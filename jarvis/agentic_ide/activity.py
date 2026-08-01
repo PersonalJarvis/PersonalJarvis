@@ -80,7 +80,7 @@ and the failure would at least be VISIBLE rather than the silent one it
 replaces: a badge stuck on "working" gets reported, a badge wrongly saying
 "done" is believed.
 
-## The one exclusion
+## The two exclusions
 
 **Movement in the shadow of a keystroke is not the agent working.** A terminal
 echoes what a person types, so a pane being typed into is a pane whose screen
@@ -88,6 +88,19 @@ changes; without this, writing a prompt by hand reads as a busy agent, and the
 moment the user pauses to think the pane is reported finished. Keystrokes are
 stamped on the pane (``Terminal.last_input_at``) and movement in their shadow
 does not count.
+
+**Movement in the shadow of a resize is not the agent working either.** A
+full-screen TUI answers a size change by redrawing its whole frame, and that
+redraw is real output AND a changed screen — both signals at once. Sizes change
+constantly in ordinary use: switching between the grid and the chat view,
+maximizing a pane, dragging a seam, switching workspace tabs (whose reconnect
+deliberately nudges a repaint), resizing the window. Every one of those made
+every FINISHED pane in the workspace read as "working" for a few seconds — at
+exactly the moment the user was looking at the list to see what had finished
+(maintainer report 2026-08-01). Resizes are stamped on the pane
+(``Terminal.last_resize_at``) and movement in their shadow does not count; an
+agent that really is working keeps producing output after the shadow passes and
+is read as working again within a couple of seconds.
 
 ## Honest limits
 
@@ -143,6 +156,19 @@ Activity = Literal["starting", "working", "waiting", "asking", "failed", "exited
 #: few seconds. The notification on top of this waits again (`SETTLE_S`), so
 #: nothing is filed until a pane has been quiet for roughly ten seconds.
 STILL_S = 4.0
+
+#: How long after a PTY resize any movement is read as the redraw the resize
+#: caused rather than as the agent working.
+#:
+#: A TUI answers a size change within a few hundred milliseconds (the repaint
+#: nudge waits 0.08 s between its two sizes and the paint follows immediately),
+#: so two seconds cover the slowest observed redraw with room to spare — while
+#: staying far below any real job. The cost is bounded and visible: an agent
+#: genuinely working through a resize reads as "waiting" for at most this long,
+#: then its next output falls outside the shadow and it reads as working again.
+#: The silent failure this replaces was the reverse and unbounded in number:
+#: every layout change relabelled every finished pane "working".
+RESIZE_SHADOW_S = 2.0
 
 #: How many of the pane's visible rows the fingerprint covers.
 #:
@@ -247,6 +273,21 @@ def _fresh(moment: float, at: float | None) -> bool:
     return 0 <= moment - float(at) <= STILL_S
 
 
+def _resize_shadowed(term: Any, at: float | None) -> bool:
+    """Did ``at`` fall in the shadow of this pane's last resize?
+
+    Movement stamped there is the TUI redrawing its frame for the new geometry,
+    not the agent working — see the module docstring. Asked about the moment the
+    MOVEMENT happened (the output stamp, the screen-change stamp), never about
+    "now": the redraw arrives within the shadow, but its stamp stays fresh for
+    :data:`STILL_S` beyond it, and judging by "now" would let that tail through.
+    """
+    resized_at = getattr(term, "last_resize_at", None)
+    if not resized_at or not at:
+        return False
+    return 0 <= float(at) - float(resized_at) <= RESIZE_SHADOW_S
+
+
 def _moving(term: Any, moment: float, still_since: float | None) -> bool:
     """Is anything happening in this pane right now?
 
@@ -254,12 +295,14 @@ def _moving(term: Any, moment: float, still_since: float | None) -> bool:
     arrived, or a screen seen to CHANGE — the latter tracked by the caller
     across sweeps and passed in as ``still_since``, since a single look cannot
     see movement. A caller without that history simply asks the first question.
+    Movement in the shadow of a keystroke or a resize counts for neither.
     """
     if _typing_now(term, moment):
         return False
-    if _fresh(moment, getattr(term, "last_output_at", None)):
+    out_at = getattr(term, "last_output_at", None)
+    if _fresh(moment, out_at) and not _resize_shadowed(term, out_at):
         return True
-    return _fresh(moment, still_since)
+    return _fresh(moment, still_since) and not _resize_shadowed(term, still_since)
 
 
 def read_activity(
@@ -410,6 +453,7 @@ def has_work_behind_it(term: Any) -> bool:
 __all__ = [
     "ASK_FRAGMENTS",
     "NO_READING",
+    "RESIZE_SHADOW_S",
     "SETTLED",
     "STAMP_FRESH_S",
     "STILL_S",

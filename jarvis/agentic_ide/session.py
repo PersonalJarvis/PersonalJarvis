@@ -834,6 +834,13 @@ class Terminal:
     # agent is working only when nobody is at the keyboard. Without it, pausing
     # mid-sentence in a pane reads as an agent that just finished.
     last_input_at: float | None = None
+    # When this pane's PTY was last RESIZED — a re-join with a new geometry, a
+    # grid re-layout, the repaint nudge. A full-screen TUI answers a size change
+    # by redrawing its whole frame, and that redraw is output plus a changed
+    # screen: exactly the two signals the activity detector reads as "working".
+    # Movement in the shadow of this stamp is the pane being redrawn, not the
+    # agent working — see `activity._resize_shadowed`.
+    last_resize_at: float | None = None
     prompts_sent: int = 0
     last_prompt: str = ""
     # The current process's records are kept as a fallback if the local history
@@ -2438,6 +2445,9 @@ class Registry:
                 geometry_changed = manager.resize(term.pty_id, cols, rows)
                 if geometry_changed:
                     term.transcript.resize(cols, rows)
+                    # The TUI is about to redraw itself for the new geometry;
+                    # that redraw must not read as the agent working.
+                    term.last_resize_at = time.time()
             needs_repaint = term.replay.truncated
             if geometry_changed and is_coding_agent(term.agent):
                 # A cursor-addressed TUI stream is meaningful only at the size
@@ -2927,6 +2937,9 @@ class Registry:
             manager.resize(pty_id, cols, max(rows - 1, 2))
             await asyncio.sleep(REPAINT_NUDGE_S)
             manager.resize(pty_id, cols, rows)
+            # The whole point of the nudge is a full repaint — which must read
+            # as the redraw it is, not as the agent suddenly working.
+            term.last_resize_at = time.time()
         except Exception as exc:  # noqa: BLE001 - a stale screen beats a failed reconnect
             logger.debug("Agentic IDE: could not nudge {} into a repaint: {}", term.name, exc)
 
@@ -3001,6 +3014,10 @@ class Registry:
             return True
         if not self._manager().resize(term.pty_id, cols, rows):
             return False
+        # The TUI answers the new size with a full redraw — shadow it so a
+        # finished pane does not read as "working" every time the grid
+        # re-lays itself out (chat view toggle, maximize, a dragged seam).
+        term.last_resize_at = time.time()
         if is_coding_agent(term.agent):
             # Future viewers must not replay cursor moves produced for the old
             # grid into the new one. The live viewer already has its screen;

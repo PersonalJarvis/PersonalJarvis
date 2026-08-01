@@ -27,7 +27,7 @@ import pytest
 
 from jarvis.agentic_ide import notifications
 from jarvis.agentic_ide import session as session_mod
-from jarvis.agentic_ide.activity import STAMP_FRESH_S, observed
+from jarvis.agentic_ide.activity import RESIZE_SHADOW_S, STAMP_FRESH_S, observed
 from jarvis.agentic_ide.session import PLAIN_TERMINAL, Registry
 from tests.fakes.fake_pty_manager import FakePtyManager
 
@@ -160,6 +160,63 @@ async def test_a_keystroke_echo_is_still_not_the_agent_working(
     _sweep(registry, now)
 
     assert term.to_dict()["activity"] == "waiting"
+
+
+async def test_a_resize_repaint_is_not_the_agent_working(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The other exclusion: a redraw for a new geometry is not work.
+
+    The reported bug (2026-08-01). Switching between the grid and the chat
+    view, maximizing, dragging a seam or changing tabs resizes every pane, a
+    TUI answers a size change with a full repaint, and that repaint is fresh
+    output AND a changed picture — so every FINISHED pane in the workspace
+    read as "working" at exactly the moment the user looked at the list.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    term.transcript.feed(REST_SCREENS["claude"])
+    now = time.time()
+    _sweep(registry, now - notifications.SWEEP_INTERVAL_S)
+    # The grid re-laid itself out: PTY resized, TUI repainted — both signals.
+    term.last_resize_at = now - 0.5
+    term.last_output_at = now
+    term.transcript.clear()
+    term.transcript.feed(REST_SCREENS["claude"] + "\r\n ")
+    _sweep(registry, now)
+
+    assert term.to_dict()["activity"] == "waiting"
+
+
+async def test_output_after_the_resize_shadow_still_counts_as_working(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The shadow is a window, not a mute button.
+
+    An agent genuinely working through a resize keeps printing after the
+    redraw; its next stamp falls outside the shadow and must count again —
+    otherwise a resize would hide real work instead of a repaint.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    term.transcript.feed(REST_SCREENS["claude"])
+    now = time.time()
+    _sweep(registry, now - notifications.SWEEP_INTERVAL_S)
+    term.last_resize_at = now - RESIZE_SHADOW_S - 1.0
+    term.last_output_at = now
+    _sweep(registry, now)
+
+    assert term.to_dict()["activity"] == "working"
+
+
+async def test_a_grid_relayout_stamps_the_resize_shadow(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The viewer's resize path leaves the stamp the detector reads."""
+    _session, term = await _pane(registry, tmp_path)
+    assert term.last_resize_at is None
+
+    assert registry.resize("Alex", 120, 40) is True
+
+    assert term.last_resize_at is not None
 
 
 # --------------------------------------------- the reading reaches a client
