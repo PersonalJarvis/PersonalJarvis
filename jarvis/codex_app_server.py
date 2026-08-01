@@ -272,10 +272,14 @@ class CodexAppServerRPCError(CodexAppServerError):
 
 
 # SSOT for the subscription-status reason-code vocabulary. Mirrors (five-layer
-# anti-drift guard, BUG-008 class): the payload assert in
-# ``jarvis/ui/web/provider_routes.py``, the TS union in ``useProviders.ts``,
-# the card's ternary in ``ProviderTierSection.tsx``, and one
-# ``apikeys_codex.status_*`` i18n key per member in de/en/es.
+# anti-drift guard, BUG-008 class): the runtime membership guard in
+# ``jarvis/ui/web/provider_routes.py::_codex_subscription_status_payload``
+# (unknown values degrade to busy with a warning), the TS union in
+# ``useProviders.ts``, the exhaustive ``CODEX_STATUS_KEY_BY_REASON`` record in
+# ``ProviderTierSection.tsx`` (a new member fails the TS build until mapped;
+# the i18n parity test derives its key list from it), and one
+# ``apikeys_codex.status_*`` i18n key per member in de/en/es. The Python side
+# is pinned by ``test_reason_code_vocabulary_is_pinned``.
 # "busy" is transient: the profile is briefly owned by another probe, a
 # login/logout, or a starting voice transport. Not a setup defect; callers
 # keep their last known state instead of asking the user to reconnect.
@@ -411,7 +415,14 @@ def _validate_current_owner(metadata: os.stat_result) -> None:
 
 
 def _validate_regular_private_file(path: Path) -> None:
-    metadata = path.lstat()
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        # An unreadable entry (antivirus hold, slow disk) is transiently
+        # unknown, never proof of a broken profile.
+        raise CodexSubscriptionInspectionFailed(
+            "The dedicated Codex voice profile could not be inspected."
+        ) from exc
     if _is_link_or_reparse(path) or not stat.S_ISREG(metadata.st_mode):
         raise CodexSubscriptionUnavailable(
             "The dedicated Codex voice profile contains an unsafe filesystem entry."
@@ -462,7 +473,13 @@ def _validate_private_directory(
     exact_posix_mode: int | None = None,
     require_owner_only: bool = False,
 ) -> None:
-    metadata = path.lstat()
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        # Transiently unreadable, not proven-broken (see the file variant).
+        raise CodexSubscriptionInspectionFailed(
+            "The dedicated Codex voice profile could not be inspected."
+        ) from exc
     if _is_link_or_reparse(path) or not stat.S_ISDIR(metadata.st_mode):
         raise CodexSubscriptionUnavailable(
             "The dedicated Codex voice profile contains an unsafe directory."
@@ -804,8 +821,50 @@ def _validated_subscription_home(
     return canonical_home
 
 
+def _rebuild_invalid_subscription_home() -> None:
+    """Remove an invalid Jarvis-owned voice profile so login can rebuild it.
+
+    Reached only from an explicit user action (Connect / Disconnect): the
+    directory is Jarvis's own — never user documents — and its only meaningful
+    content is the dedicated login the user is actively replacing or removing.
+    Without this, ``setup_invalid`` was an in-app dead end whose card text
+    demanded a reconnect that failed on the very same validation (CLAUDE.md
+    §3: recoverable IN-APP). A symlinked profile is detached, never followed.
+    """
+    from jarvis.core.paths import user_data_dir
+
+    try:
+        root = user_data_dir().resolve(strict=True)
+    except OSError as exc:
+        raise CodexSubscriptionUnavailable(
+            "Jarvis's private data directory could not be verified."
+        ) from exc
+    candidate = root / _SUBSCRIPTION_HOME_DIRNAME
+    try:
+        if candidate.is_symlink():
+            candidate.unlink()
+            return
+        if candidate.exists():
+            shutil.rmtree(candidate)
+    except OSError as exc:
+        raise CodexSubscriptionUnavailable(
+            "The invalid Codex voice profile could not be removed. Delete the "
+            f"'{_SUBSCRIPTION_HOME_DIRNAME}' folder in Jarvis's data "
+            "directory manually."
+        ) from exc
+
+
 def _prepare_subscription_login_home() -> Path:
-    home = _validated_subscription_home(create=True, require_marker=False)
+    try:
+        home = _validated_subscription_home(create=True, require_marker=False)
+    except CodexSubscriptionInspectionFailed:
+        # Transiently unreadable is NOT license to delete anything.
+        raise
+    except CodexSubscriptionUnavailable:
+        # The profile is invalid and the user explicitly asked for a fresh
+        # login — rebuild the Jarvis-owned directory from scratch.
+        _rebuild_invalid_subscription_home()
+        home = _validated_subscription_home(create=True, require_marker=False)
     marker = home / _SUBSCRIPTION_PROFILE_MARKER
     auth_file = home / "auth.json"
     if not marker.exists() and auth_file.exists():
@@ -892,7 +951,7 @@ def _sha256_file_cached(path: Path) -> str:
     """
     try:
         identity = path.stat()
-    except OSError:
+    except OSError:  # An unreadable identity cannot be memoized — hash fresh.
         return _sha256_file(path)
     key = os.path.normcase(str(path))
     signature = (
@@ -1761,15 +1820,12 @@ class CodexAppServerClient:
             # nobody left to release.
             decision_lock = threading.Lock()
             abandoned = threading.Event()
-            reserve_failed: list[BaseException] = []
             published_epoch: list[int] = []
 
             def _reserve() -> None:
-                try:
-                    epoch = _reserve_subscription_transport(self)
-                except BaseException as exc:
-                    reserve_failed.append(exc)
-                    raise
+                # A raising reserve holds nothing and propagates through the
+                # awaited future; only a SUCCESSFUL reserve needs a decider.
+                epoch = _reserve_subscription_transport(self)
                 with decision_lock:
                     if not abandoned.is_set():
                         self._profile_transport_epoch = epoch
@@ -2502,19 +2558,24 @@ class CodexAppServerClient:
                 stdin.write(payload)
                 await stdin.drain()
             except (BrokenPipeError, ConnectionError, OSError) as exc:
-                await self._close_process(
-                    CodexAppServerDisconnected("Codex app-server input closed."),
-                    expected=False,
-                )
+                # Identity guard (mirror of _reader_loop's finally): a drain
+                # that outlived a teardown-and-restart must not close the NEW
+                # process or release the successor's reservation.
+                if process is self._process:
+                    await self._close_process(
+                        CodexAppServerDisconnected("Codex app-server input closed."),
+                        expected=False,
+                    )
                 raise CodexAppServerDisconnected("Codex app-server input closed.") from exc
 
     async def _reader_loop(self, process: asyncio.subprocess.Process) -> None:
         stream = process.stdout
         if stream is None:
-            await self._close_process(
-                CodexAppServerDisconnected("Codex app-server stdout is unavailable."),
-                expected=False,
-            )
+            if process is self._process:
+                await self._close_process(
+                    CodexAppServerDisconnected("Codex app-server stdout is unavailable."),
+                    expected=False,
+                )
             return
         try:
             while True:
@@ -2854,7 +2915,19 @@ class CodexAppServerClient:
                 )
                 self._audit_effective_config(await self._read_effective_config())
             except CodexSubscriptionUnavailable as exc:
-                error = CodexSubscriptionUnavailable(str(exc))
+                if isinstance(exc, CodexSubscriptionPlanUnsupported):
+                    # The WARM call path re-judges the live account before
+                    # every thread — the same recording rule as the cold
+                    # start applies, or a plan that changed between calls
+                    # would fail every call while every surface says ready.
+                    await asyncio.shield(
+                        asyncio.to_thread(
+                            set_codex_subscription_activation_block, str(exc)
+                        )
+                    )
+                # Preserve the subclass: callers and future recorders may
+                # discriminate on it.
+                error = type(exc)(str(exc))
                 await self._close_process(
                     CodexAppServerDisconnected(
                         "Codex app-server safety state changed."
@@ -3827,6 +3900,18 @@ def _delete_codex_subscription_auth_locked() -> tuple[bool, str | None]:
         home = _validated_subscription_home(create=False, require_marker=True)
     except CodexSubscriptionProfileMissing:  # Logging out an absent profile is idempotent success.
         return True, None
+    except CodexSubscriptionInspectionFailed as exc:
+        # Transiently unreadable — refuse honestly instead of deleting blind.
+        return False, f"{exc} Try again in a moment."
+    except CodexSubscriptionUnavailable:
+        # Disconnecting must work IN-APP even when the profile is invalid:
+        # removing the whole Jarvis-owned directory deletes the credential
+        # AND clears the invalid state in one explicit user action.
+        try:
+            _rebuild_invalid_subscription_home()
+        except CodexSubscriptionUnavailable as exc:  # The honest failure text returns as the route's 409 detail.
+            return False, str(exc)
+        return True, None
     auth_file = home / "auth.json"
     if not auth_file.exists() and not auth_file.is_symlink():
         return True, None
@@ -4039,6 +4124,22 @@ async def close_shared_codex_app_servers() -> None:
                 log.warning(
                     "Dropping Codex app-server entry whose owner loop is closed"
                 )
+                # The dead loop can never reap its child: kill the tree and
+                # close the lifeline best-effort BEFORE freeing the profile,
+                # so no orphan keeps running against CODEX_HOME while the
+                # reservation reads as free.
+                orphan_process = client._process
+                client._process = None
+                orphan_tree = client._process_tree
+                client._process_tree = None
+                if orphan_process is not None and orphan_process.returncode is None:
+                    with suppress(ProcessLookupError, OSError):
+                        orphan_process.kill()
+                if orphan_tree is not None:
+                    with suppress(Exception):
+                        orphan_tree.close()
+                with suppress(Exception):
+                    client._close_lifeline()
                 epoch = client._profile_transport_epoch
                 client._profile_transport_epoch = None
                 if epoch is not None:

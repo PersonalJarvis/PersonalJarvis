@@ -805,6 +805,19 @@ export function ProviderCard({
       );
       return;
     }
+    // The experimental acknowledgement must come BEFORE the optimistic flip:
+    // a declined dialog used to return early with the radio stuck on the new
+    // card and no refetch to roll it back.
+    const isRealtimeSwitch = !["brain", "tts", "stt", "computer-use", "dictation"].includes(
+      descriptor.tier,
+    );
+    if (
+      isRealtimeSwitch &&
+      descriptor.experimental &&
+      !window.confirm(t("apikeys_view.experimental_subscription_consent"))
+    ) {
+      return;
+    }
     // Flip the highlight immediately so the switch feels instant — the backend
     // call below can take a few seconds (a TTS switch rebuilds the provider and
     // injects it into the live pipeline). The refetch on success / failure then
@@ -860,12 +873,6 @@ export function ProviderCard({
         // cheap here (a handful of tokens) and the only honest signal.
         void verifyPolishProvider();
       } else {
-        if (
-          descriptor.experimental &&
-          !window.confirm(t("apikeys_view.experimental_subscription_consent"))
-        ) {
-          return;
-        }
         const result = await switchRealtimeProvider(
           descriptor.id,
           descriptor.experimental === true,
@@ -1865,6 +1872,19 @@ function CodexAuthWidget({
             {t("apikeys_codex.install_codex")}
           </a>
         </Button>
+        {/* A plan-refused login is stored but unusable — offer the exit even
+            though the connected panel (with its Disconnect) never renders. */}
+        {status?.reason_code === "plan_unsupported" && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleLogout}
+            disabled={pending !== null}
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            {t("apikeys_codex.disconnect")}
+          </Button>
+        )}
       </div>
 
     </div>

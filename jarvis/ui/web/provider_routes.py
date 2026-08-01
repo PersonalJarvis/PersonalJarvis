@@ -952,10 +952,13 @@ def _codex_subscription_status_payload(binary_path: str | None) -> dict[str, Any
     elif connected:
         message = "Dedicated ChatGPT subscription voice login is ready."
         reason_code = "ready"
-    elif snapshot.available:
+    elif snapshot.available and snapshot.reason_code == "login_required":
         message = "Connect the dedicated ChatGPT subscription voice login."
         reason_code = snapshot.reason_code
     else:
+        # Non-login states carry their own degraded reason (for example the
+        # headless-Linux text) — overwriting it with the login invite would
+        # ask for exactly the action the reason declares impossible.
         message = snapshot.reason
         reason_code = snapshot.reason_code
     if reason_code not in CODEX_SUBSCRIPTION_REASON_CODES:
@@ -1373,6 +1376,22 @@ async def _tier_section_health(
                     detail=(
                         f"{spec.label}: "
                         f"{codex_payload.get('message') or 'ChatGPT plan not supported'}"
+                    ),
+                    subject_id=spec.id,
+                )
+            if codex_payload.get("reason_code") in {
+                "lifecycle_unavailable",
+                "not_installed",
+            }:
+                # Same rule: the hover text must name the actual remedy (an
+                # unsupported host, or installing the pinned release) — never
+                # "not connected or configured".
+                return SectionHealth(
+                    status=_section_health.NEEDS_SETUP,
+                    reason=str(codex_payload.get("reason_code")),
+                    detail=(
+                        f"{spec.label}: "
+                        f"{codex_payload.get('message') or 'not available'}"
                     ),
                     subject_id=spec.id,
                 )

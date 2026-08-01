@@ -737,7 +737,10 @@ class CodexSubscriptionRealtimeProvider:
         try:
             await client.require_chatgpt_login()
         finally:
-            if not was_ready:
+            # A cold call may have raced this gate onto the same client while
+            # we awaited: active thread subscriptions mean someone else is
+            # using it now — closing would cut their session mid-setup.
+            if not was_ready and not getattr(client, "_subscriptions", None):
                 await client.close()
 
     def __init__(

@@ -2446,6 +2446,111 @@ def test_unreadable_profile_reports_busy_not_setup_invalid(
     assert "could not be inspected" in capability.reason
 
 
+@pytest.mark.asyncio
+async def test_warm_thread_start_plan_refusal_is_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A plan that turns unsupported BETWEEN calls is discovered by the warm
+    per-thread account re-check — it must record the sticky diagnosis too."""
+    client = CodexAppServerClient("codex-test")
+
+    async def already_ready() -> None:
+        return None
+
+    async def refuse() -> None:
+        raise transport.CodexSubscriptionPlanUnsupported(
+            "Subscription voice permits only personal ChatGPT accounts."
+        )
+
+    async def no_close(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(client, "ensure_started", already_ready)
+    monkeypatch.setattr(client, "_verify_live_chatgpt_account", refuse)
+    monkeypatch.setattr(client, "_close_process", no_close)
+    monkeypatch.setattr(
+        transport, "_validated_subscription_home", lambda **_kwargs: tmp_path
+    )
+    client._workspace = SimpleNamespace(
+        root=tmp_path,
+        instructions=tmp_path / "instructions.md",
+        compact_prompt=tmp_path / "compact.md",
+        model_catalog=tmp_path / "models.json",
+        sqlite_home=tmp_path,
+        log_dir=tmp_path,
+        child_home=tmp_path,
+        child_appdata=tmp_path,
+        child_local_appdata=tmp_path,
+        child_tmp=tmp_path,
+    )
+    client._sink_base_url = "http://127.0.0.1:1/"
+
+    with pytest.raises(transport.CodexSubscriptionPlanUnsupported):
+        await client.thread_start(
+            base_instructions="transport only",
+            developer_instructions="no tools",
+            ephemeral=True,
+        )
+
+    assert "personal ChatGPT accounts" in (
+        transport.codex_subscription_activation_block() or ""
+    )
+
+
+def test_connect_rebuilds_an_invalid_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """setup_invalid must not be an in-app dead end: the explicit login action
+    rebuilds the Jarvis-owned profile instead of failing on the same check."""
+    calls: list[str] = []
+    attempts = {"n": 0}
+
+    def flaky_home(**kwargs: object) -> Path:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise CodexSubscriptionUnavailable(
+                "The dedicated Codex voice profile contains configuration or "
+                "runtime state. Create a fresh voice-only login."
+            )
+        return tmp_path
+
+    monkeypatch.setattr(transport, "_validated_subscription_home", flaky_home)
+    monkeypatch.setattr(
+        transport,
+        "_rebuild_invalid_subscription_home",
+        lambda: calls.append("rebuilt"),
+    )
+
+    home = transport._prepare_subscription_login_home()
+
+    assert calls == ["rebuilt"]
+    assert home == tmp_path
+
+
+def test_logout_clears_an_invalid_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Disconnect must work in-app even when the profile fails validation."""
+    calls: list[str] = []
+
+    def invalid_home(**_kwargs: object) -> Path:
+        raise CodexSubscriptionUnavailable(
+            "The dedicated Codex voice profile contains an unknown runtime directory."
+        )
+
+    monkeypatch.setattr(transport, "_validated_subscription_home", invalid_home)
+    monkeypatch.setattr(
+        transport,
+        "_rebuild_invalid_subscription_home",
+        lambda: calls.append("removed"),
+    )
+
+    assert transport._delete_codex_subscription_auth_locked() == (True, None)
+    assert calls == ["removed"]
+
+
 def test_activation_block_survives_cache_invalidation_until_logout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
