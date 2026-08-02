@@ -243,3 +243,66 @@ async def test_one_socket_reattaching_is_not_two_viewers(
     await fake_pty.emit(term.pty_id, "once")
 
     assert viewer.seen.count("once") == 1, "the pane wrote the same bytes twice"
+
+
+async def test_background_viewer_watches_without_stealing_geometry(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """A background browser tab must not narrow the foreground desktop pane."""
+    _session, term = await _one_pane(registry, tmp_path)
+    app, tab = Viewer(), Viewer()
+    await registry.attach(term.name, 180, 50, app.output, app.exit)
+    fake_pty.resizes.clear()
+
+    await registry.attach(
+        term.name,
+        60,
+        20,
+        tab.output,
+        tab.exit,
+        claim_owner=False,
+    )
+    await fake_pty.emit(term.pty_id, "visible in both places")
+
+    assert term.viewer_output == app.output
+    assert fake_pty.resizes == []
+    assert "visible in both places" in app.screen
+    assert "visible in both places" in tab.screen
+
+
+async def test_foreground_viewer_can_reclaim_its_geometry(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """Returning to a window restores the PTY to that window's measured size."""
+    session, term = await _one_pane(registry, tmp_path)
+    app, tab = Viewer(), Viewer()
+    await registry.attach(term.name, 180, 50, app.output, app.exit)
+    await registry.attach(
+        term.name,
+        60,
+        20,
+        tab.output,
+        tab.exit,
+        claim_owner=False,
+    )
+    fake_pty.resizes.clear()
+
+    assert registry.claim_viewer(
+        term.key,
+        60,
+        20,
+        session.id,
+        viewer=tab.output,
+    )
+    assert term.viewer_output == tab.output
+    assert fake_pty.resizes == [(term.pty_id, 60, 20)]
+
+    assert registry.claim_viewer(
+        term.key,
+        180,
+        50,
+        session.id,
+        viewer=app.output,
+    )
+    assert term.viewer_output == app.output
+    assert fake_pty.resizes[-1] == (term.pty_id, 180, 50)

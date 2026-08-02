@@ -816,7 +816,7 @@ export function AgenticTerminal({
           // was connecting were dropped — without this the agent's full-screen
           // TUI keeps drawing at the wrong width and looks clipped.
           sendResize();
-          requestAnimationFrame(sendResize);
+          requestAnimationFrame(() => sendResize());
         },
         onOutput: (text) => writeToPane(text),
         onReplay: (text) => replayToPane(text),
@@ -1070,6 +1070,7 @@ export function AgenticTerminal({
     }
     const reveal = () => {
       visibilityRef.current?.show();
+      resizeRef.current?.();
       claimResizeRef.current?.();
       termRef.current?.scrollToBottom?.();
     };

@@ -1376,18 +1376,27 @@ def _watch(
     on_exit: Any,
     cols: int,
     rows: int,
-) -> None:
-    """Attach a viewer to ``term`` and make it the owner.
+    *,
+    claim_owner: bool = True,
+) -> bool:
+    """Attach a viewer to ``term`` and optionally make it the owner.
 
     Newest last, and never twice: a socket that re-attaches (a resize, a resume
     retry) replaces its own entry rather than being fed the same bytes twice.
+    A background viewer may watch without taking the one shared PTY geometry
+    away from the window that is actually in front of the user.
     """
     term.watchers = [w for w in term.watchers if not _same_viewer(w.output, on_output)]
     term.watchers.append(PaneViewer(on_output, on_exit, cols, rows))
     if len(term.watchers) > MAX_WATCHERS:
         del term.watchers[0 : len(term.watchers) - MAX_WATCHERS]
-    term.viewer_output = on_output
-    term.viewer_exit = on_exit
+    owner_is_attached = any(
+        _same_viewer(watched.output, term.viewer_output) for watched in term.watchers
+    )
+    if claim_owner or term.viewer_output is None or not owner_is_attached:
+        term.viewer_output = on_output
+        term.viewer_exit = on_exit
+    return _same_viewer(term.viewer_output, on_output)
 
 
 def _viewers(term: Terminal) -> list[Any]:
@@ -2363,6 +2372,7 @@ class Registry:
         workspace_id: str | None = None,
         appearance: str | None = None,
         on_replay: Any = None,
+        claim_owner: bool = True,
     ) -> Terminal:
         """Point a viewer at terminal ``key`` — one attach at a time per pane.
 
@@ -2402,6 +2412,7 @@ class Registry:
                 workspace_id=workspace_id,
                 appearance=appearance,
                 on_replay=on_replay,
+                claim_owner=claim_owner,
             )
 
     async def _attach_locked(
@@ -2414,6 +2425,7 @@ class Registry:
         workspace_id: str | None = None,
         appearance: str | None = None,
         on_replay: Any = None,
+        claim_owner: bool = True,
     ) -> Terminal:
         """Point a viewer at terminal ``key``, starting its agent if needed.
 
@@ -2486,21 +2498,26 @@ class Registry:
 
         manager = self._manager()
         if term.pty_id and manager.has(term.pty_id):
-            # The agent never stopped. Take over the viewer slot: the previous
-            # viewer is either gone (a socket that closed) or is being replaced
-            # by this one, so the newest viewer always wins. The one it replaces
-            # may still be TIDYING UP — see ``detach``, which is what stops that
-            # tidy-up from clearing the slot this line just filled.
+            # The agent never stopped. A foreground viewer takes over the owner
+            # slot; a background viewer only joins the output fanout. A viewer
+            # that is being replaced may still be TIDYING UP — see ``detach``,
+            # which is what stops that tidy-up from clearing the live owner.
             #
             # Winning the slot is about OWNERSHIP (the size, the handover), not
             # about who may look: a viewer that was here first keeps receiving
             # this pane's output until its own socket goes away.
-            _watch(term, on_output, on_exit, cols, rows)
-            term.reattached = True
-            term.stopping = False
-            geometry_changed = (term.transcript.cols, term.transcript.rows) != (
+            owns_viewer = _watch(
+                term,
+                on_output,
+                on_exit,
                 cols,
                 rows,
+                claim_owner=claim_owner,
+            )
+            term.reattached = True
+            term.stopping = False
+            geometry_changed = owns_viewer and (
+                (term.transcript.cols, term.transcript.rows) != (cols, rows)
             )
             if geometry_changed:
                 geometry_changed = manager.resize(term.pty_id, cols, rows)
@@ -3113,6 +3130,49 @@ class Registry:
             term.last_resize_at = time.time()
         except Exception as exc:  # noqa: BLE001 - a stale screen beats a failed reconnect
             logger.debug("Agentic IDE: could not nudge {} into a repaint: {}", term.name, exc)
+
+    def claim_viewer(
+        self,
+        key: str,
+        cols: int,
+        rows: int,
+        workspace_id: str | None = None,
+        viewer: Any = None,
+    ) -> bool:
+        """Give a foreground viewer ownership and restore its PTY geometry."""
+        if viewer is None:
+            return False
+        found = self._locate(key, workspace_id)
+        if found is None:
+            return False
+        term = found[1]
+        if not term.pty_id:
+            return False
+        claimed = next(
+            (watched for watched in term.watchers if _same_viewer(watched.output, viewer)),
+            None,
+        )
+        if claimed is None:
+            return False
+        claimed.cols = cols
+        claimed.rows = rows
+        # Most recently foregrounded last: if this owner closes, ``detach`` can
+        # promote the viewer the user interacted with most recently before it.
+        term.watchers = [
+            watched
+            for watched in term.watchers
+            if not _same_viewer(watched.output, viewer)
+        ]
+        term.watchers.append(claimed)
+        term.viewer_output = claimed.output
+        term.viewer_exit = claimed.exit
+        return self.resize(
+            term.key,
+            cols,
+            rows,
+            workspace_id,
+            viewer=claimed.output,
+        )
 
     def resize(
         self,

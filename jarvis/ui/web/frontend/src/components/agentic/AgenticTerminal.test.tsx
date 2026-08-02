@@ -584,13 +584,14 @@ describe("pane refit", () => {
     });
   };
 
-  const pane = (maximized: boolean) => (
+  const pane = (maximized: boolean, active = true) => (
     <AgenticTerminal
       name="Dana"
       displayName="Claude Code"
       appearance="dark"
       fontSize={13}
       maximized={maximized}
+      active={active}
     />
   );
 
@@ -603,10 +604,12 @@ describe("pane refit", () => {
     terminalHarness.send.mockImplementation(() => true);
     terminalHarness.handlers.current = null;
     terminalHarness.size = { cols: 80, rows: 24 };
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
     Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
     Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
   });
@@ -648,6 +651,21 @@ describe("pane refit", () => {
     settle();
 
     expect(terminalHarness.send).not.toHaveBeenCalled();
+  });
+
+  it("reclaims the shared PTY geometry when the pane becomes active", () => {
+    const view = render(pane(false, false));
+    settle();
+    terminalHarness.send.mockClear();
+
+    view.rerender(pane(false, true));
+    settle();
+
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "claim",
+      cols: 80,
+      rows: 24,
+    });
   });
 
   it("keeps offering a size the socket could not carry", () => {

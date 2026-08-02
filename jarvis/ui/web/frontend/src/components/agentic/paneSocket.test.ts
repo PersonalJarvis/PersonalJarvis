@@ -95,8 +95,18 @@ describe("openPaneSocket", () => {
     // this socket is alive, and the server resolves a pane without one against
     // whichever is showing — which is a different folder's pane.
     expect(MockWebSocket.last!.url).toBe(
-      "ws://localhost:5173/api/agentic-ide/pty/Mika?cols=120&rows=40&workspace=ide_abc",
+      "ws://localhost:5173/api/agentic-ide/pty/Mika?cols=120&rows=40&claim=1&workspace=ide_abc",
     );
+    socket.close();
+  });
+
+  it("marks a background viewer so it cannot steal the shared PTY size", () => {
+    const socket = openPaneSocket(
+      { name: "Mika", cols: 60, rows: 20, claimOwner: false },
+      handlers(),
+    );
+
+    expect(MockWebSocket.last!.url).toContain("claim=0");
     socket.close();
   });
 

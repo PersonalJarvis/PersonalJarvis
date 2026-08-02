@@ -2984,7 +2984,8 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
     """Bidirectional bridge between one xterm pane and its agent's PTY.
 
     Wire protocol (JSON both ways) — client: ``{t:"i",d}`` input,
-    ``{t:"r",cols,rows}`` resize; server: ``{t:"o",d}`` output, ``{t:"ready"}``,
+    ``{t:"r",cols,rows}`` resize, ``{t:"claim",cols,rows}`` foreground
+    ownership; server: ``{t:"o",d}`` output, ``{t:"ready"}``,
     ``{t:"exit",code}``, ``{t:"error",message}``.
 
     The optional ``workspace`` query parameter names the workspace this pane
@@ -3018,6 +3019,11 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
     rows = _safe_int(qp.get("rows"), 24)
     workspace_id = (qp.get("workspace") or "").strip() or None
     appearance = (qp.get("appearance") or "").strip().lower() or None
+    claim_owner = (qp.get("claim") or "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+    }
 
     registry = get_registry()
     send_lock = asyncio.Lock()
@@ -3125,6 +3131,7 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
             workspace_id=pane_workspace,
             appearance=appearance,
             on_replay=on_replay,
+            claim_owner=claim_owner,
         )
     except SessionNotReady as exc:
         # "Not yet", not "not here": this pane connected while its workspace was
@@ -3223,6 +3230,14 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
                 # agent's screen to a window nobody is reading — and the viewer
                 # that IS being read has no way to notice or correct it.
                 registry.resize(
+                    term.key,
+                    _safe_int(msg.get("cols"), cols),
+                    _safe_int(msg.get("rows"), rows),
+                    pane_workspace,
+                    viewer=on_output,
+                )
+            elif kind == "claim":
+                registry.claim_viewer(
                     term.key,
                     _safe_int(msg.get("cols"), cols),
                     _safe_int(msg.get("rows"), rows),
