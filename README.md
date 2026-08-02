@@ -63,11 +63,11 @@ Real work goes to a **third**: a coding agent that runs in an isolated copy of t
 workspace, gets reviewed by a critic, and comes back with a file.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/model-tiers.png" alt="The API Keys screen with one tab per model tier: Realtime, Tool Model, and Agents" width="860" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/model-tiers.png" alt="The API Keys screen in the desktop app, with one tab per model tier: Realtime, Tool Model, and Agents" width="900" />
 </p>
 
 <p align="center">
-  <sub>One tab per tier in the app, each with its own provider. You only need keys for the tiers you actually use.</sub>
+  <sub>One tab per tier, each with its own provider, and you only need keys for the tiers you use. Every provider says how it bills: a subscription login you already have, or an API key charged per token.</sub>
 </p>
 
 ## Demo
