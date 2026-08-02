@@ -1640,18 +1640,18 @@ class DesktopApp:
 
         server.bus.subscribe(MessageSent, _on_user_message)
 
-        # Drag-drop onto the floating overlay (bar/mascot) → a proactive brain
-        # turn, reusing the SAME intake as the web dock (jarvis/brain/
-        # drop_context.ingest_drop). The overlay (Tk thread) calls dispatch_drop;
-        # we marshal here onto the long-running backend loop and run the intake.
-        # A no-op until tkdnd is present (NullDropTarget); brain may be None
-        # (build error) → ingest_drop degrades to a text-only turn.
+        # Drag-drop onto the floating overlay (bar/mascot) reuses the SAME
+        # intake as the web dock. In the Agentic IDE it stages files for the
+        # selected pane; elsewhere it retains them as silent brain context. The
+        # overlay thread calls dispatch_drop, so the actual intake is marshalled
+        # onto the long-running backend loop here.
         try:
-            from jarvis.brain.drop_context import ingest_drop, items_from_paths
+            from jarvis.brain.drop_context import items_from_paths
             from jarvis.overlay.drop_bridge import (
                 report_drop_result,
                 set_drop_handler,
             )
+            from jarvis.ui.drop_intake import capture_presence_drop
 
             def _on_overlay_drop(paths: list[str], text: str) -> None:
                 items = items_from_paths(paths) if paths else []
@@ -1668,15 +1668,13 @@ class DesktopApp:
                     accepted = False
                     try:
                         current_brain = await _await_brain_ready()
-                        accepted = bool(
-                            await ingest_drop(
-                                bus=server.bus,
-                                brain=current_brain,
-                                thread_id="default",
-                                items=items,
-                                dragged_text=dragged,
-                            )
+                        result = await capture_presence_drop(
+                            brain=current_brain,
+                            thread_id="default",
+                            items=items,
+                            dragged_text=dragged,
                         )
+                        accepted = result.captured
                     finally:
                         # The overlay gets an honest answer either way: a
                         # confirmation tick that appears when the content never

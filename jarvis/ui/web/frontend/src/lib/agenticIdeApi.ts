@@ -1113,17 +1113,18 @@ export async function setFocusMode(enabled: boolean): Promise<boolean> {
 }
 
 /**
- * Tell the backend which single pane is visibly filling the chat stage.
+ * Tell the backend which pane is visible and which one owns the next prompt.
  *
  * Ephemeral by design: this is grounding for "this terminal", not a display
- * preference. Grid view and hidden sections send no terminal because neither
- * has one honest implicit target.
+ * preference. Grid view has no single visible terminal, but its selected prompt
+ * chip remains an explicit target for the prompt bar, voice orb, and file drops.
  */
 export async function syncAgenticIdeSurface(payload: {
   workspaceId: string;
   chatView: boolean;
   onScreen: boolean;
   terminal: string | null;
+  promptTarget: string | null;
 }): Promise<void> {
   const res = await fetch("/api/agentic-ide/surface-context", {
     method: "PUT",
@@ -1134,6 +1135,7 @@ export async function syncAgenticIdeSurface(payload: {
       chat_view: payload.chatView,
       on_screen: payload.onScreen,
       terminal: payload.terminal,
+      prompt_target: payload.promptTarget,
     }),
   });
   if (!res.ok) throw new Error(await detail(res));

@@ -2408,6 +2408,7 @@ describe("chat view", () => {
         chatView: false,
         onScreen: true,
         terminal: null,
+        promptTarget: "Mika",
       }),
     );
 
@@ -2420,6 +2421,7 @@ describe("chat view", () => {
         chatView: true,
         onScreen: true,
         terminal: "Aria",
+        promptTarget: "Aria",
       }),
     );
 
@@ -2430,6 +2432,7 @@ describe("chat view", () => {
         chatView: false,
         onScreen: true,
         terminal: null,
+        promptTarget: "Aria",
       }),
     );
   });

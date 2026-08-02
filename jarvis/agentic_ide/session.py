@@ -1218,6 +1218,12 @@ class Session:
     # snapshots: after a restart the UI reports what it actually shows again.
     surface_chat_visible: bool = False
     surface_terminal: str = ""
+    # The written prompt bar and the voice orb share one explicit pane target.
+    # Unlike ``surface_terminal``, this remains meaningful in grid view: every
+    # pane may be visible, but the selected prompt chip says exactly where the
+    # next dropped file or instruction belongs.
+    surface_on_screen: bool = False
+    surface_prompt_target: str = ""
     # When this workspace was last brought to the front. Orders the "most
     # recently used" answer the resume snapshot and the UI both want, which is
     # NOT the order the workspaces were opened in.
@@ -1263,6 +1269,15 @@ class Session:
         if not self.surface_chat_visible or not self.surface_terminal:
             return None
         return self.find(self.surface_terminal)
+
+    def prompt_target_terminal(self) -> Terminal | None:
+        """The pane selected by the visible prompt bar and voice orb."""
+        if not self.surface_on_screen or not self.surface_prompt_target:
+            return None
+        selected = self.find(self.surface_prompt_target)
+        if selected is None or not accepts_prompts(selected.agent):
+            return None
+        return selected
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -2296,6 +2311,7 @@ class Registry:
         chat_view: bool,
         on_screen: bool,
         terminal: str | None,
+        prompt_target: str | None = None,
     ) -> bool:
         """Record which single pane the active UI visibly puts on its stage.
 
@@ -2306,9 +2322,16 @@ class Registry:
         session = self.session
         if session is None or session.id != workspace_id:
             return False
+        session.surface_on_screen = bool(on_screen)
         session.surface_chat_visible = bool(chat_view and on_screen)
         selected = session.find(terminal or "") if session.surface_chat_visible else None
         session.surface_terminal = selected.name if selected is not None else ""
+        prompt = session.find(prompt_target or "") if session.surface_on_screen else None
+        session.surface_prompt_target = (
+            prompt.name
+            if prompt is not None and accepts_prompts(prompt.agent)
+            else ""
+        )
         return True
 
     # ------------------------------------------------------------------ pty

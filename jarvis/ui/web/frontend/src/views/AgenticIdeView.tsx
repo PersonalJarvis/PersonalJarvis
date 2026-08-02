@@ -760,6 +760,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
             reset the orb mid-sentence.
           */}
           <VoicePanel
+            onScreen={onScreen}
             promptTarget={
               session.terminals.some(
                 (terminal) =>

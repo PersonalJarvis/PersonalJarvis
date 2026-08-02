@@ -1,21 +1,22 @@
 """``POST /api/chat/drop`` — drag-and-drop intake for the Jarvis dock / overlay.
 
 A dropped file (image, document, code, …) or dragged text is posted here as
-multipart; the route normalises it to :class:`DroppedItem`s and hands it to
-``ingest_drop``, which composes one proactive ``MessageSent`` brain turn (spoken
-on the voice build, shown in chat, landed in ``_history``). Images ride the
-multimodal path so the brain can see a dropped picture.
+multipart. In the Agentic IDE, files are staged for the selected coding pane's
+next spoken prompt; elsewhere they become silent assistant context for the next
+real user turn. The drop itself never starts a brain turn.
 
 Mirrors the avatar-upload pattern (multipart + size cap). The reply flows back
 over the normal WS event stream — this route only kicks off the turn.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
-from jarvis.brain.drop_context import DroppedItem, ingest_drop
+from jarvis.brain.drop_context import DroppedItem
+from jarvis.ui.drop_intake import capture_presence_drop
 
 router = APIRouter(tags=["chat"])
 
@@ -33,16 +34,14 @@ async def drop_into_context(
     text: str | None = Form(default=None),  # noqa: B008
     surface: str | None = Form(default=None),  # noqa: B008
 ) -> dict[str, Any]:
-    """Ingest dropped content as a proactive brain turn.
+    """Capture dropped content for the selected pane or assistant context.
 
     Returns ``{"dispatched": bool}`` — ``False`` when the drop carried nothing
     usable (no turn dispatched). 413 when the total payload exceeds the cap.
     """
     brain = getattr(request.app.state, "brain", None)
     if brain is None:
-        raise HTTPException(
-            status_code=503, detail="Brain unavailable to hold dropped context."
-        )
+        raise HTTPException(status_code=503, detail="Brain unavailable to hold dropped context.")
 
     items: list[DroppedItem] = []
     total = 0
@@ -64,7 +63,7 @@ async def drop_into_context(
             )
         )
 
-    captured = await ingest_drop(
+    captured = await capture_presence_drop(
         brain=brain,
         thread_id=thread_id or "default",
         items=items,
@@ -72,4 +71,9 @@ async def drop_into_context(
     )
     # ``dispatched`` kept as the response key for frontend compatibility; it now
     # means "captured into context" (a drop never dispatches a turn on its own).
-    return {"dispatched": captured}
+    return {
+        "dispatched": captured.captured,
+        "terminal": captured.terminal or None,
+        "voice_batch_id": captured.batch_id or None,
+        "files": list(captured.files),
+    }

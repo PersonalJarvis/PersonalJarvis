@@ -32,7 +32,6 @@ import { requestVoiceCall, requestVoiceHangup } from "@/lib/voiceApi";
 import {
   attachToTerminal,
   fetchAllVoiceAttachments,
-  fetchVoiceAttachments,
   removeVoiceAttachment,
 } from "@/lib/agenticIdeApi";
 import { playDropConfirm } from "@/lib/sound";
@@ -93,7 +92,13 @@ function format(text: string, ...values: Array<string | number>): string {
   );
 }
 
-export function VoicePanel({ promptTarget = "" }: { promptTarget?: string }) {
+export function VoicePanel({
+  promptTarget = "",
+  onScreen = true,
+}: {
+  promptTarget?: string;
+  onScreen?: boolean;
+}) {
   const t = useT();
   const voiceState = (useEventStore((s) => s.voiceState) ?? "idle") as VoiceState;
   const transcription = useEventStore((s) => s.transcription) ?? "";
@@ -110,92 +115,63 @@ export function VoicePanel({ promptTarget = "" }: { promptTarget?: string }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const active = isActive(voiceState);
-  const receiptKey = receipts
-    .map((receipt) => `${receipt.target}:${receipt.batchId}`)
-    .join("|");
 
-  // The panel can remount while the backend queue survives (navigation, an
-  // error boundary, frontend reload). Hydrate every terminal, not just the one
-  // currently selected, so no pending context can become invisible.
+  // The native Jarvis Bar lives in another process, so it cannot update this
+  // component's local state when a file lands. Reconcile the authoritative
+  // backend queue while the panel is mounted: this both discovers external
+  // drops and removes a receipt only after the spoken delivery consumed it.
   useEffect(() => {
+    if (!onScreen) return;
     let cancelled = false;
-    void fetchAllVoiceAttachments()
-      .then((response) => {
-        if (cancelled) return;
-        if (response.batches.length === 0) return;
-        setReceipts((current) => {
-          const merged = new Map(current.map((item) => [item.batchId, item]));
-          for (const batch of response.batches) {
-            merged.set(batch.batch_id, {
+    let inFlight = false;
+    let refreshQueued = false;
+    let timer: number | undefined;
+    const reconcile = () => {
+      if (cancelled) return;
+      if (inFlight) {
+        refreshQueued = true;
+        return;
+      }
+      inFlight = true;
+      void fetchAllVoiceAttachments()
+        .then((response) => {
+          if (cancelled) return;
+          setReceipts(
+            response.batches.map((batch) => ({
               batchId: batch.batch_id,
               target: batch.terminal,
               files: batch.files,
               reserved: batch.reserved,
-            });
-          }
-          return Array.from(merged.values());
-        });
-      })
-      .catch(() => {
-        // A transient reconnect must not invent an empty queue. Per-state
-        // reconciliation retries once the voice pipeline moves again.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Voice state is global, but attachment ownership is per pane. Ask the
-  // backend which batch IDs still exist instead of guessing that any global
-  // listening/thinking transition consumed the receipt currently on screen.
-  useEffect(() => {
-    if (receipts.length === 0) return;
-    let cancelled = false;
-    const targets = [...new Set(receipts.map((receipt) => receipt.target))];
-    let timer: number | undefined;
-    const reconcile = () => {
-      void Promise.allSettled(
-        targets.map(async (target) => {
-          const response = await fetchVoiceAttachments(target);
-          return { target, batches: response.batches };
-        }),
-      )
-        .then((results) => {
-          if (cancelled) return;
-          setReceipts((current) => {
-            let next = current;
-            for (const result of results) {
-              if (result.status !== "fulfilled") continue;
-              const byId = new Map(
-                result.value.batches.map((batch) => [batch.batch_id, batch]),
-              );
-              next = next
-                .filter(
-                  (receipt) =>
-                    receipt.target !== result.value.target ||
-                    byId.has(receipt.batchId),
-                )
-                .map((receipt) => {
-                  if (receipt.target !== result.value.target) return receipt;
-                  const batch = byId.get(receipt.batchId);
-                  return batch
-                    ? { ...receipt, files: batch.files, reserved: batch.reserved }
-                    : receipt;
-                });
-            }
-            return next;
-          });
+            })),
+          );
+        })
+        .catch(() => {
+          // A transient reconnect must not invent an empty queue. The next
+          // interval/focus reconciliation retries without erasing the receipt.
         })
         .finally(() => {
-          if (active && !cancelled) timer = window.setTimeout(reconcile, 750);
+          inFlight = false;
+          if (refreshQueued) {
+            refreshQueued = false;
+            reconcile();
+          } else if (!cancelled) {
+            timer = window.setTimeout(reconcile, active ? 750 : 1_500);
+          }
         });
     };
     reconcile();
+    const refreshNow = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = undefined;
+      reconcile();
+    };
+    window.addEventListener("focus", refreshNow);
     return () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
+      window.removeEventListener("focus", refreshNow);
     };
-  }, [active, receiptKey, voiceState]);
+  }, [active, onScreen]);
 
   // A drag may leave the app without sending this button a final dragleave.
   // Clear only the hover state; reading/ready are real work and must remain.

@@ -1189,10 +1189,11 @@ export function AgenticGrid({
       chatView,
       onScreen,
       terminal: chatView && onScreen ? chatSelected : null,
+      promptTarget: onScreen ? target || null : null,
     }).catch((error) => {
       console.warn("Agentic IDE: could not sync the visible terminal:", error);
     });
-  }, [chatSelected, chatView, onScreen, session.id]);
+  }, [chatSelected, chatView, onScreen, session.id, target]);
 
   /** Rail click: show the pane, and aim the composer at it when it can listen. */
   const selectChatPane = useCallback((name: string, promptable: boolean) => {

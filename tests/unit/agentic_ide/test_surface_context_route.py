@@ -1,4 +1,5 @@
 """The one-pane chat stage is the grounding for "this terminal"."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -31,9 +32,7 @@ def client(registry: Registry) -> TestClient:
 async def test_chat_surface_records_the_visible_terminal(
     client: TestClient, registry: Registry, tmp_path: Path
 ) -> None:
-    session = await registry.start(
-        str(tmp_path), [{"agent": "claude"}, {"agent": "codex"}]
-    )
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}, {"agent": "codex"}])
 
     response = client.put(
         "/api/agentic-ide/surface-context",
@@ -42,12 +41,14 @@ async def test_chat_surface_records_the_visible_terminal(
             "chat_view": True,
             "on_screen": True,
             "terminal": "T2",
+            "prompt_target": "T2",
         },
     )
 
     assert response.status_code == 200
     assert response.json()["accepted"] is True
     assert session.contextual_terminal() is session.find("T2")
+    assert session.prompt_target_terminal() is session.find("T2")
 
 
 async def test_grid_or_hidden_view_clears_the_implicit_terminal(
@@ -66,6 +67,41 @@ async def test_grid_or_hidden_view_clears_the_implicit_terminal(
     client.put("/api/agentic-ide/surface-context", json=payload)
 
     assert session.contextual_terminal() is None
+
+
+async def test_grid_keeps_the_explicit_prompt_target_for_bar_drops(
+    client: TestClient, registry: Registry, tmp_path: Path
+) -> None:
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}, {"agent": "codex"}])
+
+    response = client.put(
+        "/api/agentic-ide/surface-context",
+        json={
+            "workspace_id": session.id,
+            "chat_view": False,
+            "on_screen": True,
+            "terminal": None,
+            "prompt_target": "T2",
+        },
+    )
+
+    assert response.status_code == 200
+    assert session.contextual_terminal() is None
+    assert session.prompt_target_terminal() is session.find("T2")
+
+    response = client.put(
+        "/api/agentic-ide/surface-context",
+        json={
+            "workspace_id": session.id,
+            "chat_view": False,
+            "on_screen": False,
+            "terminal": None,
+            "prompt_target": "T2",
+        },
+    )
+
+    assert response.status_code == 200
+    assert session.prompt_target_terminal() is None
 
 
 async def test_stale_workspace_cannot_replace_the_active_surface(

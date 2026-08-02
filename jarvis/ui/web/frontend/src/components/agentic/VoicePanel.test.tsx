@@ -180,6 +180,22 @@ describe("voice panel", () => {
     ).toBe(true);
   });
 
+  it("discovers a native Jarvis Bar drop after the panel is already mounted", async () => {
+    render(<VoicePanel promptTarget="Mika" />);
+    await waitFor(() => expect(ideApi.fetchAllVoiceAttachments).toHaveBeenCalled());
+    expect(screen.queryByTestId("voice-orb-drop-context")).toBeNull();
+
+    pendingVoiceBatches.set("batch-native", {
+      batch_id: "batch-native",
+      files: ["bar-drop.png"],
+    });
+    fireEvent.focus(window);
+
+    const receipt = await screen.findByTestId("voice-orb-drop-context");
+    expect(receipt.textContent).toContain("bar-drop.png");
+    expect(receipt.textContent).toContain("Mika");
+  });
+
   it("a click during a conversation hangs up", async () => {
     storeState.voiceState = "speaking";
     render(<VoicePanel />);

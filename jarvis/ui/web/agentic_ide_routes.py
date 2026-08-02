@@ -53,7 +53,6 @@ import asyncio
 import logging
 from dataclasses import asdict
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi import (
     APIRouter,
@@ -73,6 +72,7 @@ from jarvis.agentic_ide import (
     interrupted,
     native_picker,
     notifications,
+    prompt_attachments,
     prompt_history,
     recap_engine,
     recents,
@@ -123,14 +123,6 @@ router = APIRouter(prefix="/api/agentic-ide", tags=["agentic-ide"])
 #: anybody. Panes still coming up after this are reported as undelivered rather
 #: than waited for indefinitely.
 SPAWN_READY_TIMEOUT_S = 20.0
-
-# The prompt composer already caps one analysed drop at 20k characters. Keep
-# repeated orb drops within the same total budget so a forgotten queue cannot
-# grow without bound or crowd the spoken instruction out of its own prompt.
-MAX_PENDING_VOICE_BATCHES = 8
-MAX_PENDING_VOICE_ATTACHMENTS = 16
-MAX_PENDING_VOICE_CHARS = 20_000
-
 
 async def _announce_coding_mode(request: Request) -> None:
     """Tell every connected client what the coding mode is NOW.
@@ -301,7 +293,7 @@ class ModeRequest(BaseModel):
 
 
 class SurfaceContextRequest(BaseModel):
-    """Which single terminal the Agentic-IDE UI visibly puts on stage."""
+    """Which terminal the Agentic-IDE UI shows and targets for prompts."""
 
     workspace_id: str = Field(description="Workspace currently rendered by this view.")
     chat_view: bool = Field(description="True only while the one-pane chat view is selected.")
@@ -309,6 +301,13 @@ class SurfaceContextRequest(BaseModel):
     terminal: str | None = Field(
         default=None,
         description="Visible pane call-sign; null when no single pane is shown.",
+    )
+    prompt_target: str | None = Field(
+        default=None,
+        description=(
+            "Pane selected by the prompt bar and voice orb; null when no pane "
+            "can accept an instruction."
+        ),
     )
 
 
@@ -1772,6 +1771,7 @@ async def set_surface_context(req: SurfaceContextRequest) -> dict:
         chat_view=req.chat_view,
         on_screen=req.on_screen,
         terminal=req.terminal,
+        prompt_target=req.prompt_target,
     )
     return {"ok": True, "accepted": accepted}
 
@@ -2523,37 +2523,12 @@ async def terminal_attach(
 
     voice_batch: PendingPromptAttachmentBatch | None = None
     if stage_for_voice and analysis_items:
-        voice_batch = PendingPromptAttachmentBatch(
-            batch_id=uuid4().hex,
-            attachments=tuple(analysis_items),
-            files=tuple(stored_names),
-        )
-        async with term.pending_prompt_attachment_lock:
-            pending = term.pending_prompt_attachment_batches
-            attachment_count = sum(len(batch.attachments) for batch in pending)
-            char_count = sum(
-                len(item.name) + len(item.reference) + len(item.detail) + len(item.note)
-                for batch in pending
-                for item in batch.attachments
+        try:
+            voice_batch = await prompt_attachments.enqueue(
+                term, analysis_items, stored_names
             )
-            new_chars = sum(
-                len(item.name) + len(item.reference) + len(item.detail) + len(item.note)
-                for item in analysis_items
-            )
-            if (
-                len(pending) >= MAX_PENDING_VOICE_BATCHES
-                or attachment_count + len(analysis_items)
-                > MAX_PENDING_VOICE_ATTACHMENTS
-                or char_count + new_chars > MAX_PENDING_VOICE_CHARS
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "This pane already has the maximum amount of voice-prompt "
-                        "context waiting. Use or remove a pending drop first."
-                    ),
-                )
-            pending.append(voice_batch)
+        except prompt_attachments.PromptAttachmentQueueFull as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     analysis = [item.to_dict() for item in analysis_items]
 
