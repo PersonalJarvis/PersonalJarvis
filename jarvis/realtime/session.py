@@ -65,6 +65,11 @@ log = logging.getLogger(__name__)
 _MAX_UNSCRUBBED_AUDIO_MS = 15_000
 _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S = 12.0
 _AUDIO_SEND_TIMEOUT_S = 2.0
+# A reply lasts seconds; a half-duplex mute that outlives one is a stuck turn,
+# not normal speaking. Report it, then keep reporting at this interval so a
+# call that went deaf is visible for its whole duration, not only at onset.
+_HALF_DUPLEX_MUTE_ALERT_S = 6.0
+_HALF_DUPLEX_MUTE_REPEAT_S = 10.0
 _TOOL_TRANSCRIPT_WAIT_S = 3.0
 # Grace window for the model to finish its goodbye after an end_call tool
 # call; if the provider never sends turn_complete, hang up anyway.
@@ -976,6 +981,13 @@ class RealtimeVoiceSession:
         self.allow_classic_fallback = bool(allow_classic_fallback)
         self._transport_offer_sdp = ""
         self._output_active = False
+        # Half-duplex mutes the microphone while the assistant speaks. If that
+        # state is ever left standing, the user talks and NOTHING reaches the
+        # session — and the drop is silent by construction, so the call just
+        # looks like it stopped listening. Track how long it has been muted so
+        # the condition is visible instead of invisible (AP-30).
+        self._half_duplex_muted_since: float | None = None
+        self._half_duplex_mute_reported = 0.0
 
         brain_config = getattr(self._config, "brain", None)
         reply_language = str(
@@ -1712,13 +1724,41 @@ class RealtimeVoiceSession:
                 self._pump(), name=f"rt-pump-{self.session_id}"
             )
 
+    def _note_half_duplex_mute(self) -> None:
+        """Report a microphone that half-duplex has been holding shut too long.
+
+        A reply lasts seconds; a mute that outlives one is a stuck turn, and
+        the user experiences it as "it just stopped listening to me" with
+        nothing anywhere to say why.
+        """
+        now = time.monotonic()
+        if self._half_duplex_muted_since is None:
+            self._half_duplex_muted_since = now
+            return
+        muted_s = now - self._half_duplex_muted_since
+        if muted_s < _HALF_DUPLEX_MUTE_ALERT_S:
+            return
+        if now - self._half_duplex_mute_reported < _HALF_DUPLEX_MUTE_REPEAT_S:
+            return
+        self._half_duplex_mute_reported = now
+        log.warning(
+            "realtime[%s] microphone has been muted by half-duplex for %.1fs — "
+            "the assistant is still marked as speaking, so nothing the user "
+            "says is reaching the provider",
+            self.session_id,
+            muted_s,
+        )
+
     async def handle_audio_frame(self, pcm_native: bytes) -> None:
         if self._ended or self._session is None or not pcm_native:
             return
         if self._session is self._transport_rebuild_pending:
             return
         if self._half_duplex and self._output_active:
+            self._note_half_duplex_mute()
             return
+        self._half_duplex_muted_since = None
+        self._half_duplex_mute_reported = 0.0
         try:
             if self.browser_sample_rate == self._input_sample_rate:
                 pcm16 = bytes(pcm_native)

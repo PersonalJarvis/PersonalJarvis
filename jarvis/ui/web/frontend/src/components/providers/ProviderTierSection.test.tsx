@@ -20,6 +20,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { ProviderCard } from "@/components/providers/ProviderTierSection";
 import type { ProviderDescriptor, ProviderTestResult } from "@/hooks/useProviders";
 import { useI18nStore, type UiLanguage } from "@/i18n";
+
+const EXPERIMENTAL_CONSENT_KEY =
+  "jarvis.experimentalConsent.codex-subscription-realtime";
+
 import { useEventStore } from "@/store/events";
 
 interface Call {
@@ -151,6 +155,7 @@ function polishPin(calls: Call[]): Record<string, unknown> {
 
 describe("ProviderCard — dictation polish activation", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -211,6 +216,7 @@ describe("ProviderCard — dictation polish activation", () => {
 
 describe("ProviderCard — a switched-to polish provider proves it works", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     vi.restoreAllMocks();
     useI18nStore.getState().setUi("en", { push: false });
     useEventStore.setState({ toasts: [] });
@@ -311,6 +317,7 @@ describe("ProviderCard — a switched-to polish provider proves it works", () =>
 
 describe("ProviderCard: ChatGPT subscription Realtime", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     vi.restoreAllMocks();
     useEventStore.setState({ toasts: [] });
     useI18nStore.getState().setUi("en", { push: false });
@@ -626,8 +633,9 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
 
   it("lets a plan-blocked card retry activation through the backend", async () => {
     const calls = installFetchMock();
-    // The experimental-provider acknowledgement dialog (jsdom cannot show it).
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    // Not this test's subject: the route was acknowledged earlier, so the
+    // dialog stays away (it asks once per provider, never on every switch).
+    window.localStorage.setItem(EXPERIMENTAL_CONSENT_KEY, "1");
     renderCard(
       codexRealtimeCard({
         configured: false,
@@ -738,7 +746,7 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
 
   it("activates through the Realtime switch without the Brain API-key guard", async () => {
     const calls = installFetchMock();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    window.localStorage.setItem(EXPERIMENTAL_CONSENT_KEY, "1");
     renderCard(codexRealtimeCard());
 
     fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
@@ -759,13 +767,15 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
 
   it("does not activate until the user accepts the experimental boundary", async () => {
     const calls = installFetchMock();
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     const optimistic = vi.fn();
     renderCard(codexRealtimeCard(), () => {}, optimistic);
 
     fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
 
-    await waitFor(() => expect(window.confirm).toHaveBeenCalledOnce());
+    // An in-app dialog, not window.confirm: the desktop shell renders that as
+    // a raw "127.0.0.1 says" box and it blocks the whole window.
+    const cancel = await screen.findByText("Cancel");
+    fireEvent.click(cancel);
     expect(
       calls.some(
         (candidate) =>
@@ -780,11 +790,14 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
 
   it("flips the radio optimistically only after the consent is accepted", async () => {
     installFetchMock();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const optimistic = vi.fn();
     renderCard(codexRealtimeCard(), () => {}, optimistic);
 
     fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+
+    const accept = await screen.findByText("Yes");
+    expect(optimistic).not.toHaveBeenCalled();
+    fireEvent.click(accept);
 
     await waitFor(() =>
       expect(optimistic).toHaveBeenCalledWith(
@@ -792,5 +805,24 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
         "codex-subscription-realtime",
       ),
     );
+  });
+
+  it("asks for the experimental acknowledgement once, not on every switch", async () => {
+    installFetchMock();
+    window.localStorage.setItem(EXPERIMENTAL_CONSENT_KEY, "1");
+    const optimistic = vi.fn();
+    renderCard(codexRealtimeCard(), () => {}, optimistic);
+
+    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+
+    // Straight through: re-asking every time taught the user to click the
+    // notice away unread, which defeats the point of showing it at all.
+    await waitFor(() =>
+      expect(optimistic).toHaveBeenCalledWith(
+        "realtime",
+        "codex-subscription-realtime",
+      ),
+    );
+    expect(screen.queryByText("Yes")).toBeNull();
   });
 });

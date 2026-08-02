@@ -70,6 +70,34 @@ export interface CategoryMeta {
 // Realtime only when a realtime provider actually has a key
 // (`realtimeAvailable`), so the switch can never pin the boot default to an
 // unreachable engine. See `EngineModeSwitch` below for the exact rule.
+/** Remembered acknowledgement of an experimental provider route.
+ *
+ * The notice is worth showing once — it explains whose plan pays and that the
+ * route can change without notice. Showing it on EVERY switch is the
+ * confirmation fatigue this project rejects, and it taught the user to click
+ * it away unread, which defeats the point of having it. */
+function experimentalConsentKey(providerId: string): string {
+  return `jarvis.experimentalConsent.${providerId}`;
+}
+
+function hasExperimentalConsent(providerId: string): boolean {
+  try {
+    return window.localStorage.getItem(experimentalConsentKey(providerId)) === "1";
+  } catch {
+    // A WebView with storage disabled simply asks again next time: annoying,
+    // never broken, and never silently skipping the notice.
+    return false;
+  }
+}
+
+function rememberExperimentalConsent(providerId: string): void {
+  try {
+    window.localStorage.setItem(experimentalConsentKey(providerId), "1");
+  } catch {
+    // Same trade-off as above — the dialog reappears, nothing else breaks.
+  }
+}
+
 export type VoiceEngineMode = "pipeline" | "realtime";
 
 // The three provider slots the maintainer's setup recommendation speaks about
@@ -696,6 +724,12 @@ export function ProviderCard({
 }) {
   const t = useT();
   const [activating, setActivating] = useState(false);
+  // The experimental-route acknowledgement. It used to be a window.confirm,
+  // which the desktop WebView renders as a raw "127.0.0.1 says" box that also
+  // blocks the whole window — and it reappeared on EVERY switch, which is the
+  // confirmation fatigue this project explicitly rejects. Now it is an in-app
+  // dialog shown once per provider.
+  const [consentPending, setConsentPending] = useState(false);
   const pushToast = useEventStore((s) => s.pushToast);
   const assistantName = useEventStore((s) => s.assistantName);
   // The card only escalates to red for a real "set up but failing" error — the
@@ -814,8 +848,9 @@ export function ProviderCard({
     if (
       isRealtimeSwitch &&
       descriptor.experimental &&
-      !window.confirm(t("apikeys_view.experimental_subscription_consent"))
+      !hasExperimentalConsent(descriptor.id)
     ) {
+      setConsentPending(true);
       return;
     }
     // Flip the highlight immediately so the switch feels instant — the backend
@@ -931,7 +966,53 @@ export function ProviderCard({
     await activate(true);
   }
 
+  const consentDialog = consentPending ? (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={(event) => {
+        event.stopPropagation();
+        setConsentPending(false);
+      }}
+    >
+      <div
+        className="card-outline max-w-lg space-y-4 bg-background p-5 shadow-xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="text-sm font-semibold">{descriptor.label}</div>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          {t("apikeys_view.experimental_subscription_consent")}
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            className="btn-outline px-3 py-1.5 text-sm"
+            onClick={(event) => {
+              event.stopPropagation();
+              setConsentPending(false);
+            }}
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            type="button"
+            className="btn-primary px-3 py-1.5 text-sm"
+            onClick={(event) => {
+              event.stopPropagation();
+              rememberExperimentalConsent(descriptor.id);
+              setConsentPending(false);
+              void activate();
+            }}
+          >
+            {t("common.yes")}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   return (
+    <>
+    {consentDialog}
     <div
       onClick={handleCardActivate}
       onDoubleClick={handleCardActivate}
@@ -1167,6 +1248,7 @@ export function ProviderCard({
         />
       </div>
     </div>
+    </>
   );
 }
 
@@ -1355,13 +1437,13 @@ export function ActiveControl({
         e.stopPropagation();
       }}
       className={cn(
-        "inline-flex shrink-0 select-none items-center gap-1.5 text-xs",
+        "inline-flex shrink-0 select-none items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs transition-colors focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 focus-within:ring-offset-background",
         disabled ? "cursor-not-allowed" : "cursor-pointer",
         descriptor.active
-          ? "font-medium text-primary"
+          ? "border-primary/40 bg-primary/10 font-semibold text-primary"
           : descriptor.configured
-            ? "text-muted-foreground hover:text-foreground"
-            : "text-muted-foreground/70",
+            ? "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
+            : "border-border/60 text-muted-foreground/70",
       )}
       title={labelTitle}
     >
@@ -1373,7 +1455,11 @@ export function ActiveControl({
         disabled={activating || disabled}
         className="accent-primary"
       />
-      {activating ? "Activating…" : descriptor.active ? "Active" : "Set active"}
+      {activating
+        ? t("apikeys_view.provider_activating")
+        : descriptor.active
+          ? t("apikeys_view.provider_active")
+          : t("apikeys_view.provider_set_active")}
     </label>
   );
 }
@@ -1573,11 +1659,11 @@ export function AuthWidget({
       {descriptor.experimental && (
         <div
           data-testid={`provider-experimental-note-${descriptor.id}`}
-          className="rounded-md border border-violet-500/30 bg-violet-500/[0.06] px-3 py-2 text-xs leading-relaxed text-muted-foreground"
+          className="rounded-md border border-violet-500/30 bg-violet-500/[0.06] px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground"
         >
-          <p>{t("apikeys_view.subscription_realtime_description")}</p>
-          <p className="mt-1">
-            {t("apikeys_view.experimental_subscription_fallback")}
+          <p>
+            <span>{t("apikeys_view.subscription_realtime_description")}</span>{" "}
+            <span>{t("apikeys_view.experimental_subscription_fallback")}</span>
           </p>
         </div>
       )}
