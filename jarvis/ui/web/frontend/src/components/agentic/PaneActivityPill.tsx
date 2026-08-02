@@ -1,4 +1,4 @@
-import { AlertCircle, Check, Loader2 } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PaneActivity } from "@/lib/agenticIdeApi";
 
@@ -44,13 +44,30 @@ import type { PaneActivity } from "@/lib/agenticIdeApi";
  *
  * Nothing here claims the work is CORRECT. "done" means the pane went quiet,
  * which is all a terminal can prove.
+ *
+ * ## Why motion means "busy" and colour means "ready"
+ *
+ * The two states a person scans this list for — still grinding vs. finished —
+ * are told apart by SHAPE first, not by hue: a pane that is working shows a
+ * turning spinner, and a pane that has stopped shows a still dot. That reads at
+ * a glance, survives every colour-blindness, and it is why the working state is
+ * no longer a pulsing dot: a slow throb and a steady dot are the same silhouette
+ * at 8 pixels, so the difference lived entirely in a colour the eye had to
+ * compare against its neighbours to judge.
+ *
+ * Colour then carries the second question — is this pane's stillness news? Amber
+ * is the app's own accent and marks a pane holding something for you: filled for
+ * a finished job, hollow for one that is merely ready and has done nothing yet.
+ * Blue is spent on the one state that wants an action from you right now, a pane
+ * stopped on a question. Grey is for a pane with nothing to report, red for a
+ * broken one.
  */
 
 /** The accessible meaning of each activity, and how its icon is drawn. */
 type Look = {
   label: string;
   className: string;
-  icon: "spinner" | "check" | "dot" | "alert";
+  icon: "spinner" | "dot" | "ring" | "alert";
   /** The sentence behind the badge, minus the timing clause. */
   hint: string;
 };
@@ -67,8 +84,8 @@ type Look = {
 const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
   working: {
     label: "working",
-    className: "text-amber-400 motion-safe:animate-pulse",
-    icon: "dot",
+    className: "text-amber-400",
+    icon: "spinner",
     hint: "Working — its screen is still changing.",
   },
   starting: {
@@ -99,15 +116,23 @@ const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
 
 const DONE: Look = {
   label: "done",
-  className: "text-emerald-400",
-  icon: "check",
+  className: "text-amber-400",
+  icon: "dot",
   hint: "Finished and waiting at its prompt. That it stopped, not that the work is right.",
 };
 
+/**
+ * Ready, but holding nothing — the same amber, drawn hollow.
+ *
+ * A ring rather than a second colour because this is the SAME piece of news as
+ * `done` with one part missing: the pane is quiet and yours to talk to, it just
+ * has no finished job behind it. Reading "empty" out of an unfilled shape is
+ * what a fuel gauge does, and it keeps the accent colour meaning one thing.
+ */
 const IDLE: Look = {
   label: "idle",
-  className: "text-sky-400",
-  icon: "dot",
+  className: "text-amber-400/60",
+  icon: "ring",
   hint: "Waiting at its prompt. Nothing has been sent to it yet.",
 };
 
@@ -139,11 +164,14 @@ const BROKEN: Look = {
  * The old badge, kept for exactly two panes: a plain terminal, which is a shell
  * prompt and has no job to be in the middle of, and an agent pane in the second
  * before its first status poll answers.
+ *
+ * Grey, and hollow: neither pane has a finished job behind it, so neither has
+ * earned the accent colour that means "something here is yours".
  */
 const CONNECTED: Look = {
   label: "live",
-  className: "text-sky-400",
-  icon: "dot",
+  className: "text-muted-foreground",
+  icon: "ring",
   hint: "Connected.",
 };
 
@@ -179,9 +207,15 @@ export function durationLabel(since: number, now: number): string {
 function Icon({ look }: { look: Look }) {
   if (look.icon === "spinner")
     return <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />;
-  if (look.icon === "check") return <Check className="h-3 w-3" />;
   if (look.icon === "dot")
     return <span className="h-2 w-2 rounded-full bg-current" aria-hidden="true" />;
+  if (look.icon === "ring")
+    return (
+      <span
+        className="h-2 w-2 rounded-full border-[1.5px] border-current"
+        aria-hidden="true"
+      />
+    );
   if (look.icon === "alert") return <AlertCircle className="h-3 w-3" />;
   return null;
 }

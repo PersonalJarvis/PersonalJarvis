@@ -21,31 +21,36 @@ function pill(props: Parameters<typeof PaneActivityPill>[0]) {
 }
 
 describe("what the badge shows", () => {
-  it("shows a yellow activity dot while the screen moves", () => {
+  it("spins while the screen moves", () => {
+    // Motion, not a pulsing dot: a slow throb and a steady dot are the same
+    // silhouette at 8 pixels, which put the whole busy/finished distinction
+    // into a hue the eye had to compare against its neighbours.
     const badge = pill({ status: "live", activity: "working" });
+    expect(badge.textContent).toBe("");
+    expect(badge.getAttribute("data-icon")).toBe("spinner");
+  });
+
+  it("shows a still amber dot for a pane that was given a job and has stopped", () => {
+    const badge = pill({ status: "live", activity: "waiting", worked: true });
     expect(badge.textContent).toBe("");
     expect(badge.getAttribute("data-icon")).toBe("dot");
     expect(badge.className).toContain("text-amber-400");
   });
 
-  it("shows a green check for a pane that was given a job and has stopped", () => {
-    const badge = pill({ status: "live", activity: "waiting", worked: true });
-    expect(badge.textContent).toBe("");
-    expect(badge.getAttribute("data-icon")).toBe("check");
-    expect(badge.className).toContain("text-emerald-400");
-  });
-
-  it("shows a blue ready dot — never a check — for an unused pane", () => {
+  it("hollows the dot — rather than recolouring it — for an unused pane", () => {
     // The SAME still screen as the case above. Calling it "done" would invent a
     // job for a terminal that was never given one, and read as "your work is
-    // ready" on a pane that has done none.
+    // ready" on a pane that has done none. It is the same news minus one part,
+    // so it is the same colour drawn empty.
     const badge = pill({ status: "live", activity: "waiting", worked: false });
     expect(badge.textContent).toBe("");
-    expect(badge.getAttribute("data-icon")).toBe("dot");
-    expect(badge.className).toContain("text-sky-400");
+    expect(badge.getAttribute("data-icon")).toBe("ring");
+    expect(badge.className).toContain("text-amber-400/60");
   });
 
-  it("shows a blue dot for a pane that is waiting for an answer", () => {
+  it("keeps blue for the one state that wants something from you now", () => {
+    // The only pane in the list that is neither busy nor simply finished, so
+    // it is the only one worth spending a second colour on.
     const badge = pill({ status: "live", activity: "asking" });
     expect(badge.textContent).toBe("");
     expect(badge.getAttribute("data-icon")).toBe("dot");
@@ -85,11 +90,12 @@ describe("when the pipe is the news", () => {
   it("falls back to the old badge for a pane with no reading", () => {
     // A plain terminal runs no agent, so it has no job to be in the middle of,
     // and the backend answers with no activity at all. The honest thing left to
-    // say is that the pipe is up.
+    // say is that the pipe is up — which is not news, so it is grey and hollow
+    // rather than wearing the accent that means "something here is yours".
     const badge = pill({ status: "live", activity: "" });
     expect(badge.textContent).toBe("");
-    expect(badge.getAttribute("data-icon")).toBe("dot");
-    expect(badge.className).toContain("text-sky-400");
+    expect(badge.getAttribute("data-icon")).toBe("ring");
+    expect(badge.className).toContain("text-muted-foreground");
   });
 });
 
