@@ -63,6 +63,11 @@ _UNKNOWN_ITEM_LOG_MAX = 32
 # adapter-side ceiling preserves a complete ordinary reply for one-shot STT.
 _OUTPUT_TRANSCRIPT_RECOVERY_MAX_BYTES = _OUTPUT_RATE * 2 * 60
 _OUTPUT_TRANSCRIPT_RECOVERY_TIMEOUT_S = 3.0
+# A provider copy of the real input transcript can lag the local recognizer a
+# little. Past this bound, a new server-side user caption with no local energy
+# inside an open response is not that duplicate: it is the silence/self-echo
+# turn that made ChatGPT-Live continue both sides of a conversation forever.
+_UNGROUNDED_RESPONSE_GRACE_S = 3.0
 _HISTORY_MAX_ITEMS = 12
 _HISTORY_MAX_CHARS = 12_000
 # The experimental v1 protocol was shut off server-side with the ChatGPT-Live
@@ -105,7 +110,13 @@ _THREAD_BASE_INSTRUCTIONS = (
     "commands, applications, plugins, skills, web search, MCP servers, or "
     "other agents yourself, and never read or write the filesystem. When the "
     "user asks for something to be DONE, request a handoff — the user's own "
-    "supervisor performs it and reports back through you."
+    "supervisor performs it and reports back through you. Speak only the "
+    "assistant side: produce exactly one response to the latest actual user "
+    "audio, then stop and wait. Never invent, quote, role-play, or supply a "
+    "user reply, even if silence or speaker feedback looks like another turn. "
+    "Answer in the language spoken in the latest actual user audio unless "
+    "developer context explicitly pins another; never switch languages "
+    "because an English paraphrase, transcription, or example appears in context."
 )
 _THREAD_DEVELOPER_INSTRUCTIONS = (
     "Execution boundary: do not call tools, shell commands, applications, "
@@ -129,6 +140,21 @@ _LANGUAGE_UPDATE_TEXT = {
         "For every following assistant audio and text response, reply only in "
         "Spanish. This is a voice-rendering instruction, not a request to use "
         "tools or perform an action."
+    ),
+}
+_UNGROUNDED_TURN_MESSAGES = {
+    "de": (  # i18n-allow: German runtime warning selected from the resolved turn language
+        "Die Realtime-Verbindung wird neu aufgebaut, "  # i18n-allow: runtime warning
+        "weil eine Antwort ohne lokal bestätigte "  # i18n-allow: runtime warning
+        "Spracheingabe erkannt wurde."  # i18n-allow: runtime warning
+    ),
+    "en": (
+        "The realtime connection is being rebuilt because a response without "
+        "locally grounded microphone speech was detected."
+    ),
+    "es": (
+        "La conexión en tiempo real se está restableciendo porque se detectó "
+        "una respuesta sin voz confirmada localmente."
     ),
 }
 
@@ -463,6 +489,7 @@ class _CodexSubscriptionRealtimeSession:
         active_response_generation = 0
         response_open = False
         response_allowed = False
+        response_opened_at = 0.0
         # Item types this session has already reported as unhandled. The v3 item
         # vocabulary is only partly known, and silently swallowing the rest is
         # why neither the real terminal-response item nor the never-observed
@@ -538,9 +565,11 @@ class _CodexSubscriptionRealtimeSession:
         async def _begin_response(source: str) -> bool:
             """Authorize one response from fresh local input or trusted injection."""
             nonlocal active_response_generation, response_allowed, response_open
+            nonlocal response_opened_at
             if response_open:
                 return response_allowed
             response_open = True
+            response_opened_at = asyncio.get_running_loop().time()
             active_response_generation = 0
             if self._input_transcriber is None:
                 response_allowed = True
@@ -563,7 +592,7 @@ class _CodexSubscriptionRealtimeSession:
 
         def _finish_response() -> None:
             nonlocal consumed_input_generation, active_response_generation
-            nonlocal response_allowed, response_open
+            nonlocal response_allowed, response_open, response_opened_at
             if response_allowed and active_response_generation:
                 consumed_input_generation = max(
                     consumed_input_generation, active_response_generation
@@ -571,6 +600,16 @@ class _CodexSubscriptionRealtimeSession:
             active_response_generation = 0
             response_allowed = False
             response_open = False
+            response_opened_at = 0.0
+
+        def _ungrounded_caption_breaks_open_response() -> bool:
+            return bool(
+                response_open
+                and response_allowed
+                and response_opened_at > 0.0
+                and asyncio.get_running_loop().time() - response_opened_at
+                >= _UNGROUNDED_RESPONSE_GRACE_S
+            )
 
         async def _recover_output_transcript() -> _ProviderEvent | None:
             """Recover text for provider audio whose transcript went missing."""
@@ -911,6 +950,30 @@ class _CodexSubscriptionRealtimeSession:
                         energy_plausible = self._server_user_transcript_is_plausible()
                         fresh_input = _fresh_local_input_exists()
                         if not energy_plausible or not fresh_input:
+                            if _ungrounded_caption_breaks_open_response():
+                                diagnostic = (
+                                    "Codex subscription detected an automatic "
+                                    "server turn without locally grounded "
+                                    "microphone speech; rebuilding the realtime "
+                                    "transport to stop a self-dialogue loop."
+                                )
+                                log.warning("%s Caption=%r", diagnostic, text[:80])
+                                _cancel_completion()
+                                completion_emitted = True
+                                _reset_assistant_capture()
+                                await self._interrupt_active_codex_turn()
+                                _finish_response()
+                                yield _ProviderEvent(
+                                    type="error",
+                                    error=_UNGROUNDED_TURN_MESSAGES.get(
+                                        self._language,
+                                        _UNGROUNDED_TURN_MESSAGES["en"],
+                                    ),
+                                    recoverable=True,
+                                    reconnect_advised=True,
+                                )
+                                yield _ProviderEvent(type="turn_complete")
+                                return
                             log.info(
                                 "Ignoring a server user transcript because %s (%r)",
                                 (
@@ -1191,8 +1254,11 @@ class _CodexSubscriptionRealtimeSession:
         # is delivered mid-call instead of being discarded.
         await self._deliver_context(instructions)
         normalized = str(language or "").strip().lower()
-        if normalized not in _LANGUAGE_UPDATE_TEXT or normalized == self._language:
+        if normalized not in _LANGUAGE_UPDATE_TEXT:
             return
+        # Reassert even when unchanged. The server can freeze an automatic
+        # response before the larger per-turn persona refresh takes effect;
+        # this compact final developer item is the authoritative turn pin.
         await self._client.realtime_append_text(
             self._thread_id,
             _LANGUAGE_UPDATE_TEXT[normalized],

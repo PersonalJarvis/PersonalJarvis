@@ -32,6 +32,7 @@ import time
 
 from jarvis.brain.output_filter import FALLBACK_PHRASES, ScrubResult, scrub_for_voice
 from jarvis.core.protocols import AudioChunk
+from jarvis.speech.hangup import END_CALL_SIGNAL
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +89,12 @@ class ScrubHoldGate:
         self._hard_leak = False
         self._transcript_seen = False
         self._transcript_tail = ""
+        # A provider may split a control token across transcript deltas. The
+        # ordinary scrubber sees each delta independently for display, so a
+        # split token used to pass through unchanged even though the aggregate
+        # scrub correctly recognized it. Hold only a possible token prefix
+        # until the next delta decides it.
+        self._control_tail = ""
         self._hard_leak_actions: tuple[str, ...] = ()
         # Coverage budget (BUG-069): audio released so far vs. the estimated
         # spoken duration of every transcript char the scrubber has vetted.
@@ -142,6 +149,11 @@ class ScrubHoldGate:
         if self._hard_leak:
             return self.fallback_phrase()
 
+        text = self._strip_stream_controls(str(text or ""))
+        if not text:
+            self._transcript_seen = True
+            return ""
+
         self._transcript_tail = (
             f"{self._transcript_tail}{text}"[-_TRANSCRIPT_TAIL_MAX_CHARS:]
         )
@@ -189,6 +201,19 @@ class ScrubHoldGate:
             # for byte, including punctuation-only and whitespace-only deltas.
             return text
         return _restore_edge_whitespace(text, result.cleaned)
+
+    def _strip_stream_controls(self, text: str) -> str:
+        """Remove complete or delta-split pipeline control tokens."""
+        combined = f"{self._control_tail}{text}"
+        self._control_tail = ""
+        combined = combined.replace(END_CALL_SIGNAL, "")
+        max_prefix = min(len(combined), len(END_CALL_SIGNAL) - 1)
+        for size in range(max_prefix, 0, -1):
+            if combined.endswith(END_CALL_SIGNAL[:size]):
+                self._control_tail = combined[-size:]
+                combined = combined[:-size]
+                break
+        return combined
 
     async def push_audio(self, chunk: AudioChunk) -> list[AudioChunk]:
         """Buffer or release an audio delta. Returns chunks safe to play now.
@@ -329,6 +354,7 @@ class ScrubHoldGate:
         self._hard_leak = False
         self._transcript_seen = False
         self._transcript_tail = ""
+        self._control_tail = ""
         self._hard_leak_actions = ()
         self._pending_since = None
         self.last_hold_ms = 0.0

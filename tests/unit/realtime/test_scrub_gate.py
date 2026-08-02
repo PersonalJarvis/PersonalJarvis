@@ -141,6 +141,19 @@ async def test_other_non_blocking_scrub_actions_do_not_raise_generic_error(
 
 
 @pytest.mark.asyncio
+async def test_end_call_control_split_across_deltas_never_reaches_display():
+    """Streaming boundaries must not defeat control-token stripping."""
+    gate = ScrubHoldGate(language="de")
+
+    first = await gate.feed_transcript("Talk soon. [[END")
+    second = await gate.feed_transcript("_CALL]]Bis bald. [[END_CALL]]")
+
+    assert first + second == "Talk soon. Bis bald. "
+    assert END_CALL_SIGNAL not in first + second
+    assert gate.hard_leak_pending() is False
+
+
+@pytest.mark.asyncio
 async def test_streamed_jargon_prefix_can_complete_a_user_facing_compound():
     """A partial ``MCP-Server`` transcript must not abort a clean reply."""
     gate = ScrubHoldGate(language="de")

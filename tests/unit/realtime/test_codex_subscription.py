@@ -413,6 +413,30 @@ async def test_language_update_is_developer_context_and_speech_is_authoritative(
 
 
 @pytest.mark.asyncio
+async def test_same_language_is_reasserted_at_every_local_turn_boundary() -> None:
+    """Auto-response can start before a large persona refresh takes effect.
+
+    The concise language directive must therefore be the final developer item
+    on every grounded turn, even when the resolved language did not change.
+    """
+    client = _Client()
+    session = await _provider(client).open_session(
+        RealtimeSessionConfig(language="de", transport_offer_sdp="v=0\r\no=offer")
+    )
+
+    await session.update_session(language="de")
+
+    assert client.text_appends == [
+        (
+            "thread-1",
+            codex_subscription_mod._LANGUAGE_UPDATE_TEXT["de"],
+            "developer",
+        )
+    ]
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_open_relies_on_authoritative_app_server_auth_without_pre_probe() -> None:
     client = _UnauthenticatedClient()
     provider = _provider(client)
@@ -1268,6 +1292,19 @@ class _ScriptedInputTranscriber(_StubEndpointer):
         return await self._events.get()
 
 
+class _GroundedThenQuietTranscriber(_ScriptedInputTranscriber):
+    """Delivers one real local utterance, then reports a quiet microphone."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            [
+                InputTranscriptEvent(kind="speech_started"),
+                InputTranscriptEvent(kind="transcript", text="What is up?", is_final=True),
+            ]
+        )
+        self._speaking = False
+
+
 def _hallucination_client() -> _Client:
     return _Client(
         [
@@ -1437,6 +1474,107 @@ async def test_orphan_response_without_a_fresh_local_utterance_is_interrupted():
         event for event in events if event.type == "input_transcript" and not event.is_final
     ]
     assert client.interrupts == [("thread-1", "orphan-turn")]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_ungrounded_server_turn_aborts_an_open_response_without_a_boundary(
+    monkeypatch,
+):
+    """A missing response boundary must not merge a self-dialogue forever.
+
+    Live Codex v3 evidence (2026-08-02) carried no terminal response item. The
+    legitimate answer therefore stayed open while silence produced a new
+    server-side user caption, and every automatic reply was accepted as more
+    of the original response. The first ungrounded final caption must close
+    the local turn and force a clean transport rebuild.
+    """
+    monkeypatch.setattr(codex_subscription_mod, "_UNGROUNDED_RESPONSE_GRACE_S", 0.0)
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.01,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "assistant", "text": "Hi."},
+                ),
+            ),
+            (
+                0.01,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "user", "text": "Thanks."},
+                ),
+            ),
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {
+                        "threadId": "thread-1",
+                        "role": "assistant",
+                        "text": "An invented second side of the conversation.",
+                    },
+                ),
+            ),
+        ]
+    )
+    session = await _provider(
+        client,
+        input_transcriber_factory=_GroundedThenQuietTranscriber,
+    ).open_session(RealtimeSessionConfig())
+
+    events = [event async for event in session.receive()]
+
+    assert [event.text for event in events if event.type == "output_transcript_delta"] == [
+        "Hi."
+    ]
+    assert [event.type for event in events].count("turn_complete") == 1
+    errors = [event for event in events if event.type == "error"]
+    assert len(errors) == 1
+    assert errors[0].recoverable is True
+    assert errors[0].reconnect_advised is True
+    assert "locally grounded" in str(errors[0].error)
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_ungrounded_turn_warning_uses_the_resolved_session_language(
+    monkeypatch,
+):
+    """A recovery warning must not switch the turn back to English."""
+    monkeypatch.setattr(codex_subscription_mod, "_UNGROUNDED_RESPONSE_GRACE_S", 0.0)
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.01,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "assistant", "text": "Hallo."},
+                ),
+            ),
+            (
+                0.01,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "user", "text": "Danke."},
+                ),
+            ),
+        ]
+    )
+    session = await _provider(
+        client,
+        input_transcriber_factory=_GroundedThenQuietTranscriber,
+    ).open_session(RealtimeSessionConfig(language="de"))
+
+    events = [event async for event in session.receive()]
+
+    errors = [event for event in events if event.type == "error"]
+    assert [event.error for event in errors] == [
+        codex_subscription_mod._UNGROUNDED_TURN_MESSAGES["de"]
+    ]
     await session.close()
 
 

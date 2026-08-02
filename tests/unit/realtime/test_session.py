@@ -4965,6 +4965,35 @@ def test_session_instructions_place_preferences_between_persona_and_directives(
     )
 
 
+def test_session_instructions_never_teach_native_voice_pipeline_control_tokens(
+    monkeypatch,
+):
+    """The classic TTS sentinel is neither speakable nor valid in realtime."""
+    from jarvis.brain import persona_loader
+    from jarvis.realtime import session as session_mod
+    from jarvis.speech.hangup import END_CALL_SIGNAL
+
+    monkeypatch.setattr(
+        persona_loader,
+        "load_effective_persona_prompt",
+        lambda: (
+            "IDENTITY\n\n"
+            "ENDING THE CALL\n"
+            f"Say goodbye and append {END_CALL_SIGNAL}.\n\n"
+            "CONTEXT\nKeep the actual conversation context."
+        ),
+    )
+
+    text = session_mod._session_instructions("de")
+
+    assert "IDENTITY" in text
+    assert "Keep the actual conversation context" in text
+    assert "ENDING THE CALL" not in text
+    assert END_CALL_SIGNAL not in text
+    assert "exactly one assistant response" in text
+    assert "never supply the user's side" in text.lower()
+
+
 def test_session_instructions_anchor_clock_and_stale_knowledge_guard(monkeypatch):
     """The per-turn instructions must carry today's date AND tell the model
     its training knowledge is older than that date. Without the second half

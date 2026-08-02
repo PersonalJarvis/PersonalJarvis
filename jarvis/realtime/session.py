@@ -51,7 +51,7 @@ from jarvis.sessions.constants import (
     SPOKEN_KIND_WITHHELD,
 )
 from jarvis.speech.echo_guard import SelfEchoGuard
-from jarvis.speech.hangup import HANGUP_RE
+from jarvis.speech.hangup import END_CALL_SIGNAL, HANGUP_RE
 
 log = logging.getLogger(__name__)
 
@@ -650,6 +650,11 @@ _REALTIME_SAFETY_APPENDIX = (
     "reply uses the same voice, gender, tone, and pace as your previous "
     "replies. Never switch to a different voice, never imitate another "
     "person or character, and never dramatize quoted or reported content. "
+    "Speak only the assistant side of the live conversation: produce exactly "
+    "one assistant response to the latest real user turn, then stop and wait. "
+    "Never supply the user's side, invent a user reply, or role-play dialogue, "
+    "and never perform dialogue examples from the persona. Never emit or speak pipeline "
+    "control markers; call lifetime is controlled outside the spoken reply. "
     # 2026-07-21 11:32 live forensic: a tagged action result whose rendering
     # was superseded by the surface TTS stayed in context as an un-honored
     # order — three turns later a one-word user fragment made the model
@@ -660,6 +665,16 @@ _REALTIME_SAFETY_APPENDIX = (
     "result in a later turn unless the user explicitly asks for a repeat."
 )
 _LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
+
+_REALTIME_ENDING_SECTION_RE = re.compile(
+    r"(?ms)^ENDING THE CALL[ \t]*\r?\n.*?(?=^CONTEXT[ \t]*(?:\r?\n|\Z)|\Z)"
+)
+
+
+def _realtime_persona(persona: str) -> str:
+    """Remove classic-pipeline controls from native realtime instructions."""
+    text = _REALTIME_ENDING_SECTION_RE.sub("", str(persona or ""))
+    return text.replace(END_CALL_SIGNAL, "").strip()
 
 
 @dataclass(slots=True)
@@ -805,7 +820,7 @@ def _session_instructions(
 ) -> str:
     from jarvis.brain.persona_loader import load_effective_persona_prompt
 
-    persona = load_effective_persona_prompt().strip()
+    persona = _realtime_persona(load_effective_persona_prompt())
     # The block is re-sent with every per-turn session update, so this stays
     # current across long sessions. Without it the model must either
     # hallucinate calendar answers or delegate a trivial "what day is
