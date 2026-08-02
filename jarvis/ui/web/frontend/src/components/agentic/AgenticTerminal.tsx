@@ -41,7 +41,14 @@
  *   redrawing on every keystroke that is both slow and subtly misaligned. The
  *   canvas renderer draws on a grid, which is what a terminal actually is.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -101,7 +108,7 @@ import {
   PARKED_RECHECK_MS,
 } from "./offscreenBuffer";
 import { installQuerySuppression } from "./terminalQueries";
-import { bindTerminalScrollSurface } from "./terminalScrollSurface";
+import { PaneScrollRail } from "./PaneScrollRail";
 import {
   openPaneSocket,
   type PaneSocket,
@@ -332,11 +339,14 @@ export function AgenticTerminal({
   layoutBusy = false,
 }: AgenticTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const terminalRegionRef = useRef<HTMLDivElement | null>(null);
+  const terminalRegionId = useId();
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   // Lets the font-size effect trigger a REAL resize (xterm + the terminal
   // process together) without reaching into the connect effect's socket.
   const resizeRef = useRef<(() => void) | null>(null);
+  const claimResizeRef = useRef<(() => void) | null>(null);
   const visibilityRef = useRef<{ show: () => void; park: () => void } | null>(null);
   const statusRef = useRef<PaneStatus>("connecting");
   // Mirrored into state purely so the header can show/hide the restart button;
@@ -358,6 +368,9 @@ export function AgenticTerminal({
    * Reconnects therefore stay quiet: the replayed screen is already there.
    */
   const [painted, setPainted] = useState(false);
+  // The terminal itself stays in a ref. This small epoch only tells the scroll
+  // rail that the ref now points at a new instance after a restart.
+  const [terminalEpoch, setTerminalEpoch] = useState(0);
   /**
    * The delivery this pane is currently showing a receipt for, if any.
    *
@@ -470,7 +483,7 @@ export function AgenticTerminal({
     }
     termRef.current = term;
     fitRef.current = fit;
-    const disposeScrollSurface = bindTerminalScrollSurface(container, term);
+    setTerminalEpoch((current) => current + 1);
     // Let the app-wide right-click menu reach this terminal. It cannot use the
     // browser selection here — the canvas renderer above paints the text, so
     // there is no selectable DOM to read — and it must paste through xterm so
@@ -733,7 +746,14 @@ export function AgenticTerminal({
      */
     let sentSize: { cols: number; rows: number } | null = null;
 
-    const sendResize = () => {
+    const viewerMayOwn = () =>
+      activeRef.current &&
+      !documentHidden() &&
+      (typeof document === "undefined" ||
+        typeof document.hasFocus !== "function" ||
+        document.hasFocus());
+
+    const sendResize = (claimOwner = false) => {
       // A hidden pane measures 0x0 (maximizing another one hides this one), and
       // fitting to that would resize the PTY to zero columns — which permanently
       // wrecks the agent's full-screen drawing. Skip while not measurable; the
@@ -759,15 +779,20 @@ export function AgenticTerminal({
       // Re-announcing a size makes the agent on the other end redraw its
       // entire screen, and a pane refits several times per settling layout.
       if (
+        !claimOwner &&
         sentSize &&
         sentSize.cols === size.cols &&
         sentSize.rows === size.rows
       ) {
         return;
       }
-      if (socket?.send({ t: "r", ...size })) sentSize = size;
+      if (socket?.send({ t: claimOwner ? "claim" : "r", ...size })) sentSize = size;
     };
     resizeRef.current = sendResize;
+    const claimResize = () => {
+      if (viewerMayOwn()) sendResize(true);
+    };
+    claimResizeRef.current = claimResize;
 
     socket = openPaneSocket(
       {
@@ -776,6 +801,7 @@ export function AgenticTerminal({
         cols: term.cols || 80,
         rows: term.rows || 24,
         appearance: appearanceRef.current,
+        claimOwner: viewerMayOwn(),
       },
       {
         onOpen: () => {
@@ -989,10 +1015,12 @@ export function AgenticTerminal({
     const onDocumentVisible = () => {
       if (documentHidden()) return;
       revealIfOnScreen();
+      claimResize();
     };
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", onDocumentVisible);
     }
+    window.addEventListener("focus", claimResize);
 
     return () => {
       disposed = true;
@@ -1004,6 +1032,7 @@ export function AgenticTerminal({
       // a disposed terminal inside a detached element.
       cancelPaneReflow(reflow);
       window.removeEventListener("resize", scheduleResize);
+      window.removeEventListener("focus", claimResize);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onDocumentVisible);
       }
@@ -1013,7 +1042,6 @@ export function AgenticTerminal({
       disposePasteBridge();
       disposeNewlineBridge();
       disposeQuerySuppression();
-      disposeScrollSurface();
       try {
         socket?.close();
       } catch {
@@ -1023,6 +1051,7 @@ export function AgenticTerminal({
       termRef.current = null;
       fitRef.current = null;
       resizeRef.current = null;
+      claimResizeRef.current = null;
       if (visibilityRef.current === visibility) visibilityRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see file header:
@@ -1041,7 +1070,7 @@ export function AgenticTerminal({
     }
     const reveal = () => {
       visibilityRef.current?.show();
-      resizeRef.current?.();
+      claimResizeRef.current?.();
       termRef.current?.scrollToBottom?.();
     };
     reveal();
@@ -1201,7 +1230,10 @@ export function AgenticTerminal({
 
   return (
     <div
-      onMouseDown={onFocus}
+      onMouseDown={() => {
+        onFocus?.();
+        claimResizeRef.current?.();
+      }}
       {...dragHandlers}
       className={cn(
         // One quiet border per pane; the focused one carries the workspace's
@@ -1262,6 +1294,8 @@ export function AgenticTerminal({
         xterm's canvas must not become its implicit minimum height.
       */}
       <div
+        ref={terminalRegionRef}
+        id={terminalRegionId}
         className="relative min-h-0 flex-1 overflow-hidden px-1.5 pb-0.5 pt-0.5"
       >
         <div
@@ -1272,6 +1306,16 @@ export function AgenticTerminal({
           // the unused ground belongs on.
           data-layout-busy={layoutBusy ? "true" : "false"}
           className="agentic-terminal-host h-full min-h-0 w-full overflow-hidden"
+        />
+        <PaneScrollRail
+          name={name}
+          controlsId={terminalRegionId}
+          regionRef={terminalRegionRef}
+          hostRef={containerRef}
+          terminalRef={termRef}
+          epoch={terminalEpoch}
+          appearance={appearance}
+          onFocus={onFocus}
         />
         {/*
           The pane says it is starting, instead of being a black rectangle.
