@@ -3696,6 +3696,14 @@
       "confirm": "Close selected",
       "close_failed": "These terminals could not be closed: {0}"
     },
+    "display": {
+      "appearance": "Terminal appearance",
+      "light": "Light terminals",
+      "dark": "Dark terminals",
+      "text_size": "Terminal text size",
+      "smaller": "Smaller terminal text",
+      "larger": "Larger terminal text"
+    },
     "notifications": {
       "title": "Notifications",
       "hint": "Terminals that finished, asked something, or stopped.",

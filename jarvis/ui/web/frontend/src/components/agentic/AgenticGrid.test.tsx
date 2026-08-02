@@ -2600,10 +2600,7 @@ describe("terminal text size", () => {
     window.localStorage.removeItem(FONT_KEY);
   });
 
-  const openViewMenu = () =>
-    fireEvent.click(screen.getByTestId("agentic-view-menu"));
-
-  it("opens the panes at the size the backend remembers", async () => {
+  it("keeps the remembered size visible in the toolbar", async () => {
     // The reason this comes from the backend and not from localStorage: the
     // desktop window is a WebView that starts every run with empty browser
     // storage, so a size kept only in the page is gone after each restart.
@@ -2619,16 +2616,15 @@ describe("terminal text size", () => {
     await waitFor(() =>
       expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("17"),
     );
-    openViewMenu();
-    expect(screen.getByTestId("agentic-view-menu-panel").textContent).toContain("17");
+    expect(screen.getByTestId("agentic-font-size-value").textContent).toBe("17");
+    expect(screen.queryByTestId("agentic-view-menu-panel")).toBeNull();
   });
 
   it("hands a newly chosen size to the backend", async () => {
     renderGrid();
     await waitFor(() => expect(api.fetchTerminalUiPreferences).toHaveBeenCalled());
 
-    openViewMenu();
-    fireEvent.click(screen.getByLabelText("Larger text"));
+    fireEvent.click(screen.getByLabelText("Larger terminal text"));
 
     await waitFor(() => expect(api.saveTerminalFontSize).toHaveBeenCalledWith(14));
     expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("14");
@@ -2647,15 +2643,31 @@ describe("terminal text size", () => {
 
   it("keeps working when the size cannot be read", async () => {
     // An older backend, or a request that failed. The panes still open and the
-    // buttons still resize them â€” only the memory is missing.
+    // buttons still resize them — only the memory is missing.
     vi.mocked(api.fetchTerminalUiPreferences).mockRejectedValue(new Error("404"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     renderGrid();
 
     await waitFor(() => expect(warn).toHaveBeenCalled());
-    openViewMenu();
-    fireEvent.click(screen.getByLabelText("Smaller text"));
+    fireEvent.click(screen.getByLabelText("Smaller terminal text"));
     expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("12");
     warn.mockRestore();
+  });
+
+  it("disables the visible control at the supported maximum", async () => {
+    vi.mocked(api.fetchTerminalUiPreferences).mockResolvedValue({
+      terminal_font_size: 20,
+      stored: true,
+      min: 10,
+      max: 20,
+      default: 13,
+    });
+    renderGrid();
+
+    const larger = await screen.findByLabelText("Larger terminal text");
+    await waitFor(() => expect((larger as HTMLButtonElement).disabled).toBe(true));
+    expect((screen.getByLabelText("Smaller terminal text") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
   });
 });

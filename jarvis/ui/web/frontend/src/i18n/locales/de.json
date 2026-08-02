@@ -3695,6 +3695,14 @@
       "confirm": "Ausgewählte schließen",
       "close_failed": "Diese Terminals konnten nicht geschlossen werden: {0}"
     },
+    "display": {
+      "appearance": "Terminal-Darstellung",
+      "light": "Helle Terminals",
+      "dark": "Dunkle Terminals",
+      "text_size": "Terminal-Schriftgröße",
+      "smaller": "Terminal-Schrift verkleinern",
+      "larger": "Terminal-Schrift vergrößern"
+    },
     "notifications": {
       "title": "Benachrichtigungen",
       "hint": "Terminals, die fertig sind, etwas fragen oder gestoppt haben.",

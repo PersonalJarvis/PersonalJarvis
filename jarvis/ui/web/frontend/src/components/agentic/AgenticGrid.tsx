@@ -1797,13 +1797,15 @@ export function AgenticGrid({
           )}
         </button>
 
-        {/* Terminal appearance and text size, one quiet button away. They are
-            set-and-forget preferences, not moment-to-moment controls — kept
-            permanently on the bar they cost seven bordered buttons of noise
-            for something touched once a week. */}
+        {/* Appearance stays behind one quiet menu; text size is deliberately
+            exposed beside it. Somebody opening this workspace because the
+            terminal is too small must be able to find the remedy without
+            already knowing which anonymous glyph hides it. */}
         <ViewMenu
           appearance={appearance}
           onAppearance={setAppearance}
+        />
+        <TerminalFontSizeControl
           fontSize={fontSize}
           onFontSize={setFontSize}
         />
@@ -2611,33 +2613,28 @@ export function AgenticGrid({
 }
 
 /**
- * Terminal appearance and text size, behind one quiet toolbar button.
+ * Terminal appearance, behind one quiet toolbar button.
  *
- * Both are remembered per browser profile and touched about once a week, so
- * they earn a menu rather than seven permanent buttons on the bar. The controls
- * inside keep the exact labels the standalone buttons had — a screen reader and
- * a muscle memory both find the same names one click deeper.
+ * Theme is a set-and-forget preference, unlike text size: the latter is an
+ * accessibility control and remains visible beside this menu.
  */
 function ViewMenu({
   appearance,
   onAppearance,
-  fontSize,
-  onFontSize,
 }: {
   appearance: TerminalAppearance;
   onAppearance: (next: TerminalAppearance) => void;
-  fontSize: number;
-  onFontSize: (next: number) => void;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   return (
     <div className="relative shrink-0">
       <button
         type="button"
-        aria-label="Terminal appearance and text size"
+        aria-label={t("agentic_grid.display.appearance")}
         aria-expanded={open}
         data-testid="agentic-view-menu"
-        title="Terminal appearance and text size"
+        title={t("agentic_grid.display.appearance")}
         onClick={() => setOpen((value) => !value)}
         className={cn(TOOLBAR_BTN, open && "bg-secondary text-foreground")}
       >
@@ -2652,11 +2649,13 @@ function ViewMenu({
             className="absolute right-0 top-full z-50 mt-1 w-60 rounded-xl border border-border bg-card p-3 shadow-xl"
           >
             <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-muted-foreground">Terminals</span>
+              <span className="text-xs text-muted-foreground">
+                {t("agentic_grid.display.appearance")}
+              </span>
               <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
                 <button
                   type="button"
-                  aria-label="Light terminals"
+                  aria-label={t("agentic_grid.display.light")}
                   aria-pressed={appearance === "light"}
                   onClick={() => onAppearance("light")}
                   className={cn(
@@ -2670,7 +2669,7 @@ function ViewMenu({
                 </button>
                 <button
                   type="button"
-                  aria-label="Dark terminals"
+                  aria-label={t("agentic_grid.display.dark")}
                   aria-pressed={appearance === "dark"}
                   onClick={() => onAppearance("dark")}
                   className={cn(
@@ -2684,36 +2683,59 @@ function ViewMenu({
                 </button>
               </div>
             </div>
-            <div className="mt-2 flex items-center justify-between gap-3">
-              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Type className="h-3.5 w-3.5" />
-                Text size
-              </span>
-              <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
-                <button
-                  type="button"
-                  aria-label="Smaller text"
-                  onClick={() => onFontSize(Math.max(FONT_MIN, fontSize - 1))}
-                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-                >
-                  <Minus className="h-3.5 w-3.5" />
-                </button>
-                <span className="w-8 text-center font-mono text-[11px] text-foreground">
-                  {fontSize}
-                </span>
-                <button
-                  type="button"
-                  aria-label="Larger text"
-                  onClick={() => onFontSize(Math.min(FONT_MAX, fontSize + 1))}
-                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/** Always-visible terminal text sizing for the active workspace. */
+function TerminalFontSizeControl({
+  fontSize,
+  onFontSize,
+}: {
+  fontSize: number;
+  onFontSize: (next: number) => void;
+}) {
+  const t = useT();
+  const smaller = fontSize <= FONT_MIN;
+  const larger = fontSize >= FONT_MAX;
+
+  return (
+    <div
+      role="group"
+      aria-label={t("agentic_grid.display.text_size")}
+      data-testid="agentic-font-size-control"
+      title={t("agentic_grid.display.text_size")}
+      className="flex h-7 shrink-0 items-center rounded-md border border-border/70 bg-background/30"
+    >
+      <Type aria-hidden="true" className="mx-1 h-3.5 w-3.5 text-muted-foreground" />
+      <button
+        type="button"
+        aria-label={t("agentic_grid.display.smaller")}
+        disabled={smaller}
+        onClick={() => onFontSize(Math.max(FONT_MIN, fontSize - 1))}
+        className="flex h-7 w-6 items-center justify-center text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-35"
+      >
+        <Minus className="h-3.5 w-3.5" />
+      </button>
+      <span
+        aria-live="polite"
+        data-testid="agentic-font-size-value"
+        className="w-7 text-center font-mono text-[11px] tabular-nums text-foreground"
+      >
+        {fontSize}
+      </span>
+      <button
+        type="button"
+        aria-label={t("agentic_grid.display.larger")}
+        disabled={larger}
+        onClick={() => onFontSize(Math.min(FONT_MAX, fontSize + 1))}
+        className="flex h-7 w-6 items-center justify-center rounded-r-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-35"
+      >
+        <Plus className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }
