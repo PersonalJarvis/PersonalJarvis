@@ -68,6 +68,34 @@ describe("ScreenContextGroup", () => {
     expect(buttons[0].getAttribute("role")).toBe("switch");
   });
 
+  it("runs full width like every neighbouring settings card", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        response(url.endsWith("/settings") ? SETTINGS : status(true)),
+      ),
+    );
+
+    const { container } = render(<ScreenContextGroup />);
+    await waitFor(() => expect(screen.getByText(/Ready on 2/)).toBeTruthy());
+
+    // A leftover `max-w-5xl` from the multi-field card capped this one at half
+    // the window and parked its switch mid-row next to full-width neighbours.
+    // The settings column owns the width; the card must not cap it.
+    const root = container.firstElementChild;
+    expect(root).toBeTruthy();
+    const capped = Array.from(container.querySelectorAll("*"))
+      .concat(root ? [root] : [])
+      .filter((element) =>
+        Array.from(element.classList).some((name) => name.startsWith("max-w-")),
+      );
+    expect(capped).toHaveLength(0);
+    // Same shell as RealtimeVoiceGroup, so the two read as one list.
+    expect(root?.className).toBe(
+      "mt-2 rounded-lg border border-border bg-card/60 p-4",
+    );
+  });
+
   it("writes only the enabled flag when the switch is flipped", async () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/settings") && init?.method === "PUT") {

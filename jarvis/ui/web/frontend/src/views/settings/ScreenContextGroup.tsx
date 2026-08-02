@@ -97,8 +97,14 @@ export function ScreenContextGroup() {
   // "switched off" is not a problem to report, it is what the switch says.
   const showBlocker = Boolean(settings?.enabled && status && !status.available);
 
+  // Layout is deliberately byte-for-byte the neighbouring RealtimeVoiceGroup
+  // shell: same wrapper, same icon placement, same spacing. The card carried a
+  // `max-w-5xl` from its multi-field days, which capped it at half the window
+  // and parked its switch mid-row while every other card ran full width — a
+  // mismatch that only became visible once the card got short. Do not
+  // reintroduce a width cap here; the settings column owns the width.
   return (
-    <section className="mt-2 max-w-5xl rounded-lg border border-border bg-card/60 p-4">
+    <div className="mt-2 rounded-lg border border-border bg-card/60 p-4">
       <div className="flex items-start gap-3">
         <Eye className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
@@ -116,12 +122,12 @@ export function ScreenContextGroup() {
               />
             )}
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-0.5 text-xs text-muted-foreground">
             {t("settings_view.screen_context.description")}
           </p>
           {settings?.enabled && status && (
             <p
-              className={`mt-2 text-[11px] ${
+              className={`mt-1.5 text-[11px] ${
                 status.available ? "text-emerald-400" : "text-amber-400"
               }`}
               aria-live="polite"
@@ -137,6 +143,6 @@ export function ScreenContextGroup() {
           )}
         </div>
       </div>
-    </section>
+    </div>
   );
 }
