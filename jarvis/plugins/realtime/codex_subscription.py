@@ -10,6 +10,7 @@ closes honestly instead of silently entering usage-billed API voice.
 
 from __future__ import annotations
 
+import array
 import asyncio
 import base64
 import importlib
@@ -25,10 +26,36 @@ log = logging.getLogger(__name__)
 _INPUT_RATE = 24_000
 _OUTPUT_RATE = 24_000
 _BROKER_OFFER_WAIT_S = 3.0
-_OUTPUT_QUIESCENCE_S = 0.5
+# No audible frame for this long ends the turn. It is a BACKSTOP, not the
+# boundary: the terminal response item ends a turn immediately. Measured
+# in-reply pauses on ChatGPT-Live reach ~720 ms, so a shorter window would
+# split a single answer at every breath.
+_OUTPUT_QUIESCENCE_S = 1.2
 _NORMALIZATION_QUEUE_MAX = 128
 _REMOTE_CLEANUP_TIMEOUT_S = 1.5
 _TURN_INTERRUPT_TIMEOUT_S = 1.5
+# ChatGPT-Live renders a generation pause as silent PCM. This USED to be
+# compressed away — correct for the retired v1 protocol, where audio arrived as
+# sideband deltas FASTER than realtime, so dropping silence genuinely shortened
+# the wait. On v3 the audio is a live WebRTC media track: 20 ms frames arrive at
+# wall clock, and a dropped frame cannot fast-forward anything — it only starves
+# the permanently open output stream, which is exactly the chopped voice users
+# reported (measured 2026-08-02: six cuts inside one reply). Every chunk is
+# forwarded verbatim now; the peak below only classifies a chunk as AUDIBLE, so
+# that the quiescence backstop is not held open forever by a track that keeps
+# sending silence between turns. Energy only, never transcript content (AP-27).
+_OUTPUT_AUDIBLE_PEAK = 200
+# The v3 item vocabulary is OpenAI-Realtime family — the two items already
+# handled here (``input_audio_buffer.speech_started``, ``response.cancelled``)
+# are its members, and that family ends a response with ``response.done``; the
+# repo's own OpenAI adapter maps it exactly that way. The precise v3 spelling is
+# not yet confirmed live, so both plausible names are accepted AND the
+# quiescence backstop still terminates every turn if neither ever arrives.
+_TERMINAL_RESPONSE_ITEMS = frozenset({"response.done", "response.completed"})
+_RESPONSE_OPENED_ITEMS = frozenset({"response.created", "response.in_progress"})
+# Bound on the one-line-per-type unknown-item log, so a chatty protocol cannot
+# turn observability into log spam.
+_UNKNOWN_ITEM_LOG_MAX = 32
 # The experimental v1 protocol was shut off server-side with the ChatGPT-Live
 # launch (every v1 start now answers "403 Voice session access denied",
 # verified live 2026-08-01). v3 is the ChatGPT-Live protocol: the SERVER
@@ -132,6 +159,21 @@ def _notification_parts(notification: Any) -> tuple[str, dict[str, Any]]:
         method = str(getattr(notification, "method", "") or "")
         params = getattr(notification, "params", {})
     return method, params if isinstance(params, dict) else {}
+
+
+def _pcm16_peak(pcm: bytes) -> int:
+    """Loudest sample in a PCM16 chunk, at C speed.
+
+    Mirrors ``jarvis.realtime.session._pcm16_peak``; copied rather than imported
+    because this plugin module must stay free of ``jarvis.*`` imports so plugin
+    discovery never drags the app onto the startup path.
+    """
+    usable = len(pcm) - (len(pcm) % 2)
+    if usable < 2:
+        return 0
+    samples = array.array("h")
+    samples.frombytes(pcm[:usable])
+    return max(max(samples), -min(samples))
 
 
 def _thread_id_from_result(result: Any) -> str:
@@ -269,7 +311,9 @@ class _CodexSubscriptionRealtimeSession:
         audio_endpoint: Any = None,
         input_transcriber: Any = None,
         language: str = "en",
+        voice: str = "",
     ) -> None:
+        self._voice = str(voice or "").strip()
         self._client = client
         self._subscription = subscription
         self._thread_id = thread_id
@@ -278,9 +322,9 @@ class _CodexSubscriptionRealtimeSession:
         self.realtime_version = ""
         # Owns the media path: ChatGPT-Live carries audio ONLY over WebRTC.
         self._audio_endpoint = audio_endpoint
-        # ChatGPT-Live never transcribes the USER, so Jarvis does it locally.
-        # Without this the bar stays blank and every transcript-driven
-        # integration (delegate, wiki, project files, hang-up phrase) is deaf.
+        # ChatGPT-Live emits a user transcript, but it can hallucinate captions
+        # from silence or speaker echo. Local energy-gated STT is authoritative
+        # for the bar and every transcript-driven Jarvis integration.
         self._input_transcriber = input_transcriber
         self._closed = False
         self._last_input_item_id = ""
@@ -372,8 +416,11 @@ class _CodexSubscriptionRealtimeSession:
         completion_generation = 0
         completion_emitted = False
         stream_ended = False
-        version = self.realtime_version.lower().removeprefix("v")
-        authoritative_done = version == "3"
+        # Item types this session has already reported as unhandled. The v3 item
+        # vocabulary is only partly known, and silently swallowing the rest is
+        # why neither the real terminal-response item nor the never-observed
+        # handoff item could be identified from a whole call's log (AP-30).
+        seen_unknown_items: set[str] = set()
 
         async def _pump_notifications() -> None:
             try:
@@ -389,9 +436,9 @@ class _CodexSubscriptionRealtimeSession:
         async def _pump_local_input() -> None:
             """Feed locally recognized USER speech into the same event stream.
 
-            Other providers deliver these; ChatGPT-Live does not. Emitting
-            them here is what makes the bar show live text, the indicators
-            move, and every transcript-driven Jarvis integration work.
+            The server transcript remains only a live preview/failure fallback.
+            Emitting locally grounded events here makes the bar, indicators,
+            and every transcript-driven Jarvis integration trustworthy.
             """
             transcriber = self._input_transcriber
             if transcriber is None:
@@ -502,15 +549,22 @@ class _CodexSubscriptionRealtimeSession:
                         )
                     continue
                 if queue_kind == "media_audio":
-                    # Real provider audio keeps the turn alive exactly like the
-                    # old sideband deltas did (quiescence timer, Orb state,
-                    # transcript-gated playback).
-                    if completion_task is not None:
+                    pcm = bytes(payload or b"")
+                    if not pcm:
+                        continue
+                    # Only AUDIBLE audio keeps the turn open. The media track
+                    # also carries silence between turns, so re-arming on every
+                    # chunk would mean the backstop could never fire and a turn
+                    # whose terminal item never arrives would hang forever.
+                    if (
+                        completion_task is not None
+                        and _pcm16_peak(pcm) >= _OUTPUT_AUDIBLE_PEAK
+                    ):
                         _arm_completion()
                     yield _ProviderEvent(
                         type="audio_delta",
                         audio=_PcmChunk(
-                            pcm=payload,
+                            pcm=pcm,
                             sample_rate=_OUTPUT_RATE,
                             channels=1,
                         ),
@@ -592,8 +646,11 @@ class _CodexSubscriptionRealtimeSession:
                     # The start RPC result is empty in exact-0.146; the live
                     # protocol version exists only on this notification.
                     self.realtime_version = str(params.get("version", "") or "").strip()
-                    authoritative_done = (
-                        self.realtime_version.lower().removeprefix("v") == "3"
+                    log.info(
+                        "Codex subscription realtime negotiated protocol %s "
+                        "(voice=%s; ChatGPT-Live picks the model server-side)",
+                        self.realtime_version or "unknown",
+                        self._voice or _DEFAULT_VOICE,
                     )
                     continue
 
@@ -670,12 +727,15 @@ class _CodexSubscriptionRealtimeSession:
                                 is_final=True,
                             )
                         self._assistant_delta_text = ""
-                        if authoritative_done:
-                            _cancel_completion()
-                            if not completion_emitted:
-                                completion_emitted = True
-                                yield _ProviderEvent(type="turn_complete")
-                        elif not completion_emitted:
+                        # ChatGPT-Live emits this per transcript PART, not per
+                        # response. Treating it as a turn boundary drained
+                        # playback, armed a ~0.9 s echo window and re-armed the
+                        # scrub gate three times inside ONE answer (measured
+                        # 2026-08-02 08:21:58 / 08:22:00 / 08:22:05) — the
+                        # chopped voice, and a microphone deaf between the
+                        # pieces. The turn ends on the terminal response item,
+                        # or on the quiescence backstop.
+                        if not completion_emitted:
                             _arm_completion()
                     continue
 
@@ -780,6 +840,30 @@ class _CodexSubscriptionRealtimeSession:
                             or None,
                             provider_turn_id=(direct_turn_id or None),
                         )
+                    elif item_type in _TERMINAL_RESPONSE_ITEMS:
+                        _cancel_completion()
+                        if not completion_emitted:
+                            completion_emitted = True
+                            log.info(
+                                "Codex subscription realtime turn ended on "
+                                "item %r (protocol %s)",
+                                item_type,
+                                self.realtime_version or "unknown",
+                            )
+                            yield _ProviderEvent(type="turn_complete")
+                    elif item_type in _RESPONSE_OPENED_ITEMS:
+                        _cancel_completion()
+                        completion_emitted = False
+                    elif item_type and item_type not in seen_unknown_items:
+                        # Type NAME only, once per type, bounded — never the
+                        # payload, which can carry transcript text.
+                        if len(seen_unknown_items) < _UNKNOWN_ITEM_LOG_MAX:
+                            seen_unknown_items.add(item_type)
+                            log.info(
+                                "Codex subscription realtime saw an unhandled "
+                                "realtime item type %r",
+                                item_type,
+                            )
                     continue
 
                 if method == "thread/realtime/error":
@@ -837,13 +921,23 @@ class _CodexSubscriptionRealtimeSession:
         language: str | None = None,
         tools: tuple[dict[str, Any], ...] | None = None,
     ) -> None:
-        # Tools stay unsupported by design: the Jarvis supervisor remains the
-        # only action boundary. INSTRUCTIONS, however, are the assistant's
-        # identity and project knowledge — dropping them was why the voice
-        # knew nothing about its own project. ChatGPT-Live accepts developer
-        # context (session.context.append), so a changed persona is delivered
-        # mid-call instead of being discarded.
+        # Tools cannot be declared here, and that is a transport fact rather
+        # than a policy choice: the app-server realtime RPC surface is only
+        # start / appendAudio / appendText / appendSpeech / stop, with custom
+        # fields refused outright, so there is no way to deliver a v3
+        # session.update. The handoff item stays the one model-initiated action
+        # channel. Say so once instead of discarding wordlessly (AP-30).
+        if tools:
+            log.debug(
+                "Codex subscription realtime cannot declare %d tool(s): the "
+                "app-server realtime RPC surface has no session.update",
+                len(tools),
+            )
         del tools
+        # INSTRUCTIONS, however, are the assistant's identity and project
+        # knowledge — dropping them was why the voice knew nothing about its own
+        # project. ChatGPT-Live accepts developer context, so a changed persona
+        # is delivered mid-call instead of being discarded.
         await self._deliver_context(instructions)
         normalized = str(language or "").strip().lower()
         if normalized not in _LANGUAGE_UPDATE_TEXT or normalized == self._language:
@@ -945,12 +1039,11 @@ class CodexSubscriptionRealtimeProvider:
     async def verify_activation(cls, cfg: Any) -> None:
         """Run the provider's authoritative account/config activation gate.
 
-        When the gate itself started app-server just to judge the account, it
-        also cleans up: leaving the transport reservation and an idle Codex
-        child running would make the card's reconnect button answer
-        "disconnect active subscription voice" after every activation. A
-        client that was ALREADY ready is carrying a live call — verifying is
-        harmless, closing it would cut the call mid-sentence.
+        A successful cold verification deliberately keeps the shared
+        app-server warm. Closing it here made provider selection pay one cold
+        start and the first call immediately pay another. A failed probe still
+        cleans up the child it started; an already-ready client may be serving
+        another Codex feature and is never closed here.
         """
         app_server_module = importlib.import_module("jarvis.codex_app_server")
         codex_cfg = getattr(cfg, "codex", None)
@@ -959,12 +1052,13 @@ class CodexSubscriptionRealtimeProvider:
         was_ready = bool(getattr(client, "ready", False))
         try:
             await client.require_chatgpt_login()
-        finally:
+        except Exception:
             # A cold call may have raced this gate onto the same client while
             # we awaited: active thread subscriptions mean someone else is
             # using it now — closing would cut their session mid-setup.
             if not was_ready and not getattr(client, "_subscriptions", None):
                 await client.close()
+            raise
 
     def __init__(
         self,
@@ -1062,9 +1156,9 @@ class CodexSubscriptionRealtimeProvider:
     def _build_input_transcriber(self) -> Any:
         """Local user-speech recognition, or ``None`` when unavailable.
 
-        ChatGPT-Live sends assistant transcripts only, so without this the
-        provider is deaf to Jarvis: the model talks, but the bar, the
-        indicators and every transcript-driven integration stay idle.
+        ChatGPT-Live also guesses at user speech, but local energy-gated STT is
+        authoritative. Without it silence/echo captions could become commands,
+        while transcript-driven Jarvis integrations would have no grounded text.
         """
         if self._input_transcriber_factory is not None:
             return self._input_transcriber_factory()
@@ -1168,6 +1262,7 @@ class CodexSubscriptionRealtimeProvider:
                 audio_endpoint=audio_endpoint,
                 input_transcriber=self._build_input_transcriber(),
                 language=str(getattr(cfg, "language", "en") or "en"),
+                voice=voice,
             )
             # Identity FIRST: the model must know who it is and what this
             # project is before the user's first word arrives.

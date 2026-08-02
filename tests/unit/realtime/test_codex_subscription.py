@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -439,12 +441,10 @@ def test_external_login_ready_respects_the_activation_block(
 
 
 @pytest.mark.asyncio
-async def test_verify_activation_cleans_up_its_own_transport(
+async def test_verify_activation_keeps_successful_cold_transport_warm(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The gate starts app-server only to judge the account; leaving the
-    reservation and an idle child running would 409 the card's reconnect
-    button after every activation."""
+    """Provider selection warms the transport the first call will reuse."""
     from jarvis import codex_app_server
 
     events: list[str] = []
@@ -464,7 +464,35 @@ async def test_verify_activation_cleans_up_its_own_transport(
 
     await CodexSubscriptionRealtimeProvider.verify_activation(SimpleNamespace())
 
-    assert events == ["verified", "closed"]
+    assert events == ["verified"]
+
+
+@pytest.mark.asyncio
+async def test_verify_activation_cleans_up_a_failed_cold_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis import codex_app_server
+
+    events: list[str] = []
+
+    class _Client:
+        async def require_chatgpt_login(self) -> None:
+            events.append("failed")
+            raise RuntimeError("login failed")
+
+        async def close(self) -> None:
+            events.append("closed")
+
+    monkeypatch.setattr(
+        codex_app_server,
+        "get_shared_codex_app_server",
+        lambda _binary: _Client(),
+    )
+
+    with pytest.raises(RuntimeError, match="login failed"):
+        await CodexSubscriptionRealtimeProvider.verify_activation(SimpleNamespace())
+
+    assert events == ["failed", "closed"]
 
 
 @pytest.mark.asyncio
@@ -643,6 +671,45 @@ async def test_media_track_audio_becomes_normalized_audio_deltas() -> None:
     assert [event.audio.pcm for event in audio] == [b"\x01\x00\x02\x00", b"\x03\x00"]
     assert {event.audio.sample_rate for event in audio} == {24_000}
     assert {event.audio.channels for event in audio} == {1}
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_media_track_forwards_provider_silence_verbatim() -> None:
+    """The reply's own pauses must survive the trip to the speaker.
+
+    They used to be compressed away, which was right for the retired sideband
+    protocol (audio arrived faster than realtime, so dropping silence really
+    did shorten the wait). On a live WebRTC track it removes audio the player
+    needed in order to keep playing: the output stream starves and the voice
+    chops. Measured on 2026-08-02: six cuts inside a single answer.
+    """
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.05,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "assistant", "text": "hi"},
+                ),
+            )
+        ]
+    )
+    speech = (1000).to_bytes(2, "little", signed=True) * 480
+    long_silence = b"\x00\x00" * (24_000 * 2)
+    endpoint = _FakeAudioEndpoint(output_chunks=(speech, long_silence, speech))
+    session = await _provider(client, endpoint=endpoint).open_session(
+        RealtimeSessionConfig()
+    )
+
+    audio = [
+        event.audio.pcm
+        async for event in session.receive()
+        if event.type == "audio_delta"
+    ]
+
+    assert b"".join(audio) == speech + long_silence + speech
     await session.close()
 
 
@@ -872,7 +939,12 @@ async def test_done_then_handoff_cancels_synthetic_completion(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_v3_authoritative_done_completes_without_idle_debounce(monkeypatch) -> None:
+async def test_a_terminal_response_item_ends_the_turn_at_once(monkeypatch) -> None:
+    """The server says when a response is over; Jarvis must not guess.
+
+    The quiescence backstop is pushed out of reach here, so a completion can
+    only come from the terminal item itself.
+    """
     monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_QUIESCENCE_S", 10.0)
     client = _Client(
         [
@@ -883,7 +955,11 @@ async def test_v3_authoritative_done_completes_without_idle_debounce(monkeypatch
             _Notification(
                 "thread/realtime/transcript/done",
                 {"threadId": "thread-1", "role": "assistant", "text": "done"},
-            )
+            ),
+            _Notification(
+                "thread/realtime/itemAdded",
+                {"threadId": "thread-1", "item": {"type": "response.done"}},
+            ),
         ]
     )
     session = await _provider(client).open_session(
@@ -895,6 +971,53 @@ async def test_v3_authoritative_done_completes_without_idle_debounce(monkeypatch
 
     assert len([event for event in events if event.type == "turn_complete"]) == 1
     assert session.realtime_version == "3"
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_transcript_done_is_a_part_boundary_not_a_turn(monkeypatch) -> None:
+    """One answer, one ending.
+
+    ChatGPT-Live streams a reply as several transcript parts. Treating each
+    part's ``done`` as the end of the turn drained playback, armed a ~0.9 s
+    echo window and re-armed the scrub gate three times inside ONE answer
+    (measured live 2026-08-02) — the chopped voice, plus a microphone that went
+    deaf between the pieces.
+    """
+    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_QUIESCENCE_S", 10.0)
+    parts = [
+        _Notification(
+            "thread/realtime/started",
+            {"threadId": "thread-1", "version": 3},
+        )
+    ]
+    for text in ("first. ", "second. ", "third."):
+        parts.append(
+            _Notification(
+                "thread/realtime/transcript/done",
+                {"threadId": "thread-1", "role": "assistant", "text": text},
+            )
+        )
+    parts.append(
+        _Notification(
+            "thread/realtime/itemAdded",
+            {"threadId": "thread-1", "item": {"type": "response.done"}},
+        )
+    )
+    session = await _provider(_Client(parts)).open_session(
+        RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
+    )
+
+    async with asyncio.timeout(0.2):
+        events = [event async for event in session.receive()]
+
+    assert len([event for event in events if event.type == "turn_complete"]) == 1
+    # Every part still reaches the transcript consumers.
+    assert [
+        event.text
+        for event in events
+        if event.type == "output_transcript_delta"
+    ] == ["first. ", "second. ", "third."]
     await session.close()
 
 
@@ -1122,7 +1245,7 @@ class _StubEndpointer:
         return None
 
 
-def _hallucination_client() -> "_Client":
+def _hallucination_client() -> _Client:
     return _Client(
         [
             _Notification(
@@ -1184,3 +1307,152 @@ async def test_without_a_local_recognizer_the_server_transcript_is_final():
     finals = [event for event in await _user_transcripts(speaking=None) if event.is_final]
 
     assert [event.text for event in finals] == ["a_lee pixelated image"]
+
+
+def _keeps_stream_open(*extra):
+    """Notifications plus a late one, so the stream outlives the assertions."""
+    return _ScheduledSubscription(
+        [
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/started",
+                    {"threadId": "thread-1", "version": 3},
+                ),
+            ),
+            *extra,
+            (
+                2.0,
+                _Notification(
+                    "thread/realtime/started",
+                    {"threadId": "thread-1", "version": 3},
+                ),
+            ),
+        ]
+    )
+
+
+_ARMS_THE_BACKSTOP = (
+    0.0,
+    _Notification(
+        "thread/realtime/transcript/done",
+        {"threadId": "thread-1", "role": "assistant", "text": "hi"},
+    ),
+)
+
+
+@pytest.mark.asyncio
+async def test_silent_frames_never_hold_a_turn_open(monkeypatch) -> None:
+    """The trap that makes the backstop the ONLY safe boundary.
+
+    The media track keeps sending silence between turns. If silence re-armed
+    the quiescence timer, that timer could never fire — and since the terminal
+    response item's v3 spelling is not yet confirmed live, a turn would hang
+    forever on any protocol that omits it.
+    """
+    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_QUIESCENCE_S", 0.1)
+    client = _Client()
+    client.subscription = _keeps_stream_open(_ARMS_THE_BACKSTOP)
+    silence = b"\x00\x00" * 480
+    endpoint = _FakeAudioEndpoint(
+        output_schedule=tuple((0.02, silence) for _ in range(25))
+    )
+    session = await _provider(client, endpoint=endpoint).open_session(
+        RealtimeSessionConfig()
+    )
+
+    completions = 0
+    async with asyncio.timeout(1.0):
+        async for event in session.receive():
+            if event.type == "turn_complete":
+                completions += 1
+                break
+
+    assert completions == 1
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_audible_frames_keep_a_turn_open(monkeypatch) -> None:
+    """The other half: real speech must not be cut off by the backstop.
+
+    Paired with the test above on purpose — together they rule out an
+    implementation that satisfies one by ignoring audio altogether.
+    """
+    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_QUIESCENCE_S", 0.1)
+    client = _Client()
+    client.subscription = _keeps_stream_open(_ARMS_THE_BACKSTOP)
+    speech = (1000).to_bytes(2, "little", signed=True) * 480
+    endpoint = _FakeAudioEndpoint(
+        output_schedule=tuple((0.02, speech) for _ in range(25))
+    )
+    session = await _provider(client, endpoint=endpoint).open_session(
+        RealtimeSessionConfig()
+    )
+
+    events = []
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(0.3):
+            async for event in session.receive():
+                events.append(event)
+
+    assert [event for event in events if event.type == "audio_delta"]
+    assert not [event for event in events if event.type == "turn_complete"]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_realtime_item_type_is_named_once(caplog) -> None:
+    """Silently swallowing unknown items is why neither the real terminal
+    response item nor the never-observed handoff item could be identified from
+    a whole call's log (AP-30). The name is logged; the payload never is."""
+    caplog.set_level(logging.INFO)
+    unknown = _Notification(
+        "thread/realtime/itemAdded",
+        {
+            "threadId": "thread-1",
+            "item": {"type": "response.output_audio.done", "secret": "transcript"},
+        },
+    )
+    session = await _provider(_Client([unknown, unknown])).open_session(
+        RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert not [event for event in events if event.type == "turn_complete"]
+    named = [
+        record.getMessage()
+        for record in caplog.records
+        if "unhandled realtime item type" in record.getMessage()
+    ]
+    assert len(named) == 1
+    assert "response.output_audio.done" in named[0]
+    assert "transcript" not in named[0]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_the_negotiated_protocol_and_voice_are_logged(caplog) -> None:
+    """"Is this really what Codex uses?" has to be answerable from evidence."""
+    caplog.set_level(logging.INFO)
+    client = _Client(
+        [
+            _Notification(
+                "thread/realtime/started",
+                {"threadId": "thread-1", "version": 3},
+            )
+        ]
+    )
+    session = await _provider(client).open_session(
+        RealtimeSessionConfig(voice="cove")
+    )
+
+    [event async for event in session.receive()]
+
+    assert any(
+        "negotiated protocol 3" in record.getMessage()
+        and "cove" in record.getMessage()
+        for record in caplog.records
+    )
+    await session.close()
