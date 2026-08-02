@@ -556,10 +556,13 @@ class _CodexSubscriptionRealtimeSession:
                     # also carries silence between turns, so re-arming on every
                     # chunk would mean the backstop could never fire and a turn
                     # whose terminal item never arrives would hang forever.
-                    if (
-                        completion_task is not None
-                        and _pcm16_peak(pcm) >= _OUTPUT_AUDIBLE_PEAK
-                    ):
+                    #
+                    # Audible audio also ARMS it, not just re-arms: a reply
+                    # whose transcript never lands would otherwise leave no
+                    # boundary at all, and a turn that never ends holds the
+                    # half-duplex gate open — the microphone stays shut and
+                    # Jarvis goes deaf for the rest of the call.
+                    if _pcm16_peak(pcm) >= _OUTPUT_AUDIBLE_PEAK:
                         _arm_completion()
                     yield _ProviderEvent(
                         type="audio_delta",

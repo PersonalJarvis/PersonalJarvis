@@ -1475,3 +1475,38 @@ async def test_warm_transport_never_raises(monkeypatch) -> None:
     await CodexSubscriptionRealtimeProvider.warm_transport(object())
 
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_reply_without_any_transcript_still_ends_its_turn(monkeypatch) -> None:
+    """A turn that never ends leaves Jarvis DEAF for the rest of the call.
+
+    Half-duplex keeps the microphone shut while the assistant is speaking, so
+    a missing boundary is not a cosmetic problem — the user talks and nothing
+    reaches the session. The backstop therefore has to be ARMED by audible
+    audio itself, not only by a transcript part that may never arrive.
+    """
+    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_QUIESCENCE_S", 0.1)
+    client = _Client()
+    client.subscription = _keeps_stream_open()  # no transcript notification at all
+    speech = (1000).to_bytes(2, "little", signed=True) * 480
+    silence = b"\x00\x00" * 480
+    endpoint = _FakeAudioEndpoint(
+        output_schedule=(
+            *((0.02, speech) for _ in range(10)),
+            *((0.02, silence) for _ in range(25)),
+        )
+    )
+    session = await _provider(client, endpoint=endpoint).open_session(
+        RealtimeSessionConfig()
+    )
+
+    completions = 0
+    async with asyncio.timeout(1.5):
+        async for event in session.receive():
+            if event.type == "turn_complete":
+                completions += 1
+                break
+
+    assert completions == 1
+    await session.close()
