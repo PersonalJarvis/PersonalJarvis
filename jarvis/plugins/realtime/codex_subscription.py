@@ -227,11 +227,7 @@ def _safe_error(exc: BaseException, *, max_chars: int = 500) -> str:
 
 
 def _handoff_text(item: dict[str, Any]) -> str:
-    direct = str(
-        item.get("input_transcript", "")
-        or item.get("inputTranscript", "")
-        or ""
-    ).strip()
+    direct = str(item.get("input_transcript", "") or item.get("inputTranscript", "") or "").strip()
     if direct:
         return direct
     active = item.get("active_transcript", item.get("activeTranscript", []))
@@ -274,9 +270,7 @@ async def _bounded_remote_call(
         log.warning("Codex app-server client lacks required %s cleanup", method_name)
         return False
     task = asyncio.create_task(method(thread_id, *args))
-    done, _pending = await asyncio.wait(
-        {task}, timeout=_REMOTE_CLEANUP_TIMEOUT_S
-    )
+    done, _pending = await asyncio.wait({task}, timeout=_REMOTE_CLEANUP_TIMEOUT_S)
     if not done:
         task.cancel()
         # Reap the canceled coroutine within a small second bound so it cannot
@@ -372,6 +366,11 @@ class _CodexSubscriptionRealtimeSession:
         self._language = str(language or "en").strip().lower()
         self._active_codex_turn_id = ""
         self._handoff_interrupt_pending = False
+        # ``appendText``/``appendSpeech`` intentionally create provider output
+        # without a fresh microphone turn (announcements and trusted action
+        # readbacks).  Each successful call arms exactly one exception to the
+        # automatic-response grounding gate in ``receive``.
+        self._trusted_output_permits = 0
         # Last persona/context text actually delivered, so a re-issued
         # identical one is not sent again mid-call.
         self._delivered_context = ""
@@ -410,9 +409,7 @@ class _CodexSubscriptionRealtimeSession:
         if not pcm:
             return
         if self._audio_endpoint is None:
-            raise RuntimeError(
-                "Codex subscription realtime has no media path for microphone audio"
-            )
+            raise RuntimeError("Codex subscription realtime has no media path for microphone audio")
         # ChatGPT-Live (v3) has NO audio client event: the sideband append that
         # the retired v1 protocol used is rejected outright ("Invalid value:
         # 'input_audio.append'"). Microphone audio rides the media track.
@@ -445,9 +442,7 @@ class _CodexSubscriptionRealtimeSession:
         # Stay below app-server's bounded subscription queue so a stalled
         # consumer propagates backpressure instead of silently buffering an
         # unbounded amount of audio in a second layer.
-        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(
-            maxsize=_NORMALIZATION_QUEUE_MAX
-        )
+        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=_NORMALIZATION_QUEUE_MAX)
         timer_tasks: set[asyncio.Task[None]] = set()
         completion_task: asyncio.Task[None] | None = None
         completion_generation = 0
@@ -458,6 +453,16 @@ class _CodexSubscriptionRealtimeSession:
         assistant_audio = bytearray()
         assistant_audio_active = False
         assistant_transcript_seen = False
+        # ChatGPT-Live's server VAD can start a response to silence or to its
+        # own speaker echo.  Local input is the authority for whether a NEW
+        # automatic response has a user behind it.  A generation is consumed
+        # only when its response closes, so transcript previews that arrive
+        # during the legitimate response remain visible.
+        local_input_generation = 0
+        consumed_input_generation = 0
+        active_response_generation = 0
+        response_open = False
+        response_allowed = False
         # Item types this session has already reported as unhandled. The v3 item
         # vocabulary is only partly known, and silently swallowing the rest is
         # why neither the real terminal-response item nor the never-observed
@@ -494,9 +499,7 @@ class _CodexSubscriptionRealtimeSession:
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - a deaf bar must not kill the call
-                log.warning(
-                    "Local input transcription stream ended early", exc_info=True
-                )
+                log.warning("Local input transcription stream ended early", exc_info=True)
 
         async def _pump_media_audio() -> None:
             """Feed decoded RTP audio into the same normalized event stream.
@@ -526,6 +529,49 @@ class _CodexSubscriptionRealtimeSession:
             assistant_audio_active = False
             assistant_transcript_seen = False
 
+        def _fresh_local_input_exists() -> bool:
+            return bool(
+                self._input_transcriber is None
+                or local_input_generation > consumed_input_generation
+            )
+
+        async def _begin_response(source: str) -> bool:
+            """Authorize one response from fresh local input or trusted injection."""
+            nonlocal active_response_generation, response_allowed, response_open
+            if response_open:
+                return response_allowed
+            response_open = True
+            active_response_generation = 0
+            if self._input_transcriber is None:
+                response_allowed = True
+            elif local_input_generation > consumed_input_generation:
+                active_response_generation = local_input_generation
+                response_allowed = True
+            elif self._trusted_output_permits > 0:
+                self._trusted_output_permits -= 1
+                response_allowed = True
+            else:
+                response_allowed = False
+                log.warning(
+                    "Codex subscription realtime rejected an automatic response "
+                    "without a fresh local user utterance (%s); interrupting a "
+                    "probable self-echo turn",
+                    source,
+                )
+                await self._interrupt_active_codex_turn()
+            return response_allowed
+
+        def _finish_response() -> None:
+            nonlocal consumed_input_generation, active_response_generation
+            nonlocal response_allowed, response_open
+            if response_allowed and active_response_generation:
+                consumed_input_generation = max(
+                    consumed_input_generation, active_response_generation
+                )
+            active_response_generation = 0
+            response_allowed = False
+            response_open = False
+
         async def _recover_output_transcript() -> _ProviderEvent | None:
             """Recover text for provider audio whose transcript went missing."""
             nonlocal assistant_transcript_seen
@@ -549,9 +595,7 @@ class _CodexSubscriptionRealtimeSession:
                 )
                 return None
             if not text:
-                log.warning(
-                    "Codex subscription output transcript recovery returned no text"
-                )
+                log.warning("Codex subscription output transcript recovery returned no text")
                 return None
             assistant_transcript_seen = True
             log.info(
@@ -575,8 +619,7 @@ class _CodexSubscriptionRealtimeSession:
                 text="",
                 is_final=True,
                 error=(
-                    "Local and provider input transcription were unavailable "
-                    "for this spoken turn."
+                    "Local and provider input transcription were unavailable for this spoken turn."
                 ),
                 item_id=self._last_input_item_id or None,
             )
@@ -603,6 +646,14 @@ class _CodexSubscriptionRealtimeSession:
             timer_tasks.add(completion_task)
             completion_task.add_done_callback(timer_tasks.discard)
 
+        # Start local input first. A user may finish speaking while the
+        # handshake is still draining already-buffered server notifications;
+        # scheduling the network pump first could otherwise reject the valid
+        # response before the queued local speech boundary gets normalized.
+        input_task = asyncio.create_task(
+            _pump_local_input(),
+            name=f"codex-realtime-local-input-{self._thread_id}",
+        )
         pump_task = asyncio.create_task(
             _pump_notifications(),
             name=f"codex-realtime-notifications-{self._thread_id}",
@@ -611,15 +662,12 @@ class _CodexSubscriptionRealtimeSession:
             _pump_media_audio(),
             name=f"codex-realtime-media-{self._thread_id}",
         )
-        input_task = asyncio.create_task(
-            _pump_local_input(),
-            name=f"codex-realtime-local-input-{self._thread_id}",
-        )
         try:
             while True:
                 queue_kind, payload = await queue.get()
                 if queue_kind == "local_input":
                     if payload.kind == "speech_started":
+                        local_input_generation += 1
                         local_transcript_failed = False
                         user_final_emitted = False
                         _cancel_completion()
@@ -676,21 +724,33 @@ class _CodexSubscriptionRealtimeSession:
                     # Jarvis goes deaf for the rest of the call.
                     audible = _pcm16_peak(pcm) >= _OUTPUT_AUDIBLE_PEAK
                     if audible:
+                        if not await _begin_response("media audio"):
+                            continue
                         if completion_emitted:
                             _reset_assistant_capture()
                             completion_emitted = False
                         assistant_audio_active = True
                         _arm_completion()
+                    elif not response_open:
+                        # Preserve a legitimate response's quiet onset, but do
+                        # not let the permanently-open track's between-turn
+                        # silence authorize a response by itself.
+                        if (
+                            self._input_transcriber is not None
+                            and not _fresh_local_input_exists()
+                            and self._trusted_output_permits <= 0
+                        ):
+                            continue
+                        if not await _begin_response("media prelude"):
+                            continue
+                    elif not response_allowed:
+                        continue
                     if (
                         assistant_audio_active
                         and not assistant_transcript_seen
-                        and len(assistant_audio)
-                        < _OUTPUT_TRANSCRIPT_RECOVERY_MAX_BYTES
+                        and len(assistant_audio) < _OUTPUT_TRANSCRIPT_RECOVERY_MAX_BYTES
                     ):
-                        remaining = (
-                            _OUTPUT_TRANSCRIPT_RECOVERY_MAX_BYTES
-                            - len(assistant_audio)
-                        )
+                        remaining = _OUTPUT_TRANSCRIPT_RECOVERY_MAX_BYTES - len(assistant_audio)
                         assistant_audio.extend(pcm[:remaining])
                     yield _ProviderEvent(
                         type="audio_delta",
@@ -715,14 +775,12 @@ class _CodexSubscriptionRealtimeSession:
                         completion_emitted = True
                         yield _ProviderEvent(type="turn_complete")
                         _reset_assistant_capture()
+                        _finish_response()
                     if stream_ended:
                         if not self._closed:
                             yield _ProviderEvent(
                                 type="error",
-                                error=(
-                                    "Codex app-server notification stream ended "
-                                    "unexpectedly"
-                                ),
+                                error=("Codex app-server notification stream ended unexpectedly"),
                                 recoverable=True,
                             )
                         return
@@ -758,10 +816,7 @@ class _CodexSubscriptionRealtimeSession:
                     if not self._closed:
                         yield _ProviderEvent(
                             type="error",
-                            error=(
-                                "Codex app-server notification stream ended "
-                                "unexpectedly"
-                            ),
+                            error=("Codex app-server notification stream ended unexpectedly"),
                             recoverable=True,
                         )
                     return
@@ -775,19 +830,20 @@ class _CodexSubscriptionRealtimeSession:
                 if method == "turn/started":
                     turn = params.get("turn")
                     if isinstance(turn, dict):
-                        self._active_codex_turn_id = str(
-                            turn.get("id", "") or ""
-                        ).strip()
+                        self._active_codex_turn_id = str(turn.get("id", "") or "").strip()
                     if self._handoff_interrupt_pending:
+                        await self._interrupt_active_codex_turn()
+                    elif response_open and not response_allowed:
+                        # Media can beat the sideband ``turn/started`` notice.
+                        # Complete the rejection once the interruptible id is
+                        # finally known.
                         await self._interrupt_active_codex_turn()
                     continue
 
                 if method in {"turn/completed", "turn/failed"}:
                     turn = params.get("turn")
                     completed_id = (
-                        str(turn.get("id", "") or "").strip()
-                        if isinstance(turn, dict)
-                        else ""
+                        str(turn.get("id", "") or "").strip() if isinstance(turn, dict) else ""
                     )
                     if not completed_id or completed_id == self._active_codex_turn_id:
                         self._active_codex_turn_id = ""
@@ -811,10 +867,16 @@ class _CodexSubscriptionRealtimeSession:
                     if not delta:
                         continue
                     if role == "user":
-                        if not self._server_user_transcript_is_plausible():
+                        energy_plausible = self._server_user_transcript_is_plausible()
+                        fresh_input = _fresh_local_input_exists()
+                        if not energy_plausible or not fresh_input:
                             log.debug(
-                                "Dropping a server user transcript delta that "
-                                "no microphone energy backs"
+                                "Dropping a server user transcript delta: %s",
+                                (
+                                    "no microphone energy backs it"
+                                    if not energy_plausible
+                                    else "no fresh local utterance backs it"
+                                ),
                             )
                             continue
                         _cancel_completion()
@@ -826,6 +888,8 @@ class _CodexSubscriptionRealtimeSession:
                             item_id=self._last_input_item_id or None,
                         )
                     elif role == "assistant":
+                        if not await _begin_response("assistant transcript"):
+                            continue
                         # A later transcript delta proves the previous
                         # transcript-part ``done`` was not a turn boundary.
                         _cancel_completion()
@@ -844,10 +908,16 @@ class _CodexSubscriptionRealtimeSession:
                     role = str(params.get("role", "") or "").lower()
                     text = str(params.get("text", "") or "")
                     if role == "user":
-                        if not self._server_user_transcript_is_plausible():
+                        energy_plausible = self._server_user_transcript_is_plausible()
+                        fresh_input = _fresh_local_input_exists()
+                        if not energy_plausible or not fresh_input:
                             log.info(
-                                "Ignoring a server user transcript that no "
-                                "microphone energy backs (%r)",
+                                "Ignoring a server user transcript because %s (%r)",
+                                (
+                                    "no microphone energy backs it"
+                                    if not energy_plausible
+                                    else "no fresh local utterance backs it"
+                                ),
                                 text[:80],
                             )
                             continue
@@ -873,6 +943,8 @@ class _CodexSubscriptionRealtimeSession:
                             item_id=self._last_input_item_id or None,
                         )
                     elif role == "assistant":
+                        if not await _begin_response("assistant transcript"):
+                            continue
                         assistant_transcript_seen = True
                         assistant_audio.clear()
                         # Emit only a missing suffix so transcript consumers do
@@ -915,9 +987,7 @@ class _CodexSubscriptionRealtimeSession:
                         )
                         return
                     try:
-                        pcm = base64.b64decode(
-                            str(audio.get("data", "") or ""), validate=True
-                        )
+                        pcm = base64.b64decode(str(audio.get("data", "") or ""), validate=True)
                         sample_rate = int(audio.get("sampleRate", 0) or 0)
                         channels = int(audio.get("numChannels", 1) or 1)
                     except (ValueError, TypeError) as exc:
@@ -961,9 +1031,7 @@ class _CodexSubscriptionRealtimeSession:
                         _cancel_completion()
                         completion_emitted = False
                         self._assistant_delta_text = ""
-                        self._last_input_item_id = str(
-                            item.get("item_id", "") or ""
-                        )
+                        self._last_input_item_id = str(item.get("item_id", "") or "")
                         if self._input_transcriber is None:
                             local_transcript_failed = False
                             user_final_emitted = False
@@ -974,9 +1042,16 @@ class _CodexSubscriptionRealtimeSession:
                         )
                     elif item_type == "response.cancelled":
                         _cancel_completion()
-                        completion_emitted = False
+                        cancelled_response_was_allowed = response_allowed
+                        # This is a response boundary even when Jarvis caused
+                        # the cancellation. A later ``response.done`` belongs
+                        # to the same generation and must not be mistaken for
+                        # another ungrounded response.
+                        completion_emitted = True
                         self._assistant_delta_text = ""
-                        yield _ProviderEvent(type="interrupted")
+                        _finish_response()
+                        if cancelled_response_was_allowed:
+                            yield _ProviderEvent(type="interrupted")
                     elif item_type == "handoff_request":
                         # Exact Codex 0.146 routes this item into a normal Codex
                         # turn even with clientManagedHandoffs enabled; that flag
@@ -986,9 +1061,7 @@ class _CodexSubscriptionRealtimeSession:
                         _cancel_completion()
                         self._handoff_interrupt_pending = True
                         direct_turn_id = str(
-                            item.get("turn_id", "")
-                            or item.get("turnId", "")
-                            or ""
+                            item.get("turn_id", "") or item.get("turnId", "") or ""
                         ).strip()
                         if direct_turn_id:
                             self._active_codex_turn_id = direct_turn_id
@@ -997,16 +1070,21 @@ class _CodexSubscriptionRealtimeSession:
                             type="handoff_requested",
                             text=_handoff_text(item) or None,
                             handoff_id=str(
-                                item.get("handoff_id", "")
-                                or item.get("handoffId", "")
-                                or ""
+                                item.get("handoff_id", "") or item.get("handoffId", "") or ""
                             ).strip()
                             or None,
                             provider_turn_id=(direct_turn_id or None),
                         )
                     elif item_type in _TERMINAL_RESPONSE_ITEMS:
                         _cancel_completion()
-                        if not completion_emitted:
+                        if completion_emitted:
+                            # The quiescence backstop already closed this same
+                            # response.  A delayed protocol marker is an
+                            # acknowledgement, not a new ungrounded response.
+                            _reset_assistant_capture()
+                            continue
+                        allowed = await _begin_response("terminal response item")
+                        if not completion_emitted and allowed:
                             missing_input = _missing_input_boundary()
                             if missing_input is not None:
                                 yield missing_input
@@ -1015,17 +1093,18 @@ class _CodexSubscriptionRealtimeSession:
                                 yield recovered
                             completion_emitted = True
                             log.info(
-                                "Codex subscription realtime turn ended on "
-                                "item %r (protocol %s)",
+                                "Codex subscription realtime turn ended on item %r (protocol %s)",
                                 item_type,
                                 self.realtime_version or "unknown",
                             )
                             yield _ProviderEvent(type="turn_complete")
                             _reset_assistant_capture()
+                        _finish_response()
                     elif item_type in _RESPONSE_OPENED_ITEMS:
                         _cancel_completion()
                         completion_emitted = False
                         _reset_assistant_capture()
+                        await _begin_response(item_type)
                     elif item_type and item_type not in seen_unknown_items:
                         # Type NAME only, once per type, bounded — never the
                         # payload, which can carry transcript text.
@@ -1133,9 +1212,7 @@ class _CodexSubscriptionRealtimeSession:
         if not text or text == self._delivered_context:
             return
         try:
-            await self._client.realtime_append_text(
-                self._thread_id, text, role="developer"
-            )
+            await self._client.realtime_append_text(self._thread_id, text, role="developer")
         except Exception:  # noqa: BLE001 - a mute persona must not kill the call
             log.warning(
                 "Codex subscription realtime could not deliver its context; "
@@ -1151,9 +1228,7 @@ class _CodexSubscriptionRealtimeSession:
         if not text:
             return
         try:
-            await self._client.realtime_append_text(
-                self._thread_id, text, role="developer"
-            )
+            await self._client.realtime_append_text(self._thread_id, text, role="developer")
         except Exception:  # noqa: BLE001 - an amnesiac recovery beats a dead call
             log.warning(
                 "Codex subscription realtime could not restore call history",
@@ -1167,13 +1242,21 @@ class _CodexSubscriptionRealtimeSession:
         del required_tool
 
     async def send_text(self, text: str) -> None:
-        await self._client.realtime_append_text(
-            self._thread_id, str(text), role="developer"
-        )
+        self._trusted_output_permits += 1
+        try:
+            await self._client.realtime_append_text(self._thread_id, str(text), role="developer")
+        except Exception:
+            self._trusted_output_permits = max(0, self._trusted_output_permits - 1)
+            raise
 
     async def send_speech(self, text: str) -> None:
         """Queue trusted verbatim speech without starting a Codex model turn."""
-        await self._client.realtime_append_speech(self._thread_id, str(text))
+        self._trusted_output_permits += 1
+        try:
+            await self._client.realtime_append_speech(self._thread_id, str(text))
+        except Exception:
+            self._trusted_output_permits = max(0, self._trusted_output_permits - 1)
+            raise
 
     async def truncate(self, audio_end_ms: int) -> None:
         del audio_end_ms
@@ -1285,9 +1368,7 @@ class CodexSubscriptionRealtimeProvider:
 
     @classmethod
     def from_runtime_config(cls, cfg: Any) -> CodexSubscriptionRealtimeProvider:
-        binary_path = str(
-            getattr(getattr(cfg, "codex", None), "binary_path", "") or ""
-        ).strip()
+        binary_path = str(getattr(getattr(cfg, "codex", None), "binary_path", "") or "").strip()
         return cls(binary_path=binary_path or None)
 
     @classmethod
@@ -1297,17 +1378,13 @@ class CodexSubscriptionRealtimeProvider:
             # Dynamic import preserves the plugin boundary: discovery imports
             # no ``jarvis.*`` module until this explicit capability probe.
             app_server_module = importlib.import_module("jarvis.codex_app_server")
-            binary_path = str(
-                getattr(getattr(cfg, "codex", None), "binary_path", "") or ""
-            ).strip()
+            binary_path = str(getattr(getattr(cfg, "codex", None), "binary_path", "") or "").strip()
             if app_server_module.codex_subscription_activation_block():
                 # The live account gate refused this login permanently;
                 # advertising the provider as available would build sessions
                 # that can never start (and mislead GET /voice-mode).
                 return False
-            status = app_server_module.codex_subscription_auth_snapshot(
-                binary_path or None
-            )
+            status = app_server_module.codex_subscription_auth_snapshot(binary_path or None)
             if getattr(status, "reason_code", "") == "busy":
                 # Transiently unknown, not "no login": failing closed here
                 # flips voice-mode availability (and its 400) on a healthy
@@ -1338,9 +1415,7 @@ class CodexSubscriptionRealtimeProvider:
         of every call and swallow the user's first sentence. A network that
         genuinely needs a reflexive candidate gets one on the retry.
         """
-        transport_module = importlib.import_module(
-            "jarvis.realtime.webrtc_transport"
-        )
+        transport_module = importlib.import_module("jarvis.realtime.webrtc_transport")
         attempts: tuple[Any, ...] = (None, transport_module.stun_ice_servers)
         last_error: BaseException | None = None
         for index, ice_factory in enumerate(attempts):
@@ -1392,12 +1467,8 @@ class CodexSubscriptionRealtimeProvider:
         if self._audio_endpoint_factory is not None:
             audio_endpoint = self._audio_endpoint_factory(ice_servers)
         else:
-            transport_module = importlib.import_module(
-                "jarvis.realtime.webrtc_transport"
-            )
-            audio_endpoint = transport_module.RealtimeWebRtcAudioEndpoint(
-                ice_servers
-            )
+            transport_module = importlib.import_module("jarvis.realtime.webrtc_transport")
+            audio_endpoint = transport_module.RealtimeWebRtcAudioEndpoint(ice_servers)
         offer_sdp = await audio_endpoint.create_offer()
 
         client = self._client
@@ -1433,10 +1504,7 @@ class CodexSubscriptionRealtimeProvider:
                     "%r: ChatGPT-Live (v3) selects the model server-side",
                     configured_model,
                 )
-            voice = (
-                str(getattr(cfg, "voice", "") or "").strip().lower()
-                or _DEFAULT_VOICE
-            )
+            voice = str(getattr(cfg, "voice", "") or "").strip().lower() or _DEFAULT_VOICE
             if voice not in _V3_VOICES:
                 raise RuntimeError(
                     "Codex subscription realtime has an unsupported voice configured"

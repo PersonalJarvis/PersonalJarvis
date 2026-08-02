@@ -13,6 +13,7 @@ import jarvis.plugins.realtime.codex_subscription as codex_subscription_mod
 from jarvis.plugins.realtime.codex_subscription import (
     CodexSubscriptionRealtimeProvider,
 )
+from jarvis.realtime.input_transcription import InputTranscriptEvent
 from jarvis.realtime.offer_broker import RealtimeTransportOfferBroker
 from jarvis.realtime.protocol import RealtimeSessionConfig
 
@@ -133,9 +134,7 @@ def _provider(client, **kwargs):
     # Adapter tests do not reach the user's configured cloud/local STT unless
     # a case injects an explicit recognizer. The production default is covered
     # by the input-transcriber unit tests.
-    kwargs.setdefault(
-        "input_transcriber_factory", lambda: _StubEndpointer(speaking=False)
-    )
+    kwargs.setdefault("input_transcriber_factory", lambda: None)
     provider = CodexSubscriptionRealtimeProvider(
         client=client,
         # The factory receives the ICE configuration for this attempt.
@@ -196,9 +195,7 @@ class _Client:
         self.audio_appends.append((thread_id, kwargs))
         return {}
 
-    async def realtime_append_text(
-        self, thread_id: str, text: str, *, role: str = "user"
-    ):
+    async def realtime_append_text(self, thread_id: str, text: str, *, role: str = "user"):
         self.text_appends.append((thread_id, text, role))
         return {}
 
@@ -278,9 +275,7 @@ async def test_direct_sdp_open_uses_safe_experimental_transport_contract() -> No
 
     # Jarvis's own persona/context reaches the model as developer context —
     # ChatGPT-Live has no client-settable session-instructions field.
-    assert client.text_appends == [
-        ("thread-1", "Speak concise English.", "developer")
-    ]
+    assert client.text_appends == [("thread-1", "Speak concise English.", "developer")]
     _thread_id, start = client.realtime_starts[0]
     assert start == {
         "output_modality": "audio",
@@ -423,9 +418,7 @@ async def test_open_relies_on_authoritative_app_server_auth_without_pre_probe() 
     provider = _provider(client)
 
     with pytest.raises(RuntimeError, match="unauthenticated account"):
-        await provider.open_session(
-            RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
-        )
+        await provider.open_session(RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer"))
 
     assert client.capability_calls == 0
     assert len(client.thread_starts) == 1
@@ -585,9 +578,7 @@ def test_external_login_ready_fails_open_on_transient_busy(
         ),
     )
 
-    assert (
-        CodexSubscriptionRealtimeProvider.external_login_ready(None) is expected
-    )
+    assert CodexSubscriptionRealtimeProvider.external_login_ready(None) is expected
 
 
 @pytest.mark.asyncio
@@ -641,10 +632,11 @@ async def test_notifications_normalize_audio_transcripts_and_boundaries() -> Non
             ),
         ]
     )
-    # The user really was speaking, so their transcripts pass the energy gate.
-    session = await _provider(
-        client, input_transcriber_factory=lambda: _StubEndpointer(speaking=True)
-    ).open_session(RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer"))
+    # This normalization test deliberately omits the optional local recognizer;
+    # local-grounding behavior has dedicated tests below.
+    session = await _provider(client).open_session(
+        RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
+    )
 
     events = [event async for event in session.receive()]
 
@@ -658,10 +650,8 @@ async def test_notifications_normalize_audio_transcripts_and_boundaries() -> Non
         "turn_complete",
         "error",
     ]
-    # A live preview, not the recorded turn: with a local recognizer present it
-    # owns the final text (see the server-transcript tests at the end of this
-    # file for both halves of that rule).
-    assert events[2].is_final is False
+    # Without a local recognizer the server transcript owns the final text.
+    assert events[2].is_final is True
     assert events[2].item_id == "input-1"
     assert events[3].text == "hi"
     # A cleanly exhausted fake stream is still an unexpected transport death.
@@ -690,13 +680,9 @@ async def test_media_track_audio_becomes_normalized_audio_deltas() -> None:
         ]
     )
     endpoint = _FakeAudioEndpoint(output_chunks=(b"\x01\x00\x02\x00", b"\x03\x00"))
-    session = await _provider(client, endpoint=endpoint).open_session(
-        RealtimeSessionConfig()
-    )
+    session = await _provider(client, endpoint=endpoint).open_session(RealtimeSessionConfig())
 
-    audio = [
-        event async for event in session.receive() if event.type == "audio_delta"
-    ]
+    audio = [event async for event in session.receive() if event.type == "audio_delta"]
 
     assert [event.audio.pcm for event in audio] == [b"\x01\x00\x02\x00", b"\x03\x00"]
     assert {event.audio.sample_rate for event in audio} == {24_000}
@@ -729,15 +715,9 @@ async def test_media_track_forwards_provider_silence_verbatim() -> None:
     speech = (1000).to_bytes(2, "little", signed=True) * 480
     long_silence = b"\x00\x00" * (24_000 * 2)
     endpoint = _FakeAudioEndpoint(output_chunks=(speech, long_silence, speech))
-    session = await _provider(client, endpoint=endpoint).open_session(
-        RealtimeSessionConfig()
-    )
+    session = await _provider(client, endpoint=endpoint).open_session(RealtimeSessionConfig())
 
-    audio = [
-        event.audio.pcm
-        async for event in session.receive()
-        if event.type == "audio_delta"
-    ]
+    audio = [event.audio.pcm async for event in session.receive() if event.type == "audio_delta"]
 
     assert b"".join(audio) == speech + long_silence + speech
     await session.close()
@@ -765,12 +745,8 @@ async def test_default_done_waits_for_all_late_audio_before_one_completion(
     )
     # Late RTP audio must keep re-arming the quiescence timer so one turn ends
     # exactly once, after the last audible chunk.
-    endpoint = _FakeAudioEndpoint(
-        output_schedule=((0.015, b"\x01\x00"), (0.015, b"\x01\x00"))
-    )
-    session = await _provider(client, endpoint=endpoint).open_session(
-        RealtimeSessionConfig()
-    )
+    endpoint = _FakeAudioEndpoint(output_schedule=((0.015, b"\x01\x00"), (0.015, b"\x01\x00")))
+    session = await _provider(client, endpoint=endpoint).open_session(RealtimeSessionConfig())
 
     events = [event async for event in session.receive()]
     event_types = [event.type for event in events]
@@ -911,9 +887,7 @@ async def test_handoff_preserves_item_transcript_and_interrupts_late_codex_turn(
                         "type": "handoff_request",
                         "handoff_id": "handoff-1",
                         "input_transcript": "Please check the calendar",
-                        "active_transcript": [
-                            {"role": "user", "text": "older question"}
-                        ],
+                        "active_transcript": [{"role": "user", "text": "older question"}],
                     },
                 },
             ),
@@ -1043,11 +1017,11 @@ async def test_transcript_done_is_a_part_boundary_not_a_turn(monkeypatch) -> Non
 
     assert len([event for event in events if event.type == "turn_complete"]) == 1
     # Every part still reaches the transcript consumers.
-    assert [
-        event.text
-        for event in events
-        if event.type == "output_transcript_delta"
-    ] == ["first. ", "second. ", "third."]
+    assert [event.text for event in events if event.type == "output_transcript_delta"] == [
+        "first. ",
+        "second. ",
+        "third.",
+    ]
     await session.close()
 
 
@@ -1056,12 +1030,11 @@ async def test_normalization_queue_backpressures_and_pump_cleans_up() -> None:
     client = _Client()
     subscription = _CountingSubscription()
     client.subscription = subscription
-    # This subscription streams user transcripts forever, so the endpointer has
-    # to report real speech - otherwise the energy gate rightly discards every
-    # one of them and there is no backpressure left to measure.
-    session = await _provider(
-        client, input_transcriber_factory=lambda: _StubEndpointer(speaking=True)
-    ).open_session(RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer"))
+    # No local recognizer: this test isolates queue backpressure from transcript
+    # grounding, which is covered independently below.
+    session = await _provider(client).open_session(
+        RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer")
+    )
     stream = session.receive()
 
     first = await anext(stream)
@@ -1116,17 +1089,13 @@ async def test_provider_error_and_app_server_death_are_normalized() -> None:
             )
         ]
     )
-    provider_session = await _provider(provider_error_client).open_session(
-        RealtimeSessionConfig()
-    )
+    provider_session = await _provider(provider_error_client).open_session(RealtimeSessionConfig())
     provider_events = [event async for event in provider_session.receive()]
     assert provider_events[0].type == "error"
     assert provider_events[0].recoverable is False
 
     dead_client = _Client(failure=RuntimeError("process exited"))
-    dead_session = await _provider(dead_client).open_session(
-        RealtimeSessionConfig()
-    )
+    dead_session = await _provider(dead_client).open_session(RealtimeSessionConfig())
     dead_events = [event async for event in dead_session.receive()]
     assert dead_events[0].type == "error"
     assert dead_events[0].recoverable is True
@@ -1197,9 +1166,7 @@ async def test_unconnectable_host_path_retries_with_stun() -> None:
         ice_configs.append(ice_servers)
         return _HostOnlyFails(ice_servers)
 
-    provider = CodexSubscriptionRealtimeProvider(
-        client=client, audio_endpoint_factory=factory
-    )
+    provider = CodexSubscriptionRealtimeProvider(client=client, audio_endpoint_factory=factory)
 
     session = await provider.open_session(RealtimeSessionConfig())
 
@@ -1222,9 +1189,7 @@ async def test_each_session_negotiates_its_own_media_endpoint() -> None:
         endpoints.append(endpoint)
         return endpoint
 
-    provider = CodexSubscriptionRealtimeProvider(
-        client=client, audio_endpoint_factory=factory
-    )
+    provider = CodexSubscriptionRealtimeProvider(client=client, audio_endpoint_factory=factory)
 
     for _ in (1, 2):
         session = await provider.open_session(RealtimeSessionConfig())
@@ -1281,6 +1246,11 @@ class _RecoveringEndpointer(_StubEndpointer):
         super().__init__(speaking=True)
         self.text = text
         self.recovery_calls: list[tuple[bytes, int]] = []
+        self._events = asyncio.Queue()
+        self._events.put_nowait(InputTranscriptEvent(kind="speech_started"))
+
+    async def next_event(self):  # noqa: ANN202 - test protocol
+        return await self._events.get()
 
     async def transcribe_audio(self, pcm: bytes, *, sample_rate: int) -> str:
         self.recovery_calls.append((pcm, sample_rate))
@@ -1318,7 +1288,12 @@ def _hallucination_client() -> _Client:
 
 
 async def _user_transcripts(*, speaking: bool | None) -> list:
-    transcriber = None if speaking is None else _StubEndpointer(speaking)
+    if speaking is None:
+        transcriber = None
+    elif speaking:
+        transcriber = _ScriptedInputTranscriber([InputTranscriptEvent(kind="speech_started")])
+    else:
+        transcriber = _StubEndpointer(speaking=False)
     session = await _provider(
         _hallucination_client(), input_transcriber_factory=lambda: transcriber
     ).open_session(RealtimeSessionConfig(transport_offer_sdp="v=0\r\no=offer"))
@@ -1363,10 +1338,150 @@ async def test_without_a_local_recognizer_the_server_transcript_is_final():
 
 
 @pytest.mark.asyncio
+async def test_orphan_response_without_a_fresh_local_utterance_is_interrupted():
+    """ChatGPT-Live must not turn its own output into a second user turn.
+
+    The live failure started a second response two milliseconds after the first
+    turn completed, before any final user transcript existed.  Its server-side
+    user preview then drifted to ``"sorry, i"`` while the model continued a
+    made-up conversation.  A fresh local speech boundary is the authority for
+    another automatic response; server VAD and captions are not.
+    """
+    transcriber = _ScriptedInputTranscriber(
+        [
+            InputTranscriptEvent(kind="speech_started"),
+            InputTranscriptEvent(kind="transcript", text="Hello", is_final=True),
+        ]
+    )
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.02,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "assistant", "text": "Hi."},
+                ),
+            ),
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/itemAdded",
+                    {"threadId": "thread-1", "item": {"type": "response.done"}},
+                ),
+            ),
+            (
+                0.0,
+                _Notification(
+                    "turn/started",
+                    {"threadId": "thread-1", "turn": {"id": "orphan-turn"}},
+                ),
+            ),
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/itemAdded",
+                    {
+                        "threadId": "thread-1",
+                        "item": {"type": "response.created"},
+                    },
+                ),
+            ),
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/transcript/delta",
+                    {"threadId": "thread-1", "role": "user", "delta": "sorry, i"},
+                ),
+            ),
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {
+                        "threadId": "thread-1",
+                        "role": "assistant",
+                        "text": "An invented second answer.",
+                    },
+                ),
+            ),
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/itemAdded",
+                    {
+                        "threadId": "thread-1",
+                        "item": {"type": "response.cancelled"},
+                    },
+                ),
+            ),
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/itemAdded",
+                    {"threadId": "thread-1", "item": {"type": "response.done"}},
+                ),
+            ),
+        ]
+    )
+    session = await _provider(client, input_transcriber_factory=lambda: transcriber).open_session(
+        RealtimeSessionConfig()
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.text for event in events if event.type == "output_transcript_delta"] == ["Hi."]
+    assert [event.type for event in events].count("turn_complete") == 1
+    assert not [event for event in events if event.type == "interrupted"]
+    assert not [
+        event for event in events if event.type == "input_transcript" and not event.is_final
+    ]
+    assert client.interrupts == [("thread-1", "orphan-turn")]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_trusted_direct_speech_is_allowed_without_a_new_user_utterance():
+    """Action readbacks intentionally create output outside a microphone turn."""
+    transcriber = _StubEndpointer(speaking=False)
+    client = _Client(
+        [
+            _Notification(
+                "thread/realtime/itemAdded",
+                {"threadId": "thread-1", "item": {"type": "response.created"}},
+            ),
+            _Notification(
+                "thread/realtime/transcript/done",
+                {
+                    "threadId": "thread-1",
+                    "role": "assistant",
+                    "text": "The action is complete.",
+                },
+            ),
+            _Notification(
+                "thread/realtime/itemAdded",
+                {"threadId": "thread-1", "item": {"type": "response.done"}},
+            ),
+        ]
+    )
+    session = await _provider(client, input_transcriber_factory=lambda: transcriber).open_session(
+        RealtimeSessionConfig()
+    )
+    await session.send_speech("The action is complete.")
+
+    events = [event async for event in session.receive()]
+
+    assert client.speech_appends == [("thread-1", "The action is complete.")]
+    assert [event.text for event in events if event.type == "output_transcript_delta"] == [
+        "The action is complete."
+    ]
+    assert [event.type for event in events].count("turn_complete") == 1
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_local_failure_before_server_done_promotes_the_late_preview():
     """Either ordering must still commit the spoken user turn."""
-    from jarvis.realtime.input_transcription import InputTranscriptEvent
-
     transcriber = _ScriptedInputTranscriber(
         [
             InputTranscriptEvent(kind="speech_started"),
@@ -1389,17 +1504,13 @@ async def test_local_failure_before_server_done_promotes_the_late_preview():
             )
         ]
     )
-    session = await _provider(
-        client, input_transcriber_factory=lambda: transcriber
-    ).open_session(RealtimeSessionConfig())
+    session = await _provider(client, input_transcriber_factory=lambda: transcriber).open_session(
+        RealtimeSessionConfig()
+    )
 
     events = [event async for event in session.receive()]
 
-    finals = [
-        event
-        for event in events
-        if event.type == "input_transcript" and event.is_final
-    ]
+    finals = [event for event in events if event.type == "input_transcript" and event.is_final]
     assert [event.text for event in finals] == ["Hello, what is up?"]
     await session.close()
 
@@ -1418,18 +1529,14 @@ async def test_missing_output_transcript_is_recovered_from_provider_audio(
     monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_QUIESCENCE_S", 0.03)
     speech = (900).to_bytes(2, "little", signed=True) * 480
     silence = b"\x00\x00" * 480
-    endpoint = _FakeAudioEndpoint(
-        output_schedule=((0.0, speech), (0.0, silence))
-    )
+    endpoint = _FakeAudioEndpoint(output_schedule=((0.01, speech), (0.0, silence)))
     transcriber = _RecoveringEndpointer("Hi there, everything is fine.")
     client = _Client()
     client.subscription = _ScheduledSubscription(
         [
             (
                 0.2,
-                _Notification(
-                    "thread/realtime/keepalive", {"threadId": "thread-1"}
-                ),
+                _Notification("thread/realtime/keepalive", {"threadId": "thread-1"}),
             )
         ]
     )
@@ -1446,9 +1553,7 @@ async def test_missing_output_transcript_is_recovered_from_provider_audio(
             break
 
     transcript_index = next(
-        index
-        for index, event in enumerate(events)
-        if event.type == "output_transcript_delta"
+        index for index, event in enumerate(events) if event.type == "output_transcript_delta"
     )
     complete_index = next(
         index for index, event in enumerate(events) if event.type == "turn_complete"
@@ -1467,15 +1572,11 @@ async def test_media_track_end_is_a_rebuildable_transport_error() -> None:
         [
             (
                 0.2,
-                _Notification(
-                    "thread/realtime/keepalive", {"threadId": "thread-1"}
-                ),
+                _Notification("thread/realtime/keepalive", {"threadId": "thread-1"}),
             )
         ]
     )
-    session = await _provider(client, endpoint=endpoint).open_session(
-        RealtimeSessionConfig()
-    )
+    session = await _provider(client, endpoint=endpoint).open_session(RealtimeSessionConfig())
 
     event = await anext(session.receive())
 
@@ -1531,12 +1632,8 @@ async def test_silent_frames_never_hold_a_turn_open(monkeypatch) -> None:
     client = _Client()
     client.subscription = _keeps_stream_open(_ARMS_THE_BACKSTOP)
     silence = b"\x00\x00" * 480
-    endpoint = _FakeAudioEndpoint(
-        output_schedule=tuple((0.02, silence) for _ in range(25))
-    )
-    session = await _provider(client, endpoint=endpoint).open_session(
-        RealtimeSessionConfig()
-    )
+    endpoint = _FakeAudioEndpoint(output_schedule=tuple((0.02, silence) for _ in range(25)))
+    session = await _provider(client, endpoint=endpoint).open_session(RealtimeSessionConfig())
 
     completions = 0
     async with asyncio.timeout(1.0):
@@ -1560,12 +1657,8 @@ async def test_audible_frames_keep_a_turn_open(monkeypatch) -> None:
     client = _Client()
     client.subscription = _keeps_stream_open(_ARMS_THE_BACKSTOP)
     speech = (1000).to_bytes(2, "little", signed=True) * 480
-    endpoint = _FakeAudioEndpoint(
-        output_schedule=tuple((0.02, speech) for _ in range(25))
-    )
-    session = await _provider(client, endpoint=endpoint).open_session(
-        RealtimeSessionConfig()
-    )
+    endpoint = _FakeAudioEndpoint(output_schedule=tuple((0.02, speech) for _ in range(25)))
+    session = await _provider(client, endpoint=endpoint).open_session(RealtimeSessionConfig())
 
     events = []
     with contextlib.suppress(TimeoutError):
@@ -1611,7 +1704,7 @@ async def test_an_unknown_realtime_item_type_is_named_once(caplog) -> None:
 
 @pytest.mark.asyncio
 async def test_the_negotiated_protocol_and_voice_are_logged(caplog) -> None:
-    """"Is this really what Codex uses?" has to be answerable from evidence."""
+    """ "Is this really what Codex uses?" has to be answerable from evidence."""
     caplog.set_level(logging.INFO)
     client = _Client(
         [
@@ -1621,15 +1714,12 @@ async def test_the_negotiated_protocol_and_voice_are_logged(caplog) -> None:
             )
         ]
     )
-    session = await _provider(client).open_session(
-        RealtimeSessionConfig(voice="cove")
-    )
+    session = await _provider(client).open_session(RealtimeSessionConfig(voice="cove"))
 
     [event async for event in session.receive()]
 
     assert any(
-        "negotiated protocol 3" in record.getMessage()
-        and "cove" in record.getMessage()
+        "negotiated protocol 3" in record.getMessage() and "cove" in record.getMessage()
         for record in caplog.records
     )
     await session.close()
@@ -1645,9 +1735,7 @@ async def test_warm_transport_never_raises(monkeypatch) -> None:
         calls.append(cfg)
         raise RuntimeError("no login")
 
-    monkeypatch.setattr(
-        CodexSubscriptionRealtimeProvider, "verify_activation", _boom
-    )
+    monkeypatch.setattr(CodexSubscriptionRealtimeProvider, "verify_activation", _boom)
 
     await CodexSubscriptionRealtimeProvider.warm_transport(object())
 
@@ -1674,9 +1762,7 @@ async def test_a_reply_without_any_transcript_still_ends_its_turn(monkeypatch) -
             *((0.02, silence) for _ in range(25)),
         )
     )
-    session = await _provider(client, endpoint=endpoint).open_session(
-        RealtimeSessionConfig()
-    )
+    session = await _provider(client, endpoint=endpoint).open_session(RealtimeSessionConfig())
 
     completions = 0
     async with asyncio.timeout(1.5):
