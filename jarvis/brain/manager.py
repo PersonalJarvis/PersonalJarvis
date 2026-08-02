@@ -5968,6 +5968,15 @@ class BrainManager:
             addressed = ide_intent.detect_all(
                 user_text, names=candidates
             )
+            if not addressed:
+                current = session.contextual_terminal()
+                visible = ide_intent.detect_visible(
+                    user_text,
+                    terminal=current.name if current is not None else None,
+                    names=candidates,
+                )
+                if visible is not None:
+                    addressed = [visible]
         except Exception:  # noqa: BLE001 - detection must never break a turn
             return None
 

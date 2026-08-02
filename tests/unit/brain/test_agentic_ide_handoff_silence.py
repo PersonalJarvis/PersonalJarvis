@@ -263,3 +263,30 @@ async def test_an_unaddressed_turn_announces_nothing(
 
     assert reply is None
     assert spy.events == []
+
+
+async def test_the_visible_chat_terminal_beats_a_stale_conversation_target(
+    manager: BrainManager, registry: Registry, tmp_path: Path
+) -> None:
+    """The live 2026-08-02 T1 -> "this terminal" -> wrong-T1 regression."""
+    await _open(registry, tmp_path, 4)
+    assert registry.session is not None
+    registry.set_surface_context(
+        workspace_id=registry.session.id,
+        chat_view=True,
+        on_screen=True,
+        terminal="T4",
+    )
+
+    utterance = (
+        "Kannst du bitte das Terminal prompten "  # i18n-allow: spoken input
+        "hier und prüfen, ob der neue Subscription-Pfad "  # i18n-allow: spoken input
+        "dieselben Funktionen hat?"  # i18n-allow: spoken input
+    )
+    reply = await manager._run_agentic_ide_fast_path(utterance)
+
+    first = registry.session.find("T1")
+    visible = registry.session.find("T4")
+    assert first is not None and first.prompts_sent == 0
+    assert visible is not None and visible.prompts_sent == 1
+    assert reply is not None and "T4" in reply

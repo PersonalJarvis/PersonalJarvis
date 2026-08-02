@@ -86,6 +86,7 @@ import {
   refreshTerminalRecap,
   renameTerminal,
   saveTerminalFontSize,
+  syncAgenticIdeSurface,
   setTerminalRecap,
   promptTerminal,
   type ComposedPreview,
@@ -1171,6 +1172,21 @@ export function AgenticGrid({
     if (target && names.includes(target)) return target;
     return names[0] ?? null;
   }, [chatPane, target, session.terminals]);
+
+  // The browser is the only layer that knows which pane fills the one-pane
+  // chat stage. Hand that fact to the backend so voice and chat can resolve
+  // "this terminal" from what the user actually sees. Grid view clears the
+  // context rather than guessing among several visible panes.
+  useEffect(() => {
+    void syncAgenticIdeSurface({
+      workspaceId: session.id,
+      chatView,
+      onScreen,
+      terminal: chatView && onScreen ? chatSelected : null,
+    }).catch((error) => {
+      console.warn("Agentic IDE: could not sync the visible terminal:", error);
+    });
+  }, [chatSelected, chatView, onScreen, session.id]);
 
   /** Rail click: show the pane, and aim the composer at it when it can listen. */
   const selectChatPane = useCallback((name: string, promptable: boolean) => {

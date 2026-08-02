@@ -9,6 +9,8 @@ router tool set". Each registry command is therefore its own tool.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import httpx
 from fastapi import FastAPI, HTTPException
 
@@ -173,6 +175,67 @@ async def test_an_explicit_argument_still_beats_the_default() -> None:
         {"name": "Casey", "prompt": "continue", "compose": False}, None
     )
     assert calls["terminal_prompt"]["compose"] is False
+
+
+async def test_direct_realtime_tool_uses_the_terminal_visible_in_chat(
+    monkeypatch,
+) -> None:
+    """A stale model argument cannot overrule the exact deictic utterance."""
+    from jarvis.agentic_ide import session as session_mod
+
+    t1 = SimpleNamespace(name="T1")
+    t4 = SimpleNamespace(name="T4")
+    session = SimpleNamespace(
+        terminals=[t1, t4],
+        contextual_terminal=lambda: t4,
+    )
+    monkeypatch.setattr(
+        session_mod,
+        "get_registry",
+        lambda: SimpleNamespace(session=session),
+    )
+    calls: dict = {}
+    context = SimpleNamespace(
+        user_utterance=(
+            "Kannst du bitte das Terminal prompten "  # i18n-allow: spoken input
+            "hier und den Subscription-Pfad prüfen?"  # i18n-allow: spoken input
+        )
+    )
+
+    result = await _tools(calls)["agentic-ide-prompt"].execute(
+        {"name": "T1", "prompt": "Review the subscription path"}, context
+    )
+
+    assert result.success is True
+    assert calls["terminal_prompt"]["name"] == "T4"
+
+
+async def test_direct_realtime_tool_keeps_an_explicit_terminal(
+    monkeypatch,
+) -> None:
+    from jarvis.agentic_ide import session as session_mod
+
+    t1 = SimpleNamespace(name="T1")
+    t4 = SimpleNamespace(name="T4")
+    session = SimpleNamespace(
+        terminals=[t1, t4],
+        contextual_terminal=lambda: t4,
+    )
+    monkeypatch.setattr(
+        session_mod,
+        "get_registry",
+        lambda: SimpleNamespace(session=session),
+    )
+    calls: dict = {}
+    context = SimpleNamespace(
+        user_utterance="Prompt T1, not this terminal, to run the tests"
+    )
+
+    await _tools(calls)["agentic-ide-prompt"].execute(
+        {"name": "T1", "prompt": "Run the tests"}, context
+    )
+
+    assert calls["terminal_prompt"]["name"] == "T1"
 
 
 def test_every_registry_default_survives_into_the_payload() -> None:

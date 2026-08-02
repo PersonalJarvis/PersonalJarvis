@@ -64,6 +64,27 @@ async def test_focus_mode_block_names_the_folder_and_terminals(
     assert "refactoring the router" in block
 
 
+async def test_focus_context_names_the_one_terminal_visible_in_chat_view(
+    wired: tuple[Registry, FakePtyManager], tmp_path: Path
+) -> None:
+    registry, _ = wired
+    session = await registry.start(
+        str(tmp_path), [{"agent": "claude"}, {"agent": "codex"}]
+    )
+    registry.set_focus_mode(True)
+    assert registry.set_surface_context(
+        workspace_id=session.id,
+        chat_view=True,
+        on_screen=True,
+        terminal="T2",
+    )
+
+    block = focus_context_block()
+
+    assert "one visible terminal" in block
+    assert "mean T2" in block
+
+
 async def test_block_is_capped(
     wired: tuple[Registry, FakePtyManager], tmp_path: Path
 ) -> None:

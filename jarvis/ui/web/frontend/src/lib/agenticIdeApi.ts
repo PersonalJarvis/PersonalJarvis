@@ -1113,6 +1113,33 @@ export async function setFocusMode(enabled: boolean): Promise<boolean> {
 }
 
 /**
+ * Tell the backend which single pane is visibly filling the chat stage.
+ *
+ * Ephemeral by design: this is grounding for "this terminal", not a display
+ * preference. Grid view and hidden sections send no terminal because neither
+ * has one honest implicit target.
+ */
+export async function syncAgenticIdeSurface(payload: {
+  workspaceId: string;
+  chatView: boolean;
+  onScreen: boolean;
+  terminal: string | null;
+}): Promise<void> {
+  const res = await fetch("/api/agentic-ide/surface-context", {
+    method: "PUT",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      workspace_id: payload.workspaceId,
+      chat_view: payload.chatView,
+      on_screen: payload.onScreen,
+      terminal: payload.terminal,
+    }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+}
+
+/**
  * The workspace display preferences the backend remembers for this machine.
  *
  * `stored` is false until a size has actually been chosen — the difference

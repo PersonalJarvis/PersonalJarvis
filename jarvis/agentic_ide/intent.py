@@ -464,6 +464,32 @@ _BRIEFED_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A singular pane reference whose meaning comes from the UI rather than from a
+# spoken call-sign. This is intentionally narrower than a bare "terminal": it
+# requires a demonstrative/definite article or an on-screen word, and is only
+# consulted when chat view reports one visible pane. Matching vocabulary, not
+# prose, across every supported input locale.
+_VISIBLE_TERMINAL_RE = re.compile(
+    r"(?:"
+    r"\b(?:this|that|the|current|visible|"
+    r"dies(?:es|em|en)?|das|der|dem|den|aktuelle[nmrs]?|sichtbare[nmrs]?|"
+    r"el|este|ese|actual|visible)\s+(?:terminal|pane|tab)\b"
+    r"|"
+    r"\b(?:terminal|pane|tab)\b[^.!?]{0,20}?"
+    r"\b(?:here|on\s+screen|hier|im\s+bild|aqu[ií]|en\s+pantalla)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+_VISIBLE_REPORT_RE = re.compile(
+    r"\b(?:"
+    r"what|how|status|progress|doing|done|stuck|"
+    r"was|wie|status|fortschritt|macht|tut|l[aä]uft|los|fertig|h[aä]ngt|"
+    r"qu[eé]|c[oó]mo|estado|progreso|haciendo|hecho|atascado"
+    r")\b",
+    re.IGNORECASE,
+)
+
 
 def _mentions(
     text: str, candidates: list[str], *, fuzzy: bool = True
@@ -769,6 +795,56 @@ def detect(user_text: str, *, names: list[str] | None = None) -> TerminalIntent 
     """
     found = detect_all(user_text, names=names)
     return found[0] if found else None
+
+
+def detect_visible(
+    user_text: str,
+    *,
+    terminal: str | None = None,
+    names: list[str] | None = None,
+) -> TerminalIntent | None:
+    """Resolve "this terminal" to the one pane visibly filling chat view.
+
+    Explicit call-signs always win. With no supplied ``terminal`` the active
+    session is consulted, but only its ephemeral chat-stage context; grid view
+    deliberately has no implicit target.
+    """
+    text = (user_text or "").strip()
+    if len(text) < 3 or _VISIBLE_TERMINAL_RE.search(text) is None:
+        return None
+    candidates = _running_names() if names is None else list(names)
+    if not candidates:
+        return None
+    # "Prompt T1, not this terminal" and every ordinary explicit address keep
+    # the established resolver's answer, even while another pane is on stage.
+    if detect_all(text, names=candidates):
+        return None
+    selected = terminal
+    if selected is None:
+        try:
+            from .session import get_registry
+
+            current = get_registry().session
+            pane = current.contextual_terminal() if current is not None else None
+            selected = pane.name if pane is not None else None
+        except Exception:  # noqa: BLE001 - optional UI context, never fatal
+            return None
+    if not selected or selected not in candidates:
+        return None
+    if _BRIEFING_VERB_RE.search(text):
+        kind = KIND_PROMPT
+    elif _VISIBLE_REPORT_RE.search(text):
+        kind = KIND_REPORT
+    elif _looks_like_instruction(text):
+        kind = KIND_PROMPT
+    else:
+        return None
+    return TerminalIntent(
+        terminal=selected,
+        kind=kind,
+        instruction=text if kind == KIND_PROMPT else "",
+        utterance=text,
+    )
 
 
 # Below this, stripping has eaten the task rather than the addressing — "schick
@@ -2327,7 +2403,12 @@ def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
         return True
     if spawn_vehicle_outranks_workspace(text, names=names):
         return False
-    return detect(text, names=names) is not None
+    if detect(text, names=names) is not None:
+        return True
+    # Only the process-wide form can honestly consult the active UI surface.
+    # Injected candidate lists are used by pure detector tests and must not
+    # acquire hidden global state.
+    return names is None and detect_visible(text) is not None
 
 
 __all__ = [
@@ -2339,6 +2420,7 @@ __all__ = [
     "TerminalIntent",
     "detect",
     "detect_all",
+    "detect_visible",
     "detect_close_fleet",
     "detect_spawn",
     "expects_several",

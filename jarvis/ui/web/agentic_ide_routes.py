@@ -288,6 +288,18 @@ class ModeRequest(BaseModel):
     )
 
 
+class SurfaceContextRequest(BaseModel):
+    """Which single terminal the Agentic-IDE UI visibly puts on stage."""
+
+    workspace_id: str = Field(description="Workspace currently rendered by this view.")
+    chat_view: bool = Field(description="True only while the one-pane chat view is selected.")
+    on_screen: bool = Field(description="Whether the Agentic-IDE section is visible.")
+    terminal: str | None = Field(
+        default=None,
+        description="Visible pane call-sign; null when no single pane is shown.",
+    )
+
+
 class TerminalTextSizeRequest(BaseModel):
     """How large the text in the workspace's terminals should be, in pixels."""
 
@@ -1733,6 +1745,23 @@ async def set_mode(request: Request, req: ModeRequest) -> dict:
             log.debug("AgenticIdeCodingModeChanged publish failed: %s", exc)
 
     return {"ok": True, "focus_mode": enabled}
+
+
+@router.put("/surface-context", summary="Report the visible Agentic-IDE terminal")
+async def set_surface_context(req: SurfaceContextRequest) -> dict:
+    """Keep deictic voice/chat references aligned with the visible chat pane.
+
+    The state is ephemeral and active-workspace scoped. Grid view clears it,
+    because several terminals are visible there and guessing one would be less
+    honest than asking for a call-sign.
+    """
+    accepted = get_registry().set_surface_context(
+        workspace_id=req.workspace_id,
+        chat_view=req.chat_view,
+        on_screen=req.on_screen,
+        terminal=req.terminal,
+    )
+    return {"ok": True, "accepted": accepted}
 
 
 @router.get("/ui-preferences", summary="Remembered workspace display preferences")

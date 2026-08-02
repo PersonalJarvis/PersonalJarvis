@@ -109,6 +109,45 @@ def test_unrelated_turns_are_left_alone(utterance: str) -> None:
     assert intent.owns_turn(utterance, names=NAMES) is False
 
 
+def test_visible_chat_terminal_resolves_a_deictic_prompt() -> None:
+    utterance = (
+        "Kannst du bitte das Terminal prompten "  # i18n-allow: spoken input
+        "hier und prüfen, ob der neue Subscription-Pfad "  # i18n-allow: spoken input
+        "dieselben Funktionen hat?"  # i18n-allow: spoken input
+    )
+
+    found = intent.detect_visible(utterance, terminal="T4", names=["T1", "T4"])
+
+    assert found is not None
+    assert found.terminal == "T4"
+    assert found.kind == intent.KIND_PROMPT
+
+
+def test_visible_chat_terminal_resolves_a_deictic_report() -> None:
+    found = intent.detect_visible(
+        "Can you check what the terminal here is doing?",
+        terminal="T4",
+        names=["T1", "T4"],
+    )
+
+    assert found is not None
+    assert found.terminal == "T4"
+    assert found.kind == intent.KIND_REPORT
+
+
+def test_explicit_call_sign_beats_the_visible_chat_terminal() -> None:
+    assert intent.detect_visible(
+        "Prompt T1, not this terminal, to run the tests",
+        terminal="T4",
+        names=["T1", "T4"],
+    ) is None
+    explicit = intent.detect(
+        "Prompt T1, not this terminal, to run the tests", names=["T1", "T4"]
+    )
+    assert explicit is not None
+    assert explicit.terminal == "T1"
+
+
 def test_no_open_workspace_means_no_claim() -> None:
     """With no terminals running, nothing can be addressed."""
     assert intent.detect("Sag Alex, sie soll die Tests starten", names=[]) is None  # i18n-allow: German speech input under test

@@ -1188,6 +1188,13 @@ class Session:
     # current session, and a restart should land the user back in normal mode
     # rather than silently keeping a narrowed assistant.
     focus_mode: bool = False
+    # Ephemeral UI context for deictic voice/chat references. In chat view one
+    # pane fills the stage, so "this terminal" has a concrete, visible meaning;
+    # in the grid every pane is visible and no default is honest. This state is
+    # reported by the mounted frontend and deliberately excluded from resume
+    # snapshots: after a restart the UI reports what it actually shows again.
+    surface_chat_visible: bool = False
+    surface_terminal: str = ""
     # When this workspace was last brought to the front. Orders the "most
     # recently used" answer the resume snapshot and the UI both want, which is
     # NOT the order the workspaces were opened in.
@@ -1227,6 +1234,12 @@ class Session:
         if matched is None:
             return None
         return next((t for t in self.terminals if t.name == matched), None)
+
+    def contextual_terminal(self) -> Terminal | None:
+        """The one pane visibly filling chat view, if there is exactly one."""
+        if not self.surface_chat_visible or not self.surface_terminal:
+            return None
+        return self.find(self.surface_terminal)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -2243,6 +2256,28 @@ class Registry:
         session.focus_mode = bool(enabled)
         logger.info("Agentic IDE focus mode {}", "on" if enabled else "off")
         return session.focus_mode
+
+    def set_surface_context(
+        self,
+        *,
+        workspace_id: str,
+        chat_view: bool,
+        on_screen: bool,
+        terminal: str | None,
+    ) -> bool:
+        """Record which single pane the active UI visibly puts on its stage.
+
+        A stale grid can finish a request after the user changed workspace, so
+        only the active workspace may write this context. Invalid or hidden
+        selections clear the default rather than leaving a believable old one.
+        """
+        session = self.session
+        if session is None or session.id != workspace_id:
+            return False
+        session.surface_chat_visible = bool(chat_view and on_screen)
+        selected = session.find(terminal or "") if session.surface_chat_visible else None
+        session.surface_terminal = selected.name if selected is not None else ""
+        return True
 
     # ------------------------------------------------------------------ pty
     def _locate(self, key: str, workspace_id: str | None) -> tuple[Session, Terminal] | None:

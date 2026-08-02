@@ -86,6 +86,7 @@ vi.mock("@/lib/agenticIdeApi", () => ({
     max: 20,
     default: 13,
   })),
+  syncAgenticIdeSurface: vi.fn(async () => undefined),
 }));
 
 // The grid follows the app theme for its terminal colours; these tests render
@@ -2386,6 +2387,40 @@ describe("chat view", () => {
     fireEvent.click(screen.getByTestId("chat-rail-Aria"));
     expect(cellClass("Aria")).not.toContain("hidden");
     expect(cellClass("Mika")).toContain("hidden");
+  });
+
+  it("grounds deictic voice references in the pane visibly on stage", async () => {
+    renderGrid(FOUR);
+    await waitFor(() =>
+      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith({
+        workspaceId: "ide_test",
+        chatView: false,
+        onScreen: true,
+        terminal: null,
+      }),
+    );
+
+    toChat();
+    fireEvent.click(screen.getByTestId("chat-rail-Aria"));
+
+    await waitFor(() =>
+      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith({
+        workspaceId: "ide_test",
+        chatView: true,
+        onScreen: true,
+        terminal: "Aria",
+      }),
+    );
+
+    toChat();
+    await waitFor(() =>
+      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith({
+        workspaceId: "ide_test",
+        chatView: false,
+        onScreen: true,
+        terminal: null,
+      }),
+    );
   });
 
   it("remembers the chosen view for the next workspace", () => {
