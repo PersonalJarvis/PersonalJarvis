@@ -2,7 +2,11 @@ import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { WSClient } from "@/lib/ws";
-import { deliverDictationText, isForThisWindow } from "@/lib/dictationTarget";
+import {
+  deliverDictationText,
+  documentOwnsDictation,
+  isForThisWindow,
+} from "@/lib/dictationTarget";
 import {
   SECTION_LABELS,
   isSectionId,
@@ -251,6 +255,13 @@ export function useWebSocket(): void {
             target?: string;
           };
           const text = typeof p.text === "string" ? p.text : "";
+          // The server fans this event out to every connected UI. Background
+          // tabs/windows are observers; letting each one update its own target
+          // is how one utterance was pasted into several shared terminals.
+          if (!documentOwnsDictation()) {
+            if (p.is_final) useEventStore.getState().setDictationInterim("");
+            return;
+          }
           if (!p.is_final) {
             useEventStore.getState().setDictationInterim(text);
           } else {
@@ -260,8 +271,9 @@ export function useWebSocket(): void {
               ? deliverDictationText(text)
               : "none";
             if (delivered !== "none") {
-              // Straight into the field or terminal, so no sequence bump for
-              // the composer — just drop the live tail.
+              // Inserted here, or deliberately left to the one foreground UI
+              // client that owns this broadcast. Either way, no sequence bump
+              // for this client's composer — just drop the live tail.
               store.setDictationInterim("");
             } else {
               // The composer is the historical sink and still the right

@@ -209,6 +209,7 @@ export function ChatInput() {
         />
         <Button
           type="button"
+          data-jarvis-dictation-trigger
           onClick={toggleDictation}
           disabled={!connected}
           size="icon"
