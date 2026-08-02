@@ -45,8 +45,8 @@ Verify each, **with evidence**, before anything is shipped:
   pinned to the maintainer's keys / provider / OS. Confirm (test or honest trace):
   fresh-install-with-one-key, headless-Linux boot, cross-family fallback all reach a
   working path. If you cannot verify, say so and STOP — do not assume.
-- **Community health files present & intact** — README, LICENSE, CODE_OF_CONDUCT.md,
-  TRADEMARK.md, issue/PR templates.
+- **Community health files present & intact** — README, LICENSE, TRADEMARK.md,
+  issue/PR templates.
 
 Report every item as **PASS** or **STOP** with the evidence. No silent skips.
 

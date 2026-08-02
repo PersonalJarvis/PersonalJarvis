@@ -42,7 +42,7 @@ in your working tree.
 ### Documentation & first impression
 - [ ] `README` — what it is, install, quickstart, screenshots that actually load.
 - [ ] `CONTRIBUTING.md`, `SECURITY.md` (real private reporting channel),
-      `CODE_OF_CONDUCT.md`, `CHANGELOG.md`.
+      `CHANGELOG.md`.
 - [ ] `.env.example` / config-example files cover every required variable, with
       **no real values**.
 
