@@ -36,6 +36,19 @@ _JARVIS_RATE = 24_000
 _SEND_QUEUE_MAX = 200
 _RECV_QUEUE_MAX = 200
 _ICE_TIMEOUT_S = 15.0
+# One line per 50 dropped frames == per second of lost audio at 20 ms frames.
+_DROP_LOG_EVERY = 50
+
+
+def _is_clean_track_end(exc: BaseException) -> bool:
+    """Whether a remote-track exception is the ordinary end of a call.
+
+    aiortc signals a finished track with ``MediaStreamError``; everything else
+    means the assistant's voice stopped for a reason worth reporting. Matched
+    by NAME so the module keeps importing aiortc lazily (AP-26) and so an
+    aiortc refactor cannot turn this into an import error at call time.
+    """
+    return type(exc).__name__ == "MediaStreamError"
 
 
 class WebRtcTransportUnavailable(RuntimeError):
@@ -229,6 +242,7 @@ class RealtimeWebRtcAudioEndpoint:
         resampler = AudioResampler(
             format="s16", layout="mono", rate=_JARVIS_RATE
         )
+        dropped = 0
         try:
             while True:
                 frame = await track.recv()
@@ -241,13 +255,43 @@ class RealtimeWebRtcAudioEndpoint:
                     except asyncio.QueueFull:
                         # Backpressure: drop the OLDEST frame so live speech
                         # stays current instead of drifting further behind.
+                        # Say so — this is a hole punched in the assistant's
+                        # own voice, and it used to leave no trace anywhere
+                        # (AP-30). Report the first one and then every full
+                        # second of loss, so a wedged consumer is visible
+                        # without the log becoming the next bottleneck.
                         with_suppress_get(self._recv_queue)
                         self._recv_queue.put_nowait(pcm)
+                        dropped += 1
+                        if dropped == 1 or dropped % _DROP_LOG_EVERY == 0:
+                            log.warning(
+                                "Realtime WebRTC receive queue is full; dropped "
+                                "%d provider audio frame(s) — the reply loses "
+                                "that audio",
+                                dropped,
+                            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - the track ends with the call
-            log.debug("Realtime WebRTC remote track ended (%s)", type(exc).__name__)
+            if _is_clean_track_end(exc):
+                log.debug(
+                    "Realtime WebRTC remote track ended (%s)", type(exc).__name__
+                )
+            else:
+                # Anything else means the voice just went mute mid-call. At
+                # DEBUG that was invisible to everyone including the user.
+                log.warning(
+                    "Realtime WebRTC remote track failed; the provider voice "
+                    "stops here",
+                    exc_info=True,
+                )
         finally:
+            if dropped:
+                log.warning(
+                    "Realtime WebRTC remote track dropped %d audio frame(s) in "
+                    "total on a full receive queue",
+                    dropped,
+                )
             await self._finish_stream()
 
     async def _finish_stream(self) -> None:
