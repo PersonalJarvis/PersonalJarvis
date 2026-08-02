@@ -419,6 +419,15 @@ _EVERYONE_TEMPLATES: tuple[re.Pattern[str], ...] = tuple(
         r"\b(?:prompt|brief|instruct|assign)\w*\b",
         r"\b(?:prompt|brief|instruct|assign)\w*\b[^.!?]{0,30}?"
         r"\b(?:each\s+(?:one|of\s+them)|all\s+of\s+them)\b",
+        # The collective pronoun is the direct object: "prompt all except T2".
+        # Requiring the briefing verb immediately beside it avoids reading
+        # ordinary work nouns ("fix all tests") as a workspace fan-out.
+        r"\b(?:alle|allen)\b(?:[\s,]+(?:terminals?|panes?))?[\s,]*"
+        r"\b(?:prompt|brief|anweis|beauftrag)\w*\b",  # i18n-allow: input vocab
+        r"\b(?:prompt|brief|instruct|assign)\w*\b[\s,]*"
+        r"\b(?:all|everyone|everybody)\b(?:\s+(?:terminals?|panes?))?",
+        r"\b(?:prompt|instruy|asigna|encarga)\w*\b[\s,]*(?:a\s+)?"
+        r"\b(?:todos|todas)\b(?:\s+(?:terminales|paneles))?",
         r"^(?:und\s+)?\b(?:alle|allen)\b[^.!?]{0,20}?"  # i18n-allow: input vocab
         r"\b(?:soll|sollen|m[uü]ssen|k[oö]nnen)\b",  # i18n-allow: input vocab
         r"^(?:and\s+)?\b(?:everyone|everybody|all\s+of\s+them)\b[^.!?]{0,20}?"
@@ -426,6 +435,73 @@ _EVERYONE_TEMPLATES: tuple[re.Pattern[str], ...] = tuple(
         r"\b(?:diles?|preg[uú]nta)\b[\s,]*\b(?:a\s+)?todos\b",
         r"^\b(?:todos|todas)\b[^.!?]{0,20}?\b(?:deben|deber[ií]an)\b",
     )
+)
+
+# A named pane can be mentioned precisely because it must NOT receive the
+# fleet instruction. These are selection operators, not task negations. The
+# difference matters: "prompt T12 not to delete files" still addresses T12,
+# while "prompt everyone except T12" addresses everyone else.
+_EXCLUSION_CUE_RE = re.compile(
+    r"\b(?:außer|ausser|ausgenommen|except(?:\s+for)?|excluding|apart\s+from|"
+    r"but\s+not|not|nicht|excepto|salvo|menos|sino)\b",
+    re.IGNORECASE,
+)
+
+_EXCLUSION_GAP_RE = re.compile(
+    r"^[\s,:;\-]*(?:(?:the|den|dem|die|das|los|las)\s+)?"
+    r"(?:(?:terminals?|terminales|panes?|tabs?)\s+)?$",
+    re.IGNORECASE,
+)
+
+_OTHER_PANES_RE = re.compile(
+    r"\b(?:alle\s+anderen|all\s+(?:the\s+)?others|everyone\s+else|"
+    r"todos\s+los\s+dem[aá]s|todas\s+las\s+dem[aá]s)\b",
+    re.IGNORECASE,
+)
+
+_COLLECTIVE_EXCEPTION_RE = re.compile(
+    r"\b(?:alle|allen)(?:\s+(?:terminals?|panes?))?[\s,]+"
+    r"(?:außer|ausser|ausgenommen)|"
+    r"\b(?:all|everyone|everybody)(?:\s+(?:terminals?|panes?))?[\s,]+"
+    r"(?:except(?:\s+for)?|excluding|apart\s+from|but\s+not)|"
+    r"\b(?:todos|todas)(?:\s+(?:los|las))?(?:\s+(?:terminales|paneles))?"
+    r"[\s,]+(?:excepto|salvo|menos)",
+    re.IGNORECASE,
+)
+
+_NO_WORK_AFTER_NAME_RE = re.compile(
+    r"^[^.!?;]{0,35}\b(?:"
+    r"nichts\s+(?:mehr\s+)?(?:machen|tun)|"
+    r"nicht\s+(?:mehr\s+)?(?:prompt\w*|weitermach\w*|weiterarbeit\w*)|"
+    r"do\s+nothing|nothing\s+to\s+do|"
+    r"do\s+not\s+(?:prompt|continue|keep\s+working)|"
+    r"not\s+(?:prompt|continue|keep\s+working)|"
+    r"nada\s+que\s+hacer|no\s+(?:los?\s+|las?\s+)?"
+    r"(?:instruy\w*|asign\w*|contin[uú]\w*)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_TRAILING_NEGATION_RE = re.compile(
+    r"^[\s,:\-]*(?:aber\s+)?(?:nicht|not|no)\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+_TASK_AFTER_EXCLUSION_RE = re.compile(
+    r"^[\s,:\-]*(?:"
+    r"(?:dass|damit)\s+(?:sie|ihr|diese)?\s*|"
+    r"that\s+(?:they|those)?\s*|to\s+|"
+    r"que\s+(?:ellos|ellas|estos|estas)?\s*"
+    r")(?P<task>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+_OTHER_PANES_TASK_RE = re.compile(
+    r"\b(?:alle\s+anderen|all\s+(?:the\s+)?others|everyone\s+else|"
+    r"todos\s+los\s+dem[aá]s|todas\s+las\s+dem[aá]s)\b[^.!?;,]{0,12}?"
+    r"\b(?:soll(?:en)?|m[uü]ss(?:en)?|should|must|deben|deber[ií]an)\b\s+"
+    r"(?P<task>[^.!?;,]+)",
+    re.IGNORECASE,
 )
 
 # One candidate call-sign word. Shared with ``clarify`` and the resolver
@@ -609,6 +685,73 @@ def _coordinated_group(
     return group
 
 
+def _excluded_by_cue(
+    text: str, mentions: list[tuple[int, int, str]]
+) -> set[str]:
+    """Names immediately following an explicit set-subtraction cue."""
+    anchors: set[str] = set()
+    for cue in _EXCLUSION_CUE_RE.finditer(text):
+        for start, _, name in mentions:
+            if start < cue.end():
+                continue
+            if _EXCLUSION_GAP_RE.fullmatch(text[cue.end():start]):
+                anchors.add(name)
+            break
+    return _coordinated_group(mentions, text, anchors)
+
+
+def _coordination_groups(
+    mentions: list[tuple[int, int, str]], text: str
+) -> list[list[tuple[int, int, str]]]:
+    """Partition mentioned names into adjacent spoken enumerations."""
+    if not mentions:
+        return []
+    groups = [[mentions[0]]]
+    for previous, current in zip(mentions, mentions[1:], strict=False):
+        if _COORDINATION_RE.match(text[previous[1]:current[0]]):
+            groups[-1].append(current)
+        else:
+            groups.append([current])
+    return groups
+
+
+def _excluded_by_no_work_clause(
+    text: str, mentions: list[tuple[int, int, str]]
+) -> set[str]:
+    """Names in a collective sentence whose clause says Jarvis should skip them."""
+    excluded: set[str] = set()
+    for group in _coordination_groups(mentions, text):
+        suffix = text[group[-1][1]:]
+        sentence = re.split(r"[.!?;]", suffix, maxsplit=1)[0]
+        if _NO_WORK_AFTER_NAME_RE.search(sentence) or _TRAILING_NEGATION_RE.fullmatch(
+            suffix.strip()
+        ):
+            excluded.update(name for _, _, name in group)
+    return excluded
+
+
+def _selection_instruction(
+    text: str,
+    mentions: list[tuple[int, int, str]],
+    excluded: set[str],
+) -> str:
+    """Best-effort task text after a target selector and its exception list."""
+    excluded_mentions = [item for item in mentions if item[2] in excluded]
+    if excluded_mentions:
+        suffix = text[max(end for _, end, _ in excluded_mentions):].strip()
+        match = _TASK_AFTER_EXCLUSION_RE.match(suffix)
+        if match:
+            task = " ".join(match.group("task").split())
+            if len(task) >= _MIN_INSTRUCTION_CHARS:
+                return task
+    if match := _OTHER_PANES_TASK_RE.search(text):
+        task = " ".join(match.group("task").split())
+        if len(task) >= _MIN_INSTRUCTION_CHARS:
+            return task
+    mentioned_names = [name for _, _, name in mentions]
+    return _useful_instruction(text, *mentioned_names)
+
+
 def detect_all(
     user_text: str, *, names: list[str] | None = None
 ) -> list[TerminalIntent]:
@@ -677,29 +820,42 @@ def detect_all(
             if pattern.search(working)
         }
     mentions = _mentions(working, candidates)
+    explicit_exclusions = _excluded_by_cue(working, mentions)
+    no_work_exclusions = _excluded_by_no_work_clause(working, mentions)
+    collective = any(
+        pattern.search(working) for pattern in _EVERYONE_TEMPLATES
+    ) or bool(
+        _COLLECTIVE_EXCEPTION_RE.search(working) and explicit_exclusions
+    ) or bool(_OTHER_PANES_RE.search(working) and no_work_exclusions)
+    exclusions = explicit_exclusions | (no_work_exclusions if collective else set())
 
     # The collective address reaches EVERY open pane, so it is the costliest
     # thing a misheard word can trigger — a question about a public figure that
     # speech recognition turned into "sag allen …" would brief the whole
     # workspace with it. Checked here rather than inside the templates because
     # it is a property of the sentence, not of any one addressing shape.
-    if any(pattern.search(working) for pattern in _EVERYONE_TEMPLATES) and not (
-        _is_outside_world_talk(working)
-    ):
+    if collective and not _is_outside_world_talk(working):
         kind = (
             KIND_REPORT
             if report_anchors and not (prompt_anchors or weak_prompt_anchors)
             else KIND_PROMPT
         )
+        selected = [name for name in candidates if name not in exclusions]
+        if not selected:
+            return []
+        shared = (
+            ""
+            if kind == KIND_REPORT
+            else _selection_instruction(working, mentions, exclusions)
+        )
         return [
             TerminalIntent(
                 terminal=name,
                 kind=kind,
-                instruction="" if kind == KIND_REPORT
-                else _useful_instruction(working, name),
+                instruction=shared,
                 utterance=text,
             )
-            for name in candidates
+            for name in selected
         ]
 
     if report_anchors:
@@ -766,13 +922,18 @@ def detect_all(
     else:
         return []
 
-    addressed = _coordinated_group(mentions, working, anchors)
+    anchors -= explicit_exclusions
+    addressed = _coordinated_group(mentions, working, anchors) - explicit_exclusions
     ordered = [name for _, _, name in mentions if name in addressed]
     # An anchor matched by a template but never located as a word (a garbled
     # transcript the templates still caught) keeps its place at the end.
     ordered += [name for name in anchors if name not in ordered]
 
-    shared = "" if kind == KIND_REPORT else _useful_instruction(working, *ordered)
+    shared = "" if kind == KIND_REPORT else (
+        _selection_instruction(working, mentions, explicit_exclusions)
+        if explicit_exclusions
+        else _useful_instruction(working, *ordered)
+    )
     return [
         TerminalIntent(
             terminal=name, kind=kind, instruction=shared, utterance=text

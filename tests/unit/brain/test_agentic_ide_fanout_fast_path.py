@@ -128,6 +128,24 @@ async def test_two_addressed_panes_both_receive_the_prompt(
     assert _sent_to(registry, second)
 
 
+async def test_collective_exception_only_prompts_the_requested_panes(
+    manager: BrainManager, registry: Registry, tmp_path: Path
+) -> None:
+    """Mentioning exceptions must subtract them, not turn them into targets."""
+    await _open(registry, tmp_path, 4)
+    first, second, third, fourth = _names(registry)
+
+    reply = await manager._run_agentic_ide_fast_path(
+        f"Prompt all except {third} and {fourth} to continue working"
+    )
+
+    assert reply is not None
+    assert _sent_to(registry, first)
+    assert _sent_to(registry, second)
+    assert not _sent_to(registry, third)
+    assert not _sent_to(registry, fourth)
+
+
 async def test_only_a_spoken_brain_turn_consumes_orb_context(
     manager: BrainManager, registry: Registry, tmp_path: Path
 ) -> None:
