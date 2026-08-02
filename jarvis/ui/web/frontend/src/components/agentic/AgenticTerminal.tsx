@@ -351,7 +351,10 @@ export function AgenticTerminal({
   // process together) without reaching into the connect effect's socket.
   const resizeRef = useRef<(() => void) | null>(null);
   const claimResizeRef = useRef<(() => void) | null>(null);
-  const visibilityRef = useRef<{ show: () => void; park: () => void } | null>(null);
+  const visibilityRef = useRef<{
+    show: (afterFlush?: () => void) => void;
+    park: () => void;
+  } | null>(null);
   const statusRef = useRef<PaneStatus>("connecting");
   // Mirrored into state purely so the header can show/hide the restart button;
   // it transitions a handful of times per pane, never per output chunk.
@@ -372,6 +375,12 @@ export function AgenticTerminal({
    * Reconnects therefore stay quiet: the replayed screen is already there.
    */
   const [painted, setPainted] = useState(false);
+  // A parked chat pane may have a large asynchronous xterm write to parse when
+  // it takes the stage again. Keep its terminal surface out of the paint until
+  // that write and the final tail scroll have both landed; otherwise xterm
+  // briefly shows the pane's old viewport (often its first prompt) and visibly
+  // jumps to the live prompt one frame later.
+  const [tailReady, setTailReady] = useState(active);
   // The terminal itself stays in a ref. This small epoch only tells the scroll
   // rail that the ref now points at a new instance after a restart.
   const [terminalEpoch, setTerminalEpoch] = useState(0);
@@ -583,10 +592,14 @@ export function AgenticTerminal({
      * The deadline half of parking (see ./offscreenBuffer): being wrong about
      * visibility must cost a coalesced write, never a screen that stopped.
      */
-    const flushHeld = () => {
+    const flushHeld = (afterFlush?: () => void) => {
       cancelHoldTimer();
       const held = offscreen.drain();
-      if (held) term.write(held);
+      if (held) {
+        term.write(held, afterFlush);
+        return;
+      }
+      afterFlush?.();
     };
 
     /** Make sure the held output has a flush coming, without moving one nearer. */
@@ -601,11 +614,14 @@ export function AgenticTerminal({
       }, due);
     };
 
-    const showPane = () => {
+    const showPane = (afterFlush?: () => void) => {
       if (!activeRef.current) return;
-      if (paneVisible) return;
+      if (paneVisible) {
+        afterFlush?.();
+        return;
+      }
       paneVisible = true;
-      flushHeld();
+      flushHeld(afterFlush);
     };
 
     const parkPane = () => {
@@ -1073,18 +1089,38 @@ export function AgenticTerminal({
    */
   useLayoutEffect(() => {
     if (!active) {
+      setTailReady(false);
       visibilityRef.current?.park();
       return;
     }
-    const reveal = () => {
-      visibilityRef.current?.show();
+    setTailReady(false);
+    let cancelled = false;
+    let frame: number | undefined;
+    const followTail = () => {
       resizeRef.current?.();
       claimResizeRef.current?.();
       termRef.current?.scrollToBottom?.();
     };
-    reveal();
-    const frame = requestAnimationFrame(reveal);
-    return () => cancelAnimationFrame(frame);
+    // Measure the now-mounted stage before parsing held output. Once xterm has
+    // consumed that output, one final frame lets its canvas and viewport settle;
+    // only then may the surface paint.
+    followTail();
+    const afterFlush = () => {
+      if (cancelled || !activeRef.current) return;
+      followTail();
+      frame = requestAnimationFrame(() => {
+        if (cancelled || !activeRef.current) return;
+        followTail();
+        setTailReady(true);
+      });
+    };
+    const visibility = visibilityRef.current;
+    if (visibility) visibility.show(afterFlush);
+    else afterFlush();
+    return () => {
+      cancelled = true;
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
   }, [active]);
 
   // Live restyle — no reconnect, so the running agent is untouched. The canvas
@@ -1305,7 +1341,10 @@ export function AgenticTerminal({
       <div
         ref={terminalRegionRef}
         id={terminalRegionId}
-        className="relative min-h-0 flex-1 overflow-hidden px-1.5 pb-0.5 pt-0.5"
+        className={cn(
+          "relative min-h-0 flex-1 overflow-hidden px-1.5 pb-0.5 pt-0.5",
+          active && !tailReady && "invisible",
+        )}
       >
         <div
           ref={containerRef}

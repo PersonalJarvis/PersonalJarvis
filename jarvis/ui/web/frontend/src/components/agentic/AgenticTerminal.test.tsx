@@ -18,6 +18,8 @@ const terminalHarness = vi.hoisted(() => ({
   focus: vi.fn(),
   scrollToBottom: vi.fn(),
   write: vi.fn(),
+  deferWrite: false,
+  writeCallbacks: [] as (() => void)[],
 }));
 
 vi.mock("@xterm/xterm", () => ({
@@ -59,7 +61,9 @@ vi.mock("@xterm/xterm", () => ({
     }
     write(text: string, callback?: () => void) {
       terminalHarness.write(text);
-      callback?.();
+      if (!callback) return;
+      if (terminalHarness.deferWrite) terminalHarness.writeCallbacks.push(callback);
+      else callback();
     }
     scrollToBottom() {
       terminalHarness.scrollToBottom();
@@ -120,10 +124,13 @@ describe("AgenticTerminal layout", () => {
     terminalHarness.fit.mockClear();
     terminalHarness.scrollToBottom.mockClear();
     terminalHarness.write.mockClear();
+    terminalHarness.deferWrite = false;
+    terminalHarness.writeCallbacks = [];
     globalThis.ResizeObserver = ResizeObserverHarness;
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -243,6 +250,45 @@ describe("AgenticTerminal layout", () => {
     );
 
     expect(terminalHarness.write).toHaveBeenCalledWith("working");
+  });
+
+  it("does not paint a reactivated chat pane before its live tail is ready", () => {
+    vi.useFakeTimers();
+    terminalHarness.deferWrite = true;
+    const view = render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        active={false}
+      />,
+    );
+    const region = screen.getByTestId("agentic-terminal-host-Dana").parentElement;
+
+    act(() => {
+      terminalHarness.handlers.current?.onOutput?.("new live output" as never);
+    });
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+
+    expect(region?.className).toContain("invisible");
+    expect(terminalHarness.writeCallbacks).toHaveLength(1);
+
+    act(() => {
+      terminalHarness.writeCallbacks.shift()?.();
+      vi.advanceTimersByTime(20);
+    });
+
+    expect(terminalHarness.scrollToBottom).toHaveBeenCalled();
+    expect(region?.className).not.toContain("invisible");
   });
 });
 
