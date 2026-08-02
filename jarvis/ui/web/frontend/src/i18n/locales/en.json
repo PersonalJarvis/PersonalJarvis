@@ -3720,6 +3720,37 @@
       "kind_exited": "STOPPED",
       "kind_failed": "FAILED",
       "gone": "{0} is not in this workspace any more — that terminal was closed since the notification arrived."
+    },
+    "voice_panel": {
+      "assistant_fallback": "Assistant",
+      "label": "Voice",
+      "ready": "Ready",
+      "listening": "Listening…",
+      "thinking": "Thinking…",
+      "speaking": "Speaking",
+      "error": "Voice trouble",
+      "open": "Open the voice panel",
+      "open_title": "Open the voice panel — talk to {0} here",
+      "close": "Collapse the voice panel",
+      "hang_up": "Hang up",
+      "hang_up_title": "Hang up the conversation",
+      "talk": "Talk to {0}",
+      "talk_title": "Talk to {0} — or just say the wake word",
+      "active_hint": "Click the orb to hang up.",
+      "idle_hint": "Click the orb — or say the wake word — to talk to {0}.",
+      "start_failed": "Could not start listening — a conversation may already be running."
+    },
+    "voice_drop": {
+      "hover": "Drop for {0}'s next prompt",
+      "reading": "Reading files for {0}'s next prompt…",
+      "ready_one": "1 file is ready for {1}'s next prompt.",
+      "ready_many": "{0} files are ready for {1}'s next prompt.",
+      "using": "Adding {0} file(s) to {1}'s prompt…",
+      "target_fallback": "an agent",
+      "empty": "That drop did not contain a usable file.",
+      "no_target": "Open or select an agent terminal before attaching a file.",
+      "choose": "Choose files",
+      "remove": "Remove this pending context"
     }
   },
   "prompt_writer": {

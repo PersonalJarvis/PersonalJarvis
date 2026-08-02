@@ -12183,7 +12183,11 @@ class SpeechPipeline:
             # path above, which uses it as a no-progress (stall) window. This path
             # is a production minority; the stall fix lives on the streaming path.
             response = await asyncio.wait_for(
-                self._brain_with_ack(text, lang),
+                self._brain_with_ack(
+                    text,
+                    lang,
+                    consume_pending_voice_attachments=True,
+                ),
                 timeout=self._brain_timeout_s,
             )
         except TimeoutError:
@@ -12895,7 +12899,15 @@ class SpeechPipeline:
                     self._brain_streaming(text, lang)
                 )
             else:
-                reply = await self._brain.generate(text)
+                try:
+                    generate_call = self._brain.generate(
+                        text, consume_pending_voice_attachments=True
+                    )
+                except TypeError:
+                    # Compatibility for small test/provider adapters that still
+                    # expose the pre-modality Brain protocol.
+                    generate_call = self._brain.generate(text)
+                reply = await generate_call
                 if reply:
                     await self._speak(reply, language=lang, kind=SPOKEN_KIND_COMPLETION)
         except Exception as exc:  # noqa: BLE001 — AD-OE6: never crash the turn
@@ -13176,11 +13188,14 @@ class SpeechPipeline:
                         text,
                         on_progress=self._mark_brain_progress,
                         allow_voice_confirm=True,
+                        consume_pending_voice_attachments=True,
                     )
                 except TypeError:
                     try:
                         stream = self._brain.generate_stream(
-                            text, on_progress=self._mark_brain_progress,
+                            text,
+                            on_progress=self._mark_brain_progress,
+                            consume_pending_voice_attachments=True,
                         )
                     except TypeError:
                         stream = self._brain.generate_stream(text)
@@ -13929,7 +13944,13 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001
             log.warning("Brain-timeout fallback speak failed: %s", exc)
 
-    async def _brain_with_ack(self, text: str, lang: str) -> str:
+    async def _brain_with_ack(
+        self,
+        text: str,
+        lang: str,
+        *,
+        consume_pending_voice_attachments: bool = False,
+    ) -> str:
         """Brain-Call mit optionalem Zwischen-Ack.
 
         Startet Brain-Call und einen ``_task_ack_delay_s``-Timer parallel.
@@ -13939,7 +13960,18 @@ class SpeechPipeline:
             Brain weiterwarten. Nach Ack-Playback wieder THINKING anzeigen,
             damit der Orb den richtigen Modus hat.
         """
-        brain_task = asyncio.create_task(self._brain(text), name="brain")
+        generate = getattr(self._brain, "generate", None)
+        if consume_pending_voice_attachments and callable(generate):
+            try:
+                brain_call = generate(
+                    text, consume_pending_voice_attachments=True
+                )
+            except TypeError:
+                # Compatibility for older Brain adapters without turn modality.
+                brain_call = generate(text)
+        else:
+            brain_call = self._brain(text)
+        brain_task = asyncio.create_task(brain_call, name="brain")
         timer_task = asyncio.create_task(
             asyncio.sleep(self._task_ack_delay_s), name="ack-timer"
         )

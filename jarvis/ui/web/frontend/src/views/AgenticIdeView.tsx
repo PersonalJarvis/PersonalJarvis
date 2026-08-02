@@ -111,6 +111,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [loading, setLoading] = useState(true);
   const [meta, setMeta] = useState<AgentsResponse | null>(null);
   const [session, setSession] = useState<SessionState | null>(null);
+  const [promptTarget, setPromptTarget] = useState("");
   const [focusMode, setFocus] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -749,6 +750,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
               accounts={ideAccounts}
               onStateChanged={applyStateFromSettings}
               onScreen={onScreen}
+              onPromptTargetChange={setPromptTarget}
             />
           </div>
           {/*
@@ -757,7 +759,18 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
             belongs to the app, not to a workspace, so switching tabs must not
             reset the orb mid-sentence.
           */}
-          <VoicePanel />
+          <VoicePanel
+            promptTarget={
+              session.terminals.some(
+                (terminal) =>
+                  terminal.name === promptTarget && terminal.accepts_prompts !== false,
+              )
+                ? promptTarget
+                : session.terminals.find(
+                    (terminal) => terminal.accepts_prompts !== false,
+                  )?.name ?? ""
+            }
+          />
         </div>
         {modeIntroFor === session.id && (
           <CodingModeIntro

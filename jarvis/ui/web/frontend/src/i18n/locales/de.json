@@ -3719,6 +3719,37 @@
       "kind_exited": "GESTOPPT",
       "kind_failed": "FEHLGESCHLAGEN",
       "gone": "{0} gibt es in diesem Workspace nicht mehr — das Terminal wurde geschlossen, seit die Benachrichtigung kam."
+    },
+    "voice_panel": {
+      "assistant_fallback": "Assistent",
+      "label": "Stimme",
+      "ready": "Bereit",
+      "listening": "Hört zu…",
+      "thinking": "Denkt nach…",
+      "speaking": "Spricht",
+      "error": "Sprachfunktion gestört",
+      "open": "Sprachbereich öffnen",
+      "open_title": "Sprachbereich öffnen — hier mit {0} sprechen",
+      "close": "Sprachbereich einklappen",
+      "hang_up": "Auflegen",
+      "hang_up_title": "Gespräch beenden",
+      "talk": "Mit {0} sprechen",
+      "talk_title": "Mit {0} sprechen — oder einfach das Aktivierungswort sagen",
+      "active_hint": "Zum Auflegen auf die Kugel klicken.",
+      "idle_hint": "Auf die Kugel klicken — oder das Aktivierungswort sagen — um mit {0} zu sprechen.",
+      "start_failed": "Das Zuhören konnte nicht gestartet werden — möglicherweise läuft bereits ein Gespräch."
+    },
+    "voice_drop": {
+      "hover": "Für den nächsten Prompt an {0} ablegen",
+      "reading": "Dateien werden für den nächsten Prompt an {0} gelesen…",
+      "ready_one": "1 Datei ist für den nächsten Prompt an {1} bereit.",
+      "ready_many": "{0} Dateien sind für den nächsten Prompt an {1} bereit.",
+      "using": "{0} Datei(en) werden dem Prompt an {1} hinzugefügt…",
+      "target_fallback": "einen Agenten",
+      "empty": "Dieser Drop enthielt keine verwendbare Datei.",
+      "no_target": "Öffne oder wähle zuerst ein Agent-Terminal aus.",
+      "choose": "Dateien auswählen",
+      "remove": "Diesen wartenden Kontext entfernen"
     }
   },
   "prompt_writer": {

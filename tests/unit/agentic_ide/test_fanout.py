@@ -26,6 +26,7 @@ import pytest
 
 from jarvis.agentic_ide import fanout
 from jarvis.agentic_ide.prompt_composer import ComposedPrompt
+from jarvis.agentic_ide.session import PendingPromptAttachmentBatch
 
 
 @dataclass
@@ -34,6 +35,11 @@ class FakeTerminal:
     agent: str = "claude"
     status: str = "live"
     pty_id: str | None = "pty-1"
+    pending_prompt_attachment_batches: list[PendingPromptAttachmentBatch] = field(
+        default_factory=list
+    )
+    pending_prompt_attachment_reservations: set[str] = field(default_factory=set)
+    pending_prompt_attachment_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 @dataclass
@@ -54,6 +60,7 @@ class Recorder:
 
     sent: dict[str, str] = field(default_factory=dict)
     composed_for: list[str] = field(default_factory=list)
+    attachments_for: dict[str, tuple[object, ...]] = field(default_factory=dict)
     active: int = 0
     peak: int = 0
     fail_compose_for: tuple[str, ...] = ()
@@ -64,6 +71,7 @@ class Recorder:
     async def compose(self, utterance: str, **kwargs) -> ComposedPrompt:
         name = kwargs["terminal_name"]
         self.composed_for.append(name)
+        self.attachments_for[name] = tuple(kwargs.get("attachments") or ())
         self.active += 1
         self.peak = max(self.peak, self.active)
         try:
@@ -110,6 +118,232 @@ async def test_every_addressed_terminal_receives_a_prompt() -> None:
     assert sorted(rec.sent) == ["Bruno", "Iris"]
     assert result.all_delivered is True
     assert [d.terminal for d in result.delivered] == ["Iris", "Bruno"]
+
+
+async def test_voice_orb_attachments_reach_exactly_the_next_spoken_prompt() -> None:
+    session = _session("Iris")
+    attachment = SimpleNamespace(name="layout.png")
+    session.terminals[0].pending_prompt_attachment_batches.append(
+        PendingPromptAttachmentBatch("batch-a", (attachment,), ("layout.png",))
+    )
+    rec = Recorder()
+
+    await fanout.deliver(
+        session=session,
+        terminals=["Iris"],
+        utterance="fix what the screenshot shows",
+        include_pending_attachments=True,
+        compose=rec.compose,
+        send=rec.send,
+    )
+
+    assert rec.attachments_for["Iris"] == (attachment,)
+    assert session.terminals[0].pending_prompt_attachment_batches == []
+
+
+async def test_manual_fanout_does_not_consume_a_voice_orb_drop() -> None:
+    session = _session("Iris")
+    attachment = SimpleNamespace(name="layout.png")
+    batch = PendingPromptAttachmentBatch("batch-a", (attachment,), ("layout.png",))
+    session.terminals[0].pending_prompt_attachment_batches.append(batch)
+    rec = Recorder()
+
+    await fanout.deliver(
+        session=session,
+        terminals=["Iris"],
+        utterance="an unrelated manual prompt",
+        compose=rec.compose,
+        send=rec.send,
+    )
+
+    assert rec.attachments_for["Iris"] == ()
+    assert session.terminals[0].pending_prompt_attachment_batches == [batch]
+
+
+async def test_voice_orb_attachments_survive_a_failed_delivery() -> None:
+    session = _session("Iris")
+    attachment = SimpleNamespace(name="layout.png")
+    batch = PendingPromptAttachmentBatch("batch-a", (attachment,), ("layout.png",))
+    session.terminals[0].pending_prompt_attachment_batches.append(batch)
+    rec = Recorder(fail_send_for=("Iris",))
+
+    await fanout.deliver(
+        session=session,
+        terminals=["Iris"],
+        utterance="fix what the screenshot shows",
+        include_pending_attachments=True,
+        compose=rec.compose,
+        send=rec.send,
+    )
+
+    assert session.terminals[0].pending_prompt_attachment_batches == [batch]
+    assert session.terminals[0].pending_prompt_attachment_reservations == set()
+
+
+async def test_overlapping_deliveries_reserve_batches_by_identity() -> None:
+    session = _session("Iris")
+    first = SimpleNamespace(name="first.png")
+    second = SimpleNamespace(name="second.png")
+    term = session.terminals[0]
+    term.pending_prompt_attachment_batches.append(
+        PendingPromptAttachmentBatch("batch-a", (first,), ("first.png",))
+    )
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    composed_attachments: list[tuple[object, ...]] = []
+
+    async def compose(utterance: str, **kwargs) -> ComposedPrompt:
+        attachments = tuple(kwargs.get("attachments") or ())
+        composed_attachments.append(attachments)
+        if attachments == (first,):
+            first_started.set()
+            await release_first.wait()
+        return ComposedPrompt(text=utterance)
+
+    async def send(_name: str, _text: str) -> SimpleNamespace:
+        return SimpleNamespace(submitted=True)
+
+    delivery_a = asyncio.create_task(
+        fanout.deliver(
+            session=session,
+            terminals=["Iris"],
+            utterance="first prompt",
+            include_pending_attachments=True,
+            compose=compose,
+            send=send,
+        )
+    )
+    await first_started.wait()
+    async with term.pending_prompt_attachment_lock:
+        term.pending_prompt_attachment_batches.append(
+            PendingPromptAttachmentBatch("batch-b", (second,), ("second.png",))
+        )
+    delivery_b = asyncio.create_task(
+        fanout.deliver(
+            session=session,
+            terminals=["Iris"],
+            utterance="second prompt",
+            include_pending_attachments=True,
+            compose=compose,
+            send=send,
+        )
+    )
+    await asyncio.sleep(0)
+    release_first.set()
+    await asyncio.gather(delivery_a, delivery_b)
+
+    assert composed_attachments == [(first,), (second,)]
+    assert term.pending_prompt_attachment_batches == []
+
+
+async def test_cancelled_delivery_releases_its_attachment_reservation() -> None:
+    session = _session("Iris")
+    attachment = SimpleNamespace(name="layout.png")
+    term = session.terminals[0]
+    batch = PendingPromptAttachmentBatch(
+        "batch-a", (attachment,), ("layout.png",)
+    )
+    term.pending_prompt_attachment_batches.append(batch)
+    composing = asyncio.Event()
+
+    async def compose(_utterance: str, **_kwargs) -> ComposedPrompt:
+        composing.set()
+        await asyncio.Event().wait()
+        return ComposedPrompt(text="unreachable")
+
+    task = asyncio.create_task(
+        fanout.deliver(
+            session=session,
+            terminals=["Iris"],
+            utterance="fix the layout",
+            include_pending_attachments=True,
+            compose=compose,
+        )
+    )
+    await composing.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert term.pending_prompt_attachment_batches == [batch]
+    assert term.pending_prompt_attachment_reservations == set()
+
+
+async def test_cancellation_while_waiting_for_gate_never_reserves_a_batch() -> None:
+    session = _session("Iris", "Bruno")
+    first_started = asyncio.Event()
+    never_release = asyncio.Event()
+    for index, term in enumerate(session.terminals):
+        attachment = SimpleNamespace(name=f"layout-{index}.png")
+        term.pending_prompt_attachment_batches.append(
+            PendingPromptAttachmentBatch(
+                f"batch-{index}", (attachment,), (attachment.name,)
+            )
+        )
+
+    async def compose(_utterance: str, **kwargs) -> ComposedPrompt:
+        if kwargs["terminal_name"] == "Iris":
+            first_started.set()
+            await never_release.wait()
+        return ComposedPrompt(text="brief")
+
+    task = asyncio.create_task(
+        fanout.deliver(
+            session=session,
+            terminals=["Iris", "Bruno"],
+            utterance="brief both panes",
+            include_pending_attachments=True,
+            compose=compose,
+            limit=1,
+        )
+    )
+    await first_started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert all(
+        term.pending_prompt_attachment_reservations == set()
+        for term in session.terminals
+    )
+
+
+async def test_cancellation_during_commit_still_consumes_a_sent_batch() -> None:
+    session = _session("Iris")
+    term = session.terminals[0]
+    attachment = SimpleNamespace(name="layout.png")
+    term.pending_prompt_attachment_batches.append(
+        PendingPromptAttachmentBatch("batch-a", (attachment,), ("layout.png",))
+    )
+    send_returned = asyncio.Event()
+
+    async def compose(utterance: str, **_kwargs) -> ComposedPrompt:
+        return ComposedPrompt(text=utterance)
+
+    async def send(_name: str, _text: str) -> SimpleNamespace:
+        await term.pending_prompt_attachment_lock.acquire()
+        send_returned.set()
+        return SimpleNamespace(submitted=True)
+
+    task = asyncio.create_task(
+        fanout.deliver(
+            session=session,
+            terminals=["Iris"],
+            utterance="fix the layout",
+            include_pending_attachments=True,
+            compose=compose,
+            send=send,
+        )
+    )
+    await send_returned.wait()
+    await asyncio.sleep(0)
+    task.cancel()
+    term.pending_prompt_attachment_lock.release()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert term.pending_prompt_attachment_batches == []
+    assert term.pending_prompt_attachment_reservations == set()
 
 
 async def test_prompts_are_composed_concurrently() -> None:

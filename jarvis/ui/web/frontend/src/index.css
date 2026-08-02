@@ -16,6 +16,134 @@
   scrollbar-width: thin;
   scrollbar-color: hsl(var(--border)) transparent;
 }
+
+@layer components {
+  /*
+   * Voice-orb state language. The procedural material stays inside the sphere;
+   * these two soft waves make lifecycle changes readable from across the desk.
+   * Every loop uses only transform and opacity, and none rotates, so the active
+   * surface remains calm even when a long prompt is being written.
+   */
+  .agentic-voice-orb-ring {
+    @apply pointer-events-none absolute inset-2 rounded-full border border-[#e7c46e]/45;
+    opacity: 0;
+    transform: scale(0.94);
+    will-change: transform, opacity;
+  }
+
+  .agentic-voice-orb-stage[data-state="listening"] .agentic-voice-orb-ring-a {
+    animation: agentic-orb-wave 1.35s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  }
+
+  .agentic-voice-orb-stage[data-state="thinking"] .agentic-voice-orb-ring-a,
+  .agentic-voice-orb-stage[data-state="thinking"] .agentic-voice-orb-ring-b {
+    animation: agentic-orb-work 1.55s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+
+  .agentic-voice-orb-stage[data-state="thinking"] .agentic-voice-orb-ring-b {
+    animation-delay: 0.58s;
+  }
+
+  .agentic-voice-orb-stage[data-state="speaking"] .agentic-voice-orb-ring-a,
+  .agentic-voice-orb-stage[data-state="speaking"] .agentic-voice-orb-ring-b {
+    animation: agentic-orb-wave 0.82s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  }
+
+  .agentic-voice-orb-stage[data-state="speaking"] .agentic-voice-orb-ring-b {
+    animation-delay: 0.31s;
+  }
+
+  .agentic-voice-orb-stage[data-drop-state="over"] .agentic-voice-orb-ring,
+  .agentic-voice-orb-stage[data-drop-state="reading"] .agentic-voice-orb-ring {
+    animation: agentic-orb-drop 1.1s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+    border-style: dashed;
+    border-width: 2px;
+  }
+
+  .agentic-voice-state-dot {
+    @apply h-2 w-2 rounded-full bg-muted-foreground/45;
+  }
+
+  .agentic-voice-state-dot[data-state="listening"],
+  .agentic-voice-state-dot[data-state="thinking"],
+  .agentic-voice-state-dot[data-state="speaking"] {
+    background: #e7c46e;
+    animation: agentic-orb-dot 1.25s ease-in-out infinite;
+  }
+
+  .agentic-voice-state-dot[data-state="thinking"] {
+    animation-duration: 0.85s;
+  }
+
+  .agentic-voice-state-dot[data-state="speaking"] {
+    animation-duration: 0.62s;
+  }
+
+  .agentic-voice-state-dot[data-state="error"] {
+    @apply bg-destructive;
+  }
+
+  @keyframes agentic-orb-wave {
+    0% {
+      opacity: 0.62;
+      transform: scale(0.91);
+    }
+    72%,
+    100% {
+      opacity: 0;
+      transform: scale(1.18);
+    }
+  }
+
+  @keyframes agentic-orb-work {
+    0%,
+    100% {
+      opacity: 0.16;
+      transform: scale3d(0.95, 1.01, 1);
+    }
+    50% {
+      opacity: 0.64;
+      transform: scale3d(1.13, 1.08, 1);
+    }
+  }
+
+  @keyframes agentic-orb-drop {
+    0%,
+    100% {
+      opacity: 0.42;
+      transform: scale(1.01);
+    }
+    50% {
+      opacity: 0.92;
+      transform: scale(1.12);
+    }
+  }
+
+  @keyframes agentic-orb-dot {
+    0%,
+    100% {
+      opacity: 0.45;
+      transform: scale(0.78);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.18);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .agentic-voice-orb-ring,
+    .agentic-voice-state-dot {
+      animation: none !important;
+    }
+
+    .agentic-voice-orb-stage[data-state]:not([data-state="idle"])
+      .agentic-voice-orb-ring-a {
+      opacity: 0.45;
+      transform: scale(1.08);
+    }
+  }
+}
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;

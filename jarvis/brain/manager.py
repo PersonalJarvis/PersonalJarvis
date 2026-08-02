@@ -5904,6 +5904,7 @@ class BrainManager:
         user_text: str,
         *,
         trace_id: UUID | None = None,
+        consume_pending_voice_attachments: bool = False,
     ) -> str | None:
         """Deliver a spoken instruction to the addressed Agentic-IDE terminal.
 
@@ -6022,6 +6023,9 @@ class BrainManager:
                     utterance=original,
                     instruction="",
                     language=out_lang,
+                    consume_pending_voice_attachments=(
+                        consume_pending_voice_attachments
+                    ),
                 )
 
         if not addressed:
@@ -6050,6 +6054,9 @@ class BrainManager:
                 session=session,
                 candidates=candidates,
                 language=out_lang,
+                consume_pending_voice_attachments=(
+                    consume_pending_voice_attachments
+                ),
             )
             if retry is not None:
                 return retry
@@ -6127,6 +6134,7 @@ class BrainManager:
             instruction=found.instruction,
             language=out_lang,
             assignments=assignments,
+            consume_pending_voice_attachments=consume_pending_voice_attachments,
         )
         if leftover is not None:
             # Armed only now: a question about the rest of the fleet is worth
@@ -6178,6 +6186,7 @@ class BrainManager:
         instruction: str,
         language: str,
         assignments: dict[str, str] | None = None,
+        consume_pending_voice_attachments: bool = False,
     ) -> str | None:
         """Compose and type one instruction into the addressed panes.
 
@@ -6212,6 +6221,7 @@ class BrainManager:
                 instruction=instruction,
                 assignments=assignments,
                 conversation=self._agentic_ide_conversation(utterance),
+                include_pending_attachments=consume_pending_voice_attachments,
             )
         except Exception:  # noqa: BLE001 - never crash the turn over a pane
             log.warning("Agentic IDE fast-path failed", exc_info=True)
@@ -6241,6 +6251,7 @@ class BrainManager:
         session: Any,
         candidates: list[str],
         language: str,
+        consume_pending_voice_attachments: bool = False,
     ) -> str | None:
         """Deliver the PREVIOUS turn's briefing when the user says it never went.
 
@@ -6324,6 +6335,7 @@ class BrainManager:
             utterance=previous,
             instruction="",
             language=language,
+            consume_pending_voice_attachments=consume_pending_voice_attachments,
         )
 
     def _ask_which_agentic_ide_terminal(
@@ -9098,6 +9110,7 @@ class BrainManager:
         publish_response: bool = True,
         history_override: Iterable[BrainMessage] | None = None,
         force_output_language: str | None = None,
+        consume_pending_voice_attachments: bool = False,
     ) -> str:
         """Generate a turn, optionally leaving its public response event to the caller.
 
@@ -9127,6 +9140,9 @@ class BrainManager:
                 prefer_tool_model=prefer_tool_model,
                 emit_tool_ack=emit_tool_ack,
                 force_output_language=force_output_language,
+                consume_pending_voice_attachments=(
+                    consume_pending_voice_attachments
+                ),
             )
         finally:
             # Keep the last completed turn inspectable for diagnostics/tests,
@@ -9154,6 +9170,7 @@ class BrainManager:
         prefer_tool_model: bool = False,
         emit_tool_ack: bool = True,
         force_output_language: str | None = None,
+        consume_pending_voice_attachments: bool = False,
     ) -> str:
         # 1. Intercept meta-commands (cancel, switch, depth override).
         # User request 2026-04-25: no standardised confirmation phrases
@@ -9620,7 +9637,9 @@ class BrainManager:
         # moves the UI even when a pane happens to share that word. Returns None
         # on every turn that does not address a terminal.
         ide_reply = await self._run_agentic_ide_fast_path(
-            user_text, trace_id=turn_trace_id,
+            user_text,
+            trace_id=turn_trace_id,
+            consume_pending_voice_attachments=consume_pending_voice_attachments,
         )
         if ide_reply is not None:
             await self._record_response_side_effects(
@@ -10859,6 +10878,7 @@ class BrainManager:
         on_progress: Callable[[], None] | None = None,
         allow_voice_confirm: bool = False,
         conversation_id: str | None = None,
+        consume_pending_voice_attachments: bool = False,
     ) -> AsyncIterator[str]:
         """Latency sprint 1: streaming variant of ``generate``.
 
@@ -10917,6 +10937,9 @@ class BrainManager:
                     on_progress=on_progress,
                     allow_voice_confirm=allow_voice_confirm,
                     conversation_id=conversation_id,
+                    consume_pending_voice_attachments=(
+                        consume_pending_voice_attachments
+                    ),
                 )
             finally:
                 # Sentinel signals "brain is done (or crashed)".

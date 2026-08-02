@@ -1213,6 +1213,29 @@ export interface AttachResult {
   delivered?: boolean;
   /** Present only when `analyze` was asked for. */
   analysis?: DropAttachment[];
+  /** Analysed files queued for this pane's next spoken prompt. */
+  staged_for_voice?: number;
+  /** Stable identity used to verify or cancel the pending orb drop. */
+  voice_batch_id?: string | null;
+}
+
+export interface VoiceAttachmentBatch {
+  batch_id: string;
+  files: string[];
+  reserved: boolean;
+}
+
+export interface OwnedVoiceAttachmentBatch extends VoiceAttachmentBatch {
+  terminal: string;
+}
+
+export interface VoiceAttachmentsResponse {
+  terminal: string;
+  batches: VoiceAttachmentBatch[];
+}
+
+export interface AllVoiceAttachmentsResponse {
+  batches: OwnedVoiceAttachmentBatch[];
 }
 
 /**
@@ -1239,6 +1262,8 @@ export async function attachToTerminal(
     analyze?: boolean;
     /** Default true. False stores and analyses without typing into the pane. */
     deliver?: boolean;
+    /** Queue the analysis for this pane's next spoken prompt. */
+    stageForVoice?: boolean;
   },
 ): Promise<AttachResult> {
   const form = new FormData();
@@ -1248,6 +1273,7 @@ export async function attachToTerminal(
   if (payload.submit) form.append("submit", "true");
   if (payload.analyze) form.append("analyze", "true");
   if (payload.deliver === false) form.append("deliver", "false");
+  if (payload.stageForVoice) form.append("stage_for_voice", "true");
 
   const res = await fetch(
     `/api/agentic-ide/terminals/${encodeURIComponent(name)}/attach`,
@@ -1255,6 +1281,34 @@ export async function attachToTerminal(
   );
   if (!res.ok) throw new Error(await detail(res));
   return (await res.json()) as AttachResult;
+}
+
+/** Read authoritative orb drops still waiting for one pane. */
+export function fetchVoiceAttachments(
+  name: string,
+): Promise<VoiceAttachmentsResponse> {
+  return getJson<VoiceAttachmentsResponse>(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/voice-attachments`,
+  );
+}
+
+/** Hydrate every pending orb receipt after navigation or a panel remount. */
+export function fetchAllVoiceAttachments(): Promise<AllVoiceAttachmentsResponse> {
+  return getJson<AllVoiceAttachmentsResponse>(
+    "/api/agentic-ide/voice-attachments",
+  );
+}
+
+/** Cancel one pending orb drop; the copied workspace file is left intact. */
+export async function removeVoiceAttachment(
+  name: string,
+  batchId: string,
+): Promise<void> {
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/voice-attachments/${encodeURIComponent(batchId)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) throw new Error(await detail(res));
 }
 
 export interface PromptResult {

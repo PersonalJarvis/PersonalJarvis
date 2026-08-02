@@ -3719,6 +3719,37 @@
       "kind_exited": "DETENIDO",
       "kind_failed": "FALLIDO",
       "gone": "{0} ya no está en este espacio de trabajo: ese terminal se cerró después de llegar la notificación."
+    },
+    "voice_panel": {
+      "assistant_fallback": "Asistente",
+      "label": "Voz",
+      "ready": "Listo",
+      "listening": "Escuchando…",
+      "thinking": "Pensando…",
+      "speaking": "Hablando",
+      "error": "Problema de voz",
+      "open": "Abrir el panel de voz",
+      "open_title": "Abrir el panel de voz — habla con {0} aquí",
+      "close": "Contraer el panel de voz",
+      "hang_up": "Colgar",
+      "hang_up_title": "Finalizar la conversación",
+      "talk": "Hablar con {0}",
+      "talk_title": "Habla con {0} — o di la palabra de activación",
+      "active_hint": "Haz clic en el orbe para colgar.",
+      "idle_hint": "Haz clic en el orbe — o di la palabra de activación — para hablar con {0}.",
+      "start_failed": "No se pudo empezar a escuchar — puede que ya haya una conversación en curso."
+    },
+    "voice_drop": {
+      "hover": "Soltar para el próximo prompt de {0}",
+      "reading": "Leyendo archivos para el próximo prompt de {0}…",
+      "ready_one": "1 archivo está listo para el próximo prompt de {1}.",
+      "ready_many": "{0} archivos están listos para el próximo prompt de {1}.",
+      "using": "Añadiendo {0} archivo(s) al prompt de {1}…",
+      "target_fallback": "un agente",
+      "empty": "Los elementos soltados no contenían ningún archivo utilizable.",
+      "no_target": "Abre o selecciona un terminal de agente antes de adjuntar un archivo.",
+      "choose": "Elegir archivos",
+      "remove": "Eliminar este contexto pendiente"
     }
   },
   "prompt_writer": {

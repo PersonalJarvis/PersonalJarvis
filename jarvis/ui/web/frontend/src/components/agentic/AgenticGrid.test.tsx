@@ -356,6 +356,17 @@ function renderGrid(session = BASE, extra: Record<string, unknown> = {}) {
   return { onSessionChanged, onClose, rerender };
 }
 
+describe("prompt target bridge", () => {
+  it("keeps the voice orb aimed at the written prompt target", async () => {
+    const onPromptTargetChange = vi.fn();
+    renderGrid(BASE, { onPromptTargetChange });
+
+    await waitFor(() => expect(onPromptTargetChange).toHaveBeenCalledWith("Mika"));
+    fireEvent.click(screen.getByTestId("prompt-target-Nova"));
+    await waitFor(() => expect(onPromptTargetChange).toHaveBeenLastCalledWith("Nova"));
+  });
+});
+
 describe("pane actions", () => {
   it("splitting right asks for a column beside the anchor", async () => {
     const { onSessionChanged } = renderGrid();

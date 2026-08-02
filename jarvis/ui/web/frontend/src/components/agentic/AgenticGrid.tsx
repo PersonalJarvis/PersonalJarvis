@@ -128,6 +128,8 @@ interface AgenticGridProps {
    * on its own has always been.
    */
   onScreen?: boolean;
+  /** Keep the voice orb aimed at the same pane as the written prompt bar. */
+  onPromptTargetChange?: (name: string) => void;
   /**
    * The row of open workspaces, rendered INSIDE this workspace's toolbar.
    *
@@ -517,6 +519,7 @@ export function AgenticGrid({
   onJumpToWorkspace,
   jumpTo = null,
   onScreen = true,
+  onPromptTargetChange,
 }: AgenticGridProps) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -581,6 +584,9 @@ export function AgenticGrid({
     };
   }, []);
   const [target, setTarget] = useState(session.terminals.find(takesPrompts)?.name ?? "");
+  useEffect(() => {
+    onPromptTargetChange?.(target);
+  }, [onPromptTargetChange, target]);
   const [statuses, setStatuses] = useState<Record<string, { status: PaneStatus; detail?: string }>>(
     {},
   );

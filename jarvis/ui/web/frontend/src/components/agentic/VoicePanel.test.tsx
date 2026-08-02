@@ -6,7 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * renders. Through `vi.hoisted` because the mock factory is lifted above
  * ordinary module code.
  */
-const { storeState } = vi.hoisted(() => ({
+const { pendingVoiceBatches, storeState } = vi.hoisted(() => ({
+  pendingVoiceBatches: new Map<
+    string,
+    { batch_id: string; files: string[]; reserved?: boolean }
+  >(),
   storeState: {} as Record<string, unknown>,
 }));
 
@@ -20,14 +24,53 @@ vi.mock("@/lib/voiceApi", () => ({
   requestVoiceHangup: vi.fn(async () => ({ stopped: true })),
 }));
 
+vi.mock("@/lib/agenticIdeApi", () => ({
+  attachToTerminal: vi.fn(async (name: string, payload: { files?: File[] }) => {
+    const files = payload.files?.map((file) => file.name) ?? [];
+    pendingVoiceBatches.set("batch-1", { batch_id: "batch-1", files });
+    return {
+      terminal: name,
+      references: ["@.jarvis/drops/layout.png"],
+      files,
+      copied: 1,
+      submitted: false,
+      delivered: false,
+      staged_for_voice: 1,
+      voice_batch_id: "batch-1",
+      analysis: [],
+    };
+  }),
+  fetchVoiceAttachments: vi.fn(async (terminal: string) => ({
+    terminal,
+    batches: Array.from(pendingVoiceBatches.values()).map((batch) => ({
+      ...batch,
+      reserved: batch.reserved ?? false,
+    })),
+  })),
+  fetchAllVoiceAttachments: vi.fn(async () => ({
+    batches: Array.from(pendingVoiceBatches.values()).map((batch) => ({
+      ...batch,
+      terminal: "Mika",
+      reserved: batch.reserved ?? false,
+    })),
+  })),
+  removeVoiceAttachment: vi.fn(async (_terminal: string, batchId: string) => {
+    pendingVoiceBatches.delete(batchId);
+  }),
+}));
+
+vi.mock("@/lib/sound", () => ({ playDropConfirm: vi.fn() }));
+
 import { VoicePanel } from "./VoicePanel";
 import * as api from "@/lib/voiceApi";
+import * as ideApi from "@/lib/agenticIdeApi";
 
 const pushToast = vi.fn();
 
 beforeEach(() => {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   window.localStorage.clear();
+  pendingVoiceBatches.clear();
   for (const key of Object.keys(storeState)) delete storeState[key];
   Object.assign(storeState, {
     voiceState: "idle",
@@ -49,7 +92,7 @@ describe("voice panel", () => {
     expect(screen.getByTestId("voice-panel")).toBeTruthy();
     const orb = screen.getByTestId("voice-orb-canvas");
     expect(orb.getAttribute("data-state")).toBe("idle");
-    expect(orb.getAttribute("style")).toContain("width: 160px");
+    expect(orb.getAttribute("style")).toContain("width: 176px");
     expect(screen.getByTestId("voice-panel-status").textContent).toBe("Ready");
     // The brand rule: the assistant's own name, never a hardcoded one.
     expect(screen.getByTestId("voice-orb-button").getAttribute("title")).toContain(
@@ -62,6 +105,79 @@ describe("voice panel", () => {
     fireEvent.click(screen.getByTestId("voice-orb-button"));
     await waitFor(() => expect(api.requestVoiceCall).toHaveBeenCalled());
     expect(api.requestVoiceHangup).not.toHaveBeenCalled();
+  });
+
+  it("stages a file dropped on the orb for the selected pane's next prompt", async () => {
+    render(<VoicePanel promptTarget="Mika" />);
+    const orb = screen.getByTestId("voice-orb-button");
+    const file = new File(["pixels"], "layout.png", { type: "image/png" });
+    const dataTransfer = {
+      files: [file],
+      types: ["Files"],
+      getData: () => "",
+      dropEffect: "none",
+    } as unknown as DataTransfer;
+
+    fireEvent.dragEnter(orb, { dataTransfer });
+    expect(screen.getByTestId("voice-orb-stage").getAttribute("data-drop-state")).toBe(
+      "over",
+    );
+    fireEvent.drop(orb, { dataTransfer });
+
+    await waitFor(() => expect(ideApi.attachToTerminal).toHaveBeenCalledTimes(1));
+    expect(ideApi.attachToTerminal).toHaveBeenCalledWith(
+      "Mika",
+      expect.objectContaining({
+        files: [file],
+        analyze: true,
+        deliver: false,
+        stageForVoice: true,
+      }),
+    );
+    expect(
+      (await screen.findByTestId("voice-orb-drop-context")).textContent,
+    ).toContain("layout.png");
+  });
+
+  it("keeps a receipt bound to its original pane until the backend consumes it", async () => {
+    const { rerender } = render(<VoicePanel promptTarget="Mika" />);
+    const file = new File(["pixels"], "layout.png", { type: "image/png" });
+    const dataTransfer = {
+      files: [file],
+      types: ["Files"],
+      getData: () => "",
+      dropEffect: "none",
+    } as unknown as DataTransfer;
+    fireEvent.drop(screen.getByTestId("voice-orb-button"), { dataTransfer });
+    const receipt = await screen.findByTestId("voice-orb-drop-context");
+    expect(receipt.textContent).toContain("Mika");
+
+    storeState.voiceState = "thinking";
+    rerender(<VoicePanel promptTarget="Bruno" />);
+    expect(screen.getByTestId("voice-orb-drop-context").textContent).toContain("Mika");
+    pendingVoiceBatches.clear();
+    storeState.voiceState = "speaking";
+    rerender(<VoicePanel promptTarget="Bruno" />);
+    await waitFor(() =>
+      expect(screen.queryByTestId("voice-orb-drop-context")).toBeNull(),
+    );
+  });
+
+  it("hydrates pending context after a panel remount and locks reserved context", async () => {
+    pendingVoiceBatches.set("batch-old", {
+      batch_id: "batch-old",
+      files: ["existing.png"],
+      reserved: true,
+    });
+    render(<VoicePanel promptTarget="Mika" />);
+
+    const receipt = await screen.findByTestId("voice-orb-drop-context");
+    expect(receipt.textContent).toContain("existing.png");
+    expect(receipt.textContent).toContain("Adding");
+    expect(
+      (screen.getByLabelText("Remove this pending context") as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 
   it("a click during a conversation hangs up", async () => {

@@ -37,6 +37,9 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``GET    /terminals/{name}/prompts``   → every prompt handed to that pane
 * ``POST   /terminals/{name}/prompt``    → type a prompt into it and press Enter
 * ``POST   /terminals/{name}/attach``    → drop/paste files onto a pane
+* ``GET    /voice-attachments``          → every pending orb-drop receipt
+* ``GET    /terminals/{name}/voice-attachments`` → pending orb-drop receipts
+* ``DELETE /terminals/{name}/voice-attachments/{batch_id}`` → cancel one drop
 * ``WS     /pty/{name}``                 → the pane's live terminal stream
 
 ``{name}`` accepts the call-sign ("t2", "T2") or a spoken phrase containing it
@@ -50,6 +53,7 @@ import asyncio
 import logging
 from dataclasses import asdict
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import (
     APIRouter,
@@ -90,6 +94,7 @@ from jarvis.agentic_ide.session import (
     MAX_TERMINAL_NAME,
     MAX_TERMINALS,
     MAX_WORKSPACES,
+    PendingPromptAttachmentBatch,
     Session,
     SessionError,
     SessionNotReady,
@@ -118,6 +123,13 @@ router = APIRouter(prefix="/api/agentic-ide", tags=["agentic-ide"])
 #: anybody. Panes still coming up after this are reported as undelivered rather
 #: than waited for indefinitely.
 SPAWN_READY_TIMEOUT_S = 20.0
+
+# The prompt composer already caps one analysed drop at 20k characters. Keep
+# repeated orb drops within the same total budget so a forgotten queue cannot
+# grow without bound or crowd the spoken instruction out of its own prompt.
+MAX_PENDING_VOICE_BATCHES = 8
+MAX_PENDING_VOICE_ATTACHMENTS = 16
+MAX_PENDING_VOICE_CHARS = 20_000
 
 
 async def _announce_coding_mode(request: Request) -> None:
@@ -2259,6 +2271,20 @@ async def get_prompt_history(
     )
 
 
+def _terminal_or_http_error(name: str) -> tuple[Session, Terminal]:
+    """Resolve a globally unique pane name with consistent HTTP errors."""
+    registry = get_registry()
+    found = registry.find_terminal(name)
+    if found is not None:
+        return found
+    if not registry.sessions:
+        raise HTTPException(status_code=409, detail="No Agentic-IDE session is running.")
+    known = ", ".join(t.name for s in registry.sessions for t in s.terminals) or "none"
+    raise HTTPException(
+        status_code=404, detail=f"No terminal called {name!r}. Running: {known}."
+    )
+
+
 @router.get("/terminals/{name}/report", summary="What one terminal is doing")
 async def terminal_report(name: str, lines: int = 40) -> dict:
     """Status plus the recent readable output of the terminal called ``name``."""
@@ -2266,6 +2292,83 @@ async def terminal_report(name: str, lines: int = 40) -> dict:
         return get_registry().report(name, lines)
     except SessionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/voice-attachments",
+    summary="List every file batch waiting for a spoken terminal prompt",
+)
+async def all_terminal_voice_attachments() -> dict:
+    """Hydrate the persistent orb panel after navigation or a remount."""
+    batches: list[dict] = []
+    for session in get_registry().sessions:
+        for term in session.terminals:
+            async with term.pending_prompt_attachment_lock:
+                batches.extend(
+                    {
+                        "terminal": term.name,
+                        "batch_id": batch.batch_id,
+                        "files": list(batch.files),
+                        "reserved": (
+                            batch.batch_id
+                            in term.pending_prompt_attachment_reservations
+                        ),
+                    }
+                    for batch in term.pending_prompt_attachment_batches
+                )
+    return {"batches": batches}
+
+
+@router.get(
+    "/terminals/{name}/voice-attachments",
+    summary="List files waiting for a terminal's next spoken prompt",
+)
+async def terminal_voice_attachments(name: str) -> dict:
+    """Return authoritative pending batches for the orb receipt."""
+    found = get_registry().find_terminal(name)
+    if found is None:
+        # A closed pane owns no pending context. Returning an empty authoritative
+        # list lets a preserved voice panel retire its old receipt cleanly.
+        return {"terminal": name, "batches": []}
+    _session, term = found
+    async with term.pending_prompt_attachment_lock:
+        batches = [
+            {
+                "batch_id": batch.batch_id,
+                "files": list(batch.files),
+                "reserved": (
+                    batch.batch_id in term.pending_prompt_attachment_reservations
+                ),
+            }
+            for batch in term.pending_prompt_attachment_batches
+        ]
+    return {"terminal": term.name, "batches": batches}
+
+
+@router.delete(
+    "/terminals/{name}/voice-attachments/{batch_id}",
+    summary="Remove files waiting for a terminal's spoken prompt",
+)
+async def remove_terminal_voice_attachments(name: str, batch_id: str) -> dict:
+    """Cancel one unconsumed orb drop; stored files remain in the workspace."""
+    found = get_registry().find_terminal(name)
+    if found is None:
+        return {"terminal": name, "batch_id": batch_id, "removed": False}
+    _session, term = found
+    async with term.pending_prompt_attachment_lock:
+        if batch_id in term.pending_prompt_attachment_reservations:
+            raise HTTPException(
+                status_code=409,
+                detail="That attachment batch is already being added to a prompt.",
+            )
+        before = len(term.pending_prompt_attachment_batches)
+        term.pending_prompt_attachment_batches[:] = [
+            batch
+            for batch in term.pending_prompt_attachment_batches
+            if batch.batch_id != batch_id
+        ]
+        removed = len(term.pending_prompt_attachment_batches) != before
+    return {"terminal": term.name, "batch_id": batch_id, "removed": removed}
 
 
 @router.post("/terminals/{name}/attach", summary="Drop or paste files onto a terminal")
@@ -2277,6 +2380,7 @@ async def terminal_attach(
     note: str | None = Form(default=None),  # noqa: B008
     analyze: bool = Form(default=False),  # noqa: B008
     deliver: bool = Form(default=True),  # noqa: B008
+    stage_for_voice: bool = Form(default=False),  # noqa: B008
 ) -> dict:
     """Put dropped or pasted files in front of the agent in terminal ``name``.
 
@@ -2306,20 +2410,26 @@ async def terminal_attach(
       pane, for a caller that is assembling a prompt rather than handing the
       agent a path right now. The files are on disk and referenced either way,
       so nothing is lost if the user then walks away.
+    * ``stage_for_voice=true`` keeps the returned analyses on this pane until
+      its next spoken prompt is composed. It requires ``deliver=false`` so one
+      gesture cannot both type a loose path and attach the same file to a later
+      brief.
     """
+    if stage_for_voice and deliver:
+        raise HTTPException(
+            status_code=422,
+            detail="Staging a voice-prompt attachment requires deliver=false.",
+        )
+    # Staging without analysis would preserve only a filename, which is exactly
+    # what makes screenshots useless to text-only coding CLIs. Treat the staging
+    # flag as the stronger request instead of relying on every client to send
+    # both booleans forever.
+    analyze = analyze or stage_for_voice
     registry = get_registry()
     # Resolved across every open workspace, not just the front one: call-signs
     # are unique across them, and a file dropped on a pane belongs to THAT
     # pane's folder — which is also where a copied file has to land.
-    found = registry.find_terminal(name)
-    if found is None:
-        if not registry.sessions:
-            raise HTTPException(status_code=409, detail="No Agentic-IDE session is running.")
-        known = ", ".join(t.name for s in registry.sessions for t in s.terminals) or "none"
-        raise HTTPException(
-            status_code=404, detail=f"No terminal called {name!r}. Running: {known}."
-        )
-    session, term = found
+    session, term = _terminal_or_http_error(name)
 
     references: list[str] = []
     stored_names: list[str] = []
@@ -2407,9 +2517,45 @@ async def terminal_attach(
             detail="That drop carried nothing this pane could use.",
         )
 
-    analysis: list[dict] = []
+    analysis_items: list[drop_analysis.DropAnalysis] = []
     if analyze and readable:
-        analysis = [item.to_dict() for item in await _analyze_drops(readable)]
+        analysis_items = await _analyze_drops(readable)
+
+    voice_batch: PendingPromptAttachmentBatch | None = None
+    if stage_for_voice and analysis_items:
+        voice_batch = PendingPromptAttachmentBatch(
+            batch_id=uuid4().hex,
+            attachments=tuple(analysis_items),
+            files=tuple(stored_names),
+        )
+        async with term.pending_prompt_attachment_lock:
+            pending = term.pending_prompt_attachment_batches
+            attachment_count = sum(len(batch.attachments) for batch in pending)
+            char_count = sum(
+                len(item.name) + len(item.reference) + len(item.detail) + len(item.note)
+                for batch in pending
+                for item in batch.attachments
+            )
+            new_chars = sum(
+                len(item.name) + len(item.reference) + len(item.detail) + len(item.note)
+                for item in analysis_items
+            )
+            if (
+                len(pending) >= MAX_PENDING_VOICE_BATCHES
+                or attachment_count + len(analysis_items)
+                > MAX_PENDING_VOICE_ATTACHMENTS
+                or char_count + new_chars > MAX_PENDING_VOICE_CHARS
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This pane already has the maximum amount of voice-prompt "
+                        "context waiting. Use or remove a pending drop first."
+                    ),
+                )
+            pending.append(voice_batch)
+
+    analysis = [item.to_dict() for item in analysis_items]
 
     payload = " ".join(references)
     if note and note.strip():
@@ -2445,6 +2591,8 @@ async def terminal_attach(
         "submitted": bool(submit and delivered),
         "delivered": delivered,
         "analysis": analysis,
+        "staged_for_voice": len(analysis_items) if stage_for_voice else 0,
+        "voice_batch_id": voice_batch.batch_id if voice_batch else None,
     }
 
 

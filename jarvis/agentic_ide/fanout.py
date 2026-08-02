@@ -130,6 +130,59 @@ def _unique(terminals: Sequence[str]) -> list[str]:
     return out
 
 
+async def _reserve_prompt_attachments(term: Any) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+    """Reserve unclaimed batches and return both batches and flat analyses."""
+    lock = term.pending_prompt_attachment_lock
+    async with lock:
+        batches = tuple(
+            batch
+            for batch in term.pending_prompt_attachment_batches
+            if batch.batch_id not in term.pending_prompt_attachment_reservations
+        )
+        term.pending_prompt_attachment_reservations.update(
+            batch.batch_id for batch in batches
+        )
+    attachments = tuple(
+        attachment for batch in batches for attachment in batch.attachments
+    )
+    return batches, attachments
+
+
+async def _finish_prompt_attachments(
+    term: Any, batches: Sequence[Any], *, consume: bool
+) -> None:
+    """Commit or release reservations without touching later drops."""
+    if not batches:
+        return
+    batch_ids = {batch.batch_id for batch in batches}
+    async with term.pending_prompt_attachment_lock:
+        if consume:
+            term.pending_prompt_attachment_batches[:] = [
+                batch
+                for batch in term.pending_prompt_attachment_batches
+                if batch.batch_id not in batch_ids
+            ]
+        term.pending_prompt_attachment_reservations.difference_update(batch_ids)
+
+
+async def _finish_prompt_attachments_shielded(
+    term: Any, batches: Sequence[Any], *, consume: bool
+) -> None:
+    """Settle a reservation even when its delivery task is being cancelled."""
+    if not batches:
+        return
+    cleanup = asyncio.create_task(
+        _finish_prompt_attachments(term, batches, consume=consume)
+    )
+    try:
+        await asyncio.shield(cleanup)
+    except asyncio.CancelledError:
+        # Shield keeps the state transition alive; wait for its lock-protected
+        # commit before forwarding cancellation to the caller.
+        await cleanup
+        raise
+
+
 async def _default_compose(utterance: str, **kwargs: Any) -> Any:
     from .prompt_composer import compose as compose_prompt
 
@@ -153,6 +206,7 @@ async def deliver(
     compose: Callable[..., Awaitable[Any]] | None = None,
     send: Callable[[str, str], Awaitable[Any]] | None = None,
     limit: int = DEFAULT_CONCURRENCY,
+    include_pending_attachments: bool = False,
 ) -> FanOutResult:
     """Compose and deliver a prompt for each of ``terminals``.
 
@@ -169,6 +223,10 @@ async def deliver(
 
     ``compose`` and ``send`` are injectable so this can be tested without a live
     PTY or a provider; production leaves them at their defaults.
+
+    ``include_pending_attachments`` belongs only to the spoken Agentic-IDE
+    delivery path. Manual REST/CLI fan-out must not steal a drop that was
+    explicitly staged for the next spoken prompt.
 
     Never raises for a single pane. A pane that is missing, not running, whose
     prompt could not be written, or whose PTY write failed comes back as an
@@ -238,7 +296,15 @@ async def deliver(
             )
 
         own_instruction = (assignments or {}).get(term.name) or instruction
+        pending_batches: tuple[Any, ...] = ()
+        pending_attachments: tuple[Any, ...] = ()
         async with gate:
+            # Reserve after acquiring the concurrency slot so cancellation
+            # while waiting cannot leave an invisible batch stuck as reserved.
+            if include_pending_attachments:
+                pending_batches, pending_attachments = (
+                    await _reserve_prompt_attachments(term)
+                )
             try:
                 from .session import AGENT_DISPLAY
 
@@ -249,8 +315,17 @@ async def deliver(
                     agent_display=AGENT_DISPLAY.get(term.agent, term.agent),
                     instruction=own_instruction,
                     conversation=tuple(conversation or ()),
+                    attachments=pending_attachments,
                 )
+            except asyncio.CancelledError:
+                await _finish_prompt_attachments_shielded(
+                    term, pending_batches, consume=False
+                )
+                raise
             except Exception as exc:  # noqa: BLE001 - one pane must not sink the fleet
+                await _finish_prompt_attachments_shielded(
+                    term, pending_batches, consume=False
+                )
                 log.warning(
                     "Agentic IDE fan-out: composing for %s failed", term.name,
                     exc_info=True,
@@ -264,6 +339,9 @@ async def deliver(
 
         text = getattr(composed, "text", "") or ""
         if not text.strip():
+            await _finish_prompt_attachments_shielded(
+                term, pending_batches, consume=False
+            )
             # An empty prompt would submit a bare Enter into the agent, which
             # reads as "the user pressed return" and can re-run its last task.
             return Delivery(
@@ -275,7 +353,15 @@ async def deliver(
 
         try:
             sent = await send_fn(term.name, text)
+        except asyncio.CancelledError:
+            await _finish_prompt_attachments_shielded(
+                term, pending_batches, consume=False
+            )
+            raise
         except Exception as exc:  # noqa: BLE001 - report, never propagate
+            await _finish_prompt_attachments_shielded(
+                term, pending_batches, consume=False
+            )
             log.info("Agentic IDE fan-out: could not send to %s: %s", term.name, exc)
             return Delivery(
                 terminal=term.name,
@@ -283,6 +369,10 @@ async def deliver(
                 reason_code="send_failed",
                 reason=f"it did not accept the prompt ({exc})",
             )
+
+        await _finish_prompt_attachments_shielded(
+            term, pending_batches, consume=True
+        )
 
         # The sender reports whether the agent actually STARTED. A sender that
         # says nothing leaves it None (unknown) rather than claiming success —

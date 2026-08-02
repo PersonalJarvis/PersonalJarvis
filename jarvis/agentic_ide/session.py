@@ -783,6 +783,15 @@ class PaneViewer:
     rows: int
 
 
+@dataclass(frozen=True, slots=True)
+class PendingPromptAttachmentBatch:
+    """One explicitly targeted drop waiting for a spoken pane prompt."""
+
+    batch_id: str
+    attachments: tuple[Any, ...]
+    files: tuple[str, ...]
+
+
 @dataclass(slots=True)
 class Terminal:
     """One named pane: a call-sign, an agent, and its live PTY (if attached)."""
@@ -853,6 +862,20 @@ class Terminal:
     # UI is opened, never in the workspace-state hot path.
     prompt_records: list[prompt_history.PromptHistoryEntry] = field(
         default_factory=list, repr=False, compare=False
+    )
+    # Explicitly targeted drops waiting for this pane's next spoken prompt.
+    # A batch is reserved by identity before composition and removed only after
+    # a successful PTY write. The lock protects short state transitions; model
+    # and PTY awaits never run while it is held. Ephemeral by design: this is a
+    # pending gesture, not workspace history worth restoring after a restart.
+    pending_prompt_attachment_batches: list[PendingPromptAttachmentBatch] = field(
+        default_factory=list, repr=False, compare=False
+    )
+    pending_prompt_attachment_reservations: set[str] = field(
+        default_factory=set, repr=False, compare=False
+    )
+    pending_prompt_attachment_lock: asyncio.Lock = field(
+        default_factory=asyncio.Lock, repr=False, compare=False
     )
     # When the last prompt was handed to this pane, as a wall-clock timestamp.
     #
