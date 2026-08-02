@@ -421,8 +421,8 @@ PersonalJarvis/
 │   ├── safety/              #   L3  The four risk tiers and the approval path
 │   ├── channels/            #   L7  Telegram, Discord, and the shared brain behind them
 │   ├── telephony/           #   L7  Outbound and inbound calls (optional extra)
-│   ├── plugins/             #   ——  Every pluggable backend, wired by entry point
-│   ├── cli_ctl/             #   ——  The jarvis / jarvisctl / jctl client
+│   ├── plugins/             #       Every pluggable backend, wired by entry point
+│   ├── cli_ctl/             #       The jarvis / jarvisctl / jctl client
 │   └── ui/web/              #   L7  FastAPI server + the React desktop app
 ├── ui/                      # Orb overlay; loaded by jarvis at runtime
 ├── board-backend/           # Standalone federation service (signed Board aggregates)
