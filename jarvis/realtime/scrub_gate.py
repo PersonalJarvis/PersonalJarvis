@@ -239,6 +239,25 @@ class ScrubHoldGate:
         self._consume_hold_clock()
         return out
 
+    def trust_direct_speech(self) -> None:
+        """Clear the gate for audio rendering text Jarvis itself scrubbed.
+
+        A delegate readback is injected through the provider's direct-speech
+        channel, so its audio has no MODEL transcript to vet — the opening
+        hold can never clear, and ``fail_closed`` then drops the whole answer
+        at the turn boundary. Measured live 2026-08-02: the action ran, the
+        reply existed, and the user heard nothing but "keeping the turn
+        text-only".
+
+        Re-gating this audio protects nothing: the text passed
+        ``scrub_for_voice`` before it was ever sent (ADR-0010). The trailing
+        kill switch is untouched — a later transcript that does leak still
+        sets ``_hard_leak`` and drops everything unplayed.
+        """
+        self._transcript_seen = True
+        self._coverage_active = True
+        self._cleared = True
+
     def fail_closed(self) -> bool:
         """Drop a completed response that never produced any transcript."""
         if self._hard_leak or not self._pending or self._transcript_seen:

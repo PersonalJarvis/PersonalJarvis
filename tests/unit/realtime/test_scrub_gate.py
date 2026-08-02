@@ -426,3 +426,40 @@ async def test_repeated_pushes_before_any_transcript_stay_closed():
     assert await gate.push_audio(_chunk(9_600)) == []
     assert await gate.push_audio(_chunk(9_600)) == []
     assert gate.fail_closed() is True
+
+
+@pytest.mark.asyncio
+async def test_trust_direct_speech_releases_audio_that_has_no_transcript():
+    """A delegate readback renders text Jarvis itself scrubbed.
+
+    Its audio carries no MODEL transcript, so the opening hold could never
+    clear and the turn boundary dropped the whole answer as "no_transcript".
+    Measured live 2026-08-02: the action ran, the reply existed, the user
+    heard nothing.
+    """
+    gate = ScrubHoldGate(language="en")
+    assert await gate.push_audio(_chunk(4)) == []  # held, as before
+
+    gate.trust_direct_speech()
+
+    assert gate.release_available()
+    assert gate.fail_closed() is False
+    assert gate.hard_leak_pending() is False
+
+
+@pytest.mark.asyncio
+async def test_trust_direct_speech_keeps_the_trailing_kill_switch():
+    """The relaxation is bounded: it clears the OPENING hold, nothing else.
+
+    Anything that leaks in a later transcript must still drop every unplayed
+    chunk, exactly as it would without the trust call.
+    """
+    gate = ScrubHoldGate(language="en")
+    gate.trust_direct_speech()
+    assert await gate.push_audio(_chunk(4))
+
+    await gate.feed_transcript(
+        "Traceback (most recent call last):\n  File x\nValueError: y\n\n"
+    )
+    assert gate.hard_leak_pending() is True
+    assert await gate.push_audio(_chunk(4)) == []

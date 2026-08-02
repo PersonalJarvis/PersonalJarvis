@@ -5191,6 +5191,17 @@ class RealtimeVoiceSession:
                 send_speech = getattr(self._session, "send_speech", None)
                 if callable(send_speech):
                     await send_speech(trusted_reply)
+                    if getattr(
+                        self._session, "direct_speech_is_authoritative", False
+                    ):
+                        # This audio renders text Jarvis already scrubbed, so
+                        # it carries no model transcript for the gate to vet.
+                        # Without this the whole answer is dropped at the turn
+                        # boundary as "output transcript missing" — the action
+                        # ran and the user heard nothing.
+                        self._gate.trust_direct_speech()
+                        for chunk in self._gate.release_available():
+                            await self._emit_audio(chunk)
                 else:
                     await self._session.send_text(
                         _delegate_result_prompt(

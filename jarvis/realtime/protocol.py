@@ -108,6 +108,16 @@ class RealtimeSession(Protocol):
     every completed turn so a provider-internal transport rebuild (e.g. the
     openai_realtime BUG-064 stack) can restore context without a wire call.
 
+    Optional capability (probed with ``getattr``, never required): a session
+    whose direct-speech channel renders text VERBATIM may expose
+    ``direct_speech_is_authoritative = True``. The orchestrator then clears
+    the scrub hold for that audio, because the text it renders was scrubbed
+    by Jarvis before it was sent (ADR-0010) and carries no model transcript
+    for the gate to vet — without it the whole delegate answer is dropped at
+    the turn boundary as "output transcript missing". Providers that do not
+    declare it keep failing closed, which is the correct default for anything
+    the model itself generates.
+
     A former optional ``renders_pinned_voice`` voice-identity capability
     (BUG-086 escalation) was removed 2026-07-21: routing delegate replies
     to the surface TTS produced an audibly different voice on every
