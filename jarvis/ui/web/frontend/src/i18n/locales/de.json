@@ -2272,7 +2272,14 @@
     "node_details": "{0} ({1}) · {2} {3}",
     "backlink_one": "Backlink",
     "backlink_many": "Backlinks",
-    "unresolved": "nicht aufgelöst"
+    "unresolved": "nicht aufgelöst",
+    "dimension_label": "Kartenansicht",
+    "dimension_2d": "2D",
+    "dimension_3d": "3D",
+    "dimension_2d_title": "Karte flach anzeigen",
+    "dimension_3d_title": "Karte im Raum anzeigen, zum Drehen ziehen",
+    "dimension_unavailable": "Dieser Rechner kann keine 3D-Grafik darstellen, die Karte bleibt flach.",
+    "loading_3d": "3D-Karte wird geladen…"
   },
   "tree_sidebar": {
     "load_error": "Konnte das Wiki nicht laden.",

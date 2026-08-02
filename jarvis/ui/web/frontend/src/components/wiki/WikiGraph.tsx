@@ -1,13 +1,28 @@
-// Force-directed 2D graph of the Obsidian-vault wikilink network.
+// Force-directed graph of the Obsidian-vault wikilink network.
 //
 // Owned by Agent C of Phase B3. Pure view component — it fetches
 // `/api/wiki/graph` via React Query and renders nodes/edges with
 // `react-force-graph-2d`. No filter chips, no custom force tweaks; this is the
 // landing view inside the Wiki tab, so it stays minimal and fast.
 //
+// This file owns the DATA and the chrome; the projection is a choice. The flat
+// canvas below is the default and lives here; the 3D scene is `WikiGraph3D`,
+// lazily loaded so nobody downloads a WebGL renderer to read a flat map. Both
+// draw the same nodes, the same colours and the same size encoding out of
+// `lib/wikiGraph.ts`, so switching between them changes the projection and
+// nothing else.
+//
 // Visual contract: docs/plans/b3/00-OVERVIEW.md §3. Node colours live in
 // `lib/wikiGraph.ts:NODE_COLOUR` — never hardcoded here.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import ForceGraph2D from "react-force-graph-2d";
 import type { ForceGraphMethods, NodeObject } from "react-force-graph-2d";
@@ -16,14 +31,26 @@ import {
   BROKEN_EDGE_COLOUR,
   clampCenterToView,
   NODE_COLOUR,
+  nodeSizeScore,
   sizeChanged,
   toGraphData,
   type RenderEdge,
   type RenderNode,
   type WikiGraphPayload,
 } from "@/lib/wikiGraph";
+import { useGraphDimension } from "@/lib/graphDimension";
+import { GraphDimensionToggle } from "@/components/wiki/GraphDimensionToggle";
 import { useEventStore } from "@/store/events";
 import { useT, useUiLanguage } from "@/i18n";
+
+// Three.js and the WebGL renderer are by far the heaviest thing this app can
+// pull in. Keeping them behind `lazy` means the chunk is fetched the first
+// time somebody actually asks for the 3D map, and never otherwise.
+const WikiGraph3D = lazy(() =>
+  import("@/components/wiki/WikiGraph3D").then((mod) => ({
+    default: mod.WikiGraph3D,
+  })),
+);
 
 const GRAPH_QUERY_KEY = ["wiki", "graph"] as const;
 
@@ -83,13 +110,14 @@ function edgeDetails(
   return `${source} → ${target}${relationship ? ` · ${relationship}` : ""}`;
 }
 
-/** Node radius in graph units — shared by the hit area and the label offset. */
-function nodeSizeScore(node: RenderNode, isActive: boolean): number {
-  const backlinks = node.backlinkCount ?? 0;
-  // Range 1.0 ... 2.6 → with nodeRelSize=2 that's a node radius of roughly
-  // 2.8 px (leaf) ... 4.6 px (hub).
-  const sizeScore = 1.0 + Math.min(backlinks, 8) * 0.2;
-  return isActive ? sizeScore * 1.5 : sizeScore;
+/**
+ * Node radius in graph units — shared by the hit area and the label offset.
+ * Range 1.0 … 2.6, so with `nodeRelSize=2` a dot is roughly 2.8 px (leaf) to
+ * 4.6 px (hub). The scale itself lives in `lib/wikiGraph.ts` so the 3D map
+ * sizes its spheres by exactly the same rule.
+ */
+function sizeOf(node: RenderNode, isActive: boolean): number {
+  return nodeSizeScore(node.backlinkCount ?? 0, isActive);
 }
 
 export interface WikiGraphProps {
@@ -128,6 +156,14 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
   const selectNode = useCallback((slug: string) => {
     if (slug) onNodeClickRef.current(slug);
   }, []);
+
+  // Flat canvas or WebGL scene. Shared with the UltraWiki map, and already
+  // degraded back to flat on a machine that cannot render 3D at all.
+  const { dimension } = useGraphDimension();
+  const isSpatial = dimension === "3d";
+  // The Center button drives two very different cameras. The flat one is reset
+  // imperatively below; the 3D scene watches this counter and re-frames itself.
+  const [resetTick, setResetTick] = useState(0);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: GRAPH_QUERY_KEY,
@@ -394,6 +430,10 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
   );
 
   const handleResetView = useCallback((): void => {
+    // Bumped FIRST, because everything below is flat-canvas work that bails
+    // out the moment the 3D scene is the one on screen. The scene re-frames
+    // its own camera off this counter.
+    setResetTick((tick) => tick + 1);
     const ref = graphRef.current;
     if (!ref) return;
     // User explicitly asked for centring → clear the pan-touched flag
@@ -577,7 +617,7 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
 
   const nodeVal = useCallback(
     (node: NodeObject<RenderNode>) =>
-      nodeSizeScore(node as RenderNode, node.id === highlightRef.current),
+      sizeOf(node as RenderNode, node.id === highlightRef.current),
     [],
   );
 
@@ -599,7 +639,7 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
       const isActive = node.id === highlightRef.current;
       // Match the nodeVal calculation so label distance stays consistent with
       // the dot edge across all node sizes.
-      const radius = nodeSizeScore(node as RenderNode, isActive) * 2;
+      const radius = sizeOf(node as RenderNode, isActive) * 2;
       if (isActive) {
         ctx.save();
         ctx.beginPath();
@@ -750,15 +790,18 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
       role="group"
       aria-label={t("wiki_graph.relationship_graph")}
     >
-      <button
-        type="button"
-        onClick={handleResetView}
-        data-testid="wiki-graph-reset-view"
-        className="absolute top-3 right-3 z-10 rounded-md border border-border bg-card/80 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur transition hover:text-foreground hover:bg-card"
-        title={t("wiki_graph.reset_view_title")}
-      >
-        {t("wiki_graph.center")}
-      </button>
+      <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+        <GraphDimensionToggle />
+        <button
+          type="button"
+          onClick={handleResetView}
+          data-testid="wiki-graph-reset-view"
+          className="rounded-md border border-border bg-card/80 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur transition hover:text-foreground hover:bg-card"
+          title={t("wiki_graph.reset_view_title")}
+        >
+          {t("wiki_graph.center")}
+        </button>
+      </div>
       <ul data-testid="wiki-graph-node-list" className="sr-only">
         {nodeListItems}
       </ul>
@@ -766,6 +809,29 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
         {edgeListItems}
       </ul>
 
+      {isSpatial ? (
+        <Suspense
+          fallback={
+            <div
+              data-testid="wiki-graph-3d-loading"
+              className="flex h-full items-center justify-center text-sm text-muted-foreground"
+            >
+              {t("wiki_graph.loading_3d")}
+            </div>
+          }
+        >
+          <WikiGraph3D
+            graphData={graphData}
+            width={winSize.w}
+            height={winSize.h}
+            highlightSlug={highlightSlug}
+            onNodeClick={selectNode}
+            resetSignal={resetTick}
+            nodeLabel={nodeLabel}
+            linkLabel={linkLabel}
+          />
+        </Suspense>
+      ) : (
       <ForceGraph2D<RenderNode, RenderEdge>
         // NO remount key. react-force-graph-2d (via react-kapsule) maps the
         // width/height props onto live `.width()/.height()` calls that resize
@@ -826,6 +892,7 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
         onEngineStop={handleEngineStop}
         onNodeClick={handleNodeClick}
       />
+      )}
     </div>
   );
 }

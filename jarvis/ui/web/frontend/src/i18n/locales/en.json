@@ -2273,7 +2273,14 @@
     "node_details": "{0} ({1}) · {2} {3}",
     "backlink_one": "backlink",
     "backlink_many": "backlinks",
-    "unresolved": "unresolved"
+    "unresolved": "unresolved",
+    "dimension_label": "Map view",
+    "dimension_2d": "2D",
+    "dimension_3d": "3D",
+    "dimension_2d_title": "Show the map flat",
+    "dimension_3d_title": "Show the map in space, rotate it by dragging",
+    "dimension_unavailable": "This machine cannot render 3D graphics, so the map stays flat.",
+    "loading_3d": "Loading the 3D map…"
   },
   "tree_sidebar": {
     "load_error": "Could not load the wiki.",

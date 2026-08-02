@@ -2272,7 +2272,14 @@
     "node_details": "{0} ({1}) · {2} {3}",
     "backlink_one": "retroenlace",
     "backlink_many": "retroenlaces",
-    "unresolved": "sin resolver"
+    "unresolved": "sin resolver",
+    "dimension_label": "Vista del mapa",
+    "dimension_2d": "2D",
+    "dimension_3d": "3D",
+    "dimension_2d_title": "Mostrar el mapa plano",
+    "dimension_3d_title": "Mostrar el mapa en el espacio, arrastra para girarlo",
+    "dimension_unavailable": "Este equipo no puede representar gráficos 3D, así que el mapa se queda plano.",
+    "loading_3d": "Cargando el mapa 3D…"
   },
   "tree_sidebar": {
     "load_error": "No se pudo cargar el wiki.",
