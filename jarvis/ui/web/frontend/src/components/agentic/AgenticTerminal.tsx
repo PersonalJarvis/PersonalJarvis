@@ -97,6 +97,10 @@ import {
   alignTerminalCells,
   syncTerminalFont,
 } from "@/lib/terminalFont";
+import {
+  activateTerminalLink,
+  TERMINAL_OSC_LINK_HANDLER,
+} from "@/lib/terminalLinks";
 import { installPasteBridge } from "./terminalPaste";
 import { createKeyEventChain } from "./terminalKeyChain";
 import { installNewlineBridge } from "./terminalNewline";
@@ -440,6 +444,10 @@ export function AgenticTerminal({
       // Instant scrolling: an agent that redraws a live status line while
       // animating a scroll leaves visible tearing.
       smoothScrollDuration: 0,
+      // Plain clicks belong to text selection. xterm otherwise treats an
+      // ordinary click on an OSC-8 link as navigation and shows a native
+      // warning dialog inside the desktop WebView.
+      linkHandler: TERMINAL_OSC_LINK_HANDLER,
       // Windows only. ConPTY re-emits and re-wraps lines in a way a POSIX pty
       // never does; without telling xterm which backend it is talking to, those
       // re-emitted lines pile up as duplicated, half-overwritten rows. Harmless
@@ -458,7 +466,7 @@ export function AgenticTerminal({
     const disposeQuerySuppression = installQuerySuppression(term.parser);
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.loadAddon(new WebLinksAddon());
+    term.loadAddon(new WebLinksAddon(activateTerminalLink));
     // Character WIDTH, not appearance: without this xterm measures emoji and
     // many box/symbol glyphs as one cell while the agent on the other side
     // counted two, and every such glyph shifts the rest of the line one column

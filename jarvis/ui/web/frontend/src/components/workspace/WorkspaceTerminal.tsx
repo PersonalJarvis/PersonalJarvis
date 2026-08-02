@@ -15,6 +15,10 @@ import "@xterm/xterm/css/xterm.css";
 import { Terminal as TerminalIcon, AlertCircle } from "lucide-react";
 import { installNewlineBridge } from "../agentic/terminalNewline";
 import { TERMINAL_FONT_STACK, syncTerminalFont } from "@/lib/terminalFont";
+import {
+  activateTerminalLink,
+  TERMINAL_OSC_LINK_HANDLER,
+} from "@/lib/terminalLinks";
 
 type Status = "connecting" | "live" | "exited" | "error";
 
@@ -58,6 +62,7 @@ export function WorkspaceTerminal({
       lineHeight: 1.15,
       cursorBlink: true,
       scrollback: 5000,
+      linkHandler: TERMINAL_OSC_LINK_HANDLER,
       theme: {
         background: "#0b0d10",
         foreground: "#e6e6e6",
@@ -67,7 +72,7 @@ export function WorkspaceTerminal({
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.loadAddon(new WebLinksAddon());
+    term.loadAddon(new WebLinksAddon(activateTerminalLink));
     term.open(container);
     // Shift+Enter breaks the line instead of sending a half-written
     // instruction — the same binding the Agentic IDE panes have, because it is

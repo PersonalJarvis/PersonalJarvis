@@ -23,6 +23,10 @@ import { useT } from "@/i18n";
 import { buildMissionSocketUrl, fetchMissionToken } from "@/lib/missionAuth";
 import { TERMINAL_FONT_STACK, syncTerminalFont } from "@/lib/terminalFont";
 import {
+  activateTerminalLink,
+  TERMINAL_OSC_LINK_HANDLER,
+} from "@/lib/terminalLinks";
+import {
   disposeTerminal,
   getTerminal,
   setTerminal,
@@ -78,6 +82,7 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
         lineHeight: 1.2,
         cursorBlink: false,
         scrollback: 5000,
+        linkHandler: TERMINAL_OSC_LINK_HANDLER,
         theme: {
           background: "#0b0d10",
           foreground: "#e6e6e6",
@@ -87,7 +92,7 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
       });
       const fit = new FitAddon();
       term.loadAddon(fit);
-      term.loadAddon(new WebLinksAddon());
+      term.loadAddon(new WebLinksAddon(activateTerminalLink));
       term.loadAddon(new SearchAddon());
       term.open(containerRef.current);
       fit.fit();
