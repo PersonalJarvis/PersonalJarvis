@@ -68,6 +68,34 @@ const UltraWikiPanel = lazy(() =>
 
 type CentreTab = "graph" | "page";
 
+/**
+ * Which wiki mode this machine saw last.
+ *
+ * A per-machine memory of a backend fact, kept for exactly one reason: to
+ * render the right body immediately instead of a spinner. It is never the
+ * authority — `GET /api/ultrawiki/status` is, and overwrites this the moment
+ * it answers.
+ */
+const ULTRA_MODE_KEY = "jarvis.wiki.lastUltraMode";
+
+function recallUltraMode(): boolean | null {
+  try {
+    const raw = window.localStorage.getItem(ULTRA_MODE_KEY);
+    return raw === "ultra" ? true : raw === "normal" ? false : null;
+  } catch {
+    // Private mode / storage disabled — fall back to asking, as before.
+    return null;
+  }
+}
+
+function rememberUltraMode(enabled: boolean): void {
+  try {
+    window.localStorage.setItem(ULTRA_MODE_KEY, enabled ? "ultra" : "normal");
+  } catch {
+    // Losing the shortcut only costs one probe on the next visit.
+  }
+}
+
 interface WikiToast {
   message: string;
   id: number;
@@ -129,12 +157,26 @@ export function WikiView(): JSX.Element {
   const [lastKnownUltra, setLastKnownUltra] = useState<UltraWikiStatus | null>(
     null,
   );
+  // ...and the last confirmed answer from a PREVIOUS visit, which is what
+  // stops "Checking which wiki mode is active…" from being the first thing
+  // the Wiki tab shows every single time. The probe is a few hundred
+  // milliseconds on a warm backend and several seconds on a cold one, and
+  // this component remounts on every navigation away and back — so without a
+  // memory the wait was paid again and again for an answer that has not
+  // changed since the mode was last switched. Remembering it is a claim we
+  // can stand behind (it was true a moment ago) and the live probe still
+  // corrects it the instant it disagrees.
+  const [rememberedUltra, setRememberedUltra] = useState<boolean | null>(
+    recallUltraMode,
+  );
   const [unansweredProbes, setUnansweredProbes] = useState(0);
   const ultraProbe = ultraStatusQuery.data;
   const ultraProbeAt = ultraStatusQuery.dataUpdatedAt;
   useEffect(() => {
     if (ultraProbe) {
       setLastKnownUltra(ultraProbe);
+      setRememberedUltra(ultraProbe.enabled);
+      rememberUltraMode(ultraProbe.enabled);
       setUnansweredProbes(0);
     } else if (ultraProbeAt > 0) {
       setUnansweredProbes((n) => n + 1);
@@ -142,8 +184,9 @@ export function WikiView(): JSX.Element {
   }, [ultraProbe, ultraProbeAt]);
 
   const ultraStatus = ultraProbe ?? lastKnownUltra;
-  const ultraModeKnown = ultraStatus != null;
-  const ultraEnabled = ultraStatus?.enabled === true;
+  // Only a genuinely first-ever visit has nothing to go on and has to wait.
+  const ultraModeKnown = ultraStatus != null || rememberedUltra != null;
+  const ultraEnabled = ultraStatus?.enabled ?? rememberedUltra ?? false;
 
   // When a slug is selected (via tree click, graph click, or wikilink),
   // automatically swap to the page tab.
@@ -153,6 +196,18 @@ export function WikiView(): JSX.Element {
       setIsGraphExpanded(false);
     }
   }, [selectedSlug]);
+
+  // Escape leaves the full-window map. With the nav rail covered it is the
+  // reflex people reach for first, and the Restore button in the tab bar is
+  // the only other way out.
+  useEffect(() => {
+    if (!isGraphExpanded) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsGraphExpanded(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isGraphExpanded]);
 
   // On the first visit to the Wiki tab, auto-open the Obsidian setup
   // walkthrough — but only if the user has never marked it as completed
@@ -352,7 +407,15 @@ export function WikiView(): JSX.Element {
       ) : (
         <div
           id="wiki-workspace"
-          className="flex flex-1 min-h-0 overflow-hidden"
+          className={cn(
+            "flex flex-1 min-h-0 overflow-hidden",
+            // Expanded means the whole window, not "the middle column, but
+            // wider". The map is the one thing in this app that gets better
+            // the more room it has, and leaving the nav rail, the header and
+            // two status strips around it was most of why it never looked
+            // like anything. Fixed to the viewport, above everything.
+            isGraphExpanded && "fixed inset-0 z-50 bg-background",
+          )}
           data-testid="wiki-workspace"
           data-graph-expanded={isGraphExpanded ? "true" : "false"}
         >

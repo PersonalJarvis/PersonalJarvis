@@ -31,6 +31,7 @@ import {
   BROKEN_EDGE_COLOUR,
   clampCenterToView,
   NODE_COLOUR,
+  endpointId,
   nodeSizeScore,
   sizeChanged,
   toGraphData,
@@ -64,17 +65,6 @@ async function fetchGraph(): Promise<WikiGraphPayload> {
   const res = await fetch("/api/wiki/graph");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
-}
-
-function endpointId(endpoint: unknown): string {
-  if (typeof endpoint === "string" || typeof endpoint === "number") {
-    return String(endpoint);
-  }
-  if (endpoint && typeof endpoint === "object" && "id" in endpoint) {
-    const id = (endpoint as { id?: unknown }).id;
-    return typeof id === "string" || typeof id === "number" ? String(id) : "";
-  }
-  return "";
 }
 
 function escapeTooltipText(value: string): string {

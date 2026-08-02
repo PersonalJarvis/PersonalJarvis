@@ -35,6 +35,7 @@ import SpriteText from "three-spritetext";
 import {
   BROKEN_EDGE_COLOUR,
   NODE_COLOUR,
+  endpointId,
   nodeSizeScore,
   type RenderEdge,
   type RenderNode,
@@ -54,6 +55,36 @@ const LABEL_ALL_BELOW = 220;
 
 /** A hub, once the scene is too crowded to label everything. */
 const HUB_BACKLINKS = 2;
+
+/**
+ * How many links carry a travelling light at rest.
+ *
+ * The particles are what make the map look alive rather than photographed,
+ * but each one is geometry the GPU draws every frame, and a vault with a
+ * thousand wikilinks would spend the whole frame budget on decoration. So they
+ * go to the busiest links — the ones that carry the structure — and the rest
+ * stay quiet until you hover them.
+ */
+const AMBIENT_PARTICLE_LINKS = 90;
+
+/** Colours for the focus state. Everything not near the pointer recedes. */
+const LINK_REST = "rgba(106, 169, 255, 0.5)";
+const LINK_FOCUS = "#9ecbff";
+const LINK_FADED = "rgba(106, 169, 255, 0.06)";
+const NODE_FADED = "#2c3340";
+const PARTICLE_COLOUR = "#cfe4ff";
+
+/**
+ * The colour the scene clears to.
+ *
+ * Not transparent, and not by choice: once a post-processing pass is on the
+ * composer the renderer clears opaque, so anything painted behind the canvas
+ * in CSS is never seen again. A near-black with a blue cast does the same job
+ * from inside — the frame reads as depth rather than as a switched-off screen.
+ * The CSS layer stays as the fallback for a machine where the bloom pass fails
+ * to load.
+ */
+const SPACE_COLOUR = "#05070d";
 
 export interface WikiGraph3DProps {
   graphData: { nodes: RenderNode[]; links: RenderEdge[] };
@@ -90,6 +121,61 @@ export function WikiGraph3D({
   highlightRef.current = highlightSlug;
 
   const labelEverything = graphData.nodes.length <= LABEL_ALL_BELOW;
+
+  // Pointing at a node dims everything it has nothing to do with. On a network
+  // this dense that is not a flourish — it is the only way to read a single
+  // page's neighbourhood out of a thousand crossing lines.
+  const [hoverId, setHoverId] = useState<string | null>(null);
+  const neighbours = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    const add = (from: string, to: string) => {
+      const set = map.get(from) ?? new Set<string>();
+      set.add(to);
+      map.set(from, set);
+    };
+    for (const link of graphData.links) {
+      const source = endpointId(link.source);
+      const target = endpointId(link.target);
+      if (!source || !target) continue;
+      add(source, target);
+      add(target, source);
+    }
+    return map;
+  }, [graphData.links]);
+
+  const isNearHover = useCallback(
+    (id: string): boolean =>
+      hoverId === null ||
+      id === hoverId ||
+      (neighbours.get(hoverId)?.has(id) ?? false),
+    [hoverId, neighbours],
+  );
+
+  const touchesHover = useCallback(
+    (link: RenderEdge): boolean =>
+      hoverId !== null &&
+      (endpointId(link.source) === hoverId || endpointId(link.target) === hoverId),
+    [hoverId],
+  );
+
+  // The links that carry a travelling light while nothing is hovered: the
+  // busiest ones, capped, so the effect scales to a vault of any size.
+  const ambientParticleLinks = useMemo(() => {
+    const weight = new Map<string, number>();
+    for (const node of graphData.nodes) {
+      weight.set(node.id, node.backlinkCount ?? 0);
+    }
+    return new Set(
+      [...graphData.links]
+        .filter((link) => !link.broken)
+        .sort(
+          (a, b) =>
+            (weight.get(endpointId(b.target)) ?? 0) -
+            (weight.get(endpointId(a.target)) ?? 0),
+        )
+        .slice(0, AMBIENT_PARTICLE_LINKS),
+    );
+  }, [graphData]);
 
   // Forces are set once per data generation, never per tick — d3's setters
   // re-initialise the force over every node and every link, so calling them
@@ -153,14 +239,23 @@ export function WikiGraph3D({
     frameSignal,
   });
 
-  // The host asked for a reset, or the data changed under us.
+  /*
+   * The host asked for a reset, or the data changed under us — and framing has
+   * to be repeated rather than done once. The camera is placed from where the
+   * nodes ARE, and for the first few seconds after new data they are still
+   * flying apart; framing once, too early, parks the camera at the radius of a
+   * cloud that then grows around it. The window size is a dependency for the
+   * same reason: going full-window changes the aspect ratio the distance was
+   * computed against.
+   */
   useEffect(() => {
     if (graphData.nodes.length === 0) return;
     reframe();
-    // A simulation that never reports a stop still gets framed.
-    const timer = window.setTimeout(reframe, 2600);
-    return () => window.clearTimeout(timer);
-  }, [graphData, resetSignal, reframe]);
+    const timers = [900, 2600, 5000, 8000].map((delay) =>
+      window.setTimeout(reframe, delay),
+    );
+    return () => timers.forEach(window.clearTimeout);
+  }, [graphData, resetSignal, reframe, width, height]);
 
   const handleNodeClick = useCallback(
     (node: NodeObject<RenderNode>): void => {
@@ -182,10 +277,56 @@ export function WikiGraph3D({
   }, []);
 
   const nodeColor = useCallback(
-    (node: NodeObject<RenderNode>) =>
-      (node as RenderNode).colour ?? NODE_COLOUR.entity ?? "#8b95a7",
-    [],
+    (node: NodeObject<RenderNode>) => {
+      const own = (node as RenderNode).colour ?? NODE_COLOUR.entity ?? "#8b95a7";
+      return isNearHover(String(node.id ?? "")) ? own : NODE_FADED;
+    },
+    [isNearHover],
   );
+
+  /**
+   * The glow.
+   *
+   * A force graph drawn as flat-shaded spheres reads as a diagram. The same
+   * graph with the bright parts bleeding light reads as something with depth
+   * and mass — and it costs one post-processing pass, because the renderer
+   * already hands out its composer. The threshold is low so the node colours
+   * themselves bloom, and the strength stays under the point where labels turn
+   * into smears.
+   *
+   * Loaded on demand: the pass is part of three.js's addons, and this whole
+   * component is already behind a lazy import, so a flat-map reader never
+   * downloads a line of it.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    let installed: { dispose?: () => void } | null = null;
+    void (async () => {
+      const [{ UnrealBloomPass }, { Vector2 }] = await Promise.all([
+        import("three/examples/jsm/postprocessing/UnrealBloomPass.js"),
+        import("three"),
+      ]);
+      const composer = graphRef.current?.postProcessingComposer?.();
+      if (cancelled || !composer) return;
+      const pass = new UnrealBloomPass(
+        new Vector2(Math.max(width, 1), Math.max(height, 1)),
+        // strength, radius, threshold
+        1.15,
+        0.85,
+        0.08,
+      );
+      composer.addPass(pass);
+      installed = pass;
+    })();
+    return () => {
+      cancelled = true;
+      installed?.dispose?.();
+    };
+    // Deliberately once per mount: the pass reads the canvas size from the
+    // composer on every resize itself, so re-adding it per resize would only
+    // stack passes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const nodeThreeObject = useCallback(
     (node: NodeObject<RenderNode>): SpriteText | null => {
@@ -213,10 +354,35 @@ export function WikiGraph3D({
   );
 
   const linkColor = useCallback(
-    (link: RenderEdge) =>
-      link.broken ? BROKEN_EDGE_COLOUR : "rgba(106, 169, 255, 0.55)",
-    [],
+    (link: RenderEdge) => {
+      if (hoverId !== null) {
+        if (!touchesHover(link)) return LINK_FADED;
+        return link.broken ? BROKEN_EDGE_COLOUR : LINK_FOCUS;
+      }
+      return link.broken ? BROKEN_EDGE_COLOUR : LINK_REST;
+    },
+    [hoverId, touchesHover],
   );
+
+  const linkWidth = useCallback(
+    (link: RenderEdge) => (touchesHover(link) ? 1.4 : 0.4),
+    [touchesHover],
+  );
+
+  // Light travelling from source to target: direction you can read at a
+  // glance, and the thing that makes the map look like it is running rather
+  // than sitting there. Hovering floods the neighbourhood with it.
+  const linkParticles = useCallback(
+    (link: RenderEdge) => {
+      if (hoverId !== null) return touchesHover(link) ? 4 : 0;
+      return ambientParticleLinks.has(link) ? 2 : 0;
+    },
+    [ambientParticleLinks, hoverId, touchesHover],
+  );
+
+  const handleNodeHover = useCallback((node: NodeObject<RenderNode> | null) => {
+    setHoverId(node ? String(node.id ?? "") : null);
+  }, []);
 
   // An unresolved link points at a page that does not exist, so an arrowhead
   // claiming a destination would be the wrong story; the rose colour carries
@@ -235,14 +401,15 @@ export function WikiGraph3D({
 
   return (
     // The renderer paints into its own canvas; this wrapper is what the camera
-    // work listens on to know the user has taken the wheel.
-    <div ref={hostRef} className="h-full w-full">
+    // work listens on to know the user has taken the wheel, and what carries
+    // the space the network floats in (see .wiki-space in index.css).
+    <div ref={hostRef} className="wiki-space relative h-full w-full">
     <ForceGraph3D<RenderNode, RenderEdge>
       ref={graphRef}
       graphData={data}
       width={width}
       height={height}
-      backgroundColor="rgba(0,0,0,0)"
+      backgroundColor={SPACE_COLOUR}
       nodeId="id"
       nodeLabel={nodeLabel}
       nodeRelSize={NODE_REL_SIZE}
@@ -261,12 +428,17 @@ export function WikiGraph3D({
       nodeThreeObjectExtend
       linkLabel={linkLabel}
       linkColor={linkColor}
-      linkOpacity={0.5}
-      linkWidth={0.4}
+      linkOpacity={0.6}
+      linkWidth={linkWidth}
       linkDirectionalArrowLength={linkArrowLength}
       linkDirectionalArrowRelPos={0.85}
       linkDirectionalArrowColor={linkArrowColor}
+      linkDirectionalParticles={linkParticles}
+      linkDirectionalParticleSpeed={0.006}
+      linkDirectionalParticleWidth={1.3}
+      linkDirectionalParticleColor={() => PARTICLE_COLOUR}
       onNodeClick={handleNodeClick}
+      onNodeHover={handleNodeHover}
       // Drag to rotate, wheel to zoom, right-drag to pan — the mapping people
       // already know from every other 3D viewer.
       controlType="orbit"
@@ -281,6 +453,10 @@ export function WikiGraph3D({
       onEngineTick={configureForces}
       onEngineStop={reframe}
     />
+      <div
+        className="wiki-space-vignette pointer-events-none absolute inset-0"
+        aria-hidden
+      />
     </div>
   );
 }

@@ -988,6 +988,43 @@
     );
   }
 
+  /*
+   * The space the 3D memory map floats in.
+   *
+   * The WebGL canvas is transparent on purpose, so everything behind it is
+   * plain CSS: no textures to download, no extra draw calls, nothing for the
+   * GPU to carry. Three layers, and each one earns its place —
+   *
+   *  - a deep blue-black wash off centre, so the frame is a volume rather
+   *    than a flat black rectangle;
+   *  - two very faint dot fields at different sizes, which is what gives the
+   *    orbiting network something to move AGAINST. Without them a slow
+   *    rotation is nearly invisible: the nodes shift, but with no fixed
+   *    reference the eye reads it as drift rather than depth.
+   *  - a vignette that pulls the attention back to the middle.
+   */
+  .wiki-space {
+    background-color: #05070c;
+    background-image:
+      radial-gradient(
+        ellipse 120% 90% at 50% 42%,
+        rgba(40, 78, 140, 0.22) 0%,
+        rgba(14, 24, 44, 0.5) 45%,
+        transparent 78%
+      ),
+      radial-gradient(circle at 18% 24%, rgba(255, 255, 255, 0.5) 0.6px, transparent 0.7px),
+      radial-gradient(circle at 72% 68%, rgba(255, 255, 255, 0.35) 0.5px, transparent 0.6px);
+    background-size: 100% 100%, 190px 190px, 97px 97px;
+  }
+
+  .wiki-space-vignette {
+    background: radial-gradient(
+      ellipse at 50% 50%,
+      transparent 38%,
+      rgba(0, 0, 0, 0.62) 100%
+    );
+  }
+
   /* The floating control pills over the stage (floor slider, legend, counts).
      Glass rather than a solid card: the map has to stay visible underneath,
      or the controls become a second letterbox. */

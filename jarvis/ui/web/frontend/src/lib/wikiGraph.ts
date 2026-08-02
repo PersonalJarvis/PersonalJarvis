@@ -200,6 +200,25 @@ export function nodeRadius(backlinkCount: number): number {
 }
 
 /**
+ * The id at one end of a link.
+ *
+ * Links arrive from the API as plain id strings and are REPLACED in place by
+ * the renderer with references to the node objects themselves once the
+ * simulation ingests them. Any code that reads an endpoint therefore has to
+ * cope with both shapes, and every renderer needs it — hence one definition.
+ */
+export function endpointId(endpoint: unknown): string {
+  if (typeof endpoint === "string" || typeof endpoint === "number") {
+    return String(endpoint);
+  }
+  if (endpoint && typeof endpoint === "object" && "id" in endpoint) {
+    const id = (endpoint as { id?: unknown }).id;
+    return typeof id === "string" || typeof id === "number" ? String(id) : "";
+  }
+  return "";
+}
+
+/**
  * How big a node draws, relative to its peers — the shared size encoding for
  * BOTH the flat map and the 3D one.
  *
