@@ -1060,6 +1060,27 @@ class CodexSubscriptionRealtimeProvider:
                 await client.close()
             raise
 
+    @classmethod
+    async def warm_transport(cls, cfg: Any) -> None:
+        """Pay the app-server cold start BEFORE a call, never inside one.
+
+        Measured 2026-08-02: the process spawn plus live account verification
+        happened inside the handshake and cost ~1.5 s of its 3.0 s. Until now
+        the only warm path was the UI's provider-selection route, so a user
+        who simply says the wake word pays it every time the app restarts.
+
+        Best-effort by contract: a failure here changes nothing except that
+        the next call pays what it pays today, so it must never propagate.
+        """
+        try:
+            await cls.verify_activation(cfg)
+        except Exception:  # noqa: BLE001 - warming is advisory, never fatal
+            log.warning(
+                "Codex subscription realtime could not warm its transport; "
+                "the first call will pay the cold start",
+                exc_info=True,
+            )
+
     def __init__(
         self,
         *,

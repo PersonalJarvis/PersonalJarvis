@@ -176,6 +176,31 @@ def realtime_requires_webrtc_offer(cfg: Any) -> bool:
     return False
 
 
+async def realtime_warm_selected_transports(cfg: Any) -> None:
+    """Let every explicitly selected provider pre-open its transport.
+
+    A capability probe, never a provider-id check (AP-21): a provider that
+    declares no ``warm_transport`` is simply skipped. Only explicitly selected
+    primary/fallback providers are warmed — an installed-but-unselected plugin
+    must not spawn a process or touch a credential on its own.
+
+    Warming exists because the Codex subscription adapter otherwise spawns its
+    app-server and verifies the account INSIDE the first call's handshake
+    (~1.5 s of 3.0 s, measured 2026-08-02). One broken plugin never stops the
+    others, and no failure here reaches the caller.
+    """
+    for provider_id in _explicit_provider_ids(cfg):
+        try:
+            provider_cls = load(_GROUP, provider_id, protocol=RealtimeProvider)
+            warm = getattr(provider_cls, "warm_transport", None)
+            if callable(warm):
+                await warm(cfg)
+        except Exception as exc:  # noqa: BLE001 - one broken plugin is skipped
+            log.warning(
+                "Realtime transport warm failed for %s: %s", provider_id, exc
+            )
+
+
 def _provider_family(provider_id: str) -> str:
     """Credential/quota family of a provider id (AP-22 diagnostics only)."""
     pid = (provider_id or "").strip().lower()

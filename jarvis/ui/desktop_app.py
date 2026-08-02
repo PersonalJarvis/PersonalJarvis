@@ -63,6 +63,10 @@ META_FILE_PATH = DATA_DIR / ".jarvis-running"
 #: so we detect a running process immediately and focus it instead of
 #: waiting silently.
 _LOCK_ACQUIRE_TIMEOUT = 0.0
+#: Delay before the selected realtime transport is pre-opened in the
+#: background. Long enough to stay out of the brain/MCP build's CPU and disk
+#: window, far shorter than a user reaching for the wake word.
+_REALTIME_WARM_DELAY_S = 5.0
 
 
 def _local_voice_permission_granted(
@@ -2061,6 +2065,37 @@ class DesktopApp:
                         )
 
                 loop.create_task(_provision_wake_model(), name="wake-model-provision")
+
+                async def _warm_realtime_transport() -> None:
+                    """Pre-open the selected realtime transport, off the boot path.
+
+                    Same slot and the same reasoning as the wake-model provision
+                    above: created AFTER the app-interactive mark and after the
+                    server start, so neither boot-budget mark can move (AP-26).
+                    The extra delay keeps a process spawn and a network account
+                    check out of the brain/MCP build's CPU and disk window.
+
+                    Without it, the Codex subscription adapter spawns its
+                    app-server and verifies the account inside the first call's
+                    handshake — measured 2026-08-02 at ~1.5 s of 3.0 s.
+                    """
+                    try:
+                        await asyncio.sleep(_REALTIME_WARM_DELAY_S)
+                        from jarvis.core.config import load_config
+                        from jarvis.realtime.factory import (
+                            realtime_warm_selected_transports,
+                        )
+
+                        await realtime_warm_selected_transports(load_config())
+                    except Exception:  # noqa: BLE001 — warming never crashes boot
+                        from loguru import logger as _warm_log
+                        _warm_log.opt(exception=True).debug(
+                            "Off-boot realtime transport warm skipped."
+                        )
+
+                loop.create_task(
+                    _warm_realtime_transport(), name="realtime-transport-warm"
+                )
 
             loop.create_task(_heavy_backend_bg(), name="heavy-backend")
             loop.call_soon(self._start_virtual_cursor)

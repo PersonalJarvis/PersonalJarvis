@@ -1456,3 +1456,22 @@ async def test_the_negotiated_protocol_and_voice_are_logged(caplog) -> None:
         for record in caplog.records
     )
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_warm_transport_never_raises(monkeypatch) -> None:
+    """The whole point is to move a cold start OUT of the call. A warm that
+    fails may only mean the next call pays what it pays today."""
+    calls = []
+
+    async def _boom(cfg):  # noqa: ANN001 - classmethod shape
+        calls.append(cfg)
+        raise RuntimeError("no login")
+
+    monkeypatch.setattr(
+        CodexSubscriptionRealtimeProvider, "verify_activation", _boom
+    )
+
+    await CodexSubscriptionRealtimeProvider.warm_transport(object())
+
+    assert len(calls) == 1

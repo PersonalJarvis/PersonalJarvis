@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import jarvis.realtime.factory as factory
 from jarvis.core.config import VoiceConfig
 from jarvis.realtime.factory import (
     _provider_candidates,
@@ -301,3 +302,79 @@ def test_cross_family_delegate_chain_stays_quiet(caplog):
     with caplog.at_level(logging.WARNING, logger="jarvis.realtime.factory"):
         _warn_on_same_family_delegate_chain(cfg, "gemini-live")
     assert not [record for record in caplog.records if "AP-22" in record.message]
+
+
+class _WarmProbe:
+    """Minimal realtime provider exposing the optional warm capability."""
+
+    supports_realtime = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def warm_transport(self, cfg) -> None:  # noqa: ANN001 - probe shape
+        del cfg
+        self.calls += 1
+
+
+class _NoWarmProbe:
+    supports_realtime = True
+
+
+@pytest.mark.asyncio
+async def test_warm_selected_transports_skips_providers_without_the_capability(
+    monkeypatch,
+) -> None:
+    """A capability probe, never a provider-id check (AP-21)."""
+    warm = _WarmProbe()
+    loaded = {"warm-me": warm, "plain": _NoWarmProbe()}
+    monkeypatch.setattr(
+        factory, "_explicit_provider_ids", lambda _cfg: ["plain", "warm-me"]
+    )
+    monkeypatch.setattr(
+        factory, "load", lambda _group, pid, protocol=None: loaded[pid]
+    )
+
+    await factory.realtime_warm_selected_transports(object())
+
+    assert warm.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_warm_selected_transports_survives_one_broken_provider(
+    monkeypatch,
+) -> None:
+    """Warming is advisory: a plugin that explodes must not stop the others,
+    and must never reach the caller."""
+    warm = _WarmProbe()
+
+    def _load(_group, pid, protocol=None):  # noqa: ANN001 - probe shape
+        if pid == "broken":
+            raise RuntimeError("plugin exploded")
+        return warm
+
+    monkeypatch.setattr(
+        factory, "_explicit_provider_ids", lambda _cfg: ["broken", "warm-me"]
+    )
+    monkeypatch.setattr(factory, "load", _load)
+
+    await factory.realtime_warm_selected_transports(object())
+
+    assert warm.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_warm_selected_transports_ignores_unselected_plugins(
+    monkeypatch,
+) -> None:
+    """An installed but unselected plugin must not spawn a process or touch a
+    credential on its own."""
+    warm = _WarmProbe()
+    monkeypatch.setattr(factory, "_explicit_provider_ids", lambda _cfg: [])
+    monkeypatch.setattr(
+        factory, "load", lambda _group, _pid, protocol=None: warm
+    )
+
+    await factory.realtime_warm_selected_transports(object())
+
+    assert warm.calls == 0
