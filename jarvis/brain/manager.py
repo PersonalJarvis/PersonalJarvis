@@ -10299,7 +10299,22 @@ class BrainManager:
                 # abgelehnt, drittes fiel auf multi_spawn zurueck und
                 # scheiterte ebenfalls.
                 response_empty = not (agg.text or "").strip()
-                tool_calls_executed = bool(agg.tool_calls)
+                # A REQUESTED tool call only excuses empty text when a tool
+                # could actually have run. On a turn that offered NO tools at
+                # all — a Screen Context turn strips every one of them — a
+                # model-emitted call executed nothing by construction, so
+                # treating it as a legitimate silence is always wrong.
+                #
+                # Live 2026-08-02 09:58: "kannst du bitte schnell einen
+                # Screenshot machen?" captured the screen correctly, the one
+                # vision-capable provider in the chain answered with 1170
+                # tokens of reasoning, zero text and finish_reason=tool_calls,
+                # this guard read it as legitimate, no other provider was
+                # tried, and the user heard "that didn't work just now" while a
+                # fresh screenshot sat unused. Gating on ``_turn_tools`` keeps
+                # the tools-present behaviour byte-identical, so no executed
+                # side effect can ever be re-run by a fallback.
+                tool_calls_executed = bool(agg.tool_calls) and bool(_turn_tools)
                 suppressed = (agg.finish_reason == "suppress_response")
                 if response_empty and not tool_calls_executed and not suppressed:
                     log.warning(
