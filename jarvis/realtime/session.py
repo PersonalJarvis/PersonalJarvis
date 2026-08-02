@@ -277,12 +277,14 @@ class _LoopLagProbe:
         )
 
 
-# A realtime bridge is useful only for a genuinely long delegated turn. Starting
-# a second provider response after two seconds made ordinary 5-7 second searches
-# slower: the trusted result had to wait for the interim response lifecycle to
-# end. Keep the classic speech-pipeline acknowledgement timing unchanged; this
-# longer threshold belongs only to the realtime provider bridge.
+# A realtime bridge is useful only for a genuinely long delegated turn. Providers
+# with native tools can keep the longer threshold because their normal action
+# path already stays inside the live model. A capability-limited provider must
+# hand every action to the slower orchestrator, so waiting six seconds before it
+# even acknowledges the request creates subscription-only dead air. Its earlier
+# bridge is safe: ready results pre-empt the bridge lifecycle below.
 _DELEGATE_BRIDGE_DELAY_S = 6.0
+_CAPABILITY_LIMITED_DELEGATE_BRIDGE_DELAY_S = 1.0
 # 20 messages, not 8: a failed screen action typically costs the user several
 # correction turns, and each background completion adds a context note. With 8,
 # the original task was trimmed out exactly when the recovery turn needed it
@@ -677,6 +679,8 @@ class _DelegateTurnState:
     dispatch_started: bool = False
     bridge_delivery_started: bool = False
     bridge_preempted: bool = False
+    bridge_direct_speech: bool = False
+    bridge_direct_audio_emitted: bool = False
     # The progress line chosen for THIS bridge run; the transcript validator
     # matches against it (and the closed per-language pool) so a varied line
     # can never smuggle free-form model output past the withhold.
@@ -2604,9 +2608,24 @@ class RealtimeVoiceSession:
                         and delegate_state.bridge_delivery_started
                         and not delegate_state.delivery_started
                     ):
-                        # Pair the audio with the withheld bridge transcript. It
-                        # is released only after exact deterministic validation.
-                        delegate_state.bridge_audio_chunks.append(event.audio)
+                        if delegate_state.bridge_direct_speech:
+                            # The adapter guarantees that this is the exact
+                            # orchestrator-selected phrase, so it can stream
+                            # immediately instead of waiting for a completed
+                            # model transcript. Non-authoritative providers stay
+                            # on the buffered validation path below.
+                            if delegate_state.result_ready.is_set():
+                                delegate_state.bridge_preempted = True
+                                continue
+                            self._mark_latency_named("REALTIME_FIRST_AUDIO")
+                            self._output_active = True
+                            await self._emit_audio(event.audio)
+                            delegate_state.bridge_direct_audio_emitted = True
+                        else:
+                            # Pair model-generated audio with its withheld
+                            # transcript. It is released only after exact
+                            # deterministic validation.
+                            delegate_state.bridge_audio_chunks.append(event.audio)
                         continue
                     if self._must_withhold_provider_output():
                         self._gate.drain()
@@ -2777,8 +2796,11 @@ class RealtimeVoiceSession:
                         )
                         bridge_valid = bool(
                             bridge_completed
-                            and _normalized_bridge_text(bridge_text)
-                            in allowed_bridge_lines
+                            and (
+                                delegate_state.bridge_direct_speech
+                                or _normalized_bridge_text(bridge_text)
+                                in allowed_bridge_lines
+                            )
                         )
                         bridge_may_speak = bool(
                             bridge_valid
@@ -2801,7 +2823,10 @@ class RealtimeVoiceSession:
                                 self.session_id,
                             )
                         bridge_was_audible = bool(
-                            bridge_may_speak
+                            (
+                                bridge_may_speak
+                                or delegate_state.bridge_direct_audio_emitted
+                            )
                             and not delegate_state.bridge_preempted
                             and self._output_samples_sent > 0
                         )
@@ -4959,10 +4984,15 @@ class RealtimeVoiceSession:
         the bridge lifecycle.
         """
         try:
+            bridge_delay_s = (
+                _CAPABILITY_LIMITED_DELEGATE_BRIDGE_DELAY_S
+                if not bool(getattr(self._provider, "supports_direct_tools", True))
+                else _DELEGATE_BRIDGE_DELAY_S
+            )
             try:
                 await asyncio.wait_for(
                     turn_state.result_ready.wait(),
-                    timeout=_DELEGATE_BRIDGE_DELAY_S,
+                    timeout=bridge_delay_s,
                 )
             except TimeoutError:
                 pass
@@ -4974,29 +5004,48 @@ class RealtimeVoiceSession:
             if self._delegate_bridge_must_stand_down(turn_id, turn_state):
                 return
             send_text = getattr(self._session, "send_text", None)
-            if not callable(send_text):
+            send_speech = getattr(self._session, "send_speech", None)
+            authoritative_speech = bool(
+                callable(send_speech)
+                and getattr(
+                    self._session,
+                    "direct_speech_is_authoritative",
+                    False,
+                )
+            )
+            if not authoritative_speech and not callable(send_text):
                 return
             turn_state.bridge_delivery_started = True
             turn_state.bridge_preempted = False
+            turn_state.bridge_direct_speech = False
+            turn_state.bridge_direct_audio_emitted = False
             turn_state.bridge_expected_text = _pick_delegate_bridge_text(
                 self._language
             )
             turn_state.bridge_transcript_parts.clear()
             turn_state.bridge_audio_chunks.clear()
-            # ``send_text`` starts a distinct provider response. The trusted
-            # result must wait for THIS boundary, not a boundary observed before
-            # the bridge began.
+            # The bridge renderer starts a distinct provider response. The
+            # trusted result must wait for THIS boundary, not one observed
+            # before the bridge began.
             turn_state.provider_boundary_seen = False
             turn_state.provider_ready.clear()
             drop_before_bridge = self._drop_provider_output_until_new_response
             self._drop_provider_output_until_new_response = False
             try:
-                await send_text(
-                    _delegate_bridge_prompt(
-                        language=self._language,
-                        exact_text=turn_state.bridge_expected_text,
+                if authoritative_speech:
+                    turn_state.bridge_direct_speech = True
+                    self._register_spoken_reference(
+                        turn_state.bridge_expected_text,
+                        slot=f"bridge:{turn_id}",
                     )
-                )
+                    await send_speech(turn_state.bridge_expected_text)
+                else:
+                    await send_text(
+                        _delegate_bridge_prompt(
+                            language=self._language,
+                            exact_text=turn_state.bridge_expected_text,
+                        )
+                    )
             except Exception:  # noqa: BLE001 — a broken bridge must not hurt the action
                 turn_state.bridge_delivery_started = False
                 self._drop_provider_output_until_new_response = drop_before_bridge

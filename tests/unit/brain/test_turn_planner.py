@@ -350,6 +350,33 @@ def test_guarded_non_action_words_stay_native(utterance: str) -> None:
 @pytest.mark.parametrize(
     "utterance",
     [
+        "Es legt immer noch krass.",  # i18n-allow: exact German ASR fixture
+        "Es laggt im Spiel immer noch krass.",  # i18n-allow: German fixture
+        "Das Spiel ist gut.",  # i18n-allow: German speech-input fixture
+    ],
+)
+def test_german_game_and_lag_reports_stay_native(utterance: str) -> None:
+    """ASR-homophone reports must not pay the orchestrator latency penalty."""
+    assert plan_turn(utterance).path is TurnPath.NATIVE_REALTIME
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Spiel Musik.",  # i18n-allow: German speech-input fixture
+        "Leg einen Termin an.",  # i18n-allow: German speech-input fixture
+        "Öffne das Spiel.",  # i18n-allow: German speech-input fixture
+        "Du spielst jetzt Musik.",  # i18n-allow: German speech-input fixture
+        "Du legst jetzt einen Termin an.",  # i18n-allow: German fixture
+    ],
+)
+def test_german_game_and_lay_commands_still_use_orchestrator(utterance: str) -> None:
+    assert plan_turn(utterance).path is TurnPath.ORCHESTRATOR
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
         # Live forensic 2026-07-17 08:36/08:47: every one of these
         # conversational turns was force-delegated through the router brain
         # and cost 12-21 s of silence. First-person deliberation, opinion

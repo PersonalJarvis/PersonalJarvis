@@ -3148,6 +3148,77 @@ async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_capability_limited_provider_acknowledges_delegate_early(monkeypatch):
+    """A capability-limited provider streams its trusted acknowledgement early."""
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 60.0)
+    monkeypatch.setattr(
+        "jarvis.realtime.session._CAPABILITY_LIMITED_DELEGATE_BRIDGE_DELAY_S",
+        0.01,
+    )
+    monkeypatch.setattr(
+        "jarvis.realtime.session._pick_delegate_bridge_text",
+        lambda language: "I'm still working on it.",
+    )
+
+    speech_requested = asyncio.Event()
+    first_audio = asyncio.Event()
+
+    class _AuthoritativeSpeechSession(FakeSession):
+        direct_speech_is_authoritative = True
+
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="Write this to my wiki.",
+                is_final=True,
+            )
+            await speech_requested.wait()
+            yield RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=b"\x01\x00" * 240,
+                    sample_rate=24_000,
+                    timestamp_ns=0,
+                ),
+            )
+            await asyncio.Event().wait()
+
+        async def send_speech(self, text):
+            self.text_inputs.append(text)
+            speech_requested.set()
+
+    class _CapabilityLimitedProvider(FakeProvider):
+        supports_direct_tools = False
+
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _AuthoritativeSpeechSession([])
+            return self.session
+
+    class _AudioMessages(list[bytes]):
+        def append(self, data: bytes) -> None:
+            super().append(data)
+            first_audio.set()
+
+    gate = asyncio.Event()
+    provider = _CapabilityLimitedProvider([])
+    binaries = _AudioMessages()
+    sess = _session(
+        provider,
+        brain=FakeBrain(replies=("Stored.",), gate=gate),
+        binaries=binaries,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(first_audio.wait(), timeout=1)
+
+    assert provider.session.text_inputs == ["I'm still working on it."]
+    assert binaries
+    assert sess._echo_guard.is_echo("I'm still working on it.")
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_varied_bridge_line_passes_validation_and_is_persisted(monkeypatch):
     """A non-default pool line must clear the withhold and reach the record.
 
