@@ -15,13 +15,21 @@
  * Loaded lazily by `EntityGraph`, so the WebGL renderer only arrives when the
  * switch says 3D.
  */
-import { useCallback, useEffect, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import ForceGraph3D from "react-force-graph-3d";
 import type { ForceGraphMethods, NodeObject } from "react-force-graph-3d";
 import type { Object3D } from "three";
 import SpriteText from "three-spritetext";
 
 import { CENTRING_STRENGTH, createCentringForce } from "@/lib/graphForces";
+import type { Vec3 } from "@/lib/graphCamera";
+import { useGraphOrbit, type GraphCameraApi } from "@/hooks/useGraphOrbit";
 
 /** Node shape the Explore map renders — mirrors EntityGraph's RenderNode. */
 export interface ExploreRenderNode {
@@ -98,15 +106,15 @@ export function EntityGraph3D({
     const anyRef = ref as any;
     const charge = anyRef.d3Force?.("charge");
     if (charge && typeof charge.strength === "function") {
-      charge.strength(-220);
+      charge.strength(-380);
       // Bounded reach: past this distance a node is already outside the map
       // and pushing it further only costs the camera its framing.
       if (typeof charge.distanceMax === "function") charge.distanceMax(220);
     }
     const link = anyRef.d3Force?.("link");
     if (link && typeof link.distance === "function") {
-      link.distance(55);
-      if (typeof link.strength === "function") link.strength(0.2);
+      link.distance(75);
+      if (typeof link.strength === "function") link.strength(0.14);
     }
     // A topic mentioned once, sharing a moment with nothing, has no link to
     // hold it. Without this it drifts out of the world and takes the camera
@@ -115,18 +123,26 @@ export function EntityGraph3D({
     forcesConfiguredRef.current = true;
   }, []);
 
-  // Framed once the layout has settled; fitting a still-collapsing bounding
-  // box would park the camera inside the cluster. The timer is the backstop
-  // for a simulation that never reports a stop.
-  const fitToView = useCallback((): void => {
-    graphRef.current?.zoomToFit(600, 60);
-  }, []);
+  // Framing and the slow drift are one piece of state; one hook owns both
+  // (hooks/useGraphOrbit.ts), and it re-frames whenever this counter changes.
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [frameSignal, setFrameSignal] = useState(0);
+  const reframe = useCallback(() => setFrameSignal((tick) => tick + 1), []);
+
+  useGraphOrbit({
+    graphRef: graphRef as RefObject<GraphCameraApi | undefined>,
+    hostRef,
+    nodes: graphData.nodes as Array<Partial<Vec3>>,
+    frameSignal,
+  });
 
   useEffect(() => {
     if (graphData.nodes.length === 0) return;
-    const timer = window.setTimeout(fitToView, 2600);
+    reframe();
+    // Backstop for a simulation that never reports a stop.
+    const timer = window.setTimeout(reframe, 2600);
     return () => window.clearTimeout(timer);
-  }, [graphData, fitToView]);
+  }, [graphData, reframe]);
 
   const nodeVal = useCallback((node: NodeObject<ExploreRenderNode>): number => {
     const base = (node as ExploreRenderNode).radius;
@@ -156,7 +172,10 @@ export function EntityGraph3D({
       // label instead — white against the ash-to-yellow ramp every other node
       // is tinted with.
       sprite.color = selected ? "#ffffff" : "rgba(255,255,255,0.62)";
-      sprite.textHeight = selected ? 4 : 3;
+      // Sized against the layout's spread, not the screen: the camera frames
+      // the whole network, so a fixed pixel size would shrink into nothing on
+      // a big corpus.
+      sprite.textHeight = selected ? 6 : 4.5;
       const radius = selected ? topic.radius * SELECTED_SCALE : topic.radius;
       sprite.position.set(0, -(radius + 2.5), 0);
       return sprite;
@@ -177,6 +196,9 @@ export function EntityGraph3D({
   );
 
   return (
+    // The wrapper is what the camera work listens on to know the user has
+    // taken the wheel; the renderer paints into its own canvas inside it.
+    <div ref={hostRef} className="h-full w-full">
     <ForceGraph3D<ExploreRenderNode, ExploreRenderEdge>
       ref={graphRef}
       graphData={graphData}
@@ -211,8 +233,9 @@ export function EntityGraph3D({
       showNavInfo={false}
       cooldownTicks={80}
       onEngineTick={configureForces}
-      onEngineStop={fitToView}
+      onEngineStop={reframe}
     />
+    </div>
   );
 }
 

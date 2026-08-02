@@ -19,7 +19,14 @@
  *    each, and a thousand of them turn a smooth orbit into a slideshow — so
  *    labels go to the nodes that carry the network plus whatever is selected.
  */
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import ForceGraph3D from "react-force-graph-3d";
 import type { ForceGraphMethods, NodeObject } from "react-force-graph-3d";
 import type { Object3D } from "three";
@@ -33,6 +40,8 @@ import {
   type RenderNode,
 } from "@/lib/wikiGraph";
 import { CENTRING_STRENGTH, createCentringForce } from "@/lib/graphForces";
+import type { Vec3 } from "@/lib/graphCamera";
+import { useGraphOrbit, type GraphCameraApi } from "@/hooks/useGraphOrbit";
 
 /** Sphere radius in graph units for a node whose size score is 1.0. */
 const NODE_REL_SIZE = 3;
@@ -109,7 +118,7 @@ export function WikiGraph3D({
     const anyRef = ref as any;
     const charge = anyRef.d3Force?.("charge");
     if (charge && typeof charge.strength === "function") {
-      charge.strength(-250);
+      charge.strength(-420);
       // Same reach as the flat map's. A larger radius keeps pushing a node
       // that is already outside the cluster, which is how a single unlinked
       // page ends up a long way from everything and drags the camera with it.
@@ -117,10 +126,11 @@ export function WikiGraph3D({
     }
     const link = anyRef.d3Force?.("link");
     if (link && typeof link.distance === "function") {
-      link.distance(60);
+      link.distance(85);
       // Slacker than the flat map's 0.85: in three dimensions a stiff link
-      // pulls the cluster back into the ball the repulsion just opened.
-      if (typeof link.strength === "function") link.strength(0.25);
+      // pulls the cluster back into the ball the repulsion just opened. A hub
+      // with fifty children would otherwise drag them all into its own pixel.
+      if (typeof link.strength === "function") link.strength(0.16);
     }
     // Bounds the world. Without it a single unlinked page drifts until it is
     // out of everyone's reach, and `zoomToFit` — which frames every node —
@@ -129,18 +139,28 @@ export function WikiGraph3D({
     forcesConfiguredRef.current = true;
   }, []);
 
-  // Frame the whole network once the layout has settled — `zoomToFit` on a
-  // still-collapsing bounding box lands the camera inside the cluster. The
-  // timer is the backstop for a simulation that never reports a stop.
-  const fitToView = useCallback((): void => {
-    graphRef.current?.zoomToFit(600, 80);
-  }, []);
+  // Framing and the slow drift are one piece of state, so one hook owns both
+  // (see hooks/useGraphOrbit.ts). It re-frames whenever this counter changes:
+  // new data, a settled layout, or the host's Center button.
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [frameSignal, setFrameSignal] = useState(0);
+  const reframe = useCallback(() => setFrameSignal((tick) => tick + 1), []);
 
+  useGraphOrbit({
+    graphRef: graphRef as RefObject<GraphCameraApi | undefined>,
+    hostRef,
+    nodes: graphData.nodes as Array<Partial<Vec3>>,
+    frameSignal,
+  });
+
+  // The host asked for a reset, or the data changed under us.
   useEffect(() => {
     if (graphData.nodes.length === 0) return;
-    const timer = window.setTimeout(fitToView, 2600);
+    reframe();
+    // A simulation that never reports a stop still gets framed.
+    const timer = window.setTimeout(reframe, 2600);
     return () => window.clearTimeout(timer);
-  }, [graphData, resetSignal, fitToView]);
+  }, [graphData, resetSignal, reframe]);
 
   const handleNodeClick = useCallback(
     (node: NodeObject<RenderNode>): void => {
@@ -180,7 +200,10 @@ export function WikiGraph3D({
       if (!label) return null;
       const sprite = new SpriteText(label);
       sprite.color = isActive ? "#e6ecf5" : "#a8b0c0";
-      sprite.textHeight = isActive ? 3.2 : 2.4;
+      // Sized against the layout, not the screen: the camera frames the whole
+      // network, so a label has to be a readable fraction of the SPREAD
+      // between nodes rather than a fixed number of pixels.
+      sprite.textHeight = isActive ? 5.5 : 4;
       // Clear of the sphere, so a hub's label does not sit inside its own dot.
       const radius = NODE_REL_SIZE * nodeSizeScore(backlinks, isActive);
       sprite.position.set(0, -(radius + 2), 0);
@@ -211,6 +234,9 @@ export function WikiGraph3D({
   const data = useMemo(() => graphData, [graphData]);
 
   return (
+    // The renderer paints into its own canvas; this wrapper is what the camera
+    // work listens on to know the user has taken the wheel.
+    <div ref={hostRef} className="h-full w-full">
     <ForceGraph3D<RenderNode, RenderEdge>
       ref={graphRef}
       graphData={data}
@@ -253,8 +279,9 @@ export function WikiGraph3D({
       d3AlphaDecay={0.04}
       warmupTicks={40}
       onEngineTick={configureForces}
-      onEngineStop={fitToView}
+      onEngineStop={reframe}
     />
+    </div>
   );
 }
 
