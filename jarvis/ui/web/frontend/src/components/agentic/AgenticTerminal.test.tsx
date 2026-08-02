@@ -345,6 +345,23 @@ describe("pane keyboard", () => {
     expect(claimed).toBe(true);
     expect(terminalHarness.input).not.toHaveBeenCalled();
   });
+
+  it("keeps Ctrl+C out of the PTY even when nothing is selected", () => {
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+      />,
+    );
+
+    const claimed = terminalHarness.keys.current?.(
+      new KeyboardEvent("keydown", { key: "c", ctrlKey: true }),
+    );
+
+    expect(claimed).toBe(false);
+  });
 });
 
 describe("pane header recap", () => {

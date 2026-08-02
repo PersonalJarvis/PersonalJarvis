@@ -91,7 +91,7 @@ import { PaneRecap } from "./PaneRecap";
 import { attachToTerminal } from "@/lib/agenticIdeApi";
 import type { RecapReason, RecapSource } from "@/lib/agenticIdeApi";
 import { attachTerminalBridge } from "@/lib/editActions";
-import { robustPaste } from "@/lib/clipboard";
+import { robustCopy, robustPaste } from "@/lib/clipboard";
 import {
   TERMINAL_FONT_STACK,
   alignTerminalCells,
@@ -102,6 +102,7 @@ import {
   TERMINAL_OSC_LINK_HANDLER,
 } from "@/lib/terminalLinks";
 import { installPasteBridge } from "./terminalPaste";
+import { installCopyBridge } from "./terminalCopy";
 import { createKeyEventChain } from "./terminalKeyChain";
 import { installNewlineBridge } from "./terminalNewline";
 import { cancelPaneReflow, queuePaneReflow } from "./paneReflowQueue";
@@ -510,10 +511,29 @@ export function AgenticTerminal({
       paste: (text) => term.paste(text),
       focus: () => term.focus(),
     });
-    // Both keyboard bridges below claim keystrokes, and xterm holds exactly ONE
+    // The keyboard bridges below claim keystrokes, and xterm holds exactly ONE
     // custom key handler — attaching them directly would leave only the last
     // one working, silently. See ./terminalKeyChain.
     const keys = createKeyEventChain(term);
+    const isMac = /mac|iphone|ipad/i.test(navigator.userAgent);
+    // The desktop IDE reserves its platform copy chord for copying. In
+    // particular, an unselected Ctrl+C on Windows/Linux must not reach Codex
+    // as `^C`, where it cancels the current turn or exits the pane.
+    const disposeCopyBridge = installCopyBridge(
+      {
+        attachCustomKeyEventHandler: keys.add,
+        getSelection: () => term.getSelection(),
+        focus: () => term.focus(),
+      },
+      {
+        copy: robustCopy,
+        isMac,
+        onUnavailable: () =>
+          onAttachErrorRef.current?.(
+            "Could not copy the terminal selection on this machine.",
+          ),
+      },
+    );
     // Make Ctrl+V / Cmd+V paste. Left to itself xterm reads the chord as the
     // terminal control code ^V and CANCELS the keystroke, so the browser never
     // runs its own paste and nothing arrives at all — see ./terminalPaste.
@@ -525,7 +545,7 @@ export function AgenticTerminal({
       container,
       {
         readClipboard: robustPaste,
-        isMac: /mac|iphone|ipad/i.test(navigator.userAgent),
+        isMac,
         onUnavailable: () =>
           onAttachErrorRef.current?.(
             "Could not read the clipboard on this machine.",
@@ -1063,6 +1083,7 @@ export function AgenticTerminal({
       ro.disconnect();
       io?.disconnect();
       disposeFontSync();
+      disposeCopyBridge();
       disposePasteBridge();
       disposeNewlineBridge();
       disposeQuerySuppression();
