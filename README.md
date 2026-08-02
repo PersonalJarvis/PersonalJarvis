@@ -38,7 +38,7 @@ with a microphone.
 | *"Call the clinic and book the next open appointment."* | A real outbound phone call goes out over the optional Twilio line. |
 | *"Remember: Alex prefers Signal over email."* | Written to the Knowledge Wiki, and still known in every later session. |
 | *"Switch the voice over to Cartesia."* | The speech provider changes while you talk, and Jarvis reads the change back to you, old then new. |
-| *"Tell Nova to run the tests."* | The instruction lands in that agent's terminal in the Agentic IDE workspace. |
+| *"Tell T1 to run the tests."* | The instruction lands in terminal 1 of the Agentic IDE workspace. |
 | *"Open the browser and pull up the weather."* | Jarvis takes the mouse and keyboard and does it on your screen. |
 
 All six run on shipped code. None of them is a roadmap item. Two carry a setup cost that
@@ -46,12 +46,29 @@ is not out of the box: the phone call needs the optional `[telephony]` extra plu
 Twilio account, a number, and a publicly reachable HTTPS URL for the webhooks. Computer use
 needs a desktop install with a screen, not the headless one.
 
-When-then triggers are a real feature too, but you cannot arm them by voice. You create
-them in the Tasks view or with `jarvis tasks create`, not by saying "when X, do Y". They
-fire on a clock, on an interval, or on one of Jarvis's own internal events, such as a
-mission finishing or a message being sent. They do not fire on arbitrary things happening
-elsewhere on your PC. What they can do is speak, run one tool, dispatch a harness, or run
-an agent turn.
+## Which model answers you
+
+Three of them sit behind that table, and which one you get depends on what you asked for.
+You never choose; the handover happens mid-sentence.
+
+The **realtime model** carries the conversation. It hears you and speaks back in under a
+second, and it is built for talking rather than for thinking hard.
+
+The moment your request needs an actual tool, that turn goes to a **second model**. It is
+slower than the realtime one and noticeably smarter, and it is the one that does things:
+reading your wiki, changing a setting, placing the call, taking the screen. You hear the
+answer in the same voice, so from the outside it stays one conversation.
+
+Real work goes to a **third**: a coding agent that runs in an isolated copy of the
+workspace, gets reviewed by a critic, and comes back with a file.
+
+<p align="center">
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/model-tiers.png" alt="The API Keys screen with one tab per model tier: Realtime, Tool Model, and Agents" width="860" />
+</p>
+
+<p align="center">
+  <sub>One tab per tier in the app, each with its own provider. You only need keys for the tiers you actually use.</sub>
+</p>
 
 ## Demo
 
@@ -123,7 +140,14 @@ A deeper engineering map, with anti-patterns, bug classes, and phase status down
 One command on Windows, macOS, or Linux. You need Python 3.11 or newer and Git; the
 installer checks for both and stops with a download link if one is missing. It asks nothing
 in the terminal. It launches the app, and the app walks you through a one-time setup for
-language, wake word, and API keys. Bring your own keys, nothing is bundled.
+language, wake word, and API keys.
+
+**What it costs: nothing to us.** Personal Jarvis is MIT-licensed software you run on your
+own machine. There is no subscription for it, no paid tier, no marketplace cut, and no
+referral link behind any provider named on this page. What you do need is access to a
+model, and that is billed by whoever provides it, straight to you. An AI subscription you
+already pay for works, and so does a pay-per-token API key. The same goes for the optional
+pieces: a phone call runs on your own Twilio account at Twilio's prices.
 
 **Windows** (PowerShell)
 
@@ -156,19 +180,8 @@ bash ~/.personal-jarvis/install/uninstall.sh
 ```
 
 Both of those run the uninstaller that is already on your disk. If it is missing or refuses
-to start (installs from 1.1.0 and 1.1.1 shipped one that could not run on macOS at all),
-skip it and use the app's own uninstall directly. Same job, no bootstrap involved. Add
-`--dry-run` first to see what it would remove:
-
-```bash
-# macOS · Linux
-~/.personal-jarvis/.venv/bin/python -m jarvis --uninstall
-```
-
-```powershell
-# Windows (PowerShell)
-& "$env:USERPROFILE\.personal-jarvis\.venv\Scripts\python.exe" -m jarvis --uninstall
-```
+to start, the app can uninstall itself instead: see
+[`install/README.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/install/README.md#uninstalling).
 
 <details>
 <summary><b>Optional extras, install flags, pipx & manual clone</b></summary>
@@ -221,10 +234,6 @@ jarvis          # full desktop: window + voice + Orb overlay
 jarvis serve    # headless server: API + WebSocket + browser UI, no local audio needed
 ```
 
-<p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-desktop.png" alt="The Personal Jarvis desktop app" width="860" />
-</p>
-
 <details>
 <summary><b>Headless / server notes</b></summary>
 
@@ -258,11 +267,11 @@ voice: *"what is Mika doing?"*, *"tell Nova to run the tests"*. A focus mode nar
 to that workspace for as long as you want, then switches back cleanly.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/agentic-ide-demo.gif" alt="A prompt arriving in one agent's terminal in the Agentic IDE, with the thinking counter running underneath it" width="860" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/agentic-ide-demo.gif" alt="A prompt arriving in one agent's terminal in the Agentic IDE, with the thinking counter running underneath it" width="620" />
 </p>
 
 <p align="center">
-  <sub>A prompt lands in one agent's terminal, and the counter underneath it shows how long that agent has been thinking</sub>
+  <sub>A prompt lands in one agent's terminal, carrying the task, the key files and how that part of the code works today. The counter underneath shows how long the agent has been thinking.</sub>
 </p>
 
 ### Knowledge Wiki
@@ -273,11 +282,22 @@ edit, and sync it yourself.
 
 ### Computer use
 
-Jarvis takes the mouse and keyboard when you ask: opening apps, clicking, typing,
-navigating. An on-screen action border shows you when it is driving. That border is drawn
-by a small Qt sidecar from the `[desktop]` extra; where the sidecar is absent, on a base or
-headless install and on aarch64 Linux, it degrades to a logged no-op and the control itself
-still works.
+Ask for something that has no API, and Jarvis takes the mouse and keyboard: opening apps,
+clicking, typing, navigating. There is no scripted path per application. It works the way
+you would.
+
+The loop is perceive, act, verify. Jarvis takes a screenshot, a vision model says what to
+click next, the click is made through the platform's own input layer, and then it looks
+again to check that what it intended actually happened. Two details keep that honest.
+Coordinates are resolved against the exact frame the model saw, not against a stale
+picture of the screen, so a window that moved between two steps cannot send a click into
+nothing. And every action goes through a ledger that refuses duplicates, so a model that
+repeats itself does not click Send twice.
+
+While it drives, a border sits around the screen so you can see it is not you. That border
+comes from a small Qt companion in the `[desktop]` extra. Where the companion is absent, on
+a base or headless install and on aarch64 Linux, it degrades to a logged no-op and the
+control itself still works.
 
 ### Channels and telephony
 
@@ -302,19 +322,28 @@ Generated skills always land as drafts for your review. Nothing self-activates.
 
 ### Dictation
 
-Hold a key and talk, and what you said goes into whatever text field currently has focus,
-in any application. Jarvis writes through the clipboard, sends the paste chord, and puts
-your old clipboard back. There is a key you hold while speaking and a separate key that
-toggles, and you can have both armed at once.
+Hold a key and talk, and what you said appears in whatever text field currently has focus.
+Any application, not only this one: a browser, an editor, a chat box, a form in some
+internal tool. Jarvis writes through the clipboard, sends the paste chord, and puts your
+old clipboard back where it was. When a paste does not land, it says so rather than quietly
+losing what you said.
 
-Filler sounds are stripped by plain pattern matching, per language, with no model call
-involved. An optional second pass handles what pattern matching structurally cannot:
-punctuation, capitalization, false starts, spoken numbers. It sits behind a hard latency
-ceiling, and every one of its failure paths hands back your raw transcript unchanged. A
-separate translate pass writes what you said in one fixed target language instead. Words
-the recognizer keeps getting wrong go into your own dictionary, and everything dictated is
-kept locally in both raw and cleaned form, so a cleanup can always be checked after the
-fact.
+One key is held down while you speak, a second one toggles, and you can have both armed at
+the same time. A third pastes the last thing you dictated again, for the field that ate it.
+Recognition runs on whichever speech provider you configured, and that can be a local
+model, in which case your voice never leaves the machine.
+
+Then it gets cleaned up twice. The first pass strips filler sounds by plain pattern
+matching, per language, with no model involved at all. The second is optional and does what
+pattern matching structurally cannot: punctuation, capitalization, false starts, spoken
+numbers. It sits behind a hard latency ceiling, and every failure path hands back your raw
+transcript unchanged rather than a mangled one. A separate pass translates instead, writing
+what you said in one fixed target language.
+
+Words the recognizer keeps getting wrong go into a dictionary you control. Everything
+dictated is kept on your disk in both raw and cleaned form, so you can see what a cleanup
+changed and take the original back. The audio is kept too, which means an entry that came
+back empty because a provider was down can be transcribed again later instead of being lost.
 
 ### Realtime voice
 
@@ -402,26 +431,41 @@ an LLM chat whole.
 <details>
 <summary><b>Project structure</b></summary>
 
+Inside `jarvis/` the layout mirrors the 8-layer model, so you can usually guess where
+something lives from the layer it belongs to:
+
 ```text
 PersonalJarvis/
-├── jarvis/          # The application: every core package (brain, speech, missions, memory, UI server…)
-├── ui/              # Orb overlay for the desktop; loaded by jarvis at runtime
-├── board-backend/   # Standalone federation service (verifies signed Board aggregates)
-├── conductor/       # YAML-first agentic-workflow canvas, mounted inside the app
-├── wiki/            # Seed knowledge vault (Obsidian-compatible), created on first run
-├── install/         # One-line installers + signed-release verification (cosign / TUF)
-├── tests/           # Unit, integration, contract, and end-to-end suites
-├── docs/            # Architecture docs, ADRs, the philosophy, design specs
-├── assets/          # Brand art, banner, screenshots
-├── .github/         # CI workflows + issue / pull-request templates
-├── scoop-bucket/    # Windows install manifest (Scoop)
-├── homebrew-tap/    # macOS install formula (Homebrew)
-└── README · LICENSE · CODE_OF_CONDUCT · CONTRIBUTING · SECURITY · CHANGELOG
+├── jarvis/                  # The application
+│   ├── core/                #   L6  EventBus, protocols, config + atomic writer
+│   ├── orchestrator/        #   L6  State machine and turn control
+│   ├── brain/               #   L4  Providers, the router, the Ack-Brain, persona
+│   ├── missions/            #   L6  Worker and critic loop, worktree isolation
+│   ├── agentic_ide/         #   L6  Terminal grid, call signs, prompt delivery
+│   ├── speech/              #   L2  Wake → VAD → STT → TTS
+│   ├── dictation/           #   L2  Cleanup, clipboard insert, polish, history
+│   ├── realtime/            #   L2  Speech-to-speech providers
+│   ├── memory/              #   L6  Knowledge Wiki, awareness, long-term recall
+│   ├── cu/                  #   L5  Computer use: see the screen, drive it
+│   ├── safety/              #   L3  The four risk tiers and the approval path
+│   ├── channels/            #   L7  Telegram, Discord, and the shared brain behind them
+│   ├── telephony/           #   L7  Outbound and inbound calls (optional extra)
+│   ├── plugins/             #       Every pluggable backend, wired by entry point
+│   ├── cli_ctl/             #       The jarvis / jarvisctl / jctl client
+│   └── ui/web/              #   L7  FastAPI server + the React desktop app
+├── ui/                      # Orb overlay; loaded by jarvis at runtime
+├── board-backend/           # Standalone federation service (signed Board aggregates)
+├── conductor/               # YAML-first agentic-workflow canvas, mounted in the app
+├── wiki/                    # Seed knowledge vault, created on first run
+├── install/                 # One-line installers + release verification (cosign / TUF)
+├── tests/                   # Unit, integration, contract, and end-to-end suites
+├── docs/                    # Architecture docs, ADRs, the philosophy, design specs
+├── assets/                  # Brand art, banner, screenshots, demo recordings
+├── .github/                 # CI workflows + issue / pull-request templates
+├── scoop-bucket/            # Windows install manifest (Scoop)
+├── homebrew-tap/            # macOS install formula (Homebrew)
+└── README · LICENSE · CONTRIBUTING · SECURITY · TRADEMARK · CHANGELOG
 ```
-
-Inside `jarvis/`, the layout mirrors the 8-layer model: `jarvis/brain/` (providers and
-router), `jarvis/speech/` (wake, VAD, STT, TTS), `jarvis/missions/` (the worker and critic
-loop), `jarvis/memory/wiki/` (long-term memory), `jarvis/ui/web/` (the desktop app).
 
 </details>
 

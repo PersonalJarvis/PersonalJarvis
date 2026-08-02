@@ -96,6 +96,37 @@ pip install rich packaging
 python install/installer.py --dry-run
 ```
 
+## Uninstalling
+
+The normal path is the uninstaller the installer put on disk. It removes the
+install folder, the autostart entry, and the keychain entries. `--dry-run`
+previews, `--yes` skips the confirmation:
+
+```powershell
+# Windows (PowerShell)
+& "$env:USERPROFILE\.personal-jarvis\install\uninstall.ps1"
+```
+
+```bash
+# macOS / Linux
+bash ~/.personal-jarvis/install/uninstall.sh
+```
+
+If that script is missing or refuses to start, the app uninstalls itself. This
+is the same job without the bootstrap wrapper, and it is the path to use on
+installs from 1.1.0 and 1.1.1, which shipped an uninstaller that could not run
+on macOS at all:
+
+```bash
+# macOS / Linux
+~/.personal-jarvis/.venv/bin/python -m jarvis --uninstall
+```
+
+```powershell
+# Windows (PowerShell)
+& "$env:USERPROFILE\.personal-jarvis\.venv\Scripts\python.exe" -m jarvis --uninstall
+```
+
 ## Environment overrides
 
 | Variable                  | Effect |

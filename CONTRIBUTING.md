@@ -7,8 +7,7 @@
 <h1 align="center">Contributing</h1>
 
 <p align="center">
-  Thank you for helping build Personal Jarvis.<br/>
-  This guide covers dev setup, the architecture, what to build, and getting your PR merged.
+  Dev setup, the architecture worth knowing before you touch it, and what gets a PR merged.
 </p>
 
 <p align="center">
@@ -19,19 +18,19 @@
 </p>
 
 > [!IMPORTANT]
-> **All artifacts in this repo are English** — code, comments, docstrings, docs, commit
-> messages, and PR text. You can talk to us in any language (the assistant itself speaks
-> de/en/es at runtime), but everything written *into the repo* is English. CI enforces this.
+> **Everything written into this repo is English**: code, comments, docstrings, docs, commit
+> messages, PR text. Talk to us in whatever language you like, and the assistant itself
+> speaks several at runtime, but the artifacts are English and CI checks it.
 
 ---
 
 ## Contents
 
-- [Contribution priorities](#contribution-priorities)
+- [What to work on](#what-to-work-on)
 - [Before you start](#before-you-start)
 - [Development environment](#development-environment)
-- [Architecture in 60 seconds](#architecture-in-60-seconds)
-- [Plugin, Tool, or Skill?](#plugin-tool-or-skill)
+- [The architecture worth knowing](#the-architecture-worth-knowing)
+- [Plugin, tool, or skill?](#plugin-tool-or-skill)
 - [Conventions](#conventions)
 - [Testing](#testing)
 - [Opening your PR](#opening-your-pr)
@@ -39,28 +38,35 @@
 
 ---
 
-## Contribution priorities
+## What to work on
 
-We value contributions in this order:
+Bug fixes come first, always: crashes, wrong behaviour, lost data, anything that made the
+voice path worse than it was.
 
-| # | Priority | What it covers |
-|:---:|---|---|
-| 1 | **Bug fixes** | Crashes, incorrect behavior, data loss, voice-path regressions. Always top priority. |
-| 2 | **Cross-platform** | Linux, macOS, Windows, headless servers. A feature that only works on one OS is *incomplete* — see [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md). |
-| 3 | **Security hardening** | Prompt injection, the instruction-source boundary, the risk-tier policy, path traversal, privilege escalation — see [`SECURITY.md`](SECURITY.md). |
-| 4 | **Performance & robustness** | Voice latency budgets, retry logic, graceful degradation, the "conversation never blocks" contract. |
-| 5 | **New providers / plugins** | Wake · STT · TTS · brain · harness · tool · channel. Provider-agnostic, and must pass the contract suite. |
-| 6 | **New skills** | Broadly useful ones only. Generated skills land as drafts and are never auto-activated. |
-| 7 | **Documentation** | Fixes, clarifications, new examples. |
+After that, cross-platform work. Linux, macOS, Windows and headless servers are equal here,
+and a feature that only runs on one of them is unfinished rather than done. The reasoning is
+in [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md).
+
+Then security hardening: prompt injection, the boundary between what the user said and what
+a tool merely observed, the risk-tier policy, path traversal, privilege escalation. See
+[`SECURITY.md`](SECURITY.md).
+
+Then robustness and speed, which here mostly means voice latency, retry behaviour, honest
+degradation, and the rule that a conversation never blocks.
+
+New providers and plugins are welcome across all seven groups (wake, STT, TTS, brain,
+harness, tool, channel). They have to stay provider-agnostic and pass the contract suite.
+New skills are welcome when they are broadly useful; generated ones land as drafts and are
+never activated on their own. Documentation fixes are welcome any time.
 
 ## Before you start
 
 > [!TIP]
-> For anything non-trivial, **open an issue first** so we can agree on the approach — it
-> saves you from a merged-PR-shaped surprise.
+> For anything non-trivial, open an issue first so we can agree on the approach. It saves
+> you from writing a PR that was never going to land.
 
-- Search existing issues, and say hi on [Discord](https://discord.gg/x7USduHxbc).
-- Keep each PR focused — one logical change is far easier to review and merge.
+Search the existing issues, and say hi on [Discord](https://discord.gg/x7USduHxbc). Keep each
+PR to one logical change; it is far easier to review and merges much faster.
 
 ## Development environment
 
@@ -80,49 +86,59 @@ python -m jarvis.ui.web.launcher      # run it (add --headless for a server)
 ```
 
 > [!NOTE]
-> After editing entry-points in `pyproject.toml`, re-run `pip install -e . --no-deps` — that
-> is what activates new plugins. The frontend lives in `jarvis/ui/web/frontend/`
-> (`npm install`, then `npm run dev` / `npm run build` / `npm run test`).
+> After editing entry-points in `pyproject.toml`, re-run `pip install -e . --no-deps`. That
+> is what activates new plugins, and skipping it is the single most common reason a plugin
+> "does not exist". The frontend lives in `jarvis/ui/web/frontend/`: `npm install`, then
+> `npm run dev` / `npm run build` / `npm run test`.
 
-## Architecture in 60 seconds
+## The architecture worth knowing
 
-Personal Jarvis is an 8-layer system. The rules that matter for contributors:
+Personal Jarvis is an 8-layer system. Four rules matter before you write anything:
 
-- **Higher layers reach lower layers only through protocols** (`jarvis/core/protocols.py`); lateral communication is only via typed, immutable events on the **EventBus**.
-- **Streaming-first** — `Brain`/`STT`/`TTS`/`Harness` methods return `AsyncIterator`; non-streaming providers yield exactly one element.
-- **Provider-agnostic** — never hardcode one brain vendor; `cfg.brain.primary` selects.
-- **Router-Brain dispatches** to interchangeable harnesses; heavy work runs as **missions** in isolated `git worktree` branches under a Worker-Critic loop.
+Higher layers reach lower ones only through the protocols in `jarvis/core/protocols.py`.
+Anything sideways goes over the EventBus as a typed, immutable event.
 
-For the deep dive, read [`docs/architecture-overview.md`](docs/architecture-overview.md), [`CLAUDE.md`](CLAUDE.md) (binding conventions), and [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) (the cross-platform, cloud-first doctrine).
+Everything streams. `Brain`, `STT`, `TTS` and `Harness` methods return an `AsyncIterator`,
+and a provider that cannot stream yields exactly one element.
 
-## Plugin, Tool, or Skill?
+No vendor is load-bearing. Never hardcode one brain provider; `cfg.brain.primary` decides.
 
-The most common design question — pick the smallest thing that fits:
+The router dispatches rather than doing. Heavy work becomes a mission in an isolated
+`git worktree`, under a worker and critic loop.
 
-| | **Plugin** | **Tool** | **Skill** |
+For the deep version, read [`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md), which is a dense
+engineering snapshot, [`CLAUDE.md`](CLAUDE.md) for the binding conventions, and
+[`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) for the cross-platform doctrine.
+
+## Plugin, tool, or skill?
+
+The most common design question. Pick the smallest thing that fits:
+
+| | Plugin | Tool | Skill |
 |---|---|---|---|
-| **What it is** | A swappable *provider* | A brain-callable *action* within a turn | An authored, multi-step *workflow* |
-| **Where it lives** | `jarvis/plugins/<group>/` in one of 7 groups | Registered tool, run via `ToolExecutor` | Authored skill; generated ones start as `draft` |
-| **Golden rule** | No `import jarvis.*` inside the module; new STT/Brain/Tool/Channel must pass `tests/contract/` | **Never** call `Tool.execute()` directly | **Never** auto-activated |
+| What it is | A swappable provider | A brain-callable action inside one turn | An authored, multi-step workflow |
+| Where it lives | `jarvis/plugins/<group>/`, one of 7 groups | Registered tool, run via `ToolExecutor` | Authored skill; generated ones start as `draft` |
+| The rule you cannot break | No `import jarvis.*` in the module; new STT/Brain/Tool/Channel must pass `tests/contract/` | Never call `Tool.execute()` directly | Never auto-activated |
 
-**Rule of thumb:** a swappable backend → **plugin**; a single brain-callable action → **tool**; an authored multi-step workflow → **skill**.
+A swappable backend is a plugin. A single action the brain can call is a tool. A multi-step
+workflow somebody wrote down is a skill.
 
 ## Conventions
 
-These keep the project coherent — most are enforced in CI:
+Most of these are enforced in CI, so you will find out either way. Better to know first:
 
 | Area | The rule |
 |---|---|
 | Language | English artifacts only (CI `language-policy` gate) |
-| Risk tier | `ToolExecutor.execute()` is the **only** authorized execution path |
-| Router | `ROUTER_TOOLS` is a frozenset; no spawn-tool in a worker tool set |
-| Enum drift | Strings crossing module boundaries use the five-layer pattern + a parity test |
-| Config writes | Mutate `jarvis.toml` only via `config_writer` (lock + tempfile + BOM-safe) |
+| Risk tier | `ToolExecutor.execute()` is the only authorized execution path |
+| Router | `ROUTER_TOOLS` is a frozenset; no spawn tool in a worker tool set |
+| Enum drift | Strings crossing module boundaries use the five-layer pattern plus a parity test |
+| Config writes | Mutate `jarvis.toml` only via `config_writer` (lock, tempfile, BOM-safe) |
 | Subprocess | Always pass `NO_WINDOW_CREATIONFLAGS` |
 | Secrets | Only via `get_secret()`; never in code, config, or commits |
-| Dependencies | No new Windows-/GPU-specific dependency in the base install — `[desktop]` extras only |
+| Dependencies | No Windows-only or GPU-only dependency in the base install; extras only |
 
-The full anti-pattern register lives in [`CLAUDE.md`](CLAUDE.md).
+The full anti-pattern register is in [`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md).
 
 ## Testing
 
@@ -137,29 +153,31 @@ mypy jarvis/
 cd jarvis/ui/web/frontend && npm run test && npm run build
 ```
 
-Tests use fakes (in `tests/fakes/`), not mocks. New providers must pass the contract suite.
+Tests use fakes from `tests/fakes/`, not mocks. New providers have to pass the contract suite.
 
 ## Opening your PR
 
-Run through this checklist before you open it:
+Run through this before you open it:
 
 - [ ] Tests pass (`pytest`), including `tests/contract/` for new providers
 - [ ] `ruff` and `mypy` are clean; the frontend builds and `vitest` is green
-- [ ] All new/changed artifacts are English (the CI language-policy gate is required)
-- [ ] New wire-format enums use the five-layer pattern + a parity test
-- [ ] No new base-install dependency on Windows-/GPU-specific packages (extras only)
-- [ ] User-facing changes update the docs / `CHANGELOG.md`
+- [ ] Everything new or changed is English (the CI language gate is required)
+- [ ] New wire-format enums use the five-layer pattern plus a parity test
+- [ ] No new base-install dependency on Windows-only or GPU-only packages
+- [ ] User-facing changes update the docs and `CHANGELOG.md`
 
-Open a PR with a clear description of *what* changed and *why*, and link the issue it closes.
-By contributing, you agree your contribution is licensed under the [MIT License](LICENSE).
+Describe what changed and why, and link the issue it closes. By contributing you agree your
+work is licensed under the [MIT License](LICENSE).
 
 ## Community
 
 <p align="center">
   <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-join_the_server-FFD60A?style=for-the-badge&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
+  <a href="https://x.com/Ruben_Luetke"><img alt="X" src="https://img.shields.io/badge/X-follow-FFD60A?style=for-the-badge&logo=x&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
 </p>
 
 <p align="center">
   <a href="https://discord.gg/x7USduHxbc">Discord</a> ·
+  <a href="https://x.com/Ruben_Luetke">X</a> ·
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/issues">Issues</a>
 </p>
