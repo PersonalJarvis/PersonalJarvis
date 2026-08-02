@@ -258,11 +258,11 @@ voice: *"what is Mika doing?"*, *"tell Nova to run the tests"*. A focus mode nar
 to that workspace for as long as you want, then switches back cleanly.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/agentic-ide-demo.gif" alt="A prompt arriving in one agent's terminal in the Agentic IDE, with the thinking counter running underneath it" width="860" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/agentic-ide-demo.gif" alt="A prompt arriving in one agent's terminal in the Agentic IDE, with the thinking counter running underneath it" width="620" />
 </p>
 
 <p align="center">
-  <sub>A prompt lands in one agent's terminal, and the counter underneath it shows how long that agent has been thinking</sub>
+  <sub>A prompt lands in one agent's terminal, carrying the task, the key files and how that part of the code works today. The counter underneath shows how long the agent has been thinking.</sub>
 </p>
 
 ### Knowledge Wiki
@@ -402,26 +402,41 @@ an LLM chat whole.
 <details>
 <summary><b>Project structure</b></summary>
 
+Inside `jarvis/` the layout mirrors the 8-layer model, so you can usually guess where
+something lives from the layer it belongs to:
+
 ```text
 PersonalJarvis/
-├── jarvis/          # The application: every core package (brain, speech, missions, memory, UI server…)
-├── ui/              # Orb overlay for the desktop; loaded by jarvis at runtime
-├── board-backend/   # Standalone federation service (verifies signed Board aggregates)
-├── conductor/       # YAML-first agentic-workflow canvas, mounted inside the app
-├── wiki/            # Seed knowledge vault (Obsidian-compatible), created on first run
-├── install/         # One-line installers + signed-release verification (cosign / TUF)
-├── tests/           # Unit, integration, contract, and end-to-end suites
-├── docs/            # Architecture docs, ADRs, the philosophy, design specs
-├── assets/          # Brand art, banner, screenshots
-├── .github/         # CI workflows + issue / pull-request templates
-├── scoop-bucket/    # Windows install manifest (Scoop)
-├── homebrew-tap/    # macOS install formula (Homebrew)
+├── jarvis/                  # The application
+│   ├── core/                #   L6  EventBus, protocols, config + atomic writer
+│   ├── orchestrator/        #   L6  State machine and turn control
+│   ├── brain/               #   L4  Providers, the router, the Ack-Brain, persona
+│   ├── missions/            #   L6  Worker and critic loop, worktree isolation
+│   ├── agentic_ide/         #   L6  Terminal grid, call signs, prompt delivery
+│   ├── speech/              #   L2  Wake → VAD → STT → TTS
+│   ├── dictation/           #   L2  Cleanup, clipboard insert, polish, history
+│   ├── realtime/            #   L2  Speech-to-speech providers
+│   ├── memory/              #   L6  Knowledge Wiki, awareness, long-term recall
+│   ├── cu/                  #   L5  Computer use: see the screen, drive it
+│   ├── safety/              #   L3  The four risk tiers and the approval path
+│   ├── channels/            #   L7  Telegram, Discord, and the shared brain behind them
+│   ├── telephony/           #   L7  Outbound and inbound calls (optional extra)
+│   ├── plugins/             #   ——  Every pluggable backend, wired by entry point
+│   ├── cli_ctl/             #   ——  The jarvis / jarvisctl / jctl client
+│   └── ui/web/              #   L7  FastAPI server + the React desktop app
+├── ui/                      # Orb overlay; loaded by jarvis at runtime
+├── board-backend/           # Standalone federation service (signed Board aggregates)
+├── conductor/               # YAML-first agentic-workflow canvas, mounted in the app
+├── wiki/                    # Seed knowledge vault, created on first run
+├── install/                 # One-line installers + release verification (cosign / TUF)
+├── tests/                   # Unit, integration, contract, and end-to-end suites
+├── docs/                    # Architecture docs, ADRs, the philosophy, design specs
+├── assets/                  # Brand art, banner, screenshots, demo recordings
+├── .github/                 # CI workflows + issue / pull-request templates
+├── scoop-bucket/            # Windows install manifest (Scoop)
+├── homebrew-tap/            # macOS install formula (Homebrew)
 └── README · LICENSE · CODE_OF_CONDUCT · CONTRIBUTING · SECURITY · CHANGELOG
 ```
-
-Inside `jarvis/`, the layout mirrors the 8-layer model: `jarvis/brain/` (providers and
-router), `jarvis/speech/` (wake, VAD, STT, TTS), `jarvis/missions/` (the worker and critic
-loop), `jarvis/memory/wiki/` (long-term memory), `jarvis/ui/web/` (the desktop app).
 
 </details>
 
