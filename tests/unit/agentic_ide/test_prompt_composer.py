@@ -49,7 +49,7 @@ def _writer_available(monkeypatch: pytest.MonkeyPatch) -> None:
     machine with no keys returns None and sends every test down the
     deterministic path.
     """
-    monkeypatch.setattr(prompt_composer, "_resolve_writer", lambda: _Writer())
+    monkeypatch.setattr(prompt_composer, "_resolve_writer", lambda: (_Writer(), "test"))
 
 
 @pytest.fixture()
@@ -291,7 +291,7 @@ async def test_no_quality_writer_degrades_openly(
 ) -> None:
     """Rather than silently demoting to whatever small model is left."""
     _prime(workspace)
-    monkeypatch.setattr(prompt_composer, "_resolve_writer", lambda: None)
+    monkeypatch.setattr(prompt_composer, "_resolve_writer", lambda: (None, ""))
 
     result = await prompt_composer.compose(
         "review the vosk wake provider", session=workspace, terminal_name="Kai"

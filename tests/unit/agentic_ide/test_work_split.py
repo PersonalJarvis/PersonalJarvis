@@ -47,7 +47,7 @@ class _Splitter:
 @pytest.fixture(autouse=True)
 def _splitter_available(monkeypatch: pytest.MonkeyPatch) -> None:
     """A quality-tier model is reachable unless a test says otherwise."""
-    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: _Splitter())
+    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: (_Splitter(), "test"))
 
 
 @pytest.fixture()
@@ -182,7 +182,7 @@ async def test_no_quality_provider_still_splits(
     workspace: _Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A downloader with no API key must still be able to run a fleet (§3)."""
-    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: None)
+    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: (None, ""))
     result = await work_split.split("analyse it", session=workspace, count=3)
     assert result.split_by == "fallback"
     assert len(result.assignments) == 3
@@ -192,7 +192,7 @@ async def test_no_quality_provider_still_splits(
 async def test_the_deterministic_split_uses_real_directories(
     workspace: _Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: None)
+    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: (None, ""))
     result = await work_split.split("analyse it", session=workspace, count=3)
     areas = " ".join(a.area for a in result.assignments)
     # The fixture workspace has jarvis/, docs/ and tests/ — the split must name
@@ -203,7 +203,7 @@ async def test_the_deterministic_split_uses_real_directories(
 async def test_the_deterministic_split_never_repeats_an_area(
     workspace: _Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: None)
+    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: (None, ""))
     result = await work_split.split("analyse it", session=workspace, count=3)
     areas = [a.area for a in result.assignments]
     assert len(set(areas)) == len(areas)
@@ -213,7 +213,7 @@ async def test_every_assignment_carries_the_original_order(
     workspace: _Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A slice without the goal is an agent doing something else entirely."""
-    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: None)
+    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: (None, ""))
     result = await work_split.split(
         "check cross-platform support", session=workspace, count=3
     )
@@ -225,7 +225,7 @@ async def test_more_agents_than_directories_still_gets_everyone_a_slice(
     workspace: _Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Eight agents on a four-directory repo: nobody may be left idle."""
-    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: None)
+    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: (None, ""))
     result = await work_split.split("analyse it", session=workspace, count=8)
     assert len(result.assignments) == 8
     assert all(a.task.strip() for a in result.assignments)
@@ -236,7 +236,7 @@ async def test_an_empty_folder_still_produces_one_slice_per_agent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No readable structure is not a reason to brief nobody."""
-    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: None)
+    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: (None, ""))
     file_index.reset_cache()
     result = await work_split.split(
         "analyse it", session=_Session(folder=str(tmp_path)), count=3
@@ -250,3 +250,75 @@ async def test_zero_or_negative_counts_are_refused_not_guessed(
 ) -> None:
     result = await work_split.split("analyse it", session=workspace, count=0)
     assert result.assignments == ()
+
+
+async def test_a_dead_planner_hands_the_plan_to_the_next_provider(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The composer's failure mode applies here too: a depleted key answering
+    429 must cost the provider, not drop the fleet onto the crude by-directory
+    split while a working provider sits idle (AP-22)."""
+    calls: list[int] = []
+
+    async def fake_llm_split(**_kwargs: object) -> str:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("429 RESOURCE_EXHAUSTED")
+        return VALID_THREE
+
+    monkeypatch.setattr(work_split, "_llm_split", fake_llm_split)
+    monkeypatch.setattr(
+        work_split, "_rescue_splitter", lambda tried: (_Splitter(), "tool_model:working")
+    )
+
+    result = await work_split.split("analyse it", session=workspace, count=3)
+
+    assert result.split_by == "llm"
+    assert len(result.assignments) == 3
+    assert len(calls) == 2
+
+
+async def test_the_rung_that_died_is_named_for_the_rescue(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-probing the tier that just failed spends the same dead credential."""
+    excluded: list[tuple[str, ...]] = []
+
+    async def fake_llm_split(**_kwargs: object) -> str:
+        raise RuntimeError("429 RESOURCE_EXHAUSTED")
+
+    monkeypatch.setattr(work_split, "_llm_split", fake_llm_split)
+    monkeypatch.setattr(
+        work_split, "_resolve_splitter", lambda: (_Splitter(), "api")
+    )
+    monkeypatch.setattr(
+        work_split,
+        "_rescue_splitter",
+        lambda tried: excluded.append(tuple(tried)) or (None, ""),
+    )
+
+    result = await work_split.split("analyse it", session=workspace, count=3)
+
+    assert excluded == [("api",)]
+    assert result.split_by == "fallback"
+    assert len(result.assignments) == 3
+
+
+async def test_a_pinned_planner_is_never_substituted(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``brain=`` is the caller deciding which model plans this fleet."""
+
+    async def fake_llm_split(**_kwargs: object) -> str:
+        raise RuntimeError("429 RESOURCE_EXHAUSTED")
+
+    monkeypatch.setattr(work_split, "_llm_split", fake_llm_split)
+    monkeypatch.setattr(
+        work_split, "_rescue_splitter", lambda tried: pytest.fail("substituted a pin")
+    )
+
+    result = await work_split.split(
+        "analyse it", session=workspace, count=3, brain=_Splitter()
+    )
+
+    assert result.split_by == "fallback"
