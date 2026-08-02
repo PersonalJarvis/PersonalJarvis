@@ -7752,21 +7752,52 @@ class SpeechPipeline:
                 )
                 assistant_transcript_parts.clear()
             elif was_audible:
+        def _reported_input_latency_s() -> float:
+            try:
+                from jarvis.audio.capture import (  # noqa: PLC0415
+                    last_input_latency_s,
+                )
+
+                return max(0.0, float(last_input_latency_s()))
+            except Exception:  # noqa: BLE001 - a missing figure only costs margin
+                log.debug(
+                    "Capture latency unavailable; echo tail keeps its fixed "
+                    "margin only",
+                    exc_info=True,
+                )
+                return 0.0
+
                 self._touch_assistant_speech_activity()
             if preserve_echo_tail:
                 output_latency_s = _reported_output_latency_s()
-                guard_s = _REALTIME_POST_OUTPUT_ECHO_GUARD_S + output_latency_s
+                # A frame handed to us now was RECORDED one capture latency
+                # ago, so the audible phase reaches that much further back.
+                # Without it the guard released frames still carrying the
+                # assistant's own voice, the provider heard itself, and the
+                # model answered its own last sentence.
+                input_latency_s = _reported_input_latency_s()
+                audible_s = (
+                    output_latency_s
+                    + input_latency_s
+                    + _REALTIME_HW_ECHO_TAIL_MARGIN_S
+                )
+                # Never end the tail before the audible phase it protects; on a
+                # slow capture path that simply leaves nothing to buffer, which
+                # is correct - those frames are echo, not the user.
+                guard_s = max(
+                    _REALTIME_POST_OUTPUT_ECHO_GUARD_S + output_latency_s,
+                    audible_s,
+                )
                 now = time.monotonic()
                 post_output_echo_guard_until = now + guard_s
-                post_output_hw_tail_until = (
-                    now + output_latency_s + _REALTIME_HW_ECHO_TAIL_MARGIN_S
-                )
+                post_output_hw_tail_until = now + audible_s
                 log.info(
-                    "Realtime echo tail armed for %.3fs "
-                    "(device output latency %.3fs, audible phase %.3fs).",
+                    "Realtime echo tail armed for %.3fs (device output latency "
+                    "%.3fs, capture latency %.3fs, audible phase %.3fs).",
                     guard_s,
                     output_latency_s,
-                    output_latency_s + _REALTIME_HW_ECHO_TAIL_MARGIN_S,
+                    input_latency_s,
+                    audible_s,
                 )
                 return
             post_output_echo_guard_until = 0.0

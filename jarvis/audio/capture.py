@@ -48,6 +48,37 @@ DTYPE = "int16"
 CAPTURE_BLOCK_DURATION_S = BLOCKSIZE / SAMPLE_RATE
 
 
+# Reported latency of the capture stream that is currently open. Half-duplex
+# echo protection needs it: a microphone frame handed over at time T was
+# recorded that much EARLIER, so without it the guard releases frames that
+# still carry the assistant's own voice and the model ends up answering
+# itself. Kept module-level because the mic is a process-wide singleton and
+# the consumers (realtime session, wake loop) never own the stream object.
+_INPUT_LATENCY_CAP_S = 1.0
+_last_input_latency_s = 0.0
+
+
+def last_input_latency_s() -> float:
+    """Capture latency of the open microphone stream, 0.0 when unknown."""
+    return _last_input_latency_s
+
+
+def _remember_input_latency(stream: Any) -> None:
+    global _last_input_latency_s
+    raw = getattr(stream, "latency", None)
+    # PortAudio reports a scalar for a single stream; be liberal anyway, since
+    # a wrong value here silently weakens echo protection rather than raising.
+    if isinstance(raw, (tuple, list)):
+        raw = raw[0] if raw else None
+    try:
+        latency = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        latency = 0.0
+    if not (latency > 0.0):
+        latency = 0.0
+    _last_input_latency_s = min(_INPUT_LATENCY_CAP_S, latency)
+
+
 def capture_chunks_for_duration(seconds: float) -> int:
     """Return the default-size chunk count covering at least ``seconds``."""
     return max(1, math.ceil(max(0.0, float(seconds)) / CAPTURE_BLOCK_DURATION_S))
@@ -929,6 +960,7 @@ class MicrophoneCapture:
                     _guarded_open, attempt, capture_rate, capture_blocksize
                 )
                 self._stream = stream
+                _remember_input_latency(stream)
                 self._device = attempt
                 self._using_physical_fallback = physical_fallback
                 if not physical_fallback:
