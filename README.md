@@ -267,11 +267,13 @@ voice: *"what is Mika doing?"*, *"tell Nova to run the tests"*. A focus mode nar
 to that workspace for as long as you want, then switches back cleanly.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/agentic-ide-demo.gif" alt="A prompt arriving in one agent's terminal in the Agentic IDE, with the thinking counter running underneath it" width="620" />
+  <a href="https://youtu.be/wFBdmdOn6EU">
+    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/agentic-ide-demo.gif" alt="Three coding agents side by side in the Agentic IDE, one receiving a prompt while its thinking counter runs" width="860" />
+  </a>
 </p>
 
 <p align="center">
-  <sub>A prompt lands in one agent's terminal, carrying the task, the key files and how that part of the code works today. The counter underneath shows how long the agent has been thinking.</sub>
+  <sub>A prompt lands in terminal 1, carrying the task, the key files and how that part of the code works today. The counter underneath shows how long that agent has been thinking &middot; <a href="https://youtu.be/wFBdmdOn6EU">watch the full Agentic IDE demo on YouTube</a></sub>
 </p>
 
 ### Knowledge Wiki
