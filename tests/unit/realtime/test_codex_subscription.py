@@ -101,8 +101,6 @@ class _FakeAudioEndpoint:
         self._outputs = asyncio.Queue()
         for chunk in output_chunks:
             self._outputs.put_nowait(chunk)
-        if not output_schedule:
-            self._outputs.put_nowait(None)
 
     async def create_offer(self) -> str:
         return "v=0\r\no=python-peer\r\n"
@@ -132,6 +130,12 @@ class _FakeAudioEndpoint:
 def _provider(client, **kwargs):
     """Build the provider with an injected fake media endpoint."""
     endpoint = kwargs.pop("endpoint", None) or _FakeAudioEndpoint()
+    # Adapter tests do not reach the user's configured cloud/local STT unless
+    # a case injects an explicit recognizer. The production default is covered
+    # by the input-transcriber unit tests.
+    kwargs.setdefault(
+        "input_transcriber_factory", lambda: _StubEndpointer(speaking=False)
+    )
     provider = CodexSubscriptionRealtimeProvider(
         client=client,
         # The factory receives the ICE configuration for this attempt.
@@ -295,6 +299,32 @@ async def test_direct_sdp_open_uses_safe_experimental_transport_contract() -> No
     }
     await session.close()
     assert client.unsubscribes == ["thread-1"]
+
+
+@pytest.mark.asyncio
+async def test_reopened_session_restores_bounded_same_call_history() -> None:
+    client = _Client()
+    provider = _provider(client)
+    history = (
+        {"role": "user", "text": "Which language were we discussing?"},
+        {"role": "assistant", "text": "We were discussing Malbolge."},
+    )
+
+    session = await provider.open_session(
+        RealtimeSessionConfig(
+            instructions="Speak concise English.",
+            history=history,
+        )
+    )
+
+    assert len(client.text_appends) == 2
+    thread_id, restored, role = client.text_appends[1]
+    assert thread_id == "thread-1"
+    assert role == "developer"
+    assert "conversation_history" in restored
+    assert "Which language were we discussing?" in restored
+    assert "We were discussing Malbolge." in restored
+    await session.close()
 
 
 @pytest.mark.asyncio
@@ -736,7 +766,7 @@ async def test_default_done_waits_for_all_late_audio_before_one_completion(
     # Late RTP audio must keep re-arming the quiescence timer so one turn ends
     # exactly once, after the last audible chunk.
     endpoint = _FakeAudioEndpoint(
-        output_schedule=((0.015, b"\x01\x00"), (0.015, b"\x01\x00"), (0.0, None))
+        output_schedule=((0.015, b"\x01\x00"), (0.015, b"\x01\x00"))
     )
     session = await _provider(client, endpoint=endpoint).open_session(
         RealtimeSessionConfig()
@@ -1099,6 +1129,7 @@ async def test_provider_error_and_app_server_death_are_normalized() -> None:
     )
     dead_events = [event async for event in dead_session.receive()]
     assert dead_events[0].type == "error"
+    assert dead_events[0].recoverable is True
     assert "notification stream failed" in str(dead_events[0].error)
     await provider_session.close()
     await dead_session.close()
@@ -1245,6 +1276,28 @@ class _StubEndpointer:
         return None
 
 
+class _RecoveringEndpointer(_StubEndpointer):
+    def __init__(self, text: str) -> None:
+        super().__init__(speaking=True)
+        self.text = text
+        self.recovery_calls: list[tuple[bytes, int]] = []
+
+    async def transcribe_audio(self, pcm: bytes, *, sample_rate: int) -> str:
+        self.recovery_calls.append((pcm, sample_rate))
+        return self.text
+
+
+class _ScriptedInputTranscriber(_StubEndpointer):
+    def __init__(self, events) -> None:
+        super().__init__(speaking=True)
+        self._events = asyncio.Queue()
+        for event in events:
+            self._events.put_nowait(event)
+
+    async def next_event(self):  # noqa: ANN202 - test protocol
+        return await self._events.get()
+
+
 def _hallucination_client() -> _Client:
     return _Client(
         [
@@ -1307,6 +1360,130 @@ async def test_without_a_local_recognizer_the_server_transcript_is_final():
     finals = [event for event in await _user_transcripts(speaking=None) if event.is_final]
 
     assert [event.text for event in finals] == ["a_lee pixelated image"]
+
+
+@pytest.mark.asyncio
+async def test_local_failure_before_server_done_promotes_the_late_preview():
+    """Either ordering must still commit the spoken user turn."""
+    from jarvis.realtime.input_transcription import InputTranscriptEvent
+
+    transcriber = _ScriptedInputTranscriber(
+        [
+            InputTranscriptEvent(kind="speech_started"),
+            InputTranscriptEvent(kind="transcript_failed"),
+        ]
+    )
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.02,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {
+                        "threadId": "thread-1",
+                        "role": "user",
+                        "text": "Hello, what is up?",
+                    },
+                ),
+            )
+        ]
+    )
+    session = await _provider(
+        client, input_transcriber_factory=lambda: transcriber
+    ).open_session(RealtimeSessionConfig())
+
+    events = [event async for event in session.receive()]
+
+    finals = [
+        event
+        for event in events
+        if event.type == "input_transcript" and event.is_final
+    ]
+    assert [event.text for event in finals] == ["Hello, what is up?"]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_output_transcript_is_recovered_from_provider_audio(
+    monkeypatch,
+) -> None:
+    """Provider audio must not become a silent turn when its text is absent.
+
+    Highest-impact live defect, 2026-08-02: a correctly recognized casual
+    greeting moved LISTENING -> PROCESSING -> LISTENING while the complete
+    answer was discarded as "output transcript missing". The user heard
+    nothing and the product looked as though it only kept listening.
+    """
+    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_QUIESCENCE_S", 0.03)
+    speech = (900).to_bytes(2, "little", signed=True) * 480
+    silence = b"\x00\x00" * 480
+    endpoint = _FakeAudioEndpoint(
+        output_schedule=((0.0, speech), (0.0, silence))
+    )
+    transcriber = _RecoveringEndpointer("Hi there, everything is fine.")
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.2,
+                _Notification(
+                    "thread/realtime/keepalive", {"threadId": "thread-1"}
+                ),
+            )
+        ]
+    )
+    session = await _provider(
+        client,
+        endpoint=endpoint,
+        input_transcriber_factory=lambda: transcriber,
+    ).open_session(RealtimeSessionConfig())
+
+    events = []
+    async for event in session.receive():
+        events.append(event)
+        if event.type == "turn_complete":
+            break
+
+    transcript_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.type == "output_transcript_delta"
+    )
+    complete_index = next(
+        index for index, event in enumerate(events) if event.type == "turn_complete"
+    )
+    assert events[transcript_index].text == "Hi there, everything is fine."
+    assert transcript_index < complete_index
+    assert transcriber.recovery_calls == [(speech + silence, 24_000)]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_media_track_end_is_a_rebuildable_transport_error() -> None:
+    endpoint = _FakeAudioEndpoint(output_schedule=((0.0, None),))
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.2,
+                _Notification(
+                    "thread/realtime/keepalive", {"threadId": "thread-1"}
+                ),
+            )
+        ]
+    )
+    session = await _provider(client, endpoint=endpoint).open_session(
+        RealtimeSessionConfig()
+    )
+
+    event = await anext(session.receive())
+
+    assert event.type == "error"
+    assert "media track ended unexpectedly" in str(event.error)
+    assert event.recoverable is True
+    assert session.rebuild_on_transport_death is True
+    await session.close()
 
 
 def _keeps_stream_open(*extra):

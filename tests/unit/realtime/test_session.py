@@ -1995,6 +1995,61 @@ async def test_delegate_mode_declares_single_action_function():
 
 
 @pytest.mark.asyncio
+async def test_direct_mode_uses_delegate_when_provider_cannot_declare_tools():
+    """A capability-limited subscription transport must keep actions usable."""
+
+    class NoDirectToolsProvider(FakeProvider):
+        supports_direct_tools = False
+
+    provider = NoDirectToolsProvider([RealtimeEvent(type="turn_complete")])
+    sess = _session(provider, brain=FakeBrain(), tool_mode="direct")
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    assert _tool_names(provider.opened_with) == ["jarvis_action", "end_call"]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_capability_forced_delegate_executes_provider_handoff():
+    class NoDirectToolsProvider(FakeProvider):
+        supports_direct_tools = False
+
+    brain = FakeBrain(replies=("The settings are open.",))
+    provider = NoDirectToolsProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Open the settings view.",
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="handoff_requested",
+                text="Open the settings view.",
+                handoff_id="handoff-1",
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    jsons: list[dict] = []
+    sess = _session(
+        provider,
+        brain=brain,
+        tool_mode="direct",
+        jsons=jsons,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await _wait_until(lambda: bool(provider.session.text_inputs))
+
+    assert brain.calls[0][0] == "Open the settings view."
+    assert not [item for item in jsons if item.get("type") == "provider_error"]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_delegate_directive_names_screen_control_and_forbids_capability_denial():
     """The live model must know its on-screen reach and never deny it.
 

@@ -90,6 +90,10 @@ class LocalInputTranscriber:
         self._in_speech = False
         self._last_speech_end = 0.0
         self._tasks: set[asyncio.Task[None]] = set()
+        # A configured recognizer may wrap a native inference engine. Those
+        # engines are not safe to enter concurrently (AP-24), and output
+        # transcript recovery can overlap the tail of input recognition.
+        self._recognition_lock = asyncio.Lock()
         self._closed = False
         self._unavailable_logged = False
 
@@ -210,9 +214,9 @@ class LocalInputTranscriber:
     async def _transcribe(self, pcm: bytes) -> None:
         started = time.monotonic()
         try:
-            stt = await self._ensure_stt()
-        except Exception:  # noqa: BLE001 - a missing recognizer must not kill the call
-            if not self._unavailable_logged:
+            text = await self.transcribe_audio(pcm, sample_rate=self._sample_rate)
+        except Exception:  # noqa: BLE001 - one failed utterance is not fatal
+            if self._stt is None and not self._unavailable_logged:
                 self._unavailable_logged = True
                 log.warning(
                     "Local input transcription is unavailable; this provider's "
@@ -220,23 +224,13 @@ class LocalInputTranscriber:
                     "the user's words stay idle",
                     exc_info=True,
                 )
+            elif self._stt is not None:
+                log.warning(
+                    "Local input transcription failed for one utterance",
+                    exc_info=True,
+                )
             self._emit(InputTranscriptEvent(kind="transcript_failed"))
             return
-
-        from jarvis.core.protocols import AudioChunk  # noqa: PLC0415
-
-        async def chunks():  # noqa: ANN202 - one-shot adapter
-            yield AudioChunk(
-                pcm=pcm, sample_rate=self._sample_rate, timestamp_ns=0, channels=1
-            )
-
-        try:
-            result = await stt.transcribe(chunks())
-        except Exception:  # noqa: BLE001 - one failed utterance is not fatal
-            log.warning("Local input transcription failed for one utterance", exc_info=True)
-            self._emit(InputTranscriptEvent(kind="transcript_failed"))
-            return
-        text = str(getattr(result, "text", "") or "").strip()
         if not text:
             # Real speech that produced no words: the far end's own transcript
             # of the same audio is now the best thing Jarvis has.
@@ -248,6 +242,38 @@ class LocalInputTranscriber:
             text[:120],
         )
         self._emit(InputTranscriptEvent(kind="transcript", text=text, is_final=True))
+
+    async def transcribe_audio(self, pcm: bytes, *, sample_rate: int) -> str:
+        """Recognize one bounded PCM segment without emitting input events.
+
+        The Codex subscription transport uses this only when ChatGPT-Live
+        supplied assistant audio but omitted its matching transcript. The
+        recovered text still passes through the ordinary output scrub gate;
+        this method merely supplies the missing evidence. Calls are serialized
+        because the configured STT may own a native, non-thread-safe engine.
+        """
+        if sample_rate != self._sample_rate:
+            raise ValueError(
+                "Local transcription received audio at an unexpected sample rate"
+            )
+        if not pcm:
+            return ""
+
+        from jarvis.core.protocols import AudioChunk  # noqa: PLC0415
+
+        async with self._recognition_lock:
+            stt = await self._ensure_stt()
+
+            async def chunks():  # noqa: ANN202 - one-shot adapter
+                yield AudioChunk(
+                    pcm=pcm,
+                    sample_rate=self._sample_rate,
+                    timestamp_ns=0,
+                    channels=1,
+                )
+
+            result = await stt.transcribe(chunks())
+        return str(getattr(result, "text", "") or "").strip()
 
     def _emit(self, event: InputTranscriptEvent) -> None:
         try:

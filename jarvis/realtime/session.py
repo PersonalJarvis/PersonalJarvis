@@ -1017,11 +1017,26 @@ class RealtimeVoiceSession:
         if mode not in {"delegate", "direct"}:
             mode = "delegate"
         self._tool_mode = mode
+        # Direct mode is meaningful only when every possible provider can
+        # receive native tool declarations. A capability-limited fallback
+        # must not turn actions into terminal handoff failures (AP-21/AP-22).
+        direct_tools_supported = all(
+            bool(getattr(candidate, "supports_direct_tools", True))
+            for candidate in self._providers
+        )
+        self._delegate_forced_by_provider = bool(
+            mode == "direct"
+            and not direct_tools_supported
+            and tool_bridge is None
+            and callable(brain)
+        )
         # Delegate mode needs only a callable brain (the boot proxy and the
         # real BrainManager both qualify); an explicitly injected bridge
         # always wins so existing callers/tests keep today's behavior.
         self._delegate_enabled = (
-            mode == "delegate" and tool_bridge is None and callable(brain)
+            (mode == "delegate" or self._delegate_forced_by_provider)
+            and tool_bridge is None
+            and callable(brain)
         )
         if tool_bridge is None and not self._delegate_enabled:
             try:
@@ -1051,6 +1066,13 @@ class RealtimeVoiceSession:
         self._external_update: _ExternalUpdateState | None = None
         # from_brain returns None when no public supervisor gateway is ready.
         # Say so, or a tool-less session is indistinguishable from a healthy one.
+        if self._delegate_forced_by_provider:
+            log.warning(
+                "realtime[%s] direct tool mode is unavailable on at least "
+                "one configured provider; using the deterministic delegate "
+                "so actions remain functional",
+                session_id,
+            )
         if self._delegate_enabled:
             log.info(
                 "realtime[%s] tool mode: delegate — one action function "

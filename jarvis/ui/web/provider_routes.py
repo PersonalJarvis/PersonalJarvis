@@ -2877,10 +2877,57 @@ async def _openai_realtime_voice_sample(
     return bytes(pcm), output_rate
 
 
+async def _codex_subscription_voice_sample(
+    api_key: str, *, model: str, voice: str, text: str, language: str
+) -> tuple[bytes, int]:
+    """Sample the subscription voice through its own ChatGPT-Live transport."""
+    del api_key, model
+    from jarvis.plugins.realtime.codex_subscription import (  # noqa: PLC0415
+        CodexSubscriptionRealtimeProvider,
+    )
+    from jarvis.realtime.protocol import RealtimeSessionConfig  # noqa: PLC0415
+
+    provider = CodexSubscriptionRealtimeProvider(
+        binary_path=_codex_binary_path(),
+        # A preview sends no microphone audio and needs no input recognizer.
+        input_transcriber_factory=lambda: None,
+    )
+    session = await provider.open_session(
+        RealtimeSessionConfig(
+            instructions="Speak only the trusted sample text supplied by the client.",
+            language=language,
+            voice=voice,
+        )
+    )
+    pcm = bytearray()
+    sample_rate = int(getattr(provider, "output_sample_rate", 24_000) or 24_000)
+    try:
+        await session.send_speech(text)
+        async for event in session.receive():
+            if event.type == "audio_delta" and event.audio is not None:
+                pcm += bytes(event.audio.pcm)
+                sample_rate = int(event.audio.sample_rate or sample_rate)
+            elif event.type == "error":
+                raise RuntimeError(str(event.error or "subscription preview failed"))
+            elif event.type == "turn_complete":
+                break
+    finally:
+        await session.close()
+    return bytes(pcm), sample_rate
+
+
+# Capability metadata read by the generic route below. Subscription auth is
+# verified by the adapter itself; requiring an API key here would recreate the
+# exact billing-path parity bug this sampler closes.
+_codex_subscription_voice_sample.requires_api_key = False  # type: ignore[attr-defined]
+_codex_subscription_voice_sample.timeout_s = 50.0  # type: ignore[attr-defined]
+
+
 # Only providers whose preview transport can run without an interactive media
 # offer appear here. A cataloged provider may intentionally omit a sampler;
 # ``preview_available`` keeps the UI from rendering a button that cannot work.
 _REALTIME_PREVIEW_SAMPLERS: dict[str, Any] = {
+    "codex-subscription-realtime": _codex_subscription_voice_sample,
     "gemini-live": _gemini_live_voice_sample,
     "openai-realtime": _openai_realtime_voice_sample,
 }
@@ -2933,8 +2980,9 @@ async def realtime_voice_preview(
             detail=f"Voice preview is not available for provider '{provider_id}'.",
         )
 
-    api_key = cfg_mod.get_provider_secret(provider_id)
-    if not api_key:
+    requires_api_key = bool(getattr(sampler, "requires_api_key", True))
+    api_key = cfg_mod.get_provider_secret(provider_id) if requires_api_key else ""
+    if requires_api_key and not api_key:
         raise HTTPException(
             status_code=409,
             detail=(
@@ -2947,9 +2995,13 @@ async def realtime_voice_preview(
     sample = _TTS_PREVIEW_SAMPLES.get(lang, _TTS_PREVIEW_SAMPLES[_TTS_PREVIEW_DEFAULT_LANG])
 
     try:
+        preview_timeout_s = float(
+            getattr(sampler, "timeout_s", _REALTIME_PREVIEW_TIMEOUT_S)
+            or _REALTIME_PREVIEW_TIMEOUT_S
+        )
         pcm, sample_rate = await asyncio.wait_for(
             sampler(api_key, model=model, voice=voice, text=sample, language=lang),
-            timeout=_REALTIME_PREVIEW_TIMEOUT_S,
+            timeout=preview_timeout_s,
         )
     except HTTPException:
         raise
@@ -2957,7 +3009,7 @@ async def realtime_voice_preview(
         raise HTTPException(
             status_code=502,
             detail=(
-                f"Voice preview timed out after {_REALTIME_PREVIEW_TIMEOUT_S:.0f}s — "
+                f"Voice preview timed out after {preview_timeout_s:.0f}s — "
                 "the provider did not answer."
             ),
         ) from exc
@@ -2970,8 +3022,8 @@ async def realtime_voice_preview(
         raise HTTPException(
             status_code=502,
             detail=(
-                "Voice preview produced no audio — check the provider's API key "
-                "and quota."
+                "Voice preview produced no audio — check the provider "
+                "connection and quota."
             ),
         )
     wav = _pcm_to_wav(pcm, sample_rate=sample_rate, channels=1)
