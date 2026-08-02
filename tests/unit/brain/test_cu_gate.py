@@ -138,6 +138,89 @@ def test_explicit_desktop_ask_allows_computer_use(utterance: str) -> None:
     assert llm_computer_use_allowed(utterance) is True
 
 
+# ── looking is not operating (maintainer mandate 2026-08-02, BUG-124) ─────
+#
+# The user asked "what is on my screen?" and Computer-Use started every time:
+# the bare surface noun ("Bildschirm") was enough to pass the gate, so a
+# question that Screen Context answers with ONE screenshot instead moved the
+# mouse. These pin the split — surface nouns no longer authorize a mission on
+# their own when the turn reads as a look request.
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # The reported utterance, and its nearest phrasings.
+        "Hey, was ist da auf meinem Bildschirm?",  # i18n-allow: live utterance
+        "Was siehst du auf meinem Bildschirm?",  # i18n-allow: DE turn fixture
+        "Kannst du mal auf meinen Bildschirm schauen?",  # i18n-allow: DE fixture
+        "Schau dir das mal an.",  # i18n-allow: DE turn fixture
+        "Was steht da im Terminal?",  # i18n-allow: DE turn fixture
+        "Lies mir das Fenster vor.",  # i18n-allow: DE turn fixture
+        "What is on my screen right now?",
+        "Can you see this error on my screen?",
+        "Read this window to me.",
+        "¿Qué ves en mi pantalla?",
+        # A screenshot request names the feature outright — it is the least
+        # ambiguous look request there is and must never reach the harness.
+        "Mach mal einen Screenshot.",  # i18n-allow: DE turn fixture
+        "Mach mir mal eben einen Screenshot davon.",  # i18n-allow: DE fixture
+        "Take a quick screenshot for me.",
+        "Hazme una captura de pantalla, por favor.",
+    ],
+)
+def test_look_request_never_drives_the_desktop(utterance: str) -> None:
+    assert llm_computer_use_allowed(utterance) is False
+
+
+def test_look_request_stays_blocked_inside_a_live_desktop_episode() -> None:
+    """A question mid-episode is still a question, not a corrective follow-up.
+
+    The recent-run window exists so "try again" keeps working after a mission.
+    It must not re-open the desktop for "what is on my screen?", or every
+    conversation that follows a Computer-Use run inherits the original defect.
+    """
+    look = "Was ist da auf meinem Bildschirm?"  # i18n-allow: DE turn fixture
+    cu_run_registry.register_run("m3", "open the browser", token=None)
+    assert llm_computer_use_allowed(look) is False
+    # The vehicle-free corrective follow-up is unaffected by the new rule.
+    assert llm_computer_use_allowed("Versuch es nochmal.") is True  # i18n-allow
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # An action verb wins over the look vocabulary in the same sentence:
+        # the user wants something DONE to what they are pointing at.
+        "Klick auf den Button auf meinem Bildschirm.",  # i18n-allow: DE trigger
+        "Schau in Chrome nach und klick auf Anmelden.",  # i18n-allow: DE trigger
+        "Look at my screen and close that window.",
+        # Naming the harness IS the explicit ask the mandate asks for.
+        "Mach das per Computer-Use",
+        "Use computer use to open Spotify",
+    ],
+)
+def test_explicit_action_outranks_the_look_vocabulary(utterance: str) -> None:
+    assert llm_computer_use_allowed(utterance) is True
+
+
+def test_visual_intent_probe_failure_keeps_desktop_automation_working() -> None:
+    """A classifier defect must degrade to the old behaviour, never brick CU."""
+    import jarvis.screen_context.intent as intent_module
+
+    def _boom(*_args: object, **_kwargs: object) -> bool:
+        raise RuntimeError("classifier exploded")
+
+    original = intent_module.requests_screen_operation
+    intent_module.requests_screen_operation = _boom  # type: ignore[assignment]
+    try:
+        # The probe is what is under test; the turn is only its input.
+        look = "Was ist auf meinem Bildschirm?"  # i18n-allow: DE turn fixture
+        assert llm_computer_use_allowed(look) is True
+    finally:
+        intent_module.requests_screen_operation = original  # type: ignore[assignment]
+
+
 # ── BUG-105 corrective follow-ups inside a desktop episode ────────────────
 
 

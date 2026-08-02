@@ -166,6 +166,19 @@ _WINDOW_SCOPE_RE: re.Pattern[str] = re.compile(
 # Level 2 — screen-scoped, unambiguous
 # --------------------------------------------------------------------------
 
+# Spoken language puts articles, politeness and timing particles between a verb
+# and its object ("mach MIR MAL EBEN EINEN Screenshot", "take A QUICK
+# screenshot"). An enumerated filler list cannot keep up with that and the
+# German pattern proved it: its single ``bitte`` slot missed the most common
+# spoken phrasing of all ("mach mal einen Screenshot"), the turn classified as
+# NONE, and Computer-Use picked it up and drove the desktop instead (BUG-124).
+#
+# A bounded any-token gap is the fix, not a longer word list. It is short
+# enough that the verb and the noun still belong to one clause, and it stops at
+# sentence punctuation so a verb in one sentence cannot bind a noun in the
+# next. Same shape the German ``pruef``/``bildschirm`` rule below already uses.
+_NEAR = r"[^.?!]{0,24}?"
+
 _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"(?:"
     # ---------------- English ----------------
@@ -185,8 +198,15 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"(?:screenshot|screen\s+capture)\b"
     r"|\b(?:inspect|review|analy[sz]e)\s+(?:this|that|the\s+current)\s+"
     r"(?:window|screen|monitor|dialog|tab)\b"
-    r"|\b(?:take|make|capture|grab)\s+(?:a\s+)?screen(?:shot|\s+capture)\b"
+    # A screenshot request names the feature outright — the least ambiguous
+    # sentence there is. Spoken language puts fillers between the verb and the
+    # noun ("take a quick screenshot for me"), and the earlier tight pattern
+    # missed every one of them; the turn then fell through to Computer-Use,
+    # which drove the desktop instead of taking one picture (BUG-124).
+    rf"|\b(?:take|make|capture|grab|get)\b{_NEAR}"
+    r"\bscreen(?:shot|\s+capture)\b"
     r"|\bscreen(?:shot|\s+capture)\s+(?:this|that|my\s+screen|the\s+screen)\b"
+    r"|\bscreen(?:shot|\s+capture)\s+(?:please|for\s+me)\b"
     r"|\b(?:this|that)\s+(?:error|error\s+message|message|button|menu|popup)\b"
     # read-out requests
     r"|\bwhat\s+does\s+(?:it|this|that|the\s+\w+)\s+say\b"
@@ -209,12 +229,21 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"(?:anschauen|ansehen|pruefen)\b"
     r"|\bsiehst\s+du\s+(?:das|dies|meinen\s+bildschirm|den\s+fehler)\b"  # i18n-allow: DE input
     r"|\bwas\s+siehst\s+du\b"
-    # screen nouns
-    r"|\bauf\s+(?:dem|meinem)\s+bildschirm\b|\bam\s+bildschirm\b|\bmein\s+bildschirm\b"
-    r"|\bauf\s+(?:dem|meinem|diesem)\s+monitor\b|\bmein\s+monitor\b"
+    # Screen nouns in every case German inflects them into. The earlier list
+    # spelled out the dative only, so the natural spoken accusative ("schau mal
+    # auf meinEN Bildschirm") classified as NONE and the turn fell through to
+    # Computer-Use (BUG-124). Inflection is matching data, not prose.
     # i18n-allow: German speech-input matching data
-    r"|\b(?:mach|mache|erstelle|nimm)\s+(?:bitte\s+)?(?:einen\s+)?screenshot\b"
-    r"|\bbildschirmfoto\s+(?:machen|aufnehmen|erstellen)\b"  # i18n-allow: DE input
+    r"|\b(?:auf|an|in)\s+(?:dem|den|meinem|meinen|deinem|deinen|diesem|diesen)"  # i18n-allow: DE input
+    r"\s+(?:bildschirm|monitor)\b"
+    r"|\bam\s+(?:bildschirm|monitor)\b"
+    r"|\bmein(?:en|em)?\s+(?:bildschirm|monitor)\b"
+    # i18n-allow: German speech-input matching data
+    r"|\b(?:mach|mache|machst|erstell|erstelle|erstellst|nimm|schiess|schiesse)"
+    rf"\b{_NEAR}"
+    r"\b(?:screenshot|bildschirmfoto|bildschirmaufnahme)\b"  # i18n-allow: DE input
+    r"|\b(?:screenshot|bildschirmfoto|bildschirmaufnahme)\s+"
+    r"(?:machen|aufnehmen|erstellen|bitte)\b"  # i18n-allow: DE input
     r"|\bauf\s+dem\s+schirm\b|\bhier\s+auf\s+dem\b"  # i18n-allow: DE input
     r"|\b(?:diese|die)\s+fehlermeldung\b"  # i18n-allow: DE input
     r"|\b(?:dieser|der)\s+fehler\s+(?:hier|da)\b"  # i18n-allow: DE input
@@ -237,7 +266,8 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"|\bves\s+(?:esto|eso|mi\s+pantalla)\b|\bque\s+ves\b"
     r"|\bque\s+ves\s+en\s+mi\s+(?:pantalla|monitor)\b"
     r"|\ben\s+(?:mi|la)\s+pantalla\b|\bmi\s+pantalla\b"
-    r"|\b(?:haz|toma|captura)\s+(?:una\s+)?captura\s+de\s+pantalla\b"
+    rf"|\b(?:haz|hazme|toma|tomame|captura|saca)\b{_NEAR}"
+    r"\bcaptura\s+de\s+pantalla\b"
     r"|\banaliza\s+(?:esta\s+|esa\s+|la\s+)?captura\s+de\s+pantalla\b"
     r"|\bque\s+dice\s+(?:ahi|aqui|esto|eso)\b"
     r"|\blee\s+(?:esto|eso|el\s+\w+)\b"
