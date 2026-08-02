@@ -38,9 +38,10 @@ with a microphone.
 | *"Call the clinic and book the next open appointment."* | A real outbound phone call goes out over the optional Twilio line. |
 | *"Remember: Alex prefers Signal over email."* | Written to the Knowledge Wiki, and still known in every later session. |
 | *"Switch the voice over to Cartesia."* | The speech provider changes while you talk, and Jarvis reads the change back to you, old then new. |
+| *"Tell Nova to run the tests."* | The instruction lands in that agent's terminal in the Agentic IDE workspace. |
 | *"Open the browser and pull up the weather."* | Jarvis takes the mouse and keyboard and does it on your screen. |
 
-All five run on shipped code. None of them is a roadmap item. Two carry a setup cost that
+All six run on shipped code. None of them is a roadmap item. Two carry a setup cost that
 is not out of the box: the phone call needs the optional `[telephony]` extra plus your own
 Twilio account, a number, and a publicly reachable HTTPS URL for the webhooks. Computer use
 needs a desktop install with a screen, not the headless one.
@@ -248,6 +249,22 @@ isolated `git worktree`. That is a private sandbox copy of the workspace, with c
 containment. A critic reviews the result, for up to three rounds, before you ever hear it,
 and deliverables land in **Outputs** as downloadable files.
 
+### Agentic IDE
+
+Pick a folder, choose how many terminals to open and which coding agent runs in each one,
+Claude Code or Codex, and you get a grid of real terminals inside the app. Every terminal
+carries a spoken call sign (Mika, Nova, Aria), so the whole workspace is addressable by
+voice: *"what is Mika doing?"*, *"tell Nova to run the tests"*. A focus mode narrows Jarvis
+to that workspace for as long as you want, then switches back cleanly.
+
+<p align="center">
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/agentic-ide-demo.gif" alt="A prompt arriving in one agent's terminal in the Agentic IDE, with the thinking counter running underneath it" width="860" />
+</p>
+
+<p align="center">
+  <sub>A prompt lands in one agent's terminal, and the counter underneath it shows how long that agent has been thinking</sub>
+</p>
+
 ### Knowledge Wiki
 
 An Obsidian-compatible Markdown vault that Jarvis reads and writes. Tell it something once
@@ -282,6 +299,22 @@ backs up, applies, verifies, and rolls back on failure, with a full audit trail.
 things are deliberately out of its reach: secrets and keys, the safety tiers, the review
 gates, and the active brain provider, which only you can change from the app or the CLI.
 Generated skills always land as drafts for your review. Nothing self-activates.
+
+### Dictation
+
+Hold a key and talk, and what you said goes into whatever text field currently has focus,
+in any application. Jarvis writes through the clipboard, sends the paste chord, and puts
+your old clipboard back. There is a key you hold while speaking and a separate key that
+toggles, and you can have both armed at once.
+
+Filler sounds are stripped by plain pattern matching, per language, with no model call
+involved. An optional second pass handles what pattern matching structurally cannot:
+punctuation, capitalization, false starts, spoken numbers. It sits behind a hard latency
+ceiling, and every one of its failure paths hands back your raw transcript unchanged. A
+separate translate pass writes what you said in one fixed target language instead. Words
+the recognizer keeps getting wrong go into your own dictionary, and everything dictated is
+kept locally in both raw and cleaned form, so a cleanup can always be checked after the
+fact.
 
 ### Realtime voice
 
