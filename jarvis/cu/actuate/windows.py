@@ -78,6 +78,46 @@ _VK_TABLE: dict[str, int] = {
     "decimal": 0x6E, "divide": 0x6F,
 }
 
+# Control characters KEYEVENTF_UNICODE cannot deliver, mapped to the virtual
+# key that actually produces them. Windows edit controls act on the KEY, not on
+# a synthetic WM_CHAR: a U+000A sent as a unicode "scan code" types NOTHING, so
+# type_text("line1\nline2") landed as one run-on line and tabs vanished — while
+# the pynput backend on macOS/Linux pressed Enter/Tab for the same string. VK
+# 0x0D/0x09 are the main-block keys and deliberately NOT extended (E0 belongs to
+# numpad Enter).
+_TEXT_CONTROL_VKS: dict[str, int] = {"\n": 0x0D, "\r": 0x0D, "\t": 0x09}
+
+# Punctuation keys, by the character the UNSHIFTED key produces. The shared
+# Computer-Use vocabulary (``base.is_known_key_name``) accepts any single
+# printable character, and the pynput backend types it happily — but this
+# backend resolved only a-z and 0-9, so every punctuation shortcut raised
+# "Unknown key" and the action failed outright: Ctrl+- / Ctrl+= (zoom out/in,
+# the single most common CU shortcut after copy/paste), Ctrl+, (settings in
+# VS Code, Chrome, Slack), Ctrl+/ (comment/shortcut help), Ctrl+[ / Ctrl+]
+# (indent, browser back/forward).
+#
+# VK_OEM_PLUS/MINUS/COMMA/PERIOD are defined by Microsoft as the +, -, , and .
+# key "for any country/region", so those four are layout-independent. VK_OEM_1
+# and 3..7 are documented as US-layout positions and may sit under a different
+# character elsewhere — still strictly better than today's hard failure, and
+# applications bind zoom/comment shortcuts to these VKs by position anyway.
+# Shifted characters (+, _, {, ...) are deliberately absent: emitting the
+# unshifted key for them would send input the caller did not ask for, and a
+# loud "Unknown key" beats a wrong keystroke.
+_OEM_PUNCTUATION_VKS: dict[str, int] = {
+    ";": 0xBA,    # VK_OEM_1   (US)
+    "=": 0xBB,    # VK_OEM_PLUS   (any layout)
+    ",": 0xBC,    # VK_OEM_COMMA  (any layout)
+    "-": 0xBD,    # VK_OEM_MINUS  (any layout)
+    ".": 0xBE,    # VK_OEM_PERIOD (any layout)
+    "/": 0xBF,    # VK_OEM_2   (US)
+    "`": 0xC0,    # VK_OEM_3   (US)
+    "[": 0xDB,    # VK_OEM_4   (US)
+    "\\": 0xDC,   # VK_OEM_5   (US)
+    "]": 0xDD,    # VK_OEM_6   (US)
+    "'": 0xDE,    # VK_OEM_7   (US)
+}
+
 # Extended keys (E0 prefix) — without KEYEVENTF_EXTENDEDKEY a standalone tap
 # is rejected or misrouted.
 _EXTENDED_VKS = frozenset({
@@ -98,6 +138,8 @@ def resolve_vk(key: str) -> int | None:
             return ord(k.upper())
         if "0" <= k <= "9":
             return ord(k)
+        if k in _OEM_PUNCTUATION_VKS:
+            return _OEM_PUNCTUATION_VKS[k]
     return None
 
 
@@ -374,20 +416,34 @@ class WindowsActuator(Actuator):
 
     def type_text(self, text: str, *, delay_s: float = 0.02) -> None:
         with input_space():
+            pending_cr = False
             for char in text:
-                # KEYEVENTF_UNICODE takes UTF-16 code UNITS; astral-plane
-                # characters (emoji) need their surrogate pair sent as two
-                # events each — a bare ord() overflows the WORD wScan field.
-                units = char.encode("utf-16-le")
-                events = []
-                for i in range(0, len(units), 2):
-                    code = int.from_bytes(units[i:i + 2], "little")
-                    events.append(self._key_input(0, code, _KEYEVENTF_UNICODE))
-                    events.append(
-                        self._key_input(
-                            0, code, _KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP,
-                        ),
-                    )
+                # A CRLF pair is ONE line break, not two Enter presses.
+                if pending_cr and char == "\n":
+                    pending_cr = False
+                    continue
+                pending_cr = char == "\r"
+
+                vk = _TEXT_CONTROL_VKS.get(char)
+                if vk is not None:
+                    events = [
+                        self._key_input(vk, 0, 0),
+                        self._key_input(vk, 0, _KEYEVENTF_KEYUP),
+                    ]
+                else:
+                    # KEYEVENTF_UNICODE takes UTF-16 code UNITS; astral-plane
+                    # characters (emoji) need their surrogate pair sent as two
+                    # events each — a bare ord() overflows the WORD wScan field.
+                    units = char.encode("utf-16-le")
+                    events = []
+                    for i in range(0, len(units), 2):
+                        code = int.from_bytes(units[i:i + 2], "little")
+                        events.append(self._key_input(0, code, _KEYEVENTF_UNICODE))
+                        events.append(
+                            self._key_input(
+                                0, code, _KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP,
+                            ),
+                        )
                 self._send(events)
                 if delay_s > 0:
                     time.sleep(delay_s)

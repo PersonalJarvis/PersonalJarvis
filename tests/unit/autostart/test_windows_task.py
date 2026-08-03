@@ -85,6 +85,34 @@ def test_query_script_emits_sentinel_lines() -> None:
     assert script.count("Write-Output") >= 3
 
 
+def test_register_script_escapes_apostrophes_in_paths() -> None:
+    # An unescaped apostrophe closes the single-quoted PowerShell literal early,
+    # so the whole script fails to parse. For a login like O'Brien — or a folder
+    # named "Ruben's Jarvis" — task registration, task query and shortcut I/O
+    # then all fail and autostart silently never works on that machine.
+    spec = LaunchSpec(
+        program=r"C:\Users\O'Brien\.venv\Scripts\pythonw.exe",
+        args=("-m", "jarvis.ui.web.launcher"),
+        working_dir=r"C:\Users\O'Brien\Ruben's Jarvis",
+    )
+    script = build_register_task_script(TASK_NAME, spec, user_id=r"DOM\O'Brien")
+    assert r"-Execute 'C:\Users\O''Brien\.venv\Scripts\pythonw.exe'" in script
+    assert r"Ruben''s Jarvis" in script
+    assert r"-UserId 'DOM\O''Brien'" in script
+    # Every line closes each literal it opens.
+    assert all(line.count("'") % 2 == 0 for line in script.splitlines())
+
+
+def test_query_and_unregister_scripts_escape_apostrophes() -> None:
+    weird = "Personal Jarvis' Autostart"
+    for script in (
+        build_query_task_script(weird),
+        build_unregister_task_script(weird),
+    ):
+        assert "Personal Jarvis'' Autostart" in script
+        assert all(line.count("'") % 2 == 0 for line in script.splitlines())
+
+
 def test_parse_task_query_roundtrips_register_fields() -> None:
     out = parse_task_query(build_fake_query_output())
     assert out is not None
@@ -258,3 +286,64 @@ def test_uninstall_noninteractive_never_elevates() -> None:
     mgr.uninstall(interactive=False)
     assert "remove_shortcut" in calls
     assert "elevate_unregister" not in calls
+
+
+def test_uninstall_reports_the_task_that_survived_the_silent_path() -> None:
+    # Removing the task needs elevation, which the boot reconcile must not
+    # prompt for. Reporting "Autostart disabled." anyway was a lie: the logon
+    # task kept starting Jarvis every login while Settings showed the toggle
+    # off, with nothing to explain the mismatch.
+    mgr, _ = _mk(task_info=_MATCHING_INFO, shortcut_present=True)
+    st = mgr.uninstall(interactive=False)
+    assert st.installed is True
+    assert "scheduled task" in st.detail.lower()
+
+
+def test_uninstall_reports_the_task_that_survived_a_declined_uac() -> None:
+    mgr, calls = _mk(
+        task_info=_MATCHING_INFO, shortcut_present=True, elevate_ok=False,
+    )
+    st = mgr.uninstall(interactive=True)
+    assert "elevate_unregister" in calls
+    assert st.installed is True
+
+
+def test_uninstall_reports_disabled_once_the_task_is_really_gone() -> None:
+    mgr, _ = _mk(task_info=_MATCHING_INFO, shortcut_present=True)
+    st = mgr.uninstall(interactive=True)
+    assert st.installed is False
+    assert st.detail == "Autostart disabled."
+
+
+def test_install_drops_a_leftover_shortcut_when_the_task_already_matches() -> None:
+    # A boot whose task query transiently failed (a failed query reads as "no
+    # task") writes the .lnk fallback; nothing removed it once the task became
+    # visible again, so Jarvis started TWICE at login — via the task and via
+    # the Explorer startup queue.
+    mgr, calls = _mk(task_info=_MATCHING_INFO, shortcut_present=True)
+    mgr.install(_SPEC, interactive=False)
+    assert calls == ["remove_shortcut"]
+
+
+def test_truncated_shortcut_readback_is_drift_not_a_match(monkeypatch) -> None:
+    # Padding the missing fields with "" made a half-failed COM read compare
+    # equal to a spec with no args/working dir — reporting a stale shortcut as
+    # current and suppressing the refresh that would have fixed it.
+    import subprocess
+    from pathlib import Path
+
+    from jarvis.autostart import windows as win_mod
+
+    bare = LaunchSpec(program=r"C:\Python\pythonw.exe", args=(), working_dir="")
+    monkeypatch.setattr(Path, "exists", lambda self: True)
+    monkeypatch.setattr(
+        win_mod,
+        "_run_powershell",
+        lambda script: subprocess.CompletedProcess(
+            ["powershell"],
+            0,
+            stdout=win_mod._READBACK_SENTINEL + bare.program + "\n",
+            stderr="",
+        ),
+    )
+    assert WindowsAutostart()._default_shortcut_matches(bare) is False

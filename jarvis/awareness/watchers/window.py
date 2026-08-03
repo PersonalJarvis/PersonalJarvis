@@ -29,10 +29,11 @@ the Win32 drain loop uses, so both platforms publish identical
 display (no TCC/Accessibility grant is needed just to read the frontmost
 application — ``window_state.foreground_window()`` already degrades to
 ``None`` without the optional Screen-Recording grant or without pyobjc, and
-that "no usable window" case feeds the same consecutive-failure counter
-that disables the fallback rather than spinning forever). Headless Linux
-and Wayland sessions are gated up front (mirrors ``IdleDetector``): one
-honest log line, no polling task, no crash.
+that "no window at all" case feeds the consecutive-failure counter that
+disables the fallback rather than spinning forever; a window that merely
+has no readable TITLE is a healthy probe and never counts against it).
+Headless Linux and Wayland sessions are gated up front (mirrors
+``IdleDetector``): one honest log line, no polling task, no crash.
 
 Lifecycle order in ``stop()`` (subagent Q4, 6 phases):
   P1: cancel drain task (asyncio side first, so no ``bus.publish``
@@ -42,8 +43,12 @@ Lifecycle order in ``stop()`` (subagent Q4, 6 phases):
   P4: defensive ``UnhookWinEvent`` in case the pump thread crashed; the
       primary cleanup path is in the pump thread's finally block.
   P5: ``CloseHandle(stop_event)``.
-  P6: remaining queue items are GC'd (loss acceptable — Plan §5 does not
-      require no-event-loss on shutdown).
+  P6: remaining queue items are DRAINED and the per-run change-detection
+      state is reset (loss acceptable — Plan §5 does not require
+      no-event-loss on shutdown — but carrying either into a later
+      ``start()`` is not: the queue and the "last seen window" markers live
+      on the instance, so a restart would replay pre-stop frames and then
+      swallow the first genuine one as "unchanged").
 """
 from __future__ import annotations
 
@@ -194,6 +199,7 @@ class WindowFocusWatcher:
         if detect_platform() != "win32":
             try:
                 await self._stop_posix_polling()
+                self._reset_frame_state()
             finally:
                 self._started = False
                 self._stopping = False
@@ -264,15 +270,40 @@ class WindowFocusWatcher:
                     pass
                 self._stop_event_handle = None
 
-            # P6: leftover queue items get GC'd. Log the drops counter.
+            # P6: discard leftover queue items. They must NOT survive into a
+            # later start(): the queue lives on the instance, so a restart
+            # (awareness toggled off and on again) used to drain events
+            # captured before the stop and publish them as fresh frames with
+            # their old timestamps.
             if self._drops > 0:
                 logger.info(
                     "WindowFocusWatcher: %d frames dropped (pump=%d, async=%d)",
                     self._drops, self._drops_pump, self._drops_async,
                 )
+            self._reset_frame_state()
         finally:
             self._started = False
             self._stopping = False
+
+    def _reset_frame_state(self) -> None:
+        """Drop queued frames and per-run change-detection state.
+
+        Both survive on the instance across a stop/start cycle, and both are
+        wrong on the next run: the queued payloads describe windows from the
+        previous session, and the stale "last seen" markers make the FIRST
+        probe after a restart compare equal to what was focused before the
+        stop — so the POSIX poller emitted nothing at all until the user
+        happened to switch windows, leaving ``state.current_frame`` frozen.
+        """
+        while True:
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        self._last_hwnd = 0
+        self._last_emit_ns = 0
+        self._poll_last_handle = None
+        self._poll_last_title = ""
 
     # ---- Win32-Pump-Thread --------------------------------------------------
 
@@ -374,6 +405,7 @@ class WindowFocusWatcher:
         # MsgWaitForMultipleObjects-Loop
         QS_ALLINPUT = 0x04FF
         WAIT_OBJECT_0 = 0x00000000
+        MSG_PENDING = WAIT_OBJECT_0 + 1
         INFINITE = 0xFFFFFFFF
         PM_REMOVE = 0x0001
 
@@ -383,9 +415,25 @@ class WindowFocusWatcher:
                 rc = win32event.MsgWaitForMultipleObjects(
                     [self._stop_event_handle], False, INFINITE, QS_ALLINPUT,
                 )
-                if rc == WAIT_OBJECT_0:
-                    break    # stop signalled
-                # rc == WAIT_OBJECT_0 + 1 → messages are pending
+                # Only WAIT_OBJECT_0 + 1 means "messages are pending". Anything
+                # else is either the stop event (WAIT_OBJECT_0) or a wait that
+                # failed — WAIT_FAILED (0xFFFFFFFF) or WAIT_ABANDONED_0 on a
+                # closed/invalid stop handle. Falling through to PeekMessage on
+                # a failed wait spun this thread at 100 % CPU forever, because
+                # nothing in the loop can clear the failure and the wait returns
+                # immediately every time. Treat any non-message result as
+                # terminal and leave (same doctrine as AP-20 for socket loops):
+                # stop() still joins us, and the finally block unhooks.
+                if rc != MSG_PENDING:
+                    if rc != WAIT_OBJECT_0:
+                        logger.error(
+                            "WindowFocusWatcher: MsgWaitForMultipleObjects "
+                            "returned 0x%08X (last_error=%d) — pump stopped, "
+                            "focus tracking is off until the next start()",
+                            int(rc) & 0xFFFFFFFF,
+                            ctypes.get_last_error(),
+                        )
+                    break
                 while user32.PeekMessageW(ctypes.byref(msg), 0, 0, 0, PM_REMOVE):
                     user32.TranslateMessage(ctypes.byref(msg))
                     user32.DispatchMessageW(ctypes.byref(msg))
@@ -541,14 +589,33 @@ class WindowFocusWatcher:
         from ctypes import wintypes  # noqa: PLC0415
 
         try:
-            user32 = ctypes.windll.user32
-            length = user32.GetWindowTextLengthW(hwnd)
+            # Own WinDLL instance + explicit argtypes, exactly like the
+            # UnhookWinEvent call in stop(): with the shared ``ctypes.windll``
+            # and no signatures, the HWND is marshalled as a 32-bit c_int, so a
+            # handle above 0x7FFFFFFF raises ArgumentError (frame silently
+            # dropped) instead of resolving — and binding signatures on the
+            # PROCESS-WIDE windll would leak into vision/screenshot.py and
+            # window_state.py, which configure the same functions themselves.
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+            user32.GetWindowTextLengthW.restype = ctypes.c_int
+            user32.GetWindowTextW.argtypes = [
+                wintypes.HWND, wintypes.LPWSTR, ctypes.c_int,
+            ]
+            user32.GetWindowTextW.restype = ctypes.c_int
+            user32.GetWindowThreadProcessId.argtypes = [
+                wintypes.HWND, ctypes.POINTER(wintypes.DWORD),
+            ]
+            user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+
+            handle = wintypes.HWND(hwnd)
+            length = max(0, int(user32.GetWindowTextLengthW(handle)))
             buf = ctypes.create_unicode_buffer(length + 1)
-            user32.GetWindowTextW(hwnd, buf, length + 1)
+            user32.GetWindowTextW(handle, buf, length + 1)
             title = buf.value or ""
 
             pid = wintypes.DWORD()
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
             pid_int = int(pid.value)
 
             try:
@@ -655,10 +722,10 @@ class WindowFocusWatcher:
         """One polling iteration: probe the foreground window, emit a frame
         via :meth:`_emit_frame` if focus actually changed.
 
-        Returns ``True`` when the probe returned usable window info
-        (whether or not focus changed — an unchanged focus is still a
-        healthy probe), ``False`` when it returned nothing usable (feeds
-        the consecutive-failure counter in :meth:`_poll_loop`).
+        Returns ``True`` when the probe itself worked (whether or not focus
+        changed — an unchanged focus is still a healthy probe), ``False``
+        only when the backend answered with nothing at all (feeds the
+        consecutive-failure counter in :meth:`_poll_loop`).
         Independently testable — tests call this directly instead of
         waiting out the real polling interval.
         """
@@ -668,8 +735,24 @@ class WindowFocusWatcher:
             logger.debug("POSIX foreground-window probe failed", exc_info=True)
             return False
 
-        if win is None or not (win.title or "").strip():
+        if win is None:
             return False
+
+        if not (win.title or "").strip():
+            # A window WITHOUT a readable title is not a broken backend — X11
+            # windows legitimately carry no name, and xdotool's getwindowname
+            # can fail for one window while getactivewindow keeps working.
+            # Counting it as a failure meant five such polls (10 s) permanently
+            # disabled focus tracking for the whole session, with no way back
+            # short of a restart. Report the probe as healthy, but publish
+            # nothing: a frame with no title is unidentifiable, and the privacy
+            # filter must never be handed an empty title to wave through.
+            logger.debug(
+                "POSIX foreground window has no readable title (handle=%s) — "
+                "probe healthy, frame not published",
+                win.handle,
+            )
+            return True
 
         changed = (win.handle, win.title) != (self._poll_last_handle, self._poll_last_title)
         if not changed:
@@ -702,41 +785,50 @@ class WindowFocusWatcher:
     def _resolve_posix_focus_meta(win: WindowInfo) -> tuple[int, str]:
         """Best-effort ``(pid, process_name)`` for a foreground ``WindowInfo``.
 
-        macOS: the frontmost application via ``NSWorkspace`` — the same
-        source ``window_state`` uses internally to resolve the foreground
-        title, so pid and title stay consistent even without the
-        Screen-Recording grant and without any Accessibility permission
-        (NSWorkspace's frontmost-application query needs neither). Linux:
-        ``xdotool`` resolves the owning pid from the X11 window id.
-        ``psutil`` resolves the process name from the pid on both. Never
-        raises — a missing pyobjc/xdotool or a transient lookup error
-        degrades to ``(0, "")``; the frame still publishes and title-based
-        privacy filtering still applies.
-        """
-        pid = 0
-        try:
-            plat = detect_platform()
-            if plat == "darwin":
-                from AppKit import NSWorkspace  # type: ignore[import-not-found] # noqa: PLC0415
+        The pid the PROBE already resolved wins. ``window_state.foreground_window``
+        fills ``WindowInfo.pid`` on all three platforms from the very same
+        window it took the title from, so using it keeps title and process
+        identity from the same instant. Re-querying "who is frontmost NOW"
+        instead — as this did unconditionally — pairs app A's title with app
+        B's process whenever focus moves between the probe and this call
+        (a 2 s poll makes that window wide open), and the PrivacyFilter then
+        judges a title against the wrong process name in both directions:
+        a blocked app waved through, or an allowed one blocked.
 
-                app = NSWorkspace.sharedWorkspace().frontmostApplication()
-                if app is not None:
-                    pid = int(app.processIdentifier())
-            elif plat == "linux" and win.handle and shutil.which("xdotool"):
-                proc = subprocess.run(
-                    ["xdotool", "getwindowpid", str(int(win.handle))],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=5,
-                    creationflags=NO_WINDOW_CREATIONFLAGS,
-                )
-                if proc.returncode == 0:
-                    pid = int((proc.stdout or "").strip() or "0")
-        except Exception:  # noqa: BLE001
-            logger.debug("POSIX focus pid resolution failed", exc_info=True)
-            pid = 0
+        Only when the probe carries no pid does this fall back to a live
+        query — macOS: ``NSWorkspace``'s frontmost application (needs neither
+        the Screen-Recording nor the Accessibility grant); Linux: ``xdotool``
+        resolves the owning pid from the X11 window id. ``psutil`` resolves
+        the process name from the pid on both. Never raises — a missing
+        pyobjc/xdotool or a transient lookup error degrades to ``(0, "")``;
+        the frame still publishes and title-based privacy filtering still
+        applies.
+        """
+        pid = int(win.pid or 0)
+        if pid <= 0:
+            try:
+                plat = detect_platform()
+                if plat == "darwin":
+                    from AppKit import NSWorkspace  # type: ignore[import-not-found] # noqa: PLC0415
+
+                    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+                    if app is not None:
+                        pid = int(app.processIdentifier())
+                elif plat == "linux" and win.handle and shutil.which("xdotool"):
+                    proc = subprocess.run(
+                        ["xdotool", "getwindowpid", str(int(win.handle))],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=5,
+                        creationflags=NO_WINDOW_CREATIONFLAGS,
+                    )
+                    if proc.returncode == 0:
+                        pid = int((proc.stdout or "").strip() or "0")
+            except Exception:  # noqa: BLE001
+                logger.debug("POSIX focus pid resolution failed", exc_info=True)
+                pid = 0
 
         process_name = ""
         if pid > 0:

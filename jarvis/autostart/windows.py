@@ -106,6 +106,21 @@ def _current_user_id() -> str:
     return getpass.getuser()
 
 
+def _ps_lit(value: object) -> str:
+    """Escape ``value`` for embedding in a SINGLE-quoted PowerShell literal.
+
+    A single-quoted PowerShell string takes everything literally except the
+    single quote itself, which is escaped by doubling it. Without this, one
+    apostrophe anywhere in the baked-in values ends the literal early and the
+    whole generated script fails to parse — so on a host whose login is
+    ``O'Brien`` (``C:\\Users\\O'Brien\\...``) or whose project folder is
+    ``Ruben's Jarvis``, task registration, task query and shortcut I/O all
+    fail and autostart silently never works. ``_run_powershell_elevated``
+    already escaped its own temp path this way; the script builders did not.
+    """
+    return str(value).replace("'", "''")
+
+
 # --------------------------------------------------------------------------- #
 # Pure PowerShell-script builders (CI-provable on any OS)                      #
 # --------------------------------------------------------------------------- #
@@ -124,18 +139,18 @@ def build_register_task_script(
     return (
         "$ErrorActionPreference = 'Stop'\n"
         "try {\n"
-        f"  $action = New-ScheduledTaskAction -Execute '{spec.program}' "
-        f"-Argument '{args}' -WorkingDirectory '{spec.working_dir}'\n"
+        f"  $action = New-ScheduledTaskAction -Execute '{_ps_lit(spec.program)}' "
+        f"-Argument '{_ps_lit(args)}' -WorkingDirectory '{_ps_lit(spec.working_dir)}'\n"
         "  $trigger = New-ScheduledTaskTrigger -AtLogOn\n"
         f"  $trigger.Delay = 'PT{int(delay_seconds)}S'\n"
-        f"  $principal = New-ScheduledTaskPrincipal -UserId '{user_id}' "
+        f"  $principal = New-ScheduledTaskPrincipal -UserId '{_ps_lit(user_id)}' "
         "-LogonType Interactive -RunLevel Limited\n"
         "  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries "
         "-DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) "
         "-MultipleInstances IgnoreNew\n"
-        f"  Register-ScheduledTask -TaskName '{task_name}' -Action $action "
+        f"  Register-ScheduledTask -TaskName '{_ps_lit(task_name)}' -Action $action "
         "-Trigger $trigger -Principal $principal -Settings $settings "
-        f"-Description '{WINDOWS_AUTOSTART_DESCRIPTION}' -Force | Out-Null\n"
+        f"-Description '{_ps_lit(WINDOWS_AUTOSTART_DESCRIPTION)}' -Force | Out-Null\n"
         "  exit 0\n"
         "} catch { exit 1 }\n"
     )
@@ -145,7 +160,7 @@ def build_query_task_script(task_name: str) -> str:
     """Pure: non-elevated PowerShell that prints the task action via sentinels."""
     return (
         "$ErrorActionPreference = 'SilentlyContinue'\n"
-        f"$t = Get-ScheduledTask -TaskName '{task_name}'\n"
+        f"$t = Get-ScheduledTask -TaskName '{_ps_lit(task_name)}'\n"
         "if ($t) {\n"
         "  $a = $t.Actions | Select-Object -First 1\n"
         f"  Write-Output ('{_QUERY_SENTINEL}' + $a.Execute)\n"
@@ -160,7 +175,7 @@ def build_unregister_task_script(task_name: str) -> str:
     return (
         "$ErrorActionPreference = 'Stop'\n"
         "try {\n"
-        f"  Unregister-ScheduledTask -TaskName '{task_name}' -Confirm:$false "
+        f"  Unregister-ScheduledTask -TaskName '{_ps_lit(task_name)}' -Confirm:$false "
         "-ErrorAction SilentlyContinue\n"
         "  exit 0\n"
         "} catch { exit 1 }\n"
@@ -194,15 +209,15 @@ def build_create_script(link: Path, spec: LaunchSpec, *, icon: str | None = None
     """
     window_style = 7 if spec.minimized else 1
     args = " ".join(spec.args)
-    icon_line = f"$sc.IconLocation = '{icon},0'\n" if icon else ""
+    icon_line = f"$sc.IconLocation = '{_ps_lit(icon)},0'\n" if icon else ""
     return (
         "$ErrorActionPreference = 'Stop'\n"
         "$ws = New-Object -ComObject WScript.Shell\n"
-        f"$sc = $ws.CreateShortcut('{link}')\n"
-        f"$sc.TargetPath = '{spec.program}'\n"
-        f"$sc.Arguments = '{args}'\n"
-        f"$sc.WorkingDirectory = '{spec.working_dir}'\n"
-        f"$sc.Description = '{WINDOWS_AUTOSTART_DESCRIPTION}'\n"
+        f"$sc = $ws.CreateShortcut('{_ps_lit(link)}')\n"
+        f"$sc.TargetPath = '{_ps_lit(spec.program)}'\n"
+        f"$sc.Arguments = '{_ps_lit(args)}'\n"
+        f"$sc.WorkingDirectory = '{_ps_lit(spec.working_dir)}'\n"
+        f"$sc.Description = '{_ps_lit(WINDOWS_AUTOSTART_DESCRIPTION)}'\n"
         f"{icon_line}"
         f"$sc.WindowStyle = {window_style}\n"
         "$sc.Save()\n"
@@ -214,7 +229,7 @@ def build_read_script(link: Path) -> str:
     return (
         "$ErrorActionPreference = 'Stop'\n"
         "$ws = New-Object -ComObject WScript.Shell\n"
-        f"$sc = $ws.CreateShortcut('{link}')\n"
+        f"$sc = $ws.CreateShortcut('{_ps_lit(link)}')\n"
         f"Write-Output ('{_READBACK_SENTINEL}' + $sc.TargetPath)\n"
         f"Write-Output ('{_READBACK_SENTINEL}' + $sc.Arguments)\n"
         f"Write-Output ('{_READBACK_SENTINEL}' + $sc.WorkingDirectory)\n"
@@ -295,7 +310,14 @@ def _run_powershell_elevated(script: str) -> bool:
     """
     fd, path = tempfile.mkstemp(suffix=".ps1")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        # utf-8-SIG, not plain utf-8: Windows PowerShell 5.1 (the `powershell`
+        # this launches) decodes a BOM-less -File script with the system ANSI
+        # codepage. Without the BOM every non-ASCII character baked into the
+        # script — an accented or umlauted login name in the interpreter path,
+        # a project folder with one, the description — is mojibake'd, so the
+        # registered task points at a path that does not exist (AP-7's BOM
+        # class). Every non-English-speaking user has such a path.
+        with os.fdopen(fd, "w", encoding="utf-8-sig") as fh:
             fh.write(script)
         # Escape any single-quote in the temp path (e.g. a login like O'Brien →
         # C:\Users\O'Brien\...\Temp) before baking it into the single-quoted PS arg.
@@ -414,6 +436,19 @@ class WindowsAutostart:
         # Already correct → idempotent no-op (the common boot case once enabled).
         info = self._task_probe()
         if info is not None and self._task_matches(info, spec):
+            # ...except for a leftover fallback .lnk. A boot whose task probe
+            # transiently failed (PowerShell is slow under login load, and a
+            # failed query is treated as "no task") writes the shortcut, and
+            # nothing removed it once the task became visible again — so Jarvis
+            # launched TWICE at login, once via the task and once via the
+            # Explorer startup queue. The task is authoritative; drop the
+            # fallback whenever both exist.
+            if self._shortcut_present():
+                log.info(
+                    "Autostart: removing the leftover startup shortcut — the "
+                    "scheduled task already covers this install."
+                )
+                self._remove_shortcut()
             return self.status(spec)
 
         if interactive:
@@ -449,6 +484,28 @@ class WindowsAutostart:
         info = self._task_probe()
         if info is not None and interactive:
             self._run_elevated(build_unregister_task_script(self._task_name))
+            info = self._task_probe()  # did the elevated removal actually land?
+        if info is not None:
+            # Unregistering the task needs elevation: the silent boot reconcile
+            # must never prompt, and an interactive user can decline the UAC
+            # prompt. Reporting "disabled" in either case was a lie — the
+            # Settings toggle showed autostart off while the logon task kept
+            # starting Jarvis at every login, with nothing to explain why.
+            log.warning(
+                "Autostart: the logon scheduled task survives (removing it needs "
+                "a one-time admin confirmation) — reporting it as still installed."
+            )
+            return AutostartStatus(
+                supported=True,
+                installed=True,
+                matches_spec=False,
+                entry_path=self._task_entry_path(),
+                detail=(
+                    "Startup shortcut removed, but the scheduled task still starts "
+                    "Jarvis at login — turn instant start off in Settings and "
+                    "confirm the admin prompt to remove it."
+                ),
+            )
         return AutostartStatus(
             supported=True,
             installed=False,
@@ -480,7 +537,17 @@ class WindowsAutostart:
             for line in result.stdout.splitlines()
             if line.startswith(_READBACK_SENTINEL)
         ]
-        target, args, workdir = (fields + ["", "", ""])[:3]
+        if len(fields) < 3:
+            # A truncated read-back is "unknown", not "matches". Padding the
+            # missing fields with "" made a half-failed COM read compare equal
+            # to any spec with no args — reporting a stale shortcut as current
+            # and suppressing the refresh that would have fixed it.
+            log.debug(
+                "shortcut read-back returned %d of 3 fields — treating as drift",
+                len(fields),
+            )
+            return False
+        target, args, workdir = fields[:3]
         return (
             _norm(target) == _norm(spec.program)
             and args.strip() == " ".join(spec.args).strip()

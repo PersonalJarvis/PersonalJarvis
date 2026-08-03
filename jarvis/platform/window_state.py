@@ -263,9 +263,20 @@ def _force_foreground_windows(hwnd: int) -> bool:
     get_thread.restype = wintypes.DWORD
     get_thread.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
 
-    # Restore if minimized, then try the cheap plain path first — it succeeds
-    # whenever Jarvis launched the process and input is recent.
-    user32.ShowWindow(hwnd, _SW_RESTORE)
+    # Restore ONLY if minimized, then try the cheap plain path first — it
+    # succeeds whenever Jarvis launched the process and input is recent.
+    #
+    # The IsIconic guard is load-bearing, not an optimization: SW_RESTORE
+    # means "restore to the size and position before minimize OR maximize",
+    # so calling it unconditionally UN-MAXIMIZED every already-maximized
+    # window this path touches. Every foreground site funnels through here —
+    # switch_window ("switch to Chrome"), the open_app already-running path,
+    # raise_after_launch, the CU settle fallback — so asking Jarvis to focus a
+    # maximized app shrank it back to its restored size as a side effect, and
+    # for Computer-Use it silently changed the very geometry the next
+    # screenshot is mapped against.
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, _SW_RESTORE)
     if user32.SetForegroundWindow(hwnd):
         user32.SetActiveWindow(hwnd)
         return True
@@ -285,7 +296,8 @@ def _force_foreground_windows(hwnd: int) -> bool:
                 user32.AttachThreadInput(cur_thread, target_thread, True)
             )
         user32.BringWindowToTop(hwnd)
-        user32.ShowWindow(hwnd, _SW_RESTORE)
+        if user32.IsIconic(hwnd):    # same rule as above: never un-maximize
+            user32.ShowWindow(hwnd, _SW_RESTORE)
         ok = bool(user32.SetForegroundWindow(hwnd))
         user32.SetActiveWindow(hwnd)
         return ok

@@ -396,3 +396,131 @@ async def test_posix_stop_without_start_is_noop() -> None:
     watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
     await watcher.stop()
     await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_posix_poll_once_treats_a_titleless_window_as_a_healthy_probe() -> None:
+    """A window with no readable title is not a dead backend.
+
+    X11 windows legitimately carry no name, and xdotool's getwindowname can
+    fail for one window while getactivewindow keeps working. Counting that as
+    a failure meant five such polls (10 s) permanently disabled focus tracking
+    for the rest of the session. Nothing is published either — an empty title
+    is unidentifiable and must never be handed to the privacy filter.
+    """
+    bus, manager, privacy = _make_components()
+    updated: list[FrameUpdated] = []
+    blocked: list[AwarenessCaptureBlocked] = []
+    bus.subscribe(FrameUpdated, _async_collect(updated))
+    bus.subscribe(AwarenessCaptureBlocked, _async_collect(blocked))
+
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_posix_foreground_window",
+        staticmethod(lambda: WindowInfo(title="   ", handle=7)),
+    ):
+        assert await watcher._poll_once() is True
+        assert await watcher._poll_once() is True
+
+    assert updated == []
+    assert blocked == []
+
+
+@pytest.mark.asyncio
+async def test_stop_discards_queued_frames_and_stale_focus_state(monkeypatch) -> None:
+    """A restart must not replay pre-stop frames, and must not swallow the
+    first genuine frame after it as "unchanged".
+
+    Queue and change-detection markers live on the instance, so both used to
+    survive a stop/start cycle (awareness toggled off and on in Settings):
+    stale payloads were published as fresh frames, and the poller then saw the
+    unchanged foreground window as "already reported" and emitted nothing —
+    leaving ``state.current_frame`` frozen until the user switched windows.
+    """
+    monkeypatch.setattr(window_mod, "detect_platform", lambda: "darwin")
+    bus, manager, privacy = _make_components()
+    received: list[FrameUpdated] = []
+    bus.subscribe(FrameUpdated, _async_collect(received))
+
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_posix_foreground_window",
+        staticmethod(lambda: WindowInfo(title="Terminal", handle=42)),
+    ), patch.object(
+        WindowFocusWatcher, "_resolve_posix_focus_meta",
+        staticmethod(lambda win: (123, "Terminal.app")),
+    ):
+        watcher._started = True
+        await watcher._poll_once()
+        watcher._safe_enqueue((time.time_ns(), 4242))    # frame captured pre-stop
+
+        await watcher.stop()
+        assert watcher._queue.empty()
+        assert watcher._poll_last_handle is None
+        assert watcher._poll_last_title == ""
+        assert watcher._last_hwnd == 0
+
+        watcher._started = True
+        await watcher._poll_once()    # same window, fresh run → must re-emit
+
+    assert len(received) == 2
+
+
+@pytest.mark.asyncio
+async def test_posix_focus_meta_uses_the_pid_the_probe_already_resolved(
+    monkeypatch,
+) -> None:
+    """Title and process identity must come from the SAME instant.
+
+    ``window_state.foreground_window`` fills ``WindowInfo.pid`` from the very
+    window it read the title off. Asking "who is frontmost NOW" a second time
+    instead paired app A's title with app B's process whenever focus moved in
+    between — a 2 s poll leaves that gap wide open — and the PrivacyFilter then
+    judged a title against the wrong process name in both directions.
+    """
+    monkeypatch.setattr(window_mod, "detect_platform", lambda: "darwin")
+
+    def _must_not_run():
+        raise AssertionError("re-queried the frontmost app instead of using win.pid")
+
+    monkeypatch.setattr(window_mod.shutil, "which", lambda _name: _must_not_run())
+
+    pid, _name = WindowFocusWatcher._resolve_posix_focus_meta(
+        WindowInfo(title="Notes", handle=7, pid=4242),
+    )
+
+    assert pid == 4242
+
+
+@pytest.mark.asyncio
+async def test_posix_focus_meta_degrades_to_zero_without_a_probe_pid(
+    monkeypatch,
+) -> None:
+    """No pid from the probe and no usable backend → (0, ""), never a raise."""
+    monkeypatch.setattr(window_mod, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(window_mod.shutil, "which", lambda _name: None)
+
+    assert WindowFocusWatcher._resolve_posix_focus_meta(
+        WindowInfo(title="untitled", handle=9),
+    ) == (0, "")
+
+
+@pytest.mark.asyncio
+async def test_posix_poll_emits_the_probe_pid_end_to_end(monkeypatch) -> None:
+    """The published frame carries the probe's own pid, not a re-query."""
+    monkeypatch.setattr(window_mod, "detect_platform", lambda: "darwin")
+    monkeypatch.setattr(window_mod.shutil, "which", lambda _name: None)
+
+    bus, manager, privacy = _make_components()
+    received: list[FrameUpdated] = []
+    bus.subscribe(FrameUpdated, _async_collect(received))
+
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_posix_foreground_window",
+        staticmethod(lambda: WindowInfo(title="Terminal", handle=3, pid=777)),
+    ):
+        assert await watcher._poll_once() is True
+
+    assert len(received) == 1
+    assert received[0].pid == 777

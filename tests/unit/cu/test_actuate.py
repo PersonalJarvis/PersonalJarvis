@@ -292,6 +292,56 @@ def test_normalize_virtualdesk_folds_negative_origin():
     assert 0 < nx < 65535 and 0 < ny < 65535
 
 
+def _recording_windows_actuator():
+    """A WindowsActuator that records key events instead of calling SendInput.
+
+    Built via ``__new__`` so no ctypes/Win32 struct setup runs — the mapping
+    under test is pure, and this keeps the test host-agnostic.
+    """
+    from jarvis.cu.actuate.windows import WindowsActuator
+
+    actuator = WindowsActuator.__new__(WindowsActuator)
+    sent: list[list[tuple[int, int, int]]] = []
+    actuator._t = None
+    actuator._key_input = lambda vk, scan, flags: (vk, scan, flags)
+    actuator._send = lambda events: sent.append(list(events))
+    return actuator, sent
+
+
+def test_type_text_presses_enter_for_a_newline():
+    """KEYEVENTF_UNICODE cannot deliver U+000A: Windows edit controls act on
+    the KEY, so a unicode LF typed NOTHING and every multi-line type_text
+    landed as one run-on line — while pynput on macOS/Linux pressed Enter."""
+    from jarvis.cu.actuate.windows import _KEYEVENTF_KEYUP
+
+    actuator, sent = _recording_windows_actuator()
+    actuator.type_text("a\nb", delay_s=0)
+
+    assert len(sent) == 3
+    assert sent[1] == [(0x0D, 0, 0), (0x0D, 0, _KEYEVENTF_KEYUP)]
+    # The surrounding characters still go out as unicode code units.
+    assert sent[0][0][0] == 0 and sent[0][0][1] == ord("a")
+    assert sent[2][0][1] == ord("b")
+
+
+def test_type_text_maps_tab_and_collapses_crlf_to_one_enter():
+    actuator, sent = _recording_windows_actuator()
+    actuator.type_text("\t\r\n", delay_s=0)
+
+    assert [batch[0][0] for batch in sent] == [0x09, 0x0D]
+
+
+def test_type_text_still_sends_astral_characters_as_surrogate_pairs():
+    from jarvis.cu.actuate.windows import _KEYEVENTF_UNICODE
+
+    actuator, sent = _recording_windows_actuator()
+    actuator.type_text("\U0001F600", delay_s=0)    # emoji → two UTF-16 units
+
+    assert len(sent) == 1
+    assert len(sent[0]) == 4    # down+up per surrogate half
+    assert all(vk == 0 and flags & _KEYEVENTF_UNICODE for vk, _scan, flags in sent[0])
+
+
 def test_normalize_virtualdesk_clamps_outside_points():
     assert normalize_virtualdesk(-9999, -9999, 0, 0, 1920, 1080) == (0, 0)
     assert normalize_virtualdesk(99999, 99999, 0, 0, 1920, 1080) == (65535, 65535)
@@ -308,6 +358,34 @@ def test_resolve_vk_letters_digits_and_names():
     assert resolve_vk("command") == 0x5B
     assert resolve_vk("bogus") is None
     assert resolve_vk("") is None
+
+
+def test_resolve_vk_maps_punctuation_shortcut_keys():
+    """The shared vocabulary accepts any single printable character and the
+    pynput backend types it — this backend resolved only a-z/0-9, so every
+    punctuation shortcut (Ctrl+- / Ctrl+= zoom, Ctrl+, settings, Ctrl+/
+    comment) raised "Unknown key" and the whole action failed."""
+    assert resolve_vk("-") == 0xBD    # VK_OEM_MINUS  — any layout
+    assert resolve_vk("=") == 0xBB    # VK_OEM_PLUS   — any layout
+    assert resolve_vk(",") == 0xBC    # VK_OEM_COMMA  — any layout
+    assert resolve_vk(".") == 0xBE    # VK_OEM_PERIOD — any layout
+    assert resolve_vk("/") == 0xBF
+    assert resolve_vk("[") == 0xDB
+    assert resolve_vk("]") == 0xDD
+
+
+def test_resolve_vk_refuses_shifted_characters():
+    """Emitting the unshifted key for '+' would send input nobody asked for —
+    a loud "Unknown key" beats a wrong keystroke."""
+    for shifted in ("+", "_", "{", "}", ":", "?", "~"):
+        assert resolve_vk(shifted) is None, shifted
+
+
+def test_punctuation_shortcut_survives_the_whole_combo_path():
+    """expand_combo_keys already split "ctrl+-"; resolve_vk then rejected it."""
+    expanded = expand_combo_keys(["ctrl+-"])
+    assert expanded == ["ctrl", "-"]
+    assert [resolve_vk(k) for k in expanded] == [0x11, 0xBD]
 
 
 def test_expand_combo_keys_splits_known_combos_only():
