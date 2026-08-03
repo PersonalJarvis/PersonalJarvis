@@ -25,7 +25,31 @@ export type RealtimeCallbacks = {
 export type RealtimeAudioOptions = {
   /** The active provider needs a WebRTC offer to open its subscription transport. */
   requiresWebRtcOffer?: boolean;
+  /**
+   * How long one start attempt may take before the surface calls it dead.
+   *
+   * Comes from the backend's declared provider capability, never from a
+   * provider name. Omitted (older backend, failed probe) keeps the historical
+   * fixed budget.
+   */
+  startBudgetMs?: number;
 };
+
+/** Historical fixed budget for one realtime start attempt. */
+const DEFAULT_START_BUDGET_MS = 20_000;
+
+/** Bounded startup pre-roll, mirroring the desktop's 30 s replay window.
+ *
+ * Captured microphone PCM used to be DISCARDED until the backend answered
+ * `audio_ready`. On a cold subscription transport that window is 15-25 s, so
+ * whatever the user said first was simply gone — and because that transport
+ * generates its responses from its own turn detection, nothing ever asked for
+ * a repeat. Retaining the opening in order and replaying it once the socket
+ * accepts audio gives the browser the same contract the desktop already has.
+ * The cap is per-connection and drops the OLDEST frames, so a forgotten open
+ * tab cannot grow memory without bound.
+ */
+const MAX_STARTUP_PREROLL_BYTES = 48_000 * 2 * 30; // 30 s of mono PCM16 @48 kHz
 
 export type BrowserSpeechOutcome = "ended" | "error" | "unavailable";
 
@@ -276,6 +300,8 @@ export class RealtimeAudioClient {
   private browserSpeech = new BrowserSpeechFallback();
   private webRtcTransport: RealtimeWebRtcTransport;
   private webRtcOfferSdp: string | null = null;
+  private startupPreroll: ArrayBuffer[] = [];
+  private startupPrerollBytes = 0;
 
   constructor(
     private cb: RealtimeCallbacks = {},
@@ -371,6 +397,8 @@ export class RealtimeAudioClient {
         if (data instanceof ArrayBuffer) {
           if (this.ready && this.ws?.readyState === WebSocket.OPEN) {
             this.ws.send(data);
+          } else if (!this.ready) {
+            this.retainStartupFrame(data);
           }
           return;
         }
@@ -387,13 +415,22 @@ export class RealtimeAudioClient {
   }
 
   private waitUntilReady(socket: WebSocket): Promise<void> {
+    // Never shorter than the historical budget, and long enough for whatever
+    // the active provider chain declared it needs. A cold subscription
+    // transport spends 15-25 s spawning its app-server, verifying the live
+    // account and negotiating WebRTC; giving up at a fixed 20 s reported that
+    // legitimate negotiation to the user as a failed connection.
+    const budgetMs = Math.max(
+      DEFAULT_START_BUDGET_MS,
+      Math.round(this.options.startBudgetMs ?? 0),
+    );
     return new Promise((resolve, reject) => {
       let settled = false;
       const timeout = window.setTimeout(() => {
         if (settled) return;
         settled = true;
         reject(new Error("Realtime voice connection timed out"));
-      }, 20_000);
+      }, budgetMs);
 
       const fail = (error: Error) => {
         if (!settled) {
@@ -449,6 +486,7 @@ export class RealtimeAudioClient {
           void this.finishAudioReady(message)
             .then(() => {
               this.ready = true;
+              this.flushStartupPreroll();
               if (!settled) {
                 settled = true;
                 window.clearTimeout(timeout);
@@ -475,6 +513,30 @@ export class RealtimeAudioClient {
         this.cb.onStatus?.(type, message);
       };
     });
+  }
+
+  /** Retain one captured frame while the transport is still negotiating. */
+  private retainStartupFrame(frame: ArrayBuffer): void {
+    this.startupPreroll.push(frame);
+    this.startupPrerollBytes += frame.byteLength;
+    while (
+      this.startupPreroll.length > 1 &&
+      this.startupPrerollBytes > MAX_STARTUP_PREROLL_BYTES
+    ) {
+      const dropped = this.startupPreroll.shift();
+      this.startupPrerollBytes -= dropped?.byteLength ?? 0;
+    }
+  }
+
+  /** Replay the retained opening once the socket accepts audio. */
+  private flushStartupPreroll(): void {
+    const retained = this.startupPreroll;
+    this.startupPreroll = [];
+    this.startupPrerollBytes = 0;
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    for (const frame of retained) {
+      this.ws.send(frame);
+    }
   }
 
   private async finishAudioReady(message: RealtimeStatusPayload): Promise<void> {
@@ -557,6 +619,10 @@ export class RealtimeAudioClient {
     const socket = this.ws;
     this.ws = null;
     this.ready = false;
+    // A start that never reached `audio_ready` must not carry its retained
+    // opening into the next connection attempt.
+    this.startupPreroll = [];
+    this.startupPrerollBytes = 0;
     if (sendStop && socket?.readyState === WebSocket.OPEN) {
       try {
         socket.send(JSON.stringify({ type: "audio_stop" }));

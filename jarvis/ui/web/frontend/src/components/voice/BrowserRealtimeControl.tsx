@@ -75,7 +75,8 @@ export function waveformPhase(
 export function BrowserRealtimeControl() {
   const t = useT();
   const capabilities = useCapabilities();
-  const { mode, realtimeAvailable, requiresWebRtcOffer } = useVoiceMode();
+  const { mode, realtimeAvailable, requiresWebRtcOffer, startBudgetMs } =
+    useVoiceMode();
   const setVoice = useEventStore((store) => store.setVoice);
   const setTranscription = useEventStore((store) => store.setTranscription);
   const voiceState = useEventStore((store) => store.voiceState);
@@ -195,7 +196,7 @@ export function BrowserRealtimeControl() {
           }
         },
       },
-      { requiresWebRtcOffer },
+      { requiresWebRtcOffer, startBudgetMs },
     );
     clientRef.current = client;
     try {
@@ -222,6 +223,7 @@ export function BrowserRealtimeControl() {
     requiresWebRtcOffer,
     setTranscription,
     setVoice,
+    startBudgetMs,
     state,
     stop,
     supportMessage,

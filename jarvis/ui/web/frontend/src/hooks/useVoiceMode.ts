@@ -7,6 +7,8 @@ type VoiceModeResp = {
   mode: string;
   realtime_available: boolean;
   requires_webrtc_offer: boolean;
+  /** Longest handshake any eligible realtime provider declares it needs. */
+  handshake_budget_s?: number;
   active_provider: string | null;
   // Sidebar-footer display fields: pretty provider name + the model an idle
   // realtime session would use (configured pin or catalog default).
@@ -23,6 +25,14 @@ type VoiceModeResp = {
 
 const REALTIME_DISCOVERY_RETRY_WINDOW_MS = 5 * 60_000;
 const REALTIME_DISCOVERY_RETRY_MAX_MS = 10_000;
+/** Historical surface budget for one realtime start attempt.
+ *
+ * Kept as the floor so an older backend (or a failed capability probe) behaves
+ * exactly as before. A provider that declares it needs LONGER raises it — the
+ * subscription transport declares 45 s and documents 15-25 s cold starts, and
+ * the fixed 20 s used to report those legitimate negotiations as timeouts.
+ */
+const REALTIME_START_BUDGET_FLOOR_MS = 20_000;
 
 export function useVoiceMode() {
   const qc = useQueryClient();
@@ -121,6 +131,10 @@ export function useVoiceMode() {
     mode: q.data?.mode ?? "pipeline",
     realtimeAvailable: q.data?.realtime_available ?? false,
     requiresWebRtcOffer: q.data?.requires_webrtc_offer ?? false,
+    startBudgetMs: Math.max(
+      REALTIME_START_BUDGET_FLOOR_MS,
+      Math.round((q.data?.handshake_budget_s ?? 0) * 1000),
+    ),
     // Distinguishes "the server SAID no realtime key" from "we never heard
     // back" (timeout/loading). Without it a failed status fetch showed the
     // false claim "Realtime needs provider setup" and looked like a locked

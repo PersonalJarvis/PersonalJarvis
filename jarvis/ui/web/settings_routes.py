@@ -71,6 +71,32 @@ def _realtime_requires_webrtc_offer(cfg: object) -> bool:
     return realtime_requires_webrtc_offer(cfg)
 
 
+#: Surface floor for the realtime start budget. Only ever RAISED by a
+#: provider's declared need — never lowered — so a browser that cannot reach
+#: the capability probe still behaves exactly as it always did.
+_REALTIME_SURFACE_HANDSHAKE_FLOOR_S = 20.0
+
+
+def _realtime_handshake_budget_s(cfg: object) -> float:
+    """Longest declared realtime handshake, or the historical surface floor.
+
+    The browser gave every start attempt a fixed 20 s. That is shorter than the
+    subscription transport's declared 45 s budget and its documented 15-25 s
+    cold start, so a cold subscription call could be reported as a timed-out
+    connection while the backend was still legitimately negotiating.
+    """
+    try:
+        from jarvis.realtime.factory import realtime_handshake_budget_s
+    except ImportError:  # Optional realtime support keeps the historical floor.
+        return _REALTIME_SURFACE_HANDSHAKE_FLOOR_S
+    try:
+        declared = float(realtime_handshake_budget_s(cfg))
+    except Exception:  # noqa: BLE001 — a probe failure must not break the screen
+        log.debug("Realtime handshake-budget probe failed", exc_info=True)
+        return _REALTIME_SURFACE_HANDSHAKE_FLOOR_S
+    return max(_REALTIME_SURFACE_HANDSHAKE_FLOOR_S, declared)
+
+
 async def _realtime_transport_offer_ready(required: bool) -> bool | None:
     """Return desktop offer readiness, or ``None`` when no offer is required."""
     if not required:
@@ -246,6 +272,9 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     requires_webrtc_offer = await asyncio.to_thread(
         _realtime_requires_webrtc_offer, cfg
     )
+    # Capability, not a provider id (AP-21): the surface must not call a start
+    # attempt dead while the backend is still inside a budget it declared.
+    handshake_budget_s = await asyncio.to_thread(_realtime_handshake_budget_s, cfg)
     transport_offer_ready = await _realtime_transport_offer_ready(
         requires_webrtc_offer
     )
@@ -269,6 +298,7 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
         "mode": mode,
         "realtime_available": prov is not None,
         "requires_webrtc_offer": requires_webrtc_offer,
+        "handshake_budget_s": handshake_budget_s,
         "transport_offer_ready": transport_offer_ready,
         "transport_offer_detail": transport_offer_detail,
         "active_provider": prov,

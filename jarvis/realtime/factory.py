@@ -176,6 +176,36 @@ def realtime_requires_webrtc_offer(cfg: Any) -> bool:
     return False
 
 
+def realtime_handshake_budget_s(cfg: Any) -> float:
+    """Longest handshake any eligible realtime provider declares it needs.
+
+    A capability read, never a provider-id check (AP-21). ``RealtimeVoiceSession``
+    stretches its own handshake deadline to the largest declared budget; a
+    SURFACE that gives up earlier throws that away, which is exactly what made
+    cold subscription calls unreachable from the browser: the transport is
+    allowed 45 s and documents 15-25 s cold starts, while the browser client
+    called the attempt dead after 20 s.
+
+    Returns the effective ceiling — never below the shared default — so a
+    caller can use the value directly as a timeout budget.
+    """
+    from jarvis.realtime.session import _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S
+
+    declared = [float(_PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S)]
+    for provider_id in _configured_provider_ids(cfg):
+        try:
+            provider_cls = load(_GROUP, provider_id, protocol=RealtimeProvider)
+        except Exception as exc:  # noqa: BLE001 - one broken plugin is skipped
+            log.warning(
+                "Realtime handshake-budget probe failed for %s: %s", provider_id, exc
+            )
+            continue
+        if not bool(getattr(provider_cls, "supports_realtime", False)):
+            continue
+        declared.append(float(getattr(provider_cls, "handshake_budget_s", 0.0) or 0.0))
+    return max(declared)
+
+
 async def realtime_warm_selected_transports(cfg: Any) -> None:
     """Let every explicitly selected provider pre-open its transport.
 
@@ -201,6 +231,11 @@ async def realtime_warm_selected_transports(cfg: Any) -> None:
             )
 
 
+#: The ChatGPT plan is its own quota pool, not metered platform usage. It is a
+#: DISTINCT family from ``openai``: a 429 on one says nothing about the other.
+_CHATGPT_SUBSCRIPTION_FAMILY = "openai-chatgpt-subscription"
+
+
 def _provider_family(provider_id: str) -> str:
     """Credential/quota family of a provider id (AP-22 diagnostics only)."""
     pid = (provider_id or "").strip().lower()
@@ -215,6 +250,28 @@ def _provider_family(provider_id: str) -> str:
         "claude-code": "anthropic",
     }
     return aliases.get(pid, pid.split("-")[0])
+
+
+def _brain_credential_family(provider_id: str) -> str:
+    """Family a configured BRAIN id will actually bill against.
+
+    ``codex`` is two products behind one id: with an OpenAI API key it is
+    metered platform usage (family ``openai``); WITHOUT one it runs on the
+    user's ChatGPT plan — the same account and the same quota the subscription
+    realtime voice uses. Reporting ``openai`` for both is why a Codex brain
+    sitting behind a Codex subscription voice never raised the AP-22 warning,
+    even though that is the single configuration where one 429 takes down the
+    voice and every action it delegates at the same moment.
+    """
+    family = _provider_family(provider_id)
+    if family != "openai" or (provider_id or "").strip().lower() != "codex":
+        return family
+    from jarvis.core.config import PROVIDER_SECRET_CANDIDATES  # noqa: PLC0415
+
+    candidates = tuple(PROVIDER_SECRET_CANDIDATES.get("codex", ()) or ())
+    if candidates and get_secret_any(candidates):
+        return "openai"
+    return _CHATGPT_SUBSCRIPTION_FAMILY
 
 
 def _warn_on_same_family_delegate_chain(
@@ -252,7 +309,7 @@ def _warn_on_same_family_delegate_chain(
         ]
         if not realtime_family or not chain:
             return
-        if all(_provider_family(entry) == realtime_family for entry in chain):
+        if all(_brain_credential_family(entry) == realtime_family for entry in chain):
             log.warning(
                 "AP-22: the realtime provider %r and EVERY configured brain "
                 "provider (%s) share the %r credential family — one quota or "
@@ -323,6 +380,7 @@ def build_realtime_session(
 __all__ = [
     "build_realtime_session",
     "realtime_available_provider",
+    "realtime_handshake_budget_s",
     "realtime_implicit_usage_fallback_allowed",
     "realtime_requires_webrtc_offer",
 ]

@@ -218,6 +218,7 @@ class RealtimeWebRtcAudioEndpoint:
         )
         self._reader_task: asyncio.Task[None] | None = None
         self._mic_resampler = _MicResampler()
+        self._outgoing_drops = 0
         self._closed = False
 
         @self._pc.on("track")
@@ -348,7 +349,21 @@ class RealtimeWebRtcAudioEndpoint:
             self._sender.queue.put_nowait(payload)
         except asyncio.QueueFull:
             # Drop the oldest: stale microphone audio is worse than a gap.
+            # SAY so — this queue silently deleted user speech, which reads to
+            # the user as "it ignored me" and to a log reader as a healthy call.
+            # The receive side already reports its drops; this side did not.
             with_suppress_get(self._sender.queue)
+            self._outgoing_drops += 1
+            if (
+                self._outgoing_drops == 1
+                or self._outgoing_drops % _DROP_LOG_EVERY == 0
+            ):
+                log.warning(
+                    "Realtime WebRTC send queue is full — dropped %d outgoing "
+                    "microphone frame(s); the far end is not draining audio at "
+                    "wall clock",
+                    self._outgoing_drops,
+                )
             try:
                 self._sender.queue.put_nowait(payload)
             except asyncio.QueueFull:  # noqa: S110 - a full queue after a drop means the peer is gone

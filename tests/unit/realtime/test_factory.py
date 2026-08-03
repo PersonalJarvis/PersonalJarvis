@@ -378,3 +378,87 @@ async def test_warm_selected_transports_ignores_unselected_plugins(
     await factory.realtime_warm_selected_transports(object())
 
     assert warm.calls == 0
+
+
+def test_declared_handshake_budget_reaches_the_surface(monkeypatch) -> None:
+    """A surface must not call a start attempt dead inside a declared budget.
+
+    The browser gave every attempt a fixed 20 s while the subscription
+    transport declares 45 s and documents 15-25 s cold starts, so a cold
+    subscription call could be reported as a timed-out connection while the
+    backend was still legitimately negotiating.
+    """
+
+    class _SlowStart(_BaseProvider):
+        name = "codex-subscription-realtime"
+        credential_candidates = ()
+        handshake_budget_s = 45.0
+
+        @classmethod
+        def external_login_ready(cls):
+            return True
+
+    monkeypatch.setattr(factory, "list_plugins", lambda _group: ["codex-subscription-realtime"])
+    monkeypatch.setattr(factory, "load", lambda _group, _name, protocol=None: _SlowStart)
+
+    budget = factory.realtime_handshake_budget_s(
+        _cfg(provider="codex-subscription-realtime")
+    )
+
+    assert budget == 45.0
+
+
+def test_handshake_budget_never_drops_below_the_shared_default(monkeypatch) -> None:
+    """A provider that declares nothing keeps the historical ceiling."""
+    _fake_registry(monkeypatch, {"openai"})
+
+    from jarvis.realtime.session import _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S
+
+    assert factory.realtime_handshake_budget_s(_cfg()) == pytest.approx(
+        _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S
+    )
+
+
+def test_a_subscription_brain_behind_subscription_voice_warns(monkeypatch, caplog) -> None:
+    """AP-22: the one chain where a single 429 silences voice AND actions.
+
+    ``codex`` without an OpenAI key runs on the SAME ChatGPT plan as the
+    subscription voice. Resolving it to the generic ``openai`` family meant
+    this exact configuration never produced the warning it exists for.
+    """
+    monkeypatch.setattr(factory, "get_secret_any", lambda _candidates: None)
+    config = _cfg(provider="codex-subscription-realtime")
+    config.brain.primary = "codex"
+    config.brain.deep_brain = "codex"
+    config.brain.routing_provider = None
+    config.brain.local_fallback = None
+
+    with caplog.at_level("WARNING"):
+        factory._warn_on_same_family_delegate_chain(
+            config,
+            "codex-subscription-realtime",
+            credential_family="openai-chatgpt-subscription",
+        )
+
+    assert any("AP-22" in record.message for record in caplog.records)
+
+
+def test_a_metered_codex_brain_behind_subscription_voice_does_not_warn(
+    monkeypatch, caplog
+) -> None:
+    """With an OpenAI key the brain bills a DIFFERENT pool — no false alarm."""
+    monkeypatch.setattr(factory, "get_secret_any", lambda _candidates: "openai-key")
+    config = _cfg(provider="codex-subscription-realtime")
+    config.brain.primary = "codex"
+    config.brain.deep_brain = None
+    config.brain.routing_provider = None
+    config.brain.local_fallback = None
+
+    with caplog.at_level("WARNING"):
+        factory._warn_on_same_family_delegate_chain(
+            config,
+            "codex-subscription-realtime",
+            credential_family="openai-chatgpt-subscription",
+        )
+
+    assert not [record for record in caplog.records if "AP-22" in record.message]
