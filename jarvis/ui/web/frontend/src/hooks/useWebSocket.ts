@@ -7,6 +7,7 @@ import {
   documentOwnsDictation,
   isForThisWindow,
 } from "@/lib/dictationTarget";
+import { clearVoiceInputLevel, setVoiceInputLevel } from "@/lib/voiceInputLevel";
 import {
   SECTION_LABELS,
   isSectionId,
@@ -15,7 +16,7 @@ import {
   type VoiceState,
 } from "@/store/events";
 import { useSubAgentStore, SUB_AGENT_EVENT_NAMES } from "@/store/jarvisAgents";
-import { WSEventEnvelope, WSWelcome } from "@/schema/ws";
+import { WSAudioLevel, WSEventEnvelope, WSWelcome } from "@/schema/ws";
 import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from "@/i18n";
 
 let singleton: WSClient | null = null;
@@ -66,6 +67,7 @@ export function useWebSocket(): void {
         // one falls through to the honest offline state.
         setWarming(code === 1013 || Boolean(info?.authRetryPending));
         setConnected(false);
+        clearVoiceInputLevel("native");
       },
       onMessage: (raw) => {
         const welcome = WSWelcome.safeParse(raw);
@@ -96,6 +98,12 @@ export function useWebSocket(): void {
           // authoritative "backend is up" signal — useAssistantNameSeed
           // listens for this event and re-fetches the resolved name.
           window.dispatchEvent(new CustomEvent("jarvis:assistant-name-changed"));
+          return;
+        }
+
+        const audioLevel = WSAudioLevel.safeParse(raw);
+        if (audioLevel.success) {
+          setVoiceInputLevel(audioLevel.data.input, "native");
           return;
         }
 
@@ -164,6 +172,9 @@ export function useWebSocket(): void {
           if (typeof state === "string") {
             const lower = state.toLowerCase();
             if (isVoiceState(lower)) setVoice(lower);
+            // A state boundary invalidates the previous phase's sample. Native
+            // capture will immediately supply a fresh value while listening.
+            clearVoiceInputLevel("native");
             // The live-transcript box has no other reset path: without this,
             // the last utterance of a session survives into READY/IDLE and the
             // next session, masquerading as a frozen live transcript (live
@@ -456,6 +467,7 @@ export function useWebSocket(): void {
     singleton = client;
 
     return () => {
+      clearVoiceInputLevel("native");
       client.close();
       singleton = null;
       mounted.current = false;

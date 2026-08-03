@@ -11,6 +11,58 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [1.2.2] — 2026-08-03
+
+This release makes realtime subscription voice and the Agentic IDE more
+dependable while adding richer voice controls and knowledge-map views.
+
+### Added
+
+- Added native realtime voice transport with in-app readiness diagnostics,
+  input-level feedback, browser microphone controls, and a complete action path.
+- Added 3D UltraWiki memory maps with 2D/3D switching on both knowledge surfaces.
+- Added Agentic IDE chat-or-terminal workspace choices, voice-orb context, prompt
+  receipts, persistent terminal sizing, and clearer working/done state feedback.
+
+### Fixed
+
+- Prevented subscription voice from hearing itself, inventing user turns,
+  fragmenting replies, losing action responses, or going silent after teardown.
+- Preserved the beginning of deliberate push-to-talk and call-hotkey speech,
+  including quick follow-ups during the wake-word echo lock.
+- Kept screen-context questions out of Computer-Use and routed provider failures
+  across available families instead of leaving core paths silent.
+- Hardened Agentic IDE pane recovery, scrolling, writer failures, terminal links,
+  copy shortcuts, and live-tail switching.
+
+---
+
+## [1.2.1] — 2026-07-31
+
+This corrective release reconnects the public 1.2.0 line with the complete
+maintained source tree and closes the release, install, and UI verification
+gaps found after 1.2.0 was published.
+
+### Added
+
+- Added an experimental ChatGPT subscription path for realtime voice, with
+  honest capability checks and fallback behaviour.
+- Added the Agentic IDE chat view and a consistent coding-CLI picker when a
+  workspace or chat rail opens another agent pane.
+
+### Fixed
+
+- Restored the complete current implementation to the public release line,
+  including the UltraWiki Python package and its frontend source.
+- Preserved interrupted Agentic IDE pane recovery without mistaking the
+  restored pane's own repaint for new work.
+- Restored portable `[full]` dependency resolution across supported Python,
+  operating-system, and CPU combinations, including Windows on ARM64.
+- Fixed the README's package-page asset URL and aligned stale frontend tests
+  with the shipped UI.
+
+---
+
 ## [1.2.0] — 2026-07-30
 
 This is the first public release since 1.1.5 and it is a large one: a

@@ -8,8 +8,8 @@
   "tts": {
     "provider": "grok-voice",
     "fallback": "grok-voice",
-    "voice_de": "leo",
-    "voice_en": "leo",
+    "voice_de": "Kore",
+    "voice_en": "Kore",
     "language_code": "auto",
     "chunk_by_sentence": false,
     "seed": 7,
@@ -65,7 +65,7 @@
   },
   "stt": {
     "provider": "groq-api",
-    "model": "large-v3",
+    "model": "whisper-large-v3",
     "bias_prompt": "Jarvis, OpenClaw, Codex, Gemini, Grok, Claude, Anthropic, OpenAI, OpenRouter, Whisper, Subagent, Sub-Agent, Mission-Manager, Critic-Loop, Critic, Worker, Router-Brain, Router, Kontrollierer, Voice-Pipeline, Wake-Word, Silero, VAD, TTS, STT, Telemetry, Transkript, Token, Provider, Plugin, Sprechblase, Orb, Mascot, Quip, Browser, Terminal, Repository, Branch, Commit, Push, Pull-Request, Issue, Merge, Refactor, Deployment, Screenshot, Debuggen, Workflow, Microservice, Container, Docker, Kubernetes, FastAPI, React, TypeScript, Python, JSON, Markdown, Logfile, Konfiguration, Endpoint, Webhook, API-Key, Service-Account, Cloud, Google Cloud, Vertex AI, BigQuery, GitHub, Twilio, ElevenLabs, OAuth, Credential Manager, Frontend, Backend, Skript, Daemon, Hangup, Auflegen, Denkpause, submitted, distanziert, erkennt",
     "language": "auto",
     "models": {

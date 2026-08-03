@@ -72,7 +72,7 @@ def _remember_input_latency(stream: Any) -> None:
         raw = raw[0] if raw else None
     try:
         latency = float(raw)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Unknown host latency is represented by the zero floor.
         latency = 0.0
     if not (latency > 0.0):
         latency = 0.0
@@ -232,7 +232,7 @@ def _fallback_input_devices(primary_idx: int) -> list[int]:
     try:
         devices = sd.query_devices()
         hostapis = sd.query_hostapis()
-    except Exception:
+    except Exception:  # Device enumeration is an optional compatibility probe.
         return []
     if not (0 <= primary_idx < len(devices)):
         return []
@@ -530,7 +530,7 @@ def _default_input_sample_rate(device: int | str | None) -> int:
     try:
         try:
             info = sd.query_devices(device, "input")
-        except TypeError:
+        except TypeError:  # Older sounddevice releases lack the kind argument.
             info = sd.query_devices(device)
         return int(info.get("default_samplerate", 0) or 0)
     except Exception:  # noqa: BLE001 - device query is advisory
@@ -821,7 +821,7 @@ class MicrophoneCapture:
         if self._loop and not self._loop.is_closed():
             try:
                 self._loop.call_soon_threadsafe(self._safe_put, chunk)
-            except RuntimeError:
+            except RuntimeError:  # The event loop closed between the guard and handoff.
                 self._drops += 1
 
     def _safe_put(self, chunk: AudioChunk) -> None:
@@ -845,11 +845,11 @@ class MicrophoneCapture:
             # stays anchored to real wall-clock, not delivered-frame count.
             try:
                 self._queue.get_nowait()
-            except asyncio.QueueEmpty:
+            except asyncio.QueueEmpty:  # A concurrent consumer already freed the slot.
                 pass
             try:
                 self._queue.put_nowait(chunk)
-            except asyncio.QueueFull:
+            except asyncio.QueueFull:  # A concurrent producer won the replacement slot.
                 pass
             self._drops += 1
 
@@ -951,7 +951,7 @@ class MicrophoneCapture:
                             # outer candidate loop only sees the exception.
                             try:
                                 opened.close()
-                            except Exception:  # noqa: BLE001, S110
+                            except Exception:  # noqa: BLE001, S110 - preserve the original open failure
                                 pass
                             raise
                         return opened
@@ -1157,7 +1157,7 @@ class MicrophoneCapture:
             watchdog.cancel()
             try:
                 await watchdog
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # Cancellation is the successful watchdog teardown.
                 pass
             except Exception as exc:  # noqa: BLE001
                 _log.debug("Mic-Watchdog cleanup swallow: {}", exc)

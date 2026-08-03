@@ -18,7 +18,7 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import { COLORS, FONT } from "../theme";
+import { COLORS } from "../theme";
 import { FONT_DISPLAY, FONT_MONO } from "./fonts";
 import type { CursorKey } from "../components/Cursor";
 

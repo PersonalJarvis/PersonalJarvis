@@ -10,6 +10,8 @@ import { TL } from "./intro/onboarding/timeline";
 import { TL_WIKI } from "./intro/wiki/timeline";
 import { TutorialVideo } from "./tutorial/TutorialVideo";
 import { TL_TUT } from "./tutorial/timeline";
+import { VoiceVideo } from "./voice/VoiceVideo";
+import { TL_VOICE } from "./voice/timeline";
 import { PromoVideo } from "./intro/PromoVideo";
 import { TL_PROMO } from "./intro/promo/timeline";
 import { FilmVideo } from "./intro/FilmVideo";
@@ -30,6 +32,14 @@ const MorningOverviewPreview: React.FC = () => (
 export const RemotionRoot: React.FC = () => {
   return (
     <>
+      <Composition
+        id="JarvisVoice"
+        component={VoiceVideo}
+        durationInFrames={TL_VOICE.totalFrames}
+        fps={VIDEO.fps}
+        width={VIDEO.width}
+        height={VIDEO.height}
+      />
       <Composition
         id="JarvisTutorial"
         component={TutorialVideo}

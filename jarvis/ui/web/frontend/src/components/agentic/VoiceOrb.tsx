@@ -13,6 +13,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { readVoiceInputLevel } from "@/lib/voiceInputLevel";
 import { useDocumentVisible } from "@/hooks/useDocumentVisible";
 import type { VoiceState } from "@/store/events";
 
@@ -314,6 +315,7 @@ export function VoiceOrb({
     let activeState = stateRef.current;
     let speakingAge = Number.POSITIVE_INFINITY;
     let liveImpact = 0;
+    let liveInput = 0;
 
     const drawFrame = (now: number) => {
       const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
@@ -343,15 +345,25 @@ export function VoiceOrb({
       const impactEase = 1 - Math.exp(-dt * (impactTarget > liveImpact ? 22 : 8));
       liveImpact = mix(liveImpact, impactTarget, impactEase);
 
+      // Native capture and browser realtime both write the real normalized
+      // microphone level into a shared ref. A quick attack makes consonants
+      // feel immediate; the softer release prevents a nervous flicker between
+      // syllables. Only listening reacts, so stale samples cannot move the orb
+      // while the assistant is thinking or speaking.
+      const inputTarget = activeState === "listening" ? readVoiceInputLevel(now) : 0;
+      const inputEase = 1 - Math.exp(-dt * (inputTarget > liveInput ? 24 : 9));
+      liveInput = mix(liveInput, inputTarget, inputEase);
+      const visualImpact = liveImpact + liveInput * 0.055;
+
       const breath =
         0.965 -
         live.breathAmp * 0.65 +
         live.breathAmp * 0.52 * Math.sin(breathPhase) +
         live.breathAmp * 0.13 * Math.sin(breathPhase * 2.05 + 1.4) +
-        liveImpact;
+        visualImpact;
       const radius = (half - 0.75 * dpr) * Math.min(1, breath);
 
-      paintWeather(weather, phaseX, phaseY, live, liveImpact);
+      paintWeather(weather, phaseX, phaseY, live, visualImpact);
       textureCtx.putImageData(weather, 0, 0);
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);

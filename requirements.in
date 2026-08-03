@@ -50,7 +50,11 @@ keyring>=25.5
 
 # Audio I/O
 sounddevice>=0.5
-aiortc>=1.13
+# Upstream's native dependencies do not publish Windows ARM64 wheels. The
+# WebRTC transport capability-probes this dependency and degrades honestly.
+aiortc>=1.13; sys_platform != 'win32' or platform_machine != 'ARM64'
+# Keep aiortc on the Apple-Silicon PyAV line with CPython 3.11-3.14 wheels.
+av==15.1.0; sys_platform == 'darwin' and platform_machine == 'arm64'
 # NumPy 2.1 has no Windows ARM64 wheels. Use the first official ARM64-wheel
 # branch there so a stock machine never falls into an unavailable native build.
 numpy>=1.26,<2.2; python_version < '3.14' and (sys_platform != 'win32' or platform_machine != 'ARM64')

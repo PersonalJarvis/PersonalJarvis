@@ -13,6 +13,11 @@ import {
 } from "@/lib/realtimeAudio";
 import { useEventStore, type VoiceState } from "@/store/events";
 import { cn } from "@/lib/utils";
+import {
+  clearVoiceInputLevel,
+  setBrowserVoiceInputOwnership,
+  setVoiceInputLevel,
+} from "@/lib/voiceInputLevel";
 
 type ConnectionState = "idle" | "connecting" | "connected" | "error";
 
@@ -85,6 +90,7 @@ export function BrowserRealtimeControl() {
   // repaint a five-segment meter.
   const levelRef = useRef(0);
   const clientRef = useRef<RealtimeAudioClient | null>(null);
+  const connectionGenerationRef = useRef(0);
   const browserSurface = Boolean(
     capabilities.data &&
       (capabilities.data.native_file_actions === false || !hasEmbeddedDesktopBridge()),
@@ -105,37 +111,55 @@ export function BrowserRealtimeControl() {
   );
 
   const stop = useCallback(async () => {
+    connectionGenerationRef.current += 1;
     const client = clientRef.current;
     clientRef.current = null;
-    await client?.disconnect();
     setState("idle");
     setEffectiveProvider("");
     setError("");
     levelRef.current = 0;
+    clearVoiceInputLevel("browser");
+    setBrowserVoiceInputOwnership(false);
     setVoice("idle");
+    await client?.disconnect();
   }, [setVoice]);
 
   const start = useCallback(async () => {
     if (!realtimeAvailable || state === "connecting") return;
-    await clientRef.current?.disconnect();
+    const generation = connectionGenerationRef.current + 1;
+    connectionGenerationRef.current = generation;
+    const previousClient = clientRef.current;
+    clientRef.current = null;
     setState("connecting");
     setError("");
     setEffectiveProvider("");
+    levelRef.current = 0;
+    clearVoiceInputLevel("browser");
+    await previousClient?.disconnect();
+    if (connectionGenerationRef.current !== generation) return;
 
-    const client = new RealtimeAudioClient(
+    let client: RealtimeAudioClient;
+    const isCurrent = () =>
+      connectionGenerationRef.current === generation && clientRef.current === client;
+    client = new RealtimeAudioClient(
       {
         onTranscript: (text, isFinal, role) => {
+          if (!isCurrent()) return;
           if (role === "user") setTranscription(text, isFinal);
           if (role === "user" && isFinal) setVoice("thinking");
         },
         onAudio: () => {
+          if (!isCurrent()) return;
           setError("");
           setVoice("speaking");
         },
         onInputLevel: (value) => {
+          if (!isCurrent()) return;
           levelRef.current = value;
+          setVoiceInputLevel(value, "browser");
         },
         onStatus: (status, payload) => {
+          if (!isCurrent()) return;
           if (status === "audio_ready") {
             const provider =
               typeof payload.provider === "string" ? payload.provider : "";
@@ -161,8 +185,12 @@ export function BrowserRealtimeControl() {
             setError(t("sidebar.realtime_browser_tts_unavailable"));
             setVoice("listening");
           } else if (status === "provider_error" || status === "disconnected") {
+            clientRef.current = null;
+            void client.disconnect();
             setState("error");
             setError(t("sidebar.realtime_error"));
+            levelRef.current = 0;
+            clearVoiceInputLevel("browser");
             setVoice("error");
           }
         },
@@ -172,9 +200,13 @@ export function BrowserRealtimeControl() {
     clientRef.current = client;
     try {
       await client.connect();
+      if (!isCurrent()) return;
       setState("connected");
     } catch (cause) {
-      if (clientRef.current === client) clientRef.current = null;
+      if (!isCurrent()) return;
+      clientRef.current = null;
+      void client.disconnect();
+      clearVoiceInputLevel("browser");
       setState("error");
       setError(
         cause instanceof RealtimeAudioSupportError
@@ -197,16 +229,21 @@ export function BrowserRealtimeControl() {
   ]);
 
   useEffect(() => {
-    if (visible) return;
-    const client = clientRef.current;
-    clientRef.current = null;
-    if (client) void client.disconnect();
-  }, [visible]);
+    setBrowserVoiceInputOwnership(
+      visible && (state === "connecting" || state === "connected"),
+    );
+  }, [state, visible]);
+
+  useEffect(() => {
+    if (!visible) void stop();
+  }, [stop, visible]);
 
   useEffect(
     () => () => {
+      connectionGenerationRef.current += 1;
       const client = clientRef.current;
       clientRef.current = null;
+      setBrowserVoiceInputOwnership(false);
       if (client) void client.disconnect();
     },
     [],

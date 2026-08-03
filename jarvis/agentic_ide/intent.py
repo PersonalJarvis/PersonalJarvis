@@ -908,8 +908,8 @@ def detect_all(
         # it the branch a merely SIMILAR word can win, and the names are short
         # enough for ordinary speech to score close: measured against the
         # shipping pool "unten" reaches "Hunter" and "dann" reaches "Dana"; the
-        # live 2026-07-26 session had "keine" reaching "Kai" and briefing a  # i18n-allow: quoted transcript tokens
-        # second agent nobody had named. So here — and only here — the name has
+        # "keine" once reached "Kai" and briefed an unnamed agent.  # i18n-allow: transcript tokens
+        # So here — and only here — the name has
         # to be exact (or fold to the same sound, which is what carries a
         # garbled transcript). An addressing shape, being independent evidence,
         # still admits a fuzzy call-sign in the branches above.
@@ -1070,7 +1070,8 @@ def _looks_like_instruction(text: str) -> bool:
 # "Open N more terminals"                                                     #
 # --------------------------------------------------------------------------- #
 # A second, narrower request shape: the user asking for MORE PANES rather than
-# addressing an existing one ("spawne fünf neue Claude Code Terminals").  # i18n-allow: quoted spoken input
+# addressing an existing one ("spawne fünf neue Claude Code  # i18n-allow: quoted spoken input
+# Terminals").
 #
 # Why it needs its own detector instead of a router tool: the sentence opens
 # with the very word the force-spawn heuristic reads as "dispatch a background
@@ -1079,9 +1080,10 @@ def _looks_like_instruction(text: str) -> bool:
 # deterministic too, and it deliberately claims the turn BEFORE the
 # vehicle-naming stand-down (see ``owns_turn``).
 #
-# The safety margin is one mandatory word: a TERMINAL NOUN. "Spawne fünf  # i18n-allow: quoted spoken input
-# Terminals" is a workspace request; "spawne fünf Agenten" stays a background  # i18n-allow: quoted spoken input
-# mission. A false positive here silently withholds a mission the user wanted,
+# The safety margin is one mandatory word: a TERMINAL NOUN.
+# "Spawne fünf Terminals" is a workspace request;  # i18n-allow: quoted spoken input
+# "spawne fünf Agenten" stays a background mission.  # i18n-allow: quoted spoken input
+# A false positive here silently withholds a mission the user wanted,
 # which is invisible; a false negative just costs one clearer sentence.
 
 # Nouns that mean "a pane of the coding workspace". "Fenster"/"ventana"
@@ -1091,6 +1093,33 @@ _PANE_NOUN_RE = re.compile(
     r"\b(?:terminals?|terminales|panes?|tabs?)\b",
     re.IGNORECASE,
 )
+
+# ``tab`` is shared vocabulary: inside the coding workspace it can mean a pane,
+# but beside an explicit browser surface it means a browser tab. The workspace
+# must never win that collision merely because it happens to be open. This is a
+# context veto rather than deleting ``tab`` from the pane vocabulary, so the
+# established shorthand "open three more tabs" keeps working.
+_BROWSER_TAB_CONTEXT_RE = re.compile(
+    r"\b(?:browser|chrome|firefox|safari|microsoft\s+edge|web\s*site|webpage|"
+    r"incognito|private|guest|"
+    r"webseite|internetseite|inkognito|privat|gast|"  # i18n-allow: input vocab
+    r"navegador|sitio\s+web|p[aá]gina\s+web|"  # i18n-allow: input vocab
+    r"inc[oó]gnit\w*|privad\w*)\b",  # i18n-allow: input vocab
+    re.IGNORECASE,
+)
+
+
+def _pane_nouns(text: str) -> list[re.Match[str]]:
+    """Return coding-pane nouns, excluding tabs owned by a named browser."""
+    browser_owns_tabs = _BROWSER_TAB_CONTEXT_RE.search(text) is not None
+    return [
+        match
+        for match in _PANE_NOUN_RE.finditer(text)
+        if not (
+            browser_owns_tabs
+            and match.group(0).casefold() in {"tab", "tabs"}
+        )
+    ]
 
 # Verbs that ask for something to be opened, plus the additive markers that
 # carry the same request without a verb ("noch drei Terminals").
@@ -1108,18 +1137,34 @@ _OPEN_VERB_RE = re.compile(
     re.IGNORECASE,
 )
 _ADDITIVE_RE = re.compile(
-    r"\b(?:noch|weitere\w*|zus[aä]tzlich\w*|mehr|another|more|extra|"  # i18n-allow: German input vocabulary
+    r"\b(?:noch|weitere\w*|zus[aä]tzlich\w*|mehr|another|"  # i18n-allow: input vocab
+    r"more|"
+    r"extra|"
     r"otr[oa]s?|m[aá]s)\b",
     re.IGNORECASE,
 )
 
-# An utterance that OPENS with a question word is asking about terminals, not
-# asking for them ("wie viele Terminals kann ich öffnen?"). A polite request  # i18n-allow: quoted spoken input
-# that merely ends in a question mark ("kannst du 5 Terminals öffnen?") is NOT  # i18n-allow: quoted spoken input
-# excluded — that is a real request, and the filler prefix above strips its
-# politeness for the composer anyway.
+# An utterance that OPENS with an information-question shape is asking about
+# terminals, not asking for them.
+# This includes prepositional questions ("with which shortcut …") and
+# first-person modals ("can I …"); neither is an order to the assistant. A
+# polite request that merely ends in a question mark is not excluded: it is a
+# real request, and the filler prefix above strips its politeness for the
+# composer anyway.
 _QUESTION_OPENER_RE = re.compile(
-    r"^(?:"
+    r"^\s*[¿]?(?:"
+    # A preposition can legitimately precede the interrogative. Without this,
+    # "with which shortcut can I open a browser tab" opened an IDE pane.
+    r"(?:mit|in|auf|an|von|zu|unter|[uü]ber|f[üu]r|durch)"  # i18n-allow: input vocab
+    r"\s+welche\w*|"  # i18n-allow: input vocab
+    r"(?:with|in|on|at|from|to|under|for|by|through)\s+which|"
+    r"(?:con|en|de|a|para|por)\s+(?:qu[eé]|cu[aá]les?)|"  # i18n-allow: input vocab
+    # First-person and impersonal modals ask about possibility or advice. Keep
+    # second-person forms out: "can you open …" remains a polite command.
+    r"(?:kann|k[oö]nnte|soll(?:te)?|muss|darf|d[üu]rfte)"  # i18n-allow: input vocab
+    r"\s+(?:ich|man)|"  # i18n-allow: input vocab
+    r"(?:can|could|should|must|may|would|do)\s+i|"
+    r"(?:puedo|podr[ií]a|debo|se\s+puede)|"  # i18n-allow: input vocab
     r"wie|was|wieso|warum|wo|wann|welche\w*|wieviel\w*|"
     r"how|what|why|where|when|which|"
     r"c[oó]mo|qu[eé]|cu[aá]nt\w*|por\s+qu[eé]|d[oó]nde|cu[aá]ndo"
@@ -1130,9 +1175,12 @@ _QUESTION_OPENER_RE = re.compile(
 # Number words per locale. Capped at the workspace maximum: past it the count is
 # clamped anyway, so spelling out "twenty" buys nothing.
 _NUMBER_WORDS: dict[str, int] = {
-    # German — "ein/eine/einen" doubles as the article, which is exactly right  # i18n-allow: names the German number words below
+    # German number words double as articles here.  # i18n-allow: context for matching data
     # here ("mach noch ein Terminal auf" = one).  # i18n-allow: quoted spoken input
-    "ein": 1, "eine": 1, "einen": 1, "eins": 1,  # i18n-allow: German number words (input vocabulary)
+    "ein": 1,  # i18n-allow: German number word input vocabulary
+    "eine": 1,  # i18n-allow: German number word input vocabulary
+    "einen": 1,  # i18n-allow: German number word input vocabulary
+    "eins": 1,  # i18n-allow: German number word input vocabulary
     # Both ASCII spellings of every umlaut word: a transcript may drop the
     # umlaut ("funf") or transliterate it ("fuenf"), and only the first was
     # covered — so "starte fünf Agenten" fell back to a count of one whenever
@@ -1461,7 +1509,8 @@ def _spoken_count(text: str) -> int:
 #: drift into different clauses of the sentence.
 _COUNT_AGENT_RE = re.compile(
     r"\b(?P<count>\d{1,3}|[a-zäöüñ]+)\s+"  # i18n-allow: input vocab
-    r"(?:(?:neue|weitere|zus[aä]tzliche|more|new|extra|additional|de|del|"  # i18n-allow: input vocab
+    r"(?:(?:neue|weitere|zus[aä]tzliche|more|new|extra|"  # i18n-allow: input vocab
+    r"additional|de|del|"
     r"otros|otras|m[aá]s|terminals?|terminales|panes?|tabs?)\s+){0,2}"
     rf"(?P<agent>{_AGENT_ALTERNATION})\b",
     re.IGNORECASE,
@@ -1586,7 +1635,7 @@ def _spoken_groups(text: str) -> tuple[SpawnGroup, ...]:
     # A count that no CLI name claimed, sitting in front of the pane noun, is a
     # group of its own: "two terminals and one Codex" is three panes, and the
     # two that were not given a name inherit one.
-    for match in _PANE_NOUN_RE.finditer(text):
+    for match in _pane_nouns(text):
         index = next(
             (
                 i
@@ -1744,10 +1793,16 @@ _CLI_NEAR_MISS_FLOOR = 0.55
 #: every one of them would be held up as "did you mean Claude Code?".
 _CLI_POSITION_NOISE = frozenset(
     {
-        "neue", "neuen", "weitere", "weiteren", "zusätzliche", "zusaetzliche",  # i18n-allow: input vocab
+        "neue",  # i18n-allow: input vocab
+        "neuen",  # i18n-allow: input vocab
+        "weitere",  # i18n-allow: input vocab
+        "weiteren",  # i18n-allow: input vocab
+        "zusätzliche",  # i18n-allow: input vocab
+        "zusaetzliche",  # i18n-allow: input vocab
         "new", "more", "extra", "additional", "other", "another",
         "otros", "otras", "más", "mas", "nuevos", "nuevas",  # i18n-allow: input vocab
-        "de", "del", "von", "vom", "of", "the", "a", "an", "und", "and", "y",  # i18n-allow: input vocab
+        "de", "del", "von", "vom", "of", "the", "a", "an",  # i18n-allow: input vocab
+        "und", "and", "y",  # i18n-allow: input vocab
         "bitte", "please", "por", "favor", "mir", "me", "uns", "us",  # i18n-allow: input vocab
     }
 )
@@ -1800,7 +1855,7 @@ def _uncertain_clis(text: str) -> tuple[UncertainCli, ...]:
     acting path owns it.
     """
     counts = _count_tokens(text)
-    pane_nouns = [(m.start(), m.end()) for m in _PANE_NOUN_RE.finditer(text)]
+    pane_nouns = [(m.start(), m.end()) for m in _pane_nouns(text)]
     known = [
         (m.start(), m.end())
         for m in _AGENT_RE.finditer(text)
@@ -1891,7 +1946,7 @@ def _spawn_span(text: str) -> _SpawnSpan | None:
     """The bounded clause that genuinely asks for panes to be opened."""
     for clause_match in _CLAUSE_RE.finditer(text):
         clause = clause_match.group(0)
-        panes = list(_PANE_NOUN_RE.finditer(clause)) + _counted_agent_mentions(clause)
+        panes = _pane_nouns(clause) + _counted_agent_mentions(clause)
         actors = _open_verbs(clause) + list(_ADDITIVE_RE.finditer(clause))
         if not panes or not actors:
             continue
@@ -2142,7 +2197,8 @@ _CLOSE_PARTICLE_RE = re.compile(
     re.IGNORECASE,
 )
 _ALL_PANES_RE = re.compile(
-    r"\b(?:alle[nr]?|s[aä]mtliche[nr]?|jede[nr]?|all|every|each|todos?|todas?)\b",  # i18n-allow: input vocab
+    r"\b(?:alle[nr]?|s[aä]mtliche[nr]?|jede[nr]?|all|every|"  # i18n-allow: input vocab
+    r"each|todos?|todas?)\b",
     re.IGNORECASE,
 )
 _CLOSE_STATE_QUESTION_RE = re.compile(
@@ -2200,7 +2256,7 @@ def _closes_the_fleet(clause: str) -> bool:
     that is right there; a false one kills every coding agent in the workspace
     with no confirmation and no undo — so every ambiguous shape stands down.
     """
-    for pane in _PANE_NOUN_RE.finditer(clause):
+    for pane in _pane_nouns(clause):
         if _CLOSE_BRIEFING_RE.search(clause, 0, pane.start()) is not None:
             continue
         # The German separable verb wraps AROUND the panes it closes ("mach

@@ -307,7 +307,7 @@ class LocalPreviewTranscriber:
                     guard.release()
                     try:
                         done.result()
-                    except asyncio.CancelledError:
+                    except asyncio.CancelledError:  # Cancellation is the contained worker teardown.
                         pass
                     except Exception as exc:  # noqa: BLE001 — detached worker is contained
                         log.debug("Detached dictation preview failed: %s", exc)

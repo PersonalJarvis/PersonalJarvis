@@ -36,6 +36,14 @@ def test_gate_passes_on_current_tree() -> None:
     assert gate.unflagged_dangerous_routes() == []
 
 
+def test_voice_session_call_is_not_mistaken_for_outbound_telephony() -> None:
+    """Starting the local voice session is the wake button, not a phone call."""
+    gate = _load_gate_module()
+    assert not safety.is_dangerous("POST", "/api/voice/call")
+    assert not gate._matches_marker("/call", ["/api/voice"])
+    assert safety.is_dangerous("POST", "/api/telephony/outbound")
+
+
 def _spec_with_flag(flagged: bool) -> dict:
     op = {
         "tags": ["demo"],

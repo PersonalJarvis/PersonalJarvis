@@ -464,7 +464,6 @@ export const ProofScene: React.FC<SP> = ({ scene }) => {
   const frame = useCurrentFrame();
   const each = 44;
   const start = p1.localStart;
-  const idx = Math.min(SHOTS.length - 1, Math.max(0, Math.floor((frame - start) / each)));
   return (
     <SceneWrap padding={56}>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 22, width: "100%" }}>

@@ -80,7 +80,7 @@ def quietest_cut(
 
     try:
         samples = np.frombuffer(pcm[:limit], dtype=np.int16).astype(np.float32)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # An incomplete PCM tail uses the aligned boundary.
         return _align(limit)
     if samples.size == 0:
         return _align(limit)
@@ -242,7 +242,7 @@ def speech_runs(
         samples = np.frombuffer(
             pcm[: len(pcm) - (len(pcm) % BYTES_PER_SAMPLE)], dtype=np.int16
         ).astype(np.float32)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # Invalid PCM cannot yield trustworthy speech spans.
         return []
     if samples.size == 0:
         return []
@@ -299,7 +299,7 @@ def segment_energy(pcm: bytes) -> tuple[float, float]:
         return 0.0, 0.0
     try:
         samples = np.frombuffer(pcm, dtype=np.int16)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # Invalid PCM has no measurable signal level.
         return 0.0, 0.0
     if samples.size == 0:
         return 0.0, 0.0

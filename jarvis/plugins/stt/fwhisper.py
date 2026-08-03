@@ -300,7 +300,7 @@ def ensure_cuda_libraries_findable() -> None:
         try:
             # Lets the loaded libraries find their own dependencies by name.
             directory_handle = add_dll_directory(str(directory))
-        except OSError:
+        except OSError:  # Explicit DLL preloads below remain the portable fallback.
             pass
         loaded: list[str] = []
         library_handles: list[Any] = []

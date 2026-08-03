@@ -18,7 +18,7 @@ from collections.abc import Sequence
 def _kill_process_group() -> None:
     try:
         os.killpg(os.getpgrp(), signal.SIGKILL)
-    except (AttributeError, OSError):
+    except (AttributeError, OSError):  # Hard exit is the containment fallback on this host.
         os._exit(137)
 
 
@@ -26,7 +26,7 @@ def _watch_parent(lifeline_fd: int, completed: threading.Event) -> None:
     try:
         while os.read(lifeline_fd, 1):
             pass
-    except OSError:
+    except OSError:  # A closed lifeline is the parent-death signal this thread waits for.
         pass
     if not completed.is_set():
         _kill_process_group()
@@ -47,13 +47,13 @@ def run(lifeline_fd: int, command: Sequence[str]) -> int:
     try:
         child = subprocess.Popen(list(command), close_fds=True)  # noqa: S603
         return int(child.wait())
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # Exit 127 is the supervisor-visible spawn failure signal.
         return 127
     finally:
         completed.set()
         try:
             os.close(lifeline_fd)
-        except OSError:
+        except OSError:  # The descriptor may already be closed by parent teardown.
             pass
 
 
@@ -64,7 +64,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     try:
         lifeline_fd = int(args[0])
-    except ValueError:
+    except ValueError:  # Invalid internal argv is reported by the documented exit code.
         return 2
     return run(lifeline_fd, args[2:])
 

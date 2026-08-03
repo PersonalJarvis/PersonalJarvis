@@ -257,7 +257,16 @@ jarvis/ui/web/dist._predockpolish/
 # the video/ folder is a tracked Remotion source project, so only its rendered
 # output is ignored here — not the whole folder.
 .tmp_video_analysis/
-video/public/
+video/public/*
+# The tracked Voice composition depends on these reproducible source assets.
+!video/public/vo-voice/
+video/public/vo-voice/*
+!video/public/vo-voice/*.mp3
+!video/public/shot-voice-ptt-crop.png
+!video/public/shot-voice-handsfree-crop.png
+!video/public/shot-voice-polish-crop.png
+!video/public/shot-voice-translate-crop.png
+!video/public/shot-voice-stats-crop.png
 video/out/
 
 # Vertical social promo reel — a self-contained Remotion project kept entirely

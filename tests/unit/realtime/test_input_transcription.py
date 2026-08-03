@@ -133,7 +133,10 @@ async def test_a_failing_recognizer_never_kills_the_call() -> None:
 
     first = await asyncio.wait_for(transcriber.next_event(), timeout=5.0)
     assert first.kind == "speech_started"
-    # No transcript follows, and closing still completes cleanly.
+    # The provider receives one explicit failure boundary so it can promote
+    # its own energy-gated preview; closing still completes cleanly.
+    failed = await asyncio.wait_for(transcriber.next_event(), timeout=5.0)
+    assert failed.kind == "transcript_failed"
     await transcriber.close()
     assert await asyncio.wait_for(transcriber.next_event(), timeout=5.0) is None
 

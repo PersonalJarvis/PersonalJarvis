@@ -181,8 +181,8 @@ class VoiceModeBody(BaseModel):
 
 def _realtime_provider_display(
     cfg: object, provider_id: str | None
-) -> tuple[str | None, str | None]:
-    """(label, model) the sidebar shows for the resolved realtime provider.
+) -> tuple[str | None, str | None, str | None]:
+    """Provider label plus model id/label for the resolved realtime provider.
 
     The label comes from the provider registry; the model is the pin in
     ``[brain.providers.<id>].model``, resolved to the curated catalog's default
@@ -191,7 +191,7 @@ def _realtime_provider_display(
     failure degrades to ``None`` rather than breaking the status endpoint.
     """
     if not provider_id:
-        return None, None
+        return None, None, None
     label: str | None = None
     try:
         from jarvis.ui.web.provider_spec import get_spec
@@ -213,7 +213,22 @@ def _realtime_provider_display(
         model = model or None
     except Exception:  # noqa: BLE001 — model is cosmetic, never fatal
         model = None
-    return label, model
+    return label, model, _realtime_model_label(provider_id, model)
+
+
+def _realtime_model_label(provider_id: str | None, model: str | None) -> str | None:
+    """Return a curated display label while preserving unknown future ids."""
+    if not provider_id or not model:
+        return None
+    try:
+        from jarvis.brain.model_catalog import REALTIME_MODELS
+
+        for entry in REALTIME_MODELS.get(provider_id) or ():
+            if entry.id == model:
+                return entry.label
+    except Exception:  # noqa: BLE001 — display cosmetics must never break status
+        log.debug("Realtime model label lookup failed", exc_info=True)
+    return model
 
 
 @router.get("/voice-mode")
@@ -244,10 +259,12 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
                 else "Waiting for the embedded desktop WebRTC offer."
             )
         )
-    prov_label, prov_model = _realtime_provider_display(cfg, prov)
+    prov_label, prov_model, prov_model_label = _realtime_provider_display(cfg, prov)
     from jarvis.ui.web.voice_runtime import voice_engine_status
 
     runtime = voice_engine_status(request)
+    session_provider = str(runtime.get("active_session_provider", "") or "")
+    session_model = str(runtime.get("active_session_model", "") or "")
     return {
         "mode": mode,
         "realtime_available": prov is not None,
@@ -261,12 +278,14 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
         # active_session_* fields below.
         "active_provider_label": prov_label,
         "active_model": prov_model,
+        "active_model_label": prov_model_label,
         "session_active": bool(runtime.get("session_active", False)),
         "active_session_mode": runtime.get("active_session_mode"),
-        "active_session_provider": str(
-            runtime.get("active_session_provider", "") or ""
+        "active_session_provider": session_provider,
+        "active_session_model": session_model,
+        "active_session_model_label": _realtime_model_label(
+            session_provider, session_model
         ),
-        "active_session_model": str(runtime.get("active_session_model", "") or ""),
         "transitioning": bool(runtime.get("transitioning", False)),
     }
 

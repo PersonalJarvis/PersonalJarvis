@@ -126,7 +126,7 @@ def _build_sender_track(base: Any) -> Any:
             while len(self._residue) < needed:
                 try:
                     chunk = self.queue.get_nowait()
-                except asyncio.QueueEmpty:
+                except asyncio.QueueEmpty:  # The current audio frame is intentionally padded below.
                     break
                 self._residue += chunk
             if len(self._residue) >= needed:

@@ -84,6 +84,10 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   closeWorkspace: vi.fn(),
   fetchNativePickerSupport: vi.fn(),
   openNativePicker: vi.fn(),
+  syncAgenticIdeSurface: vi.fn(async () => undefined),
+  fetchAllVoiceAttachments: vi.fn(async () => ({ batches: [] })),
+  attachToTerminal: vi.fn(),
+  removeVoiceAttachment: vi.fn(async () => undefined),
   // The grid polls this to keep the pane headers current.
   fetchTerminalRecaps: vi.fn(async () => ({
     workspace_id: null,

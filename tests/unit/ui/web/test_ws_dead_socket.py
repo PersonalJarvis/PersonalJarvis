@@ -2,14 +2,14 @@
 
 Live incident 2026-06-14: when a WebSocket client disconnected uncleanly,
 ``ws.receive_json()`` raised ``RuntimeError('WebSocket is not connected ...')``
-instead of ``WebSocketDisconnect``. The handler's ``except Exception: ... continue``
-then re-called ``receive_json`` on the closed socket indefinitely, writing the
+instead of ``WebSocketDisconnect``. Retrying any receive failure then re-called
+``receive_json`` on the closed socket indefinitely, writing the
 traceback at ~9 MB/s (the log rotated three 9.7 MB files in two seconds),
 wedging the event loop and triggering a self-restart that cancelled every
 in-flight sub-agent mission with ``app_shutdown``.
 
-The fix: a dead-socket ``RuntimeError`` ends the loop (``break``) like a
-disconnect; only genuinely recoverable malformed-frame errors ``continue``.
+The fix: every receive error ends the loop. The handler may report it
+best-effort, but never reads from a socket whose state is uncertain.
 """
 from __future__ import annotations
 
@@ -30,10 +30,11 @@ class _LoopGuard(BaseException):
 class _DeadSocketWS:
     """Fake WebSocket that fails every ``receive_json`` like a closed socket."""
 
-    def __init__(self, cap: int = 5) -> None:
+    def __init__(self, error: Exception, cap: int = 5) -> None:
         self.recv_calls = 0
         self.cap = cap
         self.closed = False
+        self.error = error
 
     async def accept(self) -> None:  # noqa: D401
         return None
@@ -45,15 +46,24 @@ class _DeadSocketWS:
         self.recv_calls += 1
         if self.recv_calls > self.cap:
             raise _LoopGuard()
-        raise RuntimeError('WebSocket is not connected. Need to call "accept" first.')
+        raise self.error
 
     async def close(self) -> None:
         self.closed = True
 
 
-async def test_handle_ws_breaks_on_dead_socket_does_not_loop() -> None:
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError('WebSocket is not connected. Need to call "accept" first.'),
+        ValueError("malformed JSON frame"),
+    ],
+)
+async def test_handle_ws_breaks_on_any_receive_error_does_not_loop(
+    error: Exception,
+) -> None:
     srv = WebServer(JarvisConfig(), bus=EventBus())
-    ws = _DeadSocketWS(cap=5)
+    ws = _DeadSocketWS(error, cap=5)
     try:
         await asyncio.wait_for(srv._handle_ws(ws), timeout=5.0)
     except _LoopGuard:

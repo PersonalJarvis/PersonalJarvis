@@ -56,7 +56,7 @@ export const FilmVideo: React.FC = () => {
           <Audio src={staticFile(a.file)} />
         </Sequence>
       ))}
-      {/* global atmosphere, above scenes */}
+      {/* Atmosphere layer above scenes. */}
       <Scanlines />
       <ProgressHairline />
     </AbsoluteFill>

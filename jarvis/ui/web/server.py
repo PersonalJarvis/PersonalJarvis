@@ -13,8 +13,10 @@ Explicitly NOT here:
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import time
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -47,6 +49,7 @@ from jarvis.terminal import PtyManager, discover_shells, get_shell
 
 from .fast_bootstrap import ASSET_SUFFIXES
 from .schema import (
+    WSAudioLevel,
     WSCommand,
     WSMessageIn,
     WSWelcome,
@@ -70,6 +73,9 @@ ASSETS_DIR = DIST_DIR / "assets"
 # (BUG-CU-STALL, AP-18). On timeout we drop the client so the bus is not
 # re-throttled every event; the browser reconnects on its own.
 _WS_SEND_TIMEOUT_S = 3.0
+# Level samples are disposable animation data. If the socket is busy, discard
+# a sample instead of letting a visual update queue behind functional frames.
+_WS_LEVEL_SEND_TIMEOUT_S = 0.25
 
 # How long the UltraWiki pipeline WORKER is held back after boot. Its store is
 # opened immediately (reads, search and recall all need it), but the worker
@@ -90,6 +96,12 @@ class WebServer:
         self.cfg = cfg
         self.bus = bus if bus is not None else get_default_bus()
         self._clients: dict[str, WebSocket] = {}
+        self._client_send_locks: dict[str, asyncio.Lock] = {}
+        self._mic_level_sessions: set[str] = set()
+        self._mic_level_unsub: Callable[[], None] | None = None
+        self._mic_level_latest = 0.0
+        self._mic_level_revision = 0
+        self._mic_level_task: asyncio.Task[None] | None = None
         self._server: uvicorn.Server | None = None
         self._serve_task: asyncio.Task[None] | None = None
         # PTY manager for the desktop-app terminal view. Sessions are
@@ -300,6 +312,7 @@ class WebServer:
         from jarvis.runs.runs_ws import router as runs_ws_router
 
         from .agent_accounts_routes import router as agent_accounts_router
+        from .agentic_ide_routes import router as agentic_ide_router
         from .antigravity_routes import router as antigravity_router
         from .board_routes import (
             board_router as board_meta_router,
@@ -365,7 +378,6 @@ class WebServer:
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
         from .workspace_routes import router as workspace_router
-        from .agentic_ide_routes import router as agentic_ide_router
         # Conductor is an external package in the same monorepo. Import
         # defensively — anyone who checks out the repo without conductor would
         # otherwise get an ImportError here at server boot.
@@ -1350,18 +1362,18 @@ class WebServer:
     async def _handle_ws(self, ws: WebSocket) -> None:
         await ws.accept()
         session_id = str(uuid4())
+        send_lock = asyncio.Lock()
         self._clients[session_id] = ws
+        self._client_send_locks[session_id] = send_lock
 
         welcome = WSWelcome(session_id=session_id, version=__version__)
-
-        send_lock = asyncio.Lock()
 
         def _drop_stalled_client() -> None:
             """Detach this WS client so a wedged socket cannot keep blocking
             the event bus (AP-18). The receive loop's ``finally`` does the
             same cleanup; doing it here too is idempotent and stops the bleed
             immediately instead of waiting for the OS TCP timeout."""
-            self._clients.pop(session_id, None)
+            self._remove_ws_client(session_id)
             try:
                 self.bus._wildcard_subscribers.remove(_forward)  # type: ignore[attr-defined]
             except ValueError:
@@ -1401,6 +1413,10 @@ class WebServer:
         try:
             async with send_lock:
                 await ws.send_json(welcome.model_dump())
+            # Welcome must remain the first frame. Register this session only
+            # after it has arrived, then lazily tap the already-open native mic.
+            self._mic_level_sessions.add(session_id)
+            self._ensure_mic_level_bridge()
 
             while True:
                 try:
@@ -1422,22 +1438,29 @@ class WebServer:
                     )
                     break
                 except Exception as exc:  # noqa: BLE001
-                    # Recoverable: a malformed frame from a still-connected
-                    # client (bad JSON). Notify and keep listening.
+                    # A failed receive leaves the socket state uncertain. Treat
+                    # every read error as terminal so a dead socket can never
+                    # spin in this loop (AP-20).
                     logger.opt(exception=exc).warning(
-                        "WS decode error",
+                        "WS receive failed; closing connection",
                         session_id=session_id,
                     )
-                    await self.bus.publish(
-                        ErrorOccurred(
-                            layer="ui.web.ws",
-                            error_type=type(exc).__name__,
-                            message=str(exc),
-                            recoverable=True,
-                            source_layer="ui.web.ws",
+                    try:
+                        await self.bus.publish(
+                            ErrorOccurred(
+                                layer="ui.web.ws",
+                                error_type=type(exc).__name__,
+                                message=str(exc),
+                                recoverable=False,
+                                source_layer="ui.web.ws",
+                            )
                         )
-                    )
-                    continue
+                    except Exception as publish_exc:  # noqa: BLE001
+                        logger.opt(exception=publish_exc).warning(
+                            "WS receive failure could not be published",
+                            session_id=session_id,
+                        )
+                    break
 
                 await self._route_incoming(session_id, raw, send_lock)
 
@@ -1445,7 +1468,7 @@ class WebServer:
             pass
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).error(
-                "WS-Handler abgebrochen",
+                "WS handler aborted",
                 session_id=session_id,
             )
             await self.bus.publish(
@@ -1463,11 +1486,112 @@ class WebServer:
                 self.bus._wildcard_subscribers.remove(_forward)  # type: ignore[attr-defined]
             except ValueError:
                 pass
-            self._clients.pop(session_id, None)
+            self._remove_ws_client(session_id)
             try:
                 await ws.close()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.opt(exception=exc).debug(
+                    "WebSocket was already closed", session_id=session_id
+                )
+
+    def _ensure_mic_level_bridge(self) -> None:
+        """Tap the existing microphone stream while a web UI is connected."""
+        if self._mic_level_unsub is not None or not self._mic_level_sessions:
+            return
+
+        # Lazy import keeps audio modules off the web server's startup path.
+        from jarvis.audio import mic_level
+
+        loop = asyncio.get_running_loop()
+
+        def _receive(level: float) -> None:
+            try:
+                loop.call_soon_threadsafe(self._queue_mic_level, float(level))
+            except RuntimeError as exc:
+                # Shutdown can close the event loop between the audio callback
+                # and this handoff. The subscriber is removed during teardown.
+                logger.opt(exception=exc).debug("Microphone level loop is closed")
+
+        self._mic_level_unsub = mic_level.subscribe(_receive)
+
+    def _stop_mic_level_bridge(self) -> None:
+        unsubscribe = self._mic_level_unsub
+        self._mic_level_unsub = None
+        self._mic_level_latest = 0.0
+        self._mic_level_revision += 1
+        if unsubscribe is not None:
+            unsubscribe()
+
+        task = self._mic_level_task
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+        self._mic_level_task = None
+
+    def _remove_ws_client(self, session_id: str) -> WebSocket | None:
+        ws = self._clients.pop(session_id, None)
+        self._client_send_locks.pop(session_id, None)
+        self._mic_level_sessions.discard(session_id)
+        if not self._mic_level_sessions:
+            self._stop_mic_level_bridge()
+        return ws
+
+    def _queue_mic_level(self, level: float) -> None:
+        """Coalesce audio-thread samples into at most one pending send task."""
+        if not self._mic_level_sessions:
+            return
+        self._mic_level_latest = min(1.0, max(0.0, level)) if math.isfinite(level) else 0.0
+        self._mic_level_revision += 1
+        if self._mic_level_task is None or self._mic_level_task.done():
+            self._mic_level_task = asyncio.create_task(self._drain_mic_levels())
+
+    async def _drain_mic_levels(self) -> None:
+        """Send only the freshest level; functional WS traffic has priority."""
+        sent_revision = -1
+        try:
+            while self._mic_level_sessions and sent_revision != self._mic_level_revision:
+                sent_revision = self._mic_level_revision
+                frame = WSAudioLevel(input=self._mic_level_latest).model_dump()
+                await asyncio.gather(
+                    *(
+                        self._send_mic_level(session_id, frame)
+                        for session_id in tuple(self._mic_level_sessions)
+                    )
+                )
+        finally:
+            if self._mic_level_task is asyncio.current_task():
+                self._mic_level_task = None
+
+    async def _send_mic_level(self, session_id: str, frame: dict[str, Any]) -> None:
+        ws = self._clients.get(session_id)
+        send_lock = self._client_send_locks.get(session_id)
+        if ws is None or send_lock is None:
+            return
+
+        async def _send() -> None:
+            async with send_lock:
+                if self._clients.get(session_id) is ws:
+                    await ws.send_json(frame)
+
+        try:
+            await asyncio.wait_for(_send(), timeout=_WS_LEVEL_SEND_TIMEOUT_S)
+        except TimeoutError:
+            # This sample is already stale; the next one will replace it.
+            return
+        except WebSocketDisconnect:
+            self._remove_ws_client(session_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).debug(
+                "Microphone level send failed", session_id=session_id
+            )
+            stale_ws = self._remove_ws_client(session_id)
+            if stale_ws is not None:
+                try:
+                    await stale_ws.close()
+                except Exception as close_exc:  # noqa: BLE001
+                    logger.opt(exception=close_exc).debug(
+                        "Microphone level socket close failed",
+                        session_id=session_id,
+                    )
 
     async def _route_incoming(
         self,
@@ -2417,7 +2541,8 @@ class WebServer:
         from jarvis.missions.init import bootstrap_missions
 
         data_dir = Path(self.cfg.memory.data_dir)
-        data_dir.mkdir(parents=True, exist_ok=True)
+        # Startup wiring runs before this stack accepts work.
+        data_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
         db_path = data_dir / "missions.db"
 
         # Isolation root: <repo_parent>/jarvis-agent-outputs/ (preferred; falls back
@@ -2890,7 +3015,8 @@ class WebServer:
         from jarvis.tasks.store import TaskStore
 
         data_dir = Path(self.cfg.memory.data_dir)
-        data_dir.mkdir(parents=True, exist_ok=True)
+        # Startup wiring runs before this stack accepts work.
+        data_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
         # Tasks share the DB with memory (ADR-0003) — an additive schema.
         db_path = data_dir / "jarvis.db"
 
@@ -2900,7 +3026,10 @@ class WebServer:
         # Crash recovery: all running -> interrupted, plus an error log entry.
         recovered = await store.cleanup_interrupted()
         if recovered:
-            logger.info("TaskStack: cleaned up {} interrupted tasks from the previous run", recovered)
+            logger.info(
+                "TaskStack: cleaned up {} interrupted tasks from the previous run",
+                recovered,
+            )
 
         # Wire the brain so agentic (`agent`) tasks can run a tool-restricted
         # turn unattended. app.state.brain is set before server.start() (see
@@ -3036,7 +3165,7 @@ class WebServer:
             mem_dir = getattr(self.cfg, "memory", None)
             if mem_dir is not None and getattr(mem_dir, "data_dir", None):
                 data_dir = Path(mem_dir.data_dir)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 — portable data-dir fallback
             pass
         data_dir.mkdir(parents=True, exist_ok=True)
         friends_db = data_dir / "friends.db"
@@ -3077,6 +3206,9 @@ class WebServer:
                 )
 
     async def stop(self) -> None:
+        self._mic_level_sessions.clear()
+        self._stop_mic_level_bridge()
+
         # Stop token refresh before the plugin registry so an in-flight refresh
         # cannot enqueue a live-session rebuild while that registry is closing.
         await self._stop_marketplace_refresh_scheduler()

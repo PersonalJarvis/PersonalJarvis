@@ -2,6 +2,11 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useEventStore } from "@/store/events";
+import {
+  setBrowserVoiceInputOwnership,
+  setVoiceInputLevel,
+  voiceInputLevelRef,
+} from "@/lib/voiceInputLevel";
 
 import { BrowserRealtimeControl, waveformPhase } from "./BrowserRealtimeControl";
 
@@ -19,6 +24,7 @@ const fakes = vi.hoisted(() => ({
     | "audio_worklet_unavailable",
   callbacks: null as null | {
     onAudio?: () => void;
+    onInputLevel?: (level: number) => void;
     onStatus?: (status: string, payload: Record<string, unknown>) => void;
   },
   options: null as null | { requiresWebRtcOffer?: boolean },
@@ -69,6 +75,7 @@ describe("BrowserRealtimeControl", () => {
     fakes.supportIssue = null;
     fakes.callbacks = null;
     fakes.options = null;
+    setBrowserVoiceInputOwnership(false);
     delete (window as unknown as { pywebview?: unknown }).pywebview;
     useEventStore.setState({
       voiceState: "idle",
@@ -151,6 +158,56 @@ describe("BrowserRealtimeControl", () => {
     expect(screen.getByTestId("voice-waveform").getAttribute("data-phase")).toBe(
       "listening",
     );
+  });
+
+  it("shares browser microphone samples with the orb", async () => {
+    render(<BrowserRealtimeControl />);
+    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+
+    act(() => fakes.callbacks?.onInputLevel?.(0.64));
+    setVoiceInputLevel(1, "native");
+
+    expect(voiceInputLevelRef.current).toBe(0.64);
+  });
+
+  it("owns microphone levels only while a browser connection is active", async () => {
+    render(<BrowserRealtimeControl />);
+    setVoiceInputLevel(0.25, "native");
+    expect(voiceInputLevelRef.current).toBe(0.25);
+
+    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+    act(() => fakes.callbacks?.onInputLevel?.(0.7));
+    setVoiceInputLevel(0.9, "native");
+    expect(voiceInputLevelRef.current).toBe(0.7);
+
+    act(() => fakes.callbacks?.onStatus?.("provider_error", {}));
+    await waitFor(() => expect(fakes.disconnect).toHaveBeenCalledTimes(1));
+    setVoiceInputLevel(0.4, "native");
+    expect(voiceInputLevelRef.current).toBe(0.4);
+  });
+
+  it("ignores a late connect and stale callbacks after unmount", async () => {
+    let finishConnect: (() => void) | undefined;
+    fakes.connect.mockImplementationOnce(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finishConnect = () => resolve(undefined);
+        }),
+    );
+    const { unmount } = render(<BrowserRealtimeControl />);
+    fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+    await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+
+    unmount();
+    act(() => fakes.callbacks?.onInputLevel?.(0.9));
+    await act(async () => {
+      finishConnect?.();
+      await Promise.resolve();
+    });
+
+    expect(voiceInputLevelRef.current).toBe(0);
   });
 
   it("swaps the measured waveform for the activity sweep once the turn is committed", async () => {

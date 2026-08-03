@@ -51,7 +51,7 @@ def _load_raw() -> dict[str, Any]:
     path = _store_path()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    except FileNotFoundError:  # A first run has no preferences file by design.
         return {}
     except (OSError, ValueError) as exc:
         logger.warning("Agentic IDE: unreadable UI preferences, using defaults: {}", exc)
@@ -84,7 +84,7 @@ def clamp_font_size(value: Any) -> int:
     """
     try:
         size = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Invalid stored input falls back to the safe default.
         return FONT_DEFAULT
     return max(FONT_MIN, min(FONT_MAX, size))
 
@@ -128,7 +128,7 @@ def reset() -> None:
     path = _store_path()
     try:
         path.unlink()
-    except FileNotFoundError:
+    except FileNotFoundError:  # Clearing an already-empty store is idempotent.
         return
     except OSError as exc:
         logger.warning("Agentic IDE: could not clear UI preferences: {}", exc)

@@ -1512,6 +1512,12 @@ class Registry:
         # rewrite the same config file eight times — and that file grows to tens
         # of kilobytes on a heavy user (see jarvis.workspace.trust).
         self._pre_trusted: set[tuple[str, str]] = set()
+        # One async gate per redirected account. Waiting here consumes no
+        # default-executor thread; only the task that owns the gate enters the
+        # synchronous setup lock in ``_prepare_spawn``. This prevents a restore
+        # burst for one account from starving unrelated ``asyncio.to_thread``
+        # work (BUG-043).
+        self._account_prepare_locks: dict[str, asyncio.Lock] = {}
         # Admits a few agent cold starts at a time (see COLD_START_LIMIT).
         # Created on first use rather than here: a semaphore belongs to the loop
         # it is first awaited on, and the registry is also built in tests that
@@ -2595,9 +2601,22 @@ class Registry:
         # on the second subscription keeps its transcripts in that account's
         # directory, and asking the default one would report "no conversation"
         # for a conversation that is right there.
+        # Off the event loop, because it is a directory walk and not a stat: the
+        # check searches the CLI's history BY ID across every project folder it
+        # has ever written (`agent_sessions._claude_conversation_exists`), which
+        # on a long-lived install is hundreds of folders — measured here at
+        # 9 ms per pane over 541 of them. Run inline it froze the whole server
+        # for that long, once per restored pane, at the one moment the loop is
+        # busiest: a restore mounts every pane in one commit, so a dozen panes
+        # meant a dozen stalls interleaved with their own spawns. It only ever
+        # runs on a pane that HAS a handle, which is why the restore path was
+        # the only one that ever felt it. `_mark_restored_continuations` already
+        # takes the same call to a thread for the same reason.
         home = account_home(term.agent, term.account)
         continuing = resume_argv(term.agent, term.resume)
-        if continuing is not None and not has_conversation(term.agent, term.resume, home):
+        if continuing is not None and not await asyncio.to_thread(
+            has_conversation, term.agent, term.resume, home
+        ):
             logger.info(
                 "Agentic IDE: {} has no conversation to continue — starting fresh",
                 term.name,
@@ -2710,15 +2729,37 @@ class Registry:
             for viewer in _exit_viewers(term):
                 await viewer(code)
 
-        # One of a few starts at a time (see COLD_START_LIMIT). The wait covers
-        # the account preparation too: that is filesystem work on the same
-        # directory every pane of an account shares, so letting eight of them
-        # queue on its lock while eight CLIs boot is the same pile-up one step
-        # earlier.
-        async with self._cold_start_slot():
-            # Off the event loop: getting the pane's account ready is filesystem
-            # work (a few stat calls once it is in place — see `_prepare_spawn`).
+        # BEFORE the slot, not inside it — and that ordering is the whole point.
+        #
+        # Off the event loop either way: getting the pane's account ready is
+        # filesystem work (a few stat calls once it is in place — see
+        # `_prepare_spawn`). But it also takes that account's setup lock, and
+        # every pane of one account shares one config dir and therefore one
+        # lock. Held inside the slot, a pane that is merely QUEUED on that lock
+        # still occupies one of the few cold-start slots while doing nothing —
+        # so a workspace of panes on the same account collapsed a gate meant to
+        # admit COLD_START_LIMIT starts at once down to roughly one, and the
+        # restore came back one terminal at a time.
+        #
+        # Serializing here is not the pile-up the gate exists to prevent. That
+        # pile-up is coding CLIs BOOTING — plugins, hooks, an `npx` process tree
+        # per MCP server. The account gate is async so waiters do not occupy the
+        # shared executor while one thread owns the filesystem setup lock.
+        redirected_home = _redirected_home(term)
+        if redirected_home is None:
             env = await asyncio.to_thread(self._prepare_spawn, term, session.folder)
+        else:
+            account_key = os.path.normcase(str(redirected_home))
+            account_gate = self._account_prepare_locks.setdefault(
+                account_key, asyncio.Lock()
+            )
+            async with account_gate:
+                env = await asyncio.to_thread(
+                    self._prepare_spawn, term, session.folder
+                )
+
+        # One of a few starts at a time (see COLD_START_LIMIT).
+        async with self._cold_start_slot():
             try:
                 pty_session = await manager.spawn(
                     shell_argv=argv,

@@ -12,10 +12,12 @@ type VoiceModeResp = {
   // realtime session would use (configured pin or catalog default).
   active_provider_label: string | null;
   active_model: string | null;
+  active_model_label?: string | null;
   session_active: boolean;
   active_session_mode: "pipeline" | "realtime" | null;
   active_session_provider: string;
   active_session_model: string;
+  active_session_model_label?: string | null;
   transitioning: boolean;
 };
 
@@ -126,11 +128,12 @@ export function useVoiceMode() {
     statusKnown: q.isSuccess,
     activeProvider: q.data?.active_provider ?? null,
     activeProviderLabel: q.data?.active_provider_label ?? null,
-    activeModel: q.data?.active_model ?? null,
+    activeModel: q.data?.active_model_label ?? q.data?.active_model ?? null,
     sessionActive: q.data?.session_active ?? false,
     activeSessionMode: q.data?.active_session_mode ?? null,
     activeSessionProvider: q.data?.active_session_provider ?? "",
-    activeSessionModel: q.data?.active_session_model ?? "",
+    activeSessionModel:
+      q.data?.active_session_model_label ?? q.data?.active_session_model ?? "",
     transitioning: q.data?.transitioning ?? false,
     setMode: m.mutate,
     isLoading: q.isLoading,

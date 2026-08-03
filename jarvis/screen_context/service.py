@@ -902,7 +902,7 @@ class ScreenContextService:
         )
         try:
             loop = asyncio.get_running_loop()
-        except RuntimeError:
+        except RuntimeError:  # Non-async callers use the equivalent timer fallback.
             timer = threading.Timer(
                 delay_s,
                 self._expire_handle,

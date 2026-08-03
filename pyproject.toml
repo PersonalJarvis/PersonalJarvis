@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "1.2.0"
+version = "1.2.2"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
@@ -75,9 +75,14 @@ dependencies = [
     # ChatGPT-Live (Codex subscription voice) carries audio ONLY on a WebRTC
     # media track — its protocol has no audio event at all. Jarvis owns that
     # peer in-process so the existing pipeline (wake word, echo guard,
-    # barge-in, Orb) keeps working; without aiortc that ONE provider degrades
-    # with an honest message while every other voice path is unaffected.
-    "aiortc>=1.13",
+    # barge-in, Orb) keeps working. Upstream has no compiler-free Windows ARM64
+    # dependency chain, so that cell uses the existing honest unavailable state
+    # while every other voice path remains available.
+    "aiortc>=1.13; sys_platform != 'win32' or platform_machine != 'ARM64'",
+    # aiortc's broad PyAV range otherwise resolves a release without Apple-
+    # Silicon wheels. 15.1 is inside its supported range and carries the full
+    # CPython 3.11-3.14 macOS ARM64 wheel matrix.
+    "av==15.1.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # NumPy 2.1 is the conservative runtime branch everywhere it ships. Its
     # Windows ARM64 wheel gap is permanent, though, so that architecture uses
     # the first compatible branch with official CPython 3.11+ ARM64 wheels.

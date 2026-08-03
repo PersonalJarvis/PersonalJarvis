@@ -538,7 +538,7 @@ REALTIME_MODELS: dict[str, list[ModelInfo]] = {
 # gemini-live: verified 2026-07-10 against the Live API capabilities guide,
 # which now permits the complete 30-voice Gemini prebuilt roster.
 REALTIME_VOICES: dict[str, list[ModelInfo]] = {
-    # Codex app-server realtime v1 voices. ``cove`` is the v1 default, so it
+    # Codex app-server ChatGPT-Live v3 voices. ``cove`` is the v3 default, so it
     # leads the picker just as each realtime model catalog leads with its
     # adapter default.
     "codex-subscription-realtime": _ids(
@@ -868,7 +868,7 @@ def model_capabilities(provider: str, model_id: str) -> dict[str, bool | None]:
                     "vision": ("image" in inp) if isinstance(inp, list) else None,
                     "tools": ("tools" in params) if isinstance(params, list) else None,
                 }
-    except Exception:  # noqa: BLE001 — missing/corrupt cache → unknown (capable)
+    except Exception:  # noqa: BLE001, S110 — missing/corrupt cache means unknown
         pass
     return {"vision": None, "tools": None}
 

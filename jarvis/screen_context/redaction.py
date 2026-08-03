@@ -75,7 +75,7 @@ def validate_pattern_source(source: str) -> str | None:
         )
     try:
         re.compile(source, re.IGNORECASE)
-    except re.error as exc:
+    except re.error as exc:  # Returning the parser message is the validation result.
         return str(exc)
     return None
 

@@ -38,7 +38,10 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, get_args
+
+if TYPE_CHECKING:
+    pass
 
 from jarvis import __version__
 from jarvis.core.process_tree import ProcessTree, make_process_tree
@@ -881,7 +884,8 @@ def _prepare_subscription_login_home() -> Path:
                     create=True, require_marker=False
                 )
                 break
-            except CodexSubscriptionUnavailable as exc:  # Retried: Windows delete-pending briefly blocks the recreate.
+            except CodexSubscriptionUnavailable as exc:
+                # Windows delete-pending can briefly block the recreate.
                 last_error = exc
                 time.sleep(0.2)
         else:
@@ -2084,8 +2088,7 @@ class CodexAppServerClient:
                     b"Connection: close\r\n\r\n"
                 )
                 await writer.drain()
-            except (ConnectionError, OSError):
-                # The diagnostic sink peer may close before its reply.
+            except (ConnectionError, OSError):  # Diagnostic peer may close before reply.
                 pass
             finally:
                 writer.close()
@@ -3989,7 +3992,8 @@ def _delete_codex_subscription_auth_locked() -> tuple[bool, str | None]:
         # AND clears the invalid state in one explicit user action.
         try:
             _rebuild_invalid_subscription_home()
-        except CodexSubscriptionUnavailable as exc:  # The honest failure text returns as the route's 409 detail.
+        except CodexSubscriptionUnavailable as exc:
+            # The route returns this honest failure as its 409 detail.
             return False, str(exc)
         return True, None
     auth_file = home / "auth.json"

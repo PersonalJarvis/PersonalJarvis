@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Identity translator so rendered text equals the i18n key — matches the
@@ -62,19 +62,22 @@ async function openVoicePanel() {
   return trigger;
 }
 
+/** Open the model picker panel via its trigger button. */
+async function openModelPanel() {
+  const trigger = await screen.findByLabelText("apikeys_view.realtime_model_label");
+  fireEvent.click(trigger);
+  return trigger;
+}
+
 describe("RealtimeOptionsControl", () => {
-  it("renders a MODEL dropdown and a VOICE picker, populated from getRealtimeOptions", async () => {
+  it("renders app-styled MODEL and VOICE pickers populated from the backend", async () => {
     getRealtimeOptions.mockResolvedValue(OPTIONS);
     render(<RealtimeOptionsControl providerId="openai-realtime" />);
 
-    const modelSelect = (await screen.findByLabelText(
-      "apikeys_view.realtime_model_label",
-    )) as HTMLSelectElement;
-
+    await openModelPanel();
     expect(getRealtimeOptions).toHaveBeenCalledWith("openai-realtime");
-    expect(
-      Array.from(modelSelect.options).map((o) => o.value),
-    ).toEqual(["", "gpt-realtime", "gpt-realtime-mini"]);
+    expect(screen.getByText("GPT Realtime")).toBeTruthy();
+    expect(screen.getByText("GPT Realtime Mini")).toBeTruthy();
 
     await openVoicePanel();
     expect(screen.getByText("Alloy")).toBeTruthy();
@@ -85,14 +88,16 @@ describe("RealtimeOptionsControl", () => {
     getRealtimeOptions.mockResolvedValue(OPTIONS);
     render(<RealtimeOptionsControl providerId="openai-realtime" />);
 
-    const modelSelect = (await screen.findByLabelText(
+    const modelTrigger = await screen.findByLabelText(
       "apikeys_view.realtime_model_label",
-    )) as HTMLSelectElement;
+    );
     const voiceTrigger = await screen.findByLabelText(
       "apikeys_view.realtime_voice_label",
     );
 
-    expect(modelSelect.value).toBe("");
+    expect(modelTrigger.textContent).toContain(
+      "apikeys_view.realtime_provider_default",
+    );
     expect(voiceTrigger.textContent).toContain(
       "apikeys_view.realtime_provider_default",
     );
@@ -106,14 +111,14 @@ describe("RealtimeOptionsControl", () => {
     });
     render(<RealtimeOptionsControl providerId="openai-realtime" />);
 
-    const modelSelect = (await screen.findByLabelText(
+    const modelTrigger = await screen.findByLabelText(
       "apikeys_view.realtime_model_label",
-    )) as HTMLSelectElement;
+    );
     const voiceTrigger = await screen.findByLabelText(
       "apikeys_view.realtime_voice_label",
     );
 
-    await waitFor(() => expect(modelSelect.value).toBe("gpt-realtime-mini"));
+    await waitFor(() => expect(modelTrigger.textContent).toContain("GPT Realtime Mini"));
     expect(voiceTrigger.textContent).toContain("Echo");
   });
 
@@ -128,8 +133,8 @@ describe("RealtimeOptionsControl", () => {
     });
     render(<RealtimeOptionsControl providerId="openai-realtime" />);
 
-    const modelSelect = await screen.findByLabelText("apikeys_view.realtime_model_label");
-    fireEvent.change(modelSelect, { target: { value: "gpt-realtime" } });
+    await openModelPanel();
+    fireEvent.click(screen.getByText("GPT Realtime"));
 
     await waitFor(() =>
       expect(saveRealtimeOptions).toHaveBeenCalledWith("openai-realtime", {
@@ -174,12 +179,13 @@ describe("RealtimeOptionsControl", () => {
     });
     render(<RealtimeOptionsControl providerId="openai-realtime" />);
 
-    const modelSelect = (await screen.findByLabelText(
-      "apikeys_view.realtime_model_label",
-    )) as HTMLSelectElement;
-    await waitFor(() => expect(modelSelect.value).toBe("gpt-realtime-mini"));
-
-    fireEvent.change(modelSelect, { target: { value: "" } });
+    const modelTrigger = await openModelPanel();
+    await waitFor(() => expect(modelTrigger.textContent).toContain("GPT Realtime Mini"));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "apikeys_view.realtime_provider_default",
+      }),
+    );
     await waitFor(() =>
       expect(saveRealtimeOptions).toHaveBeenCalledWith("openai-realtime", { model: "" }),
     );
@@ -219,6 +225,33 @@ describe("RealtimeOptionsControl", () => {
       }),
     );
     expect(saveRealtimeOptions).not.toHaveBeenCalled();
+  });
+
+  it("ignores preview audio that arrives after unmount", async () => {
+    let resolvePreview: ((blob: Blob) => void) | undefined;
+    getRealtimeOptions.mockResolvedValue({
+      ...OPTIONS,
+      current_voice: "echo",
+    });
+    fetchRealtimeVoicePreview.mockImplementationOnce(
+      () =>
+        new Promise<Blob>((resolve) => {
+          resolvePreview = resolve;
+        }),
+    );
+    const { unmount } = render(
+      <RealtimeOptionsControl providerId="openai-realtime" />,
+    );
+    fireEvent.click(await screen.findByLabelText("apikeys_voice.preview"));
+    await waitFor(() => expect(fetchRealtimeVoicePreview).toHaveBeenCalledTimes(1));
+
+    unmount();
+    await act(async () => {
+      resolvePreview?.(new Blob(["late"], { type: "audio/wav" }));
+      await Promise.resolve();
+    });
+
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 
   it("every voice row in the open panel can be auditioned without saving", async () => {
@@ -267,24 +300,31 @@ describe("RealtimeOptionsControl", () => {
   it("keeps subscription voices selectable without rendering a broken preview", async () => {
     getRealtimeOptions.mockResolvedValue({
       provider: "codex-subscription-realtime",
-      models: [{ id: "gpt-realtime-1.5", label: "GPT Realtime 1.5" }],
+      models: [{ id: "auto", label: "ChatGPT-Live (model chosen by OpenAI)" }],
       voices: [
         { id: "cove", label: "Cove" },
         { id: "juniper", label: "Juniper" },
       ],
-      current_model: "gpt-realtime-1.5",
+      current_model: "auto",
       current_voice: "cove",
       preview_available: false,
     });
     saveRealtimeOptions.mockResolvedValue({
       ok: true,
       provider: "codex-subscription-realtime",
-      model: "gpt-realtime-1.5",
+      model: "auto",
       voice: "juniper",
       restart_required: false,
     });
 
     render(<RealtimeOptionsControl providerId="codex-subscription-realtime" />);
+    expect(
+      await screen.findByText("ChatGPT-Live (model chosen by OpenAI)"),
+    ).toBeTruthy();
+    expect(screen.getByText("apikeys_view.realtime_model_managed")).toBeTruthy();
+    expect(
+      screen.getByText("apikeys_view.realtime_model_managed_hint"),
+    ).toBeTruthy();
     await openVoicePanel();
 
     expect(screen.queryByLabelText("apikeys_voice.preview")).toBeNull();
@@ -297,5 +337,22 @@ describe("RealtimeOptionsControl", () => {
       ),
     );
     expect(fetchRealtimeVoicePreview).not.toHaveBeenCalled();
+  });
+
+  it("shows a recoverable error instead of silently hiding failed options", async () => {
+    getRealtimeOptions
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(OPTIONS);
+    render(<RealtimeOptionsControl providerId="openai-realtime" />);
+
+    expect(
+      await screen.findByText("apikeys_view.realtime_options_error"),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByText("apikeys_view.realtime_options_retry"));
+
+    expect(
+      await screen.findByLabelText("apikeys_view.realtime_model_label"),
+    ).toBeTruthy();
+    expect(getRealtimeOptions).toHaveBeenCalledTimes(2);
   });
 });

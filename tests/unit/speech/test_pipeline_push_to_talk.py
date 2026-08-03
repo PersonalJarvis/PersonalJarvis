@@ -616,6 +616,212 @@ async def test_ptt_release_recovers_timed_out_native_probe_before_final_stt(
     assert getattr(captured["transcript"], "text", "") == "final"
 
 
+async def test_release_does_not_wait_for_a_cosmetic_probe_without_provider_work():
+    """A local preview may outlive its UI slot; final STT must start immediately."""
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._stt_final_timeout_s = 8.0
+    stop_event = asyncio.Event()
+    inference_active = asyncio.Event()
+    parked = asyncio.Event()
+
+    async def _cosmetic_preview() -> None:
+        await parked.wait()
+
+    task = asyncio.create_task(_cosmetic_preview())
+    await pipe._stop_ptt_live_transcription(
+        task,
+        stop_event=stop_event,
+        inference_active=inference_active,
+        wait_for_inference=True,
+    )
+
+    assert stop_event.is_set()
+    assert task.cancelled()
+
+
+async def test_release_bounds_a_cosmetic_probe_that_ignores_cancellation():
+    """A broken cosmetic task cannot move the final-STT edge indefinitely."""
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._stt_final_timeout_s = 8.0
+    stop_event = asyncio.Event()
+    inference_active = asyncio.Event()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _stubborn_preview() -> None:
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await release.wait()
+
+    task = asyncio.create_task(_stubborn_preview())
+    await entered.wait()
+    started = asyncio.get_running_loop().time()
+    await pipe._stop_ptt_live_transcription(
+        task,
+        stop_event=stop_event,
+        inference_active=inference_active,
+        wait_for_inference=True,
+    )
+
+    assert asyncio.get_running_loop().time() - started < 0.5
+    release.set()
+    await task
+
+
+async def test_dictation_provider_warmup_is_single_flight_and_joined():
+    """The first final call shares one post-ready native warm-up."""
+    import time
+
+    class _WarmProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def warm_up(self) -> None:
+            self.calls += 1
+            time.sleep(0.05)
+
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._dictation_warmup_task = None
+    pipe._dictation_warmup_provider = None
+    provider = _WarmProvider()
+
+    pipe._schedule_dictation_warmup(provider)
+    pipe._schedule_dictation_warmup(provider)
+    assert await pipe._join_dictation_warmup(provider) is provider
+    pipe._schedule_dictation_warmup(provider)
+    assert await pipe._join_dictation_warmup(provider) is provider
+    assert provider.calls == 1
+
+
+async def test_live_provider_switch_joins_the_old_warmup_before_the_new_one():
+    """A settings switch never overlaps two native warm-up generations."""
+    import threading
+
+    old_started = threading.Event()
+    old_release = threading.Event()
+
+    class _OldProvider:
+        def warm_up(self) -> None:
+            old_started.set()
+            old_release.wait(timeout=2.0)
+
+    class _NewProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def warm_up(self) -> None:
+            self.calls += 1
+
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._dictation_warmup_task = None
+    pipe._dictation_warmup_provider = None
+    pipe._dictation_warmup_succeeded_provider = None
+    pipe._dictation_warmup_shutdown = False
+    old = _OldProvider()
+    new = _NewProvider()
+    pipe._dictation_stt = lambda: new  # type: ignore[method-assign]
+
+    pipe._schedule_dictation_warmup(old)
+    assert await asyncio.to_thread(old_started.wait, 1.0)
+    pipe._schedule_dictation_warmup(new)
+    joined = asyncio.create_task(pipe._join_dictation_warmup(new))
+    await asyncio.sleep(0.05)
+
+    assert not joined.done()
+    assert new.calls == 0
+    old_release.set()
+    assert await joined is new
+    assert new.calls == 1
+
+
+async def test_reset_releases_the_warmed_provider_before_a_live_switch():
+    """A provider switch must not pin the old GPU model in memory."""
+    import time
+
+    class _WarmProvider:
+        def warm_up(self) -> None:
+            time.sleep(0.01)
+
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._dictation_warmup_task = None
+    pipe._dictation_warmup_provider = None
+    pipe._dictation_warmup_succeeded_provider = None
+    pipe._dictation_stt_instance = _WarmProvider()
+    pipe._voice_stt_fallback_chain = None
+    pipe._voice_stt_fallback_instances = {}
+
+    pipe._schedule_dictation_warmup(pipe._dictation_stt_instance)
+    await pipe._join_dictation_warmup(pipe._dictation_stt_instance)
+    assert pipe._dictation_warmup_succeeded_provider is pipe._dictation_stt_instance
+
+    pipe._reset_dictation_stt()
+
+    assert pipe._dictation_warmup_succeeded_provider is None
+
+
+async def test_a_wedged_dictation_warmup_replaces_the_provider(monkeypatch):
+    """AP-24: timeout abandons the instance a native worker may still own."""
+    import threading
+
+    import jarvis.speech.pipeline as pipeline_module
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class _WedgedProvider:
+        def warm_up(self) -> None:
+            started.set()
+            release.wait(timeout=5.0)
+
+    old = _WedgedProvider()
+    fresh = object()
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._dictation_warmup_task = None
+    pipe._dictation_warmup_provider = None
+    pipe._dictation_stt_instance = old
+    pipe._dictation_stt = lambda: fresh  # type: ignore[method-assign]
+    monkeypatch.setattr(pipeline_module, "_DICTATION_WARMUP_JOIN_TIMEOUT_S", 0.02)
+    pipe._schedule_dictation_warmup(old)
+    await asyncio.to_thread(started.wait, 1.0)
+    try:
+        assert await pipe._join_dictation_warmup(old) is fresh
+        assert pipe._dictation_stt_instance is None
+    finally:
+        release.set()
+        await asyncio.sleep(0.05)
+
+
+async def test_an_independently_cancelled_warmup_replaces_the_provider():
+    """A cancelled waiter does not prove its native thread released the engine."""
+    import threading
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class _Provider:
+        def warm_up(self) -> None:
+            started.set()
+            release.wait(timeout=5.0)
+
+    old = _Provider()
+    fresh = object()
+    pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._dictation_warmup_task = None
+    pipe._dictation_warmup_provider = None
+    pipe._dictation_stt_instance = old
+    pipe._dictation_stt = lambda: fresh  # type: ignore[method-assign]
+    pipe._schedule_dictation_warmup(old)
+    await asyncio.to_thread(started.wait, 1.0)
+    pipe._dictation_warmup_task.cancel()
+    try:
+        assert await pipe._join_dictation_warmup(old) is fresh
+    finally:
+        release.set()
+        await asyncio.sleep(0.05)
+
+
 async def test_ptt_hangup_recovers_live_probe_before_wake_rearm(monkeypatch):
     """A hard hangup never leaves a busy native STT engine for the wake path."""
     pipe = _make_pipeline()

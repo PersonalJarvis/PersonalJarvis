@@ -319,7 +319,7 @@ def _has_current_instruction(term: Any) -> bool:
         return int(getattr(term, "submit_generation", -1)) == int(
             getattr(term, "process_generation", 0)
         )
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Malformed legacy counters mean no matching run.
         return False
 
 

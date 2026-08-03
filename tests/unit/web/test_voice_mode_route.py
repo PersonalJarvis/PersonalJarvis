@@ -86,6 +86,7 @@ def test_get_voice_mode(monkeypatch):
     # pin configured in this app fixture).
     assert body["active_provider_label"] == "OpenAI Realtime"
     assert body["active_model"] == "gpt-realtime"
+    assert body["active_model_label"] == "GPT Realtime (default)"
     assert body["session_active"] is False
     assert body["active_session_mode"] is None
 
@@ -116,6 +117,8 @@ def test_get_voice_mode_reports_browser_offer_capability(monkeypatch):
     body = TestClient(_app(mode="realtime")).get("/api/settings/voice-mode").json()
 
     assert body["active_provider"] == "codex-subscription-realtime"
+    assert body["active_model"] == "auto"
+    assert body["active_model_label"] == "ChatGPT-Live (model chosen by OpenAI)"
     assert body["requires_webrtc_offer"] is True
     assert body["transport_offer_ready"] is True
     assert body["transport_offer_detail"] == "Embedded desktop WebRTC offer is ready."
@@ -328,4 +331,5 @@ def test_get_voice_mode_reports_effective_active_engine(monkeypatch):
     assert body["active_session_mode"] == "realtime"
     assert body["active_session_provider"] == "openai-realtime"
     assert body["active_session_model"] == "gpt-realtime-2.1"
+    assert body["active_session_model_label"] == "GPT Realtime 2.1"
     assert body["transitioning"] is False

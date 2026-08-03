@@ -1,5 +1,10 @@
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  clearVoiceInputLevel,
+  setBrowserVoiceInputOwnership,
+  setVoiceInputLevel,
+} from "@/lib/voiceInputLevel";
 
 const { documentState } = vi.hoisted(() => ({
   documentState: { visible: true },
@@ -58,6 +63,8 @@ function setReducedMotion(matches: boolean): void {
 
 beforeEach(() => {
   documentState.visible = true;
+  setBrowserVoiceInputOwnership(false);
+  clearVoiceInputLevel();
 });
 
 afterEach(() => {
@@ -194,6 +201,33 @@ describe("voice orb renderer", () => {
     expect(onsetRadius).toBeGreaterThan(idleRadius * 1.01);
     expect(settledRadius).toBeLessThan(onsetRadius * 0.995);
     expect(Math.abs(exitRadius - settledRadius) / settledRadius).toBeLessThan(0.015);
+  });
+
+  it("expands from the measured microphone level while listening", () => {
+    setReducedMotion(false);
+    vi.spyOn(performance, "now").mockReturnValue(0);
+    const { display } = installCanvasContexts();
+    let nextFrame: FrameRequestCallback | undefined;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      nextFrame = callback;
+      return 51;
+    });
+
+    render(<VoiceOrb state="listening" />);
+    const quietRadius = vi.mocked(display.arc).mock.calls[0][2];
+
+    setVoiceInputLevel(1);
+    nextFrame?.(60);
+    let calls = vi.mocked(display.arc).mock.calls;
+    const voicedRadius = calls[calls.length - 1][2];
+
+    clearVoiceInputLevel();
+    for (let now = 110; now <= 410; now += 50) nextFrame?.(now);
+    calls = vi.mocked(display.arc).mock.calls;
+    const releasedRadius = calls[calls.length - 1][2];
+
+    expect(voicedRadius).toBeGreaterThan(quietRadius * 1.015);
+    expect(releasedRadius).toBeLessThan(voicedRadius * 0.99);
   });
 
   it("cancels animation when hidden and again when unmounted", () => {

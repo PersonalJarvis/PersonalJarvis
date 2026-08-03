@@ -20,12 +20,48 @@ own quoting and provides the builtins.
 from __future__ import annotations
 
 import asyncio
+import os
 import shlex
 import sys
 from typing import Any
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.core.protocols import ExecutionContext, ToolResult
+
+_CMD_PATH_LIMIT = 8191
+
+
+def _windows_subprocess_env() -> dict[str, str]:
+    """Return an environment whose PATH remains usable by ``cmd.exe``.
+
+    Windows accepts an environment block containing a PATH longer than the
+    legacy command-processor limit, but ``cmd.exe`` then exposes an empty PATH
+    to the command it launches.  Desktop integrations commonly append the same
+    native-runtime directories repeatedly, so remove duplicates while keeping
+    the original lookup order.  Other platforms never use this helper.
+    """
+    env = dict(os.environ)
+    path_key = next((key for key in env if key.lower() == "path"), "PATH")
+    entries = env.get(path_key, "").split(os.pathsep)
+    deduplicated: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if not entry:
+            continue
+        identity_source = os.path.expandvars(entry.strip().strip('"'))
+        identity = os.path.normcase(os.path.normpath(identity_source))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        deduplicated.append(entry)
+    compact_path = os.pathsep.join(deduplicated)
+    if len(compact_path) > _CMD_PATH_LIMIT:
+        raise ValueError(
+            "Windows PATH remains too long for cmd.exe after deduplication "
+            f"({len(compact_path)} characters; limit {_CMD_PATH_LIMIT})."
+        )
+    env[path_key] = compact_path
+    return env
 
 
 class RunShellTool:
@@ -68,6 +104,7 @@ class RunShellTool:
                     stderr=asyncio.subprocess.PIPE,
                     cwd=cwd,
                     creationflags=NO_WINDOW_CREATIONFLAGS,
+                    env=_windows_subprocess_env(),
                 )
             else:
                 proc = await asyncio.create_subprocess_exec(

@@ -13,6 +13,8 @@ prevents that, and it is pinned down here.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from pathlib import Path
 
 import pytest
@@ -409,6 +411,54 @@ async def test_the_trust_seeding_and_the_setup_run_under_one_lock(
 
     assert "trust:account" in events
     assert events.index("lock") < events.index("trust:account")
+
+
+async def test_same_account_setup_waiters_do_not_fill_the_default_executor(
+    registry: Registry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the async gate owner may enter blocking account preparation."""
+    second = agent_accounts.create_account("claude", "Second seat")
+    await registry.start(
+        str(tmp_path),
+        [
+            {"agent": "claude", "account": second.id},
+            {"agent": "claude", "account": second.id},
+        ],
+    )
+    real_prepare = registry._prepare_spawn
+    release = threading.Event()
+    entered = threading.Event()
+    counter_lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    def _blocking_prepare(*args: object) -> dict[str, str] | None:
+        nonlocal active, peak
+        with counter_lock:
+            active += 1
+            peak = max(peak, active)
+        entered.set()
+        try:
+            release.wait(timeout=2.0)
+            return real_prepare(*args)  # type: ignore[arg-type]
+        finally:
+            with counter_lock:
+                active -= 1
+
+    monkeypatch.setattr(registry, "_prepare_spawn", _blocking_prepare)
+    tasks = [
+        asyncio.create_task(_attach(registry, term.name))
+        for term in registry.session.terminals
+    ]
+    for _ in range(100):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert entered.is_set()
+    await asyncio.sleep(0.05)
+    assert peak == 1
+    release.set()
+    await asyncio.gather(*tasks)
 
 
 async def test_a_pane_on_the_builtin_login_is_not_pre_trusted_twice(
