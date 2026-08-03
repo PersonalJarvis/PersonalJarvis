@@ -17,6 +17,7 @@ import asyncio
 import inspect
 import json
 import os
+import queue
 import secrets
 import sys
 import threading
@@ -146,6 +147,180 @@ class SingleInstanceError(RuntimeError):
 
 
 _DESKTOP_LOG_SINK_INSTALLED = False
+#: Rotate the desktop log at this size, keeping ``_LOG_RETENTION`` older files.
+_LOG_ROTATION_BYTES = 10 * 1024 * 1024
+_LOG_RETENTION = 3
+#: Bound on records waiting to reach disk. Deep enough to absorb a multi-second
+#: disk stall at the observed rate (a few hundred records per minute), shallow
+#: enough that a permanently wedged disk cannot grow the process without limit.
+_LOG_QUEUE_MAX = 20_000
+#: Records fused into one write+flush pair. Chatty subsystems (the wake
+#: heartbeat, Telegram polling) otherwise pay two syscalls per line.
+_LOG_BATCH_MAX = 256
+#: Sentinel telling the writer thread to drain and exit.
+_LOG_STOP = object()
+
+
+class _AsyncLogWriter:
+    """Write loguru records to the log file from a dedicated thread.
+
+    Why this exists instead of loguru's own file sink: a file sink runs
+    INLINE on whichever thread emitted the record, and the backend asyncio
+    loop emits constantly. One slow ``write()`` therefore blocks every
+    WebSocket, HTTP route and brain turn behind it. Observed live on
+    2026-08-03 under heavy machine load: a 24.4 s event-loop stall whose
+    stack ended in ``loguru/_file_sink.py:write``, immediately followed by
+    ``listening socket ... is dead`` and an unhandled proactor error — the
+    window lost its backend and never came back.
+
+    loguru's ``enqueue=True`` would decouple the same way, but it builds a
+    multiprocessing pipe that can fail with WinError 5 in restricted
+    desktop/sandbox contexts before the window exists. A plain threading
+    queue buys the decoupling without a pipe; rotation and retention, which
+    the file sink would otherwise provide, are carried here instead.
+
+    On overflow records are dropped rather than growing the queue without
+    bound, and the dropped count is reported into the log as soon as the disk
+    keeps up again — dropping silently would make the log lie about its own
+    completeness (AP-30).
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        rotation_bytes: int = _LOG_ROTATION_BYTES,
+        retention: int = _LOG_RETENTION,
+        max_queue: int = _LOG_QUEUE_MAX,
+    ) -> None:
+        self._path = Path(path)
+        self._rotation_bytes = rotation_bytes
+        self._retention = retention
+        self._queue: queue.Queue[Any] = queue.Queue(maxsize=max_queue)
+        self._drop_lock = threading.Lock()
+        self._dropped = 0
+        self._handle: Any = None
+        self._written = 0
+        self._thread = threading.Thread(
+            target=self._run,
+            name="jarvis-log-writer",
+            daemon=True,
+        )
+        self._thread.start()
+
+    # -- loguru sink -------------------------------------------------------
+    def __call__(self, message: Any) -> None:
+        """Hand one formatted record to the writer thread. Never blocks."""
+        try:
+            self._queue.put_nowait(str(message))
+        except queue.Full:
+            with self._drop_lock:
+                self._dropped += 1
+
+    def stop(self, timeout: float = 5.0) -> None:
+        """Drain and close. Used by tests; the daemon thread needs no stop."""
+        with suppress(queue.Full):
+            self._queue.put_nowait(_LOG_STOP)
+        self._thread.join(timeout=timeout)
+
+    # -- writer thread -----------------------------------------------------
+    def _run(self) -> None:
+        while True:
+            first = self._queue.get()
+            if first is _LOG_STOP:
+                break
+            batch = [first]
+            stopping = False
+            while len(batch) < _LOG_BATCH_MAX:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item is _LOG_STOP:
+                    stopping = True
+                    break
+                batch.append(item)
+            self._emit(batch)
+            if stopping:
+                break
+        self._close()
+
+    def _emit(self, batch: list[str]) -> None:
+        with self._drop_lock:
+            dropped, self._dropped = self._dropped, 0
+        if dropped:
+            batch.insert(
+                0,
+                f"{time.strftime('%Y-%m-%d %H:%M:%S')} | WARNING  | "
+                f"{__name__}:_AsyncLogWriter:0 | log writer dropped "
+                f"{dropped} record(s) while the disk was not keeping up.\n",
+            )
+        try:
+            handle = self._ensure_handle()
+            handle.write("".join(batch))
+            handle.flush()
+            self._written = handle.tell()
+        except (OSError, ValueError) as exc:
+            # Cannot log this — we ARE the log. stderr is None under
+            # pythonw.exe, so on the windowed build the only remaining signal
+            # is the drop counter above, reported once writing recovers.
+            self._handle = None
+            stream = getattr(sys, "__stderr__", None)
+            if stream is not None:
+                with suppress(Exception):
+                    stream.write(f"jarvis log writer failed: {exc!r}\n")
+            return
+        if self._written >= self._rotation_bytes:
+            self._rotate()
+
+    def _ensure_handle(self) -> Any:
+        if self._handle is None:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            # newline="" keeps loguru's "\n" from becoming "\r\n" on Windows,
+            # matching what the previous file sink wrote.
+            self._handle = self._path.open("a", encoding="utf-8", errors="replace", newline="")
+            self._written = self._handle.tell()
+        return self._handle
+
+    def _close(self) -> None:
+        handle, self._handle = self._handle, None
+        if handle is not None:
+            with suppress(Exception):
+                handle.close()
+
+    def _rotate(self) -> None:
+        self._close()
+        # Microsecond suffix mirrors the naming the loguru file sink used, so
+        # older rotated logs and new ones sort together — and two rotations in
+        # the same second cannot collide on a name.
+        now = time.time()
+        stamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(now))
+        target = self._path.with_name(
+            f"{self._path.stem}.{stamp}_{int(now % 1 * 1_000_000):06d}{self._path.suffix}"
+        )
+        try:
+            self._path.rename(target)
+        except OSError:
+            # Another process holds the file open (Windows) or the rename
+            # raced. Keep appending to the current file — an oversized log is
+            # strictly better than losing records.
+            self._written = 0
+            return
+        self._prune()
+
+    def _prune(self) -> None:
+        pattern = f"{self._path.stem}.*{self._path.suffix}"
+        try:
+            rotated = sorted(
+                self._path.parent.glob(pattern),
+                key=lambda item: item.stat().st_mtime,
+                reverse=True,
+            )
+        except OSError:
+            return
+        for stale in rotated[self._retention :]:
+            with suppress(OSError):
+                stale.unlink()
 
 
 def _install_desktop_log_sink(log_path: Path) -> None:
@@ -158,7 +333,9 @@ def _install_desktop_log_sink(log_path: Path) -> None:
 
     This sink writes every ``INFO+`` event to a rotating log file, and
     stdlib ``logging`` is redirected via ``InterceptHandler`` so that
-    ``uvicorn`` / ``httpx`` / ``faster_whisper`` get captured too.
+    ``uvicorn`` / ``httpx`` / ``faster_whisper`` get captured too. Writing
+    happens on :class:`_AsyncLogWriter`'s thread so that a slow disk can
+    never stall the caller — see that class for the incident this prevents.
 
     Idempotent — calling it more than once is a no-op (important in case
     DesktopApp gets instantiated multiple times in tests).
@@ -171,16 +348,11 @@ def _install_desktop_log_sink(log_path: Path) -> None:
     from loguru import logger
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    # Rotate at 10 MB, max 3 files — keeps logs from eating the disk.
     logger.add(
-        str(log_path),
+        _AsyncLogWriter(log_path),
         level="INFO",
-        rotation="10 MB",
-        retention=3,
-        encoding="utf-8",
-        # Keep this disabled on Windows. loguru's enqueue=True creates a
-        # multiprocessing pipe which can fail with WinError 5 in restricted
-        # desktop/sandbox contexts before the window is created.
+        # The writer thread IS the queue. loguru's own enqueue= would add a
+        # multiprocessing pipe on top (WinError 5 in restricted contexts).
         enqueue=False,
         backtrace=True,
         diagnose=False,  # don't dump locals (secrets!)
