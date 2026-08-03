@@ -388,15 +388,15 @@ async def test_reported_obsidian_follow_up_ingests_inline_facts(manager_factory)
     )
 
     reply = await mgr._run_wiki_ingest_fast_path(
-        "Kannst du bitte einen Eintrag da eintragen, dass ich im fiktiven "  # i18n-allow
-        "Testszenario ruhig bin und dass ich in Beispielstadt wohne?"  # i18n-allow
+        "Kannst du bitte einen Eintrag da eintragen, dass ich ziemlich "  # i18n-allow
+        "genervt bin und dass ich in Beispielstadt wohne?"  # i18n-allow
     )
 
     assert reply is not None
     await asyncio.sleep(0.05)
     assert len(tool.calls) == 1
     saved = tool.calls[0]["text"].lower()
-    assert "testszenario" in saved
+    assert "genervt" in saved
     assert "beispielstadt" in saved
     assert "was steht" not in saved
 
@@ -420,8 +420,8 @@ async def test_live_polite_travel_fact_reaches_wiki_before_local_action(
         fail_if_local_action_runs,
     )
     reply = await mgr.generate(
-        "Kannst du bitte mein Wiki-System eintragen, dass ich eine fiktive "  # i18n-allow
-        "Reise nach Beispielstadt plane?"  # i18n-allow
+        "Kannst du bitte mein Wiki-System eintragen, dass ich morgen nach "  # i18n-allow
+        "Beispielstadt reisen will?"  # i18n-allow
     )
 
     assert reply

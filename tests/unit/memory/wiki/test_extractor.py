@@ -202,8 +202,8 @@ async def test_happy_path_appends_parsed_facts(journal: CandidateJournal) -> Non
     ("incomplete_kind", "incomplete_subjects"),
     [
         ("place", ["user"]),
-        ("place", ["example-city"]),
-        ("other", ["user", "example-city"]),
+        ("place", ["beispielstadt"]),
+        ("other", ["user", "beispielstadt"]),
     ],
 )
 @pytest.mark.asyncio
@@ -215,7 +215,7 @@ async def test_residence_requires_named_place_subject_and_falls_back(
     incomplete = json.dumps(
         [
             {
-                "fact": "The fictional user lives in Example City.",
+                "fact": "The user lives in Beispielstadt.",
                 "kind": incomplete_kind,
                 "subjects": incomplete_subjects,
                 "evidence_turn_id": "residence-turn",
@@ -225,9 +225,9 @@ async def test_residence_requires_named_place_subject_and_falls_back(
     complete = json.dumps(
         [
             {
-                "fact": "The fictional user lives in Example City.",
+                "fact": "The user lives in Beispielstadt.",
                 "kind": "place",
-                "subjects": ["user", "example-city"],
+                "subjects": ["user", "beispielstadt"],
                 "evidence_turn_id": "residence-turn",
             }
         ]
@@ -240,7 +240,7 @@ async def test_residence_requires_named_place_subject_and_falls_back(
     )
 
     count = await extractor.extract_and_journal(
-        "The fictional user lives in Example City.",
+        "Ich wohne in Beispielstadt.",  # i18n-allow: synthetic residence fixture
         "Noted.",
         source_label="realtime:residence",
         turn_hash="residence-turn",
@@ -250,7 +250,7 @@ async def test_residence_requires_named_place_subject_and_falls_back(
     assert registry.tried == ["gemini", "openrouter"]
     row = journal.pending()[0]
     assert row.kind == "place"
-    assert row.subjects == ("user", "example-city")
+    assert row.subjects == ("user", "beispielstadt")
 
 
 @pytest.mark.asyncio

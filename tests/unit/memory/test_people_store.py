@@ -57,7 +57,7 @@ class TestFindByAlias:
         assert person.add_alias("DemoAlias") is True
         person.save()
 
-        # Frischer Store — liest vom Disk
+        # A fresh store reads the record from disk.
         fresh_store = PersonStore(workspace=person_store.workspace)
         found = fresh_store.find_by_alias("DemoAlias")
         assert found is not None

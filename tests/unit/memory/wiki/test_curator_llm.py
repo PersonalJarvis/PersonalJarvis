@@ -380,15 +380,15 @@ async def test_direct_residence_falls_back_until_graph_is_bidirectional(
     """A profile-only residence response cannot complete explicit ingest."""
     profile_without_link = (
         "---\ntype: entity\nentity_kind: person\nslug: owner-profile\n---\n\n"
-        "# Owner Profile\n\n## Facts\n\n- Lives in Example City.\n"
+        "# Owner Profile\n\n## Facts\n\n- Lives in Beispielstadt.\n"
     )
     profile_with_link = profile_without_link.replace(
-        "- Lives in Example City.",
-        "- Lives in [[entities/example-city|Example City]].",
+        "- Lives in Beispielstadt.",
+        "- Lives in [[entities/beispielstadt|Beispielstadt]].",
     )
     place_with_link = (
-        "---\ntype: entity\nentity_kind: place\nslug: example-city\n---\n\n"
-        "# Example City\n\n## Relationships\n\n"
+        "---\ntype: entity\nentity_kind: place\nslug: beispielstadt\n---\n\n"
+        "# Beispielstadt\n\n## Relationships\n\n"
         "- Residence of [[entities/owner-profile|Owner Profile]].\n"
     )
     profile_only = json.dumps(
@@ -410,7 +410,7 @@ async def test_direct_residence_falls_back_until_graph_is_bidirectional(
                 "reason": "link residence from profile",
             },
             {
-                "target": "entities/example-city.md",
+                "target": "entities/beispielstadt.md",
                 "operation": "create",
                 "new_body": place_with_link,
                 "reason": "create visible residence page",
@@ -427,7 +427,7 @@ async def test_direct_residence_falls_back_until_graph_is_bidirectional(
     )
 
     updates = await llm.propose_updates(
-            "In this fictional test, I live in Example City.",
+        "Ich wohne in Beispielstadt.",  # i18n-allow: synthetic residence fixture
         "tool:wiki-ingest",
         repo=FakeRepo(),
         vault=FakeVault(),
@@ -437,7 +437,7 @@ async def test_direct_residence_falls_back_until_graph_is_bidirectional(
     assert llm.provider_name == "openrouter"
     assert {update.target_path.as_posix() for update in updates} == {
         "entities/owner-profile.md",
-        "entities/example-city.md",
+        "entities/beispielstadt.md",
     }
 
 

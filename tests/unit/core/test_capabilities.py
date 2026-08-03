@@ -338,8 +338,8 @@ class TestSeedRegistry:
     def test_polite_wiki_system_write_resolves_to_ingest(self) -> None:
         """Wiki destination wins even when the fact mentions travel."""
         cap = self.reg.resolve_intent(
-            "Kannst du bitte mein Wiki-System eintragen, dass ich eine fiktive "  # i18n-allow
-            "Reise nach Beispielstadt plane?"  # i18n-allow
+            "Kannst du bitte mein Wiki-System eintragen, dass ich morgen nach "  # i18n-allow
+            "Beispielstadt reisen will?"  # i18n-allow
         )
 
         assert cap is not None

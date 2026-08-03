@@ -188,7 +188,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
     (vault_root / "index.md").write_text("# Index\n", encoding="utf-8")
     (vault_root / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
     (vault_root / "entities" / "example-user.md").write_text(
-        _entity_page("example-user", "Example User is a fictional test identity."),
+        _entity_page("example-user", "Example User is the test user."),
         encoding="utf-8",
     )
 
@@ -208,11 +208,11 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
     assert config.wiki_scheduler.consolidate_after_candidates == 1
 
     facts = [
-        "Fictional contact Example Friend moved to Example City last month.",
-        "Fictional contact Example Colleague works at the sample library.",
-        "The fictional test user owns a demo vessel named Sample One.",
-        "The fictional test user needs a short break right now.",
-        "The fictional test user owns a demo glider.",
+        "Example Friend moved to Example City last month.",
+        "Example Colleague works at the sample library.",
+        "Example User owns a vessel named Sample One.",
+        "Example User needs a short break right now.",
+        "Example User owns a demo glider.",
     ]
     extractions = [
         json.dumps(
@@ -385,7 +385,10 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
             _turn(
                 turn_id="openai-turn",
                 provider="openai-realtime",
-                text="Fictional contact Example Friend moved to Example City last month.",
+                text=(
+                    "My friend Example Friend moved to Example City last month "
+                    "and lives there now."
+                ),
                 session_id="call-1",
             )
         )
@@ -394,7 +397,10 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
             _turn(
                 turn_id="gemini-turn",
                 provider="gemini-live",
-                text="Fictional contact Example Colleague works at the sample library.",
+                text=(
+                    "My colleague Example Colleague works at the sample library "
+                    "during the week."
+                ),
                 session_id="call-2",
             )
         )
@@ -403,7 +409,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
             _turn(
                 turn_id="short-asset-turn",
                 provider="openai-realtime",
-                text="The fictional test user owns a demo vessel named Sample One.",
+                text="I own a vessel named Sample One.",
                 session_id="call-3",
             )
         )
@@ -412,7 +418,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
             _turn(
                 turn_id="transient-turn",
                 provider="gemini-live",
-                text="The fictional test user needs a short break right now.",
+                text="I need a short break right now.",
                 session_id="call-4",
             )
         )

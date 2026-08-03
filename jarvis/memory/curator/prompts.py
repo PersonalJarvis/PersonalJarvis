@@ -3,7 +3,7 @@
 Key design decisions in the prompt:
 
 1. **Subject disambiguation is at the very top** — the LLM sees it before
-   thinking about anything else. Includes a concrete fictional-contact example that
+   thinking about anything else. Includes a concrete synthetic-contact example that
    explicitly rules out the "naive-mem0" anti-pattern.
 
 2. **Do-Not-Record list** is enforced as a hard negative in the prompt —
@@ -63,7 +63,7 @@ the subject is `user`. If the user mentions a name, that name is a
 
 ## Examples — this must NOT be confused:
 
-**Input:** User says "My fictional partner ExampleContact works at X."
+**Input:** User says "My partner ExampleContact works at ExampleOrg."
 **Output:**
 - `{"subject": "person:ExampleContact", "cluster": "identity",
   "field": "name", "value": "ExampleContact", "relationship": "partner",
@@ -143,7 +143,7 @@ def build_extraction_prompt(user_text: str, assistant_text: str,
 
     We provide the LLM with context about already-known entities so that it
     can disambiguate more reliably. If it already knows, e.g., "The user is
-    called ExampleUser, ExampleContact is their fictional partner", it will
+    called ExampleUser, ExampleContact is their partner", it will
     not make the mistake shown in the Golden-Rule example.
     """
     ctx_lines = []
