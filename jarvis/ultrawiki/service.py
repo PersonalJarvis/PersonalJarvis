@@ -2075,6 +2075,46 @@ class UltraWikiService:
             store=self._require_store(), cfg=self._cfg, query=query, **kwargs
         )
 
+    async def word_search(self, word: str, **kwargs: Any) -> Any:
+        """Expand one word into its meaning-neighbourhood and retrieve passages.
+
+        Same seam as :meth:`search`: the retrieval module owns the logic and is
+        imported lazily (AP-26). Returns a
+        :class:`~jarvis.ultrawiki.word_search.WordSearchOutcome`, which carries
+        its own honest status instead of raising on a thin index.
+        """
+        await self.ensure_started()
+        from jarvis.ultrawiki import word_search as word_search_mod  # noqa: PLC0415 — lazy (AP-26)
+
+        return await word_search_mod.word_search(
+            self._require_store(), self._cfg, word, **kwargs
+        )
+
+    async def rebuild_lexicon(self) -> dict[str, Any]:
+        """Throw the word vocabulary away so the background pass recounts it.
+
+        The one repair for a ``doc_freq`` that has drifted after many deletions
+        and the way a user asks for a fresh vocabulary after changing the
+        embedding model. Deliberately manual: it costs the embedding calls of
+        rebuilding the whole term index.
+        """
+        await self.ensure_started()
+        store = self._require_store()
+        reset = getattr(store, "reset_lexicon", None)
+        if not callable(reset):
+            return {
+                "ok": False,
+                "reason": "this knowledge store has no word lexicon",
+                "lexicon": {},
+            }
+        await reset()
+        model, dim = await store.embedding_space()
+        return {
+            "ok": True,
+            "reason": "",
+            "lexicon": dict(await store.lexicon_counts(model=model, dim=dim)),
+        }
+
 
 # ---------------------------------------------------------------------------
 # Active-service seam

@@ -54,6 +54,7 @@ import logging
 import math
 import re
 import time
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -63,7 +64,15 @@ from jarvis.ultrawiki.types import SearchResult
 
 log = logging.getLogger(__name__)
 
-__all__ = ["hybrid_search", "search", "search_status", "ranking_settings"]
+__all__ = [
+    "hybrid_search",
+    "search",
+    "search_status",
+    "ranking_settings",
+    "embed_query_vector",
+    "fuse_legs",
+    "query_terms",
+]
 
 #: RRF smoothing constant (design doc 03: score(d) = sum 1 / (60 + rank)).
 RRF_K = 60
@@ -527,6 +536,77 @@ async def _bounded_vector_leg(
         return []
 
 
+async def embed_query_vector(
+    cfg: Any, query: str, *, timings: dict[str, float] | None = None
+) -> tuple[list[float] | None, str]:
+    """Embed one piece of QUERY text through the configured backend.
+
+    Returns ``(vector, reason)``. ``vector`` is ``None`` whenever the
+    embedding could not be produced, and ``reason`` then carries an honest,
+    credential-free English sentence — no caller of this function may fail
+    because embeddings are unavailable, they must degrade.
+
+    Shared by the vector leg and the word lexicon on purpose: both embed short
+    query text, both benefit from the same in-process cache, and both must see
+    the identical verdict about whether the slot is usable. ``timings``, when
+    given, records the call under ``vector_embed_ms``.
+    """
+    sink: dict[str, float] = timings if timings is not None else {}
+    ultrawiki = _uw(cfg)
+    provider = str(getattr(ultrawiki, "embedding_provider", "") or "").strip()
+    if not provider:
+        return None, (
+            "no embedding provider is configured — pick one in the UltraWiki "
+            "settings; keyword search keeps working"
+        )
+    from jarvis.ultrawiki.embeddings import (  # noqa: PLC0415 — lazy (AP-26)
+        DEFAULT_MODELS,
+        EMBEDDING_BACKENDS,
+        EmbeddingError,
+    )
+
+    factory = EMBEDDING_BACKENDS.get(provider)
+    if factory is None:
+        return None, f"unknown embedding provider {provider!r}"
+    model = _configured_model(ultrawiki, provider, DEFAULT_MODELS)
+    cache_key = _query_cache_key(provider, model, query)
+    cached = _cached_query_vector(cache_key)
+    if cached is not None:
+        log.debug("query vector served from the in-process cache")
+        return cached, ""
+    try:
+        vectors = await _timed(
+            "vector_embed_ms",
+            _embed_query_once(cache_key, factory(cfg), query, model),
+            sink,
+        )
+    except EmbeddingError as exc:
+        # Not swallowed: the provider's own honest sentence becomes this
+        # function's ``reason`` and every caller either logs it or shows it to
+        # the user. Logging here as well would print the same outage twice per
+        # search — the noise that hid a real one once.
+        return None, str(exc)
+    except Exception as exc:  # noqa: BLE001 — degrade, never fail the caller
+        log.warning(
+            "query embedding raised unexpectedly", exc_info=True
+        )
+        return None, f"the embedding provider failed ({type(exc).__name__})"
+    if not vectors or not vectors[0]:
+        return None, f"{provider} returned no query vector"
+    query_vector = list(vectors[0])
+    _remember_query_vector(cache_key, query_vector)
+    return query_vector, ""
+
+
+def query_vector_cache_key(cfg: Any, query: str) -> tuple[str, str, str]:
+    """The cache identity of one query text — also the ANN result cache key."""
+    ultrawiki = _uw(cfg)
+    provider = str(getattr(ultrawiki, "embedding_provider", "") or "").strip()
+    from jarvis.ultrawiki.embeddings import DEFAULT_MODELS  # noqa: PLC0415 — lazy (AP-26)
+
+    return _query_cache_key(provider, _configured_model(ultrawiki, provider, DEFAULT_MODELS), query)
+
+
 async def _vector_leg(
     store: Any,
     cfg: Any,
@@ -547,46 +627,13 @@ async def _vector_leg(
     a slow database.
     """
     sink: dict[str, float] = timings if timings is not None else {}
-    ultrawiki = _uw(cfg)
-    provider = str(getattr(ultrawiki, "embedding_provider", "") or "").strip()
-    if not provider:
+    if not str(getattr(_uw(cfg), "embedding_provider", "") or "").strip():
         return []
-    from jarvis.ultrawiki.embeddings import (  # noqa: PLC0415 — lazy (AP-26)
-        DEFAULT_MODELS,
-        EMBEDDING_BACKENDS,
-        EmbeddingError,
-    )
-
-    factory = EMBEDDING_BACKENDS.get(provider)
-    if factory is None:
-        log.warning("vector leg skipped: unknown embedding provider %r", provider)
-        return []
-    model = _configured_model(ultrawiki, provider, DEFAULT_MODELS)
-    cache_key = _query_cache_key(provider, model, query)
-    query_vector = _cached_query_vector(cache_key)
+    query_vector, reason = await embed_query_vector(cfg, query, timings=sink)
     if query_vector is None:
-        try:
-            vectors = await _timed(
-                "vector_embed_ms",
-                _embed_query_once(cache_key, factory(cfg), query, model),
-                sink,
-            )
-        except EmbeddingError as exc:
-            log.info("vector leg skipped: %s", exc)
-            return []
-        except Exception:  # noqa: BLE001 — degrade to keyword-only, never fail the search
-            log.warning(
-                "vector leg skipped: query embedding raised unexpectedly",
-                exc_info=True,
-            )
-            return []
-        if not vectors or not vectors[0]:
-            log.info("vector leg skipped: %s returned no query vector", provider)
-            return []
-        query_vector = list(vectors[0])
-        _remember_query_vector(cache_key, query_vector)
-    else:
-        log.debug("query vector served from the in-process cache")
+        log.info("vector leg skipped: %s", reason)
+        return []
+    cache_key = query_vector_cache_key(cfg, query)
     result_key = (*cache_key, str(area_id or ""))
     results, reason = await _timed(
         "vector_ann_ms",
@@ -762,22 +809,40 @@ def _fuse(
       having remembered something old.
     """
     knobs = ranking_settings(cfg)
-    weights = {
-        "event": knobs["event_weight"],
-        "keyword": knobs["keyword_weight"],
-        "vector": knobs["vector_weight"],
-    }
-    half_life = knobs["recency_half_life_days"]
+    return fuse_legs(
+        [
+            ("event", knobs["event_weight"], list(event_hits or [])),
+            ("keyword", knobs["keyword_weight"], keyword_hits),
+            ("vector", knobs["vector_weight"], vector_hits),
+        ],
+        cfg=cfg,
+        signals=signals,
+    )
+
+
+def fuse_legs(
+    legs: Sequence[tuple[str, float, list[SearchResult]]],
+    *,
+    cfg: Any = None,
+    signals: dict[str, float] | None = None,
+) -> list[SearchResult]:
+    """RRF-fuse an ORDERED list of ``(leg_name, weight, hits)`` triples.
+
+    The generalization of :func:`_fuse`, which is the three-leg hybrid case.
+    A caller with a different leg set — the word search fuses four: the exact
+    word, its meaning-neighbours, and two vector queries — gets the identical
+    ranking rules (one vote per item per leg, dense ranks, term-rarity signal,
+    age decay, recency tiebreak) instead of a second, subtly different fusion.
+
+    Leg ORDER decides the representative row when an item appears in several
+    legs, so the leg with the most informative snippet belongs first.
+    """
+    half_life = ranking_settings(cfg)["recency_half_life_days"]
 
     rrf_score: dict[int, float] = {}
     matched: dict[int, list[str]] = {}
     representative: dict[int, SearchResult] = {}
-    for leg_name, hits in (
-        ("event", list(event_hits or [])),
-        ("keyword", keyword_hits),
-        ("vector", vector_hits),
-    ):
-        weight = weights[leg_name]
+    for leg_name, weight, hits in legs:
         rank = 0
         for hit in hits:
             labels = matched.setdefault(hit.item_id, [])

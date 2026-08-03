@@ -512,6 +512,15 @@ export interface UltraWikiSearchHit {
   context: string[];
   /** When the ITEM was recorded; "" means identical to timestamp_utc. */
   recorded_utc: string;
+  /**
+   * WHICH passage of the item answered. An item is stored as many passages
+   * (migration 0001), and the vector leg knows which one matched — null means
+   * the leg genuinely cannot say (a keyword hit, an event card).
+   */
+  document_id: number | null;
+  chunk_index: number | null;
+  char_start: number | null;
+  char_end: number | null;
 }
 
 export interface UltraWikiSearchResponse {
@@ -540,6 +549,75 @@ export interface UltraWikiAskResponse extends UltraWikiSearchResponse {
   /** One-based indexes into `results`, matching inline `[n]` citations. */
   citations: number[];
   synthesis_error?: string;
+}
+
+// Mirrors jarvis/ultrawiki/types.py::WordSearchStatus. The parity test
+// prevents a backend state from silently rendering as a blank word search.
+export const ULTRAWIKI_WORD_SEARCH_STATUSES = [
+  "ok",
+  "empty_index",
+  "unknown_word",
+  "no_matches",
+  "neighbours_unavailable",
+] as const;
+
+export type UltraWikiWordSearchStatus =
+  (typeof ULTRAWIKI_WORD_SEARCH_STATUSES)[number];
+
+/** How the meaning-neighbours were derived (jarvis/ultrawiki/lexicon.py). */
+export type UltraWikiNeighbourSource = "vector" | "cooccurrence" | "none";
+
+/** Mirrors jarvis/ultrawiki/lexicon.py::TermNeighbour. */
+export interface UltraWikiTermNeighbour {
+  term: string;
+  /** 0-1, higher = closer. NOT comparable across neighbour_source values. */
+  similarity: number;
+  doc_freq: number;
+}
+
+/** Mirrors jarvis/ultrawiki/word_search.py::Passage. */
+export interface UltraWikiPassage {
+  document_id: number;
+  chunk_index: number;
+  /** Offsets into the item's body — enough to locate the span in the original. */
+  char_start: number;
+  char_end: number;
+  text: string;
+  /** Which of the searched words this span actually shows. */
+  terms: string[];
+  score: number;
+}
+
+/** Mirrors jarvis/ultrawiki/word_search.py::WordHit. */
+export interface UltraWikiWordHit {
+  item_id: number;
+  source_id: string;
+  title: string;
+  snippet: string;
+  permalink: string;
+  timestamp_utc: string;
+  score: number;
+  matched_by: string[];
+  passages: UltraWikiPassage[];
+}
+
+export interface UltraWikiWordSearchResponse {
+  word: string;
+  status: UltraWikiWordSearchStatus;
+  neighbour_source: UltraWikiNeighbourSource;
+  /** Honest sentence whenever something is degraded or empty; may be "". */
+  reason: string;
+  neighbours: UltraWikiTermNeighbour[];
+  results: UltraWikiWordHit[];
+  total: number;
+  /** Vocabulary size / embedded share / harvest progress; may be empty. */
+  lexicon: Partial<{
+    terms: number;
+    embedded_terms: number;
+    items: number;
+    passages: number;
+    scanned_items: number;
+  }>;
 }
 
 export interface UltraWikiActivateBody {
@@ -1258,6 +1336,38 @@ export function askUltraWiki(
     question,
     k,
   });
+}
+
+/**
+ * Word search: the ~20 terms nearest `word` by meaning, plus the passages
+ * that neighbourhood reaches. `neighbours = 0` uses the configured default.
+ */
+export function wordSearchUltraWiki(
+  word: string,
+  { k = 10, neighbours = 0, area }: {
+    k?: number;
+    neighbours?: number;
+    area?: string;
+  } = {},
+): Promise<UltraWikiWordSearchResponse> {
+  const params = new URLSearchParams({
+    word,
+    k: String(k),
+    neighbours: String(neighbours),
+  });
+  if (area) params.set("area", area);
+  return request<UltraWikiWordSearchResponse>(
+    `/api/ultrawiki/word-search?${params.toString()}`,
+  );
+}
+
+/** Throw the word vocabulary away so the background pass recounts it. */
+export function rebuildUltraWikiLexicon(): Promise<{
+  ok: boolean;
+  reason: string;
+  lexicon: UltraWikiWordSearchResponse["lexicon"];
+}> {
+  return postJson("/api/ultrawiki/lexicon/rebuild", {});
 }
 
 /** True when any sync job is still queued or running (drives poll cadence). */

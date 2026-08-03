@@ -23,6 +23,7 @@ __all__ = [
     "DocType",
     "ConsentState",
     "ExploreReason",
+    "WordSearchStatus",
     "IncrementalMode",
     "AuthKind",
     "RawItem",
@@ -99,6 +100,32 @@ class ExploreReason(StrEnum):
     NOTHING_IMPORTED = "nothing_imported"
     NOTHING_DISTILLED = "nothing_distilled"
     NO_ENTITIES = "no_entities"
+
+
+class WordSearchStatus(StrEnum):
+    """Why a word search returned what it returned.
+
+    A word search can come back empty for four unrelated reasons, and the
+    user cannot tell them apart by looking at an empty list: the store holds
+    nothing yet, the word is not in this corpus at all, the word IS known but
+    nothing it points at survived ranking, or the lexicon that turns a word
+    into its neighbourhood has not been built (no embedding provider, or the
+    background pass has not reached it). Each one has a different next step,
+    so the server names the cause rather than leaving the surface to guess.
+
+    ``OK`` means hits were returned. ``NEIGHBOURS_UNAVAILABLE`` is NOT a
+    failure: the search still ran on the word itself and may well have hits —
+    it only says the meaning-neighbourhood could not be computed.
+
+    Five-layer discipline (AP-4 / BUG-008): this is the CANONICAL list. The
+    TypeScript union in ``lib/ultrawikiApi.ts`` is parity-tested against it.
+    """
+
+    OK = "ok"
+    EMPTY_INDEX = "empty_index"
+    UNKNOWN_WORD = "unknown_word"
+    NO_MATCHES = "no_matches"
+    NEIGHBOURS_UNAVAILABLE = "neighbours_unavailable"
 
 
 class IncrementalMode(StrEnum):
@@ -254,6 +281,17 @@ class SearchResult:
     rerank_score: float | None = None  # absolute 0-10 grade, None = not reranked
     context: tuple[str, ...] = ()  # neighbouring sections/messages
     recorded_utc: str = ""  # when the ITEM was recorded; "" = same as timestamp_utc
+    # -- passage provenance --------------------------------------------------
+    # WHICH passage of the item answered (migration 0001: an item holds many
+    # documents, one per chunk of its text). The vector leg has always known
+    # this and threw it away, so a hit on page 40 of a file was reported as a
+    # hit on "the file" and the reader had to search it by hand. ``None``
+    # means the leg genuinely cannot say — a keyword hit before passage
+    # localization, an event card, a third-party store.
+    document_id: int | None = None
+    chunk_index: int | None = None
+    char_start: int | None = None
+    char_end: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

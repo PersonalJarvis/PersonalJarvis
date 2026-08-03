@@ -3204,6 +3204,27 @@
       "nothing_ingested_step_sync": "Starte dort „Jetzt synchronisieren“ und sieh zu, wie sich die Importleiste füllt.",
       "nothing_ingested_note": "Die Stichwortsuche funktioniert Sekunden nach der ersten Synchronisierung; semantische Antworten wachsen, während die Hintergrundverarbeitung einbettet und destilliert."
     },
+    "words": {
+      "tab": "Wörter",
+      "placeholder": "Ein Wort — z. B. ein Begriff, den du nicht genau benennen kannst",
+      "submit": "Finden",
+      "explainer": "Findet die Wörter, die deinem in der Bedeutung am nächsten sind, und sucht mit allen zusammen — so zählen auch Passagen, die dein Wort gar nicht enthalten.",
+      "idle": "Gib ein Wort ein, um die bedeutungsnächsten Wörter und die Passagen dahinter zu sehen.",
+      "searching": "Suche verwandte Wörter und die Passagen, die sie erreichen…",
+      "failed": "Wortsuche fehlgeschlagen: {0}",
+      "neighbours_meaning": "Der Bedeutung von „{0}“ am nächsten",
+      "neighbours_company": "Wörter, die häufig neben „{0}“ stehen",
+      "chip_hint_meaning": "{0} ähnlich · in {1} Einträgen gesehen · klicken, um nach diesem Wort zu suchen",
+      "chip_hint_company": "{0} charakteristisch · in {1} Einträgen gesehen · klicken, um nach diesem Wort zu suchen",
+      "passages_heading": "Passagen ({0})",
+      "span": "Passage {0} · Zeichen {1}–{2}",
+      "matched_terms": "enthält: {0}",
+      "lexicon_state": "Der Wortindex enthält bisher {0} von {1} Begriffen; er füllt sich im Hintergrund weiter.",
+      "leg_word": "dein Wort",
+      "leg_semantic": "Bedeutung",
+      "leg_related": "verwandtes Wort",
+      "leg_neighbourhood": "Umfeld"
+    },
     "slots": {
       "title": "Fähigkeits-Slots",
       "storage_title": "Speicher",

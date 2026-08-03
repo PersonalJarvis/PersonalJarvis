@@ -2353,6 +2353,25 @@ class UltraWikiConfig(BaseModel):
     # (the epsilon-sized recency tiebreak still settles exact ties).
     recency_half_life_days: float = 180.0
 
+    # -- word lexicon (jarvis/ultrawiki/lexicon.py) --------------------------
+    # The vocabulary index behind word search: every term the corpus uses,
+    # embedded into the SAME space as the passages, so one word can be
+    # expanded into the ~20 terms nearest it by meaning.
+    #
+    # false stops the background harvest and the term embedding. Word search
+    # keeps working — it falls back to neighbours derived from which words
+    # keep company with the query in real passages, which needs no provider
+    # at all — it is simply blunter. Existing rows are left untouched.
+    lexicon_enabled: bool = True
+    # Ceiling on how many terms ever carry a vector. The vocabulary itself is
+    # unbounded (a term still answers an exact lookup for free); this bounds
+    # the part that costs embedding calls, most-seen terms first. ~20 000
+    # covers the working vocabulary of a personal corpus in several languages
+    # at roughly the cost of embedding 20 000 very short texts, once.
+    lexicon_max_terms: int = 20000
+    # How many neighbours a word search asks for when the caller does not say.
+    word_search_neighbours: int = 20
+
 
 class WikiContextConfig(BaseModel):
     """Configuration for the wiki context injector (B5 Agent C).

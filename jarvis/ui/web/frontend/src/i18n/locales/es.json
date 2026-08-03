@@ -3204,6 +3204,27 @@
       "nothing_ingested_step_sync": "Pulsa «Sincronizar ahora» en esa fuente y observa cómo se llena la barra de importación.",
       "nothing_ingested_note": "La búsqueda por palabras clave funciona segundos después de la primera sincronización; las respuestas semánticas crecen mientras el proceso en segundo plano genera vectores y resúmenes."
     },
+    "words": {
+      "tab": "Palabras",
+      "placeholder": "Una palabra — p. ej. un concepto que no sabes nombrar con exactitud",
+      "submit": "Buscar",
+      "explainer": "Encuentra las palabras más cercanas en significado a la tuya y busca con todas ellas, de modo que también cuentan los pasajes que nunca escriben tu palabra.",
+      "idle": "Escribe una palabra para ver las más cercanas en significado y los pasajes a los que llevan.",
+      "searching": "Buscando palabras relacionadas y los pasajes que alcanzan…",
+      "failed": "La búsqueda de palabras falló: {0}",
+      "neighbours_meaning": "Más cercanas en significado a «{0}»",
+      "neighbours_company": "Palabras que acompañan a «{0}»",
+      "chip_hint_meaning": "{0} de parecido · vista en {1} elementos · haz clic para buscar esta palabra",
+      "chip_hint_company": "{0} de carácter propio · vista en {1} elementos · haz clic para buscar esta palabra",
+      "passages_heading": "Pasajes ({0})",
+      "span": "pasaje {0} · caracteres {1}–{2}",
+      "matched_terms": "muestra: {0}",
+      "lexicon_state": "El índice de palabras tiene {0} de {1} términos por ahora; sigue llenándose en segundo plano.",
+      "leg_word": "tu palabra",
+      "leg_semantic": "significado",
+      "leg_related": "palabra relacionada",
+      "leg_neighbourhood": "entorno"
+    },
     "slots": {
       "title": "Ranuras de capacidades",
       "storage_title": "Almacenamiento",

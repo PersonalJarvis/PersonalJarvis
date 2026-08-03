@@ -2440,6 +2440,73 @@ async def search_ultrawiki(
     return {"query": q, "results": rows, "total": len(rows)}
 
 
+@router.get(
+    "/word-search",
+    summary="Find a word's nearest meaning-neighbours and the passages they reach",
+)
+async def word_search_ultrawiki(
+    request: Request,
+    word: str = Query(..., min_length=1, description="A single word or short phrase"),
+    k: int = Query(default=10, ge=1, le=50, description="How many items to return"),
+    neighbours: int = Query(
+        default=0,
+        ge=0,
+        le=50,
+        description="Meaning-neighbours to expand with; 0 uses the configured default",
+    ),
+    area: str | None = Query(default=None, description="Optional area id filter"),
+) -> dict[str, Any]:
+    """Expand one word into the ~20 terms nearest it by meaning, then retrieve.
+
+    Unlike ``/search`` this answers a WORD, not a question: the neighbourhood
+    drives retrieval against the chunked documents, so hits point at the
+    passage that carries the vocabulary rather than at the whole item.
+    ``status`` names why the result looks the way it does — an empty list is
+    never left for the caller to interpret.
+    """
+    service = _require_active(request)
+    configured = _uw_cfg(request)
+    wanted = int(neighbours) or int(
+        getattr(configured, "word_search_neighbours", 20) or 20
+    )
+    outcome = await service.word_search(
+        word, k=k, neighbours=wanted, area_id=area
+    )
+    return {
+        "word": outcome.word,
+        "status": outcome.status,
+        "neighbour_source": outcome.neighbour_source,
+        "reason": outcome.reason,
+        "neighbours": [
+            dataclasses.asdict(neighbour) for neighbour in outcome.neighbours
+        ],
+        "results": [dataclasses.asdict(hit) for hit in outcome.hits],
+        "total": len(outcome.hits),
+        "lexicon": dict(outcome.lexicon),
+    }
+
+
+@router.post(
+    "/lexicon/rebuild",
+    summary="Throw the word vocabulary away and let it be recounted",
+    # Destructive to derived data and NOT free: refilling the lexicon costs
+    # one embedding call per batch of terms. The CLI must ask before running
+    # it, so the flag is declared even though the path matches no marker.
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def rebuild_ultrawiki_lexicon(request: Request) -> dict[str, Any]:
+    """Reset the word lexicon so the background pass harvests it from scratch.
+
+    The repair for a vocabulary whose frequencies have drifted after many
+    deletions, and the way to rebuild term vectors after an embedding-model
+    switch. Destructive only to derived data: nothing imported is touched, and
+    word search keeps answering through the co-occurrence path while the
+    lexicon refills.
+    """
+    service = _require_active(request)
+    return await service.rebuild_lexicon()
+
+
 @router.post(
     "/ask",
     summary="Answer a question from UltraWiki evidence with citations",

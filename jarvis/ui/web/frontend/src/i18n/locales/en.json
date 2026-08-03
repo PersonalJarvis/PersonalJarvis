@@ -3205,6 +3205,27 @@
       "nothing_ingested_step_sync": "Press Sync on that source and watch the import strip fill up.",
       "nothing_ingested_note": "Keyword search works seconds after the first sync; semantic answers grow as the background pipeline embeds and distills."
     },
+    "words": {
+      "tab": "Words",
+      "placeholder": "One word — e.g. a concept you cannot name exactly",
+      "submit": "Find",
+      "explainer": "Finds the words closest in meaning to yours, then searches with all of them — so passages count even when they never spell your word out.",
+      "idle": "Type a word to see the words nearest it in meaning, and the passages they lead to.",
+      "searching": "Looking for related words and the passages they reach…",
+      "failed": "Word search failed: {0}",
+      "neighbours_meaning": "Closest in meaning to “{0}”",
+      "neighbours_company": "Words that keep company with “{0}”",
+      "chip_hint_meaning": "{0} alike · seen in {1} items · click to search this word",
+      "chip_hint_company": "{0} characteristic · seen in {1} items · click to search this word",
+      "passages_heading": "Passages ({0})",
+      "span": "passage {0} · characters {1}–{2}",
+      "matched_terms": "shows: {0}",
+      "lexicon_state": "The word index holds {0} of {1} terms so far; it keeps filling in the background.",
+      "leg_word": "your word",
+      "leg_semantic": "meaning",
+      "leg_related": "related word",
+      "leg_neighbourhood": "neighbourhood"
+    },
     "slots": {
       "title": "Capability slots",
       "storage_title": "Storage",
