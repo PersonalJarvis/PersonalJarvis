@@ -10,3 +10,7 @@
 # (the working tree uses CLAUDE.md instead). Verified as the only dist-only file
 # on 2026-05-31; re-checked each run by the skill's reconcile diff.
 AGENTS.md
+
+# Preserve the reviewed public bug register while the local register's newer
+# live-session evidence remains withheld by the distribution denylist.
+docs/BUGS.md

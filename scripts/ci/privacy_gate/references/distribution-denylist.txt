@@ -219,6 +219,12 @@ docs/qa/**
 # identity-bearing transcript excerpts. Keep the diagnosis local; public bug
 # documentation must use synthetic reproductions instead.
 docs/reports/realtime-double-greeting-and-stall-deep-dive-2026-07-17.md
+docs/phantom-worker-aborted-deep-dive/README.md
+
+# The local bug register contains raw live-session forensics newer than the
+# reviewed public baseline. Preserve that public baseline until each new entry
+# has a synthetic reproduction.
+docs/BUGS.md
 
 # --- Internal handoff notes carrying the maintainer's private email (2026-06-30) ---
 # docs/handoffs/ holds internal review-answer handoffs. report-tutorial-review-

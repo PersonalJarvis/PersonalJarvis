@@ -117,6 +117,35 @@ scrub	019fa4bc-9110	019f0000-3003	private task id
 scrub	019fa4bc91100000	019f000030030000	private compact task id
 scrub	019fa4bc8d2b	019f00003004	private mission directory id
 scrub	019f5ca2-e30f	019f0000-3005	private mission result id
+scrub	019ea1da-4552-7ec4-8a88-ffba1773521e	019f0040-4001-7000-8000-000000000001	private phantom-worker mission id
+scrub	019ea1da	019f0040	short private phantom-worker mission reference
+scrub	2995997b	10000010	private voice-confirmation session reference
+scrub	1a3df62a	10000011	private orb session reference
+scrub	06a65611	10000012	private computer-use session reference
+scrub	57cc5f5f	10000013	private product-name session reference
+scrub	f6403ec0	10000014	private clarify-floor session reference
+scrub	fa9d4279	10000015	private screen-context session reference
+scrub	5edf0245	20000010	private tool-loop trace reference
+scrub	c82aa1a6	20000011	private capability trace reference
+scrub	af736681	20000012	private delegate turn reference
+scrub	019ea82e	019f0010	private provider-fallback mission prefix
+scrub	019ea830	019f0011	private provider-fallback mission prefix
+scrub	019ecb56	019f0012	private research mission prefix
+scrub	019ec761	019f0013	private informational mission prefix
+scrub	019f36e5	019f0014	private auth incident mission prefix
+scrub	019f38b1	019f0015	private auth incident mission prefix
+scrub	019e70a9	019f0020	private prompt incident mission prefix
+scrub	019e7e04	019f0021	private quality incident mission prefix
+scrub	019ec708	019f0022	private deliverable incident mission prefix
+scrub	019ef052	019f0023	private scope incident mission prefix
+
+# --- private-life and verbatim-transcript fixture cleanup -------------------
+scrub	move to the USA	move to Exampleland	private relocation scenario -> synthetic country
+scrub	USA-Umzug	Beispielland-Umzug	private relocation scenario -> synthetic country
+scrub	Melbourne	Exampleville	private relocation scenario -> synthetic city
+scrub	The exact final transcript of the live turn \(trace [0-9a-f]+, [0-9:]+\)\.	Synthetic transcript fixture matching the regression shape.	remove exact live-turn provenance
+scrub	_LIVE_GERMAN_TRANSCRIPT	_SYNTHETIC_GERMAN_TRANSCRIPT	synthetic transcript fixture identifier
+scrub	fire on the live turn	fire on the synthetic turn	synthetic transcript fixture description
 
 # --- private emails ---------------------------------------------------------
 # 2026-07-20: the two rows that spelled out the maintainer's private addresses
