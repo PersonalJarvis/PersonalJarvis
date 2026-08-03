@@ -16,6 +16,24 @@ carry a microphone.
 
 The module imports ``aiortc`` lazily so plugin discovery and boot stay free
 of it (AP-26), and degrades with an honest message when it is absent.
+
+Two properties are load-bearing and easy to break again:
+
+* **The outgoing track is paced against a monotonic DEADLINE, never with a
+  fixed per-frame sleep.** A media track that emits one 20 ms frame per
+  ``sleep(0.02)`` costs 20 ms PLUS scheduling latency every iteration, so it
+  transmits SLOWER than the microphone records. Measured on a stock Windows
+  desktop the naive loop ran one frame per 30.8 ms — 0.65x realtime, because
+  the default system timer granularity (~15.6 ms) rounds a 20 ms sleep up to
+  two ticks. The microphone queue then grows without bound, the far end hears
+  the user seconds late, and once the queue saturates a third of every
+  utterance is deleted outright — which no voice-activity detector can
+  endpoint. Deadline correction fixes that on every OS and needs no timer
+  tricks; raising the Windows timer resolution would only paper over it.
+* **The output stream always terminates.** Every consumer of
+  ``next_output_pcm`` must eventually see ``None``, whether the track ended,
+  the peer failed, or the endpoint was closed. A lost terminator is an
+  unbreakable hang, not a lost frame.
 """
 
 from __future__ import annotations
@@ -23,6 +41,8 @@ from __future__ import annotations
 import asyncio
 import fractions
 import logging
+import platform
+import sys
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -30,12 +50,41 @@ log = logging.getLogger(__name__)
 # Opus/WebRTC negotiate 48 kHz; Jarvis's realtime pipeline speaks 24 kHz mono.
 _WIRE_RATE = 48_000
 _WIRE_FRAME_SAMPLES = 960  # 20 ms
+_WIRE_FRAME_BYTES = _WIRE_FRAME_SAMPLES * 2  # int16 mono at the wire rate
 _JARVIS_RATE = 24_000
-# Bounded so a stalled consumer propagates backpressure instead of buffering
-# an unbounded amount of audio (~4 s at 20 ms frames).
-_SEND_QUEUE_MAX = 200
+# Outgoing microphone jitter budget, counted in CHUNKS as the capture layer
+# delivers them (~32 ms on the desktop path, 20 ms from a browser) — so 12
+# chunks is roughly 240-384 ms. That is enough to ride out ordinary scheduling
+# jitter and small enough that a genuinely stalled sender discards STALE audio
+# instead of handing the far end a microphone seconds out of date. The former
+# 200 was not a jitter budget at all: it was ~6.4 s of hidden lag that made a
+# broken sender look survivable.
+_SEND_QUEUE_MAX = 12
+# Incoming provider audio, counted in decoded 20 ms frames (~4 s). This side is
+# paced by the network rather than by a local clock, so the bound only has to
+# absorb a slow consumer.
 _RECV_QUEUE_MAX = 200
-_ICE_TIMEOUT_S = 15.0
+# Host candidates connect in about a second or not at all; a longer ceiling is
+# dead time in front of the retry that actually helps.
+_ICE_TIMEOUT_S = 8.0
+# A connected peer that never offers a media track has no usable media path.
+_REMOTE_TRACK_TIMEOUT_S = 5.0
+# Liveness check, NOT a turn timeout. ChatGPT-Live keeps its media track open
+# across the whole call and fills the gaps with silence, so the first frame
+# normally follows the handshake immediately — but a user who says nothing must
+# never be hung up on (there is no idle auto-hangup in this product), so the
+# bound is deliberately far longer than any handshake and no realistic opening
+# can reach it. The DETERMINISTIC protection against a dead media path is the
+# missing-track check in ``wait_connected``; this only catches a track that
+# attached and then stayed permanently mute. If a provider is ever observed to
+# withhold RTP entirely during silence, raise or remove this rather than
+# shortening it. Firing it ends the output stream honestly, which the adapter
+# reports as a RECOVERABLE error (the session rebuilds); it is never a hangup.
+_FIRST_AUDIO_TIMEOUT_S = 30.0
+# Pacing debt past this point is not jitter: the loop was blocked, and the
+# audio for those frames is simply gone. Re-baseline the clock instead of
+# bursting a second's worth of frames at the far end.
+_MAX_PACING_CATCHUP_S = 1.0
 # One line per 50 dropped frames == per second of lost audio at 20 ms frames.
 _DROP_LOG_EVERY = 50
 
@@ -70,14 +119,59 @@ def stun_ice_servers() -> list[Any]:
     return [RTCIceServer(urls="stun:stun.l.google.com:19302")]
 
 
+def _platform_has_no_webrtc_build() -> bool:
+    """Whether this architecture has no installable aiortc dependency chain."""
+    return sys.platform == "win32" and platform.machine().upper() in {
+        "ARM64",
+        "AARCH64",
+    }
+
+
+_import_failure_reported = False
+
+
 def webrtc_available() -> bool:
     """Whether an in-process WebRTC audio endpoint can be built here."""
+    global _import_failure_reported
     try:
         import aiortc  # noqa: F401, PLC0415 - capability probe only
         import av  # noqa: F401, PLC0415
     except Exception:  # noqa: BLE001 - a missing optional stack is a capability answer
+        # A boolean alone hid the far more common failure: a stack that IS
+        # installed and then fails to load its bundled libraries (a broken
+        # PyAV, a glibc mismatch on a slim image, a half-finished upgrade).
+        # Both cases used to produce the same "install the requirements"
+        # advice with nothing in the log to contradict it (AP-30). Reported
+        # once so a repeated probe cannot turn this into log spam.
+        if not _import_failure_reported:
+            _import_failure_reported = True
+            log.warning(
+                "In-process WebRTC audio is unavailable: the aiortc/PyAV media "
+                "stack could not be imported",
+                exc_info=True,
+            )
         return False
     return True
+
+
+def webrtc_unavailable_reason() -> str:
+    """Return an honest, user-facing reason, or an empty string when usable.
+
+    Exposed so a provider can degrade BEFORE advertising subscription voice,
+    rather than accepting a call and failing inside the handshake.
+    """
+    if webrtc_available():
+        return ""
+    if _platform_has_no_webrtc_build():
+        return (
+            "This computer's architecture has no supported WebRTC media build, "
+            "so ChatGPT subscription voice cannot run here. Every other voice "
+            "provider remains available."
+        )
+    return (
+        "In-process WebRTC audio needs the 'aiortc' package. Install Jarvis's "
+        "requirements to use ChatGPT subscription voice."
+    )
 
 
 class _PcmSenderTrack:
@@ -106,6 +200,7 @@ class _PcmSenderTrack:
 def _build_sender_track(base: Any) -> Any:
     """Return a live sender-track instance bound to ``aiortc``'s base class."""
     import numpy as np  # noqa: PLC0415
+    from aiortc.mediastreams import MediaStreamError  # noqa: PLC0415
     from av import AudioFrame  # noqa: PLC0415
 
     class _SenderTrack(base):  # type: ignore[misc, valid-type]
@@ -118,11 +213,55 @@ def _build_sender_track(base: Any) -> Any:
             )
             self._timestamp = 0
             self._residue = b""
+            # Wall-clock origin of frame 0. ``None`` until the first frame is
+            # produced, so the clock starts when the sender actually starts.
+            self._start: float | None = None
+            self._pacing_resyncs = 0
+
+        async def _pace(self) -> None:
+            """Sleep until this frame's wall-clock deadline, never longer.
+
+            Correcting against an absolute deadline is what keeps the track at
+            exactly 50 frames per second. A fixed ``sleep(20 ms)`` per frame
+            instead accumulates every scheduling delay — on a stock Windows
+            desktop that measured 30.8 ms per frame, i.e. a microphone
+            transmitted at 0.65x realtime.
+            """
+            loop = asyncio.get_running_loop()
+            now = loop.time()
+            if self._start is None:
+                self._start = now
+                return
+            delay = self._start + self._timestamp / _WIRE_RATE - now
+            if delay > 0:
+                await asyncio.sleep(delay)
+                return
+            behind = -delay
+            if behind > _MAX_PACING_CATCHUP_S:
+                # The loop was blocked for longer than any jitter budget. The
+                # microphone audio for that window is already gone; bursting
+                # its frames now would only shove a wall of stale speech at the
+                # far end. Re-baseline and say so — silence here is how a
+                # stalled event loop reads as "the assistant ignored me".
+                self._start = now - self._timestamp / _WIRE_RATE
+                self._pacing_resyncs += 1
+                log.warning(
+                    "Realtime WebRTC sender fell %.2fs behind wall clock "
+                    "(resync #%d); that much microphone audio is lost",
+                    behind,
+                    self._pacing_resyncs,
+                )
+            # Emit immediately so an ordinary backlog drains, but yield first:
+            # a catch-up burst must not starve the rest of the loop.
+            await asyncio.sleep(0)
 
         async def recv(self) -> Any:
-            # One 20 ms frame per tick, at wall clock.
-            await asyncio.sleep(_WIRE_FRAME_SAMPLES / _WIRE_RATE)
-            needed = _WIRE_FRAME_SAMPLES * 2  # int16 mono at the wire rate
+            # aiortc's contract: a stopped track raises instead of producing
+            # frames forever (see aiortc.mediastreams.AudioStreamTrack).
+            if self.readyState != "live":
+                raise MediaStreamError
+            await self._pace()
+            needed = _WIRE_FRAME_BYTES
             while len(self._residue) < needed:
                 try:
                     chunk = self.queue.get_nowait()
@@ -193,12 +332,15 @@ class _MicResampler:
 class RealtimeWebRtcAudioEndpoint:
     """A Python-owned WebRTC peer that carries realtime audio both ways."""
 
-    def __init__(self, ice_servers: list[Any] | None = None) -> None:
-        if not webrtc_available():
-            raise WebRtcTransportUnavailable(
-                "In-process WebRTC audio needs the 'aiortc' package. Install "
-                "Jarvis's requirements to use ChatGPT subscription voice."
-            )
+    def __init__(
+        self,
+        ice_servers: list[Any] | None = None,
+        *,
+        first_audio_timeout_s: float = _FIRST_AUDIO_TIMEOUT_S,
+    ) -> None:
+        unavailable = webrtc_unavailable_reason()
+        if unavailable:
+            raise WebRtcTransportUnavailable(unavailable)
         from aiortc import RTCConfiguration, RTCPeerConnection  # noqa: PLC0415
 
         # Host candidates only by DEFAULT. We are the offerer and the provider's
@@ -219,12 +361,36 @@ class RealtimeWebRtcAudioEndpoint:
         self._reader_task: asyncio.Task[None] | None = None
         self._mic_resampler = _MicResampler()
         self._outgoing_drops = 0
+        self._first_audio_timeout_s = max(0.1, float(first_audio_timeout_s))
         self._closed = False
+        # The output stream is terminated exactly once, and that fact outlives
+        # the queue: a consumer must never be able to wait for a terminator
+        # that a full queue swallowed.
+        self._ended = False
+        self._remote_track_seen = asyncio.Event()
+        self._connection_changed = asyncio.Event()
 
         @self._pc.on("track")
         def _on_track(track: Any) -> None:  # pragma: no cover - callback wiring
             if track.kind != "audio":
                 return
+            if self._closed:
+                log.info(
+                    "Ignoring a realtime WebRTC audio track offered after the "
+                    "endpoint was closed"
+                )
+                return
+            if self._reader_task is not None and not self._reader_task.done():
+                # A second reader would interleave a SECOND producer into one
+                # PCM stream, and whichever track ended first would terminate
+                # the output while the other was still live. Only the first
+                # audio track is the call.
+                log.warning(
+                    "Realtime WebRTC peer offered another audio track while one "
+                    "is already being read; ignoring the extra track"
+                )
+                return
+            self._remote_track_seen.set()
             self._reader_task = asyncio.create_task(
                 self._drain_remote(track), name="codex-realtime-rtp-reader"
             )
@@ -232,9 +398,19 @@ class RealtimeWebRtcAudioEndpoint:
         @self._pc.on("connectionstatechange")
         async def _on_state() -> None:  # pragma: no cover - callback wiring
             state = self._pc.connectionState
-            if state in {"failed", "closed"}:
-                log.warning("Realtime WebRTC peer entered state %s", state)
-                await self._finish_stream()
+            self._connection_changed.set()
+            if state == "failed":
+                log.warning("Realtime WebRTC peer connection failed")
+                # A failed peer never recovers, and leaving it open keeps the
+                # ICE agent, the DTLS transport and the outgoing Opus sender
+                # running for the life of the process.
+                await self.close()
+            elif state == "closed":
+                if not self._closed:
+                    log.warning("The realtime WebRTC peer was closed by the far end")
+                else:
+                    log.debug("Realtime WebRTC peer closed")
+                self._end_stream()
 
     async def _drain_remote(self, track: Any) -> None:
         """Decode the remote track into 24 kHz mono PCM for the pipeline."""
@@ -244,9 +420,32 @@ class RealtimeWebRtcAudioEndpoint:
             format="s16", layout="mono", rate=_JARVIS_RATE
         )
         dropped = 0
+        first_frame_pending = True
         try:
             while True:
-                frame = await track.recv()
+                if first_frame_pending:
+                    # A track that attaches and then stays permanently mute is
+                    # indistinguishable from a healthy call until somebody
+                    # bounds the wait. Only the FIRST frame is bounded: the
+                    # provider keeps this track open across the whole call and
+                    # fills the gaps with silence, but a mid-call pause must
+                    # never be mistaken for a dead transport — an idle call is
+                    # not a broken one.
+                    try:
+                        frame = await asyncio.wait_for(
+                            track.recv(), timeout=self._first_audio_timeout_s
+                        )
+                    except TimeoutError:
+                        log.warning(
+                            "Realtime WebRTC remote track delivered no audio "
+                            "within %.1fs; the assistant voice cannot arrive on "
+                            "this media path",
+                            self._first_audio_timeout_s,
+                        )
+                        return
+                    first_frame_pending = False
+                else:
+                    frame = await track.recv()
                 for resampled in resampler.resample(frame):
                     pcm = bytes(resampled.planes[0])[: resampled.samples * 2]
                     if not pcm:
@@ -293,15 +492,44 @@ class RealtimeWebRtcAudioEndpoint:
                     "total on a full receive queue",
                     dropped,
                 )
-            await self._finish_stream()
+            self._end_stream()
+            # The remote track ending IS the end of this call's media. Holding
+            # the peer open past it leaves the outgoing sender transmitting
+            # silence for the life of the process.
+            await self.close()
 
-    async def _finish_stream(self) -> None:
-        if self._closed:
+    def _end_stream(self) -> None:
+        """Terminate the output stream exactly once, without fail.
+
+        Synchronous and idempotent on purpose: every caller — the reader's
+        exit, a failed peer, ``close()`` — must be able to end the stream
+        without awaiting anything, and a consumer parked in
+        ``next_output_pcm`` must always be released.
+        """
+        if self._ended:
             return
+        self._ended = True
+        if self._recv_queue.full():
+            # A full queue is exactly the situation a terminator matters most
+            # in: the consumer is behind, which is why the track is ending.
+            # Dropping the marker here (as this used to, with a comment
+            # claiming the consumer already had one) is an unbreakable hang.
+            # Make room instead, and say what the frame cost.
+            log.warning(
+                "Realtime WebRTC receive queue was full at end of stream; "
+                "dropping one audio frame so the end-of-stream marker cannot "
+                "be lost"
+            )
+            with_suppress_get(self._recv_queue)
         try:
             self._recv_queue.put_nowait(None)
-        except asyncio.QueueFull:  # noqa: S110 - the consumer already has a terminator queued
-            pass
+        except asyncio.QueueFull:  # pragma: no cover - a bounded queue always has room after a get
+            # ``_ended`` still releases every FUTURE call; only a consumer
+            # already parked in ``get()`` could miss this, so it must be loud.
+            log.error(
+                "Realtime WebRTC end-of-stream marker could not be queued; a "
+                "waiting audio consumer may not be released"
+            )
 
     async def create_offer(self) -> str:
         """Return a fully gathered offer SDP for the provider handshake."""
@@ -317,14 +545,29 @@ class RealtimeWebRtcAudioEndpoint:
     async def apply_answer(self, answer_sdp: str) -> None:
         from aiortc import RTCSessionDescription  # noqa: PLC0415
 
+        if "m=audio" not in answer_sdp:
+            # Without an audio media section there is no track to receive and
+            # no destination for the microphone — a fact worth failing on now
+            # rather than discovering as permanent silence. Deliberately NOT a
+            # media-path failure: a different ICE configuration cannot add a
+            # media section, so this must fail fast instead of buying a second
+            # full handshake.
+            raise WebRtcTransportUnavailable(
+                "The realtime WebRTC answer carries no audio media section."
+            )
         await self._pc.setRemoteDescription(
             RTCSessionDescription(sdp=answer_sdp, type="answer")
         )
 
-    async def wait_connected(self, timeout_s: float = _ICE_TIMEOUT_S) -> None:
-        """Block until the media path is usable, or fail honestly."""
-        deadline = asyncio.get_running_loop().time() + timeout_s
+    async def _wait_for_connection(self, timeout_s: float) -> None:
+        """Await the peer's connected state without polling."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
         while True:
+            # Clear BEFORE reading the state: a transition that lands between
+            # the read and the clear would otherwise be erased, and the wait
+            # would then sit out the full timeout on an already-connected peer.
+            self._connection_changed.clear()
             state = self._pc.connectionState
             if state == "connected":
                 return
@@ -332,11 +575,48 @@ class RealtimeWebRtcAudioEndpoint:
                 raise WebRtcMediaPathUnavailable(
                     f"The realtime WebRTC media path {state}."
                 )
-            if asyncio.get_running_loop().time() >= deadline:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
                 raise WebRtcMediaPathUnavailable(
                     "The realtime WebRTC media path did not connect in time."
                 )
-            await asyncio.sleep(0.05)
+            try:
+                await asyncio.wait_for(
+                    self._connection_changed.wait(), timeout=remaining
+                )
+            except TimeoutError:
+                # Re-checked at the top of the loop so a state that changed
+                # while we were arming the wait is never missed.
+                continue
+
+    async def wait_connected(
+        self,
+        timeout_s: float = _ICE_TIMEOUT_S,
+        *,
+        track_timeout_s: float = _REMOTE_TRACK_TIMEOUT_S,
+    ) -> None:
+        """Block until the media path is usable, or fail honestly.
+
+        "Usable" means BOTH that the peer connected and that the far end
+        actually offered an audio track. ICE and DTLS coming up proves only
+        that packets can flow; a connected peer with no media track is a
+        session that looks healthy and is mute in both directions forever.
+        Both failures raise :class:`WebRtcMediaPathUnavailable`, which is a
+        handshake verdict — the caller may retry with a different ICE
+        configuration.
+        """
+        await self._wait_for_connection(timeout_s)
+        if self._remote_track_seen.is_set():
+            return
+        try:
+            await asyncio.wait_for(
+                self._remote_track_seen.wait(), timeout=max(0.0, track_timeout_s)
+            )
+        except TimeoutError:
+            raise WebRtcMediaPathUnavailable(
+                "The realtime WebRTC peer connected but offered no audio "
+                f"track within {track_timeout_s:.1f}s."
+            ) from None
 
     def send_pcm(self, pcm: bytes, sample_rate: int) -> None:
         """Queue one mono int16 PCM chunk for the outgoing media track."""
@@ -371,15 +651,29 @@ class RealtimeWebRtcAudioEndpoint:
 
     async def next_output_pcm(self) -> bytes | None:
         """Return the next decoded 24 kHz chunk, or ``None`` at end of stream."""
+        if self._ended and self._recv_queue.empty():
+            # The terminator has already been consumed; every later call
+            # answers from the flag instead of waiting for a second one.
+            return None
         return await self._recv_queue.get()
 
     async def close(self) -> None:
         if self._closed:
             return
         self._closed = True
+        # Release every waiting consumer BEFORE the peer teardown: closing the
+        # endpoint and ending its output stream are one fact, and a consumer
+        # parked in ``next_output_pcm`` used to wait here forever.
+        self._end_stream()
         task = self._reader_task
         self._reader_task = None
-        if task is not None and not task.done():
+        # The reader itself calls ``close()`` when its track ends; a task may
+        # never await its own completion.
+        if (
+            task is not None
+            and task is not asyncio.current_task()
+            and not task.done()
+        ):
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         try:
@@ -402,4 +696,5 @@ __all__ = [
     "WebRtcTransportUnavailable",
     "stun_ice_servers",
     "webrtc_available",
+    "webrtc_unavailable_reason",
 ]
