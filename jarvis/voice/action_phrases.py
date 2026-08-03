@@ -247,6 +247,17 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "That didn't work: {reason}",
         "es": "Eso no funcionó: {reason}",
     },
+    # The realtime provider yielded control for an action, but this session has
+    # no executor to hand it to (no callable supervisor brain, or the request
+    # carried no recognizable user text). Transports that cannot declare tools
+    # natively — the ChatGPT-subscription voice among them — reach actions ONLY
+    # through that handoff, so the gap used to end the whole call. A dropped
+    # action is a degraded turn; it is not a reason to hang up on the user.
+    "actions_unavailable": {
+        "de": "Aktionen gehen gerade nicht, aber wir können weiter reden.",  # i18n-allow
+        "en": "I can't run actions right now, but we can keep talking.",
+        "es": "Ahora mismo no puedo ejecutar acciones, pero podemos seguir hablando.",
+    },
     # A local action that ran past its short deadline. Replaces the old
     # tool-name-prefixed "X timeout after 3s" machine string (which leaked the
     # internal tool name) with a plain, honest sentence.

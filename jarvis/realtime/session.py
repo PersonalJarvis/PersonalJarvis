@@ -1093,6 +1093,22 @@ class RealtimeVoiceSession:
                 "so actions remain functional",
                 session_id,
             )
+        if not direct_tools_supported and not self._delegate_enabled:
+            # The one combination in which a capability-limited transport has
+            # NO action path at all: it cannot receive tool declarations, and
+            # the deterministic delegate that would stand in for them is not
+            # available either. The conversation still works; every handoff
+            # will be declined out loud. Say so once, here, rather than
+            # letting each declined action look like an isolated glitch.
+            log.warning(
+                "realtime[%s] a configured provider cannot declare tools "
+                "natively AND no deterministic delegate is available "
+                "(callable brain: %s) — actions will be declined for the "
+                "whole call. A tool bridge cannot stand in: this transport "
+                "has no way to receive the declarations.",
+                session_id,
+                bool(callable(brain)),
+            )
         if self._delegate_enabled:
             log.info(
                 "realtime[%s] tool mode: delegate — one action function "
@@ -2478,11 +2494,16 @@ class RealtimeVoiceSession:
                         )
                     await self._ensure_turn_started()
                     if not self._delegate_enabled or not self._last_user_text:
-                        await self._fail_terminally(
-                            "Realtime provider requested a supervised handoff, "
-                            "but no deterministic Jarvis delegate is available."
+                        # A transport that cannot declare tools natively reaches
+                        # EVERY action through this one event, so this gap used
+                        # to hang up on the user mid-sentence. Losing an action
+                        # degrades a turn; it must not cost the conversation.
+                        await self._decline_provider_handoff(
+                            "no deterministic Jarvis delegate is available"
+                            if not self._delegate_enabled
+                            else "the handoff carried no recognizable user request"
                         )
-                        break
+                        continue
                     self._delegate_required_for_turn = True
                     self._response_requested_for_turn = True
                     self._drop_provider_output_until_new_response = True
@@ -4997,6 +5018,50 @@ class RealtimeVoiceSession:
             self._run_delegate_bridge(turn_id, turn_state),
             name=f"rt-delegate-bridge-{self.session_id}",
         )
+
+    async def _decline_provider_handoff(self, reason: str) -> None:
+        """Speak an honest refusal for a handoff this session cannot execute.
+
+        A provider whose ``supports_direct_tools`` capability is False reaches
+        actions ONLY through the handoff control event, so an unavailable
+        executor used to end the whole call. Say what is missing and keep
+        talking instead (AP-30): the user still has a working conversation,
+        and the surface leaves PROCESSING either way.
+        """
+        from jarvis.voice.action_phrases import action_phrase  # noqa: PLC0415
+
+        log.warning(
+            "realtime[%s] provider handoff declined: %s",
+            self.session_id,
+            reason,
+        )
+        spoken = action_phrase("actions_unavailable", self._language)
+        send_speech = getattr(self._session, "send_speech", None)
+        if callable(send_speech):
+            try:
+                # Provider-voiced text must NOT estimate its playback horizon —
+                # its real audio advances the echo guard on the way out.
+                self._register_spoken_reference(spoken)
+                await send_speech(spoken)
+                if getattr(self._session, "direct_speech_is_authoritative", False):
+                    # Trusted verbatim speech carries no model transcript for
+                    # the scrub gate to vet; without this the refusal is
+                    # dropped at the turn boundary and the user hears silence.
+                    self._gate.trust_direct_speech()
+                    for chunk in self._gate.release_available():
+                        await self._emit_audio(chunk)
+                return
+            except Exception:  # noqa: BLE001 — the surface still speaks it
+                log.warning(
+                    "realtime[%s] handoff refusal could not be voiced by the "
+                    "provider; falling back to the surface",
+                    self.session_id,
+                    exc_info=True,
+                )
+        self._register_spoken_reference(spoken, estimate_playback=True)
+        await self._send_json(self._surface_speech_message(spoken))
+        await self._send_json({"type": "turn_complete"})
+        await self._publish_turn_completed()
 
     async def _await_provider_response_boundary(
         self, turn_state: _DelegateTurnState

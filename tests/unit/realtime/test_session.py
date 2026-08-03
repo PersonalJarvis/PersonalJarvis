@@ -2050,6 +2050,53 @@ async def test_capability_forced_delegate_executes_provider_handoff():
 
 
 @pytest.mark.asyncio
+async def test_handoff_without_a_delegate_declines_instead_of_ending_the_call():
+    """A missing executor must cost the ACTION, never the conversation.
+
+    A transport that cannot declare tools natively (the ChatGPT-subscription
+    voice) reaches every action through ``handoff_requested``. When no
+    deterministic delegate is available the session used to fail terminally —
+    it hung up mid-sentence because one action could not be routed. The honest
+    behaviour is to say so out loud and keep the call.
+    """
+
+    class NoDirectToolsProvider(FakeProvider):
+        supports_direct_tools = False
+
+    provider = NoDirectToolsProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Open the settings view.",
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="handoff_requested",
+                text="Open the settings view.",
+                handoff_id="handoff-no-delegate",
+            ),
+            RealtimeEvent(type="output_transcript_delta", text="Still here."),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    jsons: list[dict] = []
+    # No brain => no deterministic delegate, and this transport cannot receive
+    # tool declarations either, so the handoff has nowhere to go.
+    sess = _session(provider, brain=None, tool_mode="delegate", jsons=jsons)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    assert not [item for item in jsons if item.get("type") == "provider_error"]
+    spoken = [item for item in jsons if item.get("type") == "error_spoken"]
+    assert spoken, "the declined handoff must be voiced, not swallowed"
+    assert "action" in spoken[0]["text"].lower()
+    # The stream kept being consumed after the refusal.
+    assert any(item.get("type") == "turn_complete" for item in jsons)
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_provider_eof_waits_for_supervised_delegate_delivery():
     """A finite provider stream must not abandon its accepted handoff."""
 
