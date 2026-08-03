@@ -1133,6 +1133,39 @@ _HEADLESS_LOGIN_REASON: Final = (
     "Interactive subscription-voice login is unavailable on headless Linux. "
     "Run Jarvis on a desktop to connect this dedicated profile."
 )
+_NO_LOGIN_TERMINAL_REASON: Final = (
+    "Interactive subscription-voice login needs a terminal emulator this "
+    "desktop does not provide. Install one (for example gnome-terminal, "
+    "konsole, xfce4-terminal, kitty or alacritty) and connect again."
+)
+
+
+def _headless_linux() -> bool:
+    """A Linux host with no graphical session at all."""
+    return (
+        sys.platform.startswith("linux")
+        and not os.environ.get("DISPLAY")
+        and not os.environ.get("WAYLAND_DISPLAY")
+    )
+
+
+def _linux_login_terminal_missing() -> bool:
+    """True on a graphical Linux host with no terminal able to host the login.
+
+    Separate from the headless check: a screen exists, so the old probe said
+    "login_required" and the card offered a Connect that could only ever fail.
+    """
+    if not sys.platform.startswith("linux") or _headless_linux():
+        return False
+    try:
+        from jarvis.codex_auth import (  # noqa: PLC0415
+            linux_login_terminal_available,
+        )
+
+        return not linux_login_terminal_available()
+    except Exception:  # noqa: BLE001 - an unknown probe must not block a login
+        log.debug("Linux login-terminal probe failed", exc_info=True)
+        return False
 
 
 def _login_required_reason_code() -> CodexSubscriptionReasonCode:
@@ -1141,13 +1174,11 @@ def _login_required_reason_code() -> CodexSubscriptionReasonCode:
     On a headless Linux host the interactive browser login is impossible, so
     inviting it would only produce an error toast after the click — the
     pre-click truth there is ``lifecycle_unavailable`` (visible degradation,
-    CLAUDE.md §3). An EXISTING login still reports ready on such hosts.
+    CLAUDE.md §3). The same holds for a graphical Linux desktop that ships no
+    terminal able to host the login for its full lifetime. An EXISTING login
+    still reports ready on such hosts.
     """
-    if (
-        sys.platform.startswith("linux")
-        and not os.environ.get("DISPLAY")
-        and not os.environ.get("WAYLAND_DISPLAY")
-    ):
+    if _headless_linux() or _linux_login_terminal_missing():
         return "lifecycle_unavailable"
     return "login_required"
 
@@ -1161,7 +1192,11 @@ def _login_required_state(reason: str) -> tuple[str, CodexSubscriptionReasonCode
     """
     code = _login_required_reason_code()
     if code == "lifecycle_unavailable":
-        reason = _HEADLESS_LOGIN_REASON
+        reason = (
+            _HEADLESS_LOGIN_REASON
+            if _headless_linux()
+            else _NO_LOGIN_TERMINAL_REASON
+        )
     return reason, code
 
 
@@ -3811,15 +3846,12 @@ def start_codex_subscription_login(
 
     from jarvis.codex_auth import CodexAuthService
 
-    if (
-        sys.platform.startswith("linux")
-        and not os.environ.get("DISPLAY")
-        and not os.environ.get("WAYLAND_DISPLAY")
-    ):
-        raise CodexSubscriptionUnavailable(
-            "Interactive subscription-voice login is unavailable on headless Linux. "
-            "Run Jarvis on a desktop to connect this dedicated profile."
-        )
+    if _headless_linux():
+        raise CodexSubscriptionUnavailable(_HEADLESS_LOGIN_REASON)
+    if _linux_login_terminal_missing():
+        # Same pre-click truth the card shows, so the click and the card can
+        # never disagree about why this desktop cannot host the login.
+        raise CodexSubscriptionUnavailable(_NO_LOGIN_TERMINAL_REASON)
     with _subscription_login_lock:
         _await_status_probe_completion_locked()
         if _subscription_profile_mutating or _subscription_login_in_flight:

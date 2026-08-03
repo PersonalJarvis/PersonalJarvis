@@ -37,6 +37,11 @@ _ALLOWED_ENVIRONMENT_NAMES = frozenset(
         "CODEX_HOME",
         "CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED",
         "COMSPEC",
+        # Graphical-session handles, so the login child can open the OAuth page
+        # itself on Linux exactly as it already does on Windows and macOS.
+        # Session handles only — never a credential, proxy or keyring name.
+        "DBUS_SESSION_BUS_ADDRESS",
+        "DISPLAY",
         "HOME",
         "LANG",
         "LOCALAPPDATA",
@@ -53,7 +58,10 @@ _ALLOWED_ENVIRONMENT_NAMES = frozenset(
         "TMP",
         "TMPDIR",
         "USERPROFILE",
+        "WAYLAND_DISPLAY",
         "WINDIR",
+        "XAUTHORITY",
+        "XDG_RUNTIME_DIR",
     }
 )
 

@@ -180,15 +180,54 @@ def test_guardian_rejects_non_allowlisted_environment_without_acknowledging(
     assert not acknowledgement.exists()
 
 
-def test_guardian_rejects_desktop_session_variables_from_child_environment(
+def test_guardian_forwards_graphical_session_handles_to_the_child(
     tmp_path: Path,
 ) -> None:
+    """Codex must be able to open the OAuth page itself on Linux.
+
+    Windows (ShellExecute) and macOS (``open``) always could; the login child
+    on Linux could not, because the display handles the guardian itself has
+    were stripped from the environment it hands to Codex. The user was left
+    copying a device-code URL out of a terminal — a Linux-only degradation of
+    the same flow. These are session handles, never credentials.
+    """
+    profile = tmp_path / "profile"
+    profile.mkdir()
+
+    environment = codex_login_guard._strict_environment(
+        json.dumps(
+            {
+                "CODEX_HOME": str(profile),
+                "DISPLAY": ":0",
+                "WAYLAND_DISPLAY": "wayland-0",
+                "XAUTHORITY": "/run/user/1000/gdm/Xauthority",
+                "XDG_RUNTIME_DIR": "/run/user/1000",
+                "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+            }
+        )
+    )
+
+    assert environment["DISPLAY"] == ":0"
+    assert environment["WAYLAND_DISPLAY"] == "wayland-0"
+    assert environment["XDG_RUNTIME_DIR"] == "/run/user/1000"
+
+
+def test_guardian_still_rejects_unapproved_session_variables(
+    tmp_path: Path,
+) -> None:
+    """Admitting the display handles must not widen the allowlist generally."""
     profile = tmp_path / "profile"
     profile.mkdir()
 
     with pytest.raises(ValueError, match="not approved"):
         codex_login_guard._strict_environment(
-            json.dumps({"CODEX_HOME": str(profile), "DISPLAY": ":0"})
+            json.dumps(
+                {
+                    "CODEX_HOME": str(profile),
+                    "DISPLAY": ":0",
+                    "XDG_CURRENT_DESKTOP": "GNOME",
+                }
+            )
         )
 
 

@@ -766,3 +766,77 @@ def test_logout_returns_false_when_binary_missing(monkeypatch: pytest.MonkeyPatc
     ok, err = svc.logout_blocking()
     assert ok is False
     assert err
+
+
+@pytest.mark.parametrize(
+    ("available", "expected_flags"),
+    [
+        ("gnome-terminal", ["--wait", "--"]),
+        ("konsole", ["--nofork", "-e"]),
+        ("xfce4-terminal", ["--disable-server", "-x"]),
+        ("mate-terminal", ["--disable-factory", "-x"]),
+        ("tilix", ["--new-process", "-e"]),
+        ("terminator", ["--no-dbus", "-x"]),
+        ("kitty", []),
+        ("alacritty", ["-e"]),
+        ("wezterm", ["start", "--"]),
+        ("foot", []),
+        ("xterm", ["-e"]),
+    ],
+)
+def test_linux_login_accepts_every_supported_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+    available: str,
+    expected_flags: list[str],
+) -> None:
+    """A desktop without GNOME/KDE/xterm could not connect at all.
+
+    The old list held exactly three names, so XFCE, MATE, Cinnamon and anyone
+    on kitty/alacritty/foot/wezterm hit a hard "no supported desktop terminal"
+    while the Providers card still offered the Connect button.
+    """
+    import jarvis.codex_auth as codex_mod
+
+    monkeypatch.setattr(codex_mod.sys, "platform", "linux")
+    monkeypatch.setattr(
+        codex_mod.shutil,
+        "which",
+        lambda name: f"/usr/bin/{available}" if name == available else None,
+    )
+
+    resolved, flags = codex_mod._resolve_linux_login_terminal()
+
+    assert Path(resolved).name == available
+    assert list(flags) == expected_flags
+    assert codex_mod.linux_login_terminal_available() is True
+
+
+def test_linux_login_without_any_terminal_is_an_actionable_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No usable terminal must be a named capability gap, not a mystery."""
+    import jarvis.codex_auth as codex_mod
+
+    monkeypatch.setattr(codex_mod.sys, "platform", "linux")
+    monkeypatch.setattr(codex_mod.shutil, "which", lambda _name: None)
+
+    with pytest.raises(RuntimeError, match="Install one of"):
+        codex_mod._resolve_linux_login_terminal()
+    assert codex_mod.linux_login_terminal_available() is False
+
+
+def test_graphical_linux_without_a_terminal_does_not_invite_a_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pre-click truth: never offer a Connect that is guaranteed to fail."""
+    import jarvis.codex_app_server as transport
+    import jarvis.codex_auth as codex_mod
+
+    monkeypatch.setattr(transport.sys, "platform", "linux")
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr(codex_mod.shutil, "which", lambda _name: None)
+
+    reason, code = transport._login_required_state("please log in")
+
+    assert code == "lifecycle_unavailable"
+    assert "terminal emulator" in reason
