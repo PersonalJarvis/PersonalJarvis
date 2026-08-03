@@ -212,6 +212,13 @@ docs/qa/**
 # lists what to hide is itself the leak (2026-06-30 sub-agent review). It is an
 # internal dev tool with no downstream value; a fork writes its own.
 .claude/agents/docs-privacy-reviewer.md
+.agents/agents/docs-privacy-reviewer.md
+.codex/agents/docs-privacy-reviewer.toml
+
+# Live-session forensic evidence contains private session identifiers and
+# identity-bearing transcript excerpts. Keep the diagnosis local; public bug
+# documentation must use synthetic reproductions instead.
+docs/reports/realtime-double-greeting-and-stall-deep-dive-2026-07-17.md
 
 # --- Internal handoff notes carrying the maintainer's private email (2026-06-30) ---
 # docs/handoffs/ holds internal review-answer handoffs. report-tutorial-review-

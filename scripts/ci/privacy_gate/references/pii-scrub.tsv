@@ -24,17 +24,17 @@
 # public (see the Herz note at the end of this file) and is NOT scrubbed.
 
 # --- maintainer GitHub login + entity slug (MUST precede the bare-name rules
-# 2026-07-18 maintainer directive (CLAUDE.md rule 2): name exposure no longer
-# BLOCKS anything - all name/login/slug rows are `warn` (surfaced, never
-# blocking). Credentials/secrets keep blocking fail-closed.
+# 2026-08-03 release hardening: personal identity is scrubbed from product,
+# test, and documentation surfaces. Explicit public author-attribution paths
+# remain narrowly exempt through scrub-exempt.txt.
 # --- below, else the bare "ruben" rule would fragment them) -----------------
-warn	rubenluetke10-beep	octocat	maintainer github login (appears in a stream-evidence test fixture)
-warn	ruben-luetke	personal-jarvis-maintainer	maintainer entity slug (= slugify of full name; keeps name->slug test couplings consistent)
+scrub	rubenluetke10-beep	octocat	maintainer github login (appears in a stream-evidence test fixture)
+scrub	ruben-luetke	personal-jarvis-maintainer	maintainer entity slug (= slugify of full name; keeps name->slug test couplings consistent)
 
 # --- maintainer real name (order matters: full name before surname) ---------
-warn	Ruben Lütke	Personal Jarvis Maintainer	maintainer real name (full)
-warn	Lütke	Maintainer	maintainer surname
-warn	Luetke	Maintainer	maintainer surname (ascii-fold)
+scrub	Ruben Lütke	Personal Jarvis Maintainer	maintainer real name (full)
+scrub	Lütke	Maintainer	maintainer surname
+scrub	Luetke	Maintainer	maintainer surname (ascii-fold)
 
 scrub	luetke	maintainer	maintainer surname (lowercase residue in slugs)
 scrub	lütke	maintainer	maintainer surname (lowercase umlaut residue)
@@ -42,14 +42,14 @@ scrub	lütke	maintainer	maintainer surname (lowercase umlaut residue)
 # --- maintainer bare first names: full-depersonalization (2026-06-01). Two
 # --- distinct neutral names preserve router-prompt semantics where "Ruben" is
 # --- the user (address) and "Harald" is an example third person mentioned. ---
-warn	Ruben	Alex	maintainer first name (sample/address user) -> neutral
-warn	ruben	alex	maintainer first name lowercase (config defaults, slugs, branch tags)
+scrub	Ruben	Alex	maintainer first name (sample/address user) -> neutral
+scrub	ruben	alex	maintainer first name lowercase (config defaults, slugs, branch tags)
 # Accented spelling 'Rubén' — the ASCII 'Ruben' rules above do NOT match the é,
 # so the accented real first name shipped through (2026-06-30 sub-agent review:
 # docs/phase-b1-wiki-curator/*, tests/unit/memory/wiki/test_page.py, etc.).
-warn	Rubén	Alex	maintainer first name accented (é) -> neutral
-warn	rubén	alex	maintainer first name accented lowercase
-warn	RUBÉN	ALEX	maintainer first name accented all-caps (regression guard)
+scrub	Rubén	Alex	maintainer first name accented (é) -> neutral
+scrub	rubén	alex	maintainer first name accented lowercase
+scrub	RUBÉN	ALEX	maintainer first name accented all-caps (regression guard)
 scrub	Harald	Sam	maintainer alt first name (example person in prompts/tests)
 scrub	harald	sam	maintainer alt first name lowercase (ADR owner field, slugs, test emails)
 
@@ -108,8 +108,8 @@ block-only	[A-Za-z0-9._%+-]+@(?:gmail|gmx|outlook|hotmail|yahoo|protonmail|proto
 # INTENTIONAL public build-in-public X handle. 2026-07-18 update: the public
 # handle switched to @Ruben_Luetke (README social links + socials seed + tests)
 # — the maintainer's own chosen public identity; do NOT re-add a Herz or
-# Luetke-handle scrub. (Name rows above are warn-only per the 2026-07-18
-# directive; credentials keep blocking fail-closed.)
+# Luetke-handle scrub. Identity rows above now scrub non-attribution surfaces;
+# the narrowly approved attribution files remain exempt.
 # --- 2026-07-07 sub-agent privacy review: internal note-folder + community ids
 scrub	(?i)bridgemind	exampleserver	real personal Discord server name quoted in live-bug transcripts (9 files) — consistent rename keeps test fixtures self-consistent
 scrub	Unbenanntes Dokument \(\d+\)\.(?:md|pdf)	internal-research-notes.md	private German-named note-doc family (maintainer local notes)
