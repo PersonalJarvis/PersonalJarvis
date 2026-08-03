@@ -301,8 +301,31 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
       style={{ width: railed ? SIDEBAR_RAIL_WIDTH : width }}
       data-testid="sidebar"
       data-railed={railed ? "true" : "false"}
-      className="flex h-full shrink-0 flex-col bg-card/40 backdrop-blur"
+      className="relative isolate flex h-full shrink-0 flex-col"
     >
+      {/*
+        The frosted backing, as a SEPARATE non-scrolling layer.
+
+        It used to be `bg-card/40 backdrop-blur` on this <aside> itself — which
+        made the element carrying `backdrop-filter` the ancestor of the
+        scrolling <nav> below. WebKit composites such an element from a backdrop
+        snapshot that it does NOT reliably invalidate when a descendant scrolls,
+        so on macOS the sidebar kept PAINTING the rows at their old offsets
+        while hit-testing them at the new ones: the pointer sat on one entry and
+        the click landed on another a couple of rows up, worst at the top of the
+        list and correct again at the bottom, until something forced a full
+        repaint. Chromium (the Windows WebView2) composites this case eagerly,
+        which is why it only ever showed up on a Mac.
+
+        Splitting the blur out fixes the cause rather than the symptom: nothing
+        that scrolls lives inside a backdrop-filtered element any more. The
+        layer is `-z-10` inside an `isolate` stacking context, so it paints
+        behind the rows and cannot swallow their clicks.
+      */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 bg-card/40 backdrop-blur"
+      />
       <div className={cn("border-b border-border", railed ? "px-2 py-3" : "px-4 py-4")}>
         <div
           className={cn(
