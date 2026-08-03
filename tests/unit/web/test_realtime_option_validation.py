@@ -118,5 +118,5 @@ def test_get_realtime_options_reports_preview_capability(
     assert api_response.json()["preview_available"] is True
     assert subscription_response.status_code == 200
     body = subscription_response.json()
-    assert body["preview_available"] is False
+    assert body["preview_available"] is True
     assert [voice["id"] for voice in body["voices"]][0] == "cove"

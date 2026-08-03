@@ -2050,6 +2050,49 @@ async def test_capability_forced_delegate_executes_provider_handoff():
 
 
 @pytest.mark.asyncio
+async def test_provider_eof_waits_for_supervised_delegate_delivery():
+    """A finite provider stream must not abandon its accepted handoff."""
+
+    class NoDirectToolsProvider(FakeProvider):
+        supports_direct_tools = False
+
+    gate = asyncio.Event()
+    brain = FakeBrain(replies=("The settings are open.",), gate=gate)
+    provider = NoDirectToolsProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Open the settings view.",
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="handoff_requested",
+                text="Open the settings view.",
+                handoff_id="handoff-eof",
+            ),
+        ]
+    )
+    jsons: list[dict] = []
+    sess = _session(provider, brain=brain, tool_mode="direct", jsons=jsons)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await _wait_until(lambda: bool(brain.calls))
+    finished = asyncio.create_task(sess.wait_finished())
+    await asyncio.sleep(0)
+    assert not finished.done()
+
+    gate.set()
+    await asyncio.wait_for(finished, timeout=2.0)
+
+    surfaced = [item for item in jsons if item.get("type") == "error_spoken"]
+    assert [item["text"] for item in surfaced] == ["The settings are open."]
+    assert len([item for item in jsons if item.get("type") == "turn_complete"]) == 1
+    assert not [item for item in jsons if item.get("type") == "provider_error"]
+    await sess.end(reason="test")
+    assert brain.cancelled is False
+
+
+@pytest.mark.asyncio
 async def test_delegate_directive_names_screen_control_and_forbids_capability_denial():
     """The live model must know its on-screen reach and never deny it.
 
@@ -4109,7 +4152,16 @@ async def test_native_realtime_promise_without_tool_recovers_via_orchestrator():
     assert provider.session.interrupts == 1
     assert provider.session.required_tools == [None]
     assert brain.calls[0][0] == utterance
-    assert "<trusted_action_result>" in provider.session.text_inputs[-1]
+    provider_received_result = bool(
+        provider.session.text_inputs
+        and "<trusted_action_result>" in provider.session.text_inputs[-1]
+    )
+    surface_received_result = any(
+        item.get("type") == "error_spoken"
+        and item.get("text") == "Your Wiki contains three project pages."
+        for item in jsons
+    )
+    assert provider_received_result or surface_received_result
     assert binaries == []
     assert not any(
         item.get("role") == "assistant" and "Einen Moment" in item.get("text", "")

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -112,7 +113,7 @@ def _ok_facts_json(evidence_turn_id: str = "h1") -> str:
             {
                 "fact": "User prefers dark mode.",
                 "kind": "preference",
-                "subjects": ["ruben"],
+                "subjects": ["example-user"],
                 "evidence_turn_id": evidence_turn_id,
             },
         ]
@@ -124,6 +125,44 @@ def journal(tmp_path: Path) -> CandidateJournal:
     j = CandidateJournal(tmp_path / "jarvis.db")
     yield j
     j.close()
+
+
+@pytest.mark.asyncio
+async def test_journal_claim_does_not_block_event_loop(
+    journal: CandidateJournal,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Locked SQLite audit work stays off the latency-critical event loop."""
+    entered = threading.Event()
+    release = threading.Event()
+
+    def locked_claim(*_args: Any, **_kwargs: Any) -> bool:
+        entered.set()
+        release.wait(timeout=1.0)
+        return False
+
+    monkeypatch.setattr(journal, "claim_capture", locked_claim)
+    extractor = ConversationFactExtractor(
+        config=_config(),
+        journal=journal,
+        registry=FakeRegistry(FakeBrain("[]")),
+    )
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    task = asyncio.create_task(
+        extractor.extract_and_journal(
+            "A sufficiently long synthetic test fact.",
+            "Noted.",
+            source_label="test:locked-claim",
+            turn_hash="locked-claim",
+        )
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 1.0)
+        assert loop.time() - started_at < 0.5
+    finally:
+        release.set()
+    assert await task == 0
 
 
 @pytest.mark.asyncio
@@ -163,8 +202,8 @@ async def test_happy_path_appends_parsed_facts(journal: CandidateJournal) -> Non
     ("incomplete_kind", "incomplete_subjects"),
     [
         ("place", ["user"]),
-        ("place", ["san-francisco"]),
-        ("other", ["user", "san-francisco"]),
+        ("place", ["example-city"]),
+        ("other", ["user", "example-city"]),
     ],
 )
 @pytest.mark.asyncio
@@ -176,7 +215,7 @@ async def test_residence_requires_named_place_subject_and_falls_back(
     incomplete = json.dumps(
         [
             {
-                "fact": "The user lives in San Francisco.",
+                "fact": "The fictional user lives in Example City.",
                 "kind": incomplete_kind,
                 "subjects": incomplete_subjects,
                 "evidence_turn_id": "residence-turn",
@@ -186,9 +225,9 @@ async def test_residence_requires_named_place_subject_and_falls_back(
     complete = json.dumps(
         [
             {
-                "fact": "The user lives in San Francisco.",
+                "fact": "The fictional user lives in Example City.",
                 "kind": "place",
-                "subjects": ["user", "san-francisco"],
+                "subjects": ["user", "example-city"],
                 "evidence_turn_id": "residence-turn",
             }
         ]
@@ -201,7 +240,7 @@ async def test_residence_requires_named_place_subject_and_falls_back(
     )
 
     count = await extractor.extract_and_journal(
-        "Ich wohne in San Francisco.",  # i18n-allow: production residence fixture
+        "The fictional user lives in Example City.",
         "Noted.",
         source_label="realtime:residence",
         turn_hash="residence-turn",
@@ -211,7 +250,7 @@ async def test_residence_requires_named_place_subject_and_falls_back(
     assert registry.tried == ["gemini", "openrouter"]
     row = journal.pending()[0]
     assert row.kind == "place"
-    assert row.subjects == ("user", "san-francisco")
+    assert row.subjects == ("user", "example-city")
 
 
 @pytest.mark.asyncio
@@ -558,7 +597,7 @@ async def test_asset_kind_and_context_are_preserved(journal: CandidateJournal) -
                 {
                     "fact": "The user owns the yacht Aurora.",
                     "kind": "asset",
-                    "subjects": ["ruben", "aurora"],
+                    "subjects": ["example-user", "aurora"],
                     "evidence_turn_id": "turn-2",
                 }
             ]
@@ -634,7 +673,7 @@ async def test_secret_shaped_model_fact_never_reaches_sqlite(
                 {
                     "fact": f"The user's API key is {secret}.",
                     "kind": "other",
-                    "subjects": ["ruben"],
+                    "subjects": ["example-user"],
                     "evidence_turn_id": "secret-guard",
                 }
             ]
@@ -665,7 +704,7 @@ async def test_session_sweep_rejects_non_user_evidence(journal: CandidateJournal
                 {
                     "fact": "The assistant guessed that the user owns an aircraft.",
                     "kind": "asset",
-                    "subjects": ["ruben"],
+                    "subjects": ["example-user"],
                     "evidence_turn_id": "assistant-turn",
                 }
             ]
@@ -737,7 +776,7 @@ async def test_session_sweep_accepts_exact_user_evidence(journal: CandidateJourn
                 {
                     "fact": "The user's yacht Aurora is moored in Kiel.",
                     "kind": "asset",
-                    "subjects": ["ruben", "aurora", "kiel"],
+                    "subjects": ["example-user", "aurora", "kiel"],
                     "evidence_turn_id": "turn-2",
                 }
             ]
@@ -771,7 +810,7 @@ async def test_long_prior_context_cannot_truncate_focus_evidence(
                 {
                     "fact": "The user's yacht Aurora is moored in Kiel.",
                     "kind": "asset",
-                    "subjects": ["ruben", "aurora", "kiel"],
+                    "subjects": ["example-user", "aurora", "kiel"],
                     "evidence_turn_id": "turn-2",
                 }
             ]

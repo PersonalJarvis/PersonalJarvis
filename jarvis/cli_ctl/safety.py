@@ -59,7 +59,14 @@ def is_dangerous(method: str, path: str) -> bool:
     if method.upper() == "DELETE":
         return True
     low = path.lower()
-    return any(marker in low for marker in _DANGEROUS_MARKERS)
+    route = low.split("?", 1)[0]
+    segments = tuple(segment for segment in route.split("/") if segment)
+    legacy_contact_call = (
+        len(segments) == 4
+        and segments[:2] == ("api", "contacts")
+        and segments[-1] == "call"
+    )
+    return any(marker in low for marker in _DANGEROUS_MARKERS) or legacy_contact_call
 
 
 def _assume_yes_env() -> bool:

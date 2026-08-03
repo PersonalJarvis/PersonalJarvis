@@ -17,6 +17,7 @@ async def test_listing_reports_the_current_choice_and_every_option(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(routes, "_writer_candidates", lambda: [("codex", True)])
+    monkeypatch.setattr(routes, "_current_prompt_writer", lambda: "auto")
 
     state = await routes.prompt_writer_state()
 

@@ -22,6 +22,8 @@ def test_is_dangerous_heuristic():
     assert safety.is_dangerous("POST", "/api/missions/x/dispatch")
     assert safety.is_dangerous("POST", "/api/settings/restart-app")
     assert safety.is_dangerous("POST", "/api/contacts/x/call")
+    assert not safety.is_dangerous("POST", "/api/voice/call")
+    assert not safety.is_dangerous("POST", "/api/integrations/callbacks")
     assert not safety.is_dangerous("POST", "/api/tasks")
     assert not safety.is_dangerous("GET", "/api/missions")
 
@@ -60,7 +62,12 @@ def test_explicit_dangerous_override_true():
     # A plain path forced dangerous (e.g. config set) needs --yes.
     with pytest.raises(typer.Exit):
         safety.gate_request("PUT", "/api/control/config", dangerous=True)
-    assert safety.gate_request("PUT", "/api/control/config", dangerous=True, assume_yes=True) is True
+    assert (
+        safety.gate_request(
+            "PUT", "/api/control/config", dangerous=True, assume_yes=True
+        )
+        is True
+    )
 
 
 def test_explicit_dangerous_override_false():

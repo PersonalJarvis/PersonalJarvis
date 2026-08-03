@@ -332,7 +332,7 @@ class ConversationFactExtractor:
         text = (user_text or "").strip()
         focus_turn_id = (turn_id or turn_hash).strip()
         key = review_key or f"turn:v2:{turn_hash}"
-        if not self._claim_review(
+        if not await self._claim_review(
             review_key=key,
             source_label=source_label,
             source_kind=source_kind,
@@ -343,10 +343,12 @@ class ConversationFactExtractor:
             return 0
 
         if not self._cfg.enabled:
-            self._finish_review(key, status="filtered", error_code="extractor-disabled")
+            await self._finish_review(
+                key, status="filtered", error_code="extractor-disabled"
+            )
             return 0
         if len(text) < int(self._cfg.min_user_chars):
-            self._finish_review(key, status="filtered", error_code="below-min-chars")
+            await self._finish_review(key, status="filtered", error_code="below-min-chars")
             return 0
 
         prompt = self._build_turn_prompt(
@@ -375,14 +377,14 @@ class ConversationFactExtractor:
                 retry_empty=bool(_DURABLE_CUE_RE.search(text)),
             )
         except asyncio.CancelledError:
-            self._finish_review(key, status="failed", error_code="cancelled")
+            await self._finish_review(key, status="failed", error_code="cancelled")
             raise
         except Exception:  # noqa: BLE001 - the conversation must never notice
             log.exception("ConversationFactExtractor: unexpected extraction failure")
-            self._finish_review(key, status="failed", error_code="unexpected")
+            await self._finish_review(key, status="failed", error_code="unexpected")
             return 0
 
-        return self._persist_outcome(
+        return await self._persist_outcome(
             outcome,
             review_key=key,
             source_label=source_label,
@@ -403,7 +405,7 @@ class ConversationFactExtractor:
         chunks = self._session_chunks(usable)
         if not chunks:
             empty_key = f"{base_key}:empty"
-            if self._claim_review(
+            if await self._claim_review(
                 review_key=empty_key,
                 source_label=source_label,
                 source_kind="session-sweep",
@@ -411,7 +413,7 @@ class ConversationFactExtractor:
                 session_id=session_id,
                 turn_id="",
             ):
-                self._finish_review(
+                await self._finish_review(
                     empty_key,
                     status="filtered",
                     error_code="no-user-turns",
@@ -427,7 +429,7 @@ class ConversationFactExtractor:
         seen_facts: set[str] = set()
         for index, (key, chunk) in enumerate(zip(keys, chunks, strict=True)):
             transcript = self._build_session_prompt(chunk)
-            if not self._claim_review(
+            if not await self._claim_review(
                 review_key=key,
                 source_label=f"{source_label}:chunk:{index}",
                 source_kind="session-sweep",
@@ -437,7 +439,7 @@ class ConversationFactExtractor:
             ):
                 continue
             if not self._cfg.enabled:
-                self._finish_review(
+                await self._finish_review(
                     key,
                     status="filtered",
                     error_code="extractor-disabled",
@@ -458,11 +460,11 @@ class ConversationFactExtractor:
                     retry_empty=True,
                 )
             except asyncio.CancelledError:
-                self._finish_review(key, status="failed", error_code="cancelled")
+                await self._finish_review(key, status="failed", error_code="cancelled")
                 raise
             except Exception:  # noqa: BLE001
                 log.exception("ConversationFactExtractor: session chunk failed")
-                self._finish_review(key, status="failed", error_code="unexpected")
+                await self._finish_review(key, status="failed", error_code="unexpected")
                 continue
 
             unique = tuple(
@@ -479,7 +481,7 @@ class ConversationFactExtractor:
                     duration_ms=outcome.duration_ms,
                     error_code=outcome.error_code,
                 )
-            total += self._persist_outcome(
+            total += await self._persist_outcome(
                 outcome,
                 review_key=key,
                 source_label=f"{source_label}:chunk:{index}",
@@ -577,7 +579,7 @@ class ConversationFactExtractor:
         self._scheduler = scheduler
         self._consolidate_after = max(1, int(consolidate_after))
 
-    def _maybe_trigger_consolidation(self) -> None:
+    async def _maybe_trigger_consolidation(self) -> None:
         """Fire a background JOURNAL trigger when the backlog is heavy.
 
         Fire-and-forget (AP-9): the conversation turn never waits for the
@@ -586,7 +588,7 @@ class ConversationFactExtractor:
         if self._scheduler is None:
             return
         try:
-            backlog = self._journal.backlog_count()
+            backlog = await asyncio.to_thread(self._journal.backlog_count)
             try:
                 from jarvis.memory.wiki.health import health
 
@@ -720,7 +722,7 @@ class ConversationFactExtractor:
             history.append(turn)
         return evidence
 
-    def _claim_review(
+    async def _claim_review(
         self,
         *,
         review_key: str,
@@ -732,7 +734,8 @@ class ConversationFactExtractor:
     ) -> bool:
         try:
             text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-            return self._journal.claim_capture(
+            return await asyncio.to_thread(
+                self._journal.claim_capture,
                 review_key,
                 source_label=source_label,
                 source_kind=source_kind,
@@ -747,7 +750,7 @@ class ConversationFactExtractor:
             )
             return True
 
-    def _finish_review(
+    async def _finish_review(
         self,
         review_key: str,
         *,
@@ -758,7 +761,8 @@ class ConversationFactExtractor:
         error_code: str = "",
     ) -> None:
         try:
-            self._journal.finish_capture(
+            await asyncio.to_thread(
+                self._journal.finish_capture,
                 review_key,
                 status=status,
                 candidate_count=candidate_count,
@@ -772,7 +776,7 @@ class ConversationFactExtractor:
                 exc_info=True,
             )
 
-    def _persist_outcome(
+    async def _persist_outcome(
         self,
         outcome: _ExtractionResult,
         *,
@@ -781,7 +785,7 @@ class ConversationFactExtractor:
         turn_hash: str,
     ) -> int:
         if outcome.outcome == "failed":
-            self._finish_review(
+            await self._finish_review(
                 review_key,
                 status="failed",
                 provider=outcome.provider,
@@ -790,7 +794,7 @@ class ConversationFactExtractor:
             )
             return 0
         if not outcome.facts:
-            self._finish_review(
+            await self._finish_review(
                 review_key,
                 status="empty",
                 provider=outcome.provider,
@@ -799,7 +803,8 @@ class ConversationFactExtractor:
             return 0
 
         try:
-            appended = self._journal.commit_capture_candidates(
+            appended = await asyncio.to_thread(
+                self._journal.commit_capture_candidates,
                 outcome.facts,
                 review_key=review_key,
                 source_label=source_label,
@@ -809,7 +814,7 @@ class ConversationFactExtractor:
             )
         except Exception:  # noqa: BLE001 - extraction must stay off the user path
             log.exception("ConversationFactExtractor: atomic journal commit failed")
-            self._finish_review(
+            await self._finish_review(
                 review_key,
                 status="failed",
                 provider=outcome.provider,
@@ -825,7 +830,7 @@ class ConversationFactExtractor:
             appended,
             source_label,
         )
-        self._maybe_trigger_consolidation()
+        await self._maybe_trigger_consolidation()
         return appended
 
     async def _extract(

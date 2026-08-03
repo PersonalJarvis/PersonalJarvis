@@ -134,10 +134,15 @@ def _stack(tmp_path: Path, *, brain_sleep_s: float = 0.0):
     return bus, journal, curator, bridge, brain
 
 
-async def _drain(journal: CandidateJournal, *, timeout_s: float = 2.0) -> None:
+async def _drain(
+    journal: CandidateJournal,
+    *,
+    timeout_s: float = 2.0,
+    min_count: int = 1,
+) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        if journal.backlog_count() > 0:
+        if journal.backlog_count() >= min_count:
             return
         await asyncio.sleep(0.02)
 
@@ -209,6 +214,7 @@ async def test_same_text_in_a_later_turn_is_reviewed_again(tmp_path: Path) -> No
             )
             await bus.publish(ResponseGenerated(text="Noted.", language="en"))
             await asyncio.wait_for(brain.completed.wait(), timeout=2.0)
+            await _drain(journal, min_count=index + 1)
             assert brain.call_count == index + 1
     finally:
         bridge.stop()

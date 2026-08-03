@@ -687,6 +687,7 @@ class _DelegateTurnState:
     deterministic: bool = False
     delivery_started: bool = False
     provider_boundary_seen: bool = False
+    provider_stream_ended: bool = False
     user_text: str = ""
     result_payload: dict[str, Any] = field(default_factory=dict)
     pending_tool_calls: list[tuple[str, str]] = field(default_factory=list)
@@ -2966,14 +2967,7 @@ class RealtimeVoiceSession:
                     for chunk in final_chunks:
                         await self._emit_audio(chunk)
                     self._gate.drain()
-                    await self._send_json({"type": "turn_complete"})
-                    await self._publish_turn_completed()
-                    self._output_active = False
-                    self._output_samples_sent = 0
-                    self._response_requested_for_turn = False
-                    self._user_speech_active = False
-                    self._turn_final_text = ""
-                    self._schedule_late_delegate_flush()
+                    await self._complete_surface_turn()
                     if self._end_after_turn:
                         # end_call was acknowledged; the model has now spoken
                         # its goodbye to the end — hang up.
@@ -3081,7 +3075,57 @@ class RealtimeVoiceSession:
                 # error path — no failed flag, no provider_error for the
                 # browser surface, and the transcript-cleared audio tail held
                 # by the scrub gate is dropped.
-                if self._output_active or self._response_requested_for_turn:
+                delegate_state = self._delegate_turns.get(self._turn_id)
+                supervised_handoff_boundary_seen = bool(
+                    delegate_state is not None
+                    and delegate_state.wait_for_provider_boundary
+                    and delegate_state.provider_boundary_seen
+                    and not self._output_active
+                )
+                if supervised_handoff_boundary_seen and delegate_state is not None:
+                    delegate_state.provider_stream_ended = True
+                    bridge = self._delegate_bridge_task
+                    if bridge is not None and not bridge.done():
+                        bridge.cancel()
+                        try:
+                            await bridge
+                        except asyncio.CancelledError:  # Expected after explicit cancellation.
+                            pass
+                        except Exception:  # noqa: BLE001
+                            log.warning(
+                                "realtime[%s] delegate bridge failed while "
+                                "provider stream ended",
+                                self.session_id,
+                                exc_info=True,
+                            )
+                    if self._delegate_bridge_task is bridge:
+                        self._delegate_bridge_task = None
+                    delegate_tasks = tuple(
+                        self._delegate_tasks_by_turn.get(self._turn_id, ())
+                    )
+                    for task in delegate_tasks:
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:  # noqa: BLE001
+                            log.warning(
+                                "realtime[%s] supervised delegate failed after "
+                                "provider stream ended",
+                                self.session_id,
+                                exc_info=True,
+                            )
+                            await self._publish_error(
+                                "RealtimeDelegateError",
+                                "Supervised delegate failed after provider stream end",
+                                recoverable=True,
+                            )
+                    if self._turn_id and delegate_state.last_reply:
+                        trusted_reply = self._scrubbed_trusted_reply(delegate_state)
+                        if trusted_reply and not self._output_transcript:
+                            self._output_transcript.append(trusted_reply)
+                    await self._complete_surface_turn()
+                elif self._output_active or self._response_requested_for_turn:
                     final_chunks = self._gate.finalize()
                     if self._gate.hard_leak_pending():
                         await self._cancel_unsafe_output(
@@ -4223,6 +4267,19 @@ class RealtimeVoiceSession:
         self._external_update = None
         self._reset_turn_tracking()
 
+    async def _complete_surface_turn(self) -> None:
+        """Publish one idempotent surface boundary and reset turn state."""
+        if not self._turn_id:
+            return
+        await self._send_json({"type": "turn_complete"})
+        await self._publish_turn_completed()
+        self._output_active = False
+        self._output_samples_sent = 0
+        self._response_requested_for_turn = False
+        self._user_speech_active = False
+        self._turn_final_text = ""
+        self._schedule_late_delegate_flush()
+
     def _remember_delegate_turn(self, user_text: str, assistant_text: str) -> None:
         """Keep only this live session's bounded context for later delegation."""
 
@@ -5305,6 +5362,12 @@ class RealtimeVoiceSession:
         drop_before_delivery = self._drop_provider_output_until_new_response
         self._drop_provider_output_until_new_response = False
         try:
+            if turn_state.provider_stream_ended:
+                turn_state.surface_fallback_spoken = True
+                self._drop_provider_output_until_user_turn = True
+                self._arm_stale_readback_guard(trusted_reply)
+                await self._send_json(self._surface_speech_message(trusted_reply))
+                return
             if turn_state.pending_tool_calls:
                 for call_id, wire_name in tuple(turn_state.pending_tool_calls):
                     await self._session.send_tool_result(

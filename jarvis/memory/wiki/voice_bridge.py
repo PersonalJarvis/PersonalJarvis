@@ -429,7 +429,7 @@ class VoiceFactBridge:
                     return True
                 return False
             telemetry.inc("voice_turns_ingested_ack")
-            log.info(
+            log.debug(
                 "VoiceFactBridge[ack]: brain acked storage, capturing user text "
                 "(%d chars, lang=%s, origin=%s)",
                 len(pending.user_text), pending.user_language, pending.origin,
@@ -465,7 +465,7 @@ class VoiceFactBridge:
 
         self._last_aggressive_ns = time.monotonic_ns()
         telemetry.inc("voice_turns_ingested_aggressive")
-        log.info(
+        log.debug(
             "VoiceFactBridge[aggressive]: brain did not ack but user text "
             "looks fact-shaped, capturing via salience filter "
             "(%d chars, lang=%s, origin=%s)",
@@ -594,7 +594,9 @@ class VoiceFactBridge:
         on; the worst case is one lost candidate fact.
         """
         try:
-            if self._extractor.capture_seen(review_key):
+            # ``capture_seen`` performs a locked SQLite lookup. Keep it off the
+            # latency-critical voice event loop (AP-9).
+            if await asyncio.to_thread(self._extractor.capture_seen, review_key):
                 log.debug(
                     "VoiceFactBridge: turn already journaled (hash=%s) — skipping",
                     review_key[-24:],
