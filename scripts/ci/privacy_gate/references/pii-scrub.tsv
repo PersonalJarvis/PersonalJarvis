@@ -93,6 +93,31 @@ scrub	gen-lang-client-0108934957	<GCP_PROJECT_ID>	personal GCP project id
 # prefix; any RID suffix is preserved so the XML stays SID-shaped as a template.
 scrub	S-1-5-21-420352953-976713421-1014275510	S-1-5-21-0-0-0	windows account SID machine identifier (maintainer box)
 
+# --- private runtime/session identifiers from live forensic reproductions ---
+# Keep UUID and mission-id shapes intact so regression fixtures retain their
+# parsing semantics while no longer publishing identifiers from real runs.
+scrub	bf44825d-c3cb-41d8-aac5-fc61482e52d4	10000001-0000-4000-8000-000000000001	private realtime session id
+scrub	bfd8a2f1-9b0f-4aae-8108-eca925acc79b	10000002-0000-4000-8000-000000000002	private realtime session id
+scrub	fe594a99-3d8b-4b37-bb62-d481f02ba595	10000003-0000-4000-8000-000000000003	private realtime session id
+scrub	c77b7a88-61b3-475d-98b1-7119bee0f03d	10000004-0000-4000-8000-000000000004	private realtime session id
+scrub	c77b7a88	10000004	short private realtime session reference
+scrub	31dd0f25-8102-4159-83ca-466d6c1bb450	10000005-0000-4000-8000-000000000005	private realtime session id
+scrub	e4fa3a8e-13c4-40c9-ae04-8e88bf702b6a	20000001-0000-4000-8000-000000000001	private evidence turn id
+scrub	f260abcc-b5a3-4c38-9502-3f6473ba0ae9	20000002-0000-4000-8000-000000000002	private evidence session id
+scrub	8cf7b42d-5229-4617-91fe-d406b1e4fe6d	20000003-0000-4000-8000-000000000003	private evidence turn id
+scrub	e97522ea-2c2e-4ae8-8b41-3441f257c96e	20000004-0000-4000-8000-000000000004	private latency session id
+scrub	e97522ea	20000004	short private latency session reference
+scrub	019f0fa6-4ff6-7bd9-87fd-a32e201b32c9	019f0000-2001-7000-8000-000000000001	private parent mission id
+scrub	019f0fac-26a3-7c59-bfa3-385fb1e426fc	019f0000-2002-7000-8000-000000000002	private child mission id
+scrub	019f0fa6-4ff6	019f0000-2001	private parent mission slug
+scrub	019f0fac-26a3	019f0000-2002	private child mission slug
+scrub	019f3cd8-1dd4	019f0000-3001	private quota-incident mission id
+scrub	019f26d0-bb07	019f0000-3002	private deliverable-incident mission id
+scrub	019fa4bc-9110	019f0000-3003	private task id
+scrub	019fa4bc91100000	019f000030030000	private compact task id
+scrub	019fa4bc8d2b	019f00003004	private mission directory id
+scrub	019f5ca2-e30f	019f0000-3005	private mission result id
+
 # --- private emails ---------------------------------------------------------
 # 2026-07-20: the two rows that spelled out the maintainer's private addresses
 # were REMOVED. A denylist that quotes the very strings it protects publishes
