@@ -28,6 +28,41 @@ remaining GTK source gap; reveal/open actions remain available on Linux.
 uses a parent-lifeline process-group supervisor on macOS and Linux, while
 Windows retains kernel Job Object containment.
 
+**Fix pass 2026-08-03 (subscription realtime voice).** Four defects of the
+same shape as P-29 — the feature was reachable only on the maintainer's OS:
+
+- **Linux login terminals.** The visible `codex login` accepted exactly
+  `gnome-terminal`, `konsole` and literal `xterm`, so XFCE, MATE, Cinnamon and
+  anyone on kitty/alacritty/foot/wezterm could not connect subscription voice
+  AT ALL — while the Providers card still offered an enabled Connect button.
+  `jarvis/codex_auth.py::_LINUX_LOGIN_TERMINALS` now carries fourteen entries
+  with their documented foreground/no-fork forms, and
+  `linux_login_terminal_available()` is the pre-click capability probe so a
+  desktop that genuinely has none reports `lifecycle_unavailable` with an
+  actionable reason instead of an error toast after the click.
+- **Linux browser hand-off.** Windows (ShellExecute) and macOS (`open`) opened
+  the OAuth page themselves; the Linux login child was handed an environment
+  with no `DISPLAY`/`WAYLAND_DISPLAY`/`XAUTHORITY`, so the user had to copy a
+  device-code URL out of the terminal. Those session handles now reach the
+  child through both allowlists. Deliberately partial: the forced file
+  credential store still strips `DBUS_SESSION_BUS_ADDRESS` and
+  `XDG_RUNTIME_DIR`, so a pure-Wayland session without XWayland keeps the
+  printed URL — the keyring-isolation guarantee outranks the convenience.
+- **POSIX login containment.** Process-tree containment for the login guardian
+  was Windows-only, so a Jarvis crash on macOS/Linux left terminal → guardian
+  → `codex login` alive with the profile lock still held and every later
+  connect reporting a permanent "busy". `make_process_tree` already returns a
+  real POSIX process-group reaper; the login path now uses it, and only the
+  Windows breakaway flag remains Windows-shaped.
+- **POSIX delegate cleanup + macOS PATH.** The Codex CLI that executes
+  subscription-voice actions was tree-killed only on Windows (`taskkill /T`),
+  leaking the real `codex` child on every capped or cancelled turn off
+  Windows; it now leads its own process group and gets the SIGTERM/SIGKILL
+  sibling. It also resolved its binary with a bare `shutil.which`, so a
+  GUI-launched macOS app could show the subscription as connected while every
+  action failed with "Codex CLI not found" — both sites now share
+  `CodexAuthService._resolve_binary` and its `ensure_cli_paths()` repair.
+
 **Fix pass 2026-08-03 (keyboard + pointer, from live Mac reports).** Three
 defects of one shape — a surface OFFERS something on every OS and only one OS
 can actually deliver it, with nothing raising in between:
@@ -95,7 +130,7 @@ experiences today.
 
 | # | Impact | Area | Gap | Evidence | Behavior off-Windows |
 |---|---|---|---|---|---|
-| P-29 | Low | Subscription voice | The dedicated ChatGPT-subscription voice login is an interactive browser flow, so a headless Linux host can never CONNECT the profile there (an existing login still reports ready and calls work through the browser voice bridge) | `jarvis/codex_app_server.py::_login_required_state`, `start_codex_subscription_login` | Headless Linux without a login: every surface (card, activation, voice-mode, Test) reports the same `lifecycle_unavailable` truth with the "run Jarvis on a desktop to connect" reason — no enabled Connect button that can only produce an error toast |
+| P-29 | Low | Subscription voice | The dedicated ChatGPT-subscription voice login is an interactive browser flow, so a headless Linux host — and a graphical Linux desktop that ships no terminal emulator able to host the login for its full lifetime — can never CONNECT the profile there (an existing login still reports ready and calls work through the browser voice bridge) | `jarvis/codex_app_server.py::_login_required_state`, `_linux_login_terminal_missing`, `start_codex_subscription_login`, `jarvis/codex_auth.py::_LINUX_LOGIN_TERMINALS` | Both cases report the same `lifecycle_unavailable` truth on every surface (card, activation, voice-mode, Test), each with its own actionable reason — "run Jarvis on a desktop" or "install one of these terminals" — and never an enabled Connect button that can only produce an error toast |
 | P-24 | Medium | Dictation shortcut | The global dictation/call shortcut needs `pynput` on Linux/X11, and `pynput` hard-requires `evdev` — which is published **source-only** (verified on PyPI 2026-07-28: evdev 1.9.3 ships an sdist and no wheels) and compiles against the kernel headers. Putting it in `[full]` would break the one advertised install path on a stock `python:3.11-slim`, so it is the opt-in `[desktop-linux]` extra instead. Wayland is a separate, unfixable-by-install case: the compositor owns global shortcuts by design (the XDG `GlobalShortcuts` portal lets the *compositor* assign the keys, and no wlroots compositor implements it at all) | `pyproject.toml` (`desktop-linux`), `jarvis/platform/probes.py::has_hotkey`, `jarvis/trigger/backends/noop.py::explain_unavailable` | X11 without the extra: no global shortcut, and the log/UI now names the actual cause and the exact `pip install` that fixes it (it used to blame Wayland unconditionally). Wayland: no global shortcut at all — bind a compositor shortcut to `jarvis api dictation start`. On both, dictation still works from the Jarvis Bar, the Dictation view and the CLI, and voice still works via the wake word |
 | P-25 | Medium | Dictation insertion | Pasting the transcript into another application is blocked, silently, in three OS-specific situations: Windows UIPI when the foreground window is elevated and Jarvis is not (`SendInput` reports success and the input is discarded), macOS Secure Input while a password field is focused, and Wayland outright (no synthetic input). Detection exists for the first two; Wayland is refused up front | `jarvis/dictation/insert.py::describe_target`, `jarvis/platform/input_isolation.py::windows_foreground_window_is_elevated`, `macos_secure_input_enabled` | All three degrade to the SAME honest outcome instead of silence: the transcript is left on the clipboard, the result is reported as `clipboard_only`, and the bar plus the Dictation view say why and that Ctrl+V will paste it. macOS Secure Input detection is implemented but has not been verified on real hardware from this machine |
 | P-02 | Low | Awareness | Idle detection has no Wayland backend (Windows GetLastInputInfo, macOS Quartz, Linux X11 `xprintidle` all exist since 2026-07-16); Wayland exposes no global idle time without portal support | `jarvis/awareness/watchers/idle.py` | Wayland: one honest log line, watcher does not start |
