@@ -8,15 +8,15 @@ const LINES: Seg[][] = [
   [{ t: "---", c: COLORS.faint }],
   [{ t: "type: ", c: COLORS.blue }, { t: "entity", c: COLORS.body }],
   [{ t: "entity_kind: ", c: COLORS.blue }, { t: "person", c: COLORS.body }],
-  [{ t: "slug: ", c: COLORS.blue }, { t: "ruben", c: COLORS.body }],
+  [{ t: "slug: ", c: COLORS.blue }, { t: "example-user", c: COLORS.body }],
   [{ t: "updated: ", c: COLORS.blue }, { t: "2026-07-01", c: COLORS.body }],
   [{ t: "---", c: COLORS.faint }],
   [{ t: "", c: COLORS.body }],
-  [{ t: "# Ruben", c: COLORS.headline }],
+  [{ t: "# Example User", c: COLORS.headline }],
   [{ t: "", c: COLORS.body }],
   [{ t: "## Facts", c: COLORS.gold }],
   [{ t: "- Maintainer of Personal Jarvis.", c: COLORS.body }],
-  [{ t: "- Prefers 80s music; works reversibly.", c: COLORS.body }],
+  [{ t: "- Prefers demo music; works reversibly.", c: COLORS.body }],
   [{ t: "", c: COLORS.body }],
   [{ t: "## Relationships", c: COLORS.gold }],
   [{ t: "- ", c: COLORS.body }, { t: "[[projects/personal-jarvis]]", c: COLORS.gold }],
@@ -123,7 +123,7 @@ export const S4Page: React.FC = () => {
                 marginLeft: 10,
               }}
             >
-              entities/ruben.md
+              entities/example-user.md
             </span>
           </div>
           <div style={{ padding: "22px 26px" }}>

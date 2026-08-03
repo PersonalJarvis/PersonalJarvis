@@ -226,7 +226,7 @@ class TestRegistryHasActionIntent:
         # "just"/"simply") is NOT a command — it must not collide with the
         # stop-verb stem in the universal catalogue. Live bug 2026-06-19: the
         # filler tripped has_action_intent and force-spawned a worker on a pure
-        # chat turn (the San-Francisco emigration session). The fixtures below
+        # chat turn. The fixtures below
         # are intentionally German (the content under test).
         assert self.reg.has_action_intent("Das ist halt so.") is False  # i18n-allow
         assert (
@@ -338,8 +338,8 @@ class TestSeedRegistry:
     def test_polite_wiki_system_write_resolves_to_ingest(self) -> None:
         """Wiki destination wins even when the fact mentions travel."""
         cap = self.reg.resolve_intent(
-            "Kannst du bitte mein Wiki-System eintragen, dass ich morgen nach "  # i18n-allow
-            "San Francisco reisen will?"  # i18n-allow: production transcript under test
+            "Kannst du bitte mein Wiki-System eintragen, dass ich eine fiktive "  # i18n-allow
+            "Reise nach Beispielstadt plane?"  # i18n-allow
         )
 
         assert cap is not None

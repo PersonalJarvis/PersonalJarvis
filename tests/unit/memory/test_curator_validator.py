@@ -3,8 +3,7 @@
 Focus — the validator is the **last line of defense** against subject confusion:
 
 - Confidence thresholds: <0.5 → reject, 0.5-0.7 → review, >=0.7 → accept.
-- Laura scenario: `subject="user", field="name", value="Laura"` when
-  `people/laura.md` already exists → REJECT due to collision.
+- Fictional-contact scenario: a known contact must not become the user's name.
 - Pronoun false positives (`person:er`, `person:sie`) → REJECT.
 - Do-not-record keywords (politics, mental health, MBTI) → REJECT.
 - Overwrite protection: existing name + new name at conf<0.85 → REVIEW.
@@ -21,7 +20,6 @@ from jarvis.memory.curator.validator import (
     Validator,
 )
 
-
 # ----------------------------------------------------------------------
 # Helper factory for test candidates
 # ----------------------------------------------------------------------
@@ -30,10 +28,10 @@ def _user_cand(
     *,
     cluster: str = "identity",
     field: str = "name",
-    value: Any = "Ruben",
+    value: Any = "ExampleUser",
     confidence: float = 0.9,
     operation: str = "set",
-    evidence: str = "User: 'ich heisse Ruben'",
+    evidence: str = "User: 'My name is ExampleUser'",
 ) -> Candidate:
     return Candidate(
         subject="user",
@@ -51,10 +49,10 @@ def _person_cand(
     *,
     cluster: str = "identity",
     field: str = "profession",
-    value: Any = "Designerin",
+    value: Any = "designer",
     confidence: float = 0.9,
     operation: str = "set",
-    evidence: str = "User: 'meine Freundin ist Designerin'",
+    evidence: str = "User: 'My fictional partner is a designer'",
     relationship: str = "partner",
 ) -> Candidate:
     return Candidate(
@@ -114,33 +112,32 @@ class TestConfidenceThresholds:
 
 
 # ======================================================================
-# Laura-Szenario — die CRUCIAL-Regression
+# Fictional contact scenario — the crucial regression
 # ======================================================================
 
-class TestLauraScenario:
-    """If `people/laura.md` exists, 'Laura' must NOT pass as user.name."""
+class TestFictionalContactScenario:
+    """A known fictional contact must not pass as the user's name."""
 
-    def test_rejects_laura_as_user_name_when_laura_exists_as_person(
+    def test_rejects_contact_as_user_name_when_contact_exists_as_person(
         self, validator: Validator, person_store
     ) -> None:
-        # Setup: Laura liegt bereits als Person vor (z.B. frueher extrahiert)
-        person_store.get_or_create("Laura", relationship="partner")
+        person_store.get_or_create("ExampleContact", relationship="partner")
 
-        # LLM slippt: behauptet Laura sei der User-Name
-        cand = _user_cand(field="name", value="Laura", confidence=0.9)
+        # Simulate an LLM confusing the fictional contact with the user.
+        cand = _user_cand(field="name", value="ExampleContact", confidence=0.9)
         result = validator.validate([cand])
 
-        assert len(result.rejected) == 1, f"Laura must be rejected: {result}"
+        assert len(result.rejected) == 1, f"Contact must be rejected: {result}"
         _, reason = result.rejected[0]
         assert "kollision" in reason.lower() or "name-koll" in reason.lower()
 
-    def test_ruben_as_user_name_is_accepted_even_with_laura_person_present(
+    def test_example_user_name_is_accepted_with_contact_present(
         self, validator: Validator, person_store
     ) -> None:
         """Counter-check: unrelated person names don't block the real user name."""
-        person_store.get_or_create("Laura", relationship="partner")
+        person_store.get_or_create("ExampleContact", relationship="partner")
 
-        cand = _user_cand(field="name", value="Ruben", confidence=0.95)
+        cand = _user_cand(field="name", value="ExampleUser", confidence=0.95)
         result = validator.validate([cand])
         assert len(result.accepted) == 1
 
@@ -187,9 +184,9 @@ class TestSubjectSanity:
         assert len(result.rejected) == 1
 
     def test_rejects_person_equal_to_user_name(self, validator: Validator, profile) -> None:
-        """If the user's name is "Ruben", subject=person:Ruben must not be accepted."""
-        profile.set("identity", "name", "Ruben")
-        cand = _person_cand("Ruben", confidence=0.9)
+        """A person subject equal to the user's name must not be accepted."""
+        profile.set("identity", "name", "ExampleUser")
+        cand = _person_cand("ExampleUser", confidence=0.9)
         result = validator.validate([cand])
         assert len(result.rejected) == 1
 
@@ -203,8 +200,8 @@ class TestDoNotRecord:
         cand = _user_cand(
             cluster="values",
             field="observation",
-            value="Sympathie fuer die Linkspartei",  # i18n-allow: German do-not-record keyword ("Partei"/party) matched by the validator's reject logic
-            evidence="User: 'ich mag die Linkspartei'",
+            value="Sympathie fuer die Linkspartei",  # i18n-allow: reject fixture
+            evidence="User: 'ich mag die Linkspartei'",  # i18n-allow: fixture
             confidence=0.9,
         )
         result = validator.validate([cand])
@@ -254,22 +251,22 @@ class TestOverwriteProtection:
     def test_existing_name_new_value_below_overwrite_threshold_goes_to_review(
         self, validator: Validator, profile
     ) -> None:
-        """Bestehender Name 'Ruben', neuer Name 'Paul' mit conf=0.75 → REVIEW."""
-        profile.set("identity", "name", "Ruben")
+        """An existing name and a new value at confidence 0.75 require review."""
+        profile.set("identity", "name", "ExampleUser")
 
         cand = _user_cand(field="name", value="Paul", confidence=0.75)
         result = validator.validate([cand])
 
-        assert len(result.review) == 1, f"Erwarte review, got: {result}"
+        assert len(result.review) == 1, f"Expected review, got: {result}"
         assert len(result.accepted) == 0
         _, reason = result.review[0]
-        assert "ueberschreibung" in reason.lower() or "ruben" in reason.lower()
+        assert "ueberschreibung" in reason.lower() or "exampleuser" in reason.lower()
 
     def test_existing_name_new_value_at_overwrite_threshold_is_accepted(
         self, validator: Validator, profile
     ) -> None:
-        """Bestehender Name + neuer Name bei conf=0.9 → accepted."""
-        profile.set("identity", "name", "Ruben")
+        """An existing name plus a new name at confidence 0.9 is accepted."""
+        profile.set("identity", "name", "ExampleUser")
 
         cand = _user_cand(
             field="name",
@@ -283,8 +280,8 @@ class TestOverwriteProtection:
         self, validator: Validator, profile
     ) -> None:
         """New name == existing name → no conflict."""
-        profile.set("identity", "name", "Ruben")
-        cand = _user_cand(field="name", value="Ruben", confidence=0.9)
+        profile.set("identity", "name", "ExampleUser")
+        cand = _user_cand(field="name", value="ExampleUser", confidence=0.9)
         result = validator.validate([cand])
         assert len(result.accepted) == 1
 
@@ -305,7 +302,7 @@ class TestOverwriteProtection:
 
 
 # ======================================================================
-# Sanity-Batch — mehrere Candidates gleichzeitig
+# Batch sanity — several candidates together
 # ======================================================================
 
 class TestBatchValidation:
@@ -313,12 +310,12 @@ class TestBatchValidation:
         self, validator: Validator, person_store
     ) -> None:
         """A mix of accept/review/reject lands in the right buckets."""
-        person_store.get_or_create("Laura", relationship="partner")
+        person_store.get_or_create("ExampleContact", relationship="partner")
 
         accepted_cand = _user_cand(
             cluster="communication", field="verbosity", value="tldr", confidence=0.9
         )
-        rejected_cand = _user_cand(field="name", value="Laura", confidence=0.9)
+        rejected_cand = _user_cand(field="name", value="ExampleContact", confidence=0.9)
         low_conf_cand = _user_cand(confidence=0.2)
 
         result = validator.validate([accepted_cand, rejected_cand, low_conf_cand])
@@ -327,5 +324,5 @@ class TestBatchValidation:
         assert low_conf_cand in [c for c, _ in result.rejected]
 
     def test_thresholds_match_constants(self) -> None:
-        """Sanity: Module-Level-Konstanten haben erwartete Reihenfolge."""
+        """Module-level constants have the expected order."""
         assert CONFIDENCE_REVIEW < CONFIDENCE_ACCEPT < CONFIDENCE_OVERWRITE

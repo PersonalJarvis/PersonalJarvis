@@ -387,7 +387,7 @@ SPAWN_INPUTS = [
     "Bau eine Landingpage",
     "Wie viele PRs sind in jarvis-repo offen?",
     "Mach einen Screenshot und sag mir was du siehst",
-    # Regression — Voice-Session 2026-05-11 17:22 (Bug-Report von Ruben):
+    # Regression from a reported voice session:
     # "Kannst du bitte einen Subagenten spawnen, welcher..." fiel ohne
     # Match auf den LLM-Pfad zurueck (40s Gemini-Stream-Timeout). "spawn"
     # als Verb-Trigger plus "Subagent"-Marker fangen beide unabhaengig.
@@ -1217,8 +1217,8 @@ def test_instructional_questions_do_not_force_spawn(utterance: str) -> None:
 # Opinion / advice / recommendation / decision questions are CONVERSATION, not
 # work — they must be answered inline, NEVER force-spawned to a worker, even
 # when they contain an everyday word that collides with an action verb in the
-# universal catalogue. Live bug 2026-06-19 (voice session 11:53, San-Francisco
-# emigration turn): "Hey du, ich hab ne Frage ... was würdest du mir empfehlen?"
+# universal catalogue. A relocation-comparison turn once force-spawned:
+# "Hey du, ich hab ne Frage ... was würdest du mir empfehlen?"
 # force-spawned a worker because has_action_intent matched the NOUN "Frage"
 # (-> verb "frag"/"frage") and the FILLER particle "halt" (-> verb "halt"), so
 # _is_generic_subagent_work classified a pure chat turn as generic sub-agent
@@ -1277,12 +1277,12 @@ def test_opinion_advice_questions_do_not_force_spawn(utterance: str) -> None:
         "Wie siehst du das?",
         "Was ist deine Meinung dazu?",
         # decision help (DE)
-        "Soll ich nach San Francisco oder nach Melbourne ziehen?",
+        "Soll ich nach Beispielstadt oder nach Musterstadt ziehen?",
         # conversational opener (DE)
         "Ich hab da mal eine Frage.",
         # advice / opinion (EN)
         "What would you recommend?",
-        "Should I move to San Francisco or Melbourne?",
+        "Should I move to Example City or Sample City?",
         "I have a question.",
         # advice / opinion (ES)
         "¿Qué me recomiendas?",
@@ -2123,7 +2123,7 @@ def test_whisper_fp_exact_only_seeds_still_filter_when_alone(
         "Musik leiser bitte",
         "Applaus für die Band einspielen",
         "Untertitel im VLC anzeigen lassen",
-        "Tschüss sagen zu Laura per Email",
+        "Tschüss sagen zu Beispielkontakt per Email",
         "Thank you note in Word erstellen",
     ],
 )
@@ -2300,7 +2300,9 @@ def test_check_unsupported_intent_fires_for_unregistered_action() -> None:
     sys.modules["jarvis.core.capabilities"] = mock_module
     try:
         manager, _executor = _manager_with_spawn()
-        result = manager._check_unsupported_intent("Schick bitte eine E-Mail an Harald")
+        result = manager._check_unsupported_intent(
+            "Schick bitte eine E-Mail an Beispielkontakt"
+        )
         assert result is not None, (
             "_check_unsupported_intent must return refusal for unregistered action"
         )
@@ -2483,7 +2485,7 @@ def test_external_integration_without_capability_stays_unsupported() -> None:
     try:
         manager = _strict_manager_with_mock_registry()
         for utterance in (
-            "schick eine Email an Harald",
+            "schick eine Email an Beispielkontakt",
             "trag einen Termin in meinen Kalender ein",
             "spiel Musik auf Spotify",
         ):
@@ -2570,7 +2572,7 @@ class _FakeProfileForPrompt:
     """Minimal UserProfile stand-in: only render_for_prompt is exercised."""
 
     def render_for_prompt(self, *, max_chars: int = 2000) -> str:
-        return "## Ueber den User\n- **Name:** Ruben"
+        return "## About the user\n- **Name:** Example User"
 
 
 class _FakeUpdateProfileTool:
@@ -2759,7 +2761,7 @@ def test_contact_capabilities_do_not_resolve_external_hard_negatives() -> None:
     reg = get_registry()
     seed_registry(reg)
     for utterance in (
-        "Schick eine Email an harald@example.com mit dem Betreff Hallo",
+        "Schick eine Email an contact@example.com mit dem Betreff Hallo",
         "Trag einen Termin morgen 10 Uhr ein",
         "Sende eine WhatsApp an Mama",
         "Bestelle eine Pizza",
@@ -2830,7 +2832,7 @@ def test_voice_save_contact_stays_router_tier() -> None:
     "utterance",
     [
         "ruf Christoph an",
-        "ruf Laura an",
+        "ruf Beispielkontakt an",
         "call Christoph",
     ],
 )

@@ -3,7 +3,7 @@
 Key design decisions in the prompt:
 
 1. **Subject disambiguation is at the very top** — the LLM sees it before
-   thinking about anything else. Includes a concrete Laura example that
+   thinking about anything else. Includes a concrete fictional-contact example that
    explicitly rules out the "naive-mem0" anti-pattern.
 
 2. **Do-Not-Record list** is enforced as a hard negative in the prompt —
@@ -63,13 +63,16 @@ the subject is `user`. If the user mentions a name, that name is a
 
 ## Examples — this must NOT be confused:
 
-**Input:** User says "My girlfriend Laura works at X."
+**Input:** User says "My fictional partner ExampleContact works at X."
 **Output:**
-- `{"subject": "person:Laura", "cluster": "identity", "field": "name", "value": "Laura", "relationship": "partner", "confidence": 1.0, ...}`
-- NEVER `{"subject": "user", "field": "name", "value": "Laura"}` — that would be a serious mistake!
+- `{"subject": "person:ExampleContact", "cluster": "identity",
+  "field": "name", "value": "ExampleContact", "relationship": "partner",
+  "confidence": 1.0, ...}`
+- NEVER `{"subject": "user", "field": "name", "value": "ExampleContact"}`.
 
-**Input:** User says "My name is Ruben."
-**Output:** `{"subject": "user", "cluster": "identity", "field": "name", "value": "Ruben", ...}`
+**Input:** User says "My name is ExampleUser."
+**Output:** `{"subject": "user", "cluster": "identity", "field": "name",
+"value": "ExampleUser", ...}`
 
 **Input:** User says "My colleague Paul hates emojis."
 **Output:** An observation about Paul (subject=person:Paul), NOT about the user.
@@ -84,7 +87,9 @@ Only extract what is **stable over the long term**:
 - NO: mood of the day, momentary emotion, current task, weather, one-off events.
 
 Example: "I'm tired today" → extract NOTHING (mood of the day).
-Example: "I don't like emojis in code reviews" → `{"subject": "user", "cluster": "values", "field": "pet_peeves", "value": "Emojis in code reviews", "operation": "append"}`
+Example: "I don't like emojis in code reviews" →
+`{"subject": "user", "cluster": "values", "field": "pet_peeves",
+"value": "Emojis in code reviews", "operation": "append"}`
 
 # CONFIDENCE
 
@@ -138,8 +143,8 @@ def build_extraction_prompt(user_text: str, assistant_text: str,
 
     We provide the LLM with context about already-known entities so that it
     can disambiguate more reliably. If it already knows, e.g., "The user is
-    called Ruben, Laura is his girlfriend", it will not make the mistake shown
-    in the Golden-Rule example.
+    called ExampleUser, ExampleContact is their fictional partner", it will
+    not make the mistake shown in the Golden-Rule example.
     """
     ctx_lines = []
     if user_name:

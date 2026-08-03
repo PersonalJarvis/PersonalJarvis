@@ -212,12 +212,11 @@ def _ok_response() -> str:
 
     return json.dumps([
         {
-            "target": "entities/ruben-luetke.md",
+            "target": "entities/example-user.md",
             "operation": "update",
-            # i18n-allow: proper name with umlaut used as wiki-page fixture data
             "new_body": (
-                "---\ntype: entity\nslug: ruben-luetke\n---\n\n"
-                "# Ruben L\u00fctke\n"
+                "---\ntype: entity\nslug: example-user\n---\n\n"
+                "# Example User\n"
             ),
             "rename_from": None,
             "reason": "added phase B1 milestone",
@@ -237,9 +236,9 @@ def test_parse_updates_happy_path() -> None:
     updates = _parse_updates(raw)
     assert len(updates) == 1
     assert isinstance(updates[0], PageUpdate)
-    assert updates[0].target_path == Path("entities/ruben-luetke.md")
+    assert updates[0].target_path == Path("entities/example-user.md")
     assert updates[0].operation == "update"
-    assert "Ruben" in updates[0].new_body
+    assert "Example User" in updates[0].new_body
 
 
 def test_parse_updates_tolerates_code_fence() -> None:
@@ -339,13 +338,13 @@ async def test_propose_updates_returns_parsed_updates(
         registry=registry,
     )
     updates = await llm.propose_updates(
-        "Ruben fixed a bug today.",
+        "The fictional test user fixed a bug today.",
         "BrainTurnCompleted",
         repo=FakeRepo(),
         vault=FakeVault(),
     )
     assert len(updates) == 1
-    assert updates[0].target_path == Path("entities/ruben-luetke.md")
+    assert updates[0].target_path == Path("entities/example-user.md")
 
 
 @pytest.mark.asyncio
@@ -372,7 +371,6 @@ async def test_direct_ingest_real_schema_binds_portable_runtime_user_slug() -> N
     assert system is not None
     assert 'exact subject slug is ["owner-profile"]' in system
     assert "profile page is entities/owner-profile.md" in system
-    assert "ruben" not in system.casefold()
 
 
 @pytest.mark.asyncio
@@ -382,15 +380,15 @@ async def test_direct_residence_falls_back_until_graph_is_bidirectional(
     """A profile-only residence response cannot complete explicit ingest."""
     profile_without_link = (
         "---\ntype: entity\nentity_kind: person\nslug: owner-profile\n---\n\n"
-        "# Owner Profile\n\n## Facts\n\n- Lives in San Francisco.\n"
+        "# Owner Profile\n\n## Facts\n\n- Lives in Example City.\n"
     )
     profile_with_link = profile_without_link.replace(
-        "- Lives in San Francisco.",
-        "- Lives in [[entities/san-francisco|San Francisco]].",
+        "- Lives in Example City.",
+        "- Lives in [[entities/example-city|Example City]].",
     )
     place_with_link = (
-        "---\ntype: entity\nentity_kind: place\nslug: san-francisco\n---\n\n"
-        "# San Francisco\n\n## Relationships\n\n"
+        "---\ntype: entity\nentity_kind: place\nslug: example-city\n---\n\n"
+        "# Example City\n\n## Relationships\n\n"
         "- Residence of [[entities/owner-profile|Owner Profile]].\n"
     )
     profile_only = json.dumps(
@@ -412,7 +410,7 @@ async def test_direct_residence_falls_back_until_graph_is_bidirectional(
                 "reason": "link residence from profile",
             },
             {
-                "target": "entities/san-francisco.md",
+                "target": "entities/example-city.md",
                 "operation": "create",
                 "new_body": place_with_link,
                 "reason": "create visible residence page",
@@ -429,10 +427,7 @@ async def test_direct_residence_falls_back_until_graph_is_bidirectional(
     )
 
     updates = await llm.propose_updates(
-        (
-            "ich ziemlich genervt bin und dass ich in "  # i18n-allow: reported transcript fixture
-            "San Francisco wohne"  # i18n-allow: reported residence transcript fixture
-        ),
+            "In this fictional test, I live in Example City.",
         "tool:wiki-ingest",
         repo=FakeRepo(),
         vault=FakeVault(),
@@ -442,7 +437,7 @@ async def test_direct_residence_falls_back_until_graph_is_bidirectional(
     assert llm.provider_name == "openrouter"
     assert {update.target_path.as_posix() for update in updates} == {
         "entities/owner-profile.md",
-        "entities/san-francisco.md",
+        "entities/example-city.md",
     }
 
 

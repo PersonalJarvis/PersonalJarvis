@@ -187,8 +187,8 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
     (vault_root / "schema.md").write_text("# Schema\n", encoding="utf-8")
     (vault_root / "index.md").write_text("# Index\n", encoding="utf-8")
     (vault_root / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
-    (vault_root / "entities" / "ruben.md").write_text(
-        _entity_page("ruben", "Ruben is the user."),
+    (vault_root / "entities" / "example-user.md").write_text(
+        _entity_page("example-user", "Example User is a fictional test identity."),
         encoding="utf-8",
     )
 
@@ -197,7 +197,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
             primary="test-provider",
             providers={"test-provider": BrainProviderConfig(model="test-model")},
         ),
-        memory=MemoryConfig(wiki=WikiMemoryConfig()),
+        memory=MemoryConfig(wiki=WikiMemoryConfig(user_entity_slug="example-user")),
         # This E2E drives one fact per short call and expects each to land
         # in the vault immediately, so it pins per-candidate consolidation
         # explicitly (the SHIPPED default batches 3 per judge run since the
@@ -208,11 +208,11 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
     assert config.wiki_scheduler.consolidate_after_candidates == 1
 
     facts = [
-        "Lena moved to Hamburg last month.",
-        "Noah works at the city library.",
-        "Ruben owns a yacht named Aurora.",
-        "Ruben needs to use the bathroom right now.",
-        "Ruben owns an aircraft.",
+        "Fictional contact Example Friend moved to Example City last month.",
+        "Fictional contact Example Colleague works at the sample library.",
+        "The fictional test user owns a demo vessel named Sample One.",
+        "The fictional test user needs a short break right now.",
+        "The fictional test user owns a demo glider.",
     ]
     extractions = [
         json.dumps(
@@ -220,7 +220,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 {
                     "fact": facts[0],
                     "kind": "person",
-                    "subjects": ["lena"],
+                    "subjects": ["example-friend"],
                     "evidence_turn_id": "openai-turn",
                 }
             ]
@@ -230,7 +230,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 {
                     "fact": facts[1],
                     "kind": "person",
-                    "subjects": ["noah"],
+                    "subjects": ["example-colleague"],
                     "evidence_turn_id": "gemini-turn",
                 }
             ]
@@ -240,7 +240,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 {
                     "fact": facts[2],
                     "kind": "asset",
-                    "subjects": ["aurora"],
+                    "subjects": ["sample-one"],
                     "evidence_turn_id": "short-asset-turn",
                 }
             ]
@@ -251,7 +251,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 {
                     "fact": facts[3],
                     "kind": "other",
-                    "subjects": ["ruben"],
+                    "subjects": ["example-user"],
                     "evidence_turn_id": "transient-turn",
                 }
             ]
@@ -263,7 +263,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 {
                     "fact": facts[4],
                     "kind": "asset",
-                    "subjects": ["ruben", "aircraft"],
+                    "subjects": ["example-user", "demo-glider"],
                     "evidence_turn_id": "assistant-guess-turn",
                 }
             ]
@@ -275,8 +275,8 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 {
                     "candidate_id": 1,
                     "decision": "add",
-                    "target": "entities/lena.md",
-                    "new_body": _entity_page("lena", facts[0]),
+                    "target": "entities/example-friend.md",
+                    "new_body": _entity_page("example-friend", facts[0]),
                     "reason": "new durable person fact",
                 }
             ]
@@ -286,8 +286,8 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 {
                     "candidate_id": 2,
                     "decision": "add",
-                    "target": "entities/noah.md",
-                    "new_body": _entity_page("noah", facts[1]),
+                    "target": "entities/example-colleague.md",
+                    "new_body": _entity_page("example-colleague", facts[1]),
                     "reason": "new durable person fact",
                 }
             ]
@@ -297,8 +297,8 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 {
                     "candidate_id": 3,
                     "decision": "add",
-                    "target": "entities/aurora.md",
-                    "new_body": _asset_page("aurora", facts[2], "ruben"),
+                    "target": "entities/sample-one.md",
+                    "new_body": _asset_page("sample-one", facts[2], "example-user"),
                     "reason": "durable owned asset and relationship",
                 }
             ]
@@ -385,34 +385,34 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
             _turn(
                 turn_id="openai-turn",
                 provider="openai-realtime",
-                text="My friend Lena moved to Hamburg last month and lives there now.",
+                text="Fictional contact Example Friend moved to Example City last month.",
                 session_id="call-1",
             )
         )
-        await _wait_for_page(vault_root / "entities" / "lena.md")
+        await _wait_for_page(vault_root / "entities" / "example-friend.md")
         await _speak_and_hang_up(
             _turn(
                 turn_id="gemini-turn",
                 provider="gemini-live",
-                text="My colleague Noah works at the city library during the week.",
+                text="Fictional contact Example Colleague works at the sample library.",
                 session_id="call-2",
             )
         )
-        await _wait_for_page(vault_root / "entities" / "noah.md")
+        await _wait_for_page(vault_root / "entities" / "example-colleague.md")
         await _speak_and_hang_up(
             _turn(
                 turn_id="short-asset-turn",
                 provider="openai-realtime",
-                text="I own a yacht named Aurora.",
+                text="The fictional test user owns a demo vessel named Sample One.",
                 session_id="call-3",
             )
         )
-        await _wait_for_page(vault_root / "entities" / "aurora.md")
+        await _wait_for_page(vault_root / "entities" / "sample-one.md")
         await _speak_and_hang_up(
             _turn(
                 turn_id="transient-turn",
                 provider="gemini-live",
-                text="I need to use the bathroom right now.",
+                text="The fictional test user needs a short break right now.",
                 session_id="call-4",
             )
         )
@@ -422,7 +422,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 turn_id="assistant-guess-turn",
                 provider="openai-realtime",
                 text="What do you think I own?",
-                assistant_text="Perhaps you own an aircraft.",
+                assistant_text="Perhaps you own a demo glider.",
                 session_id="call-5",
             )
         )
@@ -431,31 +431,33 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
         bridge.stop()
         journal.close()
 
-    assert facts[0] in (vault_root / "entities" / "lena.md").read_text(
+    assert facts[0] in (vault_root / "entities" / "example-friend.md").read_text(
         encoding="utf-8"
     )
-    assert facts[1] in (vault_root / "entities" / "noah.md").read_text(
+    assert facts[1] in (vault_root / "entities" / "example-colleague.md").read_text(
         encoding="utf-8"
     )
-    asset_body = (vault_root / "entities" / "aurora.md").read_text(encoding="utf-8")
+    asset_body = (vault_root / "entities" / "sample-one.md").read_text(encoding="utf-8")
     assert facts[2] in asset_body
-    assert "[[entities/ruben|Ruben]]" in asset_body
+    assert "[[entities/example-user|Example User]]" in asset_body
     fresh_index = VaultIndex(repo=MarkdownPageRepository())
     await fresh_index.scan(vault_root)
-    assert [page.slug for page in fresh_index.backlinks_to("ruben")] == ["aurora"]
+    assert [page.slug for page in fresh_index.backlinks_to("example-user")] == [
+        "sample-one"
+    ]
     assert all(
-        "bathroom" not in path.read_text(encoding="utf-8").lower()
+        "short break" not in path.read_text(encoding="utf-8").lower()
         for path in vault_root.rglob("*.md")
     )
     assert all(
-        "aircraft" not in path.read_text(encoding="utf-8").lower()
+        "demo glider" not in path.read_text(encoding="utf-8").lower()
         for path in vault_root.rglob("*.md")
     )
     final_judge_prompt = brain.judge_requests[-1].messages[0].content
     assert "user_evidence_excerpt=" in final_judge_prompt
     assert "Evidence user turn [assistant-guess-turn]" in final_judge_prompt
     assert "What do you think I own?" in final_judge_prompt
-    assert "Perhaps you own an aircraft." not in final_judge_prompt
+    assert "Perhaps you own a demo glider." not in final_judge_prompt
     # 5 deferred turn extractions + 5 judge rounds + 5 session sweeps.
     assert brain.calls == 15
     assert journal.backlog_count() == 0

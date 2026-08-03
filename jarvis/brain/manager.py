@@ -946,8 +946,8 @@ def _is_definitional_question_about(user_text: str, token: str) -> bool:
 # work: the brain answers them inline — they must NEVER force-spawn a worker,
 # even when they contain an everyday word that collides with an action verb in
 # the universal catalogue ("Frage" -> "frag"/"frage", the filler particle
-# "halt" -> "halt"). Live bug 2026-06-19 (voice session 11:53, San-Francisco
-# emigration turn): "ich hab ne Frage ... was würdest du mir empfehlen?"
+# "halt" -> "halt"). A live relocation-comparison turn once force-spawned:
+# "ich hab ne Frage ... was würdest du mir empfehlen?"
 # force-spawned because has_action_intent matched "Frage"/"halt", so
 # _is_generic_subagent_work classified a pure chat turn as generic sub-agent
 # work; the answer then returned out-of-band via the MissionAnnouncer and never
@@ -3540,7 +3540,7 @@ class BrainManager:
             parts.append(persona_block)
 
         # User's own standing-instructions file (AGENTS.md / CLAUDE.md equivalent),
-        # named after the assistant (e.g. Ruben.md). Distinct from the persona: the
+        # named after the assistant (e.g. Assistant.md). Distinct from the persona: the
         # user writes personal preferences here, and the block is framed so they
         # refine behaviour but never override safety/confirmations. Read fresh each
         # turn -> an edit applies on the next turn, no restart. A read fault must

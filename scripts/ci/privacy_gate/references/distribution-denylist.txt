@@ -107,6 +107,12 @@ Unbenanntes*
 # contacts). Withheld until a staged demo-vault screenshot replaces it; the
 # README image reference was removed in the same review.
 assets/screenshots/view-wiki.png
+# Personalized visual QA/reference captures (2026-08-03 privacy review): these
+# contain a configured person's name, wake phrase, profile filename, or other
+# live-looking account context. They are review inputs, not runtime assets.
+assets/screenshots/app-home.png
+assets/screenshots/app-desktop.png
+qa/ref/**
 
 # --- Internal dev-process docs: whole subtrees ------------------------------
 docs/superpowers/**
