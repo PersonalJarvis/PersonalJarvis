@@ -200,8 +200,8 @@ docs/qa/**
 
 # --- Internal privacy/red-team agent spec (2026-06-30) ----------------------
 # docs-privacy-reviewer.md is the maintainer's OWN depersonalization red-team
-# guide: in source it enumerates the real maintainer identity (real name in
-# every spelling incl. the accented 'Rubén', alt name 'Harald Herz', the private
+# guide: in source it enumerates the real maintainer identity (the
+# `<MAINTAINER_NAME>` and `<ALTERNATE_NAME>` variants), the private
 # email shapes, GitHub login) and the entire scrub scheme. Shipping the doc that
 # lists what to hide is itself the leak (2026-06-30 sub-agent review). It is an
 # internal dev tool with no downstream value; a fork writes its own.
@@ -230,7 +230,7 @@ voice-session-*
 # --- Internal pick-up / handoff prompt notes (2026-06-30) -------------------
 # reporttutorialpickupprompt*.md is a loose top-level "pick-up" prompt: an
 # internal instruction to a Claude session to run the §2 privacy review. It
-# names the maintainer real name ("Ruben", "Lütke / Luetke") and enumerates the  # i18n-allow
+# names concrete maintainer-identity variants and enumerates the
 # private categories to hunt for — the same self-leak class as
 # docs-privacy-reviewer.md and docs/handoffs/** already withheld above (shipping
 # the doc that lists what to hide IS the leak). Internal process artifact, zero
