@@ -487,6 +487,65 @@ def test_pynput_key_table_maps_core_vocabulary():
     assert "win" in table
 
 
+class _FakePynputKeyboard:
+    """Stand-in for ``pynput.keyboard`` — the ``Key`` members plus ``from_vk``.
+
+    Deliberately NOT ``importorskip``: this asserts a cross-OS vocabulary
+    contract, so it has to run on the machines that break it. pynput is a
+    desktop extra and is absent on this dev box and on headless CI, which is
+    exactly where a macOS/Linux gap would otherwise sail through unchecked.
+    Only the surface ``_pynput_key_table`` touches is modelled.
+    """
+
+    class Key:
+        pass
+
+    class KeyCode:
+        def __init__(self, vk: int) -> None:
+            self.vk = vk
+
+        @classmethod
+        def from_vk(cls, vk: int) -> _FakePynputKeyboard.KeyCode:
+            return cls(vk)
+
+    def __init__(self) -> None:
+        # Every ``Key`` member the real pynput exposes on macOS/X11 and that
+        # `_pynput_key_table` looks up by name.
+        for member in (
+            "ctrl", "shift", "alt", "cmd", "esc", "enter", "tab", "space",
+            "backspace", "delete", "insert", "home", "end", "page_up",
+            "page_down", "left", "up", "right", "down", "caps_lock",
+            *(f"f{i}" for i in range(1, 21)),
+        ):
+            setattr(self.Key, member, f"<Key.{member}>")
+
+
+def test_pynput_key_table_covers_the_shared_key_vocabulary(monkeypatch):
+    """macOS/Linux must address every key the tool boundary accepts.
+
+    ``base._NAMED_KEYS`` is the ONE vocabulary a Computer-Use action is
+    validated against, and the Windows backend maps all of it (VK 0x60-0x6F
+    for the numpad alone). The POSIX table had no entry for a single numpad
+    key, so an action that ran on Windows failed on a Mac with
+    ``ValueError: Unknown key: 'numpad5'`` — the same "offered everywhere,
+    works on one OS" defect the keybind picker had.
+    """
+    from jarvis.cu.actuate.base import _NAMED_KEYS
+    from jarvis.cu.actuate.posix import _pynput_key_table
+
+    # Modifier side-variants are Windows spellings of keys the table already
+    # carries generically; pynput models no separate member for them.
+    windows_only = {"lwin", "rwin", "windows", "menu"}
+
+    for platform in ("darwin", "linux"):
+        monkeypatch.setattr(sys, "platform", platform)
+        table = _pynput_key_table(_FakePynputKeyboard())
+        missing = sorted(_NAMED_KEYS - windows_only - set(table))
+        assert not missing, (
+            f"on {platform}: accepted by the tool boundary, unusable: {missing}"
+        )
+
+
 def test_macos_cursor_readback_uses_quartz_global_coordinates(monkeypatch):
     from jarvis.cu.actuate.posix import PosixActuator
 
