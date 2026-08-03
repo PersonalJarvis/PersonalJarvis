@@ -8182,6 +8182,27 @@ class SpeechPipeline:
                             await self._set_turn_state(TurnTakingState.LISTENING)
             elif kind == "provider_error":
                 log.warning("Realtime desktop status: %s", message)
+            elif kind == "provider_fallback":
+                # The call is crossing to a DIFFERENT provider family, which can
+                # mean a different billing path (AP-22). The user-facing notice
+                # rides the bus (``ErrorOccurred`` on the ``realtime.*`` layer,
+                # published alongside this frame) so it reaches every surface in
+                # the UI language; this branch exists so the desktop dispatch
+                # never drops the frame in silence (AP-30). The rebuilt session
+                # announces itself with a fresh ``audio_ready``, whose own
+                # branch above returns the turn state to LISTENING.
+                log.warning(
+                    "Realtime desktop provider fallback: from=%s status=%s error=%s",
+                    message.get("provider", "unknown"),
+                    message.get("status", "unknown"),
+                    message.get("error", ""),
+                )
+            elif kind == "provider_warning":
+                # Recoverable: the session continues on the same provider.
+                log.warning(
+                    "Realtime desktop provider warning: %s",
+                    message.get("error", ""),
+                )
 
         # Open the microphone BEFORE building the realtime session AND before
         # the provider handshake, buffering locally until the session accepts

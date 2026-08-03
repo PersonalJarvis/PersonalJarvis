@@ -170,6 +170,13 @@ export class BrowserSpeechFallback {
         : null,
   ) {}
 
+  /**
+   * @param language BCP-47 tag resolved by the BACKEND's single turn-language
+   *   resolver. Empty means "the backend did not say", and the engine's own
+   *   default is then used — this layer must never invent one, because a
+   *   second language decision here is exactly the per-layer re-derivation the
+   *   output-language doctrine forbids.
+   */
   speak(
     text: string,
     language: string,
@@ -191,7 +198,7 @@ export class BrowserSpeechFallback {
       this.active = false;
       handlers.onFinish(outcome);
     };
-    utterance.lang = language || "en-US";
+    if (language) utterance.lang = language;
     utterance.volume = Math.max(0, Math.min(1, Number.isFinite(volume) ? volume : 1));
     utterance.onstart = () => {
       if (generation === this.generation) handlers.onStart?.();
@@ -507,6 +514,16 @@ export class RealtimeAudioClient {
           this.setOutputRate(message.sample_rate);
         } else if (type === "tts_browser_fallback") {
           this.handleBrowserSpeech(message);
+        } else if (type === "error_spoken") {
+          // The realtime session's surface-TTS path: the trusted, scrub-clean
+          // reply the provider itself did not (or must not) speak. The desktop
+          // pipeline has always rendered it; this client dropped it silently,
+          // which made a cancelled turn look like a dead call — and it is the
+          // ONLY message that carries the turn's resolved output language.
+          this.handleBrowserSpeech({
+            ...message,
+            id: typeof message.id === "string" ? message.id : "error_spoken",
+          });
         } else if (type === "thinking" || type === "turn_complete" || type === "tts_end") {
           this.playbackResampler?.reset();
         }
@@ -595,7 +612,10 @@ export class RealtimeAudioClient {
 
     this.playbackResampler?.reset();
     this.playbackNode?.port.postMessage({ type: "flush" });
-    const language = typeof message.language === "string" ? message.language : "en-US";
+    // Passed through verbatim from the backend's single turn-language
+    // resolver. No default is substituted here: inventing one would be a
+    // second language decision in a layer that has no business making it.
+    const language = typeof message.language === "string" ? message.language : "";
     const volume = typeof message.volume === "number" ? message.volume : 1;
     this.browserSpeech.speak(text, language, volume, {
       onStart: () => this.cb.onAudio?.(),

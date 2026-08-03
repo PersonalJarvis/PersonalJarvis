@@ -1,27 +1,33 @@
 import { useEventStore, type VoiceState } from "@/store/events";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
-const STATE_STYLE: Record<VoiceState, { color: string; label: string; ring: string }> = {
-  idle:      { color: "bg-blue-500",   label: "Idle",      ring: "ring-blue-500/40" },
-  listening: { color: "bg-emerald-500", label: "Listening", ring: "ring-emerald-500/50 animate-pulse" },
-  thinking:  { color: "bg-yellow-500", label: "Thinking",  ring: "ring-yellow-500/50 animate-pulse" },
-  speaking:  { color: "bg-pink-500",   label: "Speaking",  ring: "ring-pink-500/50 animate-pulse" },
-  error:     { color: "bg-red-500",    label: "Error",     ring: "ring-red-500/50" },
+// Exhaustive by construction: adding a member to VoiceState without a style
+// here fails the TypeScript build instead of rendering an undefined swatch.
+const STATE_STYLE: Record<VoiceState, { color: string; ring: string }> = {
+  idle:      { color: "bg-blue-500",    ring: "ring-blue-500/40" },
+  listening: { color: "bg-emerald-500", ring: "ring-emerald-500/50 animate-pulse" },
+  thinking:  { color: "bg-yellow-500",  ring: "ring-yellow-500/50 animate-pulse" },
+  speaking:  { color: "bg-pink-500",    ring: "ring-pink-500/50 animate-pulse" },
+  paused:    { color: "bg-amber-500",   ring: "ring-amber-500/40" },
+  error:     { color: "bg-red-500",     ring: "ring-red-500/50" },
 };
 
 export function VoiceIndicator() {
+  const t = useT();
   const state = useEventStore((s) => s.voiceState);
-  const style = STATE_STYLE[state];
+  const style = STATE_STYLE[state] ?? STATE_STYLE.idle;
+  const label = t(`voice_state.${state}`);
   return (
     <div
       role="status"
-      aria-label={`Voice state: ${style.label}`}
+      aria-label={`${t("voice_state.indicator_label")}: ${label}`}
       className={cn(
         "h-8 w-8 rounded-full ring-4 transition-colors",
         style.color,
         style.ring,
       )}
-      title={style.label}
+      title={label}
     />
   );
 }

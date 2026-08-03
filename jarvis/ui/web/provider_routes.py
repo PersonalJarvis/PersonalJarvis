@@ -23,7 +23,7 @@ import logging
 import time
 from collections.abc import Mapping
 from types import SimpleNamespace
-from typing import Any, Literal, get_args
+from typing import Any, Final, Literal, get_args
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -880,6 +880,56 @@ def _codex_binary_path(request: Request | None = None) -> str | None:
         except Exception:  # noqa: BLE001
             cfg = None
     return getattr(getattr(cfg, "codex", None), "binary_path", "") or None
+
+
+# Ceiling for the pre-switch wait on a browser WebRTC offer. Long enough to
+# cover ICE gathering (~1.5 s) plus one socket round trip, short enough that a
+# client which cannot produce one is not punished for it.
+_REALTIME_OFFER_WAIT_S: Final = 3.0
+_REALTIME_OFFER_POLL_S: Final = 0.1
+
+
+def _realtime_provider_requires_offer(provider_id: str) -> bool:
+    """Whether ``provider_id``'s transport needs a browser WebRTC offer.
+
+    A capability the adapter class declares, never a provider name (AP-21).
+    """
+    try:
+        from jarvis.core.registry import load
+        from jarvis.realtime.protocol import RealtimeProvider
+
+        provider_cls = load("jarvis.realtime", provider_id, protocol=RealtimeProvider)
+    except Exception as exc:  # noqa: BLE001 — an unloadable adapter needs no wait
+        log.debug("Realtime offer-capability probe skipped for %s: %s", provider_id, exc)
+        return False
+    return bool(getattr(provider_cls, "requires_webrtc_offer", False))
+
+
+async def _await_transport_offer(timeout_s: float) -> bool:
+    """Wait (bounded) until the UI has registered a WebRTC offer.
+
+    Polls the broker's non-consuming count: ``acquire`` would LEASE the offer
+    and hand it to nobody, which is worse than not waiting at all.
+    """
+    try:
+        from jarvis.realtime.offer_broker import (
+            get_realtime_transport_offer_broker,
+        )
+    except ImportError:  # Optional realtime support is absent on a minimal install.
+        return False
+    broker = get_realtime_transport_offer_broker()
+    deadline = asyncio.get_running_loop().time() + max(0.0, timeout_s)
+    while True:
+        if await broker.pending_count() > 0:
+            return True
+        if asyncio.get_running_loop().time() >= deadline:
+            log.info(
+                "No browser WebRTC offer appeared within %.1fs; reopening the "
+                "realtime session anyway",
+                timeout_s,
+            )
+            return False
+        await asyncio.sleep(_REALTIME_OFFER_POLL_S)
 
 
 def _codex_subscription_status_payload(binary_path: str | None) -> dict[str, Any]:
@@ -3981,7 +4031,23 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             log.debug("In-memory realtime.provider update skipped: %s", exc)
     await _emit(request, SecretConfigured(key="brain.realtime.provider", action="set"))
 
-    from jarvis.ui.web.voice_runtime import reconnect_realtime
+    from jarvis.ui.web.voice_runtime import reconnect_realtime, voice_engine_status
+
+    # A switch REOPENS an open call immediately. A transport that needs a
+    # browser WebRTC offer cannot start without one, and the client only learns
+    # it must publish one from the status snapshot it fetches AFTER this
+    # response — so the reopened session used to start with nothing registered
+    # and hang for the whole handshake budget. The UI now asks for an offer
+    # before this request; give it a bounded moment to land. Idle installs skip
+    # the wait entirely (there is no call to reopen), and a client that cannot
+    # produce an offer just spends the ceiling once rather than failing early
+    # on a provider that might still work.
+    if await asyncio.to_thread(_realtime_provider_requires_offer, body.provider):
+        try:
+            if bool(voice_engine_status(request).get("session_active", False)):
+                await _await_transport_offer(_REALTIME_OFFER_WAIT_S)
+        except Exception as exc:  # noqa: BLE001 — never block a switch on this
+            log.debug("Realtime offer pre-wait skipped: %s", exc)
 
     session_restarted = reconnect_realtime(
         request, reason=f"realtime_provider:{body.provider}"

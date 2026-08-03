@@ -388,7 +388,10 @@
     "starting": "Voice starting…",
     "warming_title": "{name} is starting up",
     "warming_hint": "Getting ready to listen – one moment, you'll be able to speak shortly.",
-    "ready_title": "Ready – you can speak now"
+    "ready_title": "Ready – you can speak now",
+    "connecting": "Connecting…",
+    "paused": "Paused",
+    "indicator_label": "Voice state"
   },
   "sidebar": {
     "wake_hint": "Say your wake word…",
@@ -415,7 +418,15 @@
     "realtime_browser_tts_unavailable": "This browser has no usable system voice. The answer is still available as text; connect a TTS provider for audio.",
     "realtime_pipeline_fallback": "Classic pipeline fallback",
     "realtime_unavailable": "Connect or configure a Realtime provider",
-    "realtime_error": "Couldn’t start voice. Test the active Realtime provider under API Keys, then retry."
+    "realtime_error": "Couldn’t start voice. Test the active Realtime provider under API Keys, then retry.",
+    "realtime_provider_fallback": "{0} became unavailable, so the call moved to another provider — billing may differ. {1}",
+    "realtime_provider_fallback_short": "The call moved off {0} to another provider.",
+    "realtime_provider_warning": "The realtime provider reported a recoverable problem; the call continues.",
+    "realtime_provider_unknown": "the previous provider",
+    "realtime_webrtc_degraded": "The WebRTC transport could not be set up; audio continues over the audio socket.",
+    "realtime_transport_capability_missing": "This window did not receive the desktop permission needed to open the subscription transport. Restart the app.",
+    "realtime_transport_offer_unsupported": "This window cannot create the WebRTC connection the subscription transport needs. Use an API Realtime provider instead.",
+    "realtime_transport_socket_unreachable": "The subscription transport channel could not be reached. Restart the app, then try again."
   },
   "provider_billing": {
     "api": "API, billed per token",
@@ -1227,7 +1238,38 @@
     "reco_computer_use_why": "the snappiest tool latency.",
     "reco_subagents_pick": "ChatGPT or Claude Max subscription",
     "reco_subagents_why": "flat rate for heavy background work.",
-    "mode_status_unknown": "Engine status has not loaded yet - the switch unlocks as soon as the backend answers. If this persists, restart the app."
+    "mode_status_unknown": "Engine status has not loaded yet - the switch unlocks as soon as the backend answers. If this persists, restart the app.",
+    "runtime_connecting": "Connecting the Realtime session — this can take up to a minute on a subscription transport.",
+    "state_active": "active",
+    "state_ready": "ready",
+    "state_checking": "checking",
+    "state_unavailable": "unavailable",
+    "state_blocked": "blocked",
+    "state_missing": "missing",
+    "state_not_connected": "not connected",
+    "state_open": "open",
+    "activate_tooltip_active": "This provider is active",
+    "activate_tooltip_activate": "Activate this provider",
+    "activate_tooltip_blocked": "Provider cannot be activated",
+    "auth_mode_api_key": "API key auth",
+    "auth_mode_codex": "ChatGPT / Codex login",
+    "auth_mode_antigravity": "Google subscription login",
+    "auth_mode_none": "Local — no auth",
+    "agents_only_short": "Available for {0} only",
+    "agents_only_toast": "{0} is only available for {1}.",
+    "agents_only_note": "{0} only. This provider cannot be used as the main Brain or Computer-Use planner because it does not receive screenshots.",
+    "local_optional_key_hint": "Local provider — runs without credentials. The key below is optional, only for servers that enforce one (e.g. vLLM --api-key).",
+    "local_no_credentials_hint": "Local provider — no credentials needed.",
+    "polish_verify_failed": "{0} is selected, but it did not answer: {1}",
+    "switch_note_next_start": " (active from next voice start)",
+    "switch_done_brain": "Brain → {0}",
+    "switch_done_tts": "Voice output → {0}",
+    "switch_done_stt": "Voice input → {0}",
+    "switch_done_computer_use": "Computer-Use → {0}",
+    "switch_done_dictation": "Dictation wording → {0}",
+    "switch_done_realtime": "Realtime → {0}",
+    "experimental_note": "This provider uses an unstable protocol that can change without notice. If it cannot start, the call stops.",
+    "experimental_consent": "Before you turn this on: this provider uses an experimental, unstable route that can change without notice. If it breaks, the call stops instead of switching to another provider on its own. Continue?"
   },
   "apikeys_test": {
     "button": "Test",
@@ -2691,7 +2733,8 @@
     "jarvis_opened": "{name} opened",
     "prompt_sent": "Prompt sent to",
     "prompt_not_submitted": "the prompt is in its input box, not sent",
-    "dictation_nowhere": "No text field had focus, so the dictation was not inserted. It is in the dictation history."
+    "dictation_nowhere": "No text field had focus, so the dictation was not inserted. It is in the dictation history.",
+    "realtime_provider_issue": "The realtime provider reported a problem."
   },
   "chat_thread": {
     "message_to": "Message to",

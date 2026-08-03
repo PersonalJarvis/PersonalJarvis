@@ -17,9 +17,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { ProviderCard } from "@/components/providers/ProviderTierSection";
+import {
+  PROVIDER_STATE_CHIPS,
+  ProviderCard,
+  type ProviderStateChip,
+} from "@/components/providers/ProviderTierSection";
 import type { ProviderDescriptor, ProviderTestResult } from "@/hooks/useProviders";
 import { useI18nStore, type UiLanguage } from "@/i18n";
+import enLocale from "@/i18n/locales/en.json";
+
+/** The rendered label of one state chip, resolved through its i18n key.
+ *
+ * These chips used to be bare English literals in the component, so a test
+ * asserting the literal could not tell a translated chip from an untranslated
+ * one. Going through the key keeps the assertion about the STATE, not about
+ * one locale's wording. */
+function chipLabel(chip: ProviderStateChip): string {
+  const [namespace, key] = PROVIDER_STATE_CHIPS[chip].key.split(".");
+  const bucket = (enLocale as unknown as Record<string, Record<string, string>>)[
+    namespace
+  ];
+  return bucket[key];
+}
 
 const EXPERIMENTAL_CONSENT_KEY =
   "jarvis.experimentalConsent.codex-subscription-realtime";
@@ -481,8 +500,8 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     ).toBeNull();
     // The state chip next to the provider name must not shout "missing" (red)
     // about an install the probe has not judged yet.
-    expect(screen.queryByText("missing")).toBeNull();
-    expect(screen.getByText("checking")).toBeTruthy();
+    expect(screen.queryByText(chipLabel("missing"))).toBeNull();
+    expect(screen.getByText(chipLabel("checking"))).toBeTruthy();
     // The connect action stays available: login validates itself and a busy
     // flicker must not lock the user out of it.
     const connect = screen.getByRole("button", {
@@ -603,8 +622,8 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     expect(connect.disabled).toBe(true);
     // The state chip stays neutral — nothing is "missing" on an OS the
     // feature does not support.
-    expect(screen.queryByText("missing")).toBeNull();
-    expect(screen.getByText("unavailable")).toBeTruthy();
+    expect(screen.queryByText(chipLabel("missing"))).toBeNull();
+    expect(screen.getByText(chipLabel("unavailable"))).toBeTruthy();
   });
 
   it("shows the sticky plan diagnosis after a refused activation", () => {

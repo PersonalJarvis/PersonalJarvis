@@ -388,7 +388,10 @@
     "starting": "Iniciando voz…",
     "warming_title": "{name} se está iniciando",
     "warming_hint": "Preparando la escucha – un momento, podrás hablar en breve.",
-    "ready_title": "Listo – ya puedes hablar"
+    "ready_title": "Listo – ya puedes hablar",
+    "connecting": "Conectando…",
+    "paused": "En pausa",
+    "indicator_label": "Estado de voz"
   },
   "sidebar": {
     "wake_hint": "Di tu palabra de activación…",
@@ -415,7 +418,15 @@
     "realtime_browser_tts_unavailable": "Este navegador no tiene una voz del sistema utilizable. La respuesta sigue disponible como texto; conecta un proveedor de TTS para oírla.",
     "realtime_pipeline_fallback": "Sistema de voz clásico como alternativa",
     "realtime_unavailable": "Conecta o configura un proveedor de tiempo real",
-    "realtime_error": "No se pudo iniciar la voz. Prueba el proveedor activo en API Keys y vuelve a intentarlo."
+    "realtime_error": "No se pudo iniciar la voz. Prueba el proveedor activo en API Keys y vuelve a intentarlo.",
+    "realtime_provider_fallback": "{0} dejó de estar disponible, así que la llamada pasó a otro proveedor: la facturación puede cambiar. {1}",
+    "realtime_provider_fallback_short": "La llamada dejó {0} y continúa con otro proveedor.",
+    "realtime_provider_warning": "El proveedor Realtime informó de un problema recuperable; la llamada continúa.",
+    "realtime_provider_unknown": "el proveedor anterior",
+    "realtime_webrtc_degraded": "No se pudo establecer el transporte WebRTC; el audio continúa por la conexión de audio.",
+    "realtime_transport_capability_missing": "Esta ventana no recibió el permiso de escritorio necesario para abrir el transporte de suscripción. Reinicia la aplicación.",
+    "realtime_transport_offer_unsupported": "Esta ventana no puede crear la conexión WebRTC que necesita el transporte de suscripción. Usa un proveedor Realtime con API.",
+    "realtime_transport_socket_unreachable": "No se pudo acceder al canal del transporte de suscripción. Reinicia la aplicación e inténtalo de nuevo."
   },
   "provider_billing": {
     "api": "API, facturación por token",
@@ -1226,7 +1237,39 @@
     "reco_computer_use_why": "la latencia más rápida para herramientas.",
     "reco_subagents_pick": "Suscripción de ChatGPT o Claude Max",
     "reco_subagents_why": "tarifa plana para el trabajo pesado en segundo plano.",
-    "mode_status_unknown": "El estado del motor aún no se ha cargado: el selector se desbloquea en cuanto el backend responda. Si persiste, reinicia la aplicación."
+    "mode_status_unknown": "El estado del motor aún no se ha cargado: el selector se desbloquea en cuanto el backend responda. Si persiste, reinicia la aplicación.",
+    "runtime_connecting": "Conectando la sesión Realtime: con un transporte de suscripción puede tardar hasta un minuto.",
+    "state_active": "activo",
+    "state_ready": "listo",
+    "state_checking": "comprobando",
+    "state_unavailable": "no disponible",
+    "state_blocked": "bloqueado",
+    "state_missing": "falta",
+    "state_not_connected": "sin conectar",
+    "state_open": "pendiente",
+    "activate_tooltip_active": "Este proveedor está activo",
+    "activate_tooltip_activate": "Activar este proveedor",
+    "activate_tooltip_blocked": "El proveedor no se puede activar",
+    "auth_mode_api_key": "Autenticación con clave API",
+    "auth_mode_codex": "Inicio de sesión de ChatGPT / Codex",
+    "auth_mode_antigravity": "Inicio de sesión de suscripción de Google",
+    "auth_mode_none": "Local: sin autenticación",
+    "agents_only_short": "Solo disponible para {0}",
+    "agents_only_toast": "{0} solo está disponible para {1}.",
+    "agents_only_note": "Solo {0}. Este proveedor no puede ser el Brain principal ni el planificador de Computer-Use porque no recibe capturas de pantalla.",
+    "local_optional_key_hint": "Proveedor local: funciona sin credenciales. La clave de abajo es opcional, solo para servidores que exigen una (por ejemplo vLLM --api-key).",
+    "local_no_credentials_hint": "Proveedor local: no necesita credenciales.",
+    "polish_verify_failed": "{0} está seleccionado, pero no respondió: {1}",
+    "switch_note_next_start": " (activo desde el próximo inicio de voz)",
+    "switch_done_brain": "Brain → {0}",
+    "switch_done_tts": "Salida de voz → {0}",
+    "switch_done_stt": "Entrada de voz → {0}",
+    "switch_done_computer_use": "Computer-Use → {0}",
+    "switch_done_dictation": "Redacción del dictado → {0}",
+    "switch_done_realtime": "Realtime → {0}",
+    "experimental_note": "Este proveedor usa un protocolo inestable que puede cambiar sin aviso. Si no puede iniciarse, la llamada se detiene.",
+    "experimental_consent": "Antes de activarlo: este proveedor usa una ruta experimental e inestable que puede cambiar sin aviso. Si falla, la llamada se detiene en lugar de cambiar por su cuenta a otro proveedor. ¿Continuar?",
+    "trademark_notice": "Los nombres y logotipos de proveedores y servicios son marcas de sus respectivos titulares y se muestran únicamente para identificar las integraciones que puedes conectar. No implican afiliación ni respaldo."
   },
   "apikeys_test": {
     "button": "Probar",
@@ -2690,7 +2733,8 @@
     "jarvis_opened": "{name} abrió",
     "prompt_sent": "Prompt enviado a",
     "prompt_not_submitted": "el prompt está en su campo de entrada, no se envió",
-    "dictation_nowhere": "Ningún campo de texto tenía el foco, así que el dictado no se insertó. Está en el historial de dictados."
+    "dictation_nowhere": "Ningún campo de texto tenía el foco, así que el dictado no se insertó. Está en el historial de dictados.",
+    "realtime_provider_issue": "El proveedor Realtime informó de un problema."
   },
   "chat_thread": {
     "message_to": "Mensaje a",

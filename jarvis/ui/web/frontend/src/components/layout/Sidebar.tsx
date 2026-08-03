@@ -164,7 +164,12 @@ const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {
   listening: { dot: "bg-emerald-400", pulse: true },
   thinking: { dot: "bg-primary", pulse: true },
   speaking: { dot: "bg-primary", pulse: true },
+  // The user muted or suspended the pipeline: neither working nor broken.
+  paused: { dot: "bg-amber-400", pulse: false },
   error: { dot: "bg-destructive", pulse: false },
+  // Not a supervisor state — the surface's own "a realtime transport is
+  // negotiating" phase, which no backend state covers.
+  connecting: { dot: "bg-amber-400", pulse: true },
 };
 
 export interface SidebarProps {
@@ -237,31 +242,41 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
     s.events.filter((e) => e.name === "AgentStateChange").length > 0 ? undefined : 0,
   );
 
+  // Read before the status line because BOTH depend on it now: the footer card
+  // follows the VOICE MODE rather than the pipeline brain (in realtime mode the
+  // pipeline brain is dormant, and showing it there misled the user —
+  // "OpenRouter" while Gemini Live was doing all the talking), and the status
+  // line needs its connecting phase. A RUNNING realtime session's live
+  // provider/model outrank the configured pick (a mid-call cross-family
+  // fallback must be visible, AP-22); when idle the resolved provider + its
+  // pinned/default model are shown.
+  const voiceMode = useVoiceMode();
+
   // The window connects in ~1s but the voice feature warms up ~20s in the
   // background. During that gap show a "Voice starting…" spinner instead of the
   // normal idle "Ready" dot (which would falsely imply the mic already works).
   // Disconnected outranks warmup — "Offline" is the honest state with no socket.
   // voiceWarming / bootWarming / warming come from the shared useVoiceReadiness
   // hook so the sidebar dot, the banner and the chat empty-state never disagree.
-  const showSpinner = warming;
-  const vs = VOICE_STATE_STYLE[voiceState] ?? VOICE_STATE_STYLE.idle;
+  const showSpinner = warming || voiceMode.connecting;
+  const vs = voiceMode.connecting
+    ? VOICE_STATE_STYLE.connecting
+    : VOICE_STATE_STYLE[voiceState] ?? VOICE_STATE_STYLE.idle;
+  // A negotiating realtime transport outranks the pipeline's own state: the
+  // subscription route needs 15-45 s before it can hear anything, and showing
+  // the stale pre-call state there is what made a live handshake look frozen.
   const voiceLabel = !connected
     ? bootWarming
       ? t("voice_state.booting")
       : t("voice_state.offline")
     : voiceWarming
       ? t("voice_state.starting")
-      : t(`voice_state.${voiceState}`);
+      : voiceMode.connecting
+        ? t("voice_state.connecting")
+        : t(`voice_state.${voiceState}`);
 
   const providerLabel = useMemo(() => prettyProviderName(brainProvider), [brainProvider]);
 
-  // The footer card follows the VOICE MODE, not always the pipeline brain:
-  // in realtime mode the pipeline brain is dormant, so showing it there
-  // misled the user ("OpenRouter" while Gemini Live was doing all the talking).
-  // A RUNNING realtime session's live provider/model outrank the configured
-  // pick (a mid-call cross-family fallback must be visible, AP-22); when idle
-  // the resolved provider + its pinned/default model are shown.
-  const voiceMode = useVoiceMode();
   const realtimeFooter = voiceMode.mode === "realtime";
   const liveRealtimeSession =
     realtimeFooter &&

@@ -36,6 +36,11 @@ import {
 import { useEventStore } from "@/store/events";
 import { agentBrand, agentsBrand } from "@/lib/agentBrand";
 import { robustCopy } from "@/lib/clipboard";
+import {
+  realtimeTransportIssueKey,
+  requestRealtimeTransportOffer,
+  type RealtimeTransportIssue,
+} from "@/lib/realtimeTransportIssue";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
@@ -338,6 +343,11 @@ export function VoiceEngineContext({
   mode,
   realtimeAvailable,
   statusKnown,
+  connecting = false,
+  requiresWebRtcOffer = false,
+  transportOfferReady = null,
+  transportOfferDetail = "",
+  transportIssue = null,
   sessionActive,
   activeSessionMode,
   activeSessionProvider,
@@ -349,6 +359,16 @@ export function VoiceEngineContext({
   mode: VoiceEngineMode;
   realtimeAvailable: boolean;
   statusKnown: boolean;
+  /** A realtime call is negotiating right now — neither idle nor running. */
+  connecting?: boolean;
+  /** The resolved realtime transport needs a browser WebRTC offer. */
+  requiresWebRtcOffer?: boolean;
+  /** Whether an offer is registered; null on a backend that does not report it. */
+  transportOfferReady?: boolean | null;
+  /** Backend one-liner naming WHY no offer is available. Rendered verbatim. */
+  transportOfferDetail?: string;
+  /** Client-side broker blocker; outranks the backend line when set. */
+  transportIssue?: RealtimeTransportIssue | null;
   sessionActive: boolean;
   activeSessionMode: "pipeline" | "realtime" | null;
   activeSessionProvider: string;
@@ -361,17 +381,35 @@ export function VoiceEngineContext({
   const runtimeDetail = [activeSessionProvider, activeSessionModel]
     .filter(Boolean)
     .join(" · ");
-  const runtimeText = transitioning
-    ? t("apikeys_view.runtime_switching")
-    : sessionActive && activeSessionMode === "realtime"
-      ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ? ` · ${runtimeDetail}` : ""}`
-      : sessionActive && activeSessionMode === "pipeline" && liveMode === "realtime"
-        ? t("apikeys_view.runtime_fallback_pipeline")
-        : sessionActive && activeSessionMode === "pipeline"
-          ? t("apikeys_view.runtime_pipeline")
-          : t("apikeys_view.runtime_idle");
+  // "Connecting" comes FIRST. A subscription transport spends 15-45 s spawning
+  // its app-server, verifying the account and negotiating WebRTC; reporting
+  // that window as "no voice session is active" is what made a working call
+  // look frozen.
+  const runtimeText = connecting
+    ? t("apikeys_view.runtime_connecting")
+    : transitioning
+      ? t("apikeys_view.runtime_switching")
+      : sessionActive && activeSessionMode === "realtime"
+        ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ? ` · ${runtimeDetail}` : ""}`
+        : sessionActive && activeSessionMode === "pipeline" && liveMode === "realtime"
+          ? t("apikeys_view.runtime_fallback_pipeline")
+          : sessionActive && activeSessionMode === "pipeline"
+            ? t("apikeys_view.runtime_pipeline")
+            : t("apikeys_view.runtime_idle");
   const runtimeMatchesSelection =
     !sessionActive || activeSessionMode === null || activeSessionMode === liveMode;
+  // The one honest explanation for a call that never starts on an
+  // offer-requiring transport (only the subscription route requires one).
+  // Rendered verbatim: the backend one-liner names the actual blocker.
+  const offerBlocked =
+    liveMode === "realtime" &&
+    requiresWebRtcOffer &&
+    transportOfferReady === false;
+  const offerDetail = !offerBlocked
+    ? ""
+    : transportIssue
+      ? t(realtimeTransportIssueKey(transportIssue))
+      : transportOfferDetail;
   const modeDescription =
     mode === "realtime" && !realtimeAvailable
       ? t(
@@ -417,7 +455,7 @@ export function VoiceEngineContext({
             aria-hidden="true"
             className={cn(
               "h-1.5 w-1.5 shrink-0 rounded-full",
-              transitioning
+              transitioning || connecting
                 ? "animate-pulse bg-amber-400 motion-reduce:animate-none"
                 : runtimeMatchesSelection
                   ? "bg-emerald-400"
@@ -426,7 +464,7 @@ export function VoiceEngineContext({
           />
           <span
             className={cn(
-              runtimeMatchesSelection && !transitioning
+              runtimeMatchesSelection && !transitioning && !connecting
                 ? "text-muted-foreground"
                 : "text-amber-300",
             )}
@@ -435,6 +473,16 @@ export function VoiceEngineContext({
           </span>
         </div>
       </div>
+
+      {offerDetail && (
+        <p
+          data-testid="voice-engine-transport-offer-detail"
+          className="mt-1 text-[11px] leading-snug text-amber-600 dark:text-amber-400"
+          aria-live="polite"
+        >
+          {offerDetail}
+        </p>
+      )}
 
       <p
         data-testid="voice-engine-keys-hint"
@@ -778,12 +826,20 @@ export function ProviderCard({
     // into a generic "does not work".
     pushToast(
       "warning",
-      `${descriptor.label} is selected, but it did not answer: ${
-        result.detail || result.status
-      }`,
+      t("apikeys_view.polish_verify_failed")
+        .replace("{0}", descriptor.label)
+        .replace("{1}", result.detail || result.status),
     );
     // Let the card repaint with the health this test just produced.
     onChanged();
+  }
+
+  /** "<tier> → <provider>", plus the "from the next voice start" note. */
+  function switchToast(key: string, restartRequired = false): string {
+    const line = t(key).replace("{0}", descriptor.label);
+    return restartRequired
+      ? `${line}${t("apikeys_view.switch_note_next_start")}`
+      : line;
   }
 
   async function activate(assumeConfigured = false) {
@@ -791,7 +847,9 @@ export function ProviderCard({
     if (!isBrainSwitchable) {
       pushToast(
         "warning",
-        `${descriptor.label} is only available for ${agentsBrand(assistantName)}.`,
+        t("apikeys_view.agents_only_toast")
+          .replace("{0}", descriptor.label)
+          .replace("{1}", agentsBrand(assistantName)),
       );
       return;
     }
@@ -862,25 +920,25 @@ export function ProviderCard({
     try {
       if (descriptor.tier === "brain") {
         await switchBrainProvider(descriptor.id);
-        pushToast("success", `Brain → ${descriptor.label}`);
+        pushToast("success", switchToast("apikeys_view.switch_done_brain"));
         window.dispatchEvent(new CustomEvent("jarvis:brain-switched"));
       } else if (descriptor.tier === "tts") {
         const result = await switchTtsProvider(descriptor.id);
-        const note = result.restart_required
-          ? " (active from next voice start)"
-          : "";
-        pushToast("success", `Voice output → ${descriptor.label}${note}`);
+        pushToast(
+          "success",
+          switchToast("apikeys_view.switch_done_tts", result.restart_required),
+        );
         window.dispatchEvent(new CustomEvent("jarvis:tts-switched"));
       } else if (descriptor.tier === "stt") {
         const result = await switchSttProvider(descriptor.id);
-        const note = result.restart_required
-          ? " (active from next voice start)"
-          : "";
-        pushToast("success", `Voice input → ${descriptor.label}${note}`);
+        pushToast(
+          "success",
+          switchToast("apikeys_view.switch_done_stt", result.restart_required),
+        );
         window.dispatchEvent(new CustomEvent("jarvis:stt-switched"));
       } else if (descriptor.tier === "computer-use") {
         await switchComputerUseProvider(descriptor.id);
-        pushToast("success", `Computer-Use → ${descriptor.label}`);
+        pushToast("success", switchToast("apikeys_view.switch_done_computer_use"));
         window.dispatchEvent(new CustomEvent("jarvis:computer-use-switched"));
       } else if (descriptor.tier === "dictation") {
         // Its own branch on purpose: this tier has no `/switch` route (the pin
@@ -896,7 +954,7 @@ export function ProviderCard({
         // exact "it says it did it but nothing changed" failure. Falling back to
         // `id` keeps an older payload without the field working.
         await switchDictationPolishProvider(descriptor.polish_family || descriptor.id);
-        pushToast("success", `Dictation wording → ${descriptor.label}`);
+        pushToast("success", switchToast("apikeys_view.switch_done_dictation"));
         window.dispatchEvent(new CustomEvent("jarvis:dictation-polish-switched"));
         // A stored key is not a working provider, and this tier is where the
         // gap bites hardest: the pass is INVISIBLE when it fails (it delivers
@@ -908,14 +966,20 @@ export function ProviderCard({
         // cheap here (a handful of tokens) and the only honest signal.
         void verifyPolishProvider();
       } else {
+        // The switch reconnects an OPEN call synchronously, and an
+        // offer-requiring transport cannot start without a registered browser
+        // offer. Ask for one before the POST rather than after the reconnect
+        // already failed. Dispatched for every realtime switch, never keyed on
+        // a provider name (AP-21) — a transport that needs none ignores it.
+        requestRealtimeTransportOffer();
         const result = await switchRealtimeProvider(
           descriptor.id,
           descriptor.experimental === true,
         );
-        const note = result.restart_required
-          ? " (active from next voice start)"
-          : "";
-        pushToast("success", `Realtime → ${descriptor.label}${note}`);
+        pushToast(
+          "success",
+          switchToast("apikeys_view.switch_done_realtime", result.restart_required),
+        );
         window.dispatchEvent(new CustomEvent("jarvis:realtime-switched"));
       }
       onChanged();
@@ -968,7 +1032,7 @@ export function ProviderCard({
 
   const consentDialog = consentPending ? (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60 p-4"
       onClick={(event) => {
         event.stopPropagation();
         setConsentPending(false);
@@ -980,7 +1044,11 @@ export function ProviderCard({
       >
         <div className="text-sm font-semibold">{descriptor.label}</div>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          {t("apikeys_view.experimental_subscription_consent")}
+          {t(
+            isSubscriptionLoginOnly
+              ? "apikeys_view.experimental_subscription_consent"
+              : "apikeys_view.experimental_consent",
+          )}
         </p>
         <div className="flex justify-end gap-2">
           <button
@@ -1020,7 +1088,10 @@ export function ProviderCard({
         descriptor.active
           ? t("apikeys_view.active_tooltip")
           : !isBrainSwitchable
-            ? `Available for ${agentsBrand(assistantName)} only`
+            ? t("apikeys_view.agents_only_short").replace(
+                "{0}",
+                agentsBrand(assistantName),
+              )
           : descriptor.configured
             ? t("apikeys_view.click_to_activate")
             : descriptor.auth_mode === "codex"
@@ -1100,10 +1171,7 @@ export function ProviderCard({
             <code className="font-mono">{descriptor.id}</code>
             {" · "}
             <span>
-              {descriptor.auth_mode === "api_key" && "API key auth"}
-              {descriptor.auth_mode === "codex" && "ChatGPT / Codex login"}
-              {descriptor.auth_mode === "antigravity" && "Google subscription login"}
-              {descriptor.auth_mode === "none" && "Local — no auth"}
+              {t(`apikeys_view.auth_mode_${descriptor.auth_mode}`)}
             </span>
           </p>
         </div>
@@ -1121,7 +1189,10 @@ export function ProviderCard({
           }
           disabledReason={
             !isBrainSwitchable
-              ? `Available for ${agentsBrand(assistantName)} only`
+              ? t("apikeys_view.agents_only_short").replace(
+                  "{0}",
+                  agentsBrand(assistantName),
+                )
               : isCodexBrain && !descriptor.codex_brain_ready
                 ? t("apikeys_codex.brain_needs_openai_key")
                 : undefined
@@ -1154,8 +1225,10 @@ export function ProviderCard({
 
       {!isBrainSwitchable && (
         <p className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
-          {agentBrand(assistantName)} only. This provider cannot be used as the main Brain or
-          Computer-Use planner because it does not receive screenshots.
+          {t("apikeys_view.agents_only_note").replace(
+            "{0}",
+            agentBrand(assistantName),
+          )}
         </p>
       )}
 
@@ -1412,11 +1485,11 @@ export function ActiveControl({
 }) {
   const t = useT();
   const labelTitle = descriptor.active
-    ? "This provider is active"
+    ? t("apikeys_view.activate_tooltip_active")
     : disabled
-      ? disabledReason ?? "Provider cannot be activated"
+      ? disabledReason ?? t("apikeys_view.activate_tooltip_blocked")
       : descriptor.configured
-        ? "Activate this provider"
+        ? t("apikeys_view.activate_tooltip_activate")
         : descriptor.codex_status?.reason_code
           ? // The reason-specific line names the actual remedy; a generic
             // "connect first" is wrong for most non-ready codex states.
@@ -1653,6 +1726,10 @@ export function AuthWidget({
   onSavedActivate?: () => void;
 }) {
   const t = useT();
+  // "Billed through a login, not a key" — the SHAPE that makes the
+  // subscription wording true, never a provider id (AP-21).
+  const isSubscriptionBilled =
+    descriptor.billing === "subscription" && descriptor.secret_keys.length === 0;
   return (
     <div className="space-y-2">
       <ProviderBillingBadge billing={descriptor.billing} />
@@ -1662,8 +1739,19 @@ export function AuthWidget({
           className="rounded-md border border-violet-500/30 bg-violet-500/[0.06] px-2.5 py-1.5 text-[11px] leading-snug text-muted-foreground"
         >
           <p>
-            <span>{t("apikeys_view.subscription_realtime_description")}</span>{" "}
-            <span>{t("apikeys_view.experimental_subscription_fallback")}</span>
+            {/* The subscription wording ("uses the ChatGPT plan…") belongs to
+                a card that IS billed through a subscription login — the shape,
+                never a provider name (AP-21). Bound to `experimental` alone it
+                would tell the next experimental provider's users that their
+                ChatGPT plan pays for it. */}
+            {isSubscriptionBilled ? (
+              <>
+                <span>{t("apikeys_view.subscription_realtime_description")}</span>{" "}
+                <span>{t("apikeys_view.experimental_subscription_fallback")}</span>
+              </>
+            ) : (
+              <span>{t("apikeys_view.experimental_note")}</span>
+            )}
           </p>
         </div>
       )}
@@ -1675,8 +1763,8 @@ export function AuthWidget({
         <>
           <p className="text-xs text-muted-foreground">
             {descriptor.secret_keys.length > 0
-              ? "Local provider — runs without credentials. The key below is optional, only for servers that enforce one (e.g. vLLM --api-key)."
-              : "Local provider — no credentials needed."}
+              ? t("apikeys_view.local_optional_key_hint")
+              : t("apikeys_view.local_no_credentials_hint")}
           </p>
           {descriptor.secret_keys.map((k) => (
             <ApiKeyForm
@@ -1780,7 +1868,16 @@ function CodexAuthWidget({
         : "apikeys_codex.status_login_required";
 
   useEffect(() => {
-    if (!loginPolling || loginReady) return;
+    if (!loginPolling) return;
+    if (loginReady) {
+      // The login just landed. `/api/providers` alone does not unlock the
+      // engine switch: realtime AVAILABILITY lives on the voice-mode snapshot,
+      // which listens for this event. Without it the card went green while the
+      // Pipeline|Realtime segment stayed disabled — for up to five minutes, and
+      // on a long-open window indefinitely.
+      window.dispatchEvent(new CustomEvent("jarvis:realtime-switched"));
+      return;
+    }
     let stopped = false;
     const deadline = Date.now() + 5 * 60_000;
     let timer: number | null = null;
@@ -1837,6 +1934,9 @@ function CodexAuthWidget({
       await codexLogout(subscriptionOnly);
       pushToast("info", t("apikeys_codex.disconnected"));
       onChanged();
+      // Losing the login removes a realtime provider: the engine switch has to
+      // re-read availability, or it keeps offering a mode that cannot start.
+      window.dispatchEvent(new CustomEvent("jarvis:realtime-switched"));
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
@@ -1915,6 +2015,12 @@ function CodexAuthWidget({
           )}
       </div>
 
+      {/* Deliberately `codex_status.installed`, NOT the payload's
+          `cli_installed`. The backend's carve-out for an ownership window
+          (answer "is it installed" from PATH instead of the owned profile)
+          protects exactly the states this row already suppresses below, so
+          reading both would add a second source of truth that can disagree —
+          and the two DO disagree in practice. See useProviders.ts. */}
       {!status?.installed &&
         !CODEX_NO_INSTALL_PROMPT_REASONS.has(status?.reason_code ?? "") && (
         <div className="flex flex-wrap items-center gap-2">
@@ -2138,31 +2244,57 @@ export function StateChip({
   );
 }
 
-export function StatusBadge({ descriptor }: { descriptor: ProviderDescriptor }) {
-  if (descriptor.active) return <StateChip tone="active">active</StateChip>;
+/**
+ * The card's state chip vocabulary — the summary a user actually scans.
+ *
+ * Every member maps to one `apikeys_view.state_*` key present in en/de/es
+ * (pinned by `provider-state-chip-parity.test.ts`). These used to be bare
+ * English literals, so a translated card carried an untranslated chip.
+ */
+export const PROVIDER_STATE_CHIPS = {
+  active: { tone: "active", key: "apikeys_view.state_active" },
+  ready: { tone: "ready", key: "apikeys_view.state_ready" },
+  checking: { tone: "neutral", key: "apikeys_view.state_checking" },
+  unavailable: { tone: "neutral", key: "apikeys_view.state_unavailable" },
+  blocked: { tone: "missing", key: "apikeys_view.state_blocked" },
+  missing: { tone: "missing", key: "apikeys_view.state_missing" },
+  not_connected: { tone: "neutral", key: "apikeys_view.state_not_connected" },
+  open: { tone: "neutral", key: "apikeys_view.state_open" },
+} as const satisfies Record<
+  string,
+  { tone: keyof typeof STATE_CHIP_TONE; key: string }
+>;
+
+export type ProviderStateChip = keyof typeof PROVIDER_STATE_CHIPS;
+
+/** Which chip a descriptor deserves. Pure, so the mapping stays testable. */
+export function providerStateChip(
+  descriptor: ProviderDescriptor,
+): ProviderStateChip {
+  if (descriptor.active) return "active";
   if (descriptor.auth_mode === "codex") {
     const status = descriptor.codex_status;
     // Transient: the status is being probed right now. Neither "missing" nor
     // "not connected" is known yet, and the red chip on a healthy install was
     // exactly the bug this state exists to prevent.
-    if (status?.reason_code === "busy")
-      return <StateChip tone="neutral">checking</StateChip>;
+    if (status?.reason_code === "busy") return "checking";
     // Nothing is "missing" on an OS the feature does not support at all.
-    if (status?.reason_code === "lifecycle_unavailable")
-      return <StateChip tone="neutral">unavailable</StateChip>;
+    if (status?.reason_code === "lifecycle_unavailable") return "unavailable";
     // Terminal until the account changes — "not connected" would undersell it.
-    if (status?.reason_code === "plan_unsupported")
-      return <StateChip tone="missing">blocked</StateChip>;
-    if (!status?.installed) return <StateChip tone="missing">missing</StateChip>;
-    if (descriptor.configured) return <StateChip tone="ready">ready</StateChip>;
-    return <StateChip tone="neutral">not connected</StateChip>;
+    if (status?.reason_code === "plan_unsupported") return "blocked";
+    if (!status?.installed) return "missing";
+    return descriptor.configured ? "ready" : "not_connected";
   }
   if (descriptor.auth_mode === "antigravity") {
     const status = descriptor.antigravity_status;
-    if (!status?.installed) return <StateChip tone="missing">missing</StateChip>;
-    if (status.connected) return <StateChip tone="ready">ready</StateChip>;
-    return <StateChip tone="neutral">not connected</StateChip>;
+    if (!status?.installed) return "missing";
+    return status.connected ? "ready" : "not_connected";
   }
-  if (descriptor.configured) return <StateChip tone="ready">ready</StateChip>;
-  return <StateChip tone="neutral">open</StateChip>;
+  return descriptor.configured ? "ready" : "open";
+}
+
+export function StatusBadge({ descriptor }: { descriptor: ProviderDescriptor }) {
+  const t = useT();
+  const chip = PROVIDER_STATE_CHIPS[providerStateChip(descriptor)];
+  return <StateChip tone={chip.tone}>{t(chip.key)}</StateChip>;
 }

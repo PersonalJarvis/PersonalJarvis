@@ -1,4 +1,8 @@
 import { RealtimeWebRtcTransport } from "./realtimeAudio";
+import {
+  publishRealtimeTransportIssue,
+  type RealtimeTransportIssue,
+} from "./realtimeTransportIssue";
 import { mintWsTicket } from "./ws";
 
 declare global {
@@ -7,7 +11,18 @@ declare global {
   }
 }
 
+/** First retry delay; each further failure doubles it up to the cap. */
 const RECONNECT_DELAY_MS = 1_500;
+const RECONNECT_DELAY_MAX_MS = 30_000;
+/**
+ * Consecutive failures after which the broker stops and says so.
+ *
+ * A fixed 1.5 s loop against a socket that answers 4401/1008 is a spin, not a
+ * retry: the backend refuses until `[voice].mode` is realtime, and a wrong
+ * capability refuses forever. Backing off and then reporting an honest
+ * terminal state beats hammering a socket that will never accept us.
+ */
+const RECONNECT_MAX_ATTEMPTS = 6;
 const WS_OPEN = 1;
 
 type OfferTransport = Pick<
@@ -65,6 +80,7 @@ export class RealtimeTransportBroker {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = true;
   private generation = 0;
+  private failures = 0;
 
   constructor(deps: Partial<BrokerDeps> = {}) {
     this.deps = { ...DEFAULT_DEPS, ...deps };
@@ -73,6 +89,7 @@ export class RealtimeTransportBroker {
   start(): void {
     if (!this.stopped) return;
     this.stopped = false;
+    this.failures = 0;
     void this.connect();
   }
 
@@ -89,11 +106,30 @@ export class RealtimeTransportBroker {
     socket?.close();
   }
 
+  /** Stop retrying and name the blocker on every status surface. */
+  private fail(issue: RealtimeTransportIssue, detail: string): void {
+    this.stopped = true;
+    if (this.reconnectTimer !== null) {
+      this.deps.cancelSchedule(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    console.warn(`Realtime transport broker unavailable (${issue}): ${detail}`);
+    publishRealtimeTransportIssue(issue);
+  }
+
   private async connect(): Promise<void> {
     const generation = ++this.generation;
     try {
       const desktopCapability = this.deps.readDesktopCapability();
-      if (!desktopCapability) return;
+      if (!desktopCapability) {
+        // The native host injects this shortly after the first paint, so an
+        // empty value early on is a race, not a verdict. Retrying (with
+        // backoff) is what turns it back into a working call; the previous
+        // bare `return` left the broker permanently dead and every later
+        // subscription call hung with nothing logged and nothing shown.
+        this.noteFailure("capability_missing", "desktop capability not injected yet");
+        return;
+      }
       const ticket = await this.deps.mintTicket();
       if (this.stopped || generation !== this.generation) return;
       const socket = this.deps.createSocket(buildRealtimeTransportSocketUrl(ticket));
@@ -112,15 +148,22 @@ export class RealtimeTransportBroker {
       };
       socket.onmessage = (event) => this.handleMessage(socket, event);
       socket.onerror = () => socket.close();
-      socket.onclose = () => {
+      socket.onclose = (event?: CloseEvent) => {
         if (this.socket !== socket) return;
         this.socket = null;
         this.releaseTransport();
-        this.scheduleReconnect();
+        // `event` is optional on purpose: a close can also be synthesised by
+        // the host (and by test doubles) without a CloseEvent, and reading
+        // `.code` off nothing would turn a reconnect into a crash.
+        const code = event?.code;
+        const reason = event?.reason;
+        this.noteFailure(
+          "socket_unreachable",
+          `broker socket closed (${code ?? "no code"}${reason ? `: ${reason}` : ""})`,
+        );
       };
     } catch (error) {
-      console.info("Realtime transport broker could not connect.", error);
-      this.scheduleReconnect();
+      this.noteFailure("socket_unreachable", `broker socket failed: ${String(error)}`);
     }
   }
 
@@ -141,7 +184,6 @@ export class RealtimeTransportBroker {
         return;
       }
       if (!sdp) {
-        console.info("This browser cannot broker a WebRTC subscription transport.");
         socket.send(
           JSON.stringify({
             type: "unavailable",
@@ -150,8 +192,8 @@ export class RealtimeTransportBroker {
         );
         // A missing RTCPeerConnection is a page capability failure, not a
         // transient socket failure. Report it once and stop the reconnect loop.
-        this.stopped = true;
         if (this.transport === transport) this.releaseTransport();
+        this.fail("offer_unsupported", "this engine has no usable RTCPeerConnection");
         socket.close();
         return;
       }
@@ -164,6 +206,10 @@ export class RealtimeTransportBroker {
           webrtc_offer_sdp: sdp,
         }),
       );
+      // A published offer is the proof this broker works — clear any earlier
+      // failure so a recovered client stops accusing itself on the status row.
+      this.failures = 0;
+      publishRealtimeTransportIssue(null);
     } catch (error) {
       console.info("Realtime transport broker could not create an offer.", error);
       if (this.transport === transport) this.releaseTransport();
@@ -204,11 +250,31 @@ export class RealtimeTransportBroker {
     transport?.close();
   }
 
+  /** Record one failed attempt: retry with backoff, or give up honestly. */
+  private noteFailure(issue: RealtimeTransportIssue, detail: string): void {
+    if (this.stopped) return;
+    this.failures += 1;
+    if (this.failures >= RECONNECT_MAX_ATTEMPTS) {
+      this.fail(issue, detail);
+      return;
+    }
+    console.info(
+      `Realtime transport broker retry ${this.failures}/${RECONNECT_MAX_ATTEMPTS} (${issue}): ${detail}`,
+    );
+    this.scheduleReconnect();
+  }
+
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer !== null) return;
+    // Exponential, capped. A constant 1.5 s loop against a socket that answers
+    // 4401/1008 is a spin against a backend that has already said no.
+    const delay = Math.min(
+      RECONNECT_DELAY_MS * 2 ** Math.max(0, this.failures - 1),
+      RECONNECT_DELAY_MAX_MS,
+    );
     this.reconnectTimer = this.deps.schedule(() => {
       this.reconnectTimer = null;
       void this.connect();
-    }, RECONNECT_DELAY_MS);
+    }, delay);
   }
 }

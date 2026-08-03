@@ -10,6 +10,7 @@ import {
 import { clearVoiceInputLevel, setVoiceInputLevel } from "@/lib/voiceInputLevel";
 import {
   SECTION_LABELS,
+  VOICE_STATES,
   isSectionId,
   useEventStore,
   type ChatMessage,
@@ -242,10 +243,30 @@ export function useWebSocket(): void {
         if (env.event_name === "ErrorOccurred") {
           // Brain errors abort the wait cycle, otherwise the indicator hangs
           // until the 60s timeout. We ignore other layer errors here.
-          const p = env.payload as { layer?: string; source_layer?: string };
+          const p = env.payload as {
+            layer?: string;
+            source_layer?: string;
+            message?: string;
+            recoverable?: boolean;
+          };
           if (p.layer === "brain" || p.source_layer === "brain") {
             setChatThinking(false);
             console.log("[ChatThinking] brain-error → false");
+          }
+          // A realtime provider failed or crossed families mid-call. This is
+          // the ONLY channel that reaches the desktop surface, where the
+          // provider_warning / provider_fallback control frames never leave
+          // the pipeline — so without it a call that silently moved to another
+          // provider (and another billing path, AP-22) said nothing at all.
+          const layer = p.layer ?? p.source_layer ?? "";
+          if (layer.startsWith("realtime.")) {
+            const detail = typeof p.message === "string" ? p.message.trim() : "";
+            pushToast(
+              p.recoverable === false ? "error" : "warning",
+              detail || translate("use_web_socket.realtime_provider_issue"),
+            );
+            // The live provider/model may have changed with it.
+            void queryClient.invalidateQueries({ queryKey: ["voice-mode"] });
           }
         }
 
@@ -418,6 +439,14 @@ export function useWebSocket(): void {
           if (keys.includes("ui.language")) void hydrateUiLanguage();
           if (keys.includes("brain.reply_language")) void hydrateReplyLanguage();
           if (keys.includes("ui.theme")) void hydrateUiTheme();
+          // Relayed for cards that own a config value nothing else tracks (the
+          // per-provider realtime model/voice pins). Each listener filters the
+          // keys it cares about, so this stays one cheap fan-out.
+          window.dispatchEvent(
+            new CustomEvent("jarvis:config-reloaded", {
+              detail: { changed_keys: keys },
+            }),
+          );
         }
 
         if (env.event_name === "ToastNotification") {
@@ -503,5 +532,8 @@ export function useWebSocket(): void {
 }
 
 function isVoiceState(v: unknown): v is VoiceState {
-  return v === "idle" || v === "listening" || v === "thinking" || v === "speaking" || v === "error";
+  // Derived from the union's own member list, never a second hand-kept literal
+  // set: a supervisor state this guard rejects is dropped in silence and the
+  // indicator freezes on whatever it showed before (BUG-008 class).
+  return typeof v === "string" && (VOICE_STATES as readonly string[]).includes(v);
 }

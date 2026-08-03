@@ -388,7 +388,10 @@
     "starting": "Sprachmodul startet…",
     "warming_title": "{name} fährt hoch",
     "warming_hint": "Das Zuhören wird vorbereitet – einen Moment, gleich kannst du sprechen.",
-    "ready_title": "Bereit – du kannst jetzt sprechen"
+    "ready_title": "Bereit – du kannst jetzt sprechen",
+    "connecting": "Verbinde…",
+    "paused": "Pausiert",
+    "indicator_label": "Sprachstatus"
   },
   "sidebar": {
     "wake_hint": "Sag dein Wake-Word…",
@@ -415,7 +418,15 @@
     "realtime_browser_tts_unavailable": "Dieser Browser hat keine nutzbare Systemstimme. Die Antwort bleibt als Text verfügbar; verbinde für Audio einen TTS-Anbieter.",
     "realtime_pipeline_fallback": "Klassische Pipeline als Fallback",
     "realtime_unavailable": "Realtime-Anbieter verbinden oder einrichten",
-    "realtime_error": "Die Sprachverbindung konnte nicht gestartet werden. Teste den aktiven Realtime-Anbieter unter API Keys und versuche es erneut."
+    "realtime_error": "Die Sprachverbindung konnte nicht gestartet werden. Teste den aktiven Realtime-Anbieter unter API Keys und versuche es erneut.",
+    "realtime_provider_fallback": "{0} war nicht mehr verfügbar, deshalb läuft das Gespräch jetzt über einen anderen Anbieter — die Abrechnung kann abweichen. {1}",
+    "realtime_provider_fallback_short": "Das Gespräch hat {0} verlassen und läuft über einen anderen Anbieter.",
+    "realtime_provider_warning": "Der Realtime-Anbieter meldet ein behebbares Problem; das Gespräch läuft weiter.",
+    "realtime_provider_unknown": "der bisherige Anbieter",
+    "realtime_webrtc_degraded": "Der WebRTC-Transport konnte nicht aufgebaut werden; der Ton läuft weiter über die Audio-Verbindung.",
+    "realtime_transport_capability_missing": "Dieses Fenster hat die Desktop-Berechtigung für den Abo-Transport nicht erhalten. Starte die App neu.",
+    "realtime_transport_offer_unsupported": "Dieses Fenster kann die WebRTC-Verbindung für den Abo-Transport nicht aufbauen. Nutze stattdessen einen API-Realtime-Anbieter.",
+    "realtime_transport_socket_unreachable": "Der Kanal für den Abo-Transport war nicht erreichbar. Starte die App neu und versuche es erneut."
   },
   "provider_billing": {
     "api": "API, Abrechnung pro Token",
@@ -1226,7 +1237,39 @@
     "reco_computer_use_why": "die schnellste Latenz für Tool-Aufrufe.",
     "reco_subagents_pick": "ChatGPT- oder Claude-Max-Subscription",
     "reco_subagents_why": "Flatrate für schwere Hintergrundarbeit.",
-    "mode_status_unknown": "Der Engine-Status ist noch nicht geladen - der Schalter wird frei, sobald das Backend antwortet. Bleibt das so, starte die App neu."
+    "mode_status_unknown": "Der Engine-Status ist noch nicht geladen - der Schalter wird frei, sobald das Backend antwortet. Bleibt das so, starte die App neu.",
+    "runtime_connecting": "Die Realtime-Sitzung wird verbunden — über einen Abo-Transport kann das bis zu einer Minute dauern.",
+    "state_active": "aktiv",
+    "state_ready": "bereit",
+    "state_checking": "wird geprüft",
+    "state_unavailable": "nicht verfügbar",
+    "state_blocked": "blockiert",
+    "state_missing": "fehlt",
+    "state_not_connected": "nicht verbunden",
+    "state_open": "offen",
+    "activate_tooltip_active": "Dieser Anbieter ist aktiv",
+    "activate_tooltip_activate": "Diesen Anbieter aktivieren",
+    "activate_tooltip_blocked": "Anbieter kann nicht aktiviert werden",
+    "auth_mode_api_key": "Anmeldung per API-Schlüssel",
+    "auth_mode_codex": "ChatGPT-/Codex-Anmeldung",
+    "auth_mode_antigravity": "Google-Abo-Anmeldung",
+    "auth_mode_none": "Lokal — keine Anmeldung",
+    "agents_only_short": "Nur für {0} verfügbar",
+    "agents_only_toast": "{0} ist nur für {1} verfügbar.",
+    "agents_only_note": "Nur {0}. Dieser Anbieter kann nicht als Haupt-Brain oder Computer-Use-Planer dienen, weil er keine Screenshots erhält.",
+    "local_optional_key_hint": "Lokaler Anbieter — läuft ohne Zugangsdaten. Der Schlüssel unten ist optional und nur für Server nötig, die einen verlangen (z. B. vLLM --api-key).",
+    "local_no_credentials_hint": "Lokaler Anbieter — keine Zugangsdaten nötig.",
+    "polish_verify_failed": "{0} ist ausgewählt, hat aber nicht geantwortet: {1}",
+    "switch_note_next_start": " (aktiv ab dem nächsten Sprachstart)",
+    "switch_done_brain": "Brain → {0}",
+    "switch_done_tts": "Sprachausgabe → {0}",
+    "switch_done_stt": "Spracheingabe → {0}",
+    "switch_done_computer_use": "Computer-Use → {0}",
+    "switch_done_dictation": "Diktat-Formulierung → {0}",
+    "switch_done_realtime": "Realtime → {0}",
+    "experimental_note": "Dieser Anbieter nutzt ein instabiles Protokoll, das sich ohne Vorankündigung ändern kann. Wenn es nicht startet, endet das Gespräch.",
+    "experimental_consent": "Bevor du das aktivierst: Dieser Anbieter nutzt eine experimentelle, instabile Route, die sich ohne Vorankündigung ändern kann. Wenn sie ausfällt, endet das Gespräch, statt von selbst auf einen anderen Anbieter zu wechseln. Fortfahren?",
+    "trademark_notice": "Anbieter- und Dienstnamen sowie Logos sind Marken ihrer jeweiligen Inhaber und werden nur gezeigt, um die verbindbaren Integrationen zu benennen. Eine Verbindung oder Empfehlung ist damit nicht gemeint."
   },
   "apikeys_test": {
     "button": "Testen",
@@ -2690,7 +2733,8 @@
     "jarvis_opened": "{name} öffnete",
     "prompt_sent": "Prompt gesendet an",
     "prompt_not_submitted": "der Prompt steht im Eingabefeld, abgeschickt wurde er nicht",
-    "dictation_nowhere": "Es war kein Textfeld aktiv, deshalb wurde das Diktat nicht eingefügt. Es steht in der Diktat-Historie."
+    "dictation_nowhere": "Es war kein Textfeld aktiv, deshalb wurde das Diktat nicht eingefügt. Es steht in der Diktat-Historie.",
+    "realtime_provider_issue": "Der Realtime-Anbieter meldet ein Problem."
   },
   "chat_thread": {
     "message_to": "Nachricht an",

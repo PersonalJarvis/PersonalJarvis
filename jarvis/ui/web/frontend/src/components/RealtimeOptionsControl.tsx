@@ -81,6 +81,33 @@ export function RealtimeOptionsControl({
     };
   }, [providerId, reloadNonce]);
 
+  // The pin can move without this card: a voice command, the control CLI, or a
+  // second window all write `[brain.providers.<id>].model/voice` and announce
+  // it. Without this the card kept showing the previous voice — a picker that
+  // quietly disagrees with what the next call will actually use.
+  useEffect(() => {
+    const modelKey = `brain.providers.${providerId}.model`;
+    const voiceKey = `brain.providers.${providerId}.voice`;
+    function onConfigReloaded(event: Event) {
+      const detail = (event as CustomEvent<{ changed_keys?: unknown }>).detail;
+      const keys = Array.isArray(detail?.changed_keys)
+        ? (detail.changed_keys as string[])
+        : [];
+      if (keys.includes(modelKey) || keys.includes(voiceKey)) {
+        setReloadNonce((value) => value + 1);
+      }
+    }
+    function onRealtimeSwitched() {
+      setReloadNonce((value) => value + 1);
+    }
+    window.addEventListener("jarvis:config-reloaded", onConfigReloaded);
+    window.addEventListener("jarvis:realtime-switched", onRealtimeSwitched);
+    return () => {
+      window.removeEventListener("jarvis:config-reloaded", onConfigReloaded);
+      window.removeEventListener("jarvis:realtime-switched", onRealtimeSwitched);
+    };
+  }, [providerId]);
+
   async function handleChange(field: "model" | "voice", next: string) {
     const prev = field === "model" ? model : voice;
     if (field === "model") setModel(next);

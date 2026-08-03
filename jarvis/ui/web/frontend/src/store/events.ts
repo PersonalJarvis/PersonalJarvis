@@ -8,7 +8,32 @@ import {
   type ThinkingTraceSnapshot,
 } from "@/lib/thinkingSteps";
 
-export type VoiceState = "idle" | "listening" | "thinking" | "speaking" | "error";
+/**
+ * Mirror of `jarvis/state/supervisor.py::SupervisorState`, lowercased.
+ *
+ * Every member must exist here, in `isVoiceState` (useWebSocket.ts), in both
+ * style maps (Sidebar.tsx, VoiceIndicator.tsx) and as a `voice_state.*` key in
+ * en/de/es — a value the backend can publish and this union does not know is
+ * dropped silently, freezing the only live indicator the desktop has on its
+ * previous state. Guarded by `voice-state-parity.test.ts`.
+ */
+export type VoiceState =
+  | "idle"
+  | "listening"
+  | "thinking"
+  | "speaking"
+  | "paused"
+  | "error";
+
+/** The full lowercased supervisor vocabulary, in the order it is declared. */
+export const VOICE_STATES: readonly VoiceState[] = [
+  "idle",
+  "listening",
+  "thinking",
+  "speaking",
+  "paused",
+  "error",
+];
 
 export type SectionId =
   | "chats"

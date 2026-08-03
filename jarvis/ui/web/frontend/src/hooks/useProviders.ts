@@ -72,6 +72,18 @@ export interface ProviderDescriptor {
    */
   computer_use_active?: boolean;
   brain_switchable?: boolean;
+  /**
+   * Whether the provider's CLI is on this machine, as the BACKEND judges it.
+   *
+   * Deliberately not rendered by any card, and that is the decision rather
+   * than an oversight: for a Codex-auth card the backend already answers this
+   * inside `codex_status.installed`, and its one carve-out (during an
+   * ownership window, answer from PATH instead of the owned profile) protects
+   * exactly the states the card's install row suppresses anyway. Reading both
+   * would give the same question two answers that can disagree. Kept in the
+   * payload for `/api/providers` consumers outside this UI (the control CLI,
+   * the setup report).
+   */
   cli_installed: boolean | null;
   /** Plain-English "which key / subscription, and what for". */
   credential_help: string | null;
