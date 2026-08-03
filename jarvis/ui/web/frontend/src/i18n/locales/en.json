@@ -1632,7 +1632,16 @@
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "Manual path for Windows PATH issues. Empty uses 'codex' from PATH.",
     "safety_title": "Safety Whitelist",
-    "safety_description": "Patterns executed without confirmation, even at risk-tier 'ask'. Avoids confirmation fatigue."
+    "safety_description": "Patterns executed without confirmation, even at risk-tier 'ask'. Avoids confirmation fatigue.",
+    "appearance": {
+      "title": "Appearance",
+      "description": "The colour theme of the whole app. Dark is the default; light is a warm paper look. Switches instantly.",
+      "dark": "Dark",
+      "light": "Light",
+      "system": "System",
+      "system_now_dark": "Following your system, which is currently dark.",
+      "system_now_light": "Following your system, which is currently light."
+    }
   },
   "telephony_view": {
     "title": "Telephony (experimental)",

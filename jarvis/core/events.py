@@ -389,6 +389,19 @@ class UiLanguageChanged(Event):
     language: str = ""  # "en" | "de" | "es"
 
 
+@dataclass(frozen=True, slots=True)
+class UiThemeChanged(Event):
+    """Fired when the app's colour theme changes.
+
+    The frontend listens for this over ``/ws`` (wildcard-forwarded) and repaints
+    live — no reload. Emitted by the settings endpoint and (indirectly, via
+    ``ConfigReloaded``) by the Control API, so ``jarvis api settings
+    put-appearance`` reaches an already-open window instead of waiting for a
+    restart.
+    """
+    theme: str = ""  # "dark" | "light" | "system"
+
+
 # ----------------------------------------------------------------------
 # Action-Lifecycle
 # ----------------------------------------------------------------------

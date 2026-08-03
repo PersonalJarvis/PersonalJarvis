@@ -1631,7 +1631,16 @@
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "Manueller Pfad für Windows-PATH-Probleme. Leer lassen nutzt 'codex' aus PATH.",
     "safety_title": "Safety-Whitelist",
-    "safety_description": "Patterns die ohne Nachfrage ausgeführt werden, auch bei Risk-Tier 'ask'. Vermeidet Confirmation-Fatigue."
+    "safety_description": "Patterns die ohne Nachfrage ausgeführt werden, auch bei Risk-Tier 'ask'. Vermeidet Confirmation-Fatigue.",
+    "appearance": {
+      "title": "Erscheinungsbild",
+      "description": "Das Farbschema der gesamten App. Dunkel ist die Voreinstellung; Hell ist ein warmer Papier-Look. Wechselt sofort.",
+      "dark": "Dunkel",
+      "light": "Hell",
+      "system": "System",
+      "system_now_dark": "Folgt Ihrem System, das derzeit dunkel ist.",
+      "system_now_light": "Folgt Ihrem System, das derzeit hell ist."
+    }
   },
   "telephony_view": {
     "title": "Telefonie (experimentell)",

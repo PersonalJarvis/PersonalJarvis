@@ -18,6 +18,7 @@ import {
 import { useSubAgentStore, SUB_AGENT_EVENT_NAMES } from "@/store/jarvisAgents";
 import { WSAudioLevel, WSEventEnvelope, WSWelcome } from "@/schema/ws";
 import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from "@/i18n";
+import { hydrateUiTheme } from "@/hooks/useTheme";
 
 let singleton: WSClient | null = null;
 
@@ -396,6 +397,18 @@ export function useWebSocket(): void {
           }
         }
 
+        // Live theme switch (Control API / another client). ThemeProvider owns
+        // the repaint; this only relays the value, so the provider stays the one
+        // place that writes the class on <html>.
+        if (env.event_name === "UiThemeChanged") {
+          const p = env.payload as { theme?: string };
+          if (p.theme === "dark" || p.theme === "light" || p.theme === "system") {
+            window.dispatchEvent(
+              new CustomEvent("jarvis:theme-changed", { detail: { theme: p.theme } }),
+            );
+          }
+        }
+
         // A voice command / the Control API writes config via the atomic writer,
         // which fires ConfigReloaded (not UiLanguageChanged). Re-hydrate the
         // affected language setting so the UI reflects it live.
@@ -404,6 +417,7 @@ export function useWebSocket(): void {
           const keys = Array.isArray(p.changed_keys) ? (p.changed_keys as string[]) : [];
           if (keys.includes("ui.language")) void hydrateUiLanguage();
           if (keys.includes("brain.reply_language")) void hydrateReplyLanguage();
+          if (keys.includes("ui.theme")) void hydrateUiTheme();
         }
 
         if (env.event_name === "ToastNotification") {

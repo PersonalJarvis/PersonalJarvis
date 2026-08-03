@@ -244,8 +244,90 @@
 }
 
 @layer base {
+  /*
+   * ===========================================================================
+   * Theme tokens — light lives on :root, dark on .dark
+   * ===========================================================================
+   *
+   * The class is put on <html> by two places that must agree: the inline boot
+   * script in index.html (synchronously, before the first paint, so neither
+   * theme flashes the other one) and ThemeProvider (hooks/useTheme.tsx) once
+   * React owns the document. Dark remains the product's default.
+   *
+   * THE RULE FOR EVERY SURFACE IN THIS APP: never write a literal colour.
+   * A component that hardcodes `bg-zinc-900`, `#0a0a0a`, or `rgba(0,0,0,.6)`
+   * looks correct in exactly one theme and is a bug in the other — and because
+   * the app defaults to dark, that bug ships invisible to whoever wrote it.
+   *
+   * The shadcn set below covers flat surfaces and text. Effects — glows, grid
+   * lines, scrims, glass, hatching — cannot use it, because they need colour
+   * CHANNELS to build an rgba() from. That is what the four `*-rgb` triples
+   * exist for; each is a bare `R G B` list meant for `rgb(var(--x) / <alpha>)`.
+   */
   :root {
-    /* Jarvis — Schwarz/Gelb Theme (matte, signal-yellow) */
+    /* --- Light: warm paper, dark gold ------------------------------------ */
+    --background: 45 40% 98%; /* #FCFBF8 warm paper */
+    --foreground: 240 9% 18%; /* #2B2B33 warm near-black */
+    --card: 0 0% 100%; /* #FFFFFF — cards lift OFF the paper */
+    --card-foreground: 240 9% 18%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 9% 18%;
+    /* #A86B00. The signal-yellow of the dark theme is 1.4:1 on paper — a
+       button nobody can read. This is the same gold the light terminal theme
+       already uses for its cursor, at 5.1:1 against --background. */
+    --primary: 38 100% 33%;
+    --primary-foreground: 0 0% 100%; /* white on gold */
+    --secondary: 45 27% 94%; /* #F4F2EC recessed surface */
+    --secondary-foreground: 240 9% 18%;
+    --muted: 45 27% 94%;
+    --muted-foreground: 240 5% 44%; /* #6B6B76 — 4.9:1, still body-text legal */
+    --accent: 38 100% 33%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 6 63% 46%; /* #C0392B — the light terminal's red */
+    --destructive-foreground: 0 0% 100%;
+    --border: 44 18% 88%; /* #E6E3DB */
+    --input: 45 30% 96%;
+    --ring: 38 100% 33%;
+    --radius: 0.75rem;
+
+    /* --- Effect channels (see the note above) ---------------------------- */
+    /* The accent as raw channels, for glows / grid lines / halos. */
+    --accent-rgb: 168 107 0;
+    /* What a translucent overlay DARKENS with (backdrops, vignettes, shadows).
+       Warm near-black rather than pure black, so a scrim over paper does not
+       turn grey-blue. */
+    --scrim-rgb: 43 40 32;
+    /* What a translucent overlay LIGHTENS with (hatching, glass rims, sheen).
+       In light mode "highlight" means going darker, so this is the ink colour —
+       the two swap roles between themes, which is exactly the point. */
+    --sheen-rgb: 43 43 51;
+    /* The ground colour of the app shell as channels, for glass pills that
+       must read as "the app, blurred" rather than a grey rectangle. */
+    --shell-rgb: 252 251 248;
+
+    /* --- Stages ----------------------------------------------------------
+       The full-bleed canvases behind the knowledge maps. They are not chrome:
+       a force graph needs its own depth cue, so it gets its own ground, its
+       own centre-of-gravity glow, and its own dot field. Light mode keeps the
+       depth and inverts the material — pale sky with ink-dark stars. */
+    --stage-bg: 45 40% 97%;
+    --stage-dot-rgb: 43 43 51;
+    --stage-dot-strong: 0.28;
+    --stage-dot-soft: 0.16;
+    --stage-wash-rgb: 120 148 200;
+    --stage-wash-strength: 0.16;
+    --stage-vignette-rgb: 43 40 32;
+    --stage-vignette-strength: 0.1;
+
+    /* Legacy aliases. Kept because they are referenced from a handful of
+       places that predate the token set; both now follow the theme. */
+    --jarvis-yellow: 168 107 0;
+    --jarvis-yellow-dim: 138 90 8;
+    --jarvis-grid: 44 18% 88%;
+  }
+
+  .dark {
+    /* --- Dark: matte black, signal yellow — the product default ---------- */
     --background: 0 0% 4%; /* #0A0A0A matte-black */
     --foreground: 0 0% 96%; /* #F4F4F5 */
     --card: 0 0% 6%; /* #0F0F0F */
@@ -253,7 +335,7 @@
     --popover: 0 0% 6%;
     --popover-foreground: 0 0% 96%;
     --primary: 50 100% 52%; /* #FFD60A signal-yellow */
-    --primary-foreground: 0 0% 4%; /* schwarz auf gelb */
+    --primary-foreground: 0 0% 4%; /* black on yellow */
     --secondary: 0 0% 10%; /* #1A1A1A */
     --secondary-foreground: 0 0% 96%;
     --muted: 0 0% 10%;
@@ -265,19 +347,24 @@
     --border: 0 0% 14%; /* #242424 */
     --input: 0 0% 10%;
     --ring: 50 100% 52%;
-    --radius: 0.75rem;
 
-    /* Jarvis-specific custom tokens */
-    --jarvis-yellow: 255 214 10; /* #FFD60A for rgba() */
-    --jarvis-yellow-dim: 230 190 40; /* dimmed yellow */
+    --accent-rgb: 255 214 10;
+    --scrim-rgb: 0 0 0;
+    --sheen-rgb: 255 255 255;
+    --shell-rgb: 10 10 10;
+
+    --stage-bg: 0 0% 4%;
+    --stage-dot-rgb: 255 255 255;
+    --stage-dot-strong: 0.5;
+    --stage-dot-soft: 0.35;
+    --stage-wash-rgb: 40 78 140;
+    --stage-wash-strength: 0.22;
+    --stage-vignette-rgb: 0 0 0;
+    --stage-vignette-strength: 0.62;
+
+    --jarvis-yellow: 255 214 10;
+    --jarvis-yellow-dim: 230 190 40;
     --jarvis-grid: 0 0% 12%;
-  }
-
-  .dark {
-    /* Dark is default — this class is only for explicit dark switches.
-       We keep the same scheme, dark = default = Jarvis. */
-    --background: 0 0% 4%;
-    --foreground: 0 0% 96%;
   }
 }
 
@@ -289,6 +376,14 @@
   html {
     @apply bg-background;
     scroll-behavior: smooth;
+    /* Tells the engine which theme its OWN widgets belong to — form controls,
+       the caret, focus rings, and (on WebView2) the parts of a scrollbar that
+       CSS cannot reach. Without it a light app keeps dark native dropdowns. */
+    color-scheme: light;
+  }
+
+  .dark {
+    color-scheme: dark;
   }
 
   body {
@@ -316,24 +411,43 @@
 }
 
 @layer components {
-  /* Subtle grid pattern in the background — gives a dashboard feel without distracting */
+  /* Subtle grid pattern in the background — gives a dashboard feel without
+     distracting. Drawn in the accent so it reads as the app's own texture;
+     slightly stronger on paper, where a 4 % line simply disappears. */
   .jarvis-grid {
     background-image:
-      linear-gradient(rgba(255, 214, 10, 0.04) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 214, 10, 0.04) 1px, transparent 1px);
+      linear-gradient(rgb(var(--accent-rgb) / 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--accent-rgb) / 0.04) 1px, transparent 1px);
     background-size: 64px 64px;
     mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
   }
 
-  /* Yellow spot glow — used as an absolute-positioned element */
+  :root:not(.dark) .jarvis-grid {
+    background-image:
+      linear-gradient(rgb(var(--accent-rgb) / 0.09) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--accent-rgb) / 0.09) 1px, transparent 1px);
+  }
+
+  /* Accent spot glow — used as an absolute-positioned element. A blurred glow
+     is additive light: it works by being BRIGHTER than its ground, which paper
+     already is. On light the same shape becomes a soft gold wash instead. */
   .jarvis-glow {
     background: radial-gradient(
       circle at center,
-      rgba(255, 214, 10, 0.22) 0%,
-      rgba(255, 214, 10, 0.08) 30%,
+      rgb(var(--accent-rgb) / 0.22) 0%,
+      rgb(var(--accent-rgb) / 0.08) 30%,
       transparent 70%
     );
     filter: blur(60px);
+  }
+
+  :root:not(.dark) .jarvis-glow {
+    background: radial-gradient(
+      circle at center,
+      rgb(var(--accent-rgb) / 0.14) 0%,
+      rgb(var(--accent-rgb) / 0.05) 30%,
+      transparent 70%
+    );
   }
 
   /* Button base — for CTAs */
@@ -341,7 +455,7 @@
     @apply inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 font-medium
            bg-primary text-primary-foreground
            transition-all duration-200
-           hover:bg-primary/90 hover:shadow-[0_0_32px_rgba(255,214,10,0.35)]
+           hover:bg-primary/90 hover:shadow-[0_0_32px_rgb(var(--accent-rgb)/0.35)]
            active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
   }
 
@@ -397,11 +511,11 @@
     0%,
     100% {
       opacity: 1;
-      box-shadow: 0 0 0 0 rgba(255, 214, 10, 0.4);
+      box-shadow: 0 0 0 0 rgb(var(--accent-rgb) / 0.4);
     }
     50% {
       opacity: 0.85;
-      box-shadow: 0 0 0 8px rgba(255, 214, 10, 0);
+      box-shadow: 0 0 0 8px rgb(var(--accent-rgb) / 0);
     }
   }
   .animate-jarvis-pulse {
@@ -422,11 +536,14 @@
     }
   }
   .thinking-shimmer {
+    /* The travelling band is the ACCENT, not a fixed pale yellow: on paper a
+       #ffe552 highlight passing over grey text is lighter than the text it is
+       meant to light up, so the sweep reads as a gap rather than a shine. */
     background: linear-gradient(
       90deg,
       hsl(var(--muted-foreground)) 0%,
       hsl(var(--muted-foreground)) 38%,
-      #ffe552 50%,
+      hsl(var(--primary)) 50%,
       hsl(var(--muted-foreground)) 62%,
       hsl(var(--muted-foreground)) 100%
     );
@@ -450,7 +567,7 @@
     animation: thinking-ring 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
   }
   .thinking-core {
-    box-shadow: 0 0 12px 2px rgba(255, 214, 10, 0.45);
+    box-shadow: 0 0 12px 2px rgb(var(--accent-rgb) / 0.45);
   }
   @keyframes thinking-breathe {
     0%,
@@ -503,9 +620,17 @@
     animation: jarvis-spin-slow 40s linear infinite;
   }
 
-  /* Text gradient for the hero */
+  /* Text gradient for the hero. Both stops are derived from the accent so the
+     headline stays readable on either ground — on paper the ramp runs from the
+     gold DOWN into a deeper bronze, because a gradient that brightens toward
+     white is an invisible headline. */
   .text-gradient-yellow {
-    background: linear-gradient(135deg, #ffe552 0%, #ffd60a 50%, #b8960a 100%);
+    background: linear-gradient(
+      135deg,
+      hsl(var(--primary) / 0.82) 0%,
+      hsl(var(--primary)) 50%,
+      color-mix(in srgb, hsl(var(--primary)) 72%, hsl(var(--foreground))) 100%
+    );
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -891,10 +1016,10 @@
     padding: 6px 11px;
     border-radius: 10px;
     background: hsl(var(--card));
-    border: 1px solid rgba(255, 214, 10, 0.45);
+    border: 1px solid rgb(var(--accent-rgb) / 0.45);
     box-shadow:
-      0 0 18px rgba(255, 214, 10, 0.18),
-      0 4px 14px rgba(0, 0, 0, 0.45);
+      0 0 18px rgb(var(--accent-rgb) / 0.18),
+      0 4px 14px rgb(var(--scrim-rgb) / 0.45);
     font-size: 11.5px;
     line-height: 1.35;
     color: hsl(var(--foreground));
@@ -912,7 +1037,7 @@
     right: 100%;
     transform: translateY(-50%);
     border: 6px solid transparent;
-    border-right-color: rgba(255, 214, 10, 0.45);
+    border-right-color: rgb(var(--accent-rgb) / 0.45);
   }
   .gigi-bubble::after {
     content: "";
@@ -936,10 +1061,10 @@
     padding: 8px 12px;
     display: flex;
     align-items: flex-end;
-    border-color: rgba(255, 214, 10, 0.72);
+    border-color: rgb(var(--accent-rgb) / 0.72);
     box-shadow:
-      0 0 24px rgba(255, 214, 10, 0.22),
-      0 8px 22px rgba(0, 0, 0, 0.55);
+      0 0 24px rgb(var(--accent-rgb) / 0.22),
+      0 8px 22px rgb(var(--scrim-rgb) / 0.55);
     font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
     font-size: 13px;
     line-height: 1.35;
@@ -951,7 +1076,7 @@
     right: auto;
     left: 100%;
     border-right-color: transparent;
-    border-left-color: rgba(255, 214, 10, 0.72);
+    border-left-color: rgb(var(--accent-rgb) / 0.72);
   }
   .gigi-bubble-listening::after {
     right: auto;
@@ -1001,8 +1126,8 @@
     cursor: copy;
     background: radial-gradient(
       460px circle at calc(100% - 3rem) calc(100% - 3rem),
-      rgba(255, 214, 10, 0.1),
-      rgba(255, 214, 10, 0.03) 42%,
+      rgb(var(--accent-rgb) / 0.1),
+      rgb(var(--accent-rgb) / 0.03) 42%,
       transparent 72%
     );
     animation: dock-catch-in 180ms ease-out;
@@ -1033,10 +1158,10 @@
   @keyframes dock-breathe {
     0%,
     100% {
-      box-shadow: 0 0 26px rgba(255, 214, 10, 0.22);
+      box-shadow: 0 0 26px rgb(var(--accent-rgb) / 0.22);
     }
     50% {
-      box-shadow: 0 0 42px rgba(255, 214, 10, 0.45);
+      box-shadow: 0 0 42px rgb(var(--accent-rgb) / 0.45);
     }
   }
 
@@ -1072,8 +1197,8 @@
   .uw-hatch {
     background-image: repeating-linear-gradient(
       -45deg,
-      rgba(255, 255, 255, 0.14) 0px,
-      rgba(255, 255, 255, 0.14) 2px,
+      rgb(var(--sheen-rgb) / 0.14) 0px,
+      rgb(var(--sheen-rgb) / 0.14) 2px,
       transparent 2px,
       transparent 6px
     );
@@ -1096,18 +1221,24 @@
    * marks the centre of gravity, the vignette pulls the eye off the edges.
    */
   .uw-stage {
-    background-color: hsl(var(--background));
+    background-color: hsl(var(--stage-bg));
     background-image:
-      linear-gradient(rgba(255, 214, 10, 0.028) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 214, 10, 0.028) 1px, transparent 1px);
+      linear-gradient(rgb(var(--accent-rgb) / 0.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--accent-rgb) / 0.028) 1px, transparent 1px);
     background-size: 48px 48px;
+  }
+
+  :root:not(.dark) .uw-stage {
+    background-image:
+      linear-gradient(rgb(var(--accent-rgb) / 0.07) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--accent-rgb) / 0.07) 1px, transparent 1px);
   }
 
   .uw-stage-glow {
     background: radial-gradient(
       circle at 50% 46%,
-      rgba(255, 214, 10, 0.13) 0%,
-      rgba(255, 214, 10, 0.04) 34%,
+      rgb(var(--accent-rgb) / 0.13) 0%,
+      rgb(var(--accent-rgb) / 0.04) 34%,
       transparent 66%
     );
     filter: blur(46px);
@@ -1117,7 +1248,7 @@
     background: radial-gradient(
       ellipse at 50% 50%,
       transparent 42%,
-      rgba(0, 0, 0, 0.5) 100%
+      rgb(var(--stage-vignette-rgb) / var(--stage-vignette-strength)) 100%
     );
   }
 
@@ -1128,25 +1259,38 @@
    * plain CSS: no textures to download, no extra draw calls, nothing for the
    * GPU to carry. Three layers, and each one earns its place —
    *
-   *  - a deep blue-black wash off centre, so the frame is a volume rather
-   *    than a flat black rectangle;
+   *  - a deep wash off centre, so the frame is a volume rather than a flat
+   *    rectangle;
    *  - two very faint dot fields at different sizes, which is what gives the
    *    orbiting network something to move AGAINST. Without them a slow
    *    rotation is nearly invisible: the nodes shift, but with no fixed
    *    reference the eye reads it as drift rather than depth.
    *  - a vignette that pulls the attention back to the middle.
+   *
+   * Light mode keeps all three and swaps the material: pale sky instead of
+   * deep space, ink-dark specks instead of white ones. The alternative —
+   * leaving the space black on a paper-white app — punches a hole in the
+   * window, which is the same mistake as a #000 terminal in a #12141a shell.
    */
   .wiki-space {
-    background-color: #05070c;
+    background-color: hsl(var(--stage-bg));
     background-image:
       radial-gradient(
         ellipse 120% 90% at 50% 42%,
-        rgba(40, 78, 140, 0.22) 0%,
-        rgba(14, 24, 44, 0.5) 45%,
+        rgb(var(--stage-wash-rgb) / var(--stage-wash-strength)) 0%,
+        rgb(var(--stage-wash-rgb) / calc(var(--stage-wash-strength) * 0.55)) 45%,
         transparent 78%
       ),
-      radial-gradient(circle at 18% 24%, rgba(255, 255, 255, 0.5) 0.6px, transparent 0.7px),
-      radial-gradient(circle at 72% 68%, rgba(255, 255, 255, 0.35) 0.5px, transparent 0.6px);
+      radial-gradient(
+        circle at 18% 24%,
+        rgb(var(--stage-dot-rgb) / var(--stage-dot-strong)) 0.6px,
+        transparent 0.7px
+      ),
+      radial-gradient(
+        circle at 72% 68%,
+        rgb(var(--stage-dot-rgb) / var(--stage-dot-soft)) 0.5px,
+        transparent 0.6px
+      );
     background-size: 100% 100%, 190px 190px, 97px 97px;
   }
 
@@ -1154,7 +1298,7 @@
     background: radial-gradient(
       ellipse at 50% 50%,
       transparent 38%,
-      rgba(0, 0, 0, 0.62) 100%
+      rgb(var(--stage-vignette-rgb) / var(--stage-vignette-strength)) 100%
     );
   }
 
@@ -1162,7 +1306,7 @@
      Glass rather than a solid card: the map has to stay visible underneath,
      or the controls become a second letterbox. */
   .uw-stage-pill {
-    background: rgba(10, 10, 10, 0.66);
+    background: rgb(var(--shell-rgb) / 0.66);
     border: 1px solid hsl(var(--border));
     backdrop-filter: blur(10px);
   }

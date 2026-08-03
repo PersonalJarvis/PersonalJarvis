@@ -1631,7 +1631,16 @@
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "Ruta manual para problemas de PATH en Windows. Vacío usa 'codex' del PATH.",
     "safety_title": "Lista blanca de seguridad",
-    "safety_description": "Patrones ejecutados sin confirmación, incluso en nivel de riesgo 'preguntar'. Evita la fatiga de confirmaciones."
+    "safety_description": "Patrones ejecutados sin confirmación, incluso en nivel de riesgo 'preguntar'. Evita la fatiga de confirmaciones.",
+    "appearance": {
+      "title": "Apariencia",
+      "description": "El tema de color de toda la aplicación. Oscuro es el predeterminado; claro es un aspecto de papel cálido. Cambia al instante.",
+      "dark": "Oscuro",
+      "light": "Claro",
+      "system": "Sistema",
+      "system_now_dark": "Sigue a su sistema, que actualmente está en modo oscuro.",
+      "system_now_light": "Sigue a su sistema, que actualmente está en modo claro."
+    }
   },
   "telephony_view": {
     "title": "Telefonía",

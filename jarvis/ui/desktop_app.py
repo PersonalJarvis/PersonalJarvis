@@ -3860,6 +3860,13 @@ class DesktopApp:
             sys.stderr.write("Backend did not start within 45s — aborting.\n")
             return self.shutdown() or 2
 
+        # The frame is painted before the web view has loaded a single byte, so
+        # it must already know the user's theme — otherwise a light app spends
+        # its entire boot inside a black window.
+        from jarvis.ui.theme import configured_theme, window_background
+
+        window_bg = window_background(configured_theme(getattr(self, "cfg", None)))
+
         try:
             self._window = webview.create_window(
                 WINDOW_TITLE,
@@ -3869,7 +3876,7 @@ class DesktopApp:
                 min_size=(900, 600),
                 resizable=True,
                 confirm_close=False,
-                background_color="#0a0e14",
+                background_color=window_bg,
             )
         except webview.WebViewException as exc:
             # No native desktop-window backend is available. This is the Linux

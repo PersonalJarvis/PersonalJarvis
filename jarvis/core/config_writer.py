@@ -982,6 +982,17 @@ def set_ui_language(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "ui", "language", name)
 
 
+def set_ui_theme(theme: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the app's colour theme in ``[ui] theme``.
+
+    ``theme`` is one of ``dark`` | ``light`` | ``system`` (validated by the
+    caller). Read at boot by the native window so the frame is painted in the
+    matching colour before the web view loads, and by the frontend so the
+    choice survives a cleared browser store.
+    """
+    _patch_table(path, "ui", "theme", theme)
+
+
 def set_preferred_opener(opener: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the remembered "open with" choice in ``[ui] preferred_opener``.
 

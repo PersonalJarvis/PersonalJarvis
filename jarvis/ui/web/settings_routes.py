@@ -546,6 +546,90 @@ async def put_ui_language(body: UiLanguageBody, request: Request) -> dict[str, o
 
 
 # ----------------------------------------------------------------------
+# Appearance — the app's colour theme.
+#
+# Lives in the backend rather than only in the browser store for three reasons,
+# all of which the desktop app hits in practice: the native window frame is
+# painted from config BEFORE the web view loads anything (a light app inside a
+# black frame is visible for the whole boot), the choice must survive a cleared
+# web store, and every user-facing action in this project ships as a REST route
+# so it becomes a `jarvis api settings ...` command (CLAUDE.md §5, CLI-first).
+#
+# "system" is stored as intent, not as a resolved value: the frontend re-reads
+# the OS preference live, so flipping the OS theme flips the app with it.
+# ----------------------------------------------------------------------
+
+_UI_THEMES: tuple[str, ...] = ("dark", "light", "system")
+
+
+class AppearanceBody(BaseModel):
+    theme: str = Field(..., min_length=1, description="dark | light | system")
+    persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
+
+
+def _current_ui_theme(request: Request) -> str:
+    # Read fresh from disk so a value just written by the Control API is
+    # reflected; fall back to the boot config, then the "dark" default.
+    try:
+        from jarvis.core.config import load_config
+
+        return str(getattr(load_config().ui, "theme", "dark"))
+    except Exception as exc:  # noqa: BLE001 — never 500 a settings read
+        log.debug("appearance fresh read failed, using boot config: %s", exc)
+    cfg = getattr(request.app.state, "config", None)
+    return str(getattr(getattr(cfg, "ui", None), "theme", "dark"))
+
+
+@router.get("/appearance")
+async def get_appearance(request: Request) -> dict[str, object]:
+    """The app's colour theme, plus the values this build accepts."""
+    return {"theme": _current_ui_theme(request), "options": list(_UI_THEMES)}
+
+
+@router.put("/appearance")
+async def put_appearance(body: AppearanceBody, request: Request) -> dict[str, object]:
+    """Switch the app's colour theme and persist it as the boot default."""
+    theme = (body.theme or "").strip().lower()
+    if theme not in _UI_THEMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown theme {body.theme!r} (allowed: {list(_UI_THEMES)})",
+        )
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core import config_writer
+            from jarvis.core.config import resolve_config_path
+
+            # Honour JARVIS_CONFIG (cloud-first) so the write lands in the same
+            # file load_config reads — no desktop/VPS split-brain.
+            config_writer.set_ui_theme(theme, path=resolve_config_path())
+            persisted = True
+        except Exception as exc:  # noqa: BLE001 — persist is best-effort
+            log.warning("appearance persist failed: %s", exc)
+
+    cfg = getattr(request.app.state, "config", None)
+    if cfg is not None and getattr(cfg, "ui", None) is not None:
+        try:
+            cfg.ui.theme = theme  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory cfg.ui.theme update skipped: %s", exc)
+
+    # Broadcast so EVERY open frontend repaints live.
+    bus = getattr(request.app.state, "bus", None)
+    if bus is not None:
+        try:
+            from jarvis.core.events import UiThemeChanged
+
+            await bus.publish(UiThemeChanged(theme=theme))
+        except Exception as exc:  # noqa: BLE001 — a bus hiccup must not fail the write
+            log.warning("UiThemeChanged publish failed: %s", exc)
+
+    return {"ok": True, "theme": theme, "persisted": persisted}
+
+
+# ----------------------------------------------------------------------
 # STT recognition language — the language Whisper TRANSCRIBES the user's voice
 # into. Distinct from BOTH the UI language (what the user sees) and the reply
 # language (what Jarvis answers in). ``auto`` lets Whisper detect the spoken

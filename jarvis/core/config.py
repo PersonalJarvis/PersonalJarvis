@@ -1523,6 +1523,16 @@ class UIConfig(BaseModel):
     # switches live (a ConfigReloaded / UiLanguageChanged event reaches the
     # frontend over /ws). Distinct from brain.reply_language (what Jarvis SPEAKS).
     language: Literal["en", "de", "es"] = "en"
+    # Colour theme of the whole desktop app: "dark" (the product default —
+    # matte black + signal yellow), "light" (warm paper + dark gold), or
+    # "system" (follow the OS appearance, re-evaluated live when the OS flips).
+    # Persisted here rather than only in the browser so the CHOICE survives a
+    # cleared web store, so the native window frame can be painted in the right
+    # colour before the web view has loaded anything (jarvis/ui/shell/window.py),
+    # and so `jarvis api settings put-appearance` can drive it like every other
+    # user-facing action. The frontend caches it in localStorage purely to paint
+    # the boot splash without waiting for HTTP.
+    theme: Literal["dark", "light", "system"] = "dark"
     # Dev mode: the frontend is not mounted from frontend/dist/ but loaded from
     # a running Vite dev server (HMR). Activated via ENV JARVIS_DEV=1 or CLI
     # --dev; the fields here simply hold the parameters.

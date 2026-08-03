@@ -1961,17 +1961,40 @@ class WebServer:
 
     @staticmethod
     def _spa_placeholder_response() -> HTMLResponse:
+        # This page has no bundle behind it, so it carries its own theme. It is
+        # served INSIDE the native window, whose ground was already painted from
+        # [ui] theme — a hardcoded dark page here would be a black rectangle in
+        # a paper-white frame for the whole rebuild.
+        from jarvis.ui.theme import (
+            HOLDING_PAGE_FOREGROUND,
+            HOLDING_PAGE_MUTED,
+            WINDOW_BACKGROUND,
+            configured_theme,
+            resolve_theme,
+        )
+
+        try:
+            from jarvis.core.config import load_config
+
+            theme = resolve_theme(configured_theme(load_config()))
+        except Exception:  # noqa: BLE001 — a holding page never fails on config
+            theme = "dark"
+
+        bg = WINDOW_BACKGROUND[theme]
+        fg = HOLDING_PAGE_FOREGROUND[theme]
+        muted = HOLDING_PAGE_MUTED[theme]
         body = (
             "<!doctype html><html lang=\"en\"><head>"
             "<meta charset=\"utf-8\">"
             "<title>Jarvis</title>"
             "<meta http-equiv=\"refresh\" content=\"2\">"
-            "<style>html,body{margin:0;height:100%;background:#0a0e14;"
-            "color:#e6e6e6;font-family:ui-sans-serif,system-ui,sans-serif;"
+            f"<meta name=\"color-scheme\" content=\"{theme}\">"
+            f"<style>html,body{{margin:0;height:100%;background:{bg};"
+            f"color:{fg};font-family:ui-sans-serif,system-ui,sans-serif;"
             "display:flex;align-items:center;justify-content:center}"
             "main{text-align:center;max-width:480px;padding:24px}"
             "h1{font-weight:500;font-size:18px;margin:0 0 12px}"
-            "p{margin:0;color:#9aa3ad;font-size:14px;line-height:1.5}</style>"
+            f"p{{margin:0;color:{muted};font-size:14px;line-height:1.5}}</style>"
             "</head><body><main>"
             "<h1>Jarvis is starting…</h1>"
             "<p>The frontend is currently being built or reloaded. "
