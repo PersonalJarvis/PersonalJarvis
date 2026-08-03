@@ -32,6 +32,25 @@ _BROKER_OFFER_WAIT_S = 3.0
 # in-reply pauses on ChatGPT-Live reach ~720 ms, so a shorter window would
 # split a single answer at every breath.
 _OUTPUT_QUIESCENCE_S = 1.2
+# How long after the last audible provider frame a further frame still counts
+# as the REST of the same answer rather than a new response.
+#
+# The quiescence backstop above closes the LOCAL turn on silence; it proves
+# nothing about the provider's response, because ChatGPT-Live announces no
+# reliable terminal item (see ``_TERMINAL_RESPONSE_ITEMS``). Treating the
+# remainder of one answer as a brand-new ungrounded response is what made the
+# grounding gate refuse it, latch, and silence the session for the rest of the
+# call. This window must therefore stay comfortably above the backstop, and
+# stay bounded so a genuinely new response after a quiet stretch is judged
+# fresh again. The entitlement it extends is cancelled outright by any
+# evidence the far end ended its turn, so a self-echo response is still
+# refused (see ``_close_response``).
+_RESPONSE_CONTINUATION_GRACE_S = 4.0
+# A response the grounding gate REFUSED is reconsidered after this much
+# provider activity. Without it a single refusal kept ``response_open`` true
+# forever, every later frame inherited that one verdict, and the session
+# stayed deaf until the call ended.
+_REJECTED_RESPONSE_MAX_S = 2.0
 _NORMALIZATION_QUEUE_MAX = 128
 _REMOTE_CLEANUP_TIMEOUT_S = 1.5
 _TURN_INTERRUPT_TIMEOUT_S = 1.5
@@ -142,6 +161,16 @@ _LANGUAGE_UPDATE_TEXT = {
         "tools or perform an action."
     ),
 }
+# Model-facing note that replaces the truncate client event ChatGPT-Live does
+# not have. Always English: it addresses the model, never the user, and the
+# spoken reply's language is pinned separately by ``_LANGUAGE_UPDATE_TEXT``.
+_TRUNCATION_NOTE = (
+    "The user interrupted your previous spoken answer after about {ms} ms of "
+    "audio. Everything you said after that point was never heard. Do not "
+    "repeat or summarize the unheard remainder; continue from the user's new "
+    "input instead. This is a rendering correction, not a request to use "
+    "tools or perform an action."
+)
 _UNGROUNDED_TURN_MESSAGES = {
     "de": (  # i18n-allow: German runtime warning selected from the resolved turn language
         "Die Realtime-Verbindung wird neu aufgebaut, "  # i18n-allow: runtime warning
@@ -397,9 +426,36 @@ class _CodexSubscriptionRealtimeSession:
         # readbacks).  Each successful call arms exactly one exception to the
         # automatic-response grounding gate in ``receive``.
         self._trusted_output_permits = 0
+        # Barge-in barrier. ``turn/interrupt`` only reaches an app-server TURN
+        # and an ordinary ChatGPT-Live response never announces one, so the
+        # local half of an interrupt is the authoritative one: bumping this
+        # counter makes ``receive`` drop every remaining frame of the response
+        # that was cut off. Read by the receive loop, which keeps its own copy.
+        self._output_drop_barrier = 0
+        # Set by ``interrupt``, read and cleared by ``truncate``: the played
+        # position only means something for a response that was actually cut.
+        self._interrupt_pending_truncation = False
         # Last persona/context text actually delivered, so a re-issued
         # identical one is not sent again mid-call.
         self._delivered_context = ""
+
+    async def _append_trusted(self, write: Any) -> Any:
+        """Run one provider write that is allowed to create output.
+
+        ``appendText``/``appendSpeech`` deliberately produce provider output
+        without a fresh microphone turn — announcements, action readbacks,
+        persona/history context, the language pin, the truncation note. Every
+        one of them arms exactly one exception to the automatic-response
+        grounding gate in ``receive``; a write that never lands gives its
+        permit back, so a failed injection cannot authorize an unrelated
+        self-echo response later in the call.
+        """
+        self._trusted_output_permits += 1
+        try:
+            return await write()
+        except BaseException:
+            self._trusted_output_permits = max(0, self._trusted_output_permits - 1)
+            raise
 
     async def _interrupt_active_codex_turn(self) -> None:
         turn_id = self._active_codex_turn_id
@@ -490,6 +546,20 @@ class _CodexSubscriptionRealtimeSession:
         response_open = False
         response_allowed = False
         response_opened_at = 0.0
+        # The grounded utterance whose answer may still be streaming, and
+        # whether the far end has since proven that answer ended. Together
+        # with the last audible frame they decide whether a frame arriving
+        # after the local backstop is the REST of that answer or a new
+        # response that needs its own grounding.
+        entitled_generation = 0
+        entitlement_spent = True
+        last_output_activity = 0.0
+        # When the currently open response was REFUSED, so the refusal can be
+        # reconsidered instead of outliving the response it applied to.
+        response_rejected_at = 0.0
+        # Local copy of the interrupt barrier; a mismatch means ``interrupt``
+        # ran and everything still queued for the cut response is stale.
+        output_barrier = self._output_drop_barrier
         # Item types this session has already reported as unhandled. The v3 item
         # vocabulary is only partly known, and silently swallowing the rest is
         # why neither the real terminal-response item nor the never-observed
@@ -562,25 +632,74 @@ class _CodexSubscriptionRealtimeSession:
                 or local_input_generation > consumed_input_generation
             )
 
+        def _entitled_turn_continues() -> bool:
+            """Is this frame the rest of an answer the user already earned?
+
+            ChatGPT-Live streams one answer with pauses and announces no
+            reliable end, so the local backstop closes turns on silence alone.
+            Without this the tail of an ordinary reply was judged as a fresh
+            ungrounded response, refused, and the refusal then applied to
+            everything after it.
+
+            It can only ever extend an entitlement a locally energy-grounded
+            utterance created, it expires with
+            ``_RESPONSE_CONTINUATION_GRACE_S`` of provider silence, and any
+            evidence the far end ended its turn cancels it outright — so it
+            cannot hand a self-echo response a way in.
+            """
+            if entitlement_spent or entitled_generation <= 0:
+                return False
+            if last_output_activity <= 0.0:
+                return False
+            elapsed = asyncio.get_running_loop().time() - last_output_activity
+            return elapsed <= _RESPONSE_CONTINUATION_GRACE_S
+
+        def _rejected_response_is_stale() -> bool:
+            return bool(
+                response_rejected_at > 0.0
+                and asyncio.get_running_loop().time() - response_rejected_at
+                >= _REJECTED_RESPONSE_MAX_S
+            )
+
         async def _begin_response(source: str) -> bool:
             """Authorize one response from fresh local input or trusted injection."""
             nonlocal active_response_generation, response_allowed, response_open
-            nonlocal response_opened_at
+            nonlocal response_opened_at, response_rejected_at
+            nonlocal entitled_generation, entitlement_spent
             if response_open:
-                return response_allowed
+                if response_allowed or not _rejected_response_is_stale():
+                    return response_allowed
+                # A refusal must never outlive the response it refused. The
+                # verdict below is re-derived from scratch; nothing here makes
+                # an ungrounded response acceptable, it only stops ONE refusal
+                # from deciding the rest of the call.
+                _close_response(spent=True)
             response_open = True
             response_opened_at = asyncio.get_running_loop().time()
+            response_rejected_at = 0.0
             active_response_generation = 0
             if self._input_transcriber is None:
                 response_allowed = True
             elif local_input_generation > consumed_input_generation:
                 active_response_generation = local_input_generation
+                entitled_generation = local_input_generation
+                entitlement_spent = False
                 response_allowed = True
             elif self._trusted_output_permits > 0:
                 self._trusted_output_permits -= 1
                 response_allowed = True
+            elif _entitled_turn_continues():
+                active_response_generation = entitled_generation
+                response_allowed = True
+                log.debug(
+                    "Codex subscription realtime treats %s as the continuation "
+                    "of the answer already grounded in utterance %d",
+                    source,
+                    entitled_generation,
+                )
             else:
                 response_allowed = False
+                response_rejected_at = response_opened_at
                 log.warning(
                     "Codex subscription realtime rejected an automatic response "
                     "without a fresh local user utterance (%s); interrupting a "
@@ -590,17 +709,50 @@ class _CodexSubscriptionRealtimeSession:
                 await self._interrupt_active_codex_turn()
             return response_allowed
 
-        def _finish_response() -> None:
+        def _close_response(*, spent: bool) -> None:
+            """Close the open response; ``spent`` retires its entitlement.
+
+            Only the far end can prove its response is over — a terminal item,
+            a cancel, a new response it announces, a handoff, or an invented
+            user caption (which is exactly the model claiming the turn ended
+            and a new user turn began). The local quiescence backstop knows
+            the LOCAL turn is over and nothing more, so it closes without
+            spending; that is what lets the rest of one answer through after
+            a pause longer than the backstop.
+            """
             nonlocal consumed_input_generation, active_response_generation
             nonlocal response_allowed, response_open, response_opened_at
+            nonlocal response_rejected_at, entitlement_spent
             if response_allowed and active_response_generation:
+                # Always advances: one utterance authorizes ONE response, and
+                # the continuation path above — never a second grounding
+                # claim on the same utterance — is what reopens it.
                 consumed_input_generation = max(
                     consumed_input_generation, active_response_generation
                 )
+            if spent:
+                entitlement_spent = True
             active_response_generation = 0
             response_allowed = False
             response_open = False
             response_opened_at = 0.0
+            response_rejected_at = 0.0
+
+        def _finish_response() -> None:
+            """Local turn boundary: closes the response, keeps the entitlement."""
+            _close_response(spent=False)
+
+        def _note_output_activity() -> None:
+            nonlocal last_output_activity
+            last_output_activity = asyncio.get_running_loop().time()
+
+        def _interrupt_barrier_moved() -> bool:
+            """True once per ``interrupt`` call, for the receive loop."""
+            nonlocal output_barrier
+            if self._output_drop_barrier == output_barrier:
+                return False
+            output_barrier = self._output_drop_barrier
+            return True
 
         def _ungrounded_caption_breaks_open_response() -> bool:
             return bool(
@@ -704,6 +856,22 @@ class _CodexSubscriptionRealtimeSession:
         try:
             while True:
                 queue_kind, payload = await queue.get()
+                if _interrupt_barrier_moved():
+                    # Barge-in. ChatGPT-Live keeps streaming the rest of the
+                    # answer the user talked over, so retire the cut response
+                    # here: its remainder is dropped by the ordinary grounding
+                    # gate below instead of being played over the person who
+                    # interrupted it.
+                    log.info(
+                        "Codex subscription realtime dropped the remainder of an "
+                        "interrupted response (protocol %s)",
+                        self.realtime_version or "unknown",
+                    )
+                    _cancel_completion()
+                    _reset_assistant_capture()
+                    _close_response(spent=True)
+                    self._assistant_delta_text = ""
+                    completion_emitted = True
                 if queue_kind == "local_input":
                     if payload.kind == "speech_started":
                         local_input_generation += 1
@@ -714,6 +882,12 @@ class _CodexSubscriptionRealtimeSession:
                         self._assistant_delta_text = ""
                         self._server_user_preview = ""
                         _reset_assistant_capture()
+                        # A locally energy-grounded utterance always reopens the
+                        # gate, whatever the response machine was doing. This is
+                        # the unconditional escape from a stuck verdict: the one
+                        # signal the far end cannot fake is the user actually
+                        # making a sound into this host's microphone.
+                        _close_response(spent=True)
                         yield _ProviderEvent(type="speech_started")
                     elif payload.kind == "transcript_failed":
                         # The local recognizer could not deliver this
@@ -765,6 +939,10 @@ class _CodexSubscriptionRealtimeSession:
                     if audible:
                         if not await _begin_response("media audio"):
                             continue
+                        # Energy only, never transcript content (AP-27): this
+                        # stamp is what tells a pause inside one answer apart
+                        # from a quiet stretch between responses.
+                        _note_output_activity()
                         if completion_emitted:
                             _reset_assistant_capture()
                             completion_emitted = False
@@ -917,6 +1095,14 @@ class _CodexSubscriptionRealtimeSession:
                                     else "no fresh local utterance backs it"
                                 ),
                             )
+                            # The far end just claimed a new user turn nobody
+                            # spoke. Whatever it says next belongs to THAT
+                            # invented turn, so the real turn's response is
+                            # closed and its entitlement retired here —
+                            # closing matters as much as retiring: a still-open
+                            # response would otherwise carry its "allowed"
+                            # verdict straight into the invented answer.
+                            _close_response(spent=True)
                             continue
                         _cancel_completion()
                         completion_emitted = False
@@ -929,6 +1115,9 @@ class _CodexSubscriptionRealtimeSession:
                     elif role == "assistant":
                         if not await _begin_response("assistant transcript"):
                             continue
+                        # Text arriving proves the same answer is still being
+                        # produced, even while its audio pauses.
+                        _note_output_activity()
                         # A later transcript delta proves the previous
                         # transcript-part ``done`` was not a turn boundary.
                         _cancel_completion()
@@ -962,7 +1151,7 @@ class _CodexSubscriptionRealtimeSession:
                                 completion_emitted = True
                                 _reset_assistant_capture()
                                 await self._interrupt_active_codex_turn()
-                                _finish_response()
+                                _close_response(spent=True)
                                 yield _ProviderEvent(
                                     type="error",
                                     error=_UNGROUNDED_TURN_MESSAGES.get(
@@ -983,6 +1172,10 @@ class _CodexSubscriptionRealtimeSession:
                                 ),
                                 text[:80],
                             )
+                            # Same reasoning as the delta path: an invented
+                            # user turn closes the real turn's response and
+                            # retires its entitlement.
+                            _close_response(spent=True)
                             continue
                         _cancel_completion()
                         completion_emitted = False
@@ -1008,6 +1201,7 @@ class _CodexSubscriptionRealtimeSession:
                     elif role == "assistant":
                         if not await _begin_response("assistant transcript"):
                             continue
+                        _note_output_activity()
                         assistant_transcript_seen = True
                         assistant_audio.clear()
                         # Emit only a missing suffix so transcript consumers do
@@ -1112,7 +1306,7 @@ class _CodexSubscriptionRealtimeSession:
                         # another ungrounded response.
                         completion_emitted = True
                         self._assistant_delta_text = ""
-                        _finish_response()
+                        _close_response(spent=True)
                         if cancelled_response_was_allowed:
                             yield _ProviderEvent(type="interrupted")
                     elif item_type == "handoff_request":
@@ -1122,6 +1316,9 @@ class _CodexSubscriptionRealtimeSession:
                         # the turn as soon as its id is visible and hand control
                         # to Jarvis's deterministic supervisor.
                         _cancel_completion()
+                        # The model yielded control; whatever it produces next
+                        # needs its own grounding, never this turn's.
+                        _close_response(spent=True)
                         self._handoff_interrupt_pending = True
                         direct_turn_id = str(
                             item.get("turn_id", "") or item.get("turnId", "") or ""
@@ -1162,11 +1359,18 @@ class _CodexSubscriptionRealtimeSession:
                             )
                             yield _ProviderEvent(type="turn_complete")
                             _reset_assistant_capture()
-                        _finish_response()
+                        # Protocol proof that the response ended: the strongest
+                        # boundary there is, so the entitlement retires here.
+                        _close_response(spent=True)
                     elif item_type in _RESPONSE_OPENED_ITEMS:
                         _cancel_completion()
                         completion_emitted = False
                         _reset_assistant_capture()
+                        # The far end announcing a NEW response is proof the
+                        # previous one ended; close it first so the new one is
+                        # judged on its own grounding instead of inheriting the
+                        # old verdict.
+                        _close_response(spent=True)
                         await _begin_response(item_type)
                     elif item_type and item_type not in seen_unknown_items:
                         # Type NAME only, once per type, bounded — never the
@@ -1259,10 +1463,12 @@ class _CodexSubscriptionRealtimeSession:
         # Reassert even when unchanged. The server can freeze an automatic
         # response before the larger per-turn persona refresh takes effect;
         # this compact final developer item is the authoritative turn pin.
-        await self._client.realtime_append_text(
-            self._thread_id,
-            _LANGUAGE_UPDATE_TEXT[normalized],
-            role="developer",
+        await self._append_trusted(
+            lambda: self._client.realtime_append_text(
+                self._thread_id,
+                _LANGUAGE_UPDATE_TEXT[normalized],
+                role="developer",
+            )
         )
         self._language = normalized
 
@@ -1278,7 +1484,9 @@ class _CodexSubscriptionRealtimeSession:
         if not text or text == self._delivered_context:
             return
         try:
-            await self._client.realtime_append_text(self._thread_id, text, role="developer")
+            await self._append_trusted(
+                lambda: self._client.realtime_append_text(self._thread_id, text, role="developer")
+            )
         except Exception:  # noqa: BLE001 - a mute persona must not kill the call
             log.warning(
                 "Codex subscription realtime could not deliver its context; "
@@ -1294,7 +1502,9 @@ class _CodexSubscriptionRealtimeSession:
         if not text:
             return
         try:
-            await self._client.realtime_append_text(self._thread_id, text, role="developer")
+            await self._append_trusted(
+                lambda: self._client.realtime_append_text(self._thread_id, text, role="developer")
+            )
         except Exception:  # noqa: BLE001 - an amnesiac recovery beats a dead call
             log.warning(
                 "Codex subscription realtime could not restore call history",
@@ -1308,26 +1518,68 @@ class _CodexSubscriptionRealtimeSession:
         del required_tool
 
     async def send_text(self, text: str) -> None:
-        self._trusted_output_permits += 1
-        try:
-            await self._client.realtime_append_text(self._thread_id, str(text), role="developer")
-        except Exception:
-            self._trusted_output_permits = max(0, self._trusted_output_permits - 1)
-            raise
+        await self._append_trusted(
+            lambda: self._client.realtime_append_text(self._thread_id, str(text), role="developer")
+        )
 
     async def send_speech(self, text: str) -> None:
         """Queue trusted verbatim speech without starting a Codex model turn."""
-        self._trusted_output_permits += 1
-        try:
-            await self._client.realtime_append_speech(self._thread_id, str(text))
-        except Exception:
-            self._trusted_output_permits = max(0, self._trusted_output_permits - 1)
-            raise
+        await self._append_trusted(
+            lambda: self._client.realtime_append_speech(self._thread_id, str(text))
+        )
 
     async def truncate(self, audio_end_ms: int) -> None:
-        del audio_end_ms
+        """Tell the model how much of its answer the user actually heard.
+
+        ChatGPT-Live has no truncate client event — the app-server realtime
+        RPC surface is start / appendAudio / appendText / appendSpeech / stop
+        and a custom field is refused outright, so the position cannot travel
+        as ``conversation.item.truncate`` does on the OpenAI Realtime adapter.
+        It travels as an inert developer note instead, because the alternative
+        (the previous no-op) left the model believing its whole answer was
+        heard: the next turn then continued from words the user never got.
+
+        Only sent for a response an ``interrupt`` actually cut, and only when
+        something was played — otherwise there is nothing to correct.
+        """
+        played_ms = max(0, int(audio_end_ms or 0))
+        if not self._interrupt_pending_truncation:
+            return
+        self._interrupt_pending_truncation = False
+        if played_ms <= 0:
+            return
+        try:
+            await self._append_trusted(
+                lambda: self._client.realtime_append_text(
+                    self._thread_id,
+                    _TRUNCATION_NOTE.format(ms=played_ms),
+                    role="developer",
+                )
+            )
+        except Exception:  # noqa: BLE001 - a stale horizon must not kill the call
+            log.warning(
+                "Codex subscription realtime could not report the interrupted "
+                "playback position; the model may repeat unheard audio",
+                exc_info=True,
+            )
 
     async def interrupt(self) -> None:
+        """Stop the assistant on barge-in, with or without a Codex turn id.
+
+        ``turn/interrupt`` addresses an app-server TURN, and an ordinary
+        ChatGPT-Live response never announces one — ``turn/started`` covers
+        Codex agent turns, and the realtime item vocabulary at the top of this
+        module is still unconfirmed. Relying on it alone made barge-in a no-op:
+        the assistant kept talking into an already-open microphone, which is
+        precisely the self-echo the grounding gate then has to clean up.
+
+        The local half is therefore unconditional and is the part that always
+        works: raising the barrier makes ``receive`` retire the cut response,
+        so every frame the far end still sends for it is dropped instead of
+        played over the person who interrupted.
+        """
+        self._output_drop_barrier += 1
+        self._interrupt_pending_truncation = True
         await self._interrupt_active_codex_turn()
 
     async def send_tool_result(self, call_id: str, name: str, result: dict[str, Any]) -> None:

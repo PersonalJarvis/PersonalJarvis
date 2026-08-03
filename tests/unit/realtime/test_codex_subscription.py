@@ -1911,3 +1911,409 @@ async def test_a_reply_without_any_transcript_still_ends_its_turn(monkeypatch) -
 
     assert completions == 1
     await session.close()
+
+
+class _ScheduledInputTranscriber(_StubEndpointer):
+    """Local endpointer whose events arrive at controlled times.
+
+    ``_ScriptedInputTranscriber`` delivers everything at once, which cannot
+    express "the user speaks AFTER the far end already said something" — the
+    exact ordering the grounding gate has to survive.
+    """
+
+    def __init__(self, scheduled_events, *, speaking: bool = True) -> None:
+        super().__init__(speaking=speaking)
+        self._scheduled = list(scheduled_events)
+
+    async def next_event(self):  # noqa: ANN202 - test protocol
+        if not self._scheduled:
+            await asyncio.sleep(3600)
+        delay_s, event = self._scheduled.pop(0)
+        if delay_s:
+            await asyncio.sleep(delay_s)
+        return event
+
+
+async def _collect_until(session, *, stop_after: int, kind: str, timeout_s: float):
+    """Drain the session until ``stop_after`` events of ``kind`` were seen."""
+    events = []
+    seen = 0
+    try:
+        async with asyncio.timeout(timeout_s):
+            async for event in session.receive():
+                events.append(event)
+                if event.type == kind:
+                    seen += 1
+                    if seen >= stop_after:
+                        break
+    except TimeoutError:
+        pass
+    return events
+
+
+@pytest.mark.asyncio
+async def test_a_refused_response_does_not_deafen_the_next_real_turn() -> None:
+    """AD-1: one refusal must not decide the rest of the call.
+
+    The gate caches its verdict for the whole response it refused, and a
+    ChatGPT-Live response has no reliable end marker. A single ungrounded
+    response therefore used to keep ``response_open`` true forever: every
+    later frame inherited that one "no", so the session stayed connected,
+    kept listening, and never answered again. A locally energy-grounded
+    utterance is the one signal the far end cannot fake, so it always
+    reopens the gate.
+    """
+    transcriber = _ScheduledInputTranscriber(
+        [
+            (0.05, InputTranscriptEvent(kind="speech_started")),
+            (0.0, InputTranscriptEvent(kind="transcript", text="Hello", is_final=True)),
+        ]
+    )
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            # Arrives before any local speech: correctly refused.
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "assistant", "text": "Echo."},
+                ),
+            ),
+            # Arrives after the user really spoke: must be delivered.
+            (
+                0.15,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {
+                        "threadId": "thread-1",
+                        "role": "assistant",
+                        "text": "The real answer.",
+                    },
+                ),
+            ),
+        ]
+    )
+    session = await _provider(
+        client, input_transcriber_factory=lambda: transcriber
+    ).open_session(RealtimeSessionConfig())
+
+    events = [event async for event in session.receive()]
+
+    assert [
+        event.text for event in events if event.type == "output_transcript_delta"
+    ] == ["The real answer."]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_a_stale_refusal_is_reconsidered_and_still_refuses_a_self_echo(
+    monkeypatch,
+) -> None:
+    """Reopening the gate must not be a way in for the echo it refused.
+
+    The refusal is reconsidered so it cannot latch, but reconsidering means
+    re-deriving the verdict from scratch — with no fresh local utterance and
+    no trusted injection the answer is still "no".
+    """
+    monkeypatch.setattr(codex_subscription_mod, "_REJECTED_RESPONSE_MAX_S", 0.0)
+    client = _Client(
+        [
+            _Notification(
+                "thread/realtime/transcript/done",
+                {"threadId": "thread-1", "role": "assistant", "text": "One."},
+            ),
+            _Notification(
+                "thread/realtime/transcript/done",
+                {"threadId": "thread-1", "role": "assistant", "text": "Two."},
+            ),
+        ]
+    )
+    session = await _provider(
+        client, input_transcriber_factory=lambda: _StubEndpointer(speaking=False)
+    ).open_session(RealtimeSessionConfig())
+
+    events = [event async for event in session.receive()]
+
+    assert not [event for event in events if event.type == "output_transcript_delta"]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_a_pause_inside_one_reply_does_not_cut_off_its_remainder(
+    monkeypatch,
+) -> None:
+    """AD-2: the local backstop must not retire the user's entitlement.
+
+    The backstop closes the LOCAL turn on silence; it proves nothing about the
+    provider's response. Spending the utterance there made the rest of the
+    same answer look like a brand-new ungrounded response, which the gate then
+    refused — one ordinary thinking pause and the reply was cut off mid-way.
+    """
+    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_QUIESCENCE_S", 0.05)
+    speech = (1000).to_bytes(2, "little", signed=True) * 480
+    endpoint = _FakeAudioEndpoint(
+        # The gap is far longer than the backstop: a real in-reply pause.
+        output_schedule=((0.02, speech), (0.30, speech))
+    )
+    transcriber = _ScheduledInputTranscriber(
+        [(0.0, InputTranscriptEvent(kind="speech_started"))]
+    )
+    client = _Client()
+    client.subscription = _keeps_stream_open()
+    session = await _provider(
+        client,
+        endpoint=endpoint,
+        input_transcriber_factory=lambda: transcriber,
+    ).open_session(RealtimeSessionConfig())
+
+    events = await _collect_until(
+        session, stop_after=2, kind="audio_delta", timeout_s=1.5
+    )
+
+    assert [event.type for event in events].count("audio_delta") == 2
+    # The backstop still delivered its boundary between the two halves.
+    assert [event.type for event in events].count("turn_complete") == 1
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_a_completed_turn_still_refuses_the_next_ungrounded_response() -> None:
+    """The self-dialogue guard, pinned against the continuation allowance.
+
+    Letting the rest of ONE answer through must not let a SECOND answer
+    through. Protocol proof that the response ended (here the terminal item)
+    retires the entitlement immediately, so the invented follow-up is refused
+    even though the far end is still producing output milliseconds later.
+    """
+    transcriber = _ScriptedInputTranscriber(
+        [InputTranscriptEvent(kind="speech_started")]
+    )
+    client = _Client(
+        [
+            _Notification(
+                "thread/realtime/transcript/done",
+                {"threadId": "thread-1", "role": "assistant", "text": "Answer one."},
+            ),
+            _Notification(
+                "thread/realtime/itemAdded",
+                {"threadId": "thread-1", "item": {"type": "response.done"}},
+            ),
+            _Notification(
+                "thread/realtime/transcript/done",
+                {
+                    "threadId": "thread-1",
+                    "role": "assistant",
+                    "text": "An invented second answer.",
+                },
+            ),
+        ]
+    )
+    session = await _provider(
+        client, input_transcriber_factory=lambda: transcriber
+    ).open_session(RealtimeSessionConfig())
+
+    events = [event async for event in session.receive()]
+
+    assert [
+        event.text for event in events if event.type == "output_transcript_delta"
+    ] == ["Answer one."]
+    assert [event.type for event in events].count("turn_complete") == 1
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_an_invented_user_caption_retires_the_entitlement() -> None:
+    """The other half of the self-dialogue guard, without a terminal item.
+
+    ChatGPT-Live announced no response boundary in the live evidence, so the
+    marker that the model considers its turn over is the user caption it
+    invents next. That caption ends the entitlement, and the answer it writes
+    for its own invented turn is refused.
+    """
+    transcriber = _ScriptedInputTranscriber(
+        [InputTranscriptEvent(kind="speech_started")]
+    )
+    transcriber._speaking = False  # the microphone is quiet from here on
+    client = _Client(
+        [
+            _Notification(
+                "thread/realtime/transcript/done",
+                {"threadId": "thread-1", "role": "assistant", "text": "Answer one."},
+            ),
+            _Notification(
+                "thread/realtime/transcript/delta",
+                {"threadId": "thread-1", "role": "user", "delta": "thanks, i"},
+            ),
+            _Notification(
+                "thread/realtime/transcript/done",
+                {
+                    "threadId": "thread-1",
+                    "role": "assistant",
+                    "text": "An invented second answer.",
+                },
+            ),
+        ]
+    )
+    session = await _provider(
+        client, input_transcriber_factory=lambda: transcriber
+    ).open_session(RealtimeSessionConfig())
+
+    events = [event async for event in session.receive()]
+
+    assert [
+        event.text for event in events if event.type == "output_transcript_delta"
+    ] == ["Answer one."]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupt_drops_the_remainder_without_any_codex_turn_id(
+    monkeypatch,
+) -> None:
+    """AD-3: barge-in must work on an ordinary ChatGPT-Live response.
+
+    ``turn/interrupt`` addresses an app-server TURN and a realtime response
+    never announces one, so the remote call had nothing to interrupt and the
+    assistant simply kept talking into an already-open microphone. The local
+    half is the one that always works.
+    """
+    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_QUIESCENCE_S", 5.0)
+    speech = (1000).to_bytes(2, "little", signed=True) * 480
+    endpoint = _FakeAudioEndpoint(
+        output_schedule=((0.02, speech), (0.15, speech), (0.05, speech))
+    )
+    transcriber = _ScheduledInputTranscriber(
+        [(0.0, InputTranscriptEvent(kind="speech_started"))]
+    )
+    client = _Client()
+    client.subscription = _keeps_stream_open()
+    session = await _provider(
+        client,
+        endpoint=endpoint,
+        input_transcriber_factory=lambda: transcriber,
+    ).open_session(RealtimeSessionConfig())
+
+    stream = session.receive()
+    async with asyncio.timeout(1.5):
+        async for event in stream:
+            if event.type == "audio_delta":
+                break
+
+    await session.interrupt()
+
+    later_audio = []
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(0.6):
+            async for event in stream:
+                if event.type == "audio_delta":
+                    later_audio.append(event)
+
+    # No Codex turn was ever announced, so the remote interrupt had no target.
+    assert client.interrupts == []
+    assert later_audio == []
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_truncate_reports_the_played_position_to_the_model() -> None:
+    """AD-3: the model must learn how much of its answer was actually heard.
+
+    ChatGPT-Live has no truncate client event, so the position travels as an
+    inert developer note. Without it the model believes the whole answer was
+    heard and grounds the next turn in words the user never got.
+    """
+    client = _Client()
+    session = await _provider(client).open_session(RealtimeSessionConfig())
+
+    # Nothing was interrupted yet: a stray truncate must not write anything.
+    await session.truncate(audio_end_ms=900)
+    assert client.text_appends == []
+
+    await session.interrupt()
+    await session.truncate(audio_end_ms=900)
+
+    assert len(client.text_appends) == 1
+    thread_id, text, role = client.text_appends[0]
+    assert thread_id == "thread-1"
+    assert role == "developer"
+    assert "900 ms" in text
+    # One note per interrupt, never a repeat on the next boundary.
+    await session.truncate(audio_end_ms=900)
+    assert len(client.text_appends) == 1
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_context_and_history_writes_are_not_ungrounded_responses() -> None:
+    """AD-14: every provider write that can create output arms a permit.
+
+    ``send_text``/``send_speech`` always did; the persona, the call history
+    and the language pin are the same ``appendText`` call and did not, so a
+    response the model produced for context Jarvis itself injected looked
+    exactly like a self-echo turn and was refused.
+    """
+    client = _Client(
+        [
+            _Notification(
+                "thread/realtime/itemAdded",
+                {"threadId": "thread-1", "item": {"type": "response.created"}},
+            ),
+            _Notification(
+                "thread/realtime/transcript/done",
+                {
+                    "threadId": "thread-1",
+                    "role": "assistant",
+                    "text": "Understood.",
+                },
+            ),
+            _Notification(
+                "thread/realtime/itemAdded",
+                {"threadId": "thread-1", "item": {"type": "response.done"}},
+            ),
+        ]
+    )
+    session = await _provider(
+        client, input_transcriber_factory=lambda: _StubEndpointer(speaking=False)
+    ).open_session(
+        RealtimeSessionConfig(
+            instructions="You are Nova, the user's own assistant.",
+            history=({"role": "user", "text": "Earlier question"},),
+        )
+    )
+
+    assert [role for _thread, _text, role in client.text_appends] == [
+        "developer",
+        "developer",
+    ]
+
+    events = [event async for event in session.receive()]
+
+    assert [
+        event.text for event in events if event.type == "output_transcript_delta"
+    ] == ["Understood."]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_the_language_pin_also_arms_a_trusted_permit() -> None:
+    """The compact per-turn language item is the same write (AD-14)."""
+    client = _Client(
+        [
+            _Notification(
+                "thread/realtime/transcript/done",
+                {"threadId": "thread-1", "role": "assistant", "text": "Verstanden."},
+            ),
+        ]
+    )
+    session = await _provider(
+        client, input_transcriber_factory=lambda: _StubEndpointer(speaking=False)
+    ).open_session(RealtimeSessionConfig())
+    await session.update_session(language="de")
+
+    events = [event async for event in session.receive()]
+
+    assert [
+        event.text for event in events if event.type == "output_transcript_delta"
+    ] == ["Verstanden."]
+    await session.close()
