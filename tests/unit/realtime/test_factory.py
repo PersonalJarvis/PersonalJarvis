@@ -335,7 +335,7 @@ async def test_warm_selected_transports_skips_providers_without_the_capability(
         factory, "load", lambda _group, pid, protocol=None: loaded[pid]
     )
 
-    await factory.realtime_warm_selected_transports(object())
+    await factory.realtime_warm_selected_transports(_cfg())
 
     assert warm.calls == 1
 
@@ -358,7 +358,7 @@ async def test_warm_selected_transports_survives_one_broken_provider(
     )
     monkeypatch.setattr(factory, "load", _load)
 
-    await factory.realtime_warm_selected_transports(object())
+    await factory.realtime_warm_selected_transports(_cfg())
 
     assert warm.calls == 1
 
@@ -375,9 +375,57 @@ async def test_warm_selected_transports_ignores_unselected_plugins(
         factory, "load", lambda _group, _pid, protocol=None: warm
     )
 
-    await factory.realtime_warm_selected_transports(object())
+    await factory.realtime_warm_selected_transports(_cfg())
 
     assert warm.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_warm_selected_transports_skips_a_pipeline_mode_install(
+    monkeypatch,
+) -> None:
+    """A stale realtime pin must not spawn a transport for a disabled feature.
+
+    Warming a subscription transport means spawning a process, running a live
+    account check, and HOLDING the profile lock — which is what made the user's
+    own Codex login report "busy" on an install whose voice runs the classic
+    pipeline. Gate on the same switch ``build_realtime_session`` reads.
+    """
+    warm = _WarmProbe()
+    monkeypatch.setattr(
+        factory, "_explicit_provider_ids", lambda _cfg: ["warm-me"]
+    )
+    monkeypatch.setattr(
+        factory, "load", lambda _group, _pid, protocol=None: warm
+    )
+
+    await factory.realtime_warm_selected_transports(_cfg(mode="pipeline"))
+
+    assert warm.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_warm_selected_transports_still_warms_the_realtime_install(
+    monkeypatch,
+) -> None:
+    """The mirror: the case warming EXISTS for keeps working.
+
+    Warming is about the cold start before the first wake word, so it must
+    depend on the configured mode alone — never on a call being in flight.
+    """
+    warm = _WarmProbe()
+    monkeypatch.setattr(
+        factory, "_explicit_provider_ids", lambda _cfg: ["warm-me"]
+    )
+    monkeypatch.setattr(
+        factory, "load", lambda _group, _pid, protocol=None: warm
+    )
+
+    await factory.realtime_warm_selected_transports(
+        _cfg(mode="realtime", provider="codex-subscription-realtime")
+    )
+
+    assert warm.calls == 1
 
 
 def test_declared_handshake_budget_reaches_the_surface(monkeypatch) -> None:

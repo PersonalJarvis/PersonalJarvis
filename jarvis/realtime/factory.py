@@ -206,6 +206,17 @@ def realtime_handshake_budget_s(cfg: Any) -> float:
     return max(declared)
 
 
+def _realtime_is_the_configured_voice_mode(cfg: Any) -> bool:
+    """Whether realtime voice is the mode this install actually runs.
+
+    The same switch ``build_realtime_session`` reads, so warming can never
+    prepare a transport the session builder would refuse. Deliberately about
+    CONFIGURATION, not about a live call: a warm transport is worth having
+    BEFORE the first wake word, which is the entire point of warming.
+    """
+    return getattr(getattr(cfg, "voice", None), "mode", "pipeline") == "realtime"
+
+
 async def realtime_warm_selected_transports(cfg: Any) -> None:
     """Let every explicitly selected provider pre-open its transport.
 
@@ -218,7 +229,19 @@ async def realtime_warm_selected_transports(cfg: Any) -> None:
     app-server and verifies the account INSIDE the first call's handshake
     (~1.5 s of 3.0 s, measured 2026-08-02). One broken plugin never stops the
     others, and no failure here reaches the caller.
+
+    Skipped entirely when realtime is not the configured voice mode. Warming a
+    transport the session builder would refuse anyway is pure cost, and for a
+    subscription transport that cost is a spawned process, a live account
+    check, and a HELD profile lock at every boot — which is what makes the
+    user's own login/logout report "busy" for a feature they switched off.
     """
+    if not _realtime_is_the_configured_voice_mode(cfg):
+        log.debug(
+            "Realtime transport warm skipped: realtime is not the configured "
+            "voice mode."
+        )
+        return
     for provider_id in _explicit_provider_ids(cfg):
         try:
             provider_cls = load(_GROUP, provider_id, protocol=RealtimeProvider)
@@ -341,8 +364,7 @@ def build_realtime_session(
     pipeline. Actual socket handshakes happen lazily on ``audio_start`` and the
     wrapper tries every candidate in order before failing.
     """
-    mode = getattr(getattr(cfg, "voice", None), "mode", "pipeline")
-    if mode != "realtime":
+    if not _realtime_is_the_configured_voice_mode(cfg):
         return None
     try:
         providers = _provider_candidates(cfg, defer_external_login_probe=True)

@@ -93,6 +93,26 @@ BILLING_LIMIT_MARKERS = (
     "depleted",
     "plan and billing",
     "plans & billing",
+    # Machine-readable TOKEN twins of the prose forms above. A transport that
+    # redacts a provider body (the Codex app-server keeps only method + code)
+    # can still forward a bounded `error.type`, and that token is then the ONLY
+    # evidence of the account state — spelled with underscores, so the
+    # space-separated entries above never match it. Both are terminal shapes
+    # ("reached"/"exceeded" against a quota), never a transient throttle, so
+    # they satisfy the hard invariant and are safe for the dead-list path in
+    # manager.py::_is_account_blocked_exc, which shares this list.
+    "usage_limit_reached",
+    "quota_exceeded",
+)
+
+# Transient throttling as a machine TOKEN, for the same redacted-transport
+# reason — but kept OUT of the billing list on purpose: a rate limit clears by
+# itself and must never dead-list a funded account. Checked after the billing
+# markers so a message carrying both still reads as the terminal state.
+_RATE_LIMIT_TOKEN_MARKERS = (
+    "rate_limit_exceeded",
+    "rate limit exceeded",
+    "too many requests",
 )
 
 # Back-compat alias (anything importing the old private name keeps working).
@@ -182,6 +202,11 @@ def classify_provider_error(message: str | None) -> str:
         return UNREACHABLE
     if _has_billing(msg):
         return NO_CREDITS
+    if any(m in msg for m in _RATE_LIMIT_TOKEN_MARKERS):
+        # A throttle whose transport dropped the HTTP status. Without this the
+        # only honest read left is "possible integration bug", which sends the
+        # user hunting a defect instead of waiting or topping up.
+        return RATE_LIMITED
     return ERROR
 
 

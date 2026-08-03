@@ -137,6 +137,13 @@ def _automatic_usage_fallback_allowed(cfg: Any) -> bool:
 
         return realtime_implicit_usage_fallback_allowed(cfg)
     except Exception:  # noqa: BLE001 - configured realtime fails closed on ambiguity
+        # Fail closed, but never silently (AP-30): refusing the metered
+        # fallback ENDS calls, so the reason has to be findable in the log.
+        log.warning(
+            "Realtime billing-fallback capability could not be read; refusing "
+            "automatic usage-billed fallback for this session",
+            exc_info=True,
+        )
         return False
 
 
