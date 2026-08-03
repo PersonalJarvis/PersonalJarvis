@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
+  AudioLines,
   Brain,
   Check,
   ChevronUp,
@@ -39,7 +40,7 @@ import { useThemeValue } from "@/hooks/useTheme";
 import { useDocumentVisible } from "@/hooks/useDocumentVisible";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { PaneResizer } from "@/components/layout/PaneResizer";
-import { useEventStore } from "@/store/events";
+import { useEventStore, type VoiceState } from "@/store/events";
 import { AgenticTerminal, type PaneStatus, type SplitDirection } from "./AgenticTerminal";
 import { AgentMark } from "./AgentMark";
 import { PaneActivityPill } from "./PaneActivityPill";
@@ -64,6 +65,7 @@ import {
 import { loadStoredArrangement, saveStoredArrangement, usePaneWeights } from "./usePaneWeights";
 import { ContinueInterrupted } from "./ContinueInterrupted";
 import { PaneNotifications } from "./PaneNotifications";
+import { isVoiceActive } from "./VoiceBubble";
 import { PromptPreview } from "./PromptPreview";
 import { PromptEditor } from "./PromptEditor";
 import { WorkspaceSettings } from "./WorkspaceSettings";
@@ -181,6 +183,19 @@ interface AgenticGridProps {
    * is an ordinary maximized pane the user can restore themselves.
    */
   jumpTo?: { pane: string; nonce: number } | null;
+  /**
+   * Is the floating voice bubble on screen, and the toggle that summons it.
+   *
+   * The bubble itself is NOT rendered here: the conversation belongs to the
+   * app, not to a workspace, and this grid is keyed by workspace — mounting
+   * the bubble inside it would reset the orb mid-sentence on every tab
+   * switch. The view above owns the bubble; the toolbar only carries the
+   * button, because the toolbar is where every other control of this screen
+   * lives. Left out (tests, embeddings), the toolbar simply has no voice
+   * button.
+   */
+  voiceOpen?: boolean;
+  onToggleVoice?: () => void;
 }
 
 const FONT_MIN = 10;
@@ -529,6 +544,8 @@ export function AgenticGrid({
   jumpTo = null,
   onScreen = true,
   onPromptTargetChange,
+  voiceOpen = false,
+  onToggleVoice,
 }: AgenticGridProps) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -1841,6 +1858,13 @@ export function AgenticGrid({
           busy={busy || working}
         />
 
+        {/* Summon or dismiss the floating voice bubble. The glyph pulses gold
+            while a conversation runs so a closed bubble still has a visible
+            heartbeat somewhere on screen. */}
+        {onToggleVoice && (
+          <WorkspaceVoiceButton open={voiceOpen} onToggle={onToggleVoice} />
+        )}
+
         <button
           ref={selectionToggleRef}
           type="button"
@@ -2769,6 +2793,50 @@ function ViewMenu({
 }
 
 /** Always-visible terminal text sizing for the active workspace. */
+/**
+ * The toolbar's voice button — summons the floating voice bubble.
+ *
+ * Its own component so only IT re-renders on voice-state changes: it
+ * subscribes to `voiceState` for the gold pulse, and re-rendering the whole
+ * grid a few times per spoken turn to animate one glyph would be the tail
+ * wagging a very large dog.
+ */
+function WorkspaceVoiceButton({
+  open,
+  onToggle,
+}: {
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const t = useT();
+  const voiceState = (useEventStore((s) => s.voiceState) ?? "idle") as VoiceState;
+  const assistantName =
+    (useEventStore((s) => s.assistantName) ?? "").trim() ||
+    t("agentic_grid.voice_bubble.assistant_fallback");
+  const active = isVoiceActive(voiceState);
+  return (
+    <button
+      type="button"
+      data-testid="agentic-voice-toggle"
+      aria-pressed={open}
+      onClick={onToggle}
+      title={
+        open
+          ? t("agentic_grid.voice_bubble.button_close")
+          : t("agentic_grid.voice_bubble.button_open").replace("{0}", assistantName)
+      }
+      className={cn(TOOLBAR_BTN, open && TOOLBAR_BTN_ON)}
+    >
+      <AudioLines
+        className={cn(
+          "h-4 w-4 shrink-0",
+          active && "animate-pulse text-primary motion-reduce:animate-none",
+        )}
+      />
+    </button>
+  );
+}
+
 function TerminalFontSizeControl({
   fontSize,
   onFontSize,

@@ -3758,23 +3758,26 @@
       "kind_failed": "FALLIDO",
       "gone": "{0} ya no está en este espacio de trabajo: ese terminal se cerró después de llegar la notificación."
     },
-    "voice_panel": {
+    "voice_bubble": {
       "assistant_fallback": "Asistente",
-      "label": "Voz",
+      "button_label": "Burbuja de voz",
+      "button_open": "Abrir la burbuja de voz — habla con {0}",
+      "button_close": "Cerrar la burbuja de voz",
       "ready": "Listo",
       "listening": "Escuchando…",
       "thinking": "Pensando…",
       "speaking": "Hablando",
+      "paused": "En pausa",
       "error": "Problema de voz",
-      "open": "Abrir el panel de voz",
-      "open_title": "Abrir el panel de voz — habla con {0} aquí",
-      "close": "Contraer el panel de voz",
       "hang_up": "Colgar",
       "hang_up_title": "Finalizar la conversación",
       "talk": "Hablar con {0}",
       "talk_title": "Habla con {0} — o di la palabra de activación",
-      "active_hint": "Haz clic en el orbe para colgar.",
-      "idle_hint": "Haz clic en el orbe — o di la palabra de activación — para hablar con {0}.",
+      "mic_start": "Iniciar una conversación con {0}",
+      "mic_stop": "Finalizar la conversación",
+      "close": "Cerrar la burbuja de voz",
+      "mute": "Silenciar la voz de {0} en esta sesión",
+      "unmute": "Reactivar la voz de {0}",
       "start_failed": "No se pudo empezar a escuchar — puede que ya haya una conversación en curso."
     },
     "voice_drop": {

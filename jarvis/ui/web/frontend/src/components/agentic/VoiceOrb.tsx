@@ -71,6 +71,17 @@ const MOTIONS: Record<VoiceState, Motion> = {
     energy: 1,
     voiceImpact: 0.045,
   },
+  paused: {
+    // Stiller than idle: the session is held, not gone — the weather keeps
+    // drifting, just with nothing to say and no breath worth noticing.
+    flowX: 0.015,
+    flowY: 0.004,
+    breathAmp: 0.003,
+    breathHz: 0.1,
+    turbulence: 0.75,
+    energy: 0.78,
+    voiceImpact: 0,
+  },
   error: {
     flowX: 0.012,
     flowY: 0,

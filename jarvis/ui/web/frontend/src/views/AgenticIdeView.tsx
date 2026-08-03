@@ -24,7 +24,11 @@ import {
   storedViewMode,
   type WorkspaceView,
 } from "@/components/agentic/AgenticGrid";
-import { VoicePanel } from "@/components/agentic/VoicePanel";
+import {
+  VoiceBubble,
+  storedVoiceBubbleOpen,
+  storeVoiceBubbleOpen,
+} from "@/components/agentic/VoiceBubble";
 import {
   WorkspaceLauncher,
   type PlannedTerminal,
@@ -114,6 +118,25 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [promptTarget, setPromptTarget] = useState("");
   const [focusMode, setFocus] = useState(false);
   const [busy, setBusy] = useState(false);
+  /*
+   * The floating voice bubble — held HERE, not in the grid, because the
+   * conversation belongs to the app: the grid is keyed by workspace, and a
+   * bubble mounted inside it would reset the orb mid-sentence on every tab
+   * switch (the same reason the old voice column lived outside the grid).
+   * The choice survives restarts so the bubble greets its user where they
+   * left it.
+   */
+  const [voiceOpen, setVoiceOpen] = useState(storedVoiceBubbleOpen);
+  const toggleVoiceBubble = useCallback(() => {
+    setVoiceOpen((current) => {
+      storeVoiceBubbleOpen(!current);
+      return !current;
+    });
+  }, []);
+  const closeVoiceBubble = useCallback(() => {
+    storeVoiceBubbleOpen(false);
+    setVoiceOpen(false);
+  }, []);
 
   // Every open workspace, for the bar above. The one on screen is `session`;
   // these are the others, still running, one click away.
@@ -724,55 +747,58 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   if (session && !addingNew) {
     return (
       <div className="flex h-full flex-col">
-        <div className="flex min-h-0 flex-1">
-          <div className="min-h-0 min-w-0 flex-1">
-            {/*
-              Keyed by workspace, so switching tabs REPLACES the grid instead of
-              re-using it. That is deliberate: each pane's terminal is wired to
-              one call-sign for its whole life, and re-using the component across
-              workspaces would leave xterm instances pointed at the panes of the
-              workspace that just left.
-            */}
-            <AgenticGrid
-              key={session.id}
-              session={session}
-              workspaceBar={renderBar(true)}
-              appActions={<TopBarActions />}
-              onJumpToWorkspace={(id, pane) => void jumpToPane(id, pane)}
-              jumpTo={jumpTo}
-              focusMode={focusMode}
-              onToggleFocus={(v) => void toggleFocus(v)}
-              onClose={() => void close()}
-              busy={busy}
-              maxTerminals={maxTerminals}
-              agents={splitChoices}
-              onSessionChanged={setSession}
-              accounts={ideAccounts}
-              onStateChanged={applyStateFromSettings}
-              onScreen={onScreen}
-              onPromptTargetChange={setPromptTarget}
-            />
-          </div>
+        <div className="min-h-0 min-w-0 flex-1">
           {/*
-            The voice column: talk to the assistant while the agents work.
-            OUTSIDE the per-workspace grid on purpose — the conversation
-            belongs to the app, not to a workspace, so switching tabs must not
-            reset the orb mid-sentence.
+            Keyed by workspace, so switching tabs REPLACES the grid instead of
+            re-using it. That is deliberate: each pane's terminal is wired to
+            one call-sign for its whole life, and re-using the component across
+            workspaces would leave xterm instances pointed at the panes of the
+            workspace that just left.
           */}
-          <VoicePanel
+          <AgenticGrid
+            key={session.id}
+            session={session}
+            workspaceBar={renderBar(true)}
+            appActions={<TopBarActions />}
+            onJumpToWorkspace={(id, pane) => void jumpToPane(id, pane)}
+            jumpTo={jumpTo}
+            focusMode={focusMode}
+            onToggleFocus={(v) => void toggleFocus(v)}
+            onClose={() => void close()}
+            busy={busy}
+            maxTerminals={maxTerminals}
+            agents={splitChoices}
+            onSessionChanged={setSession}
+            accounts={ideAccounts}
+            onStateChanged={applyStateFromSettings}
             onScreen={onScreen}
-            promptTarget={
-              session.terminals.some(
-                (terminal) =>
-                  terminal.name === promptTarget && terminal.accepts_prompts !== false,
-              )
-                ? promptTarget
-                : session.terminals.find(
-                    (terminal) => terminal.accepts_prompts !== false,
-                  )?.name ?? ""
-            }
+            onPromptTargetChange={setPromptTarget}
+            voiceOpen={voiceOpen}
+            onToggleVoice={toggleVoiceBubble}
           />
         </div>
+        {/*
+          The floating voice bubble: talk to the assistant while the agents
+          work. A fixed overlay rather than a column, so the terminals keep
+          the whole width in every view mode; OUTSIDE the per-workspace grid
+          on purpose — the conversation belongs to the app, not to a
+          workspace, so switching tabs must not reset the orb mid-sentence.
+        */}
+        <VoiceBubble
+          open={voiceOpen}
+          onClose={closeVoiceBubble}
+          onScreen={onScreen}
+          promptTarget={
+            session.terminals.some(
+              (terminal) =>
+                terminal.name === promptTarget && terminal.accepts_prompts !== false,
+            )
+              ? promptTarget
+              : session.terminals.find(
+                  (terminal) => terminal.accepts_prompts !== false,
+                )?.name ?? ""
+          }
+        />
         {modeIntroFor === session.id && (
           <CodingModeIntro
             terminals={session.terminals.map((x) => x.name)}

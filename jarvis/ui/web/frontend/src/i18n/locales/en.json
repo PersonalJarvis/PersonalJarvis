@@ -3759,23 +3759,26 @@
       "kind_failed": "FAILED",
       "gone": "{0} is not in this workspace any more — that terminal was closed since the notification arrived."
     },
-    "voice_panel": {
+    "voice_bubble": {
       "assistant_fallback": "Assistant",
-      "label": "Voice",
+      "button_label": "Voice bubble",
+      "button_open": "Open the voice bubble — talk to {0}",
+      "button_close": "Close the voice bubble",
       "ready": "Ready",
       "listening": "Listening…",
       "thinking": "Thinking…",
       "speaking": "Speaking",
+      "paused": "Paused",
       "error": "Voice trouble",
-      "open": "Open the voice panel",
-      "open_title": "Open the voice panel — talk to {0} here",
-      "close": "Collapse the voice panel",
       "hang_up": "Hang up",
       "hang_up_title": "Hang up the conversation",
       "talk": "Talk to {0}",
       "talk_title": "Talk to {0} — or just say the wake word",
-      "active_hint": "Click the orb to hang up.",
-      "idle_hint": "Click the orb — or say the wake word — to talk to {0}.",
+      "mic_start": "Start a conversation with {0}",
+      "mic_stop": "End the conversation",
+      "close": "Close the voice bubble",
+      "mute": "Mute {0}'s voice for this session",
+      "unmute": "Unmute {0}'s voice",
       "start_failed": "Could not start listening — a conversation may already be running."
     },
     "voice_drop": {
