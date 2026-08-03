@@ -23,6 +23,7 @@ RealtimeEventType = Literal[
     "speech_started",
     "interrupted",
     "turn_complete",
+    "usage",
     "error",
 ]
 
@@ -54,6 +55,17 @@ class RealtimeEvent:
     # the Jarvis supervisor, never a provider tool call or response boundary.
     handoff_id: str | None = None
     provider_turn_id: str | None = None
+    # Token/second counters for one finished generation, folded per turn by the
+    # orchestrator and forwarded to the recorder. Declared HERE because the
+    # shipped API-billed adapters already emit ``type="usage"`` events with this
+    # payload: a third-party adapter doing the same against this dataclass used
+    # to raise AttributeError inside the receive pump.
+    usage: dict[str, int] | None = None
+    # True when JARVIS itself caused this event — an ``interrupted`` produced by
+    # our own ``interrupt()`` rather than by the user speaking. Without it the
+    # orchestrator reads its own cancellation as a barge-in and arms the
+    # user-speech state against a user who never said anything.
+    self_initiated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +129,13 @@ class RealtimeSession(Protocol):
     the turn boundary as "output transcript missing". Providers that do not
     declare it keep failing closed, which is the correct default for anything
     the model itself generates.
+
+    Optional capability (probed with ``getattr``, defaulting to
+    ``supports_direct_tools``): ``supports_tool_results``. A transport with no
+    native function calling has no wire to carry a ``function_call_output``
+    either, so ``send_tool_result`` on it can only raise. Callers probe this
+    instead of calling and catching, because a swallowed raise is how a
+    dropped tool result becomes invisible (AP-30).
 
     A former optional ``renders_pinned_voice`` voice-identity capability
     (BUG-086 escalation) was removed 2026-07-21: routing delegate replies

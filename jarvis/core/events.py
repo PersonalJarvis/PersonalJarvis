@@ -1500,6 +1500,12 @@ class RealtimeSessionReady(Event):
     surface: str = ""
     input_sample_rate: int = 0
     output_sample_rate: int = 0
+    #: The call's output language as a bare tag ("de" / "en" / "es" / any
+    #: future supported locale), resolved by the ONE turn-language resolver.
+    #: ``VoiceSessionStarted`` carries the same value but is published for the
+    #: browser surface only, so on desktop this was the language nothing ever
+    #: told the UI. Consumers render it; they never re-derive it.
+    language: str = ""
 
 
 @dataclass(frozen=True, slots=True)

@@ -70,6 +70,25 @@ _AUDIO_SEND_TIMEOUT_S = 2.0
 # call that went deaf is visible for its whole duration, not only at onset.
 _HALF_DUPLEX_MUTE_ALERT_S = 6.0
 _HALF_DUPLEX_MUTE_REPEAT_S = 10.0
+# Per-turn stall backstop. A provider can stop emitting ENTIRELY — no audio, no
+# transcript, no boundary, no error — and the receive iterator then simply never
+# yields again. Nothing else in this module bounds that: the pump awaits the
+# iterator without a timeout and the desktop supervisor awaits wait_finished()
+# without one either, so an adapter that latches goes unnoticed until the user
+# kills the call. This watchdog is armed fresh for EACH turn and cancelled at
+# every boundary (AP-19: never a process-global counter — BUG-032 was exactly
+# that bug, a watchdog that fired between units of work). 20 s is deliberately
+# above the 15 s untranscribed-audio bound so a slow-but-alive reply is never
+# cut; a turn silent for longer than that is stuck, not busy.
+_TURN_STALL_TIMEOUT_S = 20.0
+_TURN_STALL_POLL_S = 0.5
+# Withheld provider output used to leave no trace anywhere (AP-30): a turn could
+# be dropped in full and the log looked like a healthy call. Report it, bounded.
+_OUTPUT_DROP_LOG_INTERVAL_S = 2.0
+# Answered input-item ids retained for duplicate suppression. Per transport
+# (cleared on rebuild) and bounded, so a long call cannot grow one entry per
+# utterance forever.
+_ANSWERED_INPUT_ID_MAX = 64
 _TOOL_TRANSCRIPT_WAIT_S = 3.0
 # Grace window for the model to finish its goodbye after an end_call tool
 # call; if the provider never sends turn_complete, hang up anyway.
@@ -1008,6 +1027,17 @@ class RealtimeVoiceSession:
         # the condition is visible instead of invisible (AP-30).
         self._half_duplex_muted_since: float | None = None
         self._half_duplex_mute_reported = 0.0
+        # Per-turn stall watchdog (see _TURN_STALL_TIMEOUT_S). Armed by
+        # _ensure_turn_started, cancelled by _reset_turn_tracking, so its
+        # lifetime is exactly one turn and it can never fire between turns.
+        self._turn_stall_task: asyncio.Task[None] | None = None
+        self._turn_activity_at = 0.0
+        # Rate limiter + reason for the "provider output is being dropped" log.
+        self._output_drop_reported = 0.0
+        self._output_drop_count = 0
+        # Frames discarded because a transport rebuild is pending. Reported so a
+        # stuck marker cannot silently swallow the microphone (AP-30).
+        self._rebuild_drop_reported = 0.0
 
         brain_config = getattr(self._config, "brain", None)
         reply_language = str(
@@ -1525,6 +1555,19 @@ class RealtimeVoiceSession:
             if offer_sdp:
                 self._transport_offer_sdp = offer_sdp
             if self._session is None:
+                # A cold subscription transport legitimately spends tens of
+                # seconds here (app-server spawn, account verification, WebRTC
+                # negotiation). Announcing the attempt BEFORE the wait is the
+                # difference between a surface that can show progress and one
+                # that shows dead air for the whole budget.
+                await self._send_json(
+                    {
+                        "type": "audio_starting",
+                        "provider": self.active_provider,
+                        "language": self._language,
+                        "handshake_budget_s": self._declared_handshake_budget_s(),
+                    }
+                )
                 await self._open()
             self._in_resampler = StreamingPcm16Resampler(
                 self.browser_sample_rate, self._input_sample_rate
@@ -1533,6 +1576,11 @@ class RealtimeVoiceSession:
                 "type": "audio_ready",
                 "provider": self.active_provider,
                 "model": self._active_model,
+                # The call's output language, from the ONE resolver
+                # (jarvis/core/turn_language.py via _resolve_lang) — never a
+                # per-layer default and never a de/en-only guess. Bare tag
+                # ("de" / "en" / "es" / any future supported locale).
+                "language": self._language,
                 "requires_webrtc_answer": bool(
                     getattr(self._provider, "requires_webrtc_offer", False)
                 ),
@@ -1545,6 +1593,7 @@ class RealtimeVoiceSession:
             if answer_sdp:
                 ready["webrtc_answer_sdp"] = answer_sdp
             await self._send_json(ready)
+            await self._announce_language()
             if self._surface == "browser" and not self._browser_session_started:
                 await self._publish_browser_session_started()
                 self._browser_session_started = True
@@ -1560,6 +1609,40 @@ class RealtimeVoiceSession:
             await self._barge_in()
         elif kind == "audio_stop":
             await self.end(reason=HANGUP_CLIENT_STOP)
+
+    def _declared_handshake_budget_s(self) -> float:
+        """Longest handshake any still-eligible provider declares it needs.
+
+        A capability read across the candidates this session actually holds
+        (AP-21), never a provider-name check, and never below the shared
+        default so a surface can use it directly as a progress budget.
+        """
+        declared = [float(_PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S)]
+        for provider in self._providers:
+            if not self._provider_is_available(provider):
+                continue
+            declared.append(
+                float(getattr(provider, "handshake_budget_s", 0.0) or 0.0)
+            )
+        return max(declared)
+
+    async def _announce_language(self) -> None:
+        """Tell every surface which language this call is speaking.
+
+        One field, one producer: ``_language`` is whatever
+        ``resolve_output_language`` returned (pin -> stickiness -> detected
+        input -> DEFAULT_LOCALE). Surfaces render it; they never re-derive it.
+        """
+        try:
+            await self._send_json(
+                {"type": "language", "language": self._language}
+            )
+        except Exception:  # noqa: BLE001 — a surface may already be gone
+            log.debug(
+                "realtime[%s] language announcement failed",
+                self.session_id,
+                exc_info=True,
+            )
 
     def _active_provider_selection(self, provider: Any) -> tuple[str, str]:
         provider_id = str(getattr(provider, "name", "") or "")
@@ -1811,7 +1894,20 @@ class RealtimeVoiceSession:
         if self._ended or self._session is None or not pcm_native:
             return
         if self._session is self._transport_rebuild_pending:
+            # Deliberate: the transport is being swapped and this frame cannot
+            # land anywhere. Silence here was indistinguishable from a healthy
+            # call when the marker got stuck, so say it — bounded (AP-30).
+            now = time.monotonic()
+            if now - self._rebuild_drop_reported >= _HALF_DUPLEX_MUTE_REPEAT_S:
+                self._rebuild_drop_reported = now
+                log.warning(
+                    "realtime[%s] dropping microphone frames while a transport "
+                    "rebuild is pending — nothing the user says is reaching "
+                    "the provider",
+                    self.session_id,
+                )
             return
+        self._rebuild_drop_reported = 0.0
         if self._half_duplex and self._output_active:
             self._note_half_duplex_mute()
             return
@@ -2115,6 +2211,22 @@ class RealtimeVoiceSession:
                         # A normal receive-side rebuild may have won the race.
                         # Discard that old session's queued write-stall signal
                         # and keep the current transport pass alive.
+                        #
+                        # Releasing the marker here is load-bearing: it is the
+                        # ONLY other thing that gates handle_audio_frame, and
+                        # _rebuild_transport — the only other place that clears
+                        # it — is precisely the path this branch skips. Left
+                        # standing it silently discarded every later microphone
+                        # frame for the rest of the call.
+                        if self._transport_rebuild_pending is target_session:
+                            self._transport_rebuild_pending = None
+                            log.info(
+                                "realtime[%s] discarded a stale transport "
+                                "rebuild request (%s); the microphone stays "
+                                "open",
+                                self.session_id,
+                                detail,
+                            )
                         if transport_task in done:
                             return await transport_task
                         continue
@@ -2132,6 +2244,10 @@ class RealtimeVoiceSession:
         """
         try:
             async for event in self._session.receive():
+                # Any event at all proves the transport is still producing, so
+                # the per-turn stall watchdog measures exactly one thing: total
+                # provider silence inside an open turn.
+                self._note_turn_activity()
                 if event.type == "input_transcript":
                     transcript = _dictionary_corrected(str(event.text or "").strip())
                     transcription_failed = bool(event.error)
@@ -2199,8 +2315,13 @@ class RealtimeVoiceSession:
                         and input_item_id in self._response_requested_input_ids
                     )
                     if event.is_final and input_already_answered:
-                        log.debug(
-                            "realtime[%s] ignored duplicate final input item %s",
+                        # A swallowed user utterance is never a debug-level
+                        # event: if the id space ever collides, this is the
+                        # only trace that turn 2 vanished (AP-30).
+                        log.info(
+                            "realtime[%s] ignored a final input item this turn "
+                            "already answered (item=%s); if the user is "
+                            "waiting, the provider reused an item id",
                             self.session_id,
                             input_item_id,
                         )
@@ -2264,6 +2385,10 @@ class RealtimeVoiceSession:
                             self._gate = ScrubHoldGate(new_language)
                             if self._tool_bridge is not None:
                                 self._tool_bridge.set_language(new_language)
+                            # The surfaces label the call with this; a flip
+                            # that only the session knows about leaves every
+                            # indicator stuck on the opening language.
+                            await self._announce_language()
                     if input_observed:
                         self._mark_latency_named(
                             "REALTIME_INPUT_COMMITTED",
@@ -2441,7 +2566,11 @@ class RealtimeVoiceSession:
                         and input_observed
                         and self._delegate_required_for_turn
                     ):
-                        self._start_deterministic_delegate(self._last_user_text)
+                        # This branch runs on a FINAL input transcript, so the
+                        # utterance is provably over — no boundary wait needed.
+                        self._start_deterministic_delegate(
+                            self._last_user_text, input_final=True
+                        )
                     if (
                         event.is_final
                         and input_observed
@@ -2476,6 +2605,17 @@ class RealtimeVoiceSession:
                         self._response_requested_for_turn = True
                         if input_item_id:
                             self._response_requested_input_ids.add(input_item_id)
+                            if (
+                                len(self._response_requested_input_ids)
+                                > _ANSWERED_INPUT_ID_MAX
+                            ):
+                                # Bounded: a long call must not accumulate one
+                                # entry per utterance for its whole lifetime.
+                                self._response_requested_input_ids = set(
+                                    tuple(self._response_requested_input_ids)[
+                                        -_ANSWERED_INPUT_ID_MAX:
+                                    ]
+                                )
                 elif event.type == "handoff_requested":
                     # Client-managed handoffs are a provider control boundary,
                     # never a public response boundary and never a direct tool
@@ -2552,6 +2692,7 @@ class RealtimeVoiceSession:
                         delegate_state.bridge_transcript_parts.append(event.text)
                         continue
                     if self._must_withhold_provider_output():
+                        self._note_output_withheld("transcript")
                         self._gate.drain()
                         continue
                     await self._ensure_turn_started()
@@ -2632,8 +2773,8 @@ class RealtimeVoiceSession:
                     )
                     for chunk in self._gate.release_available():
                         await self._emit_audio(chunk)
-                elif event.type == "usage" and event.usage is not None:
-                    for key, value in event.usage.items():
+                elif event.type == "usage" and getattr(event, "usage", None):
+                    for key, value in dict(event.usage).items():
                         if isinstance(value, int) and value > 0:
                             self._turn_usage[key] = (
                                 self._turn_usage.get(key, 0) + value
@@ -2665,6 +2806,7 @@ class RealtimeVoiceSession:
                             delegate_state.bridge_audio_chunks.append(event.audio)
                         continue
                     if self._must_withhold_provider_output():
+                        self._note_output_withheld("audio")
                         self._gate.drain()
                         continue
                     await self._ensure_turn_started()
@@ -2704,6 +2846,22 @@ class RealtimeVoiceSession:
                             reason="output transcript exceeded safe audio buffer",
                             fallback_text=trusted_reply or None,
                         )
+                elif event.type == "interrupted" and getattr(
+                    event, "self_initiated", False
+                ):
+                    # Jarvis's own interrupt() echoing back as a provider
+                    # event. Every site that issues one (barge-in, the handoff
+                    # cut, the delegate boundary cut, the unsafe-output cancel)
+                    # already drained the gate and armed its own withhold, so
+                    # there is nothing left to do — while treating it as a
+                    # barge-in armed _user_speech_active against a user who
+                    # never spoke, blocking announcements, late action results
+                    # and the readback watchdog until the next real transcript.
+                    log.debug(
+                        "realtime[%s] ignored a self-initiated provider "
+                        "interruption",
+                        self.session_id,
+                    )
                 elif event.type in {"speech_started", "interrupted"} and (
                     self._pending_delegate_needs_endpoint_protection()
                     or self._delegate_readback_awaits_first_audio()
@@ -3385,12 +3543,15 @@ class RealtimeVoiceSession:
         # turn boundary for no reason.
         self._advised_reconnect_detail = None
         self._gate = ScrubHoldGate(self._language)
-        self._output_active = False
-        self._output_samples_sent = 0
-        self._response_requested_for_turn = False
-        self._user_speech_active = False
+        self._reset_output_state(reason="transport rebuild")
         self._drop_provider_output_until_new_response = False
         self._drop_provider_output_until_user_turn = False
+        # Input-item ids are scoped to the DEAD transport. A fresh provider
+        # session may restart its numbering, and a collision here silently
+        # swallows the next real utterance at the duplicate-item guard — the
+        # user speaks and no turn ever opens. The set is per-transport, so it
+        # is retired with the transport.
+        self._response_requested_input_ids.clear()
         log.warning(
             "realtime[%s] transport died mid-call (%s) — rebuilding the "
             "provider session in place (%d/%d in the current %.0f s window)",
@@ -3415,6 +3576,7 @@ class RealtimeVoiceSession:
                 "type": "audio_ready",
                 "provider": self.active_provider,
                 "model": self._active_model,
+                "language": self._language,
                 "requires_webrtc_answer": bool(
                     getattr(self._provider, "requires_webrtc_offer", False)
                 ),
@@ -3428,6 +3590,7 @@ class RealtimeVoiceSession:
             if answer_sdp:
                 ready["webrtc_answer_sdp"] = answer_sdp
             await self._send_json(ready)
+            await self._announce_language()
         except Exception:  # noqa: BLE001, S110 — surface refresh is best-effort
             pass
         return True
@@ -3702,6 +3865,7 @@ class RealtimeVoiceSession:
                     provider=self.active_provider,
                     model=self._active_model,
                     surface=self._surface,
+                    language=self._language,
                     input_sample_rate=self._input_sample_rate,
                     output_sample_rate=int(
                         getattr(self._provider, "output_sample_rate", 24_000) or 24_000
@@ -3775,8 +3939,141 @@ class RealtimeVoiceSession:
         self._current_turn_index = self._turn_index
         self._turn_index += 1
         self._latency_tracker = self._create_latency_tracker(trace_id)
+        self._arm_turn_stall_watchdog()
         if self._external_update is None:
             await self._publish_turn_started()
+
+    def _note_turn_activity(self) -> None:
+        """Record that the provider is still producing something for this turn."""
+        self._turn_activity_at = time.monotonic()
+
+    def _cancel_turn_stall_watchdog(self) -> None:
+        task = self._turn_stall_task
+        self._turn_stall_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _arm_turn_stall_watchdog(self) -> None:
+        """Start the one watchdog that owns THIS turn.
+
+        Re-armed per turn on purpose (AP-19): a shared counter that survives a
+        boundary fires against the next turn's fresh answer, which is exactly
+        BUG-032. Cancelled in ``_reset_turn_tracking``, so its lifetime cannot
+        outlive the turn that created it.
+        """
+        self._cancel_turn_stall_watchdog()
+        self._note_turn_activity()
+        turn_id = self._turn_id
+        if not turn_id:
+            return
+        self._turn_stall_task = asyncio.create_task(
+            self._watch_turn_for_stall(turn_id),
+            name=f"rt-turn-stall-{self.session_id}",
+        )
+
+    def _turn_stall_is_excusable(self, turn_id: str) -> bool:
+        """Whether silence right now is legitimate rather than a wedge."""
+        return bool(
+            self._ended
+            or self._failed.is_set()
+            or self._hangup_reason
+            or self._session is None
+            # A delegated Brain turn is allowed to be silent: it has its own
+            # budget (_DELEGATE_TIMEOUT_S) and its own readback watchdog.
+            or self._turn_has_pending_delegate(turn_id)
+            or self._has_pending_delegate_from_earlier_turn()
+            # The user is audibly mid-utterance; the provider owes nothing yet.
+            or self._user_speech_active
+            # Audio is flowing, so the transport is demonstrably alive.
+            or self._output_active
+            or self._output_samples_sent > 0
+        )
+
+    async def _watch_turn_for_stall(self, turn_id: str) -> None:
+        """Break a turn that produced nothing at all, and say why out loud.
+
+        The provider iterator has no timeout and neither does the surface's
+        ``wait_finished()``, so an adapter that stops emitting entirely — no
+        audio, no transcript, no boundary, no error — leaves the call open
+        forever with the microphone held shut by half-duplex. This is the
+        independent backstop for that: it never trusts the transport to
+        report its own death.
+        """
+        try:
+            while True:
+                await asyncio.sleep(_TURN_STALL_POLL_S)
+                if self._turn_id != turn_id:
+                    return
+                if self._turn_stall_is_excusable(turn_id):
+                    self._note_turn_activity()
+                    continue
+                silent_s = time.monotonic() - self._turn_activity_at
+                if silent_s < _TURN_STALL_TIMEOUT_S:
+                    continue
+                await self._recover_stalled_turn(turn_id, silent_s)
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — the backstop must never end the call
+            log.warning(
+                "realtime[%s] turn stall watchdog failed for turn %s",
+                self.session_id,
+                turn_id,
+                exc_info=True,
+            )
+
+    async def _recover_stalled_turn(self, turn_id: str, silent_s: float) -> None:
+        """Close a wedged turn honestly: say what happened, then reopen the mic."""
+        from jarvis.voice.action_phrases import action_phrase  # noqa: PLC0415
+
+        pending_update = self._external_update
+        log.warning(
+            "realtime[%s] turn %s produced no audio, transcript, tool call or "
+            "boundary for %.1fs (provider=%s, response_requested=%s, "
+            "output_withheld=%s) — closing it locally so the microphone "
+            "reopens; the transport stopped emitting without reporting it",
+            self.session_id,
+            turn_id,
+            silent_s,
+            self.active_provider or "unknown",
+            self._response_requested_for_turn,
+            self._must_withhold_provider_output(),
+        )
+        await self._publish_error(
+            "RealtimeTurnStalled",
+            (
+                f"The realtime provider produced nothing for {silent_s:.0f}s "
+                "on an open turn; the turn was closed locally."
+            ),
+            recoverable=True,
+        )
+        # Say something TRUE. A stalled turn is not "something went wrong" in
+        # the abstract — the request was received and simply never answered,
+        # which is what action_timeout states, in every supported language.
+        # An out-of-band readback that never rendered is spoken verbatim
+        # instead: its text is already scrubbed and is the honest content.
+        if pending_update is not None and pending_update.source_text:
+            spoken = pending_update.source_text
+            language = pending_update.language
+        else:
+            language = self._language
+            spoken = action_phrase("action_timeout", language)
+        if not self._output_transcript:
+            self._output_transcript.append(spoken)
+        # _external_update is deliberately left standing: _publish_turn_completed
+        # consumes it and records the readback on its own SpeechSpoken track.
+        try:
+            await self._send_json(self._surface_speech_message(spoken))
+        except Exception:  # noqa: BLE001 — the reset below matters more
+            log.warning(
+                "realtime[%s] could not voice the stalled-turn notice",
+                self.session_id,
+                exc_info=True,
+            )
+        # Withholding armed by this dead turn must not deafen the next one.
+        self._drop_provider_output_until_new_response = False
+        self._gate.drain()
+        await self._complete_surface_turn()
 
     def _create_latency_tracker(self, trace_id: Any) -> Any | None:
         """Build optional telemetry without making it a voice dependency."""
@@ -4288,16 +4585,46 @@ class RealtimeVoiceSession:
         self._external_update = None
         self._reset_turn_tracking()
 
-    async def _complete_surface_turn(self) -> None:
-        """Publish one idempotent surface boundary and reset turn state."""
-        if not self._turn_id:
-            return
-        await self._send_json({"type": "turn_complete"})
-        await self._publish_turn_completed()
+    def _reset_output_state(self, *, reason: str) -> None:
+        """Clear every per-response duplex flag — on EVERY path that ends one.
+
+        Half-duplex mutes the microphone while ``_output_active`` stands
+        (``handle_audio_frame``), and on a transport whose speech-start edges
+        are derived from that same microphone the flag is SELF-SUSTAINING:
+        while it is set, none of the events that would clear it can be
+        observed. So this reset must never sit behind a condition. It used to:
+        ``_complete_surface_turn`` returned early when the turn id had already
+        been cleared by an earlier local boundary, skipping every line below
+        and leaving the call permanently deaf with only the six-second
+        half-duplex warning as a trace.
+
+        The two ``_drop_provider_output_*`` flags are deliberately NOT cleared
+        here: they exist to withhold a LATE provider rendering that arrives
+        after its turn closed, so a turn boundary is precisely when they must
+        survive. They are released by real user input and by the delivery
+        paths that own them.
+        """
+        if self._output_active or self._output_samples_sent:
+            log.debug(
+                "realtime[%s] output state reset (%s)", self.session_id, reason
+            )
         self._output_active = False
         self._output_samples_sent = 0
         self._response_requested_for_turn = False
         self._user_speech_active = False
+        self._half_duplex_muted_since = None
+        self._half_duplex_mute_reported = 0.0
+
+    async def _complete_surface_turn(self) -> None:
+        """Publish one idempotent surface boundary and reset turn state.
+
+        Publishing needs a turn id; RESETTING never does (see
+        ``_reset_output_state``).
+        """
+        if self._turn_id:
+            await self._send_json({"type": "turn_complete"})
+            await self._publish_turn_completed()
+        self._reset_output_state(reason="surface turn boundary")
         self._turn_final_text = ""
         self._schedule_late_delegate_flush()
 
@@ -4354,6 +4681,11 @@ class RealtimeVoiceSession:
         )
 
     def _reset_turn_tracking(self) -> None:
+        # The stall watchdog belongs to exactly one turn. Cancelling it here —
+        # the single choke point every boundary passes through — is what keeps
+        # it from surviving into the next unit of work and aborting a fresh
+        # answer (AP-19 / BUG-032).
+        self._cancel_turn_stall_watchdog()
         self._turn_id = ""
         self._turn_trace_id = None
         self._latency_tracker = None
@@ -4484,14 +4816,59 @@ class RealtimeVoiceSession:
                 return ref
         return None
 
+    def _session_takes_tool_results(self) -> bool:
+        """Whether this transport can carry a tool result back to the model.
+
+        Capability, never a provider name (AP-21). A transport with no native
+        function calling has no ``function_call_output`` wire either, so
+        ``send_tool_result`` on it can only raise — and a raise caught and
+        logged at DEBUG is how a dropped result becomes invisible (AP-30).
+        """
+        session = self._session
+        if session is None:
+            return False
+        explicit = getattr(session, "supports_tool_results", None)
+        if explicit is not None:
+            return bool(explicit)
+        return bool(getattr(session, "supports_direct_tools", True))
+
     def _must_withhold_provider_output(self) -> bool:
         """Drop untrusted output during delegation and after barge-in."""
-        return bool(
-            self._drop_provider_output_until_new_response
-            or self._drop_provider_output_until_user_turn
-            or self._must_withhold_delegate_output()
-            or self._delegate_surface_fallback_spoken()
+        return bool(self._output_withhold_reason())
+
+    def _output_withhold_reason(self) -> str:
+        """Name the guard currently withholding provider output, or ``""``.
+
+        Each of these is individually correct, but together they can silence a
+        whole turn — and until now they did it without leaving a single trace,
+        so a silent call and a healthy one looked identical in the log.
+        """
+        if self._drop_provider_output_until_new_response:
+            return "awaiting a new response after a barge-in or delegation"
+        if self._drop_provider_output_until_user_turn:
+            return "awaiting the user's next turn after a surface fallback"
+        if self._must_withhold_delegate_output():
+            return "a delegated action owns this turn"
+        if self._delegate_surface_fallback_spoken():
+            return "the surface already spoke this turn's reply"
+        return ""
+
+    def _note_output_withheld(self, kind: str) -> None:
+        """Report, bounded, that provider output is being dropped (AP-30)."""
+        self._output_drop_count += 1
+        now = time.monotonic()
+        if now - self._output_drop_reported < _OUTPUT_DROP_LOG_INTERVAL_S:
+            return
+        self._output_drop_reported = now
+        log.info(
+            "realtime[%s] withholding provider %s (%d event(s) so far this "
+            "window): %s",
+            self.session_id,
+            kind,
+            self._output_drop_count,
+            self._output_withhold_reason() or "unknown",
         )
+        self._output_drop_count = 0
 
     def _track_delegate_task(
         self, turn_id: str, task: asyncio.Task[None]
@@ -4968,7 +5345,7 @@ class RealtimeVoiceSession:
         await self._session.send_tool_result(call_id, wire_name, result)
 
     async def _handle_end_call(self, event: Any) -> None:
-        if self._session is not None:
+        if self._session is not None and self._session_takes_tool_results():
             try:
                 await self._session.send_tool_result(
                     str(getattr(event, "call_id", "") or ""),
@@ -4976,7 +5353,12 @@ class RealtimeVoiceSession:
                     {"success": True},
                 )
             except Exception:  # noqa: BLE001 — still hang up on a dead wire
-                log.debug("end_call tool result send failed", exc_info=True)
+                log.warning(
+                    "realtime[%s] end_call acknowledgement could not be sent; "
+                    "hanging up anyway",
+                    self.session_id,
+                    exc_info=True,
+                )
         self._end_after_turn = True
         if self._end_call_timer is None or self._end_call_timer.done():
             self._end_call_timer = asyncio.create_task(
@@ -4984,8 +5366,16 @@ class RealtimeVoiceSession:
                 name=f"rt-end-call-{self.session_id}",
             )
 
-    def _start_deterministic_delegate(self, user_text: str) -> None:
-        """Start one orchestrator-owned Brain turn for local-evidence input."""
+    def _start_deterministic_delegate(
+        self, user_text: str, *, input_final: bool = False
+    ) -> None:
+        """Start one orchestrator-owned Brain turn for local-evidence input.
+
+        ``input_final`` says the DISPATCHING path already saw the utterance
+        close. On a transport whose input transcription is local there is no
+        provider input boundary to wait for at all, so without this every such
+        turn paid the full stability window before the Brain was even asked.
+        """
         turn_id = self._turn_id
         if not turn_id:
             return
@@ -4994,6 +5384,7 @@ class RealtimeVoiceSession:
             _DelegateTurnState(deterministic=True),
         )
         turn_state.deterministic = True
+        turn_state.input_final = turn_state.input_final or bool(input_final)
         turn_state.user_text = str(user_text or "").strip()
         if turn_state.dispatch_started or turn_state.result_complete:
             return
@@ -5042,14 +5433,27 @@ class RealtimeVoiceSession:
                 # Provider-voiced text must NOT estimate its playback horizon —
                 # its real audio advances the echo guard on the way out.
                 self._register_spoken_reference(spoken)
+                # This refusal is OUR text, already scrubbed. The withhold that
+                # the user's own speech edge armed applies to model output, not
+                # to it — leaving it armed made _emit_audio drop the refusal
+                # silently, so the user heard nothing at all.
+                self._drop_provider_output_until_new_response = False
+                self._drop_provider_output_until_user_turn = False
                 await send_speech(spoken)
                 if getattr(self._session, "direct_speech_is_authoritative", False):
                     # Trusted verbatim speech carries no model transcript for
                     # the scrub gate to vet; without this the refusal is
                     # dropped at the turn boundary and the user hears silence.
-                    self._gate.trust_direct_speech()
+                    self._gate.trust_direct_speech(spoken)
                     for chunk in self._gate.release_available():
                         await self._emit_audio(chunk)
+                # Both branches must leave the same state behind. Returning
+                # here without a boundary left the turn open with _output_active
+                # standing, which on a half-duplex surface is a permanently
+                # deaf microphone.
+                if not self._output_transcript:
+                    self._output_transcript.append(spoken)
+                await self._complete_surface_turn()
                 return
             except Exception:  # noqa: BLE001 — the surface still speaks it
                 log.warning(
@@ -5060,8 +5464,7 @@ class RealtimeVoiceSession:
                 )
         self._register_spoken_reference(spoken, estimate_playback=True)
         await self._send_json(self._surface_speech_message(spoken))
-        await self._send_json({"type": "turn_complete"})
-        await self._publish_turn_completed()
+        await self._complete_surface_turn()
 
     async def _await_provider_response_boundary(
         self, turn_state: _DelegateTurnState
@@ -5433,6 +5836,18 @@ class RealtimeVoiceSession:
                 self._arm_stale_readback_guard(trusted_reply)
                 await self._send_json(self._surface_speech_message(trusted_reply))
                 return
+            if turn_state.pending_tool_calls and not self._session_takes_tool_results():
+                # Should be unreachable (a transport with no native tools can
+                # never accumulate calls), but silence here would strand the
+                # answer entirely. Drop the calls loudly and speak the result.
+                log.warning(
+                    "realtime[%s] %d native tool result(s) cannot be delivered: "
+                    "this transport has no function-call wire — speaking the "
+                    "result instead",
+                    self.session_id,
+                    len(turn_state.pending_tool_calls),
+                )
+                turn_state.pending_tool_calls.clear()
             if turn_state.pending_tool_calls:
                 for call_id, wire_name in tuple(turn_state.pending_tool_calls):
                     await self._session.send_tool_result(
@@ -5453,7 +5868,7 @@ class RealtimeVoiceSession:
                         # Without this the whole answer is dropped at the turn
                         # boundary as "output transcript missing" — the action
                         # ran and the user heard nothing.
-                        self._gate.trust_direct_speech()
+                        self._gate.trust_direct_speech(trusted_reply)
                         for chunk in self._gate.release_available():
                             await self._emit_audio(chunk)
                 else:
@@ -5797,6 +6212,7 @@ class RealtimeVoiceSession:
 
     async def _emit_audio(self, chunk: Any) -> None:
         if self._must_withhold_provider_output():
+            self._note_output_withheld("audio")
             return
         pcm = bytes(getattr(chunk, "pcm", b"") or b"")
         if not pcm:
@@ -5918,6 +6334,7 @@ class RealtimeVoiceSession:
             return
         self._ended = True
         self._loop_lag.stop()
+        self._cancel_turn_stall_watchdog()
         self._cancel_tool_transcript_wait()
         if self._end_call_timer is not None and not self._end_call_timer.done():
             self._end_call_timer.cancel()

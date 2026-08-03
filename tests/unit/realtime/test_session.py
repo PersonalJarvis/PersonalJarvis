@@ -6296,3 +6296,435 @@ async def test_a_new_order_still_reaches_the_orchestrator_while_one_runs():
     assert refusals == [], "a new order must never be refused as a repeat"
     gate.set()
     await sess.end(reason="test")
+
+
+# ---------------------------------------------------------------------------
+# Subscription-transport parity: the capability tuple no other fake carries.
+#
+# The ChatGPT-subscription voice ships with creates_responses_automatically +
+# isolates_response_generations + NO native tools + authoritative direct speech
+# + a rebuildable transport, on a half-duplex desktop surface. Every fake above
+# tests one of those in isolation; the wedges live in the COMBINATION, because
+# on that transport the microphone is both the thing half-duplex mutes and the
+# only source of the speech edges that would unmute it.
+# ---------------------------------------------------------------------------
+
+
+class SubscriptionLikeSession(FakeSession):
+    """A queue-driven session with the live subscription capability tuple."""
+
+    supports_tool_updates = False
+    supports_direct_tools = False
+    creates_responses_automatically = True
+    isolates_response_generations = True
+    direct_speech_is_authoritative = True
+    rebuild_on_transport_death = True
+
+    def __init__(self, events=None):
+        super().__init__(list(events or []))
+        self.queue: asyncio.Queue = asyncio.Queue()
+        self.spoken = []
+
+    async def receive(self):
+        for event in self._events:
+            yield event
+            await asyncio.sleep(0)
+        while True:
+            event = await self.queue.get()
+            if event is None:
+                return
+            yield event
+
+    async def send_speech(self, text):
+        self.spoken.append(text)
+
+    async def send_tool_result(self, call_id, name, result):
+        # The real transport has no function-call wire and can only raise.
+        raise RuntimeError("this transport does not execute tools directly")
+
+
+class SubscriptionLikeProvider(FakeProvider):
+    name = "subscription-like"
+    supports_direct_tools = False
+    handshake_budget_s = 45.0
+
+    async def open_session(self, cfg):
+        self.opened_with = cfg
+        self.session = SubscriptionLikeSession(self._events)
+        return self.session
+
+
+def _pcm_chunk(samples=240):
+    return AudioChunk(
+        pcm=b"\x10\x20" * samples, sample_rate=24_000, timestamp_ns=0
+    )
+
+
+def _half_duplex_session(provider, *, brain=None, jsons=None, binaries=None):
+    """A desktop-shaped session: half-duplex, exactly like the live surface."""
+    return RealtimeVoiceSession(
+        session_id="subscription-test",
+        send_binary=(
+            (lambda data: binaries.append(data) or asyncio.sleep(0))
+            if binaries is not None
+            else (lambda _data: asyncio.sleep(0))
+        ),
+        send_json=(
+            (lambda m: jsons.append(m) or asyncio.sleep(0))
+            if jsons is not None
+            else (lambda _m: asyncio.sleep(0))
+        ),
+        provider=provider,
+        config=_delegate_cfg("delegate"),
+        brain=brain,
+        half_duplex=True,
+        surface="desktop",
+    )
+
+
+async def _microphone_reaches(sess, session) -> bool:
+    """Whether a microphone frame still gets through to the transport."""
+    before = len(session.sent_audio)
+    await sess.handle_audio_frame(b"\x00\x01" * 480)
+    return len(session.sent_audio) > before
+
+
+@pytest.mark.asyncio
+async def test_subscription_capability_tuple_survives_three_turns():
+    """Turn 2 and 3 must work exactly like turn 1.
+
+    The reported failure was "transcription only works for the first run, then
+    it listens forever". Every per-response flag has to be back at rest after
+    each boundary, and — the load-bearing part — the microphone has to still
+    reach the transport, because on this provider a muted microphone also
+    starves the only source of the next turn's speech edges.
+    """
+    provider = SubscriptionLikeProvider([])
+    jsons = []
+    sess = _half_duplex_session(provider, jsons=jsons)
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    session = provider.session
+
+    for index in range(3):
+        await session.queue.put(RealtimeEvent(type="speech_started"))
+        await session.queue.put(
+            RealtimeEvent(
+                type="input_transcript",
+                text=f"question number {index}",
+                is_final=True,
+            )
+        )
+        await session.queue.put(
+            RealtimeEvent(type="output_transcript_delta", text="Here you go.")
+        )
+        await session.queue.put(
+            RealtimeEvent(type="audio_delta", audio=_pcm_chunk())
+        )
+        await session.queue.put(RealtimeEvent(type="turn_complete"))
+        await _wait_until(
+            lambda i=index: len(
+                [m for m in jsons if m.get("type") == "turn_complete"]
+            )
+            > i
+        )
+        # The boundary settles across two awaits: the surface message goes out
+        # first, then the record is published, and only then is the duplex
+        # state reset (the record reads _output_samples_sent, so it cannot be
+        # reordered). Let it settle rather than racing it.
+        try:
+            await _wait_until(lambda: sess._output_active is False)
+        except TimeoutError:
+            pass  # fall through to the explicit assertion below
+        assert sess._output_active is False, f"turn {index + 1} stayed speaking"
+        assert sess._output_samples_sent == 0
+        assert sess._response_requested_for_turn is False
+        assert sess._user_speech_active is False
+        assert sess._transport_rebuild_pending is None
+        assert await _microphone_reaches(sess, session), (
+            f"the microphone was still muted after turn {index + 1}"
+        )
+
+    # The transport declares rebuild_on_transport_death, so ENDING the
+    # stream would only make the pump reopen it. End the call instead.
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_a_boundary_after_a_local_completion_still_reopens_the_microphone():
+    """The turn-id guard used to swallow the whole reset.
+
+    ``_complete_surface_turn`` returned early when an earlier local path had
+    already cleared the turn id, so ``_output_active`` — the flag half-duplex
+    mutes the microphone on — was never cleared. On this transport that is
+    terminal: the muted microphone starves the local endpointer, so no speech
+    edge, no transcript and no further boundary can ever arrive to clear it.
+    """
+    provider = SubscriptionLikeProvider([])
+    sess = _half_duplex_session(provider)
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    session = provider.session
+
+    await session.queue.put(
+        RealtimeEvent(type="input_transcript", text="hello", is_final=True)
+    )
+    await session.queue.put(
+        RealtimeEvent(type="output_transcript_delta", text="Hi there.")
+    )
+    await session.queue.put(
+        RealtimeEvent(type="audio_delta", audio=_pcm_chunk())
+    )
+    await _wait_until(lambda: sess._output_active)
+
+    # A local path closes the turn without touching the duplex flags — this is
+    # what _begin_user_speech_turn and the old decline path both did.
+    await sess._publish_turn_completed()
+    assert sess._turn_id == ""
+    assert sess._output_active is True
+    assert not await _microphone_reaches(sess, session)
+
+    await session.queue.put(RealtimeEvent(type="turn_complete"))
+    await _wait_until(lambda: sess._output_active is False)
+    assert await _microphone_reaches(sess, session)
+
+    # The transport declares rebuild_on_transport_death, so ENDING the
+    # stream would only make the pump reopen it. End the call instead.
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_a_silent_provider_turn_is_closed_locally_and_said_out_loud(
+    monkeypatch,
+):
+    """A transport that stops emitting must not hold the call open forever.
+
+    The receive iterator has no timeout and neither does the surface's
+    wait_finished(), so an adapter that latches emits nothing at all — no
+    audio, no transcript, no boundary, no error — and the call sits with the
+    microphone shut until the user kills it. The watchdog is the independent
+    backstop: it never trusts the transport to report its own death.
+    """
+    import jarvis.realtime.session as session_module
+
+    monkeypatch.setattr(session_module, "_TURN_STALL_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(session_module, "_TURN_STALL_POLL_S", 0.02)
+
+    provider = SubscriptionLikeProvider([])
+    jsons = []
+    sess = _half_duplex_session(provider, jsons=jsons)
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    session = provider.session
+
+    await session.queue.put(
+        RealtimeEvent(
+            type="input_transcript", text="what time is it", is_final=True
+        )
+    )
+    await _wait_until(lambda: sess._turn_id != "")
+    # ...and now the transport simply goes quiet.
+
+    await _wait_until(
+        lambda: any(m.get("type") == "turn_complete" for m in jsons)
+    )
+    spoken = [m for m in jsons if m.get("type") == "error_spoken"]
+    assert spoken, "a stalled turn must be reported out loud, never silently"
+    assert spoken[0]["text"].strip(), "the notice must carry real words"
+    assert sess._output_active is False
+    assert sess._response_requested_for_turn is False
+    assert sess._drop_provider_output_until_new_response is False
+    assert await _microphone_reaches(sess, session)
+
+    # The transport declares rebuild_on_transport_death, so ENDING the
+    # stream would only make the pump reopen it. End the call instead.
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_the_stall_watchdog_never_fires_between_turns(monkeypatch):
+    """AP-19 / BUG-032: a watchdog that outlives its unit of work aborts the
+    NEXT one. This one is armed per turn and cancelled at every boundary, so
+    an idle session between turns must stay completely quiet."""
+    import jarvis.realtime.session as session_module
+
+    monkeypatch.setattr(session_module, "_TURN_STALL_TIMEOUT_S", 0.15)
+    monkeypatch.setattr(session_module, "_TURN_STALL_POLL_S", 0.02)
+
+    provider = SubscriptionLikeProvider([])
+    jsons = []
+    sess = _half_duplex_session(provider, jsons=jsons)
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    session = provider.session
+
+    await session.queue.put(
+        RealtimeEvent(type="input_transcript", text="hello", is_final=True)
+    )
+    await session.queue.put(
+        RealtimeEvent(type="output_transcript_delta", text="Hi there.")
+    )
+    await session.queue.put(
+        RealtimeEvent(type="audio_delta", audio=_pcm_chunk())
+    )
+    await session.queue.put(RealtimeEvent(type="turn_complete"))
+    await _wait_until(
+        lambda: any(m.get("type") == "turn_complete" for m in jsons)
+    )
+
+    # Idle for many watchdog windows with no turn open.
+    await asyncio.sleep(0.6)
+    assert sess._turn_stall_task is None or sess._turn_stall_task.done()
+    assert not [m for m in jsons if m.get("type") == "error_spoken"], (
+        "the watchdog fired between turns"
+    )
+
+    # The transport declares rebuild_on_transport_death, so ENDING the
+    # stream would only make the pump reopen it. End the call instead.
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_a_discarded_rebuild_request_releases_the_microphone_marker():
+    """The pending-rebuild marker gates handle_audio_frame all by itself.
+
+    Only ``_rebuild_transport`` cleared it — precisely the path a discarded
+    request skips — so a request that lost its race left every later
+    microphone frame silently dropped for the rest of the call.
+    """
+    provider = SubscriptionLikeProvider([])
+    sess = _half_duplex_session(provider)
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    session = provider.session
+
+    # A queued advised rebuild that the pump will refuse (the session is no
+    # longer rebuildable by the time it is dequeued).
+    sess._transport_rebuild_pending = session
+    sess._failed.set()
+    sess._transport_rebuild_requests.put_nowait((session, "advised reconnect"))
+
+    await _wait_until(lambda: sess._transport_rebuild_pending is None)
+    assert await _microphone_reaches(sess, session)
+
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_a_handoff_declined_through_provider_speech_closes_its_turn():
+    """Both decline branches must leave the same state behind.
+
+    The provider-speech branch returned without a boundary, and the withhold
+    armed by the user's own speech edge then made _emit_audio drop the refusal
+    audio too — so the user heard nothing and the turn stayed open with
+    _output_active standing.
+    """
+    provider = SubscriptionLikeProvider([])
+    jsons = []
+    # brain=None => no deterministic delegate, and this transport cannot
+    # declare tools either, so the handoff has nowhere to go.
+    sess = _half_duplex_session(provider, jsons=jsons)
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    session = provider.session
+
+    await session.queue.put(RealtimeEvent(type="speech_started"))
+    await session.queue.put(
+        RealtimeEvent(
+            type="handoff_requested",
+            text="Open the settings view.",
+            handoff_id="handoff-1",
+        )
+    )
+    await _wait_until(lambda: bool(session.spoken))
+    assert session.spoken, "the refusal must be voiced by the provider"
+    await _wait_until(
+        lambda: any(m.get("type") == "turn_complete" for m in jsons)
+    )
+
+    assert sess._drop_provider_output_until_new_response is False, (
+        "the refusal is our own scrubbed text; the model withhold must not "
+        "swallow it"
+    )
+    assert sess._output_active is False
+    assert sess._response_requested_for_turn is False
+    assert await _microphone_reaches(sess, session)
+
+    # The transport declares rebuild_on_transport_death, so ENDING the
+    # stream would only make the pump reopen it. End the call instead.
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_a_transport_rebuild_retires_the_answered_input_ids():
+    """Input-item ids belong to the transport that issued them.
+
+    A fresh provider session may restart its numbering, and a collision makes
+    the duplicate-input guard swallow the next real utterance: the user speaks
+    and no turn ever opens.
+    """
+    provider = SubscriptionLikeProvider([])
+    sess = _half_duplex_session(provider)
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    first = provider.session
+    sess._response_requested_input_ids.add("item_0")
+
+    assert await sess._rebuild_transport(detail="test rebuild") is True
+
+    assert provider.session is not first
+    assert sess._response_requested_input_ids == set()
+    assert sess._transport_rebuild_pending is None
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_the_surface_is_told_the_call_language_and_the_start_budget():
+    """The UI had no way to learn either.
+
+    ``VoiceSessionStarted`` carries the language but is published for the
+    browser surface only; ``audio_ready`` carried none at all, and a cold
+    subscription handshake was pure dead air with no declared budget to show.
+    One producer, one field name, one value.
+    """
+    provider = SubscriptionLikeProvider([])
+    jsons = []
+    sess = _half_duplex_session(provider, jsons=jsons)
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+
+    starting = next(m for m in jsons if m.get("type") == "audio_starting")
+    ready = next(m for m in jsons if m.get("type") == "audio_ready")
+    announced = next(m for m in jsons if m.get("type") == "language")
+
+    assert ready["language"] == sess._language
+    assert announced["language"] == sess._language
+    assert starting["language"] == sess._language
+    # The interim notice precedes the handshake it is announcing.
+    assert jsons.index(starting) < jsons.index(ready)
+    assert starting["handshake_budget_s"] >= provider.handshake_budget_s
+
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_a_self_initiated_interruption_is_not_read_as_user_speech():
+    """Jarvis's own interrupt() echoing back must not arm the user-speech state.
+
+    Every site that issues one already drained the gate and armed its own
+    withhold; treating the echo as a barge-in blocked announcements, late
+    action results and the readback watchdog against a user who never spoke.
+    """
+    provider = SubscriptionLikeProvider([])
+    sess = _half_duplex_session(provider)
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    session = provider.session
+
+    await session.queue.put(
+        RealtimeEvent(type="interrupted", self_initiated=True)
+    )
+    await session.queue.put(
+        RealtimeEvent(type="input_transcript", text="marker", is_final=True)
+    )
+    await _wait_until(lambda: sess._last_user_text == "marker")
+
+    assert sess._user_speech_active is False
+    assert session.interrupts == 0, (
+        "a self-initiated interruption must not be answered with another one"
+    )
+
+    # The transport declares rebuild_on_transport_death, so ENDING the
+    # stream would only make the pump reopen it. End the call instead.
+    await sess.end(reason="test")

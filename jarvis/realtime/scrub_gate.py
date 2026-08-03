@@ -110,6 +110,12 @@ class ScrubHoldGate:
         # (live forensic 2026-07-16 10:26).
         self._pending_since: float | None = None
         self.last_hold_ms = 0.0
+        # Clearance granted to ONE injected, already-scrubbed utterance that
+        # will never carry a model transcript (see ``trust_direct_speech``).
+        # Scoped rather than sticky: it survives a ``drain()`` only until its
+        # own audio has actually played.
+        self._direct_speech_pending = False
+        self._direct_speech_released_ms = 0.0
 
     @property
     def pending_audio_ms(self) -> float:
@@ -243,7 +249,10 @@ class ScrubHoldGate:
         self._pending = []
         self._pending_audio_ms = 0.0
         self._cleared = False
-        self._released_ms += _duration_ms(out)
+        released = _duration_ms(out)
+        self._released_ms += released
+        if self._direct_speech_pending:
+            self._direct_speech_released_ms += released
         self._consume_hold_clock()
         return out
 
@@ -260,11 +269,14 @@ class ScrubHoldGate:
         self._pending = []
         self._pending_audio_ms = 0.0
         self._cleared = False
-        self._released_ms += _duration_ms(out)
+        released = _duration_ms(out)
+        self._released_ms += released
+        if self._direct_speech_pending:
+            self._direct_speech_released_ms += released
         self._consume_hold_clock()
         return out
 
-    def trust_direct_speech(self) -> None:
+    def trust_direct_speech(self, text: str = "") -> None:
         """Clear the gate for audio rendering text Jarvis itself scrubbed.
 
         A delegate readback is injected through the provider's direct-speech
@@ -275,13 +287,29 @@ class ScrubHoldGate:
         text-only".
 
         Re-gating this audio protects nothing: the text passed
-        ``scrub_for_voice`` before it was ever sent (ADR-0010). The trailing
-        kill switch is untouched — a later transcript that does leak still
-        sets ``_hard_leak`` and drops everything unplayed.
+        ``scrub_for_voice`` before it was ever sent (ADR-0010) — which is also
+        why the clearance cannot be re-derived later: AP-11 forbids an LLM call
+        in the voice scrubber, and the model emits no transcript of its own for
+        this audio. The trailing kill switch is untouched — a later transcript
+        that does leak still sets ``_hard_leak`` and drops everything unplayed.
+
+        The clearance is bound to THIS utterance (``_direct_speech_pending``):
+        a ``drain()`` belonging to some OTHER response — on an
+        automatic-response transport the model's own concurrent generation
+        routinely ends between the injection and the first readback frame —
+        must not revoke it. ``text`` is accepted for call-site clarity and for
+        the debug line; the gate never re-scrubs it.
         """
         self._transcript_seen = True
         self._coverage_active = True
         self._cleared = True
+        self._direct_speech_pending = True
+        self._direct_speech_released_ms = 0.0
+        if text:
+            log.debug(
+                "scrub gate trusts %d chars of injected direct speech",
+                len(str(text)),
+            )
 
     def fail_closed(self) -> bool:
         """Drop a completed response that never produced any transcript."""
@@ -343,11 +371,28 @@ class ScrubHoldGate:
                 int(excess_ms),
             )
         self._released_ms += tail_ms
+        if self._direct_speech_pending:
+            self._direct_speech_released_ms += tail_ms
         self._consume_hold_clock()
         return out
 
     def drain(self) -> None:
-        """Barge-in / turn-end: discard buffered audio and reset per-turn state."""
+        """Barge-in / turn-end: discard buffered audio and reset per-turn state.
+
+        One exception, and it is the whole point of ``trust_direct_speech``:
+        an injected, already-scrubbed utterance whose audio has not started
+        playing yet keeps its clearance. On a transport that generates its own
+        responses, the model's concurrent generation ends — and drains this
+        gate — between the injection and the first readback frame; revoking
+        there left the readback with no clearance and no model transcript, so
+        the next boundary dropped the whole answer as ``no_transcript``. The
+        action had already run and the user heard nothing.
+        """
+        keep_direct_speech = bool(
+            self._direct_speech_pending
+            and self._direct_speech_released_ms <= 0.0
+            and not self._hard_leak
+        )
         self._pending.clear()
         self._pending_audio_ms = 0.0
         self._cleared = False
@@ -361,6 +406,13 @@ class ScrubHoldGate:
         self._released_ms = 0.0
         self._covered_chars = 0
         self._coverage_active = False
+        self._direct_speech_pending = False
+        self._direct_speech_released_ms = 0.0
+        if keep_direct_speech:
+            self._direct_speech_pending = True
+            self._transcript_seen = True
+            self._coverage_active = True
+            self._cleared = True
 
 
 def _duration_ms(chunks: tuple[AudioChunk, ...] | list[AudioChunk]) -> float:

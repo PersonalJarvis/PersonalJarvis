@@ -476,3 +476,61 @@ async def test_trust_direct_speech_keeps_the_trailing_kill_switch():
     )
     assert gate.hard_leak_pending() is True
     assert await gate.push_audio(_chunk(4)) == []
+
+
+@pytest.mark.asyncio
+async def test_drain_keeps_direct_speech_trust_until_its_audio_played():
+    """A boundary belonging to ANOTHER response must not revoke the clearance.
+
+    On a transport that generates its own responses, the model's concurrent
+    generation ends — and drains this gate — between the injection of a
+    trusted delegate readback and its first audible frame. Revoking there left
+    the readback with no clearance and no model transcript of its own, so the
+    next boundary dropped the whole answer as "no_transcript": the action had
+    already run and the user heard nothing.
+    """
+    gate = ScrubHoldGate(language="en")
+    gate.trust_direct_speech("The settings are open.")
+
+    # The other response's boundary lands before any readback audio arrives.
+    gate.drain()
+
+    # The readback is still trusted, so its audio flows instead of being held.
+    assert await gate.push_audio(_chunk(4))
+    assert gate.fail_closed() is False
+    assert gate.hard_leak_pending() is False
+
+
+@pytest.mark.asyncio
+async def test_drain_revokes_direct_speech_trust_once_it_has_played():
+    """The exception is scoped: it survives ONE boundary, not the session.
+
+    Once the injected utterance has actually been heard, a drain is an
+    ordinary barge-in/turn end for it and the gate returns to fail-closed for
+    everything the model produces afterwards.
+    """
+    gate = ScrubHoldGate(language="en")
+    gate.trust_direct_speech("The settings are open.")
+    assert await gate.push_audio(_chunk(4))  # the readback became audible
+
+    gate.drain()
+
+    # Model audio after that boundary is gated again, with no transcript yet.
+    assert await gate.push_audio(_chunk(4)) == []
+    assert gate.fail_closed() is True
+
+
+@pytest.mark.asyncio
+async def test_drain_never_carries_a_hard_leak_forward():
+    """A revoked-by-leak injection must not be resurrected by the exception."""
+    gate = ScrubHoldGate(language="en")
+    gate.trust_direct_speech("The settings are open.")
+    await gate.feed_transcript(
+        "Traceback (most recent call last):\n  File x\nValueError: y\n\n"
+    )
+    assert gate.hard_leak_pending() is True
+
+    gate.drain()
+
+    assert gate.hard_leak_pending() is False
+    assert await gate.push_audio(_chunk(4)) == []

@@ -47,3 +47,31 @@ def test_session_config_history_defaults_empty():
     # The first open of a call carries no history; only a mid-call reopen
     # (transport rebuild / cross-family fallback) seeds it (BUG-088).
     assert RealtimeSessionConfig().history == ()
+
+
+def test_event_declares_the_usage_payload_the_adapters_already_emit():
+    """The shipped API-billed adapters emit ``type="usage"`` with a payload.
+
+    The contract described neither the event type nor the field, so an adapter
+    built against this dataclass — rather than against a private one — raised
+    AttributeError inside the receive pump the moment it reported usage.
+    """
+    from jarvis.realtime.protocol import RealtimeEvent, RealtimeEventType
+
+    assert "usage" in RealtimeEventType.__args__
+    assert RealtimeEvent(type="audio_delta").usage is None
+    event = RealtimeEvent(type="usage", usage={"input_tokens": 12})
+    assert event.usage == {"input_tokens": 12}
+
+
+def test_event_can_mark_a_self_initiated_interruption():
+    """Jarvis's own interrupt() must be distinguishable from a barge-in.
+
+    Without the flag the orchestrator reads its own cancellation as "the user
+    started speaking" and arms the user-speech state against a user who never
+    said anything.
+    """
+    from jarvis.realtime.protocol import RealtimeEvent
+
+    assert RealtimeEvent(type="interrupted").self_initiated is False
+    assert RealtimeEvent(type="interrupted", self_initiated=True).self_initiated
