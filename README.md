@@ -70,6 +70,18 @@ workspace, gets reviewed by a critic, and comes back with a file.
   <sub>One tab per tier, each with its own provider, and you only need keys for the tiers you use. Every provider says how it bills: a subscription login you already have, or an API key charged per token.</sub>
 </p>
 
+## Demo
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">
+    <img src="https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/assets/demo/personal-jarvis-demo.gif" alt="Animated demo showing the spoken prompt, Jarvis opening Windows Settings, and switching display mode from dark to light" width="860" />
+  </a>
+</p>
+
+<p align="center">
+  <sub>One voice command, and the router takes the screen and does it live &middot; <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">watch the full demo on YouTube</a></sub>
+</p>
+
 ## What it does differently
 
 The router is deliberately small. It works out what you said, picks a tool or a worker,
