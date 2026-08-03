@@ -192,8 +192,15 @@ const FONT_MAX = 20;
  * workspace: controls recede to quiet glyphs, colour is reserved for state
  * that is ON, and the terminals are the only thing on screen with weight.
  */
+/*
+ * `rounded-control` (6 px), not the theme's `md` (10 px). At 28 px square a
+ * 10 px radius is a third of the edge, which reads as a lozenge rather than a
+ * button and put a row of soft blobs across the top of a view whose subject is
+ * a wall of right-angled terminals. Six is the section's control radius — see
+ * ./controls.tsx for the closed set and why the theme's own steps did not fit.
+ */
 const TOOLBAR_BTN =
-  "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground " +
+  "flex h-7 w-7 shrink-0 items-center justify-center rounded-control text-muted-foreground " +
   "transition-colors hover:bg-secondary hover:text-foreground " +
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 " +
   "disabled:cursor-not-allowed disabled:opacity-40";
@@ -253,8 +260,6 @@ const COMPOSER_DEFAULT_PX = 176;
 const COMPOSER_COLLAPSED_PX = 28;
 /** Below this dragged height the bar snaps shut rather than half-showing. */
 const COMPOSER_COLLAPSE_AT_PX = 96;
-/** Below this it is too short for the "you can also say this out loud" note. */
-const COMPOSER_HINT_AT_PX = 190;
 /**
  * Room the toolbar and a still-usable grid keep for themselves.
  *
@@ -1972,13 +1977,21 @@ export function AgenticGrid({
         <aside
           data-testid="agentic-chat-rail"
           className={cn(
-            "w-64 shrink-0 flex-col border-r border-border",
+            /*
+             * 224 px, and the header is the same 44 px rule-under-a-label as
+             * the voice column opposite it. Chat view puts THREE vertical
+             * bands in front of the one pane being read — the app's own
+             * navigation, this list, and the voice column — so the two this
+             * view owns at least agree with each other about how a column
+             * begins.
+             */
+            "w-56 shrink-0 flex-col border-r border-border",
             chatView ? "flex" : "hidden",
           )}
         >
           {/* `relative` so the CLI picker hangs under the plus button. */}
-          <div className="relative flex items-center justify-between px-3 py-2">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <div className="relative flex h-11 shrink-0 items-center justify-between border-b border-border/60 px-3">
+            <span className="truncate text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
               Agents
             </span>
             <button
@@ -2042,13 +2055,21 @@ export function AgenticGrid({
                         ? toggleTerminalSelection(term.name)
                         : selectChatPane(term.name, takesPrompts(term))
                     }
+                    /*
+                     * A selected row is marked by a rule down its left edge and
+                     * a raised background — not by a yellow border wrapped
+                     * around a yellow fill. Eleven rows of tinted boxes is what
+                     * turns a list into a heat map, and it left the accent with
+                     * nothing distinct to say when a row actually wanted
+                     * attention.
+                     */
                     className={cn(
-                      "w-full rounded-lg border px-2.5 py-2 text-left transition-colors",
+                      "w-full rounded-control border-l-2 px-2.5 py-2 text-left transition-colors",
                       selectionMode && marked
-                        ? "border-primary bg-primary/10"
+                        ? "border-primary bg-secondary"
                         : active && !selectionMode
-                          ? "border-primary/50 bg-primary/10"
-                          : "border-transparent hover:bg-secondary",
+                          ? "border-primary bg-secondary"
+                          : "border-transparent hover:bg-secondary/60",
                     )}
                   >
                     {/* The right padding is permanent, not applied on hover:
@@ -2459,14 +2480,16 @@ export function AgenticGrid({
           style={{ height: COMPOSER_COLLAPSED_PX }}
           className="flex shrink-0 items-center justify-between gap-2 px-3"
         >
-          <span className="truncate text-[11px] text-muted-foreground">
-            {target || "No terminal"} hears whatever you say out loud.
+          <span className="truncate text-[11px] text-muted-foreground/70">
+            {target
+              ? `Say it out loud and ${target} gets it.`
+              : "Say it out loud and the agents get it."}
           </span>
           <button
             type="button"
             data-testid="agentic-composer-reopen"
             onClick={() => composer.resize(COMPOSER_DEFAULT_PX)}
-            className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="flex shrink-0 items-center gap-1.5 rounded-control px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             <ChevronUp className="h-3.5 w-3.5" />
             Write instead
@@ -2490,43 +2513,73 @@ export function AgenticGrid({
             void attach({ paths: [], files: images });
           }}
           className={cn(
-            "relative shrink-0 flex-col overflow-hidden px-3 py-2 transition-colors",
+            /*
+             * The height the seam dragged belongs to THIS element; the padding
+             * that insets the writing surface from the window edge belongs to
+             * it too, so that the surface inside can be `h-full` and the bar
+             * still occupies exactly the pixels the seam promised. Putting the
+             * inset on the surface as a margin instead would have made the bar
+             * 16 px taller than its own stated height — silently, and at the
+             * expense of the panes above it.
+             */
+            "relative shrink-0 flex-col p-2",
             composerCollapsed ? "hidden" : "flex",
-            dragging && "bg-primary/5 ring-1 ring-inset ring-primary/50",
           )}
         >
+          <div
+            className={cn(
+              /*
+               * ONE surface, and the reason it is one is the reason this bar
+               * used to look assembled: a target row, a bordered textarea and a
+               * pill button, each with its own edge and its own radius, stacked
+               * in a padded strip. Four frames, none of which was the edge of
+               * the thing. The border, the radius and the focus treatment now
+               * belong to this element alone; everything inside it is bare.
+               */
+              "relative flex h-full min-h-0 flex-col overflow-hidden rounded-surface border transition-colors",
+              "border-border/70 bg-card/40 focus-within:border-primary/40",
+              dragging && "border-primary/60 bg-primary/5",
+            )}
+          >
           {dragging && (
             <div
               data-testid="agentic-composer-dropzone"
-              className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-primary/60 bg-background/80 text-xs font-medium text-primary"
+              className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-surface bg-background/85 text-xs font-medium text-primary"
             >
               Drop a screenshot or document — {target || "the agent"} gets what is in it
             </div>
           )}
-          <div className="mb-1.5 flex max-h-16 shrink-0 flex-wrap items-center gap-1 overflow-y-auto scrollbar-jarvis">
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Send to
-            </span>
-            {/* Agent panes only. A plain terminal is a shell prompt — it is
-                typed into by hand, so listing it here would offer a target that
-                refuses every instruction sent to it. */}
+          {/*
+            Which agent hears this — a row of tabs across the head of the
+            surface rather than a "Send to" label followed by loose chips.
+            The label was answering a question the chips already answer, and
+            spending a line of the bar to do it; a selected tab is marked by a
+            rule under it, which is the one place in this view where yellow
+            still means "this is the choice you made" without shouting it.
+
+            Agent panes only. A plain terminal is a shell prompt — it is typed
+            into by hand, so listing it here would offer a target that refuses
+            every instruction sent to it.
+          */}
+          <div className="flex max-h-16 shrink-0 items-stretch gap-0.5 overflow-x-auto overflow-y-hidden border-b border-border/60 px-1.5 scrollbar-jarvis">
             {session.terminals.filter(takesPrompts).map((term) => {
               const state = statuses[term.name];
+              const picked = target === term.name;
               return (
                 <button
-                key={term.key}
-                type="button"
-                data-testid={`prompt-target-${term.name}`}
-                onClick={() => (chatView ? selectChatPane(term.name, true) : setTarget(term.name))}
-                aria-pressed={target === term.name}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-xs transition-colors",
-                    target === term.name
-                      ? "border-primary/60 bg-primary/10 text-primary"
-                      : "border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
+                  key={term.key}
+                  type="button"
+                  data-testid={`prompt-target-${term.name}`}
+                  onClick={() => (chatView ? selectChatPane(term.name, true) : setTarget(term.name))}
+                  aria-pressed={picked}
+                  className={cn(
+                    "flex shrink-0 items-center gap-1.5 border-b-2 px-2.5 py-1.5 text-xs transition-colors",
+                    picked
+                      ? "border-primary font-medium text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground",
                   )}
                 >
-                  <span className="font-medium">{term.name}</span>
+                  <span>{term.name}</span>
                   <PaneActivityPill
                     status={state?.status ?? "connecting"}
                     detail={state?.detail}
@@ -2537,14 +2590,16 @@ export function AgenticGrid({
             })}
           </div>
           {(attachments.length > 0 || analyzing > 0) && (
-            <AttachmentStrip
-              attachments={attachments}
-              analyzing={analyzing}
-              onRemove={dropAttachment}
-            />
+            <div className="shrink-0 px-2 pt-2">
+              <AttachmentStrip
+                attachments={attachments}
+                analyzing={analyzing}
+                onRemove={dropAttachment}
+              />
+            </div>
           )}
           {preview && (
-            <div className="mb-2 shrink-0 overflow-y-auto scrollbar-jarvis">
+            <div className="mb-2 shrink-0 overflow-y-auto px-2 pt-2 scrollbar-jarvis">
               <PromptPreview
                 terminal={target}
                 composed={preview.composed}
@@ -2572,14 +2627,21 @@ export function AgenticGrid({
             two-line box with empty space under it. Its own resize grip is gone —
             two ways to change one height fight each other.
           */}
-        <PromptEditor target={target} sending={sending} seed={promptSeed} onSend={send} />
-        {composerHeight >= COMPOSER_HINT_AT_PX && (
-          <p className="mt-2 shrink-0 text-[11px] text-muted-foreground">
-            Anything you can type here, you can also say out loud — for example “what is{" "}
-            {session.terminals[0]?.name ?? "Mika"} doing?” or “tell{" "}
-            {session.terminals[0]?.name ?? "Mika"} to run the tests”.
-          </p>
-        )}
+        {/*
+          No standing "you can also say this out loud" note under the input.
+          It was a tip printed permanently into the writing surface, and a tip
+          that cannot be dismissed is read once and then occupies the bar
+          forever — the collapsed strip already says the same thing in the one
+          state where it is news (see `agentic-composer-collapsed`).
+        */}
+        <PromptEditor
+          target={target}
+          sending={sending}
+          seed={promptSeed}
+          onSend={send}
+          onAttach={(files) => void attach({ paths: [], files })}
+        />
+        </div>
       </div>
 
       {/* The pane in hand, following the cursor.

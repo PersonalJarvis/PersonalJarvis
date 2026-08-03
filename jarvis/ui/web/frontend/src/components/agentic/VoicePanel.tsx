@@ -307,7 +307,7 @@ export function VoicePanel({
             assistantName,
           )}
           aria-label={t("agentic_grid.voice_panel.open")}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          className="flex h-7 w-7 items-center justify-center rounded-control text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <PanelRightOpen className="h-4 w-4" />
         </button>
@@ -329,10 +329,16 @@ export function VoicePanel({
   return (
     <aside
       data-testid="voice-panel"
-      className="flex h-full w-72 shrink-0 flex-col border-l border-border"
+      /*
+       * 240 px rather than 288. This column is a presence indicator and a
+       * transcript, not a reading surface — and it is the third vertical band
+       * on a screen whose actual content is the terminals. Every pixel it does
+       * not need belongs to them.
+       */
+      className="flex h-full w-60 shrink-0 flex-col border-l border-border"
     >
-      <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/60 px-3">
+        <span className="truncate text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
           {t("agentic_grid.voice_panel.label")}
         </span>
         <button
@@ -341,13 +347,21 @@ export function VoicePanel({
           onClick={toggleOpen}
           title={t("agentic_grid.voice_panel.close")}
           aria-label={t("agentic_grid.voice_panel.close")}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          className="flex h-7 w-7 items-center justify-center rounded-control text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <PanelRightClose className="h-4 w-4" />
         </button>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-5 pb-6">
+      {/*
+        Aligned to the TOP of the column, not centred in it.
+        A 176 px orb parked in the middle of a full-height column reads as a
+        splash screen — the largest, brightest, most animated object on a
+        screen whose subject is a wall of terminals. Sat at the top at 96 px it
+        is what it actually is: a status light you can click, with the
+        transcript under it and the column's own controls at its foot.
+      */}
+      <div className="flex min-h-0 flex-1 flex-col items-center gap-3 px-4 pb-3 pt-6">
         <div
           data-testid="voice-orb-stage"
           data-state={voiceState}
@@ -358,7 +372,7 @@ export function VoicePanel({
                 ? "ready"
                 : dropPhase
           }
-          className="agentic-voice-orb-stage relative grid h-48 w-48 shrink-0 place-items-center"
+          className="agentic-voice-orb-stage relative grid h-28 w-28 shrink-0 place-items-center"
         >
           <span aria-hidden="true" className="agentic-voice-orb-ring agentic-voice-orb-ring-a" />
           <span aria-hidden="true" className="agentic-voice-orb-ring agentic-voice-orb-ring-b" />
@@ -398,67 +412,75 @@ export function VoicePanel({
                 : format(t("agentic_grid.voice_panel.talk"), assistantName)
             }
             className={cn(
-              "relative z-10 rounded-full outline-none transition-[transform,box-shadow,opacity] duration-500 ease-out hover:scale-[1.015] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-[#e7c46e]/55 motion-reduce:transform-none",
+              /*
+               * The idle orb is DESATURATED and dimmed, and only a running
+               * conversation brings its colour up. The renderer paints the same
+               * ivory-to-amber weather either way; what changes is how loudly
+               * it is allowed to say so. An indicator that looks identical
+               * whether or not anything is happening is decoration, and a
+               * decoration this bright is what made the column read as a
+               * screensaver bolted to an IDE.
+               */
+              "relative z-10 rounded-full outline-none transition-[transform,filter,opacity] duration-700 ease-out",
+              "hover:scale-[1.02] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-primary/50 motion-reduce:transform-none",
               active
-                ? "shadow-[0_20px_56px_-38px_rgba(231,196,110,0.48)]"
-                : "shadow-[0_18px_48px_-40px_rgba(231,196,110,0.3)]",
-              dropPhase === "over" && "scale-[1.045]",
+                ? "[filter:saturate(1)_brightness(1)]"
+                : "[filter:saturate(0.45)_brightness(0.72)] hover:[filter:saturate(0.7)_brightness(0.85)]",
+              dropPhase === "over" && "scale-[1.04]",
               (busy || dropPhase === "reading") && "cursor-wait opacity-80",
             )}
           >
-            <VoiceOrb state={voiceState} size={176} />
+            <VoiceOrb state={voiceState} size={96} />
           </button>
         </div>
 
-        <div className="flex flex-col items-center gap-1.5 text-center">
-          <span className="flex items-center gap-2">
-            <span
-              aria-hidden="true"
-              data-state={voiceState}
-              className="agentic-voice-state-dot"
-            />
-            <span
-              data-testid="voice-panel-status"
-              aria-live="polite"
-              className={cn(
-                "font-display text-base font-semibold transition-colors",
-                active && "text-[#e7c46e]",
-              )}
-            >
-              {dropPhase === "over"
-                ? format(
-                    t("agentic_grid.voice_drop.hover"),
-                    promptTarget || t("agentic_grid.voice_drop.target_fallback"),
-                  )
-                : dropPhase === "reading"
-                  ? format(t("agentic_grid.voice_drop.reading"), dropTarget)
-                  : t(STATUS_KEY[voiceState] ?? STATUS_KEY.idle)}
-            </span>
+        {/*
+          One line, at label weight. It used to be a 16 px display-font
+          headline with a second explanatory sentence under it — "Ready" set
+          larger than anything in the terminals beside it, followed by a
+          standing instruction telling the reader how to click the thing they
+          were looking at. The instruction is now the button's own tooltip,
+          which is where an instruction about a control belongs.
+        */}
+        <span className="flex shrink-0 items-center gap-1.5">
+          <span
+            aria-hidden="true"
+            data-state={voiceState}
+            className="agentic-voice-state-dot"
+          />
+          <span
+            data-testid="voice-panel-status"
+            aria-live="polite"
+            className={cn(
+              "text-[11px] font-medium uppercase tracking-[0.1em] transition-colors",
+              active ? "text-primary" : "text-muted-foreground",
+            )}
+          >
+            {dropPhase === "over"
+              ? format(
+                  t("agentic_grid.voice_drop.hover"),
+                  promptTarget || t("agentic_grid.voice_drop.target_fallback"),
+                )
+              : dropPhase === "reading"
+                ? format(t("agentic_grid.voice_drop.reading"), dropTarget)
+                : t(STATUS_KEY[voiceState] ?? STATUS_KEY.idle)}
           </span>
-          <span className="text-xs text-muted-foreground">
-            {active
-              ? t("agentic_grid.voice_panel.active_hint")
-              : format(
-                  t("agentic_grid.voice_panel.idle_hint"),
-                  assistantName,
-                )}
-          </span>
-        </div>
+        </span>
 
         {receipts.map((receipt) => (
           <div
             key={receipt.batchId}
             data-testid="voice-orb-drop-context"
             aria-live="polite"
-            className="flex max-w-full items-start gap-2 rounded-xl border border-[#e7c46e]/30 bg-[#e7c46e]/[0.07] px-3 py-2 text-left"
+            className="flex w-full max-w-full shrink-0 items-start gap-2 rounded-control border border-border/70 bg-card/50 px-2.5 py-2 text-left"
           >
-            <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[#e7c46e]/15 text-[#e7c46e]">
-              <Check className="h-3 w-3" aria-hidden="true" />
+            <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-primary/15 text-primary">
+              <Check className="h-2.5 w-2.5" aria-hidden="true" />
             </span>
             <span className="min-w-0 flex-1 text-[11px] leading-relaxed text-muted-foreground">
               <span className="block truncate font-medium text-foreground">
                 <FilePlus2
-                  className="mr-1 inline h-3.5 w-3.5 text-[#e7c46e]"
+                  className="mr-1 inline h-3.5 w-3.5 text-primary"
                   aria-hidden="true"
                 />
                 {receipt.files.join(", ")}
@@ -504,27 +526,32 @@ export function VoicePanel({
             void stageFiles({ paths: [], files }, promptTarget);
           }}
         />
-        <button
-          type="button"
-          disabled={!promptTarget || dropPhase === "reading"}
-          onClick={() => fileInputRef.current?.click()}
-          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />
-          {t("agentic_grid.voice_drop.choose")}
-        </button>
-
         {/* What the microphone is hearing, as it hears it. Shown only while a
             conversation runs — an idle panel repeating the last sentence of a
             finished one would read as a stuck microphone. */}
         {active && transcription && (
           <p
             data-testid="voice-panel-transcript"
-            className="line-clamp-3 max-w-full text-center text-sm italic text-muted-foreground"
+            className="line-clamp-4 max-w-full shrink-0 text-center text-[13px] leading-relaxed text-muted-foreground"
           >
-            “{transcription}”
+            {transcription}
           </p>
         )}
+
+        {/* Last in the column, pushed to its foot: the fallback for people who
+            do not drag files onto the orb. `mt-auto` is what keeps it there
+            whether or not a transcript and a receipt are above it — a control
+            that drifts up and down the column as state arrives is one nobody
+            can learn the position of. */}
+        <button
+          type="button"
+          disabled={!promptTarget || dropPhase === "reading"}
+          onClick={() => fileInputRef.current?.click()}
+          className="mt-auto flex shrink-0 items-center gap-1.5 rounded-control px-2 py-1 text-[11px] text-muted-foreground/80 transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />
+          {t("agentic_grid.voice_drop.choose")}
+        </button>
       </div>
     </aside>
   );

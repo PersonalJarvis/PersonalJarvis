@@ -201,13 +201,22 @@ export function WorkspaceBar({
                 ? `${workspace.folder} — drop a screenshot or document here to send it to this workspace`
                 : workspace.folder
             }
+            /*
+             * The selected tab is a RAISED tab, marked once.
+             * It used to be marked three times over — a yellow border, a yellow
+             * fill, a yellow folder glyph and yellow label text — which is four
+             * ways of saying the same thing and left the accent unable to say
+             * anything else in this row. One filled surface carries "you are
+             * here"; the glyph keeps the colour because it is the smallest of
+             * the four and reads at a glance across a wide bar.
+             */
             className={cn(
-              "group/tab flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 transition-colors",
+              "group/tab flex shrink-0 items-center gap-1.5 rounded-control border px-2 py-1 transition-colors",
               dropping
-                ? "border-primary border-dashed bg-primary/15"
+                ? "border-dashed border-primary bg-primary/10"
                 : selected
-                  ? "border-primary/50 bg-primary/10"
-                  : "border-transparent hover:border-border hover:bg-muted/40",
+                  ? "border-border/60 bg-secondary"
+                  : "border-transparent hover:bg-secondary/50",
             )}
           >
             {renaming ? (
@@ -274,8 +283,10 @@ export function WorkspaceBar({
                   />
                   <span
                     className={cn(
-                      "max-w-[14rem] truncate text-sm font-medium",
-                      selected ? "text-primary" : "text-foreground",
+                      "max-w-[14rem] truncate text-sm",
+                      selected
+                        ? "font-medium text-foreground"
+                        : "text-muted-foreground",
                     )}
                   >
                     {workspace.name}
@@ -396,10 +407,10 @@ function PaneCount({
       data-testid={`workspace-panes-${workspace.id}`}
       title={`${workspace.terminals} terminal${workspace.terminals === 1 ? "" : "s"} open`}
       className={cn(
-        "shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px]",
-        selected
-          ? "bg-primary/20 text-primary"
-          : "bg-muted text-muted-foreground",
+        // No fill of its own: the tab it sits in is already a filled surface
+        // when selected, and a badge inside it was a second box inside a box.
+        "shrink-0 font-mono text-[10px] tabular-nums",
+        selected ? "text-primary" : "text-muted-foreground/60",
       )}
     >
       {workspace.terminals}

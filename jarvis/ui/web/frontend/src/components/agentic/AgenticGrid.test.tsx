@@ -424,7 +424,7 @@ describe("pane actions", () => {
     // The freshly added pane is the one the user just asked for, so the prompt
     // bar should already point at it.
     await waitFor(() =>
-      expect(screen.getByPlaceholderText(/instruction for Aria/i)).toBeTruthy(),
+      expect(screen.getByLabelText(/instruction for Aria/i)).toBeTruthy(),
     );
   });
 
@@ -446,7 +446,7 @@ describe("pane actions", () => {
     expect(screen.getByRole("button", { name: /^Mika/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^Nova live$/ })).toBeNull();
     // The agent pane, not the shell, is what the prompt goes to.
-    expect(screen.getByPlaceholderText(/instruction for Mika/i)).toBeTruthy();
+    expect(screen.getByLabelText(/instruction for Mika/i)).toBeTruthy();
   });
 
   it("does not make a new plain terminal the prompt target", async () => {
@@ -469,7 +469,7 @@ describe("pane actions", () => {
     await waitFor(() => expect(api.addTerminal).toHaveBeenCalled());
     // The prompt bar stays pointed at the agent it was on — a shell pane that
     // stole the target would silently swallow the next instruction.
-    expect(screen.getByPlaceholderText(/instruction for Mika/i)).toBeTruthy();
+    expect(screen.getByLabelText(/instruction for Mika/i)).toBeTruthy();
   });
 
   it("reports a refused split instead of pretending it worked", async () => {
@@ -863,7 +863,7 @@ describe("selecting several terminals", () => {
     fireEvent.click(screen.getByTestId("confirm-close-selection-confirm"));
 
     await waitFor(() =>
-      expect(screen.getByPlaceholderText(/instruction for Nova/i)).toBeTruthy(),
+      expect(screen.getByLabelText(/instruction for Nova/i)).toBeTruthy(),
     );
     expect(
       screen.getByTestId("select-terminal-Nova").getAttribute("aria-pressed"),
@@ -931,7 +931,7 @@ describe("closing the workspace", () => {
   it("hides workspace controls from assistive technology while confirmation is open", () => {
     renderGrid();
     fireEvent.click(screen.getByTitle("Close the workspace and stop every agent in it"));
-    const prompt = screen.getByPlaceholderText(/instruction for Mika/i);
+    const prompt = screen.getByLabelText(/instruction for Mika/i);
 
     expect(prompt.closest('[aria-hidden="true"]')).toBeTruthy();
   });
@@ -992,7 +992,7 @@ describe("restarting a dead pane", () => {
 
 describe("the prompt bar composes before it sends", () => {
   const type = (text: string) => {
-    const box = screen.getByPlaceholderText(/instruction for Mika/i);
+    const box = screen.getByLabelText(/instruction for Mika/i);
     fireEvent.change(box, { target: { value: text } });
     fireEvent.keyDown(box, { key: "Enter" });
   };
@@ -1049,7 +1049,7 @@ describe("the prompt bar composes before it sends", () => {
 
     await waitFor(() => expect(screen.queryByTestId("prompt-preview")).toBeNull());
     expect(
-      (screen.getByPlaceholderText(/instruction for Mika/i) as HTMLTextAreaElement).value,
+      (screen.getByLabelText(/instruction for Mika/i) as HTMLTextAreaElement).value,
     ).toBe("run the tests");
     expect(api.promptTerminal).not.toHaveBeenCalled();
   });
@@ -1125,7 +1125,7 @@ describe("dropping files on the prompt bar", () => {
     drop();
     await waitFor(() => expect(screen.getByTestId("agentic-attachments")).toBeTruthy());
 
-    const box = screen.getByPlaceholderText(/instruction for Mika/i);
+    const box = screen.getByLabelText(/instruction for Mika/i);
     fireEvent.change(box, { target: { value: "fix this" } });
     fireEvent.keyDown(box, { key: "Enter" });
 
@@ -1141,7 +1141,7 @@ describe("dropping files on the prompt bar", () => {
     drop();
     await waitFor(() => expect(screen.getByTestId("agentic-attachments")).toBeTruthy());
 
-    const box = screen.getByPlaceholderText(/instruction for Mika/i);
+    const box = screen.getByLabelText(/instruction for Mika/i);
     fireEvent.change(box, { target: { value: "fix this" } });
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
@@ -1166,7 +1166,7 @@ describe("dropping files on the prompt bar", () => {
     drop();
     await waitFor(() => expect(screen.getByTestId("agentic-attachments")).toBeTruthy());
 
-    const box = screen.getByPlaceholderText(/instruction for Mika/i);
+    const box = screen.getByLabelText(/instruction for Mika/i);
     fireEvent.change(box, { target: { value: "fix this" } });
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
@@ -1311,7 +1311,7 @@ describe("prompt bar seam", () => {
 
     const composer = screen.getByTestId("agentic-composer");
     expect(composer.style.height).toBe(`${OPEN}px`);
-    expect(screen.getByPlaceholderText(/instruction for Mika/i)).toBeTruthy();
+    expect(screen.getByLabelText(/instruction for Mika/i)).toBeTruthy();
   });
 
   it("remembers an opened bar across a remount", () => {
@@ -2263,13 +2263,13 @@ describe("renaming a pane", () => {
     vi.mocked(api.renameTerminal).mockResolvedValue(RENAMED);
     const { rerender } = renderGrid();
 
-    expect(screen.getByPlaceholderText(/instruction for Mika/i)).toBeTruthy();
+    expect(screen.getByLabelText(/instruction for Mika/i)).toBeTruthy();
 
     fireEvent.click(screen.getByTestId("pane-rename-Mika"));
     await waitFor(() => expect(api.renameTerminal).toHaveBeenCalled());
     rerender({ session: RENAMED });
 
-    expect(screen.getByPlaceholderText(/instruction for Frontend/i)).toBeTruthy();
+    expect(screen.getByLabelText(/instruction for Frontend/i)).toBeTruthy();
   });
 
   it("says what went wrong and leaves the workspace alone", async () => {

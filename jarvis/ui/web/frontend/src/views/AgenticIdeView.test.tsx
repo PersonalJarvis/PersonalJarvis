@@ -806,7 +806,7 @@ describe("Agentic IDE running workspace", () => {
     render(<AgenticIdeView />);
 
     await screen.findByTestId("pane-Mika");
-    const box = screen.getByPlaceholderText(/type an instruction for mika/i);
+    const box = screen.getByLabelText(/instruction for mika/i);
     fireEvent.change(box, { target: { value: "run the tests" } });
     fireEvent.click(screen.getByRole("button", { name: /send/i }));
 
@@ -829,7 +829,7 @@ describe("Agentic IDE running workspace", () => {
     render(<AgenticIdeView />);
 
     await screen.findByTestId("pane-Mika");
-    fireEvent.change(screen.getByPlaceholderText(/type an instruction/i), {
+    fireEvent.change(screen.getByLabelText(/instruction for/i), {
       target: { value: "hello" },
     });
     fireEvent.click(screen.getByRole("button", { name: /send/i }));

@@ -24,8 +24,13 @@
    * Every loop uses only transform and opacity, and none rotates, so the active
    * surface remains calm even when a long prompt is being written.
    */
+  /* The ring and the state dot follow the APP's accent, not the orb's own
+     ivory-gold material. Two yellows a few degrees apart in one 240 px column
+     is a mismatch the eye reads as sloppiness long before it can name it —
+     the sphere keeps its warm palette because it is a rendered material, and
+     everything drawn around it belongs to the interface. */
   .agentic-voice-orb-ring {
-    @apply pointer-events-none absolute inset-2 rounded-full border border-[#e7c46e]/45;
+    @apply pointer-events-none absolute inset-2 rounded-full border border-primary/40;
     opacity: 0;
     transform: scale(0.94);
     will-change: transform, opacity;
@@ -67,7 +72,7 @@
   .agentic-voice-state-dot[data-state="listening"],
   .agentic-voice-state-dot[data-state="thinking"],
   .agentic-voice-state-dot[data-state="speaking"] {
-    background: #e7c46e;
+    background: hsl(var(--primary));
     animation: agentic-orb-dot 1.25s ease-in-out infinite;
   }
 

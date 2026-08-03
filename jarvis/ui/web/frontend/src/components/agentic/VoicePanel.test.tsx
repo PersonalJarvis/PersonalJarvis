@@ -92,7 +92,9 @@ describe("voice panel", () => {
     expect(screen.getByTestId("voice-panel")).toBeTruthy();
     const orb = screen.getByTestId("voice-orb-canvas");
     expect(orb.getAttribute("data-state")).toBe("idle");
-    expect(orb.getAttribute("style")).toContain("width: 176px");
+    // A status light, not a centrepiece — see the panel's own note on why this
+    // came down from 176 px.
+    expect(orb.getAttribute("style")).toContain("width: 96px");
     expect(screen.getByTestId("voice-panel-status").textContent).toBe("Ready");
     // The brand rule: the assistant's own name, never a hardcoded one.
     expect(screen.getByTestId("voice-orb-button").getAttribute("title")).toContain(
