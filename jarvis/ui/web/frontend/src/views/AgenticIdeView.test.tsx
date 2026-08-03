@@ -554,9 +554,17 @@ describe("Agentic IDE launcher", () => {
     }
   }
 
-  /** Columns and bands the stage lays its panes out in. */
+  /** Columns and rows the stage lays its panes out in. */
   const columnsOf = (stage: HTMLElement) => stage.style.gridTemplateColumns;
   const rowsOf = (stage: HTMLElement) => stage.style.gridTemplateRows;
+  /**
+   * How much wider than its frame the stage draws the workspace.
+   *
+   * The frame is the WINDOW and the grid inside it is the workspace, so
+   * anything over 100 % is the part that will be a sideways scroll away — the
+   * preview's way of saying "this many fit, the rest are to the right".
+   */
+  const widthOf = (stage: HTMLElement) => stage.style.width;
 
   /**
    * A pixel width the way the readout writes it.
@@ -657,75 +665,83 @@ describe("Agentic IDE launcher", () => {
     ).toBe(true);
   });
 
-  it("previews 12 terminals as 6 and 6 when the window is wide enough", async () => {
-    // 2328 px of workspace minus the grid's padding fits six 380 px panes, so
-    // the twelve wrap into two even bands — the arrangement the user asked for.
+  it("previews 12 terminals as 12 columns, six of them on screen", async () => {
+    // 2328 px of workspace minus the grid's padding fits six 380 px panes. All
+    // twelve are still ONE line — the workspace is twice the window and scrolls
+    // — because a wrap would have paid for the new panes with the height of the
+    // ones already open (reported 2026-08-03).
     const stage = await stageAt(2328, "12");
-    expect(columnsOf(stage)).toBe("repeat(6, minmax(0, 1fr))");
-    expect(rowsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
+    expect(columnsOf(stage)).toBe("repeat(12, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    expect(widthOf(stage)).toBe("200%");
   });
 
-  it("previews the narrower arrangement a narrow window will really produce", async () => {
-    // The same twelve in a 1314 px workspace: only three panes stay readable
-    // per line, so the grid makes 3 × 4. The preview promised 6 + 6 here once,
-    // which is the drift this test exists to catch.
+  it("previews the same twelve in a narrow window, fewer of them on screen", async () => {
+    // The arrangement does not depend on the window any more — only the view
+    // onto it does. A 1314 px workspace shows three of the twelve columns at
+    // the same readable width, and the rest are a scroll to the right.
     const stage = await stageAt(1314, "12");
-    expect(columnsOf(stage)).toBe("repeat(3, minmax(0, 1fr))");
-    expect(rowsOf(stage)).toBe("repeat(4, minmax(0, 1fr))");
+    expect(columnsOf(stage)).toBe("repeat(12, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    expect(widthOf(stage)).toBe("400%");
   });
 
   it("keeps a small workspace on one line at any usable width", async () => {
     const stage = await stageAt(1314, "3");
     expect(columnsOf(stage)).toBe("repeat(3, minmax(0, 1fr))");
     expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    // Nothing to scroll past, so the stage is an ordinary full-width grid.
+    expect(widthOf(stage)).toBe("100%");
   });
 
   it("previews four terminals side by side in a 2K workspace", async () => {
     // An aspect-ratio rule used to fold these into 2 x 2. It re-dealt the
     // running workspace on the fourth split (reported 2026-07-31), so rows are
-    // the user's choice now and only width wraps — the preview says the same.
+    // the user's choice now — the preview says the same.
     const stage = await stageAt(2048, "4", 1164);
     expect(columnsOf(stage)).toBe("repeat(4, minmax(0, 1fr))");
     expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    expect(widthOf(stage)).toBe("100%");
   });
 
-  it("draws one pane per terminal and never more than the stage can hold", async () => {
+  it("draws one pane per terminal and never grows the box to fit them", async () => {
     // The old dot preview sat in a fixed 40×40 px box with nothing bounding it,
     // so a high count in a narrow window grew a tall column of dots straight out
-    // through the card, over the buttons above and below. The stage divides a
-    // FIXED height between its rows instead, so no count can overflow it — the
-    // panes get thinner, the box does not grow.
+    // through the card, over the buttons above and below. The stage is a FIXED
+    // frame that clips instead — the panes past the window are drawn outside it
+    // and cut off at its edge, which is what the workspace itself does.
     const stage = await stageAt(800, "12");
     expect(stage.children.length).toBe(12);
-    expect(columnsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
-    expect(rowsOf(stage)).toBe("repeat(6, minmax(0, 1fr))");
+    expect(columnsOf(stage)).toBe("repeat(12, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    expect(widthOf(stage)).toBe("600%");
   });
 
-  it("names the window width its arrangement depends on", async () => {
-    // The reported bug: the preview said "2 across, 4 down" in a 1050 px window
-    // and the workspace opened 4 × 2 once maximised. Both are right — what was
-    // missing is that the arrangement has a condition at all.
+  it("names the window width at which nothing has to be scrolled to", async () => {
+    // The reported bug behind this readout: an arrangement stated without its
+    // condition. The condition changed on 2026-08-03 — the arrangement is fixed
+    // now and the window decides how much of it is visible — so the sentence
+    // has to say that instead.
     await stageAt(1050, "8");
 
     const readout = screen.getByTestId("workspace-stage-readout");
-    expect(readout.textContent).toContain("2 across");
-    expect(readout.textContent).toContain("4 down");
+    expect(readout.textContent).toContain("8 across");
+    expect(readout.textContent).toContain("2 of them on screen");
     // 8 panes × the readable minimum + the grid's own padding — the width at
-    // which they all fit on one line, stated so a maximise cannot turn the
-    // preview into a broken promise. Computed rather than written out, because
-    // tightening the grid's padding moves this number without changing
+    // which they are all visible at once. Computed rather than written out,
+    // because tightening the grid's padding moves this number without changing
     // anything the test is actually about.
     //
     // `grouped` spells out the narrow no-break space the readout separates
     // thousands with: an invisible literal here reads as a plain space,
     // passes review, and fails the run.
-    const oneBandWidth = 8 * MIN_PANE_WIDTH_PX + GRID_HORIZONTAL_PADDING_PX;
+    const allVisibleWidth = 8 * MIN_PANE_WIDTH_PX + GRID_HORIZONTAL_PADDING_PX;
     expect(readout.textContent).toContain(
-      grouped(String(oneBandWidth).replace(/\B(?=(\d{3})+(?!\d))/g, " ")),
+      grouped(String(allVisibleWidth).replace(/\B(?=(\d{3})+(?!\d))/g, " ")),
     );
     // 1 056, not 1 050: the view rounds the measured width to 16 px steps so a
     // one-pixel drift cannot churn the layout, and the readout reports the width
-    // the arrangement was actually decided from rather than a truer-looking one.
+    // it actually answered for rather than a truer-looking one.
     expect(readout.textContent).toContain(grouped("1 056"));
   });
 
@@ -734,8 +750,8 @@ describe("Agentic IDE launcher", () => {
 
     const readout = screen.getByTestId("workspace-stage-readout");
     expect(readout.textContent).toContain("8 across");
-    expect(readout.textContent).toContain("1 down");
     expect(readout.textContent).toMatch(/wide enough/i);
+    expect(readout.textContent).not.toMatch(/scroll/i);
   });
 
   it("says so plainly when the machine has no terminal backend", async () => {

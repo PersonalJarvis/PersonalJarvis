@@ -37,12 +37,10 @@ import { Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { IconButton } from "./controls";
 import {
-  MAX_PANES_PER_BAND,
+  columnsWithoutScrolling,
   paneGrid,
-  paneLines,
-  widthForOneBand,
+  widthForAllVisible,
   wizardPanes,
-  workspaceBandCapacityFor,
 } from "./layout";
 
 /**
@@ -113,27 +111,33 @@ export function WorkspaceShape({
   names,
   workspaceWidthPx,
 }: WorkspaceShapeProps) {
-  const perBand = useMemo(
-    () => workspaceBandCapacityFor(workspaceWidthPx),
+  const grid = useMemo(() => paneGrid(wizardPanes(count)), [count]);
+  /*
+   * How many of those columns the window shows at once.
+   *
+   * The stage draws all of them — the workspace really is `count` columns wide
+   * whatever the window does — and the readout says how many are on screen
+   * before it scrolls. Two different questions since 2026-08-03, when the
+   * workspace stopped wrapping: the ARRANGEMENT no longer depends on the window
+   * at all, only the view onto it does.
+   */
+  const visible = useMemo(
+    () => columnsWithoutScrolling(workspaceWidthPx),
     [workspaceWidthPx],
   );
-  const grid = useMemo(
-    () => paneGrid(wizardPanes(count), perBand),
-    [count, perBand],
-  );
-  const bands = useMemo(() => paneLines(count, perBand), [count, perBand]);
 
   return (
     <div className="flex flex-col gap-3 p-3">
       <WorkspaceStage
         columns={grid.columns}
-        rows={bands}
+        visible={visible}
+        rows={grid.rows}
         count={count}
         names={names}
       />
       <Readout
         columns={grid.columns}
-        bands={bands}
+        visible={visible}
         count={count}
         workspaceWidthPx={workspaceWidthPx}
       />
@@ -302,14 +306,22 @@ export function CountTrack({
  * Every pane is placed by `paneGrid` — the function the running workspace uses
  * — over the panes the backend will actually create (`wizardPanes`). The two
  * cannot drift apart without the running grid changing too.
+ *
+ * The stage is the WINDOW, not the workspace. Past `visible` columns the grid
+ * inside it is drawn wider than the frame and the remainder is clipped at the
+ * right edge — which is exactly what the running workspace does, and says it
+ * more plainly than any sentence could: this many fit, the rest are a scroll
+ * away.
  */
 function WorkspaceStage({
   columns,
+  visible,
   rows,
   count,
   names,
 }: {
   columns: number;
+  visible: number;
   rows: number;
   count: number;
   names: string[];
@@ -340,6 +352,9 @@ function WorkspaceStage({
 
   const safeColumns = Math.max(1, columns);
   const safeRows = Math.max(1, rows);
+  // How much wider than the frame the workspace is drawn. 1 while everything
+  // fits, so the common case is an ordinary full-width grid.
+  const overshoot = Math.max(1, safeColumns / Math.max(1, visible));
   const paneWidth = size.width > 0 ? size.width / safeColumns : 0;
   const paneHeight = size.height > 0 ? size.height / safeRows : 0;
   // Panes are laid out as a grid of equal cells, so one pane's detail level is
@@ -369,8 +384,9 @@ function WorkspaceStage({
       <div
         ref={stageRef}
         data-testid="workspace-stage-grid"
-        className="grid h-full w-full gap-1 p-1"
+        className="grid h-full gap-1 p-1"
         style={{
+          width: `${overshoot * 100}%`,
           gridTemplateColumns: `repeat(${safeColumns}, minmax(0, 1fr))`,
           gridTemplateRows: `repeat(${safeRows}, minmax(0, 1fr))`,
         }}
@@ -445,33 +461,29 @@ function StagePane({
  */
 function Readout({
   columns,
-  bands,
+  visible,
   count,
   workspaceWidthPx,
 }: {
   columns: number;
-  bands: number;
+  visible: number;
   count: number;
   workspaceWidthPx: number;
 }) {
-  const oneBandAt = widthForOneBand(count);
-  const wrapped = bands > 1;
-  const canUnwrap =
-    wrapped && oneBandAt !== null && oneBandAt > Math.round(workspaceWidthPx);
+  const allVisibleAt = widthForAllVisible(count);
+  const scrolls = columns > visible;
 
   let condition: string;
-  if (!wrapped) {
+  if (!scrolls) {
     condition = "All side by side — this window is wide enough.";
-  } else if (canUnwrap) {
-    condition = `Wrapped to keep every pane readable. From ${formatPx(
-      oneBandAt,
-    )} px wide they would all fit on one line — this window is ${formatPx(
+  } else if (allVisibleAt !== null) {
+    condition = `All side by side, ${visible} of them on screen — scroll sideways for the rest. From ${formatPx(
+      allVisibleAt,
+    )} px wide they all fit at once; this window is ${formatPx(
       Math.round(workspaceWidthPx),
     )} px.`;
-  } else if (count > MAX_PANES_PER_BAND) {
-    condition = `More than ${MAX_PANES_PER_BAND} side by side is unreadable at any window size, so they wrap.`;
   } else {
-    condition = "Wrapped to keep every pane readable.";
+    condition = "All side by side — scroll sideways for the rest.";
   }
 
   return (
@@ -480,7 +492,7 @@ function Readout({
       className="text-xs leading-relaxed text-muted-foreground"
     >
       <span className="font-mono tabular-nums text-foreground">
-        {columns} across × {bands} down
+        {columns} across
       </span>{" "}
       · {condition}
     </p>

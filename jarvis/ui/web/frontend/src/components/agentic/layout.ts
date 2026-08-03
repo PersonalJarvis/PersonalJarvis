@@ -34,20 +34,28 @@
  * siblings inside one grid container that never changes, and a layout change is
  * only ever a change of numbers on each pane. Nothing is re-parented, so
  * nothing remounts.
- */
-
-/**
- * Most columns that may share one band (one line of columns) when the available
- * width is unknown — a last-resort ceiling, not the number to lay out by.
  *
- * Use `bandCapacityFor(widthPx)` wherever the width IS known, which is every
- * real render. A fixed count cannot work: ten columns in a 2560 px window give
- * each pane ~256 px, but the same ten in a 1440 px window give ~144 px — about
- * 18 characters. Measured at that width, Claude Code truncates every line and
- * breaks single words across rows ("Clau/de/Max"), which is exactly the
- * unreadable pane reported on 2026-07-25 with eight terminals in one band.
+ * ## One line of columns, however many there are
+ *
+ * The workspace never wraps. Opening a column always puts it beside the last
+ * one, and a workspace of twenty columns is twenty columns across.
+ *
+ * It used to wrap at the point where the panes would fall below
+ * `MIN_PANE_WIDTH_PX` — six on a normal desktop — and that was the wrong
+ * trade. Wrapping does not create room; it takes the height of every existing
+ * pane to pay for the new one, so the sixth split silently halved the five
+ * panes the user was already reading and dropped the new one onto a second
+ * line. The arrangement the user built changed SHAPE because of a pane they
+ * added at the end, which is exactly what a workspace must not do (reported
+ * 2026-08-03).
+ *
+ * Readability is still a floor — it is just paid for the same way the vertical
+ * one is. Below `MIN_PANE_WIDTH_PX` per column the workspace grows WIDER than
+ * the window and scrolls sideways, the way it already grows taller and scrolls
+ * down when the stacks get short (`MIN_PANE_HEIGHT_PX`). A workspace larger
+ * than the window is an ordinary thing that every editor does; a workspace
+ * that rearranges itself is not.
  */
-export const MAX_PANES_PER_BAND = 10;
 
 /**
  * Narrowest a pane may get before its agent's output stops being readable.
@@ -57,6 +65,12 @@ export const MAX_PANES_PER_BAND = 10;
  * 13 px monospace a character is ~7.8 px wide, so 45 characters plus the pane's
  * frame and padding lands near 380 px. Deliberately a floor on WIDTH rather than
  * a count, so the same rule holds on a laptop and on a 4K display.
+ *
+ * It is the width the workspace stops SHRINKING at, not a count it stops
+ * growing at: past it the columns keep their width and the workspace scrolls
+ * sideways. Measured against a real agent on 2026-07-25 — at ~18 characters
+ * Claude Code truncates every line and breaks single words across rows
+ * ("Clau/de/Max"), which is what this number exists to prevent.
  */
 export const MIN_PANE_WIDTH_PX = 380;
 
@@ -88,31 +102,39 @@ export const MIN_PANE_HEIGHT_PX = 240;
 export const GRID_HORIZONTAL_PADDING_PX = 8;
 
 /**
- * How many columns fit in ``widthPx`` without starving them.
+ * How wide the workspace has to be drawn to hold ``columns`` readable columns.
  *
- * Returns at least 1 — one unreadably narrow pane still beats no pane — and
- * never more than `MAX_PANES_PER_BAND`.
+ * The horizontal twin of the canvas height rule: normally the workspace is
+ * exactly the width it was given and nothing scrolls, and once the columns
+ * would be squeezed below `MIN_PANE_WIDTH_PX` it grows past the window instead
+ * and the grid scrolls sideways.
+ *
+ * ``availableWidthPx`` is the grid's CONTENT width, so the return value is one
+ * too — the caller's padding is already off both.
  */
-export function bandCapacityFor(
-  widthPx: number,
-  minPaneWidth: number = MIN_PANE_WIDTH_PX,
+export function workspaceWidthFor(
+  columns: number,
+  availableWidthPx: number,
 ): number {
-  if (!Number.isFinite(widthPx) || widthPx <= 0) return MAX_PANES_PER_BAND;
-  const fits = Math.floor(widthPx / Math.max(1, minPaneWidth));
-  return Math.max(1, Math.min(MAX_PANES_PER_BAND, fits));
+  const wanted = Math.max(0, columns) * MIN_PANE_WIDTH_PX;
+  return Math.max(availableWidthPx, wanted);
 }
 
 /**
- * Columns that fit inside the grid's content box.
+ * How many columns are visible at ``containerWidthPx`` before it scrolls.
  *
- * `clientWidth` includes padding while CSS grid tracks occupy the content box.
- * Keeping this subtraction here gives the running grid and wizard preview the
- * exact same answer at width thresholds.
+ * Nothing lays out by this — it is what the wizard's readout says out loud, so
+ * someone picking twelve terminals on a laptop learns they are getting a
+ * workspace they scroll rather than one that silently rearranged itself.
+ *
+ * Takes an OUTER width (the wizard measures an unpadded element) and subtracts
+ * the padding the grid will have, so it answers for the same physical window
+ * the running grid does. Never 0: one cramped column still beats none.
  */
-export function workspaceBandCapacityFor(containerWidthPx: number): number {
-  return bandCapacityFor(
-    Math.max(0, containerWidthPx - GRID_HORIZONTAL_PADDING_PX),
-  );
+export function columnsWithoutScrolling(containerWidthPx: number): number {
+  const content = Math.max(0, containerWidthPx - GRID_HORIZONTAL_PADDING_PX);
+  if (!Number.isFinite(content) || content <= 0) return 1;
+  return Math.max(1, Math.floor(content / MIN_PANE_WIDTH_PX));
 }
 
 /**
@@ -141,8 +163,8 @@ export interface Positioned {
  * (`agentic_ide/session.py`: "A wizard-opened workspace is one row of columns").
  *
  * It exists so the preview cannot describe a workspace the backend would never
- * build. The old preview took a shortcut and fed the raw terminal COUNT into
- * `paneColumns`, which happens to agree here only because every terminal gets
+ * build. An earlier preview took a shortcut and derived its dots from the raw
+ * terminal COUNT, which happens to agree here only because every terminal gets
  * its own column at the start. Feed `paneGrid` the same panes the grid will
  * receive and the preview stops being a second opinion.
  */
@@ -154,21 +176,16 @@ export function wizardPanes(count: number): Positioned[] {
 }
 
 /**
- * Width at which ``count`` wizard-opened terminals would fit on ONE line.
+ * Window width at which ``count`` terminals are all visible at once.
  *
- * The preview promises an arrangement that depends on a number the user is not
- * thinking about — how wide the window happens to be right now. Pick 8 in a
- * 1050 px window and the honest answer is "2 across, 4 down"; maximise the same
- * window and it becomes "4 across, 2 down". Reporting only the first reads as a
- * broken promise the moment the second one happens, which is exactly what was
- * reported on 2026-07-26.
- *
- * So the preview also says what a wider window would buy. Returns null when the
- * count is already on one line, or when it never can be (past
- * `MAX_PANES_PER_BAND` no width is enough — the wrap is the point).
+ * The arrangement no longer depends on the window — `count` terminals are
+ * `count` columns at every size — but how much of it you can SEE does, and the
+ * preview says so rather than letting a workspace that scrolls come as a
+ * surprise. Returns null when one column is the whole workspace and there is
+ * nothing to scroll past.
  */
-export function widthForOneBand(count: number): number | null {
-  if (count <= 1 || count > MAX_PANES_PER_BAND) return null;
+export function widthForAllVisible(count: number): number | null {
+  if (count <= 1) return null;
   return count * MIN_PANE_WIDTH_PX + GRID_HORIZONTAL_PADDING_PX;
 }
 
@@ -187,38 +204,6 @@ export interface PaneGrid {
   /** `grid-template-rows` count. */
   rows: number;
   placements: PanePlacement[];
-}
-
-/**
- * Columns per band for a workspace of ``count`` columns: the grid's width.
- *
- * Also the wizard's preview width, which is the point — the dots the user sees
- * before starting are the arrangement they get.
- *
- * Bands fill up GREEDILY: the first band takes the full capacity and only the
- * overflow starts a new one. An earlier version balanced the bands instead
- * (7 columns at capacity 6 became 4 + 3), which read as tidier in a static
- * picture but moved panes the user never touched: splitting a pane to the
- * right re-dealt the whole workspace, and a terminal that was mid-read jumped
- * to another row (reported 2026-07-31). Which panes share a row is the user's
- * decision — the split buttons are exactly that choice — so the layout's only
- * job is the readability wrap, done with the least possible movement: every
- * existing column keeps its place, and only the newest can start a band.
- */
-export function paneColumns(count: number, maxPerBand: number = MAX_PANES_PER_BAND): number {
-  if (count <= 0) return 0;
-  return Math.min(count, Math.max(1, maxPerBand));
-}
-
-/**
- * Bands a workspace of ``count`` columns occupies once wrapped.
- *
- * A wrapped workspace is taller, so the grid needs proportionally more rows —
- * otherwise two bands share the height of one and every pane is half as tall.
- */
-export function paneLines(count: number, maxPerBand: number = MAX_PANES_PER_BAND): number {
-  const width = paneColumns(count, maxPerBand);
-  return width === 0 ? 0 : Math.ceil(count / width);
 }
 
 function greatestCommonDivisor(a: number, b: number): number {
@@ -240,10 +225,7 @@ function greatestCommonDivisor(a: number, b: number): number {
  * pane where a column of 3 spans 2 — and every column fills exactly the same
  * height whatever it holds.
  */
-export function paneGrid<T extends Positioned>(
-  panes: readonly T[],
-  maxPerBand: number = MAX_PANES_PER_BAND,
-): PaneGrid {
+export function paneGrid<T extends Positioned>(panes: readonly T[]): PaneGrid {
   if (panes.length === 0) return { columns: 0, rows: 0, placements: [] };
 
   // Column index by the pane's own column number, gaps closed.
@@ -257,9 +239,6 @@ export function paneGrid<T extends Positioned>(
     stack.sort((a, b) => panes[a].slot - panes[b].slot);
   }
 
-  const perBand = Math.max(1, paneColumns(ordered.length, maxPerBand));
-  const bands = Math.ceil(ordered.length / perBand);
-
   let unit = 1;
   for (const stack of stacks) {
     const height = Math.max(1, stack.length);
@@ -271,17 +250,15 @@ export function paneGrid<T extends Positioned>(
 
   const placements: PanePlacement[] = new Array(panes.length);
   stacks.forEach((stack, index) => {
-    const band = Math.floor(index / perBand);
-    const column = (index % perBand) + 1;
     const span = Math.max(1, Math.floor(unit / Math.max(1, stack.length)));
     stack.forEach((pane, position) => {
       placements[pane] = {
-        column,
-        row: band * unit + position * span + 1,
+        column: index + 1,
+        row: position * span + 1,
         rowSpan: span,
       };
     });
   });
 
-  return { columns: perBand, rows: bands * unit, placements };
+  return { columns: ordered.length, rows: unit, placements };
 }

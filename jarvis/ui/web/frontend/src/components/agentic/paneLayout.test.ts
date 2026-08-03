@@ -29,7 +29,7 @@ function seamOf(seams: PaneSeam[], id: string): PaneSeam {
 
 describe("paneLayout", () => {
   it("splits an untouched workspace evenly, which is where it starts", () => {
-    const { boxes } = paneLayout([pane("A", 0), pane("B", 1), pane("C", 2)], 10);
+    const { boxes } = paneLayout([pane("A", 0), pane("B", 1), pane("C", 2)]);
     expect(boxes.map((box) => round(box.w))).toEqual([0.33, 0.33, 0.33]);
     expect(boxes.map((box) => round(box.x))).toEqual([0, 0.33, 0.67]);
     expect(boxes.every((box) => box.h === 1)).toBe(true);
@@ -39,7 +39,7 @@ describe("paneLayout", () => {
     // The whole point of weights: the middle column is twice as wide, and the
     // two beside it are unchanged relative to each other.
     const weights: PaneWeights = { ...evenWeights(), columns: [1, 2, 1] };
-    const { boxes } = paneLayout([pane("A", 0), pane("B", 1), pane("C", 2)], 10, weights);
+    const { boxes } = paneLayout([pane("A", 0), pane("B", 1), pane("C", 2)], weights);
     expect(boxes.map((box) => round(box.w))).toEqual([0.25, 0.5, 0.25]);
   });
 
@@ -47,48 +47,58 @@ describe("paneLayout", () => {
     const weights: PaneWeights = { ...evenWeights(), panes: { B: 3 } };
     const { boxes } = paneLayout(
       [pane("A", 0), pane("B", 0, 1), pane("C", 0, 2)],
-      10,
       weights,
     );
     expect(boxes.map((box) => round(box.h))).toEqual([0.2, 0.6, 0.2]);
     expect(boxes.map((box) => round(box.y))).toEqual([0, 0.2, 0.8]);
   });
 
-  it("lets two bands have DIFFERENT column widths", () => {
+  it("keeps every column on one line, however many there are", () => {
+    // The 2026-08-03 report: a sixth terminal used to start a second line and
+    // halve the five panes the user was already reading. Twelve columns are
+    // twelve full-height columns now; the grid scrolls sideways instead.
+    const panes = Array.from({ length: 12 }, (_, i) => pane(`T${i}`, i));
+    const { boxes, columns } = paneLayout(panes);
+    expect(columns).toBe(12);
+    expect(boxes.every((box) => box.y === 0 && box.h === 1)).toBe(true);
+    expect(round(boxes[11].x + boxes[11].w)).toBe(1);
+  });
+
+  it("lets each column have its OWN width beside stacks of its own heights", () => {
     // A CSS grid cannot express this — `grid-template-columns` is shared by
     // every row — and that limitation is why the workspace stopped being one.
-    const panes = Array.from({ length: 4 }, (_, i) => pane(`T${i}`, i));
-    const weights: PaneWeights = { ...evenWeights(), columns: [3, 1, 1, 1] };
-    const { boxes } = paneLayout(panes, 2, weights);
+    const panes = [pane("A", 0), pane("B", 1), pane("C", 1, 1)];
+    const weights: PaneWeights = {
+      columns: [3, 1],
+      panes: { C: 3 },
+    };
+    const { boxes } = paneLayout(panes, weights);
     expect(round(boxes[0].w)).toBe(0.75);
     expect(round(boxes[1].w)).toBe(0.25);
-    // The second band never saw the first band's weights.
-    expect(round(boxes[2].w)).toBe(0.5);
-    expect(round(boxes[3].w)).toBe(0.5);
+    // ...and the narrow column's two panes keep their own split of the height.
+    expect(round(boxes[1].h)).toBe(0.25);
+    expect(round(boxes[2].h)).toBe(0.75);
   });
 
   it("offers a seam for every boundary and none for an edge", () => {
-    const { seams } = paneLayout(
-      [pane("A", 0), pane("B", 0, 1), pane("C", 1)],
-      10,
-    );
+    const { seams } = paneLayout([pane("A", 0), pane("B", 0, 1), pane("C", 1)]);
     expect(seams.map((seam) => seam.id).sort()).toEqual(["column:0:1", "pane:A:B"]);
     expect(seamOf(seams, "column:0:1").orientation).toBe("vertical");
     expect(seamOf(seams, "pane:A:B").orientation).toBe("horizontal");
   });
 
-  it("offers a seam between two bands", () => {
-    const panes = Array.from({ length: 4 }, (_, i) => pane(`T${i}`, i));
-    const { seams } = paneLayout(panes, 2);
-    const band = seamOf(seams, "band:0:1");
-    expect(band.orientation).toBe("horizontal");
-    expect(band.y).toBe(0.5);
-    expect(band.w).toBe(1);
+  it("has no band seams, because a workspace is one line of columns", () => {
+    // There used to be a horizontal seam per wrap. Nothing wraps, so a
+    // workspace of any size offers exactly the boundaries the user built.
+    const panes = Array.from({ length: 8 }, (_, i) => pane(`T${i}`, i));
+    const { seams } = paneLayout(panes);
+    expect(seams.every((seam) => seam.kind === "column")).toBe(true);
+    expect(seams).toHaveLength(7);
   });
 
   it("reports the height below which the workspace scrolls instead of shrinking", () => {
-    // Two bands whose tallest columns hold 2 and 1 panes: three minimum pane
-    // heights, not the six a least-common-multiple row grid used to demand.
+    // The tallest stack in the workspace: two panes deep, so two minimum pane
+    // heights — not the six a least-common-multiple row grid used to demand.
     const panes = [
       pane("A", 0),
       pane("B", 0, 1),
@@ -96,43 +106,52 @@ describe("paneLayout", () => {
       pane("D", 2),
       pane("E", 3),
     ];
-    expect(paneLayout(panes, 2).minHeightUnits).toBe(3);
+    expect(paneLayout(panes).minHeightUnits).toBe(2);
+  });
+
+  it("reports the columns the canvas has to be wide enough for", () => {
+    // What the grid multiplies by MIN_PANE_WIDTH_PX to decide whether the
+    // workspace is bigger than its window.
+    const panes = Array.from({ length: 7 }, (_, i) => pane(`T${i}`, i));
+    expect(paneLayout(panes).columns).toBe(7);
+    // Stacked panes share a column and do not widen the workspace.
+    expect(paneLayout([pane("A", 0), pane("B", 0, 1)]).columns).toBe(1);
   });
 
   it("closes gaps in column numbers rather than rendering a blank stripe", () => {
-    const { boxes } = paneLayout([pane("A", 0), pane("B", 7)], 10);
+    const { boxes } = paneLayout([pane("A", 0), pane("B", 7)]);
     expect(boxes.map((box) => round(box.x))).toEqual([0, 0.5]);
   });
 
   it("has nothing to lay out for an empty workspace", () => {
-    expect(paneLayout([], 10)).toEqual({
+    expect(paneLayout([])).toEqual({
       boxes: [],
       seams: [],
-      bands: 0,
+      columns: 0,
       minHeightUnits: 0,
     });
   });
 });
 
 describe("dragSeam", () => {
-  const twoColumns = paneLayout([pane("A", 0), pane("B", 1)], 10);
+  const twoColumns = paneLayout([pane("A", 0), pane("B", 1)]);
   const seam = seamOf(twoColumns.seams, "column:0:1");
 
   it("moves width from one side to the other and nowhere else", () => {
     // 1000 px wide, dragged 250 px right: the left pane takes three quarters.
     const next = dragSeam(evenWeights(), seam, 250, 1000);
-    const { boxes } = paneLayout([pane("A", 0), pane("B", 1)], 10, next);
+    const { boxes } = paneLayout([pane("A", 0), pane("B", 1)], next);
     expect(round(boxes[0].w)).toBe(0.75);
     expect(round(boxes[1].w)).toBe(0.25);
   });
 
   it("leaves a third column untouched while its neighbours trade", () => {
     const panes = [pane("A", 0), pane("B", 1), pane("C", 2)];
-    const three = paneLayout(panes, 10);
+    const three = paneLayout(panes);
     // 900 px wide, dragged 300 px right: A would swallow B whole, so B stops at
     // its 120 px minimum and A takes the rest of the two-thirds they share.
     const next = dragSeam(evenWeights(), seamOf(three.seams, "column:0:1"), 300, 900);
-    const { boxes } = paneLayout(panes, 10, next);
+    const { boxes } = paneLayout(panes, next);
     expect(round(boxes[0].w)).toBe(0.53);
     expect(round(boxes[1].w)).toBe(0.13);
     // The one that was not part of the drag keeps exactly its third.
@@ -142,27 +161,28 @@ describe("dragSeam", () => {
   it("stops a pane at the minimum instead of dragging it out of existence", () => {
     // A control that can be dragged to nothing has no way back.
     const next = dragSeam(evenWeights(), seam, 100000, 1000);
-    const { boxes } = paneLayout([pane("A", 0), pane("B", 1)], 10, next);
+    const { boxes } = paneLayout([pane("A", 0), pane("B", 1)], next);
     expect(Math.round(boxes[1].w * 1000)).toBe(MIN_SEAM_PANE_PX);
   });
 
   it("shares evenly when neither side can meet the minimum", () => {
     const next = dragSeam(evenWeights(), seam, 500, MIN_SEAM_PANE_PX);
-    const { boxes } = paneLayout([pane("A", 0), pane("B", 1)], 10, next);
+    const { boxes } = paneLayout([pane("A", 0), pane("B", 1)], next);
     expect(round(boxes[0].w)).toBe(0.5);
   });
 
-  it("converts pixels against the BAND's height, not the window's", () => {
-    // Two panes stacked in a column of a two-band workspace share half the
-    // height, so 100 px is twice the fraction it would be across the whole one.
+  it("converts pixels against the workspace's full height", () => {
+    // Two panes stacked in a column span the whole workspace, whatever the
+    // columns beside them hold — so 100 px of a 1000 px workspace is a tenth,
+    // moved from B to A.
     const panes = [pane("A", 0), pane("B", 0, 1), pane("C", 1), pane("D", 2)];
-    const layout = paneLayout(panes, 2);
+    const layout = paneLayout(panes);
     const stacked = seamOf(layout.seams, "pane:A:B");
-    expect(stacked.axisFraction).toBe(0.5);
+    expect(stacked.axisFraction).toBe(1);
     const next = dragSeam(evenWeights(), stacked, 100, 1000);
-    const { boxes } = paneLayout(panes, 2, next);
-    // 100 px of a 500 px band is a fifth, moved from B to A.
-    expect(round(boxes[0].h / 0.5)).toBe(0.7);
+    const { boxes } = paneLayout(panes, next);
+    expect(round(boxes[0].h)).toBe(0.6);
+    expect(round(boxes[1].h)).toBe(0.4);
   });
 
   it("does nothing when the workspace has not been measured yet", () => {
@@ -173,7 +193,7 @@ describe("dragSeam", () => {
 describe("evenSeam", () => {
   it("makes two neighbours equal without disturbing the rest", () => {
     const panes = [pane("A", 0), pane("B", 1), pane("C", 2)];
-    const seams = paneLayout(panes, 10).seams;
+    const seams = paneLayout(panes).seams;
     const lopsided: PaneWeights = { ...evenWeights(), columns: [3, 1, 4] };
     const next = evenSeam(lopsided, seamOf(seams, "column:0:1"));
     expect(next.columns).toEqual([2, 2, 4]);
@@ -186,8 +206,8 @@ describe("weightsAfterSplit", () => {
     // every other pane on the line narrower.
     const before = [pane("A", 0), pane("B", 1), pane("C", 2)];
     const after = [pane("A", 0), pane("New", 1), pane("B", 2), pane("C", 3)];
-    const next = weightsAfterSplit(evenWeights(), before, after, "A", "New", 10);
-    const { boxes } = paneLayout(after, 10, next);
+    const next = weightsAfterSplit(evenWeights(), before, after, "A", "New");
+    const { boxes } = paneLayout(after, next);
     // A held a third of the line; it and the pane split off it now hold a sixth
     // each — the same third between them.
     expect(round(boxes[0].w)).toBe(0.17);
@@ -201,15 +221,15 @@ describe("weightsAfterSplit", () => {
     const before = [pane("A", 0), pane("B", 1)];
     const after = [pane("A", 0), pane("New", 1), pane("B", 2)];
     const wide: PaneWeights = { ...evenWeights(), columns: [3, 1] };
-    const next = weightsAfterSplit(wide, before, after, "A", "New", 10);
+    const next = weightsAfterSplit(wide, before, after, "A", "New");
     expect(next.columns).toEqual([1.5, 1.5, 1]);
   });
 
   it("halves the anchor's HEIGHT when the split went downwards", () => {
     const before = [pane("A", 0), pane("B", 1)];
     const after = [pane("A", 0), pane("New", 0, 1), pane("B", 1)];
-    const next = weightsAfterSplit(evenWeights(), before, after, "A", "New", 10);
-    const { boxes } = paneLayout(after, 10, next);
+    const next = weightsAfterSplit(evenWeights(), before, after, "A", "New");
+    const { boxes } = paneLayout(after, next);
     expect(round(boxes[0].h)).toBe(0.5);
     expect(round(boxes[1].h)).toBe(0.5);
     // The pane beside them keeps its full height — that is what makes a split
@@ -220,22 +240,32 @@ describe("weightsAfterSplit", () => {
   it("splits a stacked pane in half without resizing its neighbours", () => {
     const before = [pane("A", 0), pane("B", 0, 1)];
     const after = [pane("A", 0), pane("B", 0, 1), pane("New", 0, 2)];
-    const next = weightsAfterSplit(evenWeights(), before, after, "B", "New", 10);
-    const { boxes } = paneLayout(after, 10, next);
+    const next = weightsAfterSplit(evenWeights(), before, after, "B", "New");
+    const { boxes } = paneLayout(after, next);
     expect(round(boxes[0].h)).toBe(0.5);
     expect(round(boxes[1].h)).toBe(0.25);
     expect(round(boxes[2].h)).toBe(0.25);
   });
 
-  it("leaves the anchor alone when the new column wrapped onto another band", () => {
-    // Halving would be a lie there: the two are not sharing a line, so the
-    // anchor would just end up oddly narrow beside columns it never split from.
-    const before = [pane("A", 0), pane("B", 1)];
-    const after = [pane("A", 0), pane("New", 1), pane("B", 2)];
-    const next = weightsAfterSplit(evenWeights(), before, after, "A", "New", 2);
-    const { boxes } = paneLayout(after, 2, next);
-    expect(round(boxes[0].w)).toBe(0.5);
-    expect(round(boxes[1].w)).toBe(0.5);
+  it("still halves the anchor on a workspace wider than its window", () => {
+    // This case used to be the exception: past the wrap the new column landed
+    // on another line, so halving would have left the anchor oddly narrow
+    // beside columns it never split from. Nothing wraps now — the new pane is
+    // always the anchor's neighbour — so the rule holds at every size.
+    const before = Array.from({ length: 8 }, (_, i) => pane(`T${i}`, i));
+    const after = [
+      pane("T0", 0),
+      pane("New", 1),
+      // The backend re-packs, so everything right of the split shifts up one.
+      ...Array.from({ length: 7 }, (_, i) => pane(`T${i + 1}`, i + 2)),
+    ];
+    const next = weightsAfterSplit(evenWeights(), before, after, "T0", "New");
+    const { boxes } = paneLayout(after, next);
+    expect(round(boxes[0].w)).toBe(round(boxes[1].w));
+    // Together they hold exactly the eighth of the line T0 had to itself.
+    expect(round(boxes[0].w + boxes[1].w)).toBe(round(1 / 8));
+    // ...and no other column moved.
+    expect(round(boxes[2].w)).toBe(round(1 / 8));
   });
 });
 

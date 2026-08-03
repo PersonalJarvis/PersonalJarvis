@@ -583,14 +583,17 @@ describe("grid layout", () => {
     expect(box("Vega").width).toBe(box("Nova").width);
   });
 
-  it("wraps a crowded workspace by overflow, never by re-dealing", () => {
-    // 12 columns are past the ten-per-band ceiling, so the overflow starts a
-    // second band: ten above, two below. The first ten keep their places —
-    // filling greedily is what stops an opened pane from moving the others.
+  it("keeps a crowded workspace on ONE line, never re-dealing it", () => {
+    // Reported 2026-08-03: past a width-derived ceiling the extra columns used
+    // to start a second line — which paid for them with the height of every
+    // pane already open, and moved a pane the user was reading. Twelve columns
+    // are twelve columns now; the workspace is wider than the window and the
+    // grid scrolls sideways.
     const panes = Array.from({ length: 12 }, (_, i) => [`T${i + 1}`, i] as [string, number]);
     renderGrid(sessionWith(panes));
-    expect(box("T1")).toMatchObject({ left: 0, top: 0 });
-    expect(box("T11")).toMatchObject({ left: 0, top: 50 });
+    expect(box("T1")).toMatchObject({ left: 0, top: 0, height: 100 });
+    expect(box("T11")).toMatchObject({ top: 0, height: 100 });
+    expect(box("T11").left).toBeGreaterThan(box("T10").left);
     // Same parent for every pane — a pane that moves to another parent element
     // is remounted, and remounting kills the agent behind it.
     expect(screen.getByTestId("pane-cell-T12").parentElement).toBe(
@@ -618,9 +621,10 @@ describe("grid layout", () => {
   it("gives the panes their own rectangles back when one is restored", () => {
     const panes = Array.from({ length: 12 }, (_, i) => [`T${i + 1}`, i] as [string, number]);
     renderGrid(sessionWith(panes));
+    const before = box("T11");
     fireEvent.click(screen.getByTestId("pane-maximize-T3"));
     fireEvent.click(screen.getByTestId("pane-maximize-T3"));
-    expect(box("T11")).toMatchObject({ left: 0, top: 50 });
+    expect(box("T11")).toMatchObject(before);
   });
 });
 
@@ -1420,15 +1424,17 @@ describe("resizing the workspace", () => {
     expect(screen.getByTestId("pane-seam-pane:Mika:Nova")).toBeTruthy();
   });
 
-  it("puts one between two rows of terminals as well", () => {
+  it("offers one seam per boundary the USER made, and no others", () => {
+    // A crowded workspace used to grow an extra horizontal seam per wrap, for a
+    // row boundary nobody asked for. Twelve columns are one line now, so the
+    // eleven seams between them are the only ones there are.
     const panes = Array.from({ length: 12 }, (_, i) => [`T${i + 1}`, i] as [string, number]);
     renderGrid(sessionWith(panes));
-    expect(screen.getByTestId("pane-seam-band:0:1")).toBeTruthy();
+    expect(screen.queryAllByTestId(/^pane-seam-/)).toHaveLength(11);
+    expect(screen.queryAllByTestId(/^pane-seam-band:/)).toHaveLength(0);
   });
 
   it("moves width between the two panes a seam divides and no others", () => {
-    // Wide enough that all three panes share one line — below ~1140 px they
-    // wrap, and a wrapped pane is not a neighbour of the seam being dragged.
     const restore = measured(1800, 600);
     try {
       renderGrid(sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2]]));
@@ -1779,16 +1785,28 @@ describe("a workspace with far more panes than the window fits", () => {
     // rows, 40 gave 7 and 100 gave 3 — readable width, unusable height, and
     // nothing crashed to tell anyone.
     //
-    // 40 panes one per column wrap into 4 bands of 10, and a band never gets
-    // less than one minimum pane height, so the workspace is drawn 4 × 240 px
-    // tall however short the window is.
-    renderGrid(manyPanes(40));
+    // A column four panes deep is drawn 4 × 240 px tall however short the
+    // window is, and the workspace scrolls down to the rest.
+    renderGrid(
+      sessionWith(
+        Array.from({ length: 4 }, (_, i) => [`T${i}`, 0, i] as [string, number, number]),
+      ),
+    );
     expect(screen.getByTestId("agentic-grid-canvas").style.height).toBe("960px");
   });
 
-  it("scrolls once the panes stop fitting, rather than squeezing them", () => {
+  it("keeps every pane readable instead of sharing the WIDTH N ways", () => {
+    // The 2026-08-03 half of the same rule. Forty columns used to wrap into
+    // four lines of ten — which fixed the width by taking three quarters of
+    // every pane's height, and moved panes the user was reading. Now the
+    // workspace is drawn 40 × 380 px wide and scrolls sideways instead.
     renderGrid(manyPanes(40));
-    expect(screen.getByTestId("agentic-grid").className).toContain("overflow-y-auto");
+    expect(screen.getByTestId("agentic-grid-canvas").style.width).toBe("15200px");
+  });
+
+  it("scrolls on either axis once the panes stop fitting, rather than squeezing them", () => {
+    renderGrid(manyPanes(40));
+    expect(screen.getByTestId("agentic-grid").className).toContain("overflow-auto");
   });
 
   it("renders a pane for every one of a hundred terminals", () => {

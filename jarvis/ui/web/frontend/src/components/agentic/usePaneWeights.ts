@@ -47,9 +47,11 @@ export function loadWeights(workspaceId: string): PaneWeights {
     const raw = window.localStorage.getItem(storageKey(workspaceId));
     if (!raw) return evenWeights();
     const parsed = JSON.parse(raw) as Partial<PaneWeights>;
+    // Only the families that still exist are read back. Entries written by an
+    // older build carry a `bands` list too — the workspace no longer wraps into
+    // bands, so it is dropped here rather than kept as a number nothing means.
     return {
       columns: Array.isArray(parsed.columns) ? parsed.columns.map(Number) : [],
-      bands: Array.isArray(parsed.bands) ? parsed.bands.map(Number) : [],
       panes:
         parsed.panes && typeof parsed.panes === "object"
           ? (parsed.panes as Record<string, number>)
