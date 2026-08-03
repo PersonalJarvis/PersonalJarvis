@@ -44,9 +44,8 @@ log = logging.getLogger(__name__)
 # down against the session's own noise floor — see ``_NoiseFloor``.
 _SPEECH_RMS = 700.0
 _SILENCE_RMS = 500.0
-# The hysteresis between "speech" and "silence" is a RATIO, not two independent
-# numbers, so a calibrated speech gate carries the silence gate down with it and
-# the two can never cross.
+#: The legacy relationship between the two absolute gates, reused to scale the
+#: silence gate whenever the speech gate is calibrated down.
 _SILENCE_RATIO = _SILENCE_RMS / _SPEECH_RMS
 _SPEECH_START_MS = 120
 _SILENCE_END_MS = 700
@@ -76,12 +75,34 @@ _MIN_VOICED_MS = 300
 # The word-agnostic discriminator (AP-27) survives BY CONSTRUCTION: silence and
 # speaker echo sit AT the floor while the gate sits at ``_SPEECH_GATE_K`` x the
 # floor, at ANY mic gain. Nothing here looks at what was said — only at energy.
-_FLOOR_INIT = 600.0
+_FLOOR_INIT = 350.0
 _FLOOR_ABS_MIN = 7.0  # a muted mic's numeric noise must never define a floor
 _FLOOR_ALPHA = 0.05  # EMA weight per quiet chunk
 _FLOOR_QUIET_BAND = 1.5  # a chunk this close to the floor counts as quiet
-_SPEECH_GATE_K = 1.2
+# The floor must also be able to rise. A room noisier than the initial estimate
+# puts every non-speech chunk ABOVE the quiet band, so a purely downward
+# estimator can never learn it: the silence gate stays under the room tone and
+# the utterance only ever ends at ``_MAX_UTTERANCE_MS`` — a transcript up to
+# 20 s late. A sustained run of loud NON-SPEECH chunks cannot be one utterance,
+# so it is the room, and the floor follows it. Capped at ``_SPEECH_RMS`` so a
+# leaking speaker can never desensitize the gate past its legacy value.
+_FLOOR_RISE_AFTER = 25  # consecutive above-band non-speech chunks (~0.5 s)
+_FLOOR_RISE_ALPHA = 0.25
+_SPEECH_GATE_K = 2.0
 _SPEECH_GATE_ABS_MIN = 50.0
+
+# The SILENCE gate is anchored to the floor FROM ABOVE, never derived from the
+# speech gate from below. Deriving it downward is a trap with a sharp edge: the
+# floor is by definition the level real silence sits at, so any gate placed
+# BELOW the floor can never be crossed — ``_silence_ms`` never accumulates, the
+# utterance never closes, and the recognizer is never called. The endpointer
+# then produces one ``speech_started`` and no transcript at all, which on this
+# transport reads as "the first turn worked and then it went mute forever".
+#
+# So: sit a clear margin ABOVE the measured floor, and clamp strictly below the
+# speech gate so the hysteresis can never invert.
+_SILENCE_GATE_FLOOR_K = 1.4
+_SILENCE_GATE_MAX_FRACTION = 0.9
 
 # How long after the microphone last carried real speech a server-side user
 # transcript is still plausible. The far end transcribes with its own latency,
@@ -120,11 +141,16 @@ _EVENT_QUEUE_MAX = 256
 SPEECH_STARTED = "speech_started"
 TRANSCRIPT = "transcript"
 TRANSCRIPT_FAILED = "transcript_failed"
-#: An utterance the endpointer opened but then discarded as too short to be
-#: speech. It carries no text and must never become a turn — but it must not
-#: vanish either: ``speech_started`` already told the transport a human spoke,
-#: and a boundary that never arrives is a turn that hangs.
-SPEECH_DISCARDED = "speech_discarded"
+
+# A discarded (too short) utterance is reported through the LOG, deliberately
+# not as a new event kind. This stream has exactly one reader, and it branches
+# on the two kinds above and routes everything else through a fallback that
+# wipes the provider's own user-transcript preview — so a new kind would make
+# every cough destroy the very fallback the failure path exists to promote.
+# Nothing waits on a close for a discarded utterance either (the transport ends
+# its turns on its own boundaries, not on this stream), so the honest fix is
+# observability, not a wire change.
+_DISCARD_STREAK_WARN = 5
 
 
 class RecognizerBusy(RuntimeError):
@@ -184,15 +210,32 @@ class _NoiseFloor:
         self._abs_min = float(abs_min)
         self._alpha = float(alpha)
         self._quiet_band = float(quiet_band)
+        self._above_band = 0
 
     @property
     def floor(self) -> float:
         return self._floor
 
     def update(self, rms: float) -> None:
+        """Fold one NON-SPEECH chunk into the estimate.
+
+        Only the caller knows whether an utterance is open; feeding speech in
+        here would let one loud sentence redefine the room.
+        """
         if rms < self._floor * self._quiet_band:
+            self._above_band = 0
             floor = (1.0 - self._alpha) * self._floor + self._alpha * rms
             self._floor = max(floor, self._abs_min)
+            return
+        # Above the band, and not speech: either the room is louder than the
+        # current estimate, or this is a transient. Only a sustained run is
+        # allowed to move the floor upward.
+        self._above_band += 1
+        if self._above_band < _FLOOR_RISE_AFTER:
+            return
+        self._above_band = 0
+        floor = (1.0 - _FLOOR_RISE_ALPHA) * self._floor + _FLOOR_RISE_ALPHA * rms
+        self._floor = min(max(floor, self._abs_min), _SPEECH_RMS)
 
     def gate(self, configured: float, k: float, abs_min: float) -> float:
         """Lower-only effective gate: never above ``configured``."""
@@ -248,6 +291,7 @@ class LocalInputTranscriber:
         self._build_lock = asyncio.Lock()
         self._consecutive_failures = 0
         self._consecutive_busy = 0
+        self._discarded_streak = 0
         self._closed = False
         self._unavailable_logged = False
         self._rate_mismatch_logged = False
@@ -276,6 +320,23 @@ class LocalInputTranscriber:
 
     def _speech_gate(self) -> float:
         return self._floor.gate(_SPEECH_RMS, _SPEECH_GATE_K, _SPEECH_GATE_ABS_MIN)
+
+    def _silence_gate(self, speech_gate: float) -> float:
+        """The level below which a chunk counts as silence, for THIS session.
+
+        Anchored above the measured noise floor rather than scaled down from
+        the speech gate: real silence sits AT the floor, so a gate underneath it
+        is unreachable and the utterance never ends. The scaled legacy value is
+        the lower bound (so a quiet room keeps the historical behaviour) and the
+        speech gate the upper bound (so the hysteresis cannot invert).
+        """
+        return min(
+            speech_gate * _SILENCE_GATE_MAX_FRACTION,
+            max(
+                speech_gate * _SILENCE_RATIO,
+                self._floor.floor * _SILENCE_GATE_FLOOR_K,
+            ),
+        )
 
     # -- feeding -------------------------------------------------------
     def feed(self, pcm: bytes, sample_rate: int) -> None:
@@ -328,7 +389,7 @@ class LocalInputTranscriber:
         self._utterance_ms += duration_ms
         if level >= speech_gate:
             self._voiced_ms += duration_ms
-        if level < speech_gate * _SILENCE_RATIO:
+        if level < self._silence_gate(speech_gate):
             self._silence_ms += duration_ms
         else:
             self._silence_ms = 0
@@ -337,6 +398,39 @@ class LocalInputTranscriber:
             or self._utterance_ms >= _MAX_UTTERANCE_MS
         ):
             self._finish_utterance()
+
+    def _note_discarded(self, voiced_ms: int) -> None:
+        """Report an utterance that opened but was too short to be speech.
+
+        Individually this is correct and uninteresting — a cough must not buy a
+        recognizer call. A RUN of them without a single transcript in between is
+        the interesting signal: it means the gate is opening on something that
+        never turns into speech, which is what a mis-calibrated floor or a
+        half-open microphone looks like from here. Saying only the first half
+        would be a discard that reports nothing actionable (AP-30).
+        """
+        self._discarded_streak += 1
+        log.debug(
+            "Local input transcription discarded a %d ms utterance "
+            "(minimum %d ms voiced, gate %.0f, floor %.0f)",
+            voiced_ms,
+            _MIN_VOICED_MS,
+            self._speech_gate(),
+            self._floor.floor,
+        )
+        if self._discarded_streak != _DISCARD_STREAK_WARN:
+            return
+        log.warning(
+            "Local input transcription has discarded %d utterances in a row as "
+            "too short (last %d ms, minimum %d ms voiced, gate %.0f, floor "
+            "%.0f). Speech is opening the gate but never qualifying, so this "
+            "call is producing no user transcripts at all.",
+            self._discarded_streak,
+            voiced_ms,
+            _MIN_VOICED_MS,
+            self._speech_gate(),
+            self._floor.floor,
+        )
 
     def _begin_utterance(self) -> None:
         self._in_speech = True
@@ -360,24 +454,11 @@ class LocalInputTranscriber:
         self._silence_ms = 0
         self._speech_ms = 0
         if voiced_ms < _MIN_VOICED_MS or not pcm:
-            # Too short to be speech. It still needs a boundary: the matching
-            # ``speech_started`` already told the transport a human spoke, and a
-            # turn that opens without ever closing hangs (AP-30 — a discard that
-            # neither logs nor signals is how a turn disappears silently).
-            log.debug(
-                "Local input transcription discarded a %d ms utterance "
-                "(minimum %d ms voiced, gate %.0f, floor %.0f)",
-                voiced_ms,
-                _MIN_VOICED_MS,
-                self._speech_gate(),
-                self._floor.floor,
-            )
-            self._emit(
-                InputTranscriptEvent(kind=SPEECH_DISCARDED, voiced_ms=voiced_ms)
-            )
+            self._note_discarded(voiced_ms)
             return
         # Only a qualifying utterance vouches for a server-side transcript; a
         # cough must not open the door that the energy gate just closed.
+        self._discarded_streak = 0
         self._last_speech_end = time.monotonic()
         task = asyncio.create_task(
             self._transcribe(pcm, voiced_ms), name="realtime-local-input-transcribe"
@@ -534,7 +615,6 @@ class LocalInputTranscriber:
                 "recognizer is still busy with an earlier segment",
                 voiced_ms,
             )
-            await self._note_busy()
             self._emit(
                 InputTranscriptEvent(kind=TRANSCRIPT_FAILED, voiced_ms=voiced_ms)
             )
@@ -545,12 +625,11 @@ class LocalInputTranscriber:
                 "the recognizer is treated as wedged",
                 voiced_ms,
             )
-            await self._note_failure("timeout")
             self._emit(
                 InputTranscriptEvent(kind=TRANSCRIPT_FAILED, voiced_ms=voiced_ms)
             )
             return
-        except Exception as exc:  # noqa: BLE001 - one failed utterance is not fatal
+        except Exception:  # noqa: BLE001 - one failed utterance is not fatal
             if self._stt is None:
                 self._log_unavailable()
             else:
@@ -558,21 +637,10 @@ class LocalInputTranscriber:
                     "Local input transcription failed for one utterance",
                     exc_info=True,
                 )
-            # A provider reporting its OWN engine as busy (the non-blocking
-            # in-flight guard the local Whisper provider raises) is the same
-            # "slow but alive" signal as our own skip, not an independent
-            # failure. Recognized by shape, never by importing the provider —
-            # the realtime path must stay importable without the local-voice
-            # extra installed.
-            if type(exc).__name__ == "TranscribeBusy":
-                await self._note_busy()
-            else:
-                await self._note_failure(type(exc).__name__)
             self._emit(
                 InputTranscriptEvent(kind=TRANSCRIPT_FAILED, voiced_ms=voiced_ms)
             )
             return
-        self._note_success()
         if not text:
             # Real speech that produced no words: the far end's own transcript
             # of the same audio is now the best thing Jarvis has.
@@ -621,27 +689,57 @@ class LocalInputTranscriber:
             return ""
 
         if self._recognition_busy:
+            await self._note_busy()
             raise RecognizerBusy(
                 "the local recognizer is already transcribing another segment"
             )
+
+        from jarvis.core.protocols import AudioChunk  # noqa: PLC0415
+
+        async def chunks():  # noqa: ANN202 - one-shot adapter
+            yield AudioChunk(
+                pcm=payload,
+                sample_rate=target_rate,
+                timestamp_ns=0,
+                channels=1,
+            )
+
+        # Health accounting lives HERE, at the one choke point both callers pass
+        # through — the streaming utterance path and the transport's
+        # output-transcript recovery. Counting it only in the caller above left
+        # a wedge first hit by recovery invisible to the leash, so the self-heal
+        # needed four lost utterances instead of two.
         self._recognition_busy = True
         try:
-            from jarvis.core.protocols import AudioChunk  # noqa: PLC0415
-
-            async def chunks():  # noqa: ANN202 - one-shot adapter
-                yield AudioChunk(
-                    pcm=payload,
-                    sample_rate=target_rate,
-                    timestamp_ns=0,
-                    channels=1,
-                )
-
             result = await asyncio.wait_for(
                 stt.transcribe(chunks()),
                 timeout=self._recognition_timeout_s(payload, target_rate),
             )
-        finally:
+        except TimeoutError:
             self._recognition_busy = False
+            await self._note_failure("timeout")
+            raise
+        except Exception as exc:  # noqa: BLE001 - classified, counted, re-raised
+            self._recognition_busy = False
+            # A provider reporting its OWN engine as busy (the non-blocking
+            # in-flight guard the local Whisper provider raises) is the same
+            # "slow but alive" signal as our own skip, not an independent
+            # failure. Recognized by shape, never by importing the provider —
+            # the realtime path must stay importable without the local-voice
+            # extra installed.
+            if type(exc).__name__ == "TranscribeBusy":
+                await self._note_busy()
+            else:
+                await self._note_failure(type(exc).__name__)
+            raise
+        except BaseException:
+            # Cancellation is the CALLER giving up, not the engine failing. It
+            # does abandon the worker thread, but the next call's busy report is
+            # what proves that — counting it here would double-count one wedge.
+            self._recognition_busy = False
+            raise
+        self._recognition_busy = False
+        self._note_success()
         return str(getattr(result, "text", "") or "").strip()
 
     def _to_recognizer_rate(self, pcm: bytes, target_rate: int) -> bytes:
@@ -718,7 +816,6 @@ class LocalInputTranscriber:
 
 
 __all__ = [
-    "SPEECH_DISCARDED",
     "SPEECH_STARTED",
     "TRANSCRIPT",
     "TRANSCRIPT_FAILED",

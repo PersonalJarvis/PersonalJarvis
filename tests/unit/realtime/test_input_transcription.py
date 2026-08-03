@@ -44,7 +44,22 @@ def _loud(samples: int = CHUNK_SAMPLES) -> bytes:
 
 
 def _quiet(samples: int = CHUNK_SAMPLES) -> bytes:
+    """Digital silence — a muted or disconnected input, NOT a real room.
+
+    Kept for the mute cases only. Endpointing must never be judged on it: it is
+    the one input level at which a silence gate placed below the noise floor
+    still appears to work, which is exactly how a gate that can never close on a
+    real microphone shipped green. Use ``_room_tone`` for that.
+    """
     return b"\x00\x00" * samples
+
+
+def _room_tone(level: float, samples: int = CHUNK_SAMPLES, *, seed: int = 7) -> bytes:
+    """Low-amplitude noise at ``level`` RMS — what a real quiet room measures."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    return rng.normal(0.0, level, samples).astype(np.int16).tobytes()
 
 
 class TranscribeBusy(RuntimeError):
@@ -160,14 +175,41 @@ async def test_a_blip_of_noise_never_becomes_a_transcript() -> None:
     transcriber = LocalInputTranscriber(sample_rate=RATE, stt_factory=lambda: stt)
 
     _speak(transcriber, speech_chunks=8)  # 160 ms - too short to be speech
-    events = await _drain(transcriber, 2)
+    events = await _drain(transcriber, 1)
 
     assert events[0].kind == module.SPEECH_STARTED
-    # It must not become a turn - but it must not vanish either: the boundary
-    # tells the transport that the turn opened by ``speech_started`` is over.
-    assert events[1].kind == module.SPEECH_DISCARDED
-    assert events[1].text == ""
-    assert events[1].voiced_ms < module._MIN_VOICED_MS  # noqa: SLF001
+    assert stt.calls == 0
+    # Nothing follows it on the wire. The discard is reported through the log,
+    # NOT as a new event kind: this stream's one reader routes any unknown kind
+    # through a fallback that wipes the provider's own user-transcript preview,
+    # so a per-cough event would destroy the very fallback that the failure path
+    # exists to promote.
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(transcriber.next_event(), timeout=0.05)
+    await transcriber.close()
+
+
+@pytest.mark.asyncio
+async def test_a_run_of_discarded_utterances_reports_itself(caplog) -> None:
+    """One cough is uninteresting; a run of them without a transcript is not.
+
+    It means the gate opens on something that never becomes speech — a
+    mis-calibrated floor or a half-open microphone — and the call is producing
+    no user transcripts at all (AP-30: report what silence would hide).
+    """
+    stt = _FakeSTT()
+    transcriber = LocalInputTranscriber(sample_rate=RATE, stt_factory=lambda: stt)
+
+    with caplog.at_level("WARNING"):
+        for _ in range(module._DISCARD_STREAK_WARN):  # noqa: SLF001
+            _speak(transcriber, speech_chunks=8)
+
+    warnings = [
+        record
+        for record in caplog.records
+        if "discarded" in record.getMessage() and "in a row" in record.getMessage()
+    ]
+    assert len(warnings) == 1
     assert stt.calls == 0
     await transcriber.close()
 
@@ -481,6 +523,78 @@ def test_the_recognition_bound_scales_with_the_segment() -> None:
     )
     assert long > short
     assert long <= module._RECOGNITION_TIMEOUT_MAX_S  # noqa: SLF001
+
+
+# -- endpointing against REAL room tone, at every plausible noise floor ------
+
+
+@pytest.mark.parametrize("floor_level", [0, 20, 40, 80, 150, 300, 600])
+@pytest.mark.asyncio
+async def test_an_utterance_ends_on_room_tone_at_any_noise_floor(
+    floor_level: int,
+) -> None:
+    """The regression that made this file's own suite worthless.
+
+    Real silence sits AT the session's noise floor — that is what the floor
+    estimates. A silence gate derived DOWNWARD from the calibrated speech gate
+    lands below it, so ``_silence_ms`` can never accumulate, the utterance never
+    closes and the recognizer is never called: one ``speech_started``, no
+    transcript, forever. On this transport that removes the grounding evidence
+    for every later turn, so the provider's answers get rejected as self-echo
+    and interrupted — "the first turn worked and then it went mute".
+
+    Every earlier endpointing test closed its utterance with digital zeros, the
+    single input level at which the broken gate still worked.
+    """
+    stt = _FakeSTT("heard in a real room")
+    transcriber = LocalInputTranscriber(sample_rate=RATE, stt_factory=lambda: stt)
+
+    def tone() -> bytes:
+        return _quiet() if floor_level == 0 else _room_tone(floor_level)
+
+    for _ in range(180):  # ~3.6 s of room tone establishes the floor
+        transcriber.feed(tone(), RATE)
+    for _ in range(50):  # 1 s of speech
+        transcriber.feed(_loud(), RATE)
+    for _ in range(200):  # 4 s of the SAME room tone must close the utterance
+        transcriber.feed(tone(), RATE)
+
+    events = await _drain(transcriber, 2)
+    assert events[0].kind == module.SPEECH_STARTED
+    assert events[1].kind == module.TRANSCRIPT, (
+        f"floor {floor_level}: the utterance never ended — the silence gate "
+        f"({transcriber._silence_gate(transcriber._speech_gate()):.0f}) is not "  # noqa: SLF001
+        f"above the measured floor ({transcriber.noise_floor:.0f})"
+    )
+    await transcriber.close()
+
+
+@pytest.mark.parametrize("floor_level", [0, 20, 40, 80, 150, 300, 600])
+def test_the_silence_gate_always_sits_between_the_floor_and_the_speech_gate(
+    floor_level: int,
+) -> None:
+    """The invariant behind the test above, checked directly.
+
+    Below the floor the utterance can never end; above the speech gate the
+    hysteresis inverts and speech would close its own utterance.
+    """
+    transcriber = LocalInputTranscriber(sample_rate=RATE)
+    tone = _quiet() if floor_level == 0 else _room_tone(floor_level)
+    for _ in range(200):
+        transcriber.feed(tone, RATE)
+
+    floor = transcriber.noise_floor
+    speech_gate = transcriber._speech_gate()  # noqa: SLF001
+    silence_gate = transcriber._silence_gate(speech_gate)  # noqa: SLF001
+
+    assert silence_gate > floor, (
+        f"floor {floor_level}: silence gate {silence_gate:.0f} is at or below "
+        f"the measured floor {floor:.0f} — silence can never be detected"
+    )
+    assert silence_gate < speech_gate, (
+        f"floor {floor_level}: silence gate {silence_gate:.0f} is not below the "
+        f"speech gate {speech_gate:.0f} — the hysteresis has inverted"
+    )
 
 
 # -- AP-23: the gate must not be a property of the maintainer's mic ----------
