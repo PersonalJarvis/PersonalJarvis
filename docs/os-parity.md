@@ -28,6 +28,48 @@ remaining GTK source gap; reveal/open actions remain available on Linux.
 uses a parent-lifeline process-group supervisor on macOS and Linux, while
 Windows retains kernel Job Object containment.
 
+**Fix pass 2026-08-03 (keyboard + pointer, from live Mac reports).** Three
+defects of one shape — a surface OFFERS something on every OS and only one OS
+can actually deliver it, with nothing raising in between:
+
+- **Keybind picker.** The Quartz keycode table covered letters, digits,
+  F1-F12 and the arrows. The picker also offers the whole nav cluster, the
+  entire numpad and F13-F20, and the Windows backend registers all of them —
+  so on macOS those shortcuts recorded, validated, saved and rendered as
+  bound, then never fired. Fixed in `backends/quartz.py`; a parity test now
+  reads the bindable tokens out of the frontend source, so adding a cap
+  without its keycode fails instead of shipping a dead shortcut.
+- **Event-tap permission probe.** The TCC grant check ran on EVERY reconcile,
+  i.e. two native ObjC calls per keystroke the machine sees, inside the tap
+  callback. macOS DISABLES a tap whose callback overruns its deadline — the
+  "works sometimes, or not at all" report. Now throttled (1 s TTL) while
+  staying fail-closed.
+- **Computer-Use numpad.** `base._NAMED_KEYS` accepts `numpad0`-`numpad9`
+  plus the five operators and Windows maps every one; the POSIX table mapped
+  none, so the identical action died off-Windows with
+  `ValueError: Unknown key: 'numpad5'`. Addressed by raw virtual key
+  (Carbon `kVK_ANSI_Keypad*` / `XK_KP_*`).
+- **Sidebar pointer offset** (macOS only, not previously registered): the
+  `<aside>` carried `backdrop-blur`, making the `backdrop-filter` element an
+  ANCESTOR of the scrolling `<nav>`. WebKit does not reliably invalidate that
+  backdrop snapshot when a descendant scrolls, so the sidebar painted rows at
+  their old offsets while hit-testing them at the new ones. The frosted
+  backing is now its own non-scrolling layer. **Awaiting confirmation on real
+  Mac hardware** — it cannot be reproduced on Windows, where Chromium
+  composites the case eagerly.
+
+P-26 is removed: a Mac user CAN now record a ⌘ shortcut (`metaToken` emits
+`cmd` on darwin, and `KeyboardMap` no longer draws the Meta cap reserved).
+
+**Known, deliberate, and NOT a macOS gap:** the punctuation keys (`- = [ ] \
+; ' , . /` and backtick) plus CapsLock are drawn `dead` in the picker on
+every OS. `event.code` is keyed to US-layout positions, so binding by
+position would record "BracketLeft" while the keycap the user actually
+pressed prints something else entirely on any non-US layout. Reported from a
+Mac as "you cannot pick all the keys"; it is cross-platform by design, not a
+parity defect. Changing it means choosing position- over label-fidelity for
+all three OSes at once.
+
 ## Audit verdict summary
 
 **No hard breakers found.** No feature crashes on macOS or headless Linux;
@@ -76,7 +118,6 @@ experiences today.
 | P-21 | Low | Coding-CLI panes | OpenCode panes ship single-login for the same class of reason: the only variable that moves its credentials and session database is `XDG_DATA_HOME`, which is a SHARED variable rather than a dedicated override — redirecting it per pane would also redirect any other XDG-aware tool the agent spawns inside that pane | `jarvis/workspace/agents.py` (the `opencode` entry) | All OSes: one OpenCode login. Verified on Windows that `XDG_DATA_HOME` does move `auth.json` and the session database; the blast radius on macOS and Linux has not been measured, which is why it is not wired up |
 | P-22 | Low | Coding-CLI panes | Kimi Code uses the bundled Git Bash as its shell environment on Windows, so without Git for Windows installed the binary answers `--version` correctly and the agent then cannot run a single shell command | Kimi vendor docs; `jarvis/workspace/agents.py` (the `kimi` entry) | Windows without Git for Windows: the pane opens, the CLI reports a healthy version, and shell commands fail inside it. macOS/Linux unaffected. `KIMI_SHELL_PATH` points at a non-standard `bash.exe`. An install check that only runs `--version` cannot see this |
 | P-23 | Info | Coding-CLI panes | Kimi Code's alternate screen cannot be disabled (an open upstream request notes it is the outlier versus Claude Code, Codex and the Gemini CLI), so it may conflict with the pane's own scrollback the way a Claude Code pane once did | Upstream issue; `jarvis/agentic_ide/screen.py` | All OSes equally — not an OS gap, recorded here because it is the same class of pane defect and is expected to need the same kind of fix |
-| P-26 | Low | Keybind recorder | A Mac user cannot RECORD a Command (⌘) shortcut, even though the backend validator accepts `cmd+…` on darwin. Two frontend layers close the door: `modifierTokens` maps `metaKey` to the `win` token (there is one token for "the Meta key", and it is named after the Windows key), and `KeyboardMap` then renders that cap disabled with a "Reserved by the system" tooltip — correct on a PC, wrong on a Mac, where ⌘ is the natural modifier for exactly this kind of shortcut. Deliberately deferred, not overlooked: separating the two Meta keys means a new token that the hotkey backends (`global_hotkeys._KEY_MAP`, `pynput._GENERIC_MODIFIER_ALIASES`) must also learn, and the shipped defaults (`ctrl+right_alt+j` push-to-talk, `ctrl+right_alt+space` hands-free) need no ⌘ on any OS | `jarvis/ui/web/frontend/src/hooks/useHotkey.ts::modifierTokens`, `src/views/settings/KeyboardMap.tsx` (`reserved = token === "win"`), `jarvis/trigger/hotkey.py::validate_hotkey` | macOS: every shipped default works, and Ctrl/Option/Shift combos record and save normally — only ⌘-based combos are unreachable from the UI (a `cmd+…` combo already present in `jarvis.toml` keeps working). Windows/Linux: correct as-is, the Windows/Super key genuinely is OS-reserved |
 | P-27 | Low | Mouse-button shortcuts | A shortcut may now be a MOUSE BUTTON (middle, and the two side buttons — `mouse_middle` / `mouse_x1` / `mouse_x2`). All three OSes are implemented in the same change and share one token vocabulary, but the delivery is not uniform: Windows needs nothing extra (the backend polls `GetAsyncKeyState`, which reports mouse buttons); macOS needs pyobjc `Quartz` plus the Accessibility + Input Monitoring grants the hotkey tap already requires; Linux/X11 needs `pynput`, which is the opt-in `[desktop-linux]` extra for the reason recorded in P-24 (`evdev` is source-only). Wayland cannot do it at all — no global button grab exists, the same design reason keyboard shortcuts degrade there. The left and right buttons are deliberately not bindable on any OS: their meaning follows the system "swap mouse buttons" setting, so a shortcut recorded as "left" would fire on the physical right button for a left-handed user | `jarvis/trigger/hotkey.py::mouse_hotkeys_available`, `backends/global_hotkeys.py::_MOUSE_TOKEN_TO_VK`, `backends/pynput.py::_start_mouse_listener`, `backends/quartz.py::_MOUSE_BUTTON_TO_TOKEN` | Every host answers the capability question BEFORE offering the control: `mouse_hotkeys_available()` returns an English sentence naming what is missing and what still works, and a backend that cannot start its mouse hook logs the same thing and keeps the KEYBOARD shortcuts alive rather than failing the whole binding. macOS/Linux desktop with the extras: full parity with Windows. Wayland and headless: key combinations only |
 
 ## Maintenance
