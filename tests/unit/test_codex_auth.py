@@ -413,6 +413,7 @@ def test_guarded_windows_login_closes_job_when_guardian_exits(
             ["guardian.exe"],
             tmp_path / "login.ack",
             tmp_path / "login.release",
+            tmp_path / "login.alive",
         ),
     )
 
@@ -779,7 +780,8 @@ def test_logout_returns_false_when_binary_missing(monkeypatch: pytest.MonkeyPatc
         ("terminator", ["--no-dbus", "-x"]),
         ("kitty", []),
         ("alacritty", ["-e"]),
-        ("wezterm", ["start", "--"]),
+        # --always-new-process is load-bearing: see OS-4 in docs/os-parity.md.
+        ("wezterm", ["start", "--always-new-process", "--"]),
         ("foot", []),
         ("xterm", ["-e"]),
     ],
@@ -840,3 +842,114 @@ def test_graphical_linux_without_a_terminal_does_not_invite_a_login(
 
     assert code == "lifecycle_unavailable"
     assert "terminal emulator" in reason
+
+
+def test_every_login_terminal_records_why_its_flags_keep_it_in_the_foreground() -> None:
+    """The reason column is the review gate for a new entry, not decoration.
+
+    The guardian holds the profile lock until codex exits, so an entry whose
+    launcher returns early releases that lock mid-write. That property cannot be
+    checked automatically, so every entry has to carry the argument for it.
+    """
+    import jarvis.codex_auth as codex_mod
+
+    assert codex_mod._LINUX_LOGIN_TERMINALS
+    for name, _flags, reason in codex_mod._LINUX_LOGIN_TERMINALS:
+        assert name and name == name.strip()
+        assert len(reason) > 20, f"{name} has no usable justification"
+
+
+def test_wezterm_always_spawns_its_own_process() -> None:
+    """Plain ``wezterm start`` delegates to a running wezterm-gui and returns.
+
+    That would let ``cleanup_login`` run its post-check and release the profile
+    lock while codex was still writing auth.json.
+    """
+    import jarvis.codex_auth as codex_mod
+
+    flags = dict(
+        (name, flags) for name, flags, _reason in codex_mod._LINUX_LOGIN_TERMINALS
+    )["wezterm"]
+    assert "--always-new-process" in flags
+
+
+@pytest.mark.parametrize(
+    "rejected",
+    [
+        # Debian's x-terminal-emulator alternative. It does not accept the
+        # gnome-terminal flags, so prefix matching launched something that could
+        # never host the login.
+        "gnome-terminal.wrapper",
+        # The old `st` entry accepted anything merely STARTING with "st".
+        "stterm",
+        "start-terminal",
+        # Client halves of a terminal SERVER: exactly the shape the table exists
+        # to keep out.
+        "urxvtc",
+        "footclient",
+    ],
+)
+def test_terminal_matching_is_exact_not_prefix(rejected: str) -> None:
+    import jarvis.codex_auth as codex_mod
+
+    assert codex_mod._linux_login_terminal_entry(rejected) is None
+
+
+def test_terminal_matching_resolves_known_package_aliases() -> None:
+    import jarvis.codex_auth as codex_mod
+
+    entry = codex_mod._linux_login_terminal_entry("rxvt-unicode")
+    assert entry is not None
+    assert entry[0] == "urxvt"
+    assert codex_mod._linux_login_terminal_entry("URXVT") == ("urxvt", ("-e",))
+
+
+def test_a_terminal_that_never_started_the_guardian_is_named_as_the_cause(
+    tmp_path: Path,
+) -> None:
+    """An unusable terminal used to surface as a guardian handshake error.
+
+    The guardian writes its first acknowledgement before anything else, so a
+    missing ack file proves the guardian never ran — which points at whatever
+    was supposed to host it, not at the guardian.
+    """
+
+    class _Process:
+        def poll(self) -> int | None:
+            return None
+
+    service = CodexAuthService("codex", visible_login=True)
+    original = RuntimeError("The subscription-login guardian did not request lock handoff.")
+
+    explained = service._explain_login_launch_failure(
+        original,
+        _Process(),  # type: ignore[arg-type]
+        acknowledgement=tmp_path / "never-written.ack",
+        launch_host="somebody-elses-terminal",
+    )
+
+    assert "somebody-elses-terminal" in str(explained)
+    assert "could not host" in str(explained)
+
+
+def test_a_guardian_that_did_acknowledge_keeps_the_original_diagnosis(
+    tmp_path: Path,
+) -> None:
+
+    class _Process:
+        def poll(self) -> int | None:
+            return None
+
+    acknowledgement = tmp_path / "written.ack"
+    acknowledgement.write_text("waiting", encoding="ascii")
+    service = CodexAuthService("codex", visible_login=True)
+    original = RuntimeError("The subscription-login guardian did not confirm profile ownership.")
+
+    explained = service._explain_login_launch_failure(
+        original,
+        _Process(),  # type: ignore[arg-type]
+        acknowledgement=acknowledgement,
+        launch_host="kitty",
+    )
+
+    assert explained is original

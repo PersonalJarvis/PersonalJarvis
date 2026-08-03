@@ -63,6 +63,57 @@ same shape as P-29 — the feature was reachable only on the maintainer's OS:
   action failed with "Codex CLI not found" — both sites now share
   `CodexAuthService._resolve_binary` and its `ensure_cli_paths()` repair.
 
+**Fix pass 2026-08-03 (subscription voice, second round).** The 2026-08-03 pass
+above fixed which terminals are offered; this one fixes what happens after one
+is launched. Same shape again — a guarantee that held only on Windows.
+
+- **Login containment now binds to the guardian, not to the launcher.** The
+  previous pass gave the login a POSIX process-group reaper, but on macOS the
+  spawned process is `osascript`, which asks the ALREADY-RUNNING Terminal.app to
+  `do script` — so the guardian is a grandchild of Terminal, in no process group
+  Jarvis owns. GNOME is the same story through `gnome-terminal-server`. The
+  reaper was signalling a group that contained only the launcher, and a Jarvis
+  crash still left the guardian holding the profile lock with every later
+  Connect reporting a permanent "busy". A process tree cannot cross those
+  boundaries and neither can an inherited pipe, so the lifeline is now a
+  **parent-liveness lock file**: Jarvis holds it for the whole login, the kernel
+  drops it on any kind of death, and the guardian polls it and ends the login if
+  it can take it (`jarvis/codex_auth.py::_hold_parent_liveness_lock`,
+  `jarvis/codex_login_guard.py::_parent_liveness_lost`, exit code
+  `EXIT_PARENT_GONE`). The probe is deliberately conservative — anything it
+  cannot read counts as "Jarvis is alive", because ending a healthy login is
+  worse than one stale lock.
+- **`wezterm` released the profile lock mid-write.** Plain `wezterm start` hands
+  the window to a running `wezterm-gui` and returns at once, so `cleanup_login`
+  ran its post-check and released the lock while `codex` was still writing
+  `auth.json` — exactly the hazard the terminal table's own docstring describes.
+  Now `--always-new-process`. Every entry additionally carries the REASON its
+  flags keep it in the foreground, pinned per entry by a test.
+- **Terminal matching is exact, not prefix.** `startswith` accepted Debian's
+  `gnome-terminal.wrapper` for the `gnome-terminal` entry (and handed it flags
+  that wrapper rejects) and accepted anything merely beginning with `st`. Both
+  launched something that could not host the login, and the failure then
+  surfaced as a guardian handshake error. Matching is now exact with a tiny
+  justified alias map, and a login whose guardian never wrote its first
+  acknowledgement names the TERMINAL as the cause instead of the guardian.
+- **The POSIX lifeline no longer swallows a forwarded descriptor.**
+  `child_lifeline.py` re-spawns the real child with `close_fds=True`, so the
+  profile-lock descriptor the caller passes in was dropped at exec and the lock
+  was held by the supervisor rather than by the app-server child it was meant
+  for. The supervisor now accepts `--keep-fd N` and forwards it. Harmless today
+  because the two processes die together — but the caller's guarantee was simply
+  not true, and the first change that lets the supervisor exit first would have
+  turned it into two processes writing one profile.
+- **Checked, not a defect: the macOS Apple-Silicon PyAV pin.** Base pins
+  `av==15.1.0` for that cell with no `python_version` guard while `[local-voice]`
+  and `[tts-eval]` carried `python_version < '3.14'` and a comment claiming
+  wheels only up to 3.13 — which reads as a broken install on macOS arm64 +
+  CPython 3.14. It is not one: the PyPI file list for `av 15.1.0` carries
+  `cp311/cp312/cp313/cp314` `macosx_13_0_arm64` wheels. The base pin was right
+  and the comment was wrong; the comment is corrected and the redundant guard
+  removed. The pin itself stays — `av 16+` raises the Apple-Silicon floor to
+  macOS 14, and 15.1 is what keeps the supported macOS 13 floor.
+
 **Fix pass 2026-08-03 (keyboard + pointer, from live Mac reports).** Three
 defects of one shape — a surface OFFERS something on every OS and only one OS
 can actually deliver it, with nothing raising in between:
@@ -130,6 +181,7 @@ experiences today.
 
 | # | Impact | Area | Gap | Evidence | Behavior off-Windows |
 |---|---|---|---|---|---|
+| P-30 | Medium | Subscription voice | ChatGPT-Live carries its audio ONLY on a WebRTC media track, so the transport needs `aiortc` + PyAV in-process. Upstream publishes no compiler-free Windows ARM64 dependency chain, so base excludes `aiortc` on that one cell — and the same absence occurs anywhere the wheel chain cannot install. `webrtc_available()` exists but is called ONLY inside the endpoint constructor, so no surface asks it before advertising the provider | `pyproject.toml` (the `aiortc` marker), `jarvis/realtime/webrtc_transport.py::webrtc_available`, `jarvis/plugins/realtime/codex_subscription.py::external_login_ready`, `can_open_duplex_session`, `jarvis/ui/web/provider_routes.py::_codex_subscription_status_payload` | **Today, dishonest:** with a valid Codex login the card reports `ready`, `PUT /voice-mode` accepts `realtime`, and the call then fails at connect time with "needs the 'aiortc' package. Install Jarvis's requirements" — advice a Windows ARM64 user can never act on. Every other realtime provider and all standard voice stay available. **Wanted:** the media-stack probe joins the login probe, the card reports `lifecycle_unavailable` with a per-platform reason before the click, and the message stops prescribing an install that cannot work |
 | P-29 | Low | Subscription voice | The dedicated ChatGPT-subscription voice login is an interactive browser flow, so a headless Linux host — and a graphical Linux desktop that ships no terminal emulator able to host the login for its full lifetime — can never CONNECT the profile there (an existing login still reports ready and calls work through the browser voice bridge) | `jarvis/codex_app_server.py::_login_required_state`, `_linux_login_terminal_missing`, `start_codex_subscription_login`, `jarvis/codex_auth.py::_LINUX_LOGIN_TERMINALS` | Both cases report the same `lifecycle_unavailable` truth on every surface (card, activation, voice-mode, Test), each with its own actionable reason — "run Jarvis on a desktop" or "install one of these terminals" — and never an enabled Connect button that can only produce an error toast |
 | P-24 | Medium | Dictation shortcut | The global dictation/call shortcut needs `pynput` on Linux/X11, and `pynput` hard-requires `evdev` — which is published **source-only** (verified on PyPI 2026-07-28: evdev 1.9.3 ships an sdist and no wheels) and compiles against the kernel headers. Putting it in `[full]` would break the one advertised install path on a stock `python:3.11-slim`, so it is the opt-in `[desktop-linux]` extra instead. Wayland is a separate, unfixable-by-install case: the compositor owns global shortcuts by design (the XDG `GlobalShortcuts` portal lets the *compositor* assign the keys, and no wlroots compositor implements it at all) | `pyproject.toml` (`desktop-linux`), `jarvis/platform/probes.py::has_hotkey`, `jarvis/trigger/backends/noop.py::explain_unavailable` | X11 without the extra: no global shortcut, and the log/UI now names the actual cause and the exact `pip install` that fixes it (it used to blame Wayland unconditionally). Wayland: no global shortcut at all — bind a compositor shortcut to `jarvis api dictation start`. On both, dictation still works from the Jarvis Bar, the Dictation view and the CLI, and voice still works via the wake word |
 | P-25 | Medium | Dictation insertion | Pasting the transcript into another application is blocked, silently, in three OS-specific situations: Windows UIPI when the foreground window is elevated and Jarvis is not (`SendInput` reports success and the input is discarded), macOS Secure Input while a password field is focused, and Wayland outright (no synthetic input). Detection exists for the first two; Wayland is refused up front | `jarvis/dictation/insert.py::describe_target`, `jarvis/platform/input_isolation.py::windows_foreground_window_is_elevated`, `macos_secure_input_enabled` | All three degrade to the SAME honest outcome instead of silence: the transcript is left on the clipboard, the result is reported as `clipboard_only`, and the bar plus the Dictation view say why and that Ctrl+V will paste it. macOS Secure Input detection is implemented but has not been verified on real hardware from this machine |
