@@ -2561,7 +2561,11 @@ export function AgenticGrid({
             into by hand, so listing it here would offer a target that refuses
             every instruction sent to it.
           */}
-          <div className="flex max-h-16 shrink-0 items-stretch gap-0.5 overflow-x-auto overflow-y-hidden border-b border-border/60 px-1.5 scrollbar-jarvis">
+          {/* One line that scrolls sideways, never two that wrap: a bar whose
+              head silently grows a second row takes that row off the panes
+              above it, and it did so at exactly the moment a workspace got
+              busy enough to need them. */}
+          <div className="flex shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-border/60 px-1.5 scrollbar-jarvis">
             {session.terminals.filter(takesPrompts).map((term) => {
               const state = statuses[term.name];
               const picked = target === term.name;
