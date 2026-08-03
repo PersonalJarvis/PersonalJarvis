@@ -34,6 +34,10 @@ dependable while adding richer voice controls and knowledge-map views.
   across available families instead of leaving core paths silent.
 - Hardened Agentic IDE pane recovery, scrolling, writer failures, terminal links,
   copy shortcuts, and live-tail switching.
+- Repaired autostart, window focus, input capture, and audio ducking on macOS and
+  Windows, and made every pickable key bindable as a hotkey on macOS.
+- Moved desktop log writing to a dedicated thread so logging can no longer stall
+  the thread that emitted the record.
 
 ---
 
