@@ -145,6 +145,18 @@ docs/spike-results-jarvis-agents.md
 docs/voice-acceptance-brief.md
 docs/bug-019-spawn-failure-report.html
 docs/jarvis-board/PHASE_A_DONE.md
+docs/phase5-research.md
+docs/phase5-integration-test-results.md
+
+# --- Personalized demo capture (2026-08-03 privacy review) ------------------
+# The recording, GIF, poster, and render manifest carry a real account email,
+# machine identifier, and private session-history text. Keep the independently
+# sanitized Agentic IDE demo, but withhold this capture family until rerendered
+# entirely from synthetic data.
+assets/demo/personal-jarvis-demo-poster.png
+assets/demo/personal-jarvis-demo.gif
+assets/demo/personal-jarvis-demo.manifest.json
+assets/demo/personal-jarvis-demo.mp4
 
 # --- The whole video/ Remotion build project (2026-06-27) -------------------
 # video/ is the Remotion source project used to RENDER the YouTube onboarding

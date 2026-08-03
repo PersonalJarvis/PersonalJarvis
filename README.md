@@ -73,9 +73,7 @@ workspace, gets reviewed by a critic, and comes back with a file.
 ## Demo
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">
-    <img src="https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/assets/demo/personal-jarvis-demo.gif" alt="Animated demo showing the spoken prompt, Jarvis opening Windows Settings, and switching display mode from dark to light" width="860" />
-  </a>
+  <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8"><strong>Watch the full voice-control demo on YouTube</strong></a>
 </p>
 
 <p align="center">
