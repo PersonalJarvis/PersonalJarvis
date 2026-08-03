@@ -31,24 +31,28 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 export type DropZone = "swap" | "left" | "right" | "above" | "below";
 
 /**
- * The most of a pane's HEIGHT the stack-it bands at the top and bottom may take.
+ * Share of a pane's WIDTH, down its middle, where a drop stacks rather than
+ * lands beside — the column the two vertical zones live in.
  *
- * Only the horizontal edges need a band at all — see `zoneFor`, where left and
- * right split what is left between them. A share on its own was once the whole
- * story and it made stacking far too easy to hit by accident: five panes draw
- * each column tall and narrow, so 0.3 of the height is a very deep band, and the
- * two of them together swallowed most of the pane (BUG-111).
- */
-export const EDGE_FRACTION = 0.3;
-
-/**
- * The ceiling that keeps a stack-it band from growing with the pane.
+ * The two vertical zones used to be BANDS along the top and bottom edges
+ * instead, and that shape cannot be made to work at both of the sizes a pane
+ * really has. A band deep enough to aim at in a 900 px column swallows the
+ * sideways drag that crosses it (BUG-111); one shallow enough not to —
+ * `EDGE_MAX_PX` was 88 — is under a tenth of that column's height, and reported
+ * on 2026-08-03 as "you cannot drag terminals underneath each other at all".
+ * Both complaints are true of the same geometry, so the geometry is what
+ * changed.
  *
- * An edge is a place a user AIMS at, and aiming does not get harder because the
- * pane got taller — so past a point the band stops growing and the sideways
- * halves keep the rest.
+ * A stripe answers both because it divides the axis the pane does NOT vary
+ * much on. Panes get taller and shorter as the grid fills; a column's width
+ * stays near `MIN_PANE_WIDTH_PX` whatever happens below it. So the stripe is a
+ * target of roughly constant size, and — the part the bands could never give —
+ * it runs the pane's FULL height: anywhere down the middle is "stack it", with
+ * the half the pointer is in saying above or below.
+ *
+ * Half the width, so aiming for a side and aiming for the middle cost the same.
  */
-export const EDGE_MAX_PX = 88;
+export const STACK_STRIPE_FRACTION = 0.5;
 
 /** Pixels the pointer must travel before a click on a header becomes a drag. */
 export const DRAG_THRESHOLD_PX = 5;
@@ -65,8 +69,8 @@ export interface PaneRect {
 export interface ZoneOptions {
   /** The swap modifier is held — every drop becomes an exchange. */
   swap?: boolean;
-  /** Share of the height the stack-it bands may claim. Test seam. */
-  edge?: number;
+  /** Share of the width the stack-it stripe may claim. Test seam. */
+  stripe?: number;
 }
 
 /**
@@ -76,20 +80,26 @@ export interface ZoneOptions {
  * of this function, and it was learned the hard way: carrying a pane sideways
  * onto another one is how a person says "put it over there", and answering that
  * with a swap sends the target back the other way — the user asked for one pane
- * to move and two of them did (BUG-111). So the horizontal half the pointer is
- * in decides which SIDE of the target the pane lands on, and every point in the
- * pane is a landing place. There is no aiming, and no dead middle that means
- * something else.
+ * to move and two of them did (BUG-111). Exchanging two panes is still worth
+ * having — it is the only move that leaves the grid's shape untouched — so it
+ * stays on the swap modifier, where it cannot happen to someone who did not ask
+ * for it.
  *
- * Two bands are carved out first, along the top and bottom edges, for joining
- * the target's own column — the one drop that is genuinely vertical, so it is
- * the one that reads the vertical position. They are measured in PIXELS and
- * capped (`EDGE_MAX_PX`), because a band that keeps a fixed SHARE of a tall
- * narrow column is deep enough to swallow the sideways drag it sits in.
+ * What is left is read as a picture of the result, which is what a person
+ * dropping something believes they are doing: **the pane lands where they are
+ * pointing.** A pane dropped down the middle of the target shares that column,
+ * so the target's own space splits horizontally and the vertical half under the
+ * pointer says which of the two the moved pane takes. A pane dropped out on
+ * either flank becomes a column of its own on that side.
  *
- * Exchanging two panes is still worth having — it is the only move that leaves
- * the grid's shape untouched — so it stays on the swap modifier, where it can no
- * longer happen to someone who did not ask for it.
+ * The middle is a full-height STRIPE rather than two edge bands (see
+ * `STACK_STRIPE_FRACTION`), and that is the difference that makes stacking
+ * reachable: the flanks still take a drop at any height, so carrying a pane
+ * sideways across a tall column never stacks it by accident, while aiming for
+ * the middle no longer means hitting a strip a tenth of the pane deep.
+ *
+ * Every point in the pane is still a landing place — there is no dead middle
+ * and nothing to hit exactly.
  */
 export function zoneFor(
   rect: PaneRect,
@@ -102,11 +112,10 @@ export function zoneFor(
   // cannot produce a nonsensical layout, so it is the fallback.
   if (rect.width <= 0 || rect.height <= 0) return "swap";
   if (options.swap) return "swap";
-  const band = Math.min(rect.height * (options.edge ?? EDGE_FRACTION), EDGE_MAX_PX);
-  const fromTop = y - rect.top;
-  const fromBottom = rect.top + rect.height - y;
-  if (fromTop <= band || fromBottom <= band) {
-    return fromTop <= fromBottom ? "above" : "below";
+  const stripe = rect.width * (options.stripe ?? STACK_STRIPE_FRACTION);
+  const fromCentre = Math.abs(x - (rect.left + rect.width / 2));
+  if (fromCentre <= stripe / 2) {
+    return y - rect.top < rect.height / 2 ? "above" : "below";
   }
   return x - rect.left < rect.width / 2 ? "left" : "right";
 }
