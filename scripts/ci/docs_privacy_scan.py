@@ -18,12 +18,10 @@ Two modes:
   placeholder. Used for the one-off bulk clean-up.
 
 Both the ``scrub`` rows and the private ``block-only`` email patterns are read
-from the manifest — this script hardcodes NO personal value of its own (so the
-script itself never leaks an identifier and never drifts from the manifest). The
-emails are ``block-only`` there because they must survive untouched in
-``.mailmap``; ``.mailmap`` is not under ``docs/``, so inside documentation we are
-free to mask them — and we must, because they would otherwise hard-block the
-next public push.
+from the manifest when it is available. Public distribution snapshots omit that
+maintainer-specific manifest, so this script falls back to generic Windows,
+macOS, and Linux home-path rules, consumer-email rules, and Windows-SID rules
+without embedding anyone's identity.
 
 Usage:
     python scripts/ci/docs_privacy_scan.py [PATH ...]        # scan (read-only)
@@ -63,6 +61,44 @@ TEXT_SUFFIXES = {
 }
 
 
+def _generic_manifest() -> tuple[
+    list[tuple[re.Pattern[str], str, str]], list[re.Pattern[str]]
+]:
+    """Return privacy rules safe to publish in arbitrary downstream forks."""
+    rules = [
+        (
+            re.compile(
+                r"(?i)\b[A-Z]:[\\/]+Users[\\/]+"
+                r"(?!<(?:name|person|user|username)>)[^\\/\s]+"
+            ),
+            "<USER_HOME>",
+            "personal Windows home path",
+        ),
+        (
+            re.compile(
+                r"(?i)(?<![A-Za-z0-9._~-])/(?:home|Users)/"
+                r"(?!(?:<(?:name|person|service-user|user|username)>|user(?:/|$)))"
+                r"[^/\s]+"
+            ),
+            "<USER_HOME>",
+            "personal POSIX home path",
+        ),
+        (
+            re.compile(r"S-1-5-21-\d{4,}-\d{4,}-\d{4,}-\d+"),
+            "S-1-5-21-0-0-0-0",
+            "Windows account SID",
+        ),
+    ]
+    emails = [
+        re.compile(
+            r"[A-Za-z0-9._%+-]+@(?:gmail|gmx|outlook|hotmail|yahoo|"
+            r"protonmail|proton|web)\.[a-z.]+",
+            re.IGNORECASE,
+        )
+    ]
+    return rules, emails
+
+
 def load_manifest() -> tuple[list[tuple[re.Pattern[str], str, str]], list[re.Pattern[str]]]:
     """Parse the canonical scrub manifest.
 
@@ -74,6 +110,9 @@ def load_manifest() -> tuple[list[tuple[re.Pattern[str], str, str]], list[re.Pat
       that look like an email (so private maintainer mailboxes are masked inside
       docs without this script ever hardcoding the address).
     """
+    if not MANIFEST.is_file():
+        return _generic_manifest()
+
     scrub_rules: list[tuple[re.Pattern[str], str, str]] = []
     blockonly_emails: list[re.Pattern[str]] = []
     for raw in MANIFEST.read_text(encoding="utf-8").splitlines():
@@ -102,13 +141,6 @@ def tracked_docs() -> list[Path]:
         check=True,
     ).stdout
     return [REPO_ROOT / rel for rel in out.splitlines() if rel.strip()]
-
-
-def _read(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, OSError):
-        return None
 
 
 def scan_text(
@@ -164,10 +196,18 @@ def main() -> int:
     ]
 
     total_hits = 0
+    read_failures = 0
     changed = 0
     for path in targets:
-        text = _read(path)
-        if text is None:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            rel = path.relative_to(REPO_ROOT) if REPO_ROOT in path.parents else path.name
+            print(
+                f"{rel}:0: unreadable documentation file ({type(exc).__name__})",
+                file=sys.stderr,
+            )
+            read_failures += 1
             continue
         if args.fix:
             new = fix_text(text, rules, emails)
@@ -185,11 +225,12 @@ def main() -> int:
 
     if args.fix:
         print(f"\n{changed} file(s) masked.")
-        return 0
+        return 1 if read_failures else 0
 
-    if total_hits:
+    if total_hits or read_failures:
         print(
-            f"\n{total_hits} personal-data hit(s) found. "
+            f"\n{total_hits} personal-data hit(s) and "
+            f"{read_failures} unreadable file(s) found. "
             "Mask them (python scripts/ci/docs_privacy_scan.py --fix <file>) "
             "or run the docs-privacy-reviewer sub-agent before this ships.",
             file=sys.stderr,
