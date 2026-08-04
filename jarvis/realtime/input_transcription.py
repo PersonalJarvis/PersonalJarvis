@@ -480,6 +480,10 @@ class LocalInputTranscriber:
         try:
             await self._ensure_stt()
         except Exception:  # noqa: BLE001 - a deaf bar must not stop a call opening
+            log.debug(
+                "Local input recognizer could not be built while warming",
+                exc_info=True,
+            )
             self._log_unavailable()
             return False
         prime = getattr(self._stt, "warm_up", None)
@@ -540,6 +544,15 @@ class LocalInputTranscriber:
             try:
                 declared = int(getattr(stt, attribute, 0) or 0)
             except (TypeError, ValueError):
+                # A provider whose rate attribute is not a number tells us
+                # nothing; say which one, because the fallback that follows
+                # decides what sample rate the recognizer is fed.
+                log.debug(
+                    "Ignoring non-numeric %r on the recognizer while resolving "
+                    "its native sample rate",
+                    attribute,
+                    exc_info=True,
+                )
                 continue
             if declared > 0:
                 return declared

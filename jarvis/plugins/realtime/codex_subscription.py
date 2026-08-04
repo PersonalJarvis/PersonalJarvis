@@ -87,8 +87,28 @@ _OUTPUT_TRANSCRIPT_RECOVERY_TIMEOUT_S = 3.0
 # inside an open response is not that duplicate: it is the silence/self-echo
 # turn that made ChatGPT-Live continue both sides of a conversation forever.
 _UNGROUNDED_RESPONSE_GRACE_S = 3.0
+# How many CONSECUTIVE final captions with neither microphone energy nor a
+# fresh local utterance justify tearing the transport down. One is survivable
+# and common — server-side recognizers lag, and this repo documents 3-22 s of
+# it for other providers — so rebuilding on the first one ended a healthy call
+# every time the far end transcribed slowly. A run of them is the loop.
+_UNGROUNDED_CAPTIONS_BEFORE_REBUILD = 2
+# How long a trusted injection's permit may wait for the response it provokes.
+# Generous relative to the far end's latency, and bounded so an injection that
+# was never answered cannot authorize an unrelated response later in the call.
+_TRUSTED_PERMIT_GRACE_S = 15.0
 _HISTORY_MAX_ITEMS = 12
 _HISTORY_MAX_CHARS = 12_000
+# Local-recognizer event kinds, mirrored from
+# ``jarvis.realtime.input_transcription`` rather than imported, because this
+# plugin module must stay free of ``jarvis.*`` imports so plugin discovery
+# never drags the app onto the startup path (same rationale as ``_pcm16_peak``).
+# A kind this adapter does not know must never fall through to the transcript
+# branch: an unhandled control event there wiped the far end's preview and
+# published an empty transcript for a turn the user really spoke.
+_SPEECH_STARTED = "speech_started"
+_TRANSCRIPT_FAILED = "transcript_failed"
+_SPEECH_DISCARDED = "speech_discarded"
 # The experimental v1 protocol was shut off server-side with the ChatGPT-Live
 # launch (every v1 start now answers "403 Voice session access denied",
 # verified live 2026-08-01). v3 is the ChatGPT-Live protocol: the SERVER
@@ -144,23 +164,59 @@ _THREAD_DEVELOPER_INSTRUCTIONS = (
     "handoff. Conversation itself — answering, explaining, remembering what "
     "was said, using the developer context you were given — is your job."
 )
-_LANGUAGE_UPDATE_TEXT = {
-    "de": (
-        "For every following assistant audio and text response, reply only in "
-        "German. This is a voice-rendering instruction, not a request to use "
-        "tools or perform an action."
-    ),
-    "en": (
-        "For every following assistant audio and text response, reply only in "
-        "English. This is a voice-rendering instruction, not a request to use "
-        "tools or perform an action."
-    ),
-    "es": (
-        "For every following assistant audio and text response, reply only in "
-        "Spanish. This is a voice-rendering instruction, not a request to use "
-        "tools or perform an action."
-    ),
+#: English names for the locales this adapter has a natural phrasing for. This
+#: is COSMETIC ONLY and gates nothing: an entry simply reads better to the
+#: model than a bare tag. Any locale the resolver produces — today's, and every
+#: one added later — is pinned through ``_language_pin_text`` below without
+#: needing an entry here (CLAUDE.md §1: no closed de/en/es table, no per-layer
+#: language default).
+_LANGUAGE_ENDONYMS = {
+    "ar": "Arabic",
+    "de": "German",
+    "en": "English",
+    "es": "Spanish",
+    "fr": "French",
+    "hi": "Hindi",
+    "it": "Italian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "nl": "Dutch",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "tr": "Turkish",
+    "zh": "Chinese",
 }
+
+
+def _normalized_locale(language: object) -> str:
+    """Bare lowercase language subtag, or "" when there is nothing to pin."""
+    tag = str(language or "").strip().lower().replace("_", "-")
+    return tag.split("-", 1)[0] if tag else ""
+
+
+def _language_pin_text(language: object) -> str:
+    """The developer instruction that pins ONE resolved output language.
+
+    The turn's language is decided upstream by
+    ``jarvis.core.turn_language.resolve_output_language`` — this layer only
+    renders it, never re-derives it. It must therefore work for every locale
+    that resolver can produce, which a fixed phrase table cannot: an unlisted
+    locale used to be discarded silently, so the model kept answering in
+    whatever it felt like and this session's own language state went stale.
+    """
+    locale = _normalized_locale(language)
+    if not locale:
+        return ""
+    name = _LANGUAGE_ENDONYMS.get(locale)
+    target = f"{name} ({locale})" if name else f"the language with IETF language tag {locale!r}"
+    return (
+        "For every following assistant audio and text response, reply only in "
+        f"{target}. This is a voice-rendering instruction, not a request to "
+        "use tools or perform an action."
+    )
+
+
 # Model-facing note that replaces the truncate client event ChatGPT-Live does
 # not have. Always English: it addresses the model, never the user, and the
 # spoken reply's language is pinned separately by ``_LANGUAGE_UPDATE_TEXT``.
@@ -186,6 +242,19 @@ _UNGROUNDED_TURN_MESSAGES = {
         "una respuesta sin voz confirmada localmente."
     ),
 }
+
+
+def _ungrounded_turn_message(language: object) -> str:
+    """User-facing rebuild notice in the resolved turn language.
+
+    Unlike the model-facing pin above this one has to be TRANSLATED, so an
+    unlisted locale falls back to ``DEFAULT_LOCALE`` rather than being
+    machine-rendered — the documented behaviour for a layer that genuinely
+    cannot serve a language (CLAUDE.md §1).
+    """
+    return _UNGROUNDED_TURN_MESSAGES.get(
+        _normalized_locale(language), _UNGROUNDED_TURN_MESSAGES["en"]
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,11 +490,14 @@ class _CodexSubscriptionRealtimeSession:
         self._language = str(language or "en").strip().lower()
         self._active_codex_turn_id = ""
         self._handoff_interrupt_pending = False
-        # ``appendText``/``appendSpeech`` intentionally create provider output
+        # ``send_text``/``send_speech`` intentionally create provider output
         # without a fresh microphone turn (announcements and trusted action
         # readbacks).  Each successful call arms exactly one exception to the
-        # automatic-response grounding gate in ``receive``.
+        # automatic-response grounding gate in ``receive``, valid only for a
+        # bounded window — an injection the far end never answered must not
+        # authorize an unrelated response later in the call.
         self._trusted_output_permits = 0
+        self._trusted_output_permit_at = 0.0
         # Barge-in barrier. ``turn/interrupt`` only reaches an app-server TURN
         # and an ordinary ChatGPT-Live response never announces one, so the
         # local half of an interrupt is the authoritative one: bumping this
@@ -438,23 +510,43 @@ class _CodexSubscriptionRealtimeSession:
         # Last persona/context text actually delivered, so a re-issued
         # identical one is not sent again mid-call.
         self._delivered_context = ""
+        # False once the local recognizer stream DIED. It is the only grounding
+        # source this transport has, so losing it must degrade to the same
+        # fail-open behaviour as a host that never had one — otherwise the gate
+        # refuses and interrupts every remaining answer of the call.
+        self._local_grounding_ok = True
 
-    async def _append_trusted(self, write: Any) -> Any:
-        """Run one provider write that is allowed to create output.
+    def _local_grounding_active(self) -> bool:
+        """Whether locally grounded input is available AND still trustworthy."""
+        return self._input_transcriber is not None and self._local_grounding_ok
 
-        ``appendText``/``appendSpeech`` deliberately produce provider output
-        without a fresh microphone turn — announcements, action readbacks,
-        persona/history context, the language pin, the truncation note. Every
-        one of them arms exactly one exception to the automatic-response
-        grounding gate in ``receive``; a write that never lands gives its
-        permit back, so a failed injection cannot authorize an unrelated
-        self-echo response later in the call.
+    async def _append_trusted(self, write: Any, *, arms_response: bool) -> Any:
+        """Run one provider write through the single trusted-write path.
+
+        ``arms_response`` separates the two kinds of write that share this one
+        RPC, and getting it wrong is a self-dialogue hole in either direction:
+
+        * ``True`` — an injection whose PURPOSE is to be spoken now
+          (``send_text``, ``send_speech``: announcements, action readbacks).
+          It arms exactly one exception to the grounding gate in ``receive``.
+        * ``False`` — inert context the model is given but must not answer on
+          its own (persona, call history, the language pin, the truncation
+          note). The thread's own base instructions say to respond only to
+          real user audio, so a response to one of these IS the self-echo turn
+          the gate exists to refuse. Arming a permit here banked one at every
+          session open and handed it to the first invented answer of the call.
+
+        A write that never lands gives its permit back, so a failed injection
+        cannot authorize an unrelated response later either.
         """
-        self._trusted_output_permits += 1
+        if arms_response:
+            self._trusted_output_permits += 1
+            self._trusted_output_permit_at = asyncio.get_running_loop().time()
         try:
             return await write()
         except BaseException:
-            self._trusted_output_permits = max(0, self._trusted_output_permits - 1)
+            if arms_response:
+                self._trusted_output_permits = max(0, self._trusted_output_permits - 1)
             raise
 
     async def _interrupt_active_codex_turn(self) -> None:
@@ -511,9 +603,9 @@ class _CodexSubscriptionRealtimeSession:
         cannot do this job — a hallucination is spelled like a sentence.
         """
         transcriber = self._input_transcriber
-        if transcriber is None:
-            # No endpointer, so no evidence either way; a deaf bar would be a
-            # worse failure than an occasional invented line.
+        if not self._local_grounding_active():
+            # No endpointer (or a dead one), so no evidence either way; a deaf
+            # bar would be a worse failure than an occasional invented line.
             return True
         checker = getattr(transcriber, "speech_recently", None)
         if not callable(checker):
@@ -532,6 +624,17 @@ class _CodexSubscriptionRealtimeSession:
         stream_ended = False
         local_transcript_failed = False
         user_final_emitted = False
+        # The "we could not transcribe this turn" notice is emitted once per
+        # turn, but it must NOT latch ``user_final_emitted``: a genuine
+        # transcript that lands afterwards is the real text of that same turn
+        # and used to be discarded because the placeholder had already claimed
+        # the slot.
+        missing_boundary_emitted = False
+        # Consecutive FINAL server captions that had neither microphone energy
+        # nor a fresh local utterance behind them. One is normal on a laggy
+        # link; a run of them is the self-dialogue loop.
+        ungrounded_final_captions = 0
+        grounding_loss_reported = False
         assistant_audio = bytearray()
         assistant_audio_active = False
         assistant_transcript_seen = False
@@ -591,12 +694,19 @@ class _CodexSubscriptionRealtimeSession:
                 while True:
                     event = await transcriber.next_event()
                     if event is None:
+                        # Clean end: the recognizer was closed with the session.
                         return
                     await queue.put(("local_input", event))
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 - a deaf bar must not kill the call
-                log.warning("Local input transcription stream ended early", exc_info=True)
+            except Exception as exc:  # noqa: BLE001 - normalized by the consumer
+                # NOT a clean end. This is the transport's ONLY grounding
+                # source, so simply returning left the gate refusing and
+                # interrupting every remaining answer of the call — a silent
+                # mute that looked like the provider had stopped talking
+                # (AP-30). The consumer degrades to the same fail-open path a
+                # host without any recognizer takes, and says so out loud.
+                await queue.put(("local_input_failed", exc))
 
         async def _pump_media_audio() -> None:
             """Feed decoded RTP audio into the same normalized event stream.
@@ -628,9 +738,29 @@ class _CodexSubscriptionRealtimeSession:
 
         def _fresh_local_input_exists() -> bool:
             return bool(
-                self._input_transcriber is None
+                not self._local_grounding_active()
                 or local_input_generation > consumed_input_generation
             )
+
+        def _trusted_permit_available() -> bool:
+            """A trusted injection is only good for the response it provokes.
+
+            The far end answers an injection within a second or two. A permit
+            that outlives that window belongs to an injection nobody answered
+            and must not be spent by an unrelated response much later.
+            """
+            if self._trusted_output_permits <= 0:
+                return False
+            elapsed = asyncio.get_running_loop().time() - self._trusted_output_permit_at
+            if elapsed <= _TRUSTED_PERMIT_GRACE_S:
+                return True
+            log.debug(
+                "Discarding %d trusted output permit(s) unspent after %.1fs",
+                self._trusted_output_permits,
+                elapsed,
+            )
+            self._trusted_output_permits = 0
+            return False
 
         def _entitled_turn_continues() -> bool:
             """Is this frame the rest of an answer the user already earned?
@@ -678,14 +808,14 @@ class _CodexSubscriptionRealtimeSession:
             response_opened_at = asyncio.get_running_loop().time()
             response_rejected_at = 0.0
             active_response_generation = 0
-            if self._input_transcriber is None:
+            if not self._local_grounding_active():
                 response_allowed = True
             elif local_input_generation > consumed_input_generation:
                 active_response_generation = local_input_generation
                 entitled_generation = local_input_generation
                 entitlement_spent = False
                 response_allowed = True
-            elif self._trusted_output_permits > 0:
+            elif _trusted_permit_available():
                 self._trusted_output_permits -= 1
                 response_allowed = True
             elif _entitled_turn_continues():
@@ -754,13 +884,21 @@ class _CodexSubscriptionRealtimeSession:
             output_barrier = self._output_drop_barrier
             return True
 
-        def _ungrounded_caption_breaks_open_response() -> bool:
+        def _caption_is_too_early_to_judge() -> bool:
+            """Whether an ungrounded caption landed too soon to count as evidence.
+
+            A caption arriving in the first moments of a freshly opened response
+            is a race between two streams, not proof of an invented turn: the
+            far end may simply have transcribed the utterance that opened this
+            very response. Such a caption still closes the response, but it does
+            not advance the self-dialogue run — the next one decides.
+            """
             return bool(
                 response_open
                 and response_allowed
                 and response_opened_at > 0.0
                 and asyncio.get_running_loop().time() - response_opened_at
-                >= _UNGROUNDED_RESPONSE_GRACE_S
+                < _UNGROUNDED_RESPONSE_GRACE_S
             )
 
         async def _recover_output_transcript() -> _ProviderEvent | None:
@@ -772,12 +910,14 @@ class _CodexSubscriptionRealtimeSession:
             if not callable(recover):
                 return None
             try:
+                # No outer wait_for: the recognizer bounds itself in proportion
+                # to the audio handed in, and cancelling that await from here
+                # abandons a worker thread INSIDE the native engine, which is
+                # the exact wedge AP-24 describes. A skip (``RecognizerBusy``)
+                # and a genuine overrun (``TimeoutError``) both arrive as
+                # ordinary exceptions and are handled below.
                 text = str(
-                    await asyncio.wait_for(
-                        recover(bytes(assistant_audio), sample_rate=_OUTPUT_RATE),
-                        timeout=_OUTPUT_TRANSCRIPT_RECOVERY_TIMEOUT_S,
-                    )
-                    or ""
+                    await recover(bytes(assistant_audio), sample_rate=_OUTPUT_RATE) or ""
                 ).strip()
             except Exception:  # noqa: BLE001 - the fail-closed gate remains active
                 log.warning(
@@ -801,10 +941,20 @@ class _CodexSubscriptionRealtimeSession:
             )
 
         def _missing_input_boundary() -> _ProviderEvent | None:
-            nonlocal user_final_emitted
+            """One placeholder per turn when neither source produced text.
+
+            It deliberately does NOT latch ``user_final_emitted``: this is a
+            "we have nothing yet" notice, and the far end's own transcript of
+            the same audio regularly lands afterwards. Latching made that late
+            genuine text unreachable forever, so the turn the user really spoke
+            was permanently recorded as empty.
+            """
+            nonlocal missing_boundary_emitted
             if not local_transcript_failed or user_final_emitted:
                 return None
-            user_final_emitted = True
+            if missing_boundary_emitted:
+                return None
+            missing_boundary_emitted = True
             return _ProviderEvent(
                 type="input_transcript",
                 text="",
@@ -872,11 +1022,42 @@ class _CodexSubscriptionRealtimeSession:
                     _close_response(spent=True)
                     self._assistant_delta_text = ""
                     completion_emitted = True
+                if queue_kind == "local_input_failed":
+                    # The ONLY grounding source died mid-call. Degrade to the
+                    # same fail-open behaviour a host without any recognizer
+                    # has (``_local_grounding_active``), or the gate would
+                    # refuse and interrupt every remaining answer — a mute the
+                    # user cannot distinguish from a dead provider.
+                    if not self._local_grounding_ok:
+                        continue
+                    self._local_grounding_ok = False
+                    _close_response(spent=False)
+                    log.warning(
+                        "Local input transcription stream failed; the Codex "
+                        "subscription grounding gate now fails OPEN for the "
+                        "rest of this call",
+                        exc_info=payload if isinstance(payload, BaseException) else None,
+                    )
+                    if not grounding_loss_reported:
+                        grounding_loss_reported = True
+                        yield _ProviderEvent(
+                            type="error",
+                            error=(
+                                "Local speech recognition stopped during this call: "
+                                f"{type(payload).__name__}: {_safe_error(payload)}. "
+                                "The assistant keeps answering, but Jarvis-side "
+                                "transcript features stay idle."
+                            ),
+                            recoverable=True,
+                        )
+                    continue
                 if queue_kind == "local_input":
-                    if payload.kind == "speech_started":
+                    if payload.kind == _SPEECH_STARTED:
                         local_input_generation += 1
                         local_transcript_failed = False
                         user_final_emitted = False
+                        missing_boundary_emitted = False
+                        ungrounded_final_captions = 0
                         _cancel_completion()
                         completion_emitted = False
                         self._assistant_delta_text = ""
@@ -887,14 +1068,35 @@ class _CodexSubscriptionRealtimeSession:
                         # the unconditional escape from a stuck verdict: the one
                         # signal the far end cannot fake is the user actually
                         # making a sound into this host's microphone.
-                        _close_response(spent=True)
+                        #
+                        # It closes WITHOUT spending: a discarded utterance (a
+                        # cough) revokes its own generation below, and the reply
+                        # it interrupted must then be able to continue.
+                        _close_response(spent=False)
                         yield _ProviderEvent(type="speech_started")
-                    elif payload.kind == "transcript_failed":
+                    elif payload.kind == _SPEECH_DISCARDED:
+                        # The endpointer opened an utterance and then judged it
+                        # too short to be speech. It carries no text and must
+                        # never become a turn — but it must not destroy the
+                        # far end's preview either, which is the fallback for
+                        # the REAL utterance around it, nor leave the turn that
+                        # ``speech_started`` already announced hanging open.
+                        consumed_input_generation = max(
+                            consumed_input_generation, local_input_generation
+                        )
+                        log.debug(
+                            "Local endpointer discarded a %d ms utterance; it grounds no response",
+                            int(getattr(payload, "voiced_ms", 0) or 0),
+                        )
+                        if not response_open and not completion_emitted:
+                            completion_emitted = True
+                            yield _ProviderEvent(type="turn_complete")
+                    elif payload.kind == _TRANSCRIPT_FAILED:
                         # The local recognizer could not deliver this
                         # utterance. A turn the user really spoke must not
                         # vanish, so the far end's preview is promoted — it
-                        # covers the same audio and passed the same energy
-                        # gate. Silence here would strand the whole turn.
+                        # covers the same audio and the endpointer already
+                        # vouched for it. Silence here would strand the turn.
                         preview = self._server_user_preview
                         self._server_user_preview = ""
                         local_transcript_failed = True
@@ -953,9 +1155,9 @@ class _CodexSubscriptionRealtimeSession:
                         # not let the permanently-open track's between-turn
                         # silence authorize a response by itself.
                         if (
-                            self._input_transcriber is not None
+                            self._local_grounding_active()
                             and not _fresh_local_input_exists()
-                            and self._trusted_output_permits <= 0
+                            and not _trusted_permit_available()
                         ):
                             continue
                         if not await _begin_response("media prelude"):
@@ -1088,20 +1290,17 @@ class _CodexSubscriptionRealtimeSession:
                         fresh_input = _fresh_local_input_exists()
                         if not energy_plausible or not fresh_input:
                             log.debug(
-                                "Dropping a server user transcript delta: %s",
-                                (
-                                    "no microphone energy backs it"
-                                    if not energy_plausible
-                                    else "no fresh local utterance backs it"
-                                ),
+                                "Dropping a server user transcript delta: energy=%s fresh=%s",
+                                energy_plausible,
+                                fresh_input,
                             )
-                            # The far end just claimed a new user turn nobody
-                            # spoke. Whatever it says next belongs to THAT
-                            # invented turn, so the real turn's response is
-                            # closed and its entitlement retired here —
-                            # closing matters as much as retiring: a still-open
-                            # response would otherwise carry its "allowed"
-                            # verdict straight into the invented answer.
+                            # The far end claimed a user turn this host cannot
+                            # confirm. Whatever it says next belongs to THAT
+                            # turn, so the real turn's response is closed and
+                            # its entitlement retired here — closing matters as
+                            # much as retiring: a still-open response would
+                            # otherwise carry its "allowed" verdict straight
+                            # into the invented answer.
                             _close_response(spent=True)
                             continue
                         _cancel_completion()
@@ -1139,14 +1338,54 @@ class _CodexSubscriptionRealtimeSession:
                         energy_plausible = self._server_user_transcript_is_plausible()
                         fresh_input = _fresh_local_input_exists()
                         if not energy_plausible or not fresh_input:
-                            if _ungrounded_caption_breaks_open_response():
-                                diagnostic = (
-                                    "Codex subscription detected an automatic "
-                                    "server turn without locally grounded "
-                                    "microphone speech; rebuilding the realtime "
-                                    "transport to stop a self-dialogue loop."
+                            # Two different questions, deliberately NOT fused.
+                            # A caption may only become a turn ON ITS OWN when
+                            # both hold. But when a fresh local utterance
+                            # exists, the endpointer has ALREADY vouched that a
+                            # human spoke, and the far end simply transcribed
+                            # it with its own latency — that caption is the
+                            # documented fallback for this turn and is retained
+                            # even though it arrived past the energy window.
+                            if fresh_input:
+                                self._server_user_preview = text
+                                ungrounded_final_captions = 0
+                                log.info(
+                                    "A late server user transcript arrived past "
+                                    "the energy window; retained as the fallback "
+                                    "for the utterance the endpointer confirmed"
                                 )
-                                log.warning("%s Caption=%r", diagnostic, text[:80])
+                                _close_response(spent=True)
+                                continue
+                            # Neither energy nor a fresh utterance: this is the
+                            # far end inventing a user turn. ONE is survivable
+                            # (links are laggy); a RUN of them is the
+                            # self-dialogue loop and needs a clean transport.
+                            if _caption_is_too_early_to_judge():
+                                log.info(
+                                    "Ignoring an ungrounded server user "
+                                    "transcript that raced its own response "
+                                    "window: %r",
+                                    text[:80],
+                                )
+                                _close_response(spent=True)
+                                continue
+                            ungrounded_final_captions += 1
+                            if (
+                                ungrounded_final_captions
+                                >= _UNGROUNDED_CAPTIONS_BEFORE_REBUILD
+                            ):
+                                diagnostic = (
+                                    "Codex subscription detected %d consecutive "
+                                    "automatic server turns without locally "
+                                    "grounded microphone speech; rebuilding the "
+                                    "realtime transport to stop a self-dialogue "
+                                    "loop."
+                                )
+                                log.warning(
+                                    diagnostic + " Caption=%r",
+                                    ungrounded_final_captions,
+                                    text[:80],
+                                )
                                 _cancel_completion()
                                 completion_emitted = True
                                 _reset_assistant_capture()
@@ -1154,29 +1393,24 @@ class _CodexSubscriptionRealtimeSession:
                                 _close_response(spent=True)
                                 yield _ProviderEvent(
                                     type="error",
-                                    error=_UNGROUNDED_TURN_MESSAGES.get(
-                                        self._language,
-                                        _UNGROUNDED_TURN_MESSAGES["en"],
-                                    ),
+                                    error=_ungrounded_turn_message(self._language),
                                     recoverable=True,
                                     reconnect_advised=True,
                                 )
                                 yield _ProviderEvent(type="turn_complete")
                                 return
                             log.info(
-                                "Ignoring a server user transcript because %s (%r)",
-                                (
-                                    "no microphone energy backs it"
-                                    if not energy_plausible
-                                    else "no fresh local utterance backs it"
-                                ),
+                                "Ignoring a server user transcript with no "
+                                "microphone energy and no fresh local utterance "
+                                "(%d in a row): %r",
+                                ungrounded_final_captions,
                                 text[:80],
                             )
-                            # Same reasoning as the delta path: an invented
-                            # user turn closes the real turn's response and
-                            # retires its entitlement.
+                            # An invented user turn closes the real turn's
+                            # response and retires its entitlement.
                             _close_response(spent=True)
                             continue
+                        ungrounded_final_captions = 0
                         _cancel_completion()
                         completion_emitted = False
                         # The local recognizer owns the FINAL text: it is the
@@ -1184,7 +1418,7 @@ class _CodexSubscriptionRealtimeSession:
                         # bias prompt, and it is what every other Jarvis
                         # feature hears. This stays a live preview unless that
                         # recognizer reports it could not deliver.
-                        local_owns_final = self._input_transcriber is not None
+                        local_owns_final = self._local_grounding_active()
                         if user_final_emitted:
                             continue
                         if local_owns_final and not local_transcript_failed:
@@ -1289,9 +1523,10 @@ class _CodexSubscriptionRealtimeSession:
                         completion_emitted = False
                         self._assistant_delta_text = ""
                         self._last_input_item_id = str(item.get("item_id", "") or "")
-                        if self._input_transcriber is None:
+                        if not self._local_grounding_active():
                             local_transcript_failed = False
                             user_final_emitted = False
+                            missing_boundary_emitted = False
                         _reset_assistant_capture()
                         yield _ProviderEvent(
                             type="speech_started",
@@ -1457,18 +1692,29 @@ class _CodexSubscriptionRealtimeSession:
         # project. ChatGPT-Live accepts developer context, so a changed persona
         # is delivered mid-call instead of being discarded.
         await self._deliver_context(instructions)
-        normalized = str(language or "").strip().lower()
-        if normalized not in _LANGUAGE_UPDATE_TEXT:
+        await self._pin_language(language)
+
+    async def _pin_language(self, language: object) -> None:
+        """Deliver the resolved output language as the turn's authoritative pin.
+
+        Reasserted even when unchanged: the server can freeze an automatic
+        response before the larger per-turn persona refresh takes effect, and
+        this compact final developer item is what wins. Every locale the
+        resolver produces is pinned — an unlisted one used to be discarded
+        without a word, which left the first turn (and every turn in an
+        unlisted language) answering in whatever the far end preferred.
+        """
+        normalized = _normalized_locale(language)
+        text = _language_pin_text(normalized)
+        if not text:
             return
-        # Reassert even when unchanged. The server can freeze an automatic
-        # response before the larger per-turn persona refresh takes effect;
-        # this compact final developer item is the authoritative turn pin.
         await self._append_trusted(
             lambda: self._client.realtime_append_text(
                 self._thread_id,
-                _LANGUAGE_UPDATE_TEXT[normalized],
+                text,
                 role="developer",
-            )
+            ),
+            arms_response=False,
         )
         self._language = normalized
 
@@ -1485,7 +1731,8 @@ class _CodexSubscriptionRealtimeSession:
             return
         try:
             await self._append_trusted(
-                lambda: self._client.realtime_append_text(self._thread_id, text, role="developer")
+                lambda: self._client.realtime_append_text(self._thread_id, text, role="developer"),
+                arms_response=False,
             )
         except Exception:  # noqa: BLE001 - a mute persona must not kill the call
             log.warning(
@@ -1503,7 +1750,8 @@ class _CodexSubscriptionRealtimeSession:
             return
         try:
             await self._append_trusted(
-                lambda: self._client.realtime_append_text(self._thread_id, text, role="developer")
+                lambda: self._client.realtime_append_text(self._thread_id, text, role="developer"),
+                arms_response=False,
             )
         except Exception:  # noqa: BLE001 - an amnesiac recovery beats a dead call
             log.warning(
@@ -1519,13 +1767,15 @@ class _CodexSubscriptionRealtimeSession:
 
     async def send_text(self, text: str) -> None:
         await self._append_trusted(
-            lambda: self._client.realtime_append_text(self._thread_id, str(text), role="developer")
+            lambda: self._client.realtime_append_text(self._thread_id, str(text), role="developer"),
+            arms_response=True,
         )
 
     async def send_speech(self, text: str) -> None:
         """Queue trusted verbatim speech without starting a Codex model turn."""
         await self._append_trusted(
-            lambda: self._client.realtime_append_speech(self._thread_id, str(text))
+            lambda: self._client.realtime_append_speech(self._thread_id, str(text)),
+            arms_response=True,
         )
 
     async def truncate(self, audio_end_ms: int) -> None:
@@ -1554,7 +1804,8 @@ class _CodexSubscriptionRealtimeSession:
                     self._thread_id,
                     _TRUNCATION_NOTE.format(ms=played_ms),
                     role="developer",
-                )
+                ),
+                arms_response=False,
             )
         except Exception:  # noqa: BLE001 - a stale horizon must not kill the call
             log.warning(
@@ -1755,17 +2006,36 @@ class CodexSubscriptionRealtimeProvider:
             "Codex subscription realtime could not open a media path"
         ) from last_error
 
-    def _build_input_transcriber(self) -> Any:
+    def _build_input_transcriber(self, cfg: Any = None) -> Any:
         """Local user-speech recognition, or ``None`` when unavailable.
 
         ChatGPT-Live also guesses at user speech, but local energy-gated STT is
         authoritative. Without it silence/echo captions could become commands,
         while transcript-driven Jarvis integrations would have no grounded text.
+
+        The session's recognition language is handed over when the recognizer
+        accepts it. Probed rather than assumed (AP-21): an older recognizer
+        without the parameter keeps working on its own configured language
+        instead of the whole call losing its only grounding source over a
+        keyword argument.
         """
         if self._input_transcriber_factory is not None:
             return self._input_transcriber_factory()
+        input_language = _normalized_locale(getattr(cfg, "input_language", ""))
+        if input_language == "auto":
+            input_language = ""
         try:
             module = importlib.import_module("jarvis.realtime.input_transcription")
+            if input_language:
+                try:
+                    return module.LocalInputTranscriber(
+                        sample_rate=_INPUT_RATE, language=input_language
+                    )
+                except TypeError:
+                    log.debug(
+                        "Local input transcription does not accept a language "
+                        "yet; using its configured one"
+                    )
             return module.LocalInputTranscriber(sample_rate=_INPUT_RATE)
         except Exception:  # noqa: BLE001 - the call still works, just deaf
             log.warning(
@@ -1855,14 +2125,26 @@ class CodexSubscriptionRealtimeProvider:
                 thread_id=thread_id,
                 answer_sdp=answer_sdp,
                 audio_endpoint=audio_endpoint,
-                input_transcriber=self._build_input_transcriber(),
+                input_transcriber=self._build_input_transcriber(cfg),
                 language=str(getattr(cfg, "language", "en") or "en"),
                 voice=voice,
             )
+            # Build and prime the recognizer here, not inside the first
+            # utterance: a local engine costs seconds to construct, and paying
+            # that while the user is already speaking delays the first
+            # transcript past its own turn. Idempotent and never raises.
+            warm = getattr(session._input_transcriber, "warm", None)
+            if callable(warm):
+                await warm()
             # Identity FIRST: the model must know who it is and what this
             # project is before the user's first word arrives.
             await session._deliver_context(getattr(cfg, "instructions", ""))
             await session._deliver_history(getattr(cfg, "history", ()))
+            # Then the language, so the FIRST reply is already pinned. Without
+            # this the opening answer came back in whatever the far end chose,
+            # and only the second turn (the first ``update_session``) was
+            # corrected — the language indicator disagreeing with the voice.
+            await session._pin_language(getattr(cfg, "language", ""))
             return session
         except BaseException:
             try:

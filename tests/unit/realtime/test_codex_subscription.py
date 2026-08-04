@@ -275,7 +275,16 @@ async def test_direct_sdp_open_uses_safe_experimental_transport_contract() -> No
 
     # Jarvis's own persona/context reaches the model as developer context —
     # ChatGPT-Live has no client-settable session-instructions field.
-    assert client.text_appends == [("thread-1", "Speak concise English.", "developer")]
+    # Persona first, then the resolved output language: the FIRST reply has to
+    # be pinned too, not just every reply after the first ``update_session``.
+    assert client.text_appends == [
+        ("thread-1", "Speak concise English.", "developer"),
+        (
+            "thread-1",
+            codex_subscription_mod._language_pin_text("en"),
+            "developer",
+        ),
+    ]
     _thread_id, start = client.realtime_starts[0]
     assert start == {
         "output_modality": "audio",
@@ -312,7 +321,8 @@ async def test_reopened_session_restores_bounded_same_call_history() -> None:
         )
     )
 
-    assert len(client.text_appends) == 2
+    # Persona, then the restored history, then the resolved language pin.
+    assert len(client.text_appends) == 3
     thread_id, restored, role = client.text_appends[1]
     assert thread_id == "thread-1"
     assert role == "developer"
@@ -402,11 +412,18 @@ async def test_language_update_is_developer_context_and_speech_is_authoritative(
     await session.send_speech("Trusted answer")
 
     assert client.text_appends == [
+        # Pinned once when the session opened...
         (
             "thread-1",
-            codex_subscription_mod._LANGUAGE_UPDATE_TEXT["es"],
+            codex_subscription_mod._language_pin_text("en"),
             "developer",
-        )
+        ),
+        # ...and again for the language this turn resolved to.
+        (
+            "thread-1",
+            codex_subscription_mod._language_pin_text("es"),
+            "developer",
+        ),
     ]
     assert client.speech_appends == [("thread-1", "Trusted answer")]
     await session.close()
@@ -426,12 +443,10 @@ async def test_same_language_is_reasserted_at_every_local_turn_boundary() -> Non
 
     await session.update_session(language="de")
 
+    pin = codex_subscription_mod._language_pin_text("de")
     assert client.text_appends == [
-        (
-            "thread-1",
-            codex_subscription_mod._LANGUAGE_UPDATE_TEXT["de"],
-            "developer",
-        )
+        ("thread-1", pin, "developer"),
+        ("thread-1", pin, "developer"),
     ]
     await session.close()
 
@@ -1486,8 +1501,10 @@ async def test_ungrounded_server_turn_aborts_an_open_response_without_a_boundary
     Live Codex v3 evidence (2026-08-02) carried no terminal response item. The
     legitimate answer therefore stayed open while silence produced a new
     server-side user caption, and every automatic reply was accepted as more
-    of the original response. The first ungrounded final caption must close
-    the local turn and force a clean transport rebuild.
+    of the original response. A RUN of ungrounded final captions must close the
+    local turn and force a clean transport rebuild - a single one must not,
+    because a server that transcribes with its own latency is normal and
+    tearing the transport down for it costs a full handshake every turn.
     """
     monkeypatch.setattr(codex_subscription_mod, "_UNGROUNDED_RESPONSE_GRACE_S", 0.0)
     client = _Client()
@@ -1505,6 +1522,23 @@ async def test_ungrounded_server_turn_aborts_an_open_response_without_a_boundary
                 _Notification(
                     "thread/realtime/transcript/done",
                     {"threadId": "thread-1", "role": "user", "text": "Thanks."},
+                ),
+            ),
+            # A single late caption is survivable and must NOT tear the
+            # transport down (a server that transcribes slowly is normal).
+            # A RUN of them is the self-dialogue loop.
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "user", "text": "Sure thing."},
+                ),
+            ),
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "user", "text": "Anything else?"},
                 ),
             ),
             (
@@ -1560,6 +1594,22 @@ async def test_ungrounded_turn_warning_uses_the_resolved_session_language(
                 _Notification(
                     "thread/realtime/transcript/done",
                     {"threadId": "thread-1", "role": "user", "text": "Danke."},
+                ),
+            ),
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "user", "text": "Alles klar."},
+                ),
+            ),
+            # A run, not a single late caption: one is survivable, a run is the
+            # self-dialogue loop that earns the rebuild warning.
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "user", "text": "Und weiter?"},  # i18n-allow: German utterance under test
                 ),
             ),
         ]
@@ -2225,33 +2275,37 @@ async def test_truncate_reports_the_played_position_to_the_model() -> None:
     """
     client = _Client()
     session = await _provider(client).open_session(RealtimeSessionConfig())
+    # Opening the session pins the reply language, which is itself a developer
+    # write; count from there so this test measures only what truncate adds.
+    baseline = len(client.text_appends)
 
     # Nothing was interrupted yet: a stray truncate must not write anything.
     await session.truncate(audio_end_ms=900)
-    assert client.text_appends == []
+    assert len(client.text_appends) == baseline
 
     await session.interrupt()
     await session.truncate(audio_end_ms=900)
 
-    assert len(client.text_appends) == 1
-    thread_id, text, role = client.text_appends[0]
+    assert len(client.text_appends) == baseline + 1
+    thread_id, text, role = client.text_appends[-1]
     assert thread_id == "thread-1"
     assert role == "developer"
     assert "900 ms" in text
     # One note per interrupt, never a repeat on the next boundary.
     await session.truncate(audio_end_ms=900)
-    assert len(client.text_appends) == 1
+    assert len(client.text_appends) == baseline + 1
     await session.close()
 
 
 @pytest.mark.asyncio
-async def test_context_and_history_writes_are_not_ungrounded_responses() -> None:
-    """AD-14: every provider write that can create output arms a permit.
+async def test_context_and_history_writes_never_authorize_a_response() -> None:
+    """Silent configuration writes must not buy the model a turn.
 
-    ``send_text``/``send_speech`` always did; the persona, the call history
-    and the language pin are the same ``appendText`` call and did not, so a
-    response the model produced for context Jarvis itself injected looked
-    exactly like a self-echo turn and was refused.
+    The persona, the call history and the language pin travel as the same
+    ``appendText`` call that ``send_text``/``send_speech`` use, but they mean
+    the opposite thing: they configure the session rather than ask for speech.
+    Arming a trusted-output permit for them would authorize one ungrounded
+    answer per write - at session open, before the user has said anything.
     """
     client = _Client(
         [
@@ -2282,22 +2336,33 @@ async def test_context_and_history_writes_are_not_ungrounded_responses() -> None
         )
     )
 
+    # The language pin, the persona and the history: three developer writes.
     assert [role for _thread, _text, role in client.text_appends] == [
+        "developer",
         "developer",
         "developer",
     ]
 
     events = [event async for event in session.receive()]
 
+    # No microphone energy stands behind this answer, and a configuration
+    # write is not consent to speak - so it is refused, exactly like any other
+    # ungrounded turn.
     assert [
         event.text for event in events if event.type == "output_transcript_delta"
-    ] == ["Understood."]
+    ] == []
     await session.close()
 
 
 @pytest.mark.asyncio
-async def test_the_language_pin_also_arms_a_trusted_permit() -> None:
-    """The compact per-turn language item is the same write (AD-14)."""
+async def test_the_language_pin_never_authorizes_a_response() -> None:
+    """Changing the reply language is configuration, not a request to speak.
+
+    The pin travels as the same ``appendText`` write as an announcement, so it
+    is the one place where a permit would be easiest to grant by accident -
+    and it would hand the model an authorized ungrounded turn on every
+    language change.
+    """
     client = _Client(
         [
             _Notification(
@@ -2315,5 +2380,5 @@ async def test_the_language_pin_also_arms_a_trusted_permit() -> None:
 
     assert [
         event.text for event in events if event.type == "output_transcript_delta"
-    ] == ["Verstanden."]
+    ] == []
     await session.close()
