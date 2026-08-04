@@ -497,35 +497,38 @@ describe("pane actions", () => {
   });
 });
 
+/** The inline style of a pane's cell, as written (jsdom keeps it verbatim). */
+function cellStyle(name: string): string {
+  return screen.getByTestId(`pane-cell-${name}`).getAttribute("style") ?? "";
+}
+
+/**
+ * A pane's rectangle, as the four percentages it was positioned with.
+ *
+ * Panes are placed by FRACTION now rather than by grid track, because one CSS
+ * grid shares `grid-template-columns` across all of its rows — so two bands
+ * could never have had different column widths, and every pane in a band was
+ * stuck the same size as its neighbours.
+ *
+ * Percentages of the WORKSPACE, which is the window — so these numbers are also
+ * the proof that a workspace never grows past what is on screen.
+ */
+function box(name: string): { left: number; top: number; width: number; height: number } {
+  const style = cellStyle(name);
+  const read = (property: string) => {
+    const match = new RegExp(`${property}: (?:calc\\()?([-\\d.]+)%`).exec(style);
+    if (!match) throw new Error(`${name} has no ${property}: ${style}`);
+    return Number(match[1]);
+  };
+  return {
+    left: read("left"),
+    top: read("top"),
+    width: read("width"),
+    height: read("height"),
+  };
+}
+
 describe("grid layout", () => {
-  /** The inline style of a pane's cell, as written (jsdom keeps it verbatim). */
-  function cellStyle(name: string): string {
-    return screen.getByTestId(`pane-cell-${name}`).getAttribute("style") ?? "";
-  }
-
-  /**
-   * A pane's rectangle, as the four percentages it was positioned with.
-   *
-   * Panes are placed by FRACTION now rather than by grid track, because one CSS
-   * grid shares `grid-template-columns` across all of its rows — so two bands
-   * could never have had different column widths, and every pane in a band was
-   * stuck the same size as its neighbours.
-   */
-  function box(name: string): { left: number; top: number; width: number; height: number } {
-    const style = cellStyle(name);
-    const read = (property: string) => {
-      const match = new RegExp(`${property}: (?:calc\\()?([-\\d.]+)%`).exec(style);
-      if (!match) throw new Error(`${name} has no ${property}: ${style}`);
-      return Number(match[1]);
-    };
-    return {
-      left: read("left"),
-      top: read("top"),
-      width: read("width"),
-      height: read("height"),
-    };
-  }
-
   it("puts a fresh workspace side by side in one row", () => {
     renderGrid(sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2], ["Kai", 3]]));
     expect(box("Mika")).toMatchObject({ left: 0, top: 0, width: 25, height: 100 });
@@ -587,8 +590,7 @@ describe("grid layout", () => {
     // Reported 2026-08-03: past a width-derived ceiling the extra columns used
     // to start a second line — which paid for them with the height of every
     // pane already open, and moved a pane the user was reading. Twelve columns
-    // are twelve columns now; the workspace is wider than the window and the
-    // grid scrolls sideways.
+    // are twelve columns now, sharing the one window between them.
     const panes = Array.from({ length: 12 }, (_, i) => [`T${i + 1}`, i] as [string, number]);
     renderGrid(sessionWith(panes));
     expect(box("T1")).toMatchObject({ left: 0, top: 0, height: 100 });
@@ -608,10 +610,10 @@ describe("grid layout", () => {
     // Without this the pane would stay in its one-twelfth rectangle while the
     // rest of the workspace is blank.
     expect(cellStyle("T3")).toContain("inset: 0");
-    // ...and the surface it fills is exactly the window, not the whole
-    // workspace. A maximized pane taller than the visible area made the
-    // terminal fit itself to rows below the clip — which is where the CLI keeps
-    // its prompt box.
+    // ...and the surface it fills is exactly the window — which is now true of
+    // every pane, maximized or not. A maximized pane taller than the visible
+    // area made the terminal fit itself to rows below the clip, which is where
+    // the CLI keeps its prompt box.
     expect(screen.getByTestId("agentic-grid").className).toContain("overflow-hidden");
     expect(screen.getByTestId("agentic-grid-canvas").style.height).toBe("");
     // Nothing to divide while one pane covers the others.
@@ -1771,7 +1773,14 @@ describe("resizing the workspace", () => {
   });
 });
 
-describe("a workspace with far more panes than the window fits", () => {
+/**
+ * The standing rule for this screen, reported 2026-08-04: the workspace is ONE
+ * screenful, always. Opening a seventh terminal used to widen the canvas past
+ * the window, so the maintainer had to scroll sideways to see the pane they had
+ * just opened — and watching eight agents at once meant scrolling between them.
+ * Panes get smaller instead.
+ */
+describe("a workspace with far more panes than the window comfortably fits", () => {
   /** Many panes, one per column, the way a big fan-out opens them. */
   function manyPanes(count: number) {
     return sessionWith(
@@ -1779,34 +1788,36 @@ describe("a workspace with far more panes than the window fits", () => {
     );
   }
 
-  it("keeps every pane readable instead of sharing the height N ways", () => {
-    // The failure this guards: height used to be a free `1fr`, so panes shrank
-    // without limit. Measured on a 2560 px screen, 12 panes gave each ~26 text
-    // rows, 40 gave 7 and 100 gave 3 — readable width, unusable height, and
-    // nothing crashed to tell anyone.
-    //
-    // A column four panes deep is drawn 4 × 240 px tall however short the
-    // window is, and the workspace scrolls down to the rest.
+  it("divides the window's HEIGHT between a deep column instead of growing past it", () => {
+    // The canvas used to be drawn 4 × 240 px tall for a four-deep column, and
+    // the grid scrolled down to the rest.
     renderGrid(
       sessionWith(
         Array.from({ length: 4 }, (_, i) => [`T${i}`, 0, i] as [string, number, number]),
       ),
     );
-    expect(screen.getByTestId("agentic-grid-canvas").style.height).toBe("960px");
+    const canvas = screen.getByTestId("agentic-grid-canvas");
+    expect(canvas.style.height).toBe("");
+    expect(canvas.className).toContain("h-full");
+    // Four panes, four quarters, the last one ending exactly at the bottom.
+    expect(box("T3")).toMatchObject({ top: 75, height: 25 });
   });
 
-  it("keeps every pane readable instead of sharing the WIDTH N ways", () => {
-    // The 2026-08-03 half of the same rule. Forty columns used to wrap into
-    // four lines of ten — which fixed the width by taking three quarters of
-    // every pane's height, and moved panes the user was reading. Now the
-    // workspace is drawn 40 × 380 px wide and scrolls sideways instead.
+  it("divides the window's WIDTH between forty columns instead of growing past it", () => {
+    // The 2026-08-03 half of the same rule, which used to draw the canvas
+    // 40 × 380 px wide and scroll sideways.
     renderGrid(manyPanes(40));
-    expect(screen.getByTestId("agentic-grid-canvas").style.width).toBe("15200px");
+    const canvas = screen.getByTestId("agentic-grid-canvas");
+    expect(canvas.style.width).toBe("");
+    expect(canvas.className).toContain("w-full");
+    expect(box("T39").left).toBeCloseTo(97.5, 5);
   });
 
-  it("scrolls on either axis once the panes stop fitting, rather than squeezing them", () => {
+  it("never scrolls on either axis, however many panes are open", () => {
     renderGrid(manyPanes(40));
-    expect(screen.getByTestId("agentic-grid").className).toContain("overflow-auto");
+    const grid = screen.getByTestId("agentic-grid").className;
+    expect(grid).toContain("overflow-hidden");
+    expect(grid).not.toContain("overflow-auto");
   });
 
   it("renders a pane for every one of a hundred terminals", () => {
@@ -2176,13 +2187,12 @@ describe("the workspace header row", () => {
 
 /**
  * Panes arrive from outside this grid — spoken across the room, or from the
- * CLI — so nothing draws the user's eye to the change, and a workspace taller
- * than its viewport puts the new pane below the fold entirely. Reported
- * 2026-07-28 as terminals that "just don't load": they had loaded, off-screen
- * and unannounced.
+ * CLI — so nothing draws the user's eye to the change. Reported 2026-07-28 as
+ * terminals that "just don't load": they had loaded, unannounced (and, back
+ * when a workspace could be taller than its viewport, off screen as well).
  */
 describe("panes that appear from outside the grid", () => {
-  it("scrolls the newest pane into view and marks what just arrived", () => {
+  it("marks what just arrived, without moving the workspace under the user", () => {
     const scrollIntoView = vi.fn();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
@@ -2208,9 +2218,6 @@ describe("panes that appear from outside the grid", () => {
       ),
     );
 
-    // Nothing was announced on mount: a restored workspace's panes are not news.
-    expect(scrollIntoView).not.toHaveBeenCalled();
-
     view.rerender(
       grid(
         sessionWith([
@@ -2222,7 +2229,10 @@ describe("panes that appear from outside the grid", () => {
       ),
     );
 
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    // Nothing is scrolled to any more: the workspace is one screenful, so the
+    // new pane is already in view — and the only scroller such a call could
+    // still find is the app's own, which would move the whole section.
+    expect(scrollIntoView).not.toHaveBeenCalled();
     // The panes that arrived wear a ring; the ones that were already there
     // must not, or "what is new" says nothing at all.
     expect(screen.getByTestId("pane-cell-T4").className).toContain("ring-2");

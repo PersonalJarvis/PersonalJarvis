@@ -867,13 +867,18 @@ export function AgenticTerminal({
         /**
          * A prompt just landed in this pane — make that impossible to miss.
          *
-         * Three things, and the order matters. The pane is un-parked FIRST:
+         * Two things, and the order matters. The pane is un-parked FIRST:
          * whatever the observer believes, output held back now is output the
          * user will not see while they are looking straight at the receipt
-         * telling them it arrived. Then it is scrolled into the viewport,
-         * because a receipt drawn on a pane two screens down is no better than
-         * no receipt. Only then does it flash, which is the part that is merely
-         * nice.
+         * telling them it arrived. Only then does it flash, which is the part
+         * that is merely nice.
+         *
+         * It used to scroll the pane into the viewport as well, because a
+         * receipt drawn on a pane two screens down is no better than no
+         * receipt. There is no such pane any more — the workspace is one
+         * screenful by rule (see the header of ./layout) — and the call would
+         * now find the app's own scroller instead and move the whole section
+         * under the user.
          *
          * None of this depends on the agent echoing anything, which is the
          * whole point: this path is what remains true when the terminal is a
@@ -885,15 +890,6 @@ export function AgenticTerminal({
           setReceipt(delivery);
           setJustDelivered(true);
           window.setTimeout(() => setJustDelivered(false), 2_000);
-          if (activeRef.current) {
-            try {
-              container.scrollIntoView({ block: "nearest", behavior: "auto" });
-            } catch {
-              // Older engines take no options object; position is a nicety and
-              // the receipt is legible wherever the pane happens to sit.
-              container.scrollIntoView();
-            }
-          }
         },
         onReady: ({ resumed, reattached, lastPrompt }) => {
           troubleShown = null;
@@ -1679,8 +1675,8 @@ function PaneHeader({
                   "flex h-5 w-5 shrink-0 items-center justify-center rounded transition-opacity",
                   "opacity-0 focus-visible:opacity-100 group-hover/header:opacity-100",
                   light
-                    ? "text-[#6b6b73] hover:bg-black/10"
-                    : "text-[#9a9aa5] hover:bg-white/10",
+                    ? "text-[#6b6b73] hover:bg-scrim/10"
+                    : "text-[#9a9aa5] hover:bg-sheen/10",
                 )}
               >
                 <Pencil className="h-3 w-3" />
@@ -1869,8 +1865,8 @@ function PaneAction({
         danger
           ? "hover:bg-destructive/20 hover:text-destructive"
           : light
-            ? "hover:bg-black/10"
-            : "hover:bg-white/10",
+            ? "hover:bg-scrim/10"
+            : "hover:bg-sheen/10",
       )}
       style={{ color: light ? "#55555e" : "#a8a8b2" }}
     >

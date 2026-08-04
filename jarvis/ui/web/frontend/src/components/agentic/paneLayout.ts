@@ -133,17 +133,13 @@ export interface WorkspaceLayout {
   boxes: PaneBox[];
   seams: PaneSeam[];
   /**
-   * Columns the workspace holds, left to right — also the width below which it
-   * stops shrinking and scrolls sideways instead, in multiples of one minimum
-   * pane width. See `MIN_PANE_WIDTH_PX` in `./layout` for why there is a floor.
+   * Columns the workspace holds, left to right.
+   *
+   * Purely informational now: the workspace is drawn at exactly the size it was
+   * given on both axes, so nothing multiplies this by a minimum width any more
+   * (see the header of `./layout`).
    */
   columns: number;
-  /**
-   * Height below which panes stop shrinking and the workspace scrolls instead,
-   * in multiples of one minimum pane height — the tallest stack in the
-   * workspace. See `MIN_PANE_HEIGHT_PX` in `./layout` for why there is a floor.
-   */
-  minHeightUnits: number;
 }
 
 function weightAt(list: readonly number[], index: number): number {
@@ -160,16 +156,17 @@ function paneWeight(weights: PaneWeights, name: string): number {
  * Lay a workspace out.
  *
  * Every column the panes name gets a place on ONE line, however many there are:
- * the workspace never re-arranges itself to fit a window (see the header of
- * `./layout`). `columns` comes back with the boxes so the caller can decide how
- * wide to draw the canvas, which is where the readability floor is paid now.
+ * the workspace never re-arranges itself to fit a window, and never grows past
+ * it either (see the header of `./layout`). The boxes are fractions of whatever
+ * area the caller draws them in, so "one more pane" is always "everything a
+ * little smaller" and never "scroll to find it".
  */
 export function paneLayout<T extends Sized>(
   panes: readonly T[],
   weights: PaneWeights = evenWeights(),
 ): WorkspaceLayout {
   if (panes.length === 0) {
-    return { boxes: [], seams: [], columns: 0, minHeightUnits: 0 };
+    return { boxes: [], seams: [], columns: 0 };
   }
 
   // Columns in left-to-right order with gaps closed, exactly as `paneGrid` does
@@ -189,12 +186,10 @@ export function paneLayout<T extends Sized>(
 
   const boxes: PaneBox[] = new Array(panes.length);
   const seams: PaneSeam[] = [];
-  let tallest = 1;
   let xCursor = 0;
 
   stacks.forEach((stack, index) => {
     const width = columnWeights[index] / columnTotal;
-    tallest = Math.max(tallest, stack.length);
 
     // --------------------------------------------------- panes in this column
     const stackWeights = stack.map((pane) => paneWeight(weights, panes[pane].name));
@@ -248,7 +243,7 @@ export function paneLayout<T extends Sized>(
     xCursor += width;
   });
 
-  return { boxes, seams, columns: stacks.length, minHeightUnits: tallest };
+  return { boxes, seams, columns: stacks.length };
 }
 
 // ---------------------------------------------------------------- dragging

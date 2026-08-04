@@ -96,22 +96,23 @@ describe("paneLayout", () => {
     expect(seams).toHaveLength(7);
   });
 
-  it("reports the height below which the workspace scrolls instead of shrinking", () => {
-    // The tallest stack in the workspace: two panes deep, so two minimum pane
-    // heights — not the six a least-common-multiple row grid used to demand.
+  it("keeps a stacked column inside the workspace instead of overflowing it", () => {
+    // Until 2026-08-04 the tallest stack was reported back so the grid could
+    // draw the canvas taller than the window and scroll down to the rest. Panes
+    // are shares of the visible area now, on both axes: four deep is four
+    // quarters, however short the window is.
     const panes = [
       pane("A", 0),
       pane("B", 0, 1),
-      pane("C", 1),
-      pane("D", 2),
-      pane("E", 3),
+      pane("C", 0, 2),
+      pane("D", 0, 3),
     ];
-    expect(paneLayout(panes).minHeightUnits).toBe(2);
+    const { boxes } = paneLayout(panes);
+    expect(boxes.map((box) => round(box.h))).toEqual([0.25, 0.25, 0.25, 0.25]);
+    expect(round(boxes[3].y + boxes[3].h)).toBe(1);
   });
 
-  it("reports the columns the canvas has to be wide enough for", () => {
-    // What the grid multiplies by MIN_PANE_WIDTH_PX to decide whether the
-    // workspace is bigger than its window.
+  it("reports the columns the workspace holds", () => {
     const panes = Array.from({ length: 7 }, (_, i) => pane(`T${i}`, i));
     expect(paneLayout(panes).columns).toBe(7);
     // Stacked panes share a column and do not widen the workspace.
@@ -124,12 +125,7 @@ describe("paneLayout", () => {
   });
 
   it("has nothing to lay out for an empty workspace", () => {
-    expect(paneLayout([])).toEqual({
-      boxes: [],
-      seams: [],
-      columns: 0,
-      minHeightUnits: 0,
-    });
+    expect(paneLayout([])).toEqual({ boxes: [], seams: [], columns: 0 });
   });
 });
 

@@ -36,12 +36,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { IconButton } from "./controls";
-import {
-  columnsWithoutScrolling,
-  paneGrid,
-  widthForAllVisible,
-  wizardPanes,
-} from "./layout";
+import { paneGrid, paneWidthAt, panesAreComfortable, wizardPanes } from "./layout";
 
 /**
  * Counts that get a labelled tick on the track.
@@ -112,35 +107,16 @@ export function WorkspaceShape({
   workspaceWidthPx,
 }: WorkspaceShapeProps) {
   const grid = useMemo(() => paneGrid(wizardPanes(count)), [count]);
-  /*
-   * How many of those columns the window shows at once.
-   *
-   * The stage draws all of them — the workspace really is `count` columns wide
-   * whatever the window does — and the readout says how many are on screen
-   * before it scrolls. Two different questions since 2026-08-03, when the
-   * workspace stopped wrapping: the ARRANGEMENT no longer depends on the window
-   * at all, only the view onto it does.
-   */
-  const visible = useMemo(
-    () => columnsWithoutScrolling(workspaceWidthPx),
-    [workspaceWidthPx],
-  );
 
   return (
     <div className="flex flex-col gap-3 p-3">
       <WorkspaceStage
         columns={grid.columns}
-        visible={visible}
         rows={grid.rows}
         count={count}
         names={names}
       />
-      <Readout
-        columns={grid.columns}
-        visible={visible}
-        count={count}
-        workspaceWidthPx={workspaceWidthPx}
-      />
+      <Readout columns={grid.columns} workspaceWidthPx={workspaceWidthPx} />
     </div>
   );
 }
@@ -307,21 +283,20 @@ export function CountTrack({
  * — over the panes the backend will actually create (`wizardPanes`). The two
  * cannot drift apart without the running grid changing too.
  *
- * The stage is the WINDOW, not the workspace. Past `visible` columns the grid
- * inside it is drawn wider than the frame and the remainder is clipped at the
- * right edge — which is exactly what the running workspace does, and says it
- * more plainly than any sentence could: this many fit, the rest are a scroll
- * away.
+ * The stage is the whole workspace AND the whole window, because those are the
+ * same thing now: every column is drawn inside the frame, however many there
+ * are, and more terminals make each one narrower. It used to draw the grid
+ * wider than the frame and clip the remainder, which was the honest picture of
+ * a workspace you scrolled sideways — and is exactly what the maintainer asked
+ * to be rid of on 2026-08-04.
  */
 function WorkspaceStage({
   columns,
-  visible,
   rows,
   count,
   names,
 }: {
   columns: number;
-  visible: number;
   rows: number;
   count: number;
   names: string[];
@@ -352,9 +327,6 @@ function WorkspaceStage({
 
   const safeColumns = Math.max(1, columns);
   const safeRows = Math.max(1, rows);
-  // How much wider than the frame the workspace is drawn. 1 while everything
-  // fits, so the common case is an ordinary full-width grid.
-  const overshoot = Math.max(1, safeColumns / Math.max(1, visible));
   const paneWidth = size.width > 0 ? size.width / safeColumns : 0;
   const paneHeight = size.height > 0 ? size.height / safeRows : 0;
   // Panes are laid out as a grid of equal cells, so one pane's detail level is
@@ -384,9 +356,8 @@ function WorkspaceStage({
       <div
         ref={stageRef}
         data-testid="workspace-stage-grid"
-        className="grid h-full gap-1 p-1"
+        className="grid h-full w-full gap-1 p-1"
         style={{
-          width: `${overshoot * 100}%`,
           gridTemplateColumns: `repeat(${safeColumns}, minmax(0, 1fr))`,
           gridTemplateRows: `repeat(${safeRows}, minmax(0, 1fr))`,
         }}
@@ -453,37 +424,39 @@ function StagePane({
 }
 
 /**
- * What the stage shows, in words, together with what it depends on.
+ * What the stage shows, in words, together with what it costs.
  *
  * The second half is the part that matters. An arrangement stated without its
- * condition is a bug this step actually had: correct on screen, wrong five
- * seconds later after a maximise, with nothing to explain the difference.
+ * consequence is a bug this step actually had: correct on screen, and silent
+ * about the thing the user would notice a minute later.
  */
 function Readout({
   columns,
-  visible,
-  count,
   workspaceWidthPx,
 }: {
   columns: number;
-  visible: number;
-  count: number;
   workspaceWidthPx: number;
 }) {
-  const allVisibleAt = widthForAllVisible(count);
-  const scrolls = columns > visible;
+  // By COLUMNS rather than the raw count, so the sentence can never describe a
+  // different workspace from the stage above it.
+  const paneWidth = paneWidthAt(columns, workspaceWidthPx);
+  const comfortable = panesAreComfortable(columns, workspaceWidthPx);
 
+  /*
+   * There is no longer an "and the rest are off screen" case to warn about —
+   * every pane is on screen, always. What is left to say is the price of that
+   * promise, which the user pays in pane WIDTH, so the readout quotes it before
+   * they commit to the count rather than after.
+   */
   let condition: string;
-  if (!scrolls) {
-    condition = "All side by side — this window is wide enough.";
-  } else if (allVisibleAt !== null) {
-    condition = `All side by side, ${visible} of them on screen — scroll sideways for the rest. From ${formatPx(
-      allVisibleAt,
-    )} px wide they all fit at once; this window is ${formatPx(
-      Math.round(workspaceWidthPx),
-    )} px.`;
+  if (paneWidth === 0) {
+    condition = "All on one screen.";
+  } else if (comfortable) {
+    condition = `All on one screen, about ${formatPx(paneWidth)} px each.`;
   } else {
-    condition = "All side by side — scroll sideways for the rest.";
+    condition = `All on one screen, about ${formatPx(
+      paneWidth,
+    )} px each — narrow for an agent's output. Maximize a pane to read it full size.`;
   }
 
   return (

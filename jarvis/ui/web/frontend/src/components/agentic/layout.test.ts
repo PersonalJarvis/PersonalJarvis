@@ -1,85 +1,69 @@
 import { describe, expect, it } from "vitest";
 import {
+  COMFORTABLE_PANE_WIDTH_PX,
   GRID_HORIZONTAL_PADDING_PX,
-  MIN_PANE_WIDTH_PX,
-  columnsWithoutScrolling,
   paneGrid,
-  widthForAllVisible,
+  paneWidthAt,
+  panesAreComfortable,
   wizardPanes,
-  workspaceWidthFor,
 } from "./layout";
 
 /*
- * The thresholds are expressed as "content width + the grid's own padding"
- * rather than as the literal pixel numbers they came to.
+ * The widths are expressed as "content width + the grid's own padding" rather
+ * than as the literal pixel numbers they come to.
  *
  * Those literals were what made this file break when the grid was tightened
  * from 12 px of padding a side to 4 — a purely visual change that has no
  * business moving a threshold, and did not: only the OUTER width at which it is
  * crossed moved, by exactly the padding.
  */
-const FOUR_COLUMNS_AT = 4 * MIN_PANE_WIDTH_PX;
-const SIX_COLUMNS_AT = 6 * MIN_PANE_WIDTH_PX;
+const FOUR_COMFORTABLE_AT = 4 * COMFORTABLE_PANE_WIDTH_PX;
 
-describe("workspaceWidthFor", () => {
-  it("is exactly the window while the columns are readable in it", () => {
-    // Nothing scrolls in the ordinary case: four columns in a window wide
-    // enough for six are four columns of a quarter of the window each.
-    expect(workspaceWidthFor(4, SIX_COLUMNS_AT)).toBe(SIX_COLUMNS_AT);
+describe("paneWidthAt", () => {
+  it("divides the window between the columns, whatever the count", () => {
+    // The rule this whole module now serves (maintainer, 2026-08-04): the
+    // workspace is always one screenful, so a pane is a SHARE of the window and
+    // never a fixed size the window has to grow to accommodate.
+    const outer = FOUR_COMFORTABLE_AT + GRID_HORIZONTAL_PADDING_PX;
+    expect(paneWidthAt(4, outer)).toBe(COMFORTABLE_PANE_WIDTH_PX);
+    expect(paneWidthAt(8, outer)).toBe(COMFORTABLE_PANE_WIDTH_PX / 2);
+    expect(paneWidthAt(40, outer)).toBe(COMFORTABLE_PANE_WIDTH_PX / 10);
   });
 
-  it("grows past the window rather than squeezing the columns", () => {
-    // The 2026-08-03 report: a sixth terminal on a five-column window used to
-    // wrap onto a second line, which halved the five panes the user was already
-    // reading. Now the workspace is six columns wide and the grid scrolls.
-    const window = 5 * MIN_PANE_WIDTH_PX;
-    expect(workspaceWidthFor(6, window)).toBe(6 * MIN_PANE_WIDTH_PX);
+  it("answers for the grid's content width, not the element around it", () => {
+    // The wizard measures an unpadded element; the running grid pads itself.
+    // A helper that ignored that would quote a width the workspace never has.
+    expect(paneWidthAt(1, 1000)).toBe(1000 - GRID_HORIZONTAL_PADDING_PX);
   });
 
-  it("never lets a column fall below the readable floor, at any count", () => {
-    // Measured against a real agent on 2026-07-25: below ~380 px Claude Code
-    // truncates every line and breaks single words across rows.
-    for (const columns of [1, 2, 6, 7, 12, 40, 100]) {
-      const width = workspaceWidthFor(columns, 1440);
-      expect(width / columns).toBeGreaterThanOrEqual(MIN_PANE_WIDTH_PX);
-    }
-  });
-
-  it("is the window itself for an empty workspace", () => {
-    expect(workspaceWidthFor(0, 1440)).toBe(1440);
+  it("has nothing to divide for an empty or unmeasured workspace", () => {
+    expect(paneWidthAt(0, 1440)).toBe(0);
+    expect(paneWidthAt(4, 0)).toBe(0);
+    expect(paneWidthAt(4, Number.NaN)).toBe(0);
   });
 });
 
-describe("columnsWithoutScrolling", () => {
-  it("uses the grid content width on both sides of the four-column threshold", () => {
-    const outer = FOUR_COLUMNS_AT + GRID_HORIZONTAL_PADDING_PX;
-    expect(columnsWithoutScrolling(outer - 1)).toBe(3);
-    expect(columnsWithoutScrolling(outer)).toBe(4);
+describe("panesAreComfortable", () => {
+  it("turns on either side of the readable width, measured against a real agent", () => {
+    // 2026-07-25, against Claude Code: below ~380 px it truncates every line and
+    // breaks single words across rows ("Clau/de/Max"). That is now ADVICE the
+    // wizard gives before anything opens — it no longer moves a single pixel.
+    const outer = FOUR_COMFORTABLE_AT + GRID_HORIZONTAL_PADDING_PX;
+    expect(panesAreComfortable(4, outer)).toBe(true);
+    expect(panesAreComfortable(5, outer)).toBe(false);
   });
 
-  it("uses the grid content width on both sides of the six-column threshold", () => {
-    const outer = SIX_COLUMNS_AT + GRID_HORIZONTAL_PADDING_PX;
-    expect(columnsWithoutScrolling(outer - 1)).toBe(5);
-    expect(columnsWithoutScrolling(outer)).toBe(6);
+  it("is about the pane, not the count — the same eight differ by display", () => {
+    const laptop = 1440;
+    const wall = 8 * COMFORTABLE_PANE_WIDTH_PX + GRID_HORIZONTAL_PADDING_PX;
+    expect(panesAreComfortable(8, laptop)).toBe(false);
+    expect(panesAreComfortable(8, wall)).toBe(true);
   });
 
-  it("gives a laptop fewer visible columns than a large display", () => {
-    expect(columnsWithoutScrolling(1440)).toBeLessThan(
-      columnsWithoutScrolling(2560),
-    );
-  });
-
-  it("never returns zero — one cramped column still beats none", () => {
-    expect(columnsWithoutScrolling(120)).toBe(1);
-    expect(columnsWithoutScrolling(0)).toBe(1);
-    expect(columnsWithoutScrolling(Number.NaN)).toBe(1);
-  });
-
-  it("has no ceiling — a wide enough window shows however many there are", () => {
-    // The old capacity helper stopped at ten whatever the display. A 4K wall
-    // really does fit more than ten readable columns, and nothing about the
-    // count is capped any more.
-    expect(columnsWithoutScrolling(100_000)).toBeGreaterThan(10);
+  it("says nothing rather than warning while the container is unmeasured", () => {
+    // A first paint reports 0. Rendering that as "these panes will be cramped"
+    // means every user is shouted at once, for a reading that was never taken.
+    expect(panesAreComfortable(12, 0)).toBe(true);
   });
 });
 
@@ -107,31 +91,6 @@ describe("wizardPanes", () => {
     const grid = paneGrid(wizardPanes(8));
     expect(grid.columns).toBe(8);
     expect(grid.rows).toBe(1);
-  });
-});
-
-describe("widthForAllVisible", () => {
-  it("names the width at which a count stops needing a sideways scroll", () => {
-    // What the readout tells the user, so a workspace that scrolls is never a
-    // surprise: eight panes need 8 × 380 px plus the grid padding.
-    expect(widthForAllVisible(8)).toBe(
-      8 * MIN_PANE_WIDTH_PX + GRID_HORIZONTAL_PADDING_PX,
-    );
-    // And it agrees with the helper the wizard measures through, rather than
-    // being a second opinion about the same threshold.
-    expect(columnsWithoutScrolling(widthForAllVisible(8) as number)).toBe(8);
-  });
-
-  it("has an answer for every count — no width is ever 'not enough'", () => {
-    // The old helper returned null past ten, where the wrap was unavoidable.
-    // Nothing wraps now, so every count has a width that shows all of it.
-    expect(widthForAllVisible(24)).toBe(
-      24 * MIN_PANE_WIDTH_PX + GRID_HORIZONTAL_PADDING_PX,
-    );
-  });
-
-  it("has nothing to offer when one column is the whole workspace", () => {
-    expect(widthForAllVisible(1)).toBeNull();
   });
 });
 

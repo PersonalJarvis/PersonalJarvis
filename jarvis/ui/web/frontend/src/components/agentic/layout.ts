@@ -35,106 +35,77 @@
  * only ever a change of numbers on each pane. Nothing is re-parented, so
  * nothing remounts.
  *
- * ## One line of columns, however many there are
+ * ## One line of columns, however many there are — and ALWAYS one screenful
  *
  * The workspace never wraps. Opening a column always puts it beside the last
  * one, and a workspace of twenty columns is twenty columns across.
  *
- * It used to wrap at the point where the panes would fall below
- * `MIN_PANE_WIDTH_PX` — six on a normal desktop — and that was the wrong
- * trade. Wrapping does not create room; it takes the height of every existing
- * pane to pay for the new one, so the sixth split silently halved the five
- * panes the user was already reading and dropped the new one onto a second
- * line. The arrangement the user built changed SHAPE because of a pane they
- * added at the end, which is exactly what a workspace must not do (reported
- * 2026-08-03).
+ * It also never scrolls. The whole workspace is exactly the area it is given:
+ * open a pane and every pane gets a little smaller, on whichever axis the split
+ * was. That is the maintainer's standing rule for this screen (2026-08-04), and
+ * it settles the two failures that came before it:
  *
- * Readability is still a floor — it is just paid for the same way the vertical
- * one is. Below `MIN_PANE_WIDTH_PX` per column the workspace grows WIDER than
- * the window and scrolls sideways, the way it already grows taller and scrolls
- * down when the stacks get short (`MIN_PANE_HEIGHT_PX`). A workspace larger
- * than the window is an ordinary thing that every editor does; a workspace
- * that rearranges itself is not.
+ * * **Wrapping** (until 2026-08-03) paid for a new pane with the HEIGHT of every
+ *   existing one, so the sixth split silently halved the five panes the user was
+ *   already reading and dropped the new one onto a second line. The arrangement
+ *   changed SHAPE because of a pane added at the end.
+ * * **Scrolling** (its replacement) kept the shape and moved the panes off the
+ *   screen instead — a seventh terminal was opened somewhere to the right, and
+ *   watching eight agents meant scrolling between them. A wall of terminals you
+ *   have to scroll is not a wall of terminals.
+ *
+ * So neither axis has a floor that grows the canvas any more. Readability is a
+ * thing the user manages themselves, with the two controls that already exist:
+ * open fewer panes, or maximize the one being read. `COMFORTABLE_PANE_WIDTH_PX`
+ * survives ONLY as the number the wizard's readout warns from — advice before
+ * anything opens, never a layout decision.
  */
 
 /**
- * Narrowest a pane may get before its agent's output stops being readable.
+ * Below this a pane is cramped for an agent's output — ADVICE, not a floor.
  *
  * An agent TUI draws boxes, file trees and status rows; below roughly 45
  * characters it truncates them and the pane becomes decoration. At the default
  * 13 px monospace a character is ~7.8 px wide, so 45 characters plus the pane's
- * frame and padding lands near 380 px. Deliberately a floor on WIDTH rather than
- * a count, so the same rule holds on a laptop and on a 4K display.
+ * frame and padding lands near 380 px. Measured against a real agent on
+ * 2026-07-25 — at ~18 characters Claude Code truncates every line and breaks
+ * single words across rows ("Clau/de/Max").
  *
- * It is the width the workspace stops SHRINKING at, not a count it stops
- * growing at: past it the columns keep their width and the workspace scrolls
- * sideways. Measured against a real agent on 2026-07-25 — at ~18 characters
- * Claude Code truncates every line and breaks single words across rows
- * ("Clau/de/Max"), which is what this number exists to prevent.
+ * Nothing lays out by it. The workspace is always one screenful (see the header
+ * above), so this number's only job is to let the wizard say "twelve panes on
+ * this window is about 130 px each, which is tight" BEFORE the user commits to
+ * twelve — the honest form of a warning, rather than a workspace that quietly
+ * grows a scrollbar.
  */
-export const MIN_PANE_WIDTH_PX = 380;
-
-/**
- * Shortest a pane may get before its agent's output stops being readable.
- *
- * The mirror of `MIN_PANE_WIDTH_PX`, and it was missing. Panes shared the window
- * height in equal parts with nothing stopping them from shrinking, so raising
- * the per-workspace cap from 12 to 100 quietly traded one failure for another:
- * measured on a 2560 px screen, 12 panes give each ~26 text rows, 40 give 7, and
- * 100 give 3. Nothing crashes — the workspace simply becomes unusable, which is
- * harder to notice than a crash and worse to live with.
- *
- * An agent TUI needs its input box plus enough history to see what it just did:
- * roughly a dozen rows at the default 13 px (~17 px per row) plus the pane's
- * header and frame. Past that point the grid scrolls instead of shrinking, the
- * same way a long page does.
- */
-export const MIN_PANE_HEIGHT_PX = 240;
+export const COMFORTABLE_PANE_WIDTH_PX = 380;
 
 /**
  * Horizontal padding of the rendered grid — 4 px on each side.
  *
  * It mirrors `GRID_GAP_PX` in AgenticGrid, and the two must not drift: the
- * column count is computed from the grid's CONTENT width, so a padding the
- * layout module does not know about makes the wizard's preview and the running
- * grid disagree about how many panes fit at a given window width.
+ * wizard estimates a pane's width from the grid's CONTENT width, so a padding
+ * the layout module does not know about makes the preview's advice slightly
+ * wrong about the workspace it is previewing.
  */
 export const GRID_HORIZONTAL_PADDING_PX = 8;
 
 /**
- * How wide the workspace has to be drawn to hold ``columns`` readable columns.
+ * How wide each of ``columns`` panes ends up at ``containerWidthPx``.
  *
- * The horizontal twin of the canvas height rule: normally the workspace is
- * exactly the width it was given and nothing scrolls, and once the columns
- * would be squeezed below `MIN_PANE_WIDTH_PX` it grows past the window instead
- * and the grid scrolls sideways.
- *
- * ``availableWidthPx`` is the grid's CONTENT width, so the return value is one
- * too — the caller's padding is already off both.
- */
-export function workspaceWidthFor(
-  columns: number,
-  availableWidthPx: number,
-): number {
-  const wanted = Math.max(0, columns) * MIN_PANE_WIDTH_PX;
-  return Math.max(availableWidthPx, wanted);
-}
-
-/**
- * How many columns are visible at ``containerWidthPx`` before it scrolls.
- *
- * Nothing lays out by this — it is what the wizard's readout says out loud, so
- * someone picking twelve terminals on a laptop learns they are getting a
- * workspace they scroll rather than one that silently rearranged itself.
+ * The workspace is always exactly its window (see the header), so this is a
+ * plain division — and that is the point: it is the number the wizard's readout
+ * quotes, so "twelve terminals" is a decision made with its consequence in view
+ * rather than one discovered afterwards.
  *
  * Takes an OUTER width (the wizard measures an unpadded element) and subtracts
  * the padding the grid will have, so it answers for the same physical window
- * the running grid does. Never 0: one cramped column still beats none.
+ * the running grid does. Never negative, and 0 for an empty workspace.
  */
-export function columnsWithoutScrolling(containerWidthPx: number): number {
+export function paneWidthAt(columns: number, containerWidthPx: number): number {
   const content = Math.max(0, containerWidthPx - GRID_HORIZONTAL_PADDING_PX);
-  if (!Number.isFinite(content) || content <= 0) return 1;
-  return Math.max(1, Math.floor(content / MIN_PANE_WIDTH_PX));
+  const count = Math.max(0, Math.trunc(columns));
+  if (count === 0 || !Number.isFinite(content) || content <= 0) return 0;
+  return content / count;
 }
 
 /**
@@ -176,17 +147,21 @@ export function wizardPanes(count: number): Positioned[] {
 }
 
 /**
- * Window width at which ``count`` terminals are all visible at once.
+ * Is ``count`` panes comfortable on a window this wide, or merely possible?
  *
- * The arrangement no longer depends on the window — `count` terminals are
- * `count` columns at every size — but how much of it you can SEE does, and the
- * preview says so rather than letting a workspace that scrolls come as a
- * surprise. Returns null when one column is the whole workspace and there is
- * nothing to scroll past.
+ * Every count fits — the workspace is always one screenful — so the only thing
+ * left to say is how much room each pane gets, and this is where that turns
+ * into a yes or no. Deliberately about the PANE rather than the count: the same
+ * eight terminals are roomy on a 4K display and cramped on a laptop.
  */
-export function widthForAllVisible(count: number): number | null {
-  if (count <= 1) return null;
-  return count * MIN_PANE_WIDTH_PX + GRID_HORIZONTAL_PADDING_PX;
+export function panesAreComfortable(
+  count: number,
+  containerWidthPx: number,
+): boolean {
+  const width = paneWidthAt(count, containerWidthPx);
+  // An unmeasured container says nothing yet — and "we have not measured" must
+  // not render as a warning, or the wizard opens shouting at every user once.
+  return width === 0 || width >= COMFORTABLE_PANE_WIDTH_PX;
 }
 
 /** Where one pane sits in the CSS grid. All values are 1-based, as CSS wants. */

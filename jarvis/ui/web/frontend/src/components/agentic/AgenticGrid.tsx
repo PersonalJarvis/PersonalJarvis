@@ -47,11 +47,6 @@ import { PaneActivityPill } from "./PaneActivityPill";
 import { AgentPickerMenu, offersAgentChoice, type SplitAgentChoice } from "./AgentPicker";
 import type { TerminalAppearance } from "./terminalThemes";
 import {
-  GRID_HORIZONTAL_PADDING_PX,
-  MIN_PANE_HEIGHT_PX,
-  workspaceWidthFor,
-} from "./layout";
-import {
   paneArrangement,
   paneLayout,
   panesFromArrangement,
@@ -856,38 +851,29 @@ export function AgenticGrid({
   // Where each pane sits in the one grid below — coordinates, not nested
   // lists, so a layout change never re-parents a pane (see ./layout).
   /*
-   * How big the workspace's VISIBLE area is — the grid's content box, padding
-   * excluded on both axes.
+   * The grid is the window, and the workspace is exactly the grid.
    *
-   * Neither number decides the arrangement; the panes do. Both are the size a
-   * percentage resolves against, and both carry a floor (`canvasWidth` and
-   * `canvasHeight` below): once the columns would fall under
-   * `MIN_PANE_WIDTH_PX` or the stacks under `MIN_PANE_HEIGHT_PX`, the canvas
-   * grows past this box and the grid scrolls rather than shrinking panes
-   * further.
+   * Its SIZE is nobody's business here any more: the canvas below fills this
+   * element on both axes, so every pane's percentage resolves against the
+   * visible area and a workspace of twenty panes is twenty smaller panes rather
+   * than a wall you scroll along. The one thing that still needs pixels —
+   * turning a seam drag into weights — reads the canvas at the moment of the
+   * gesture.
    *
-   * Which of the two widths this holds matters, and getting it wrong was a real
-   * defect back when the column COUNT came from it: `contentRect.width` already
-   * excludes this element's padding, and a helper that subtracted it a second
-   * time laid the grid out narrower than it is. The seed value has to agree —
-   * `clientWidth` INCLUDES padding, hence the subtraction in `fallback`.
+   * What survives is the one BOOLEAN the panes need: has this element been laid
+   * out at all? A terminal opened during the first, sizeless pass attaches its
+   * PTY at one size and is moved to another while its replay is still being
+   * parsed (see `geometryReady` in ./AgenticTerminal), which is a real garbled
+   * pane rather than a cosmetic flicker.
    */
   const gridRef = useRef<HTMLDivElement | null>(null);
-  const [gridWidth, setGridWidth] = useState(0);
-  const [gridHeight, setGridHeight] = useState(0);
+  const [gridMeasured, setGridMeasured] = useState(false);
   useEffect(() => {
     const node = gridRef.current;
     if (!node) return;
-    const fallback = () => Math.max(0, node.clientWidth - GRID_HORIZONTAL_PADDING_PX);
-    setGridWidth(fallback());
-    setGridHeight(node.clientHeight);
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? fallback();
-      // Round to a step so a one-pixel drift cannot churn the layout (and with
-      // it every pane's resize) on window animations.
-      setGridWidth(Math.round(width / 16) * 16);
-      setGridHeight(Math.round(entries[0]?.contentRect.height ?? node.clientHeight));
-    });
+    const measured = () => node.clientWidth > 0 && node.clientHeight > 0;
+    setGridMeasured(measured());
+    const observer = new ResizeObserver(() => setGridMeasured(measured()));
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
@@ -1019,12 +1005,16 @@ export function AgenticGrid({
 
   const sizes = usePaneWeights(
     session.id,
+    // Measured at the moment of the drag rather than kept in state: the canvas
+    // IS the visible workspace now, so its live size is the only truth a
+    // pixels-to-weights conversion needs. A canvas that is not there yet
+    // reports 0, which `dragSeam` treats as "no room, change nothing".
     useCallback(
       () => ({
-        width: canvasRef.current?.clientWidth ?? gridWidth,
-        height: canvasRef.current?.clientHeight ?? gridHeight,
+        width: canvasRef.current?.clientWidth ?? 0,
+        height: canvasRef.current?.clientHeight ?? 0,
       }),
-      [gridWidth, gridHeight],
+      [],
     ),
     paintDraggedLayout,
   );
@@ -1136,28 +1126,6 @@ export function AgenticGrid({
    * it just as a seam does.
    */
   const layoutBusy = sizes.dragging !== null || composer.isResizing;
-
-  /*
-   * How big the workspace is DRAWN, which is not always how big it looks.
-   *
-   * Panes take a percentage of these two numbers, so they are also the floor
-   * that keeps them readable. Once the columns cannot fit at
-   * `MIN_PANE_WIDTH_PX` each, or the tallest stack at `MIN_PANE_HEIGHT_PX` per
-   * pane, the canvas grows past the window and the workspace scrolls — rather
-   * than shrinking every pane further, or (as it did until 2026-08-03)
-   * rearranging the workspace behind the user's back to make the new pane fit.
-   * A workspace bigger than its window is an ordinary thing; a workspace that
-   * re-deals itself when you open a terminal is not.
-   *
-   * A maximized pane is exactly the window on both axes, so it can never end up
-   * larger than the area it is being read in.
-   */
-  const canvasWidth =
-    maximized !== null ? gridWidth : workspaceWidthFor(layout.columns, gridWidth);
-  const canvasHeight =
-    maximized !== null
-      ? gridHeight
-      : Math.max(gridHeight, layout.minHeightUnits * MIN_PANE_HEIGHT_PX);
 
   const atLimit = session.terminals.length >= maxTerminals;
 
@@ -1385,18 +1353,12 @@ export function AgenticGrid({
         const rail = chatRailRef.current;
         if (rail) rail.scrollTop = rail.scrollHeight;
       });
-    } else {
-      // The LAST one: panes are appended, so the newest is the one whose arrival
-      // could have pushed the grid past its viewport — SIDEWAYS as often as
-      // down, now that a workspace grows to the right instead of wrapping, so
-      // both axes are named rather than left to the browser's default.
-      // Probed rather than assumed: `scrollIntoView` is absent in jsdom and in
-      // some embedded WebViews.
-      const newest = paneNodes.current.get(fresh[fresh.length - 1]);
-      if (typeof newest?.scrollIntoView === "function") {
-        newest.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" });
-      }
     }
+    // In the grid there is nothing to scroll to: the workspace is one screenful
+    // by rule, so a pane that just opened is already in view and the ring below
+    // is the whole announcement. This used to call `scrollIntoView` on the
+    // newest pane, which was the honest answer while a workspace could be wider
+    // or taller than its window.
     const timer = window.setTimeout(() => setJustOpened(new Set()), 2600);
     return () => {
       if (frame !== undefined) cancelAnimationFrame(frame);
@@ -1407,12 +1369,12 @@ export function AgenticGrid({
   /*
    * "Jump to pane" — from the header bell, or from the view after a tab switch.
    *
-   * Three things, in this order: the pane is maximized, it is scrolled to, and
-   * it wears the same arrival ring a freshly opened pane does. Maximizing is
-   * what the user asked for — a notification about a pane is a request to READ
-   * that pane, and reading a postcard-sized terminal in a grid of twelve is the
-   * problem, not the answer. The ring covers the case where the pane was
-   * already the maximized one and nothing visibly moved.
+   * Two things: the pane is maximized, and it wears the same arrival ring a
+   * freshly opened pane does. Maximizing is what the user asked for — a
+   * notification about a pane is a request to READ that pane, and reading a
+   * postcard-sized terminal in a grid of twelve is the problem, not the answer.
+   * The ring covers the case where the pane was already the maximized one and
+   * nothing visibly moved.
    *
    * Silently ignored for a pane that is no longer here: an entry outlives the
    * terminal it came from by up to one poll, and a stray maximize of "whatever
@@ -1440,12 +1402,6 @@ export function AgenticGrid({
     if (chatView) setChatPane(wanted);
     else setMaximized(wanted);
     setJustOpened(new Set([wanted]));
-    const node = paneNodes.current.get(wanted);
-    // Probed rather than assumed — `scrollIntoView` is absent in jsdom and in
-    // some embedded WebViews, and a maximized pane fills the grid anyway.
-    if (typeof node?.scrollIntoView === "function") {
-      node.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" });
-    }
     const timer = window.setTimeout(() => setJustOpened(new Set()), 2600);
     return () => window.clearTimeout(timer);
     // `session.terminals` deliberately absent: this fires on a JUMP, not every
@@ -2172,14 +2128,15 @@ export function AgenticGrid({
         ref={gridRef}
         data-testid="agentic-grid"
         className={cn(
-          "relative min-h-0 min-w-0 flex-1",
-          // Scrolls on EITHER axis, and only once the panes would be squeezed
-            // below a readable size — sideways past `MIN_PANE_WIDTH_PX` per
-            // column, down past `MIN_PANE_HEIGHT_PX` per stacked pane. With a
-            // workspace that fits, this is `overflow-hidden` behaviour and
-            // nothing moves. The chat stage never scrolls — its one pane fills
-            // it, and the terminal scrolls inside itself.
-            chatView || maximized !== null ? "overflow-hidden" : "overflow-auto scrollbar-jarvis",
+          // NEVER scrolls, on either axis. The workspace is one screenful by
+            // rule (maintainer, 2026-08-04): opening a pane makes every pane a
+            // little smaller, and finding the seventh terminal is never a
+            // matter of scrolling sideways to it. `overflow-hidden` is the
+            // whole enforcement — the canvas below is sized to this element, so
+            // there is nothing to scroll to in the first place, and this only
+            // guarantees that a rounding error or a pane's own overflow cannot
+            // quietly hand the grid a scrollbar back.
+            "relative min-h-0 min-w-0 flex-1 overflow-hidden",
             // A drag across the grid would otherwise sweep a text selection over
             // every header and label it crosses.
             arrange.held !== null && "select-none",
@@ -2189,30 +2146,18 @@ export function AgenticGrid({
         style={{ padding: chatView ? 12 : GRID_GAP_PX }}
       >
       {/*
-        The surface the fractions resolve against.
+        The surface the fractions resolve against — always exactly the window.
 
-        Separate from the scroller because the two have different sizes on
-        purpose: the scroller is the window, this is the workspace, and a
-        workspace whose panes would fall below `MIN_PANE_WIDTH_PX` or
-        `MIN_PANE_HEIGHT_PX` grows past the window on that axis and scrolls
-        rather than shrinking them further.
+        It kept its own size until 2026-08-04, growing past the grid so the
+        panes could stay above a minimum and the workspace scrolled to reach
+        them. That is the behaviour this element now exists to prevent: a pane
+        is a share of what is on screen, so the twelfth terminal makes the other
+        eleven smaller and stays in the same view as them.
       */}
       <div
         ref={canvasRef}
         data-testid="agentic-grid-canvas"
-        className={cn(
-          "relative",
-          // The chat stage fills everything between the rail and the voice
-          // column. It started as a centred, capped column; the maintainer
-          // wants the terminal at full size (2026-07-31), and the calm framing
-          // comes from the rail and the card border, not from margins.
-          chatView && "h-full w-full",
-        )}
-        style={
-          chatView
-            ? undefined
-            : { width: canvasWidth || "100%", height: canvasHeight || undefined }
-        }
+        className="relative h-full w-full"
       >
         {session.terminals.map((term, index) => {
           const box = layout.boxes[index];
@@ -2271,7 +2216,7 @@ export function AgenticGrid({
                     promptCount={term.prompts_sent}
                     appearance={appearance}
                     fontSize={fontSize}
-                    geometryReady={gridWidth > 0 && gridHeight > 0}
+                    geometryReady={gridMeasured}
                     focused={target === term.name}
                     active={!chatView || onStage}
                     maximized={isMaximized}
