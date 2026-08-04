@@ -750,6 +750,69 @@ async def test_realtime_start_subscribes_before_request_and_returns_answer_sdp(
     await client.close()
 
 
+def _voice_thread_responder(process: FakeProcess, message: dict[str, Any]) -> None:
+    if _respond_handshake(process, message):
+        return
+    request_id = message.get("id")
+    if not isinstance(request_id, int):
+        return
+    if message.get("method") == "thread/start":
+        _respond(process, request_id, {"thread": {"id": "voice-thread"}})
+
+
+@pytest.mark.asyncio
+async def test_thread_start_sends_caller_instructions_on_the_wire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The provider's voice persona must reach the JSON-RPC frame verbatim.
+
+    An earlier revision deleted both caller instruction arguments and always
+    sent the hardcoded "dumb pipe" transport text, so the live model never
+    learned its persona, the one-speaker rule, or that handoffs exist — while
+    the adapter-level test kept passing against a fake client that never sees
+    the wire.
+    """
+    harness = SpawnHarness(monkeypatch, [_voice_thread_responder])
+    client = CodexAppServerClient()
+    await client.thread_start(
+        base_instructions="You are the live voice. Request a handoff for actions.",
+        developer_instructions="Execution boundary: actions go to the client.",
+    )
+    params = next(
+        item["params"]
+        for item in harness.processes[0].stdin.messages
+        if item.get("method") == "thread/start"
+    )
+    assert (
+        params["baseInstructions"]
+        == "You are the live voice. Request a handoff for actions."
+    )
+    assert (
+        params["developerInstructions"]
+        == "Execution boundary: actions go to the client."
+    )
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_thread_start_without_instructions_keeps_the_transport_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(monkeypatch, [_voice_thread_responder])
+    client = CodexAppServerClient()
+    await client.thread_start(base_instructions="   ", developer_instructions=None)
+    params = next(
+        item["params"]
+        for item in harness.processes[0].stdin.messages
+        if item.get("method") == "thread/start"
+    )
+    assert params["baseInstructions"] == transport._TRANSPORT_BASE_INSTRUCTIONS
+    assert (
+        params["developerInstructions"] == transport._TRANSPORT_DEVELOPER_INSTRUCTIONS
+    )
+    await client.close()
+
+
 @pytest.mark.asyncio
 async def test_audio_append_uses_protocol_chunk_shape(
     monkeypatch: pytest.MonkeyPatch,

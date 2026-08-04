@@ -3158,7 +3158,22 @@ class CodexAppServerClient:
         extra: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Start a verified ChatGPT-only transport thread outside the workspace."""
-        del base_instructions, developer_instructions, cwd, model, ephemeral
+        # cwd/model/ephemeral stay caller-proof: the audit below pins them to
+        # the safe values, so a caller cannot widen the boundary. Instructions
+        # are different — they are the voice's identity, one-speaker rule and
+        # language rule. Discarding them here (as an earlier revision did)
+        # silently shipped the "dumb pipe" transport text instead, so the live
+        # model never learned it may request handoffs and answered greetings
+        # out of persona. The transport constants remain the fail-closed floor
+        # whenever a caller passes nothing.
+        del cwd, model, ephemeral
+        base_text = (
+            str(base_instructions or "").strip() or _TRANSPORT_BASE_INSTRUCTIONS
+        )
+        developer_text = (
+            str(developer_instructions or "").strip()
+            or _TRANSPORT_DEVELOPER_INSTRUCTIONS
+        )
         await self.ensure_started()
         if extra:
             raise CodexSubscriptionUnavailable(
@@ -3169,7 +3184,7 @@ class CodexAppServerClient:
             {
                 "allowProviderModelFallback": False,
                 "approvalPolicy": "never",
-                "baseInstructions": _TRANSPORT_BASE_INSTRUCTIONS,
+                "baseInstructions": base_text,
                 "config": {
                     "analytics": {"enabled": False},
                     "cli_auth_credentials_store": "file",
@@ -3240,7 +3255,7 @@ class CodexAppServerClient:
                     "tools": {"web_search": False},
                 },
                 "cwd": self._safe_thread_cwd(),
-                "developerInstructions": _TRANSPORT_DEVELOPER_INSTRUCTIONS,
+                "developerInstructions": developer_text,
                 "dynamicTools": None,
                 "environments": [],
                 "ephemeral": True,
