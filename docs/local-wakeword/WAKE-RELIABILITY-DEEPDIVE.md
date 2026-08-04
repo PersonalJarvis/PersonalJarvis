@@ -201,3 +201,55 @@ words outside the model lexicon ride the free-decode fuzzy path — best
 effort, (c) the definitive sub-200 ms class remains a trained neural KWS.
 Guards: `tests/unit/plugins/wake/test_vosk_kws_provider.py`,
 `tests/unit/speech/test_wake_plan_vosk.py` (chain + live-arming regression).
+
+## The shape gate's own spelling assumptions (2026-08-04, BUG-123 / AP-27)
+
+The free-decode SHAPE gate was introduced (2026-07-13) because no spelling rule
+can judge an out-of-vocabulary wake word. Two of its four questions turned out to
+be spelling rules in disguise, and they cost roughly two thirds of all wakes for
+a non-native speaker.
+
+Measured against the real `vosk-model-small-en-us-0.15`, one German and one US
+voice, per phrase — what the FREE ear produces for a GENUINE call:
+
+```
+"Hey Ben"    (de voice) -> "have you been"    3 tokens, every conf 1.00
+"Hey Ruben"  (de voice) -> "have you been"    3 tokens, every conf 1.00
+"Hey Atlas"  (de voice) -> "have you at last" 4 tokens, every conf 1.00
+"Hey Claude" (de voice) -> "harry claude"     spelled -> fired
+"Hey Ben"    (us voice) -> "hey ben"          spelled -> fired
+```
+
+* **Token count.** A wake PREFIX is a short function word; in a foreign accent
+  the free decoder re-tokenises it (`hey` -> `have you`). A genuine two-token
+  call then exceeds the phrase's own token budget. The rule assumed the decoder
+  tokenises the phrase the way the phrase is written.
+* **Confidence.** The rule reads certainty as "the ear knew some OTHER word" —
+  true only while the wake word is out-of-vocabulary. A name that IS a word
+  ("Ben" -> `been`, "Claude" -> `cloud`) is recognised outright at conf 1.00,
+  so the rule rejects hardest exactly the easy names users pick first.
+
+Both now yield `SHAPE_UNDECIDED` and are decided by the **acoustic competition**
+(re-score against an explicit `"<prefix> [unk]"` alternative) instead of vetoing
+the candidate. Measured discrimination of that competition on the same audio:
+the phrase survives for **8/8 genuine calls and 0/20 unrelated utterances**
+(including the recorded live false-wake transcripts `hi servers sichern`,
+`ein jahr bis`). <!-- i18n-allow: forensic quotes of utterances under test -->
+
+The two duration-based questions stay HARD rejections — they measure how much
+sound was made, never what it was, so no accent or vocabulary can invert them.
+
+End to end through the real `_verify_window`: genuine calls **12/16 -> 16/16**,
+ordinary speech **0/30 false accepts, unchanged**, near-homophone NAMES
+("Hey Bell" for "Hey Ben") 7/22 -> 12/22 — the one class that pays, and one that
+a small offline model cannot separate by a single final consonant anyway.
+
+Two side effects worth knowing:
+
+* The natural one-breath call — "Hey Claude, what is the weather today" — fires
+  again; its command words now make the candidate contested rather than vetoed
+  (open as a strict xfail since 2026-07-25).
+* The authoritative confirm reports the "heard it, could not confirm it"
+  rejection through the rate-limited suppression log. Before, it was the only
+  rejection class that logged at DEBUG, so the live log could not tell a
+  suppressed wake from a wake that was never heard.

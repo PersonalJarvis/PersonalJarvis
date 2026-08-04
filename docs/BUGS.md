@@ -8487,3 +8487,94 @@ a process that has already settled once; for a process that just started it
 answers "is this CLI drawing itself?", and every caller that conflates the two
 fails silently in exactly the seconds after a restart — which is when the
 feature is used.
+
+---
+
+## BUG-123: the wake word needs three tries — the SHAPE gate carries its own spelling assumptions (HIGH, FIXED 2026-08-04)
+
+**Symptom (maintainer field report).** "I had to say it very often." Simple
+names are no better than invented ones: "even with an easy name like Ben it
+often fails." The status line meanwhile showed the raw i18n key
+`VOICE_STATE.CONNECTING` instead of a label (separate defect, same screenshot —
+the built `dist/` predated the locale key by 33 minutes).
+
+**Evidence — the live log said "heard it, threw it away".** On this install
+(2026-08-04 17:01-17:02, phrase "Hey Claude", engine `vosk_kws`, en model):
+
+```
+candidates=2  suppressed_confirm=2  fired=0     <- two calls heard and rejected
+17:02:05 vosk-kws: verify OK (shape) ... free ear heard 'hey khloe' ... fired=1
+```
+
+Three calls, one fire. And not one line said WHY the first two died: the
+"neither spelled nor shaped like a call" branch of `_verify_window` was the only
+rejection that logged at DEBUG, so the most common suppression in production was
+also the one invisible in production.
+
+**Root cause — AP-27, one level below where it was last fixed.** The free-decode
+SHAPE gate (`candidate_shape_ok`) exists precisely because a spelling rule cannot
+judge an out-of-vocabulary wake word. Two of its four questions turned out to
+rest on spelling assumptions of their own. Replaying each phrase through the real
+en model with a German and a US voice:
+
+| phrase | spoken (German voice) | free ear heard | verdict |
+|---|---|---|---|
+| Hey Ben | Hey Ben | `have you been` (3 tokens, conf 1.00) | suppressed |
+| Hey Ruben | Hey Ruben | `have you been` (3 tokens, conf 1.00) | suppressed |
+| Hey Atlas | Hey Atlas | `have you at last` (4 tokens, conf 1.00) | suppressed |
+
+* **The token count** assumes the free ear spends ONE token on the wake prefix.
+  A short function word in a foreign accent is re-tokenised — `hey` -> `have
+  you` — so a genuine two-token call arrives as three or four and is charged
+  against the phrase's own budget. Every non-native speaker of the model's
+  language hits this, which for an international product is the normal case.
+* **The confidence veto** assumes the wake word is out-of-vocabulary, and reads
+  the decoder's certainty as proof that some OTHER word was said. Every name
+  that IS an ordinary word inverts it: "Ben" -> `been`, "Claude" -> `cloud`,
+  both at conf 1.00. That is exactly the maintainer's "even easy names fail" —
+  easy names are easy because they are real words.
+
+Neither premise can be repaired by moving a threshold, and a spelling floor low
+enough to rescue `hey khloe` (0.55 against "claude") is far below what unrelated
+speech scores. Same shape as BUG-037: the rule that suppresses ghosts also
+rejects genuine wakes.
+
+**Fix — the two contested questions stop being vetoes.** They now yield
+`SHAPE_UNDECIDED` and hand the candidate to the ACOUSTIC COMPETITION that
+already gates every shape acceptance (re-score against an explicit
+`"<prefix> [unk]"` alternative — a purely acoustic judgement that never reads a
+spelling, AP-27-safe). The two duration-based questions — "not spoken longer
+than the phrase could be" and "a name-sized body exists where the name belongs"
+— stay HARD rejections: they measure how much sound was made, never what it was,
+so no accent or vocabulary can invert them. No calibrated threshold moved.
+
+The authoritative confirm now also REPORTS this rejection class through the
+rate-limited `_log_suppression`, so "heard and thrown away" is distinguishable
+from "never heard" without a debug build.
+
+**Measured, real en model, synthesised German + US voice** (`_verify_window`
+end to end, 16 genuine calls / 30 unrelated utterances incl. the recorded live
+false-wake transcripts):
+
+| | genuine calls | ordinary speech | near-homophone NAMES |
+|---|---|---|---|
+| before | 12/16 fire | 0/30 false | 7/22 accepted |
+| after | **16/16 fire** | **0/30 false** | 12/22 accepted |
+
+The cost is confined to near-homophone names ("Hey Bell" firing "Hey Ben") — a
+class that already leaked and that no offline small model can separate by a
+single final consonant. Ordinary speech and bare interjections are unchanged.
+This also closed the previously-open one-breath case (BUG-037 follow-up, strict
+xfail since 2026-07-25): "Hey Claude, what is the weather today" now fires,
+because trailing command words make the candidate contested instead of vetoed.
+
+**Honest limit.** The 2026-07 calibration corpora (250/1650 real captured
+windows) are no longer on disk; the numbers above come from a smaller
+synthesised corpus. The change deliberately moves no threshold, so the
+calibrated bounds remain exactly as measured then.
+
+**Guards.** `tests/unit/plugins/wake/test_vosk_wake_word_agnostic.py`
+(contested-vs-hard verdicts, the German prefix split, a contested shape that
+LOSES the competition), `tests/unit/plugins/wake/test_vosk_kws_provider.py`
+(the fake's competitor grammar now models the measured decoder instead of
+answering "phrase" unconditionally).

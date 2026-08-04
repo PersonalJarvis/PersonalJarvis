@@ -25,12 +25,13 @@ Two-stage detection, AP-27-safe:
    must contain a real wake prefix immediately followed by a sound-close core.
    This keeps ASR spelling/splitting tolerance (for example, "joe avis" for
    "Jarvis") without letting a high-confidence grammar hallucination turn
-   unrelated room speech into a wake. A shape-only acceptance (the free ear
-   could not spell the word but what it heard looks like a wake call) must
-   additionally win the acoustic competition against an explicit
-   "<prefix> [unk]" grammar alternative, or a call of a DIFFERENT name fires
-   too (live 2026-07-17). Infrastructure errors fail OPEN so a broken confirm
-   cannot eat a real wake.
+   unrelated room speech into a wake. When the free ear could not spell the
+   word, the word-agnostic SHAPE of what it heard decides instead — and any
+   shape that is either a clean wake shape or merely contested (a re-tokenised
+   prefix, a name the decoder knows as an ordinary word) must win the acoustic
+   competition against an explicit "<prefix> [unk]" grammar alternative, or a
+   call of a DIFFERENT name fires too (live 2026-07-17). Infrastructure errors
+   fail OPEN so a broken confirm cannot eat a real wake.
 
 A raw-energy gate (word-agnostic RMS at the match site, AP-27) rejects
 near-silent candidates before the confirm. The detector never emits
@@ -228,6 +229,40 @@ _SHAPE_MIN_CORE_BODY_S = 0.20
 # split case is covered by the spelling path and must not be paid for twice.
 _SHAPE_TOKEN_SLACK = 0
 
+# --- three-way shape verdict (AP-27, forensic 2026-08-04) -------------------
+# Two of the four shape questions turned out to rest on a SPELLING assumption
+# after all, which is the AP-27 trap one more level down. Measured on this box
+# against the real en model, one German and one US voice per phrase:
+#
+#   "Hey Ben"   spoken de -> free ear "have you been"   (3 tokens, all conf 1.00)
+#   "Hey Atlas" spoken de -> free ear "have you at last"(4 tokens, all conf 1.00)
+#   "Hey Ruben" spoken de -> free ear "have you been"   (3 tokens, all conf 1.00)
+#
+# Both broken premises are visible in that one line:
+#   * the TOKEN COUNT assumes the free ear spends one token on the wake prefix.
+#     A short function word in a foreign accent is re-tokenised ("hey" ->
+#     "have you"), so a genuine two-token call arrives as three or four and is
+#     charged against the phrase's own budget.
+#   * the CONFIDENCE veto assumes the wake word is out-of-vocabulary. Every
+#     name that IS an ordinary word ("Ben" -> "been", "Claude" -> "cloud")
+#     makes the free ear certain, and the rule reads that certainty as proof
+#     that some OTHER word was said.
+# Live consequence on this install (2026-08-04 17:01-17:02): 3 candidates,
+# 2 suppressed, 1 fired — the user says the wake word three times.
+#
+# Neither premise can be repaired by moving a threshold, so the two questions
+# stop being VETOES and become a reason to ask the acoustic competition —
+# the purely acoustic judgement that already gates every shape acceptance.
+# Measured on the same synthesised corpus (8 genuine calls, 20 unrelated
+# utterances incl. the recorded live false-wake transcripts): the competitor
+# grammar keeps the phrase for 8/8 genuine calls and 0/20 unrelated ones.
+#
+# The other two questions stay HARD rejections: they measure how much sound was
+# made, never what it was, so no accent or vocabulary can invert them.
+SHAPE_WAKE = "wake"            # looks like a call — competition confirms as before
+SHAPE_UNDECIDED = "undecided"  # tokenisation/confidence contradicts — competition decides
+SHAPE_SPEECH = "speech"        # too much sound, or no name-sized body: never a wake
+
 # --- acoustic competition for the SHAPE path (live forensic 2026-07-17) -----
 # The shape gate accepts anything that LOOKS like a wake call — which a call of
 # a DIFFERENT name also does. Live: "hey nova" confirmed (shape) for the phrase
@@ -387,14 +422,14 @@ def sound_confirm(free_text: str, phrase: str, *, ratio: float = _CONFIRM_RATIO)
     return False
 
 
-def candidate_shape_ok(
+def candidate_shape_verdict(
     local_words: Sequence[dict],
     phrase: str,
     *,
     max_voiced_s_per_token: float = _SHAPE_MAX_VOICED_S_PER_TOKEN,
     max_other_word_conf: float = _SHAPE_MAX_OTHER_WORD_CONF,
     min_core_body_s: float = _SHAPE_MIN_CORE_BODY_S,
-) -> bool:
+) -> str:
     """Does the free ear's output AT the candidate span look like a wake call?
 
     Word-agnostic by construction (AP-27): it reads only how much was said at
@@ -402,43 +437,47 @@ def candidate_shape_ok(
     spelled. ``local_words`` are the free decode's word dicts (``word``,
     ``start``, ``end``, ``conf``) already localised to the phrase span.
 
-    Four word-agnostic questions, all scaled by the configured phrase:
+    Four word-agnostic questions, all scaled by the configured phrase. Two of
+    them are HARD (``SHAPE_SPEECH`` — nothing may overrule them), two only make
+    the candidate ``SHAPE_UNDECIDED`` and hand it to the acoustic competition:
 
-    1. **Not more words than the phrase has.** A wake call is the phrase; a
-       forced grammar hit on conversation carries the surrounding words too.
-       (A free decoder that SPLITS the name into two tokens — "Jarvis" ->
-       "joe avis" — is already accepted by ``sound_confirm``'s core_sizes
-       tolerance, so this gate does not need to pay for that case with the
-       extra false accepts a token slack costs.)
-    2. **Not spoken for longer than the phrase could be.** The grammar happily
-       stretches the phrase across flowing speech; a real call cannot last
-       longer than its own tokens do.
-    3. **The free ear is not SURE it heard another core word.** This is the
-       positive signal an out-of-vocabulary wake word leaves behind: the free
-       decoder does not know the core, so it guesses and its confidence drops.
-       Ordinary speech ("engineering", "google") it recognises outright. A
-       known wake prefix is deliberately excluded from this confidence check.
-    4. **A name was actually spoken.** Strip the known wake prefixes and the
-       REMAINING voiced duration — the core body — must be at least a syllable.
-       Without this, the three bounds above describe a bare interjection just
-       as well as a wake call, and "hey ho" fires (live 2026-07-13). Note this
-       still never reads the name's SPELLING: it only asks whether a
-       name-sized sound exists where the name belongs.
+    1. **Not spoken for longer than the phrase could be.** HARD. The grammar
+       happily stretches the phrase across flowing speech; a real call cannot
+       last longer than its own tokens do. Pure duration — no accent, no
+       vocabulary and no tokenisation can invert it.
+    2. **A name was actually spoken.** HARD. Strip the known wake prefixes and
+       the REMAINING voiced duration — the core body — must be at least a
+       syllable. Without this the other bounds describe a bare interjection
+       just as well as a wake call, and "hey ho" fires (live 2026-07-13). It
+       never reads the name's SPELLING: it only asks whether a name-sized
+       sound exists where the name belongs.
+    3. **Not more words than the phrase has.** UNDECIDED. A wake call is the
+       phrase; a forced grammar hit on conversation carries the surrounding
+       words too. But the count assumes the free ear tokenises the phrase the
+       way the phrase is written, and a wake PREFIX in a foreign accent is
+       routinely re-tokenised ("hey" -> "have you", measured 2026-08-04), so a
+       genuine call arrives over budget. (A SPLIT name — "Jarvis" -> "joe
+       avis" — is already accepted by ``sound_confirm``'s core_sizes
+       tolerance.)
+    4. **The free ear is not SURE it heard another core word.** UNDECIDED.
+       This is the signal an out-of-vocabulary wake word leaves behind: the
+       free decoder does not know the core, so it guesses and its confidence
+       drops. But a name that IS an ordinary word ("Ben" -> "been") is
+       recognised outright, and then certainty means the opposite of what this
+       rule reads into it. A known wake prefix is excluded from the check.
 
-    Empty input rejects: the grammar claimed the phrase where the free ear
-    heard no speech at all.
+    Empty input is ``SHAPE_SPEECH``: the grammar claimed the phrase where the
+    free ear heard no speech at all.
     """
     if not local_words:
-        return False
+        return SHAPE_SPEECH
     n_tokens = max(1, len(normalize_phrase_for_match(phrase)))
-    if len(local_words) > n_tokens + _SHAPE_TOKEN_SLACK:
-        return False
     voiced_s = sum(
         max(0.0, float(w.get("end", 0.0)) - float(w.get("start", 0.0)))
         for w in local_words
     )
     if voiced_s > max_voiced_s_per_token * n_tokens:
-        return False
+        return SHAPE_SPEECH
     # A confidently recognised wake prefix is expected evidence, not proof the
     # decoder heard some OTHER word. Apply the confidence discriminator only
     # to the unknown core body. Otherwise a perfect ``hey`` confidence rejects
@@ -455,19 +494,45 @@ def candidate_shape_ok(
     ]
     confidence_words = local_words if phrase_is_all_prefix else core_words
     if not confidence_words:
-        return False
-    top_conf = max(float(w.get("conf", 0.0)) for w in confidence_words)
-    if top_conf > max_other_word_conf:
-        return False
+        return SHAPE_SPEECH
     # A phrase that IS nothing but prefixes ("Hey", "Hallo") has no core to
     # demand, so it must not be gated on a core duration.
-    if phrase_is_all_prefix:
-        return True
-    core_body_s = sum(
-        max(0.0, float(w.get("end", 0.0)) - float(w.get("start", 0.0)))
-        for w in core_words
-    )
-    return core_body_s >= min_core_body_s
+    if not phrase_is_all_prefix:
+        core_body_s = sum(
+            max(0.0, float(w.get("end", 0.0)) - float(w.get("start", 0.0)))
+            for w in core_words
+        )
+        if core_body_s < min_core_body_s:
+            return SHAPE_SPEECH
+    contested = len(local_words) > n_tokens + _SHAPE_TOKEN_SLACK
+    top_conf = max(float(w.get("conf", 0.0)) for w in confidence_words)
+    if top_conf > max_other_word_conf:
+        contested = True
+    return SHAPE_UNDECIDED if contested else SHAPE_WAKE
+
+
+def candidate_shape_ok(
+    local_words: Sequence[dict],
+    phrase: str,
+    *,
+    max_voiced_s_per_token: float = _SHAPE_MAX_VOICED_S_PER_TOKEN,
+    max_other_word_conf: float = _SHAPE_MAX_OTHER_WORD_CONF,
+    min_core_body_s: float = _SHAPE_MIN_CORE_BODY_S,
+) -> bool:
+    """True only for an UNCONTESTED wake shape (see ``candidate_shape_verdict``).
+
+    Kept as the narrow boolean question — "does this look like a wake call on
+    its own?" — so the shape rules stay independently testable. The verify path
+    consumes the three-way verdict, because a contested shape is decided by the
+    acoustic competition rather than thrown away.
+    """
+    return candidate_shape_verdict(
+        local_words,
+        phrase,
+        max_voiced_s_per_token=max_voiced_s_per_token,
+        max_other_word_conf=max_other_word_conf,
+        min_core_body_s=min_core_body_s,
+    ) == SHAPE_WAKE
 
 
 class VoskKwsProvider:
@@ -1183,22 +1248,55 @@ class VoskKwsProvider:
         # must additionally WIN the acoustic competition — a purely acoustic
         # judgement that never reads a spelling, so (a)'s recall contract is
         # untouched: a free ear that spelled the phrase still fires instantly.
+        #
+        # And (b) carried two SPELLING assumptions of its own (measured
+        # 2026-08-04, see the SHAPE_* note): that the free ear spends one token
+        # on the wake prefix, and that it cannot confidently spell the name.
+        # A foreign accent breaks the first ("hey" -> "have you") and an
+        # ordinary-word name breaks the second ("Ben" -> "been"), so both now
+        # yield SHAPE_UNDECIDED and let the SAME acoustic competition decide
+        # instead of vetoing the wake outright. The two duration-based
+        # questions stay hard rejections — they measure how much sound was
+        # made, never what it was.
         ok = sound_confirm(free_local, self._phrase, ratio=self._confirm_ratio)
-        by_shape = False
-        if not ok and candidate_shape_ok(local_words, self._phrase):
-            ok = by_shape = self._shape_competition_ok(pcm, model_path)
+        shape = "" if ok else candidate_shape_verdict(local_words, self._phrase)
+        if not ok and shape in (SHAPE_WAKE, SHAPE_UNDECIDED):
+            ok = self._shape_competition_ok(pcm, model_path)
             if not ok:
                 self._stat_suppressed_shape_competition += 1
-        log_method = log.info if ok else log.debug
-        log_method(
-            "vosk-kws: verify %s (%s) — free ear heard %r at the candidate span "
-            "(conf=%.2f) vs phrase %r",
-            "OK" if ok else "SUPPRESSED",
-            ("shape" if by_shape else "spelled") if ok else "neither",
-            free_local[:60],
-            conf,
-            self._phrase,
-        )
+        if ok:
+            log.info(
+                "vosk-kws: verify OK (%s) — free ear heard %r at the candidate "
+                "span (conf=%.2f) vs phrase %r",
+                "spelled" if not shape else shape,
+                free_local[:60],
+                conf,
+                self._phrase,
+            )
+        elif fail_open:
+            # The authoritative confirm REPORTS its rejections: this branch —
+            # "heard it, could not confirm it" — is the one a "sometimes it does
+            # not react" report turns on, and it used to be DEBUG-only, so the
+            # live log could not tell it from "never heard" at all (this
+            # install, 2026-08-04: two suppressed candidates, zero explanatory
+            # lines). The visual-only early check stays quiet: it rejects by
+            # design on truncated audio and would drown this out.
+            self._log_suppression(
+                "free ear heard %r at the span (re-score conf %.2f, shape=%s) — "
+                "neither spelled nor sounded like a call of %r",
+                free_local[:60],
+                conf,
+                shape or "n/a",
+                self._phrase,
+            )
+        else:
+            log.debug(
+                "vosk-kws: early check rejected — free ear heard %r (shape=%s) "
+                "vs phrase %r",
+                free_local[:60],
+                shape or "n/a",
+                self._phrase,
+            )
         return ok
 
     def _shape_competition_ok(self, pcm: bytes, model_path: str | None) -> bool:
@@ -1556,8 +1654,12 @@ def vosk_model_supports_phrase(model_path: str, phrase: str) -> bool:
 
 
 __all__ = [
+    "SHAPE_SPEECH",
+    "SHAPE_UNDECIDED",
+    "SHAPE_WAKE",
     "VoskKwsProvider",
     "candidate_shape_ok",
+    "candidate_shape_verdict",
     "sound_confirm",
     "vosk_model_supports_phrase",
 ]

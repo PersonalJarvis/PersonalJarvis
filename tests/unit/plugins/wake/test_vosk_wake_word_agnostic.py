@@ -32,8 +32,11 @@ import numpy as np
 import pytest
 
 from jarvis.plugins.wake.vosk_kws_provider import (
+    SHAPE_SPEECH,
+    SHAPE_UNDECIDED,
     VoskKwsProvider,
     candidate_shape_ok,
+    candidate_shape_verdict,
     sound_confirm,
 )
 
@@ -379,32 +382,26 @@ def test_the_competition_grammar_derives_from_the_configured_phrase() -> None:
 # --- the wake spoken in ONE breath with the command (2026-07-25) -------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "OPEN, measured 2026-07-25: a wake spoken in one breath with the "
-        "command loses BOTH confirm routes. Narrowing the shape window to the "
-        "phrase span fixes it but costs precision — the token-count bound "
-        "relies on surrounding words being counted, so the narrower window "
-        "makes the room-speech fixture land ON the token count and ACCEPT. "
-        "Needs corpus calibration (250/1650 windows), not a fixture."
-    ),
-    strict=True,
-)
 def test_a_wake_followed_immediately_by_the_command_still_fires(monkeypatch) -> None:
     """The natural way people address an assistant must not be the hard case.
 
     The shape gate localises the free ear's words to the phrase span, and that
     window extends 0.3 s PAST the phrase. So any command word starting inside
-    that trailing slack is counted into the candidate, pushes the token count
-    over the phrase's own (``_SHAPE_TOKEN_SLACK`` is 0) and disables the shape
-    path outright. For an out-of-vocabulary name the spelling path cannot cover
-    that gap either, so BOTH confirm routes fail at once — an isolated call plus
-    a pause fires, while the same call followed by the request does not.
+    that trailing slack is counted into the candidate and pushes the token
+    count over the phrase's own (``_SHAPE_TOKEN_SLACK`` is 0). For an
+    out-of-vocabulary name the spelling path cannot cover that gap either, so
+    BOTH confirm routes used to fail at once — an isolated call plus a pause
+    fired, the same call followed by the request did not.
 
-    Kept as a STRICT xfail rather than deleted: it is the executable statement
-    of the defect, so whoever calibrates the corpus can see exactly what has to
-    start passing — and if a future change makes it pass by accident, strict
-    mode flags that too.
+    Fixed 2026-08-04 without moving any bound: an over-budget token count now
+    makes the candidate ``SHAPE_UNDECIDED`` instead of vetoing it, and the
+    acoustic competition decides. That is a purely acoustic judgement, so the
+    earlier objection — narrowing the shape WINDOW costs precision because the
+    token bound relies on surrounding words being counted — no longer applies:
+    the surrounding words are still counted, they just no longer get the last
+    word. Precision is held by
+    ``test_room_speech_across_the_phrase_span_is_still_rejected`` (hard-rejected
+    on duration) and by the competition tests above.
     """
     p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
 
@@ -472,6 +469,121 @@ def test_a_bare_interjection_plus_a_command_is_still_not_a_wake() -> None:
         [_w("hey", 0.40, 0.60, conf=1.0), _w("ho", 0.60, 0.68, conf=0.5)],
         "Hey Ruben",
     ) is False
+
+
+# --- the shape gate's own spelling assumptions (measured 2026-08-04) ---------
+#
+# Live on the maintainer's install (17:01-17:02): 3 candidates, 2 suppressed,
+# 1 fired — "I have to say it three times". Replaying the phrases through the
+# real en model with a German and a US voice showed the free ear's output for a
+# genuine call, and with it the two assumptions the shape gate still made.
+
+
+@pytest.mark.parametrize(
+    ("phrase", "heard"),
+    (
+        # A German-accented wake PREFIX is re-tokenised into confidently known
+        # filler, so a two-token call arrives as three or four tokens.
+        ("Hey Ben", [_w("have", 0.48, 0.69, conf=1.0),
+                     _w("you", 0.69, 0.78, conf=1.0),
+                     _w("been", 0.78, 1.08, conf=1.0)]),
+        ("Hey Ruben", [_w("have", 0.48, 0.72, conf=1.0),
+                       _w("you", 0.72, 0.89, conf=1.0),
+                       _w("been", 0.94, 1.23, conf=1.0)]),
+        ("Hey Atlas", [_w("have", 0.48, 0.66, conf=1.0),
+                       _w("you", 0.66, 0.75, conf=1.0),
+                       _w("at", 0.75, 0.88, conf=1.0),
+                       _w("last", 0.88, 1.14, conf=1.0)]),
+        # A name that IS an ordinary word: the free ear spells it confidently,
+        # which the confidence rule read as proof of some OTHER word.
+        ("Hey Ben", [_w("hey", 0.48, 0.72, conf=1.0),
+                     _w("ben", 0.72, 1.05, conf=1.0)]),
+        ("Hey Claude", [_w("hey", 0.48, 0.69, conf=1.0),
+                        _w("cloud", 0.69, 1.17, conf=1.0)]),
+    ),
+)
+def test_a_contested_shape_is_undecided_not_a_veto(phrase, heard) -> None:
+    """Neither assumption may THROW AWAY a candidate on its own."""
+    assert candidate_shape_verdict(heard, phrase) == SHAPE_UNDECIDED
+    # ...and the narrow boolean question still answers "not on its own".
+    assert candidate_shape_ok(heard, phrase) is False
+
+
+@pytest.mark.parametrize(
+    ("phrase", "heard"),
+    (
+        # Too much sound for the phrase's own tokens: flowing speech.
+        ("Hey Ruben", [_w("herr", 0.20, 1.00), _w("oben", 1.00, 2.00)]),
+        # Nothing name-sized where the name belongs ("hey ho", live 2026-07-13).
+        ("Hey Ruben", [_w("hey", 0.40, 0.62), _w("ho", 0.62, 0.74)]),
+        # The free ear heard no speech at all at the span.
+        ("Hey Ruben", []),
+    ),
+)
+def test_the_duration_questions_stay_hard_rejections(phrase, heard) -> None:
+    """The two bounds that measure SOUND, not words, can never be overruled."""
+    assert candidate_shape_verdict(heard, phrase) == SHAPE_SPEECH
+
+
+def test_a_german_prefix_split_wake_fires_through_the_competition(monkeypatch) -> None:
+    """The live bug: "Hey Ben" heard as "have you been" was thrown away.
+
+    Measured against the real en model: the German voice's "Hey Ben" free-decodes
+    to "have you been" (3 confidently known tokens), which failed the token
+    count AND the confidence rule, while "been" is too far from "ben" for the
+    spelling path. Both routes closed on a genuine call.
+    """
+    p = VoskKwsProvider("Hey Ben", model_path="fake", keyword="ben")
+    grammar = {
+        "text": "hey ben",
+        "result": [
+            {"word": "hey", "start": 0.48, "end": 0.78, "conf": 1.0},
+            {"word": "ben", "start": 0.78, "end": 1.08, "conf": 1.0},
+        ],
+    }
+    free = {
+        "text": "have you been",
+        "result": [
+            _w("have", 0.48, 0.69, conf=1.0),
+            _w("you", 0.69, 0.78, conf=1.0),
+            _w("been", 0.78, 1.08, conf=1.0),
+        ],
+    }
+
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(grammar, free))
+    assert p._verify_window(_loud_window(), fail_open=True) is True
+
+
+def test_a_contested_shape_that_loses_the_competition_does_not_fire(
+    monkeypatch,
+) -> None:
+    """Undecided means the DECODER decides — not that the candidate is waved in.
+
+    Measured on real audio: the competitor grammar keeps the phrase for 8/8
+    genuine calls and 0/20 unrelated utterances, so this is where room speech
+    that survives the two duration bounds is stopped.
+    """
+    p = VoskKwsProvider("Hey Ben", model_path="fake", keyword="ben")
+    grammar = {
+        "text": "hey ben",
+        "result": [
+            {"word": "hey", "start": 0.48, "end": 0.78, "conf": 1.0},
+            {"word": "ben", "start": 0.78, "end": 1.08, "conf": 1.0},
+        ],
+    }
+    free = {
+        "text": "have you been",
+        "result": [
+            _w("have", 0.48, 0.69, conf=1.0),
+            _w("you", 0.69, 0.78, conf=1.0),
+            _w("been", 0.78, 1.08, conf=1.0),
+        ],
+    }
+    competition = {"text": "hey [unk]", "result": []}
+
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(grammar, free, competition))
+    assert p._verify_window(_loud_window(), fail_open=True) is False
+    assert p.stats()["suppressed_shape_competition"] == 1
 
 
 # --- diagnosability: a suppressed wake must leave a trace (2026-07-25) --------
