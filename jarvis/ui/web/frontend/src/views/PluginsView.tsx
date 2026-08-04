@@ -1075,7 +1075,7 @@ function CarouselBanner() {
               "h-1.5 w-1.5 rounded-full transition-all duration-300",
               active === i
                 ? "scale-125 bg-primary shadow-[0_0_8px_rgba(255,214,10,0.7)]"
-                : "bg-white/30 hover:bg-white/60",
+                : "bg-sheen/30 hover:bg-sheen/60",
             )}
           />
         ))}
@@ -1098,7 +1098,7 @@ function CarouselSlideView({ slide, active }: { slide: CarouselSlide; active: bo
     >
       <div
         className={cn(
-          "flex items-center gap-2 rounded-full border bg-black/55 px-4 py-2 text-xs shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur-md",
+          "flex items-center gap-2 rounded-full border bg-scrim/55 px-4 py-2 text-xs shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur-md",
           slide.accent,
         )}
       >
@@ -1221,7 +1221,7 @@ export function BrandTile({ plugin }: { plugin: Plugin }) {
         // own logo is near-black ship a light variant for exactly this case —
         // see LOGOS.md; without one, a dark mark would vanish here.
         fullColour && !showMonogram
-          ? "border-white/10 bg-white/[0.07]"
+          ? "border-sheen/10 bg-sheen/[0.07]"
           : "border-border/60",
       )}
       style={fullColour && !showMonogram ? undefined : { backgroundColor: tile }}
@@ -1606,7 +1606,7 @@ function OAuthRedirectDialog({
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/70 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -1786,7 +1786,7 @@ function DeviceCodeDialog({
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/70 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -1976,7 +1976,7 @@ export function PkceConnectDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby="pkce-connect-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/70 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget && !busy) onClose();
       }}
@@ -2153,7 +2153,7 @@ function DisconnectConfirmDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby="disconnect-dialog-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/70 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget && !isPending) onCancel();
       }}
@@ -2296,7 +2296,7 @@ export function PatConnectDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby="pat-dialog-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/70 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget && !isPending) onClose();
       }}

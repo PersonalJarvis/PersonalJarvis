@@ -175,7 +175,7 @@ export function SkillCreateDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/70 p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

@@ -64,7 +64,7 @@ export function IntroVideoScreen({ onContinue }: { onContinue: () => void }) {
                 if (!img.src.endsWith("hqdefault.jpg")) img.src = THUMB_FALLBACK;
               }}
             />
-            <span className="absolute inset-0 flex items-center justify-center bg-black/25 transition-colors group-hover:bg-black/15">
+            <span className="absolute inset-0 flex items-center justify-center bg-scrim/25 transition-colors group-hover:bg-scrim/15">
               <span className="flex h-16 w-16 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform group-hover:scale-110">
                 <Play className="h-7 w-7 translate-x-0.5 fill-current" />
               </span>

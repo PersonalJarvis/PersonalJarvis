@@ -174,6 +174,23 @@
   display: none;
 }
 
+/* Shiki dual-theme switch — PLAIN (non-@layer) CSS, same reason as the rules
+   below: `.shiki` markup is produced at runtime from highlighted strings and
+   never appears in the source, so a @layer rule for it would be purged.
+
+   CodeBlock highlights once with both themes; Shiki writes the light colour
+   into `color:` and the dark one into `--shiki-dark` on every span. These two
+   rules are what make the dark half take over. Without them, switching the
+   theme would leave every code block permanently in light colours. */
+.dark .shiki,
+.dark .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
+  font-style: var(--shiki-dark-font-style) !important;
+  font-weight: var(--shiki-dark-font-weight) !important;
+  text-decoration: var(--shiki-dark-text-decoration) !important;
+}
+
 /* xterm.js viewport scrollbar — PLAIN (non-@layer) CSS on purpose. Tailwind
    tree-shakes `@layer utilities` by class usage, and `.xterm-viewport` is
    created by xterm.js at runtime (it never appears in the source), so a rule

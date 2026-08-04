@@ -188,7 +188,7 @@ export function DepartureBoard({ agents = [], snapshotError = null, health = nul
           </div>
         )}
 
-        <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-800/80 bg-black/35 scrollbar-jarvis">
+        <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-800/80 bg-scrim/35 scrollbar-jarvis">
           <div className="min-w-[1040px]">
             <BoardHeader />
             {sortedAgents.length === 0 ? (
@@ -336,7 +336,7 @@ function AgentRow({
       {expanded && hasDrilldown && (
         <div className="border-t border-zinc-900/80 bg-zinc-950/55 px-4 pb-4 pt-3">
           <div className="grid grid-cols-[1.35fr_1fr] gap-4">
-            <div className="min-w-0 rounded-md border border-zinc-800/70 bg-black/30">
+            <div className="min-w-0 rounded-md border border-zinc-800/70 bg-scrim/30">
               <div className="flex items-center gap-2 border-b border-zinc-900 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
                 <TerminalSquare className="h-3.5 w-3.5 text-primary" />
                 Tool calls
@@ -352,7 +352,7 @@ function AgentRow({
               )}
             </div>
 
-            <div className="min-w-0 rounded-md border border-zinc-800/70 bg-black/30">
+            <div className="min-w-0 rounded-md border border-zinc-800/70 bg-scrim/30">
               <div className="border-b border-zinc-900 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
                 {agentBrand(assistantName)} details
               </div>

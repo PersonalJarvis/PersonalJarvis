@@ -20,8 +20,8 @@ export function BoardCard({ children, className, glow }: BoardCardProps) {
     <div
       className={cn(
         "relative overflow-hidden rounded-[20px]",
-        "bg-gradient-to-b from-white/[0.055] to-white/[0.015]",
-        "border border-white/[0.07]",
+        "bg-gradient-to-b from-sheen/[0.055] to-sheen/[0.015]",
+        "border border-sheen/[0.07]",
         "shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06),0_16px_40px_-20px_rgba(0,0,0,0.8)]",
         className,
       )}

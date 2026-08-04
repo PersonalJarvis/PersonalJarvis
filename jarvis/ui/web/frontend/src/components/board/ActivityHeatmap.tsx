@@ -4,7 +4,7 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 const LEVEL: Record<number, string> = {
-  0: "bg-white/[0.04] ring-1 ring-inset ring-white/[0.03]",
+  0: "bg-sheen/[0.04] ring-1 ring-inset ring-sheen/[0.03]",
   1: "bg-primary/30",
   2: "bg-primary/50",
   3: "bg-primary/75",

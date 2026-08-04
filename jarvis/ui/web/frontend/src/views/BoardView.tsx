@@ -82,7 +82,7 @@ export function BoardView() {
               onClick={() => setShareOpen(true)}
               disabled={loading || !s}
               className={cn(
-                "inline-flex items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-xs font-medium transition-colors",
+                "inline-flex items-center gap-2 rounded-lg border border-sheen/[0.08] bg-sheen/[0.03] px-3 py-1.5 text-xs font-medium transition-colors",
                 "hover:border-primary/40 hover:bg-primary/[0.06]",
                 (loading || !s) && "opacity-50",
               )}
@@ -97,7 +97,7 @@ export function BoardView() {
               onClick={() => refresh.mutate()}
               disabled={refresh.isPending}
               className={cn(
-                "inline-flex items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-xs font-medium transition-colors",
+                "inline-flex items-center gap-2 rounded-lg border border-sheen/[0.08] bg-sheen/[0.03] px-3 py-1.5 text-xs font-medium transition-colors",
                 "hover:border-primary/40 hover:bg-primary/[0.06]",
                 refresh.isPending && "opacity-60",
               )}
@@ -216,7 +216,7 @@ export function BoardView() {
                   </span>
                 )}
                 {longest > 0 && (
-                  <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[11px] text-muted-foreground">
+                  <span className="rounded-full border border-sheen/[0.08] bg-sheen/[0.03] px-2.5 py-1 text-[11px] text-muted-foreground">
                     {plural(t, "board_view.longest_streak", longest)}
                   </span>
                 )}
@@ -260,9 +260,9 @@ export function BoardView() {
 // Per-index hairline dividers for a 2-col (mobile) / 4-col (desktop) grid.
 const DIVIDERS = [
   "",
-  "border-l border-white/[0.06]",
-  "border-t border-white/[0.06] lg:border-t-0 lg:border-l",
-  "border-l border-t border-white/[0.06] lg:border-t-0",
+  "border-l border-sheen/[0.06]",
+  "border-t border-sheen/[0.06] lg:border-t-0 lg:border-l",
+  "border-l border-t border-sheen/[0.06] lg:border-t-0",
 ];
 
 function Metric({
@@ -308,7 +308,7 @@ function Dot() {
 }
 
 function Skeleton({ className }: { className?: string }) {
-  return <div className={cn("w-full animate-pulse rounded-lg bg-white/[0.04]", className)} />;
+  return <div className={cn("w-full animate-pulse rounded-lg bg-sheen/[0.04]", className)} />;
 }
 
 function plural(t: (k: string) => string, baseKey: string, n: number): string {

@@ -165,9 +165,9 @@ export function ShareDialog({ open, onOpenChange, stats }: Props) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-scrim/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0" />
         <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-white/[0.08] bg-card p-5 shadow-2xl data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
+          className="fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-sheen/[0.08] bg-card p-5 shadow-2xl data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
           data-testid="share-dialog"
         >
           <div className="mb-3 flex items-start justify-between gap-3">
@@ -180,7 +180,7 @@ export function ShareDialog({ open, onOpenChange, stats }: Props) {
               </Dialog.Description>
             </div>
             <Dialog.Close
-              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
+              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-sheen/[0.06] hover:text-foreground"
               aria-label="Close"
             >
               <X className="h-4 w-4" />
@@ -189,7 +189,7 @@ export function ShareDialog({ open, onOpenChange, stats }: Props) {
 
           {/* Scaled, non-captured preview */}
           <div
-            className="mx-auto mb-4 overflow-hidden rounded-xl border border-white/[0.06]"
+            className="mx-auto mb-4 overflow-hidden rounded-xl border border-sheen/[0.06]"
             style={{ width: PREVIEW, height: PREVIEW }}
           >
             <div
@@ -223,7 +223,7 @@ export function ShareDialog({ open, onOpenChange, stats }: Props) {
             <span className="mb-1 block text-[11px] text-muted-foreground">
               {t("board_view.share.handle_label")}
             </span>
-            <div className="flex items-center rounded-lg border border-white/[0.08] bg-white/[0.03] px-2.5">
+            <div className="flex items-center rounded-lg border border-sheen/[0.08] bg-sheen/[0.03] px-2.5">
               <span className="text-sm text-muted-foreground">@</span>
               <input
                 value={handle}
@@ -303,7 +303,7 @@ function ActionButton({
         "inline-flex flex-col items-center justify-center gap-1 rounded-lg border px-2 py-2.5 text-[11px] font-medium transition-colors",
         primary
           ? "border-primary/40 bg-primary/[0.10] text-primary hover:bg-primary/[0.16]"
-          : "border-white/[0.08] bg-white/[0.03] hover:border-primary/40 hover:bg-primary/[0.06]",
+          : "border-sheen/[0.08] bg-sheen/[0.03] hover:border-primary/40 hover:bg-primary/[0.06]",
         disabled && "opacity-50",
       )}
     >

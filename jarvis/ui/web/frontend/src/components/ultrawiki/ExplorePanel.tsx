@@ -351,7 +351,7 @@ function EntityRow({
       {/* The signature of this view: where in your history this topic lived.
           Width is its lifetime, position is when, warmth is how recent. */}
       <span
-        className="mt-1 block h-[3px] w-full rounded-full bg-white/[0.06]"
+        className="mt-1 block h-[3px] w-full rounded-full bg-sheen/[0.06]"
         aria-hidden
       >
         <span
