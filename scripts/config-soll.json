@@ -33,7 +33,7 @@
     "allow_sapi5_fallback": false
   },
   "brain": {
-    "primary": "grok",
+    "primary": "openrouter",
     "fallback": "openrouter",
     "deep_brain": "claude-cli",
     "routing_provider": "grok",
@@ -56,7 +56,7 @@
     "deep_model": "claude-opus-4-8"
   },
   "brain.worker": {
-    "provider": "openai-codex",
+    "provider": "claude-api",
     "model": "gemini-3.1-pro-preview",
     "fallback_provider": "gemini",
     "fallback_model": "gemini-3.1-pro-preview",
@@ -106,8 +106,8 @@
     "voice": "Fenrir"
   },
   "brain.providers.openai-realtime": {
-    "model": "gpt-realtime-2.1",
-    "voice": "cedar"
+    "model": "gpt-realtime-2.1-mini",
+    "voice": "alloy"
   },
   "brain.tool_model": {
     "provider": "grok"
@@ -121,5 +121,12 @@
   "brain.providers.ollama": {
     "tool_model": "deepseek-r1:14b",
     "cu_model": "deepseek-r1:14b"
+  },
+  "brain.providers.codex-subscription-realtime": {
+    "voice": "cove"
+  },
+  "brain.providers.grok": {
+    "tool_model": "grok-4.5",
+    "cu_model": "grok-4.5"
   }
 }
