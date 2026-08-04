@@ -11,7 +11,7 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
-## [1.2.2] — 2026-08-03
+## [1.2.2] — 2026-08-04
 
 This release makes realtime subscription voice and the Agentic IDE more
 dependable while adding richer voice controls and knowledge-map views.
@@ -23,6 +23,12 @@ dependable while adding richer voice controls and knowledge-map views.
 - Added 3D UltraWiki memory maps with 2D/3D switching on both knowledge surfaces.
 - Added Agentic IDE chat-or-terminal workspace choices, voice-orb context, prompt
   receipts, persistent terminal sizing, and clearer working/done state feedback.
+- Added a real light theme selectable in Settings, replacing a switch that
+  previously changed nothing.
+- Added a draggable voice bubble to the Agentic IDE that replaces the fixed
+  voice side column and speaks status updates from wherever it sits.
+- Added UltraWiki word search over a meaning-neighbourhood of terms, so a
+  query finds pages that use related words, not only the literal ones.
 
 ### Fixed
 
@@ -38,6 +44,20 @@ dependable while adding richer voice controls and knowledge-map views.
   Windows, and made every pickable key bindable as a hotkey on macOS.
 - Moved desktop log writing to a dedicated thread so logging can no longer stall
   the thread that emitted the record.
+- Stopped the wake-word shape gate from rejecting genuine wakes over its own
+  spelling assumptions; verification now relies only on word-agnostic evidence.
+- Made subscription realtime calls honest end to end: the surface shows a real
+  connecting state during a provider's cold start, the reply language is pinned
+  when the call opens, a stalled turn recovers instead of hanging, per-call cost
+  is reported truthfully, and the transport pre-warms early and works on macOS
+  and Linux, not only Windows.
+- Stopped a config write from silently dropping every section it was not asked
+  to touch, which could erase provider pins and most of a working configuration.
+- Kept the Agentic IDE workspace on one screen with sideways scrolling, made a
+  pane drop land where the pointer aims, and stopped a provider card that cannot
+  be activated from stacking a wall of identical warnings.
+- Made the onboarding local-brain button select the local brain instead of a
+  cloud one, and stopped the sidebar painting rows at stale positions on macOS.
 
 ---
 
