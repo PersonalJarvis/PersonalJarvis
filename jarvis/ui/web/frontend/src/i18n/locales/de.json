@@ -3730,6 +3730,12 @@
       "starting": "Der Agent startet noch — er wird fortgesetzt, sobald er läuft.",
       "result_queued": "{0} starten noch; sie machen weiter, sobald sie laufen: {1}."
     },
+    "even": {
+      "label": "Terminal-Größen angleichen",
+      "hint": "Jedes Terminal bekommt dieselbe Größe. Nichts wird verschoben — die Grenzen gleichen sich dort an, wo sie schon sind.",
+      "already": "Alle Terminals haben bereits dieselbe Größe.",
+      "grid_only": "Größen gleichen sich im Terminal-Raster an — hier gibt es keine Grenzen zum Angleichen."
+    },
     "arrange": {
       "carrying": "auf ein Terminal ziehen",
       "swap": "Mit {0} tauschen",

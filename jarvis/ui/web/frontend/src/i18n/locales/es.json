@@ -3730,6 +3730,12 @@
       "starting": "Su agente todavía está arrancando: continuará en cuanto esté listo.",
       "result_queued": "{0} aún arrancan; seguirán en cuanto estén listos: {1}."
     },
+    "even": {
+      "label": "Igualar el tamaño de los terminales",
+      "hint": "Da a cada terminal el mismo tamaño. No se mueve nada: los bordes se igualan donde ya están.",
+      "already": "Todos los terminales ya tienen el mismo tamaño.",
+      "grid_only": "Los tamaños se igualan en la cuadrícula de terminales: aquí no hay bordes que igualar."
+    },
     "arrange": {
       "carrying": "suéltalo sobre un terminal",
       "swap": "Intercambiar con {0}",

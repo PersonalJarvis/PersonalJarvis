@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
+  AlignHorizontalDistributeCenter,
   AudioLines,
   Brain,
   Check,
@@ -47,6 +48,8 @@ import { PaneActivityPill } from "./PaneActivityPill";
 import { AgentPickerMenu, offersAgentChoice, type SplitAgentChoice } from "./AgentPicker";
 import type { TerminalAppearance } from "./terminalThemes";
 import {
+  evenWeights,
+  isEvenLayout,
   paneArrangement,
   paneLayout,
   panesFromArrangement,
@@ -1024,6 +1027,33 @@ export function AgenticGrid({
   );
 
   /*
+   * "Even them out" — every terminal back to the same share of the window.
+   *
+   * A workspace drifts out of shape one drag at a time: a pane is widened to
+   * read a diff, another is squeezed to make room, and an hour later the wall
+   * is five different widths for no reason anyone remembers. Straightening it
+   * by hand means dragging every seam back and never quite landing on even.
+   *
+   * It resets the WEIGHTS and nothing else, which is the whole point: the
+   * arrangement — which column each terminal is in, which slot down that
+   * column — lives in `session.terminals` and only the backend may change it.
+   * So no pane is re-ordered, moved to another column or stacked under
+   * another one; the boundaries simply even out where they already are. The
+   * same act therefore covers every arrangement there is: columns side by
+   * side share the width equally, and panes stacked in one column share that
+   * column's height equally.
+   */
+  const evenPanes = useCallback(() => {
+    sizes.setWeights(evenWeights());
+  }, [sizes.setWeights]);
+
+  /** Would evening out change anything? Answers for the button's own state. */
+  const alreadyEven = useMemo(
+    () => isEvenLayout(session.terminals, sizes.weights),
+    [session.terminals, sizes.weights],
+  );
+
+  /*
    * Which panes the current column weights are keyed to.
    *
    * Weights are stored by COLUMN INDEX (see `paneLayout`), and the backend
@@ -1778,6 +1808,33 @@ export function AgenticGrid({
           ) : (
             <MessagesSquare className="h-4 w-4 shrink-0" />
           )}
+        </button>
+
+        {/* Even out the sizes. Beside the grid/chat toggle because both are
+            about the SHAPE of the workspace rather than what is in it, and
+            before the appearance controls because it changes the panes
+            themselves, not how their text is drawn.
+
+            Off in chat view and while a pane is maximized: both hide the
+            boundaries this evens out, so the click would be a change nobody
+            can see — and a control whose effect is invisible reads as a dead
+            one. The tooltip says which of the reasons applies. */}
+        <button
+          type="button"
+          data-testid="agentic-even-panes"
+          onClick={evenPanes}
+          disabled={chatView || maximized !== null || alreadyEven}
+          title={
+            chatView || maximized !== null
+              ? t("agentic_grid.even.grid_only")
+              : alreadyEven
+                ? t("agentic_grid.even.already")
+                : t("agentic_grid.even.hint")
+          }
+          aria-label={t("agentic_grid.even.label")}
+          className={TOOLBAR_BTN}
+        >
+          <AlignHorizontalDistributeCenter className="h-4 w-4 shrink-0" />
         </button>
 
         {/* Appearance stays behind one quiet menu; text size is deliberately

@@ -3730,6 +3730,12 @@
       "starting": "Its agent is still starting — it will be continued as soon as it is up.",
       "result_queued": "{0} still starting; they carry on the moment they are up: {1}."
     },
+    "even": {
+      "label": "Even out the terminal sizes",
+      "hint": "Give every terminal the same size. Nothing is moved — the boundaries even out where they already are.",
+      "already": "Every terminal already has the same size.",
+      "grid_only": "Sizes even out in the terminal grid — there are no boundaries to even here."
+    },
     "arrange": {
       "carrying": "drop it on a terminal",
       "swap": "Swap with {0}",

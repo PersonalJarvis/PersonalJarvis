@@ -1419,6 +1419,27 @@ describe("resizing the workspace", () => {
     });
   }
 
+  /** The same, down the other axis — a horizontal seam reads `clientY`. */
+  function dragSeamDownBy(testId: string, fromY: number, toY: number) {
+    const seam = screen.getByTestId(testId);
+    act(() => {
+      seam.dispatchEvent(
+        new MouseEvent("pointerdown", { clientY: fromY, bubbles: true }),
+      );
+    });
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointermove", { clientY: toY }));
+    });
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointerup"));
+    });
+  }
+
+  /** Is a toolbar control currently refusing clicks? */
+  function disabled(testId: string): boolean {
+    return (screen.getByTestId(testId) as HTMLButtonElement).disabled;
+  }
+
   it("puts a grab handle on every boundary between panes", () => {
     renderGrid(sessionWith([["Mika", 0], ["Nova", 0, 1], ["Aria", 1]]));
     // One between the two columns, one between the panes stacked in the first.
@@ -1607,6 +1628,113 @@ describe("resizing the workspace", () => {
 
       fireEvent.doubleClick(screen.getByTestId("pane-seam-column:0:1"));
       expect(widthOf("Mika")).toBe(50);
+    } finally {
+      restore();
+    }
+  });
+
+  /*
+   * The toolbar's "even them out" button.
+   *
+   * The request it answers (2026-08-04): after an hour of dragging, a wall of
+   * terminals is five different widths and straightening it by hand means
+   * dragging every seam back one at a time. The one thing it must NEVER do is
+   * rearrange anything — which pane sits in which column, and which pane is
+   * stacked under which, is exactly what the user asked to keep.
+   */
+  it("evens every terminal out on one click", () => {
+    const restore = measured(1800, 900);
+    try {
+      renderGrid(
+        sessionWith([
+          ["Mika", 0],
+          ["Nova", 1],
+          ["Vega", 1, 1],
+          ["Aria", 2],
+        ]),
+      );
+      // Out of shape on BOTH axes: one column dragged wide, and the stack
+      // inside another column dragged so its two panes are unequal.
+      dragSeamBy("pane-seam-column:0:1", 600, 900);
+      dragSeamDownBy("pane-seam-pane:Nova:Vega", 450, 700);
+      expect(widthOf("Mika")).not.toBe(33.3);
+      expect(Math.round(box("Vega").height)).not.toBe(50);
+
+      fireEvent.click(screen.getByTestId("agentic-even-panes"));
+
+      // Every column the same width...
+      expect(widthOf("Mika")).toBe(33.3);
+      expect(widthOf("Nova")).toBe(33.3);
+      expect(widthOf("Aria")).toBe(33.3);
+      // ...and the two panes sharing a column splitting its height equally.
+      expect(box("Nova").height).toBeCloseTo(50, 3);
+      expect(box("Vega").height).toBeCloseTo(50, 3);
+      // Remembered, so the workspace comes back straight rather than snapping
+      // to the pre-click sizes on the next mount.
+      expect(stored()).toEqual({ columns: [], panes: {} });
+    } finally {
+      restore();
+    }
+  });
+
+  it("moves no pane while it evens the sizes out", () => {
+    const restore = measured(1800, 900);
+    try {
+      renderGrid(
+        sessionWith([
+          ["Mika", 0],
+          ["Nova", 1],
+          ["Vega", 1, 1],
+          ["Aria", 2],
+        ]),
+      );
+      dragSeamBy("pane-seam-column:0:1", 600, 900);
+
+      fireEvent.click(screen.getByTestId("agentic-even-panes"));
+
+      // Same left-to-right order as before, Vega still stacked under Nova in
+      // the middle column, and nothing pushed onto another line.
+      expect(box("Mika").left).toBe(0);
+      expect(box("Nova").left).toBeCloseTo(33.333, 2);
+      expect(box("Aria").left).toBeCloseTo(66.667, 2);
+      expect(box("Vega").left).toBe(box("Nova").left);
+      expect(box("Nova").top).toBe(0);
+      expect(box("Vega").top).toBeCloseTo(50, 3);
+    } finally {
+      restore();
+    }
+  });
+
+  it("offers nothing to press while the workspace is already even", () => {
+    // A live button that would change nothing is a button people press twice
+    // and then distrust.
+    const restore = measured(1000, 600);
+    try {
+      renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+      expect(disabled("agentic-even-panes")).toBe(true);
+
+      dragSeamBy("pane-seam-column:0:1", 500, 750);
+      expect(disabled("agentic-even-panes")).toBe(false);
+
+      fireEvent.click(screen.getByTestId("agentic-even-panes"));
+      expect(disabled("agentic-even-panes")).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
+  it("stands down while one pane covers the others", () => {
+    // A maximized workspace has no boundaries on screen, so evening them out
+    // would be a click with nothing to show for it.
+    const restore = measured(1000, 600);
+    try {
+      renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
+      dragSeamBy("pane-seam-column:0:1", 500, 750);
+      fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
+      expect(disabled("agentic-even-panes")).toBe(true);
+
+      fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
+      expect(disabled("agentic-even-panes")).toBe(false);
     } finally {
       restore();
     }

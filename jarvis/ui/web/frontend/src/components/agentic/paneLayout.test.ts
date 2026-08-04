@@ -3,6 +3,7 @@ import {
   dragSeam,
   evenSeam,
   evenWeights,
+  isEvenLayout,
   MIN_SEAM_PANE_PX,
   paneArrangement,
   paneLayout,
@@ -317,5 +318,36 @@ describe("sameArrangement", () => {
     expect(sameArrangement({ A: 0, B: 1 }, { A: 0, B: 2 })).toBe(false);
     expect(sameArrangement({ A: 0 }, { A: 0, B: 1 })).toBe(false);
     expect(sameArrangement({ A: 0, B: 1 }, { A: 0, C: 1 })).toBe(false);
+  });
+});
+
+describe("isEvenLayout", () => {
+  const row = [pane("A", 0), pane("B", 1), pane("C", 2)];
+
+  it("calls an untouched workspace even", () => {
+    expect(isEvenLayout(row, evenWeights())).toBe(true);
+  });
+
+  it("reads equal weights as even whatever number they are written as", () => {
+    // The button asks "would this change anything on screen", not "are the
+    // stored numbers the defaults" — three columns at 7 are the same picture
+    // as three columns at 1.
+    expect(isEvenLayout(row, { ...evenWeights(), columns: [7, 7, 7] })).toBe(true);
+  });
+
+  it("spots a dragged column and a dragged stack alike", () => {
+    expect(isEvenLayout(row, { ...evenWeights(), columns: [2, 1, 1] })).toBe(false);
+    const stack = [pane("A", 0), pane("B", 0, 1)];
+    expect(isEvenLayout(stack, { ...evenWeights(), panes: { A: 3 } })).toBe(false);
+  });
+
+  it("ignores a weight belonging to a pane that is no longer open", () => {
+    // Closing a pane leaves its height weight behind until the next remap. It
+    // sizes nothing, so it must not keep the button lit for work it cannot do.
+    expect(isEvenLayout(row, { ...evenWeights(), panes: { Gone: 9 } })).toBe(true);
+  });
+
+  it("has no opinion about an empty workspace", () => {
+    expect(isEvenLayout([], evenWeights())).toBe(true);
   });
 });

@@ -324,6 +324,44 @@ export function evenSeam(weights: PaneWeights, seam: PaneSeam): PaneWeights {
   return writeSide(writeSide(weights, seam, seam.before, half), seam, seam.after, half);
 }
 
+/**
+ * How close two fractions have to be before nobody could see the difference.
+ *
+ * A fraction of the workspace, so on a 4K monitor this is four thousandths of a
+ * pixel — far below anything a screen can draw, and loose enough that a seam
+ * dragged to visually-even (or the float noise a chain of drags leaves behind)
+ * counts as even rather than leaving the toolbar offering a button that would
+ * change nothing.
+ */
+const EVEN_EPSILON = 1e-4;
+
+/**
+ * Is every terminal already sharing its space equally with its siblings?
+ *
+ * Answered by comparing the layout the current weights produce against the one
+ * `evenWeights` produces, rather than by inspecting the weights themselves.
+ * That is the honest question — "would evening this out move anything on
+ * screen" — and it is the same answer for weights of `[1, 1]` and `[7, 7]`,
+ * which no comparison of the stored numbers alone would give.
+ */
+export function isEvenLayout<T extends Sized>(
+  panes: readonly T[],
+  weights: PaneWeights,
+): boolean {
+  const current = paneLayout(panes, weights);
+  const even = paneLayout(panes, evenWeights());
+  return current.boxes.every((box, index) => {
+    const target = even.boxes[index];
+    if (!target) return false;
+    return (
+      Math.abs(box.x - target.x) <= EVEN_EPSILON &&
+      Math.abs(box.y - target.y) <= EVEN_EPSILON &&
+      Math.abs(box.w - target.w) <= EVEN_EPSILON &&
+      Math.abs(box.h - target.h) <= EVEN_EPSILON
+    );
+  });
+}
+
 // ------------------------------------------------------- splits and closes
 
 /** Which column index each pane sits in, gaps closed, for a set of panes. */
