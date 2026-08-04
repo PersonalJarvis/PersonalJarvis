@@ -20,6 +20,16 @@ const terminalHarness = vi.hoisted(() => ({
   write: vi.fn(),
   deferWrite: false,
   writeCallbacks: [] as (() => void)[],
+  /**
+   * Every terminal this pane has built, oldest first.
+   *
+   * A pane replaces its terminal without remounting — the grid re-measuring,
+   * a restart, a rename — and what the REPLACEMENT is built with is exactly
+   * where a pane lost the reader's text size. So the double keeps the options
+   * it was constructed with rather than starting from an empty object, and the
+   * list makes the newest instance reachable from a test.
+   */
+  instances: [] as { options: Record<string, unknown> }[],
 }));
 
 vi.mock("@xterm/xterm", () => ({
@@ -30,8 +40,14 @@ vi.mock("@xterm/xterm", () => ({
     get rows() {
       return terminalHarness.size.rows;
     }
-    options: Record<string, unknown> = {};
+    options: Record<string, unknown>;
     unicode = { activeVersion: "" };
+
+    constructor(options: Record<string, unknown> = {}) {
+      this.options = { ...options };
+      terminalHarness.instances.push(this);
+    }
+
     // The pane silences xterm's own answers to the agent's protocol queries
     // (see ./terminalQueries). The double only has to accept the handlers.
     parser = {
@@ -989,5 +1005,107 @@ describe("renaming a pane", () => {
     await act(async () => undefined);
     expect(onRename).not.toHaveBeenCalled();
     expect(screen.queryByTestId("pane-rename-input-T1")).toBeNull();
+  });
+});
+
+/*
+ * The toolbar's text size is an ACCESSIBILITY control: somebody who cannot
+ * comfortably read 13px sets 20 once and expects every pane to be readable,
+ * not the one they happen to be typing in.
+ *
+ * What broke that was invisible in every earlier test, because the terminal
+ * double ignored the options it was constructed with: the pane froze the size
+ * and theme it first rendered with and handed them to every terminal it built
+ * afterwards. A pane replaces its terminal without remounting — the grid
+ * re-measures and `geometryReady` flips, a pane is restarted or renamed — and
+ * since the size effect fires on CHANGES, nothing came along afterwards to
+ * correct the resurrected value. The panes rebuilt since the last change sat
+ * at the startup size for good, next to the ones that were not.
+ */
+describe("terminal text size across a rebuild", () => {
+  beforeEach(() => {
+    terminalHarness.instances.length = 0;
+    globalThis.ResizeObserver = ResizeObserverHarness;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const newest = () => terminalHarness.instances[terminalHarness.instances.length - 1];
+
+  it("builds a replacement terminal at the size the user is looking at", () => {
+    const view = render(
+      <AgenticTerminal name="Dana" displayName="Claude Code" appearance="dark" fontSize={13} />,
+    );
+    expect(newest().options.fontSize).toBe(13);
+
+    // The reader turns the text up while the pane is live.
+    view.rerender(
+      <AgenticTerminal name="Dana" displayName="Claude Code" appearance="dark" fontSize={20} />,
+    );
+    expect(newest().options.fontSize).toBe(20);
+
+    // ...and the grid is re-measured, which rebuilds the terminal underneath a
+    // pane that never unmounted. This is the pane the user was NOT typing in.
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={20}
+        geometryReady={false}
+      />,
+    );
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={20}
+        geometryReady
+      />,
+    );
+
+    expect(terminalHarness.instances.length).toBeGreaterThan(1);
+    expect(newest().options.fontSize).toBe(20);
+  });
+
+  it("restates the size to a terminal restarted after the change", () => {
+    const view = render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        restartToken={0}
+      />,
+    );
+    // Copied now: the live restyle below writes the new theme onto THIS
+    // instance too, so reading it afterwards would compare light against light.
+    const openedWith = { ...(newest().options.theme as Record<string, unknown>) };
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="light"
+        fontSize={18}
+        restartToken={0}
+      />,
+    );
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="light"
+        fontSize={18}
+        restartToken={1}
+      />,
+    );
+
+    // The theme travels with the size: both were frozen by the same ref, so a
+    // restarted pane came back in the palette it opened with.
+    expect(newest().options.fontSize).toBe(18);
+    expect(newest().options.theme).not.toEqual(openedWith);
   });
 });

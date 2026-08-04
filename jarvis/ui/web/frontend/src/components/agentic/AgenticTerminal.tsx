@@ -1158,19 +1158,30 @@ export function AgenticTerminal({
     };
   }, [active]);
 
-  // Live restyle — no reconnect, so the running agent is untouched. The canvas
-  // renderer caches rendered glyphs per colour in a texture atlas, so a theme
-  // change has to invalidate it or the old palette keeps being painted.
+  /*
+   * Live restyle — no reconnect, so the running agent is untouched. The canvas
+   * renderer caches rendered glyphs per colour in a texture atlas, so a theme
+   * change has to invalidate it or the old palette keeps being painted.
+   *
+   * `terminalEpoch` is in here, and in the size effect below, for a reason the
+   * appearance prop alone cannot cover: these effects fire on CHANGES, and the
+   * terminal underneath them can be replaced without one. Every rebuild bumps
+   * the epoch, so the pane restates the current theme and size to the new
+   * terminal instead of trusting that it was born with them.
+   */
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
     term.options.theme = themeFor(appearance);
     term.clearTextureAtlas?.();
-  }, [appearance]);
+  }, [appearance, terminalEpoch]);
 
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
+    // A no-op on a terminal already built at this size (xterm's setter drops a
+    // write of the identical value), which is what makes restating it on every
+    // rebuild free.
     term.options.fontSize = fontSize;
     // A new size is a new glyph advance, and so a new fraction of a pixel for
     // the canvas renderer to floor away. Re-align before the fit below, or the
@@ -1183,7 +1194,7 @@ export function AgenticTerminal({
     // every line breaks in the wrong place. The two must move together, so this
     // goes through the same resize path the observer uses.
     resizeRef.current?.();
-  }, [fontSize]);
+  }, [fontSize, terminalEpoch]);
 
   /*
    * Refit when the pane is maximized, and again when it is restored.
