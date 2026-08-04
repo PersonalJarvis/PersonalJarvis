@@ -3822,7 +3822,9 @@
       "close": "Cerrar la burbuja de voz",
       "mute": "Silenciar la voz de {0} en esta sesión",
       "unmute": "Reactivar la voz de {0}",
-      "start_failed": "No se pudo empezar a escuchar — puede que ya haya una conversación en curso."
+      "start_failed": "No se pudo empezar a escuchar — puede que ya haya una conversación en curso.",
+      "notice_jump": "Ir a {0}",
+      "notice_dismiss": "Ocultar este aviso"
     },
     "voice_drop": {
       "hover": "Soltar para el próximo prompt de {0}",

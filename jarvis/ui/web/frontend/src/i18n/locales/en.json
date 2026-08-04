@@ -3822,7 +3822,9 @@
       "close": "Close the voice bubble",
       "mute": "Mute {0}'s voice for this session",
       "unmute": "Unmute {0}'s voice",
-      "start_failed": "Could not start listening — a conversation may already be running."
+      "start_failed": "Could not start listening — a conversation may already be running.",
+      "notice_jump": "Go to {0}",
+      "notice_dismiss": "Hide this update"
     },
     "voice_drop": {
       "hover": "Drop for {0}'s next prompt",

@@ -6,11 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * renders. Through `vi.hoisted` because the mock factory is lifted above
  * ordinary module code.
  */
-const { pendingVoiceBatches, storeState } = vi.hoisted(() => ({
+const { pendingVoiceBatches, paneNotifications, storeState } = vi.hoisted(() => ({
   pendingVoiceBatches: new Map<
     string,
     { batch_id: string; files: string[]; reserved?: boolean }
   >(),
+  /** What the bell would be counting — the update card reads the same store. */
+  paneNotifications: [] as Array<Record<string, unknown>>,
   storeState: {} as Record<string, unknown>,
 }));
 
@@ -52,16 +54,41 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   removeVoiceAttachment: vi.fn(async (_terminal: string, batchId: string) => {
     pendingVoiceBatches.delete(batchId);
   }),
+  fetchPaneNotifications: vi.fn(async () => ({
+    enabled: true,
+    unread: paneNotifications.filter((n) => !n.read).length,
+    notifications: paneNotifications,
+  })),
 }));
 
 vi.mock("@/lib/sound", () => ({ playDropConfirm: vi.fn() }));
 
 import { VoiceBubble } from "./VoiceBubble";
+import { resetDismissedNotices } from "./VoiceBubbleNotice";
 import * as api from "@/lib/voiceApi";
 import * as ideApi from "@/lib/agenticIdeApi";
 
 const pushToast = vi.fn();
 const onClose = vi.fn();
+
+/** One entry as the bell's endpoint returns it. */
+function notification(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "n1",
+    kind: "completed",
+    workspace_id: "ws-7",
+    workspace: "Jarvis",
+    pane_key: "ws-7:T3",
+    pane: "T3",
+    agent: "claude",
+    display_name: "Claude Code",
+    title: "T3 went quiet.",
+    detail: "Analyse the marketing options",
+    created_at: 1_700_000_000,
+    read: false,
+    ...overrides,
+  };
+}
 
 /**
  * jsdom has no PointerEvent constructor, so `fireEvent.pointerDown` falls back
@@ -84,6 +111,10 @@ beforeEach(() => {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   window.localStorage.clear();
   pendingVoiceBatches.clear();
+  paneNotifications.length = 0;
+  // The waved-away ids live in a module set on purpose (they survive closing
+  // the bubble), so a test has to clear them the same way a reload would.
+  resetDismissedNotices();
   for (const key of Object.keys(storeState)) delete storeState[key];
   Object.assign(storeState, {
     voiceState: "idle",
@@ -339,5 +370,89 @@ describe("voice bubble", () => {
     storeState.voiceState = "idle";
     renderBubble();
     expect(screen.queryByTestId("voice-bubble-transcript")).toBeNull();
+  });
+
+  /*
+   * The bubble has no panel of its own. What that has to mean, mechanically, is
+   * that the space it spans keeps belonging to the terminals underneath — the
+   * wrapper takes no pointer events and every real control turns them back on.
+   * Without this the bubble would be an invisible click shield over the wall.
+   */
+  it("takes no clicks except on its own controls", () => {
+    renderBubble();
+    const bubble = screen.getByTestId("voice-bubble");
+    expect(bubble.className).toContain("pointer-events-none");
+    // No card: nothing paints a background across the whole column.
+    expect(bubble.className).not.toContain("bg-background/95");
+
+    for (const id of [
+      "voice-bubble-attach",
+      "voice-bubble-mic",
+      "voice-bubble-close",
+      "voice-bubble-speaker",
+    ]) {
+      expect(screen.getByTestId(id).className).toContain("pointer-events-auto");
+    }
+    // The row itself is only the gaps between the discs, and those belong to
+    // whatever pane is behind them.
+    const row = screen.getByTestId("voice-bubble-mic").parentElement!;
+    expect(row.className).toContain("pointer-events-none");
+  });
+
+  it("keeps the status line off the screen while nothing is happening", () => {
+    renderBubble();
+    // Still spoken to a screen reader, just not painted over a terminal.
+    const idle = screen.getByTestId("voice-bubble-status").parentElement!;
+    expect(idle.className).toContain("sr-only");
+    cleanup();
+
+    storeState.voiceState = "speaking";
+    renderBubble();
+    const busy = screen.getByTestId("voice-bubble-status").parentElement!;
+    expect(busy.className).not.toContain("sr-only");
+    expect(busy.className).toContain("pointer-events-auto");
+  });
+
+  it("reports the newest unread pane update and takes you to that pane", async () => {
+    paneNotifications.push(notification());
+    const onJumpToPane = vi.fn();
+    renderBubble({ onJumpToPane });
+
+    const card = await screen.findByTestId("voice-bubble-notice");
+    expect(card.getAttribute("data-kind")).toBe("completed");
+    // What the pane was asked to do, not the backend's "went quiet" sentence.
+    expect(card.textContent).toContain("Analyse the marketing options");
+    expect(card.textContent).toContain("T3");
+
+    fireEvent.click(screen.getByTestId("voice-bubble-notice-jump"));
+    expect(onJumpToPane).toHaveBeenCalledWith("ws-7", "T3");
+  });
+
+  it("says nothing about updates the bell has already been shown", async () => {
+    paneNotifications.push(notification({ read: true }));
+    renderBubble();
+    await waitFor(() => expect(ideApi.fetchPaneNotifications).toHaveBeenCalled());
+    expect(screen.queryByTestId("voice-bubble-notice")).toBeNull();
+  });
+
+  it("hiding an update card leaves the entry in the bell", async () => {
+    paneNotifications.push(notification());
+    renderBubble();
+
+    await screen.findByTestId("voice-bubble-notice");
+    fireEvent.click(screen.getByTestId("voice-bubble-notice-dismiss"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("voice-bubble-notice")).toBeNull(),
+    );
+    // The peek hid it. Nothing was discarded and nothing was marked read, so
+    // the bell still counts it — that is the whole contract of the X here.
+    expect(paneNotifications[0].read).toBe(false);
+  });
+
+  it("is a plain report, not a link, when nobody can move the grid", async () => {
+    paneNotifications.push(notification());
+    renderBubble();
+    await screen.findByTestId("voice-bubble-notice");
+    expect(screen.queryByTestId("voice-bubble-notice-jump")).toBeNull();
   });
 });

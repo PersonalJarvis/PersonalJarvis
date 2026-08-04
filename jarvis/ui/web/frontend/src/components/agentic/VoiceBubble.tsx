@@ -17,6 +17,26 @@
  * session only (never persisted — a forgotten mute must not survive a
  * restart).
  *
+ * ## Why the bubble has no panel around it
+ *
+ * It used to be a rounded card: a 224 px slab of opaque background sitting on
+ * top of the terminal wall for as long as the voice was open. The orb is the
+ * only part of it that has to be seen, and the card was covering agents to
+ * frame it. So there is no card — the orb, the status, the controls and the
+ * update notice each carry their own small surface, and the space between them
+ * is the workspace, visible and clickable.
+ *
+ * That last part is a rule, not an aesthetic: the wrapper is
+ * `pointer-events-none` and every real control turns them back on. A
+ * transparent-but-solid rectangle would eat clicks meant for the terminal
+ * behind it, which is exactly the thing the card was already doing visibly.
+ * Anything added here needs `pointer-events-auto` to work, and needs to deserve
+ * the clicks it takes away from the pane underneath.
+ *
+ * Dragging still works anywhere on the orb, the status pill or the transcript —
+ * they carry `data-drag-surface`, which is also where the pointer capture goes,
+ * because a capture on the `pointer-events-none` wrapper is not delivered.
+ *
  * Everything shown is read from the event store the voice pipeline already
  * feeds over the WebSocket (`voiceState`, the live transcription), so the
  * bubble costs no polling of its own and is exactly as current as the
@@ -28,6 +48,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -53,6 +74,7 @@ import {
   attachToTerminal,
   fetchAllVoiceAttachments,
   removeVoiceAttachment,
+  type PaneNotification,
 } from "@/lib/agenticIdeApi";
 import { playDropConfirm } from "@/lib/sound";
 import { useT } from "@/i18n";
@@ -63,12 +85,13 @@ import {
   type PaneDropPayload,
 } from "./paneDrop";
 import { VoiceOrb } from "./VoiceOrb";
+import { VoiceBubbleNotice } from "./VoiceBubbleNotice";
 
 const OPEN_KEY = "jarvis.agenticIde.voiceBubbleOpen";
 const POS_KEY = "jarvis.agenticIde.voiceBubblePos";
 
 /** The bubble's fixed width; the drag clamp keeps this much reachable. */
-const BUBBLE_WIDTH_PX = 224;
+const BUBBLE_WIDTH_PX = 256;
 /** How much of the bubble must stay inside the window after a drag/resize. */
 const MIN_VISIBLE_PX = 88;
 
@@ -170,23 +193,42 @@ function format(text: string, ...values: Array<string | number>): string {
   );
 }
 
-/** One round control of the bubble's action row. */
+/**
+ * One round control of the bubble's action row.
+ *
+ * Each button is its own small disc with its own background: with no panel
+ * behind them, a row of bare glyphs would sit directly on whatever the terminal
+ * underneath happens to be printing, and half of them would be unreadable half
+ * the time. `pointer-events-auto` is per button, not on the row — the gaps
+ * between them belong to the pane below.
+ */
 const BUBBLE_BTN =
-  "flex h-9 w-9 items-center justify-center rounded-full border border-border/70 " +
-  "bg-secondary/70 text-muted-foreground transition-colors hover:bg-secondary " +
-  "hover:text-foreground focus-visible:outline-none focus-visible:ring-2 " +
+  "pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full " +
+  "border border-border/50 bg-background/85 text-muted-foreground shadow-lg " +
+  "backdrop-blur transition-colors hover:bg-secondary hover:text-foreground " +
+  "focus-visible:outline-none focus-visible:ring-2 " +
   "focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40";
+
+/** The small floating surfaces (status, transcript, receipts) share this look. */
+const BUBBLE_SURFACE =
+  "pointer-events-auto border border-border/50 bg-background/85 shadow-lg backdrop-blur";
 
 export function VoiceBubble({
   open,
   onClose,
   promptTarget = "",
   onScreen = true,
+  onJumpToPane,
 }: {
   open: boolean;
   onClose: () => void;
   promptTarget?: string;
   onScreen?: boolean;
+  /**
+   * Take the user to the pane an update card names. Optional: without it the
+   * card still reports what finished, it just is not a link.
+   */
+  onJumpToPane?: (workspaceId: string, pane: string) => void;
 }) {
   const t = useT();
   const voiceState = (useEventStore((s) => s.voiceState) ?? "idle") as VoiceState;
@@ -258,9 +300,20 @@ export function VoiceBubble({
       originY: origin.y,
       moved: false,
     };
-    // Optional-chained: jsdom has no pointer capture, and losing it only
-    // means a very fast drag can slip off the bubble mid-gesture.
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    /*
+     * Capture on the surface that was actually grabbed, not on the wrapper:
+     * the wrapper is `pointer-events-none` so the terminals behind the gaps
+     * stay clickable, and a capture target that takes no pointer events never
+     * receives the move/up it was captured for. Captured events still bubble
+     * up to the wrapper's handlers, so the drag reads exactly as before.
+     *
+     * Optional-chained: jsdom has no pointer capture, and losing it only means
+     * a very fast drag can slip off the bubble mid-gesture.
+     */
+    const handle =
+      (event.target as HTMLElement).closest<HTMLElement>("[data-drag-surface]") ??
+      event.currentTarget;
+    handle.setPointerCapture?.(event.pointerId);
   }, []);
 
   const onDragPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
@@ -410,6 +463,17 @@ export function VoiceBubble({
     };
   }, [mounted]);
 
+  // Only a parent that can actually move the grid makes the card a link —
+  // otherwise it stays a plain report, because a link that goes nowhere is
+  // worse than no link.
+  const jumpToNotice = useMemo(
+    () =>
+      onJumpToPane
+        ? (entry: PaneNotification) => onJumpToPane(entry.workspace_id, entry.pane)
+        : undefined,
+    [onJumpToPane],
+  );
+
   const toggleMute = useCallback(async () => {
     const next = !muted;
     try {
@@ -500,6 +564,9 @@ export function VoiceBubble({
   // the bubble decides to be invisible down here, never above a hook.
   if (!mounted || !pos) return null;
 
+  /** Nothing is happening and nothing is being dropped — say nothing. */
+  const quiet = voiceState === "idle" && dropPhase === "idle";
+
   return (
     <div
       data-testid="voice-bubble"
@@ -519,13 +586,16 @@ export function VoiceBubble({
         }
       }}
       className={cn(
-        "fixed z-50 flex w-56 cursor-grab select-none flex-col items-center gap-2.5",
-        "rounded-3xl border border-border/60 bg-background/95 p-4 shadow-2xl",
+        // No card: the wrapper is only a column of floating pieces, and it lets
+        // every click it does not need through to the terminals underneath.
+        "pointer-events-none fixed z-50 flex w-64 cursor-grab select-none",
+        "flex-col items-center gap-2",
         "active:cursor-grabbing",
       )}
     >
       <div
         data-testid="voice-orb-stage"
+        data-drag-surface
         data-state={voiceState}
         data-drop-state={
           dropPhase === "idle" && receipts.some((receipt) => receipt.reserved)
@@ -534,7 +604,7 @@ export function VoiceBubble({
               ? "ready"
               : dropPhase
         }
-        className="agentic-voice-orb-stage relative grid h-40 w-40 shrink-0 place-items-center"
+        className="agentic-voice-orb-stage pointer-events-auto relative grid h-40 w-40 shrink-0 place-items-center"
       >
         <span aria-hidden="true" className="agentic-voice-orb-ring agentic-voice-orb-ring-a" />
         <span aria-hidden="true" className="agentic-voice-orb-ring agentic-voice-orb-ring-b" />
@@ -580,6 +650,9 @@ export function VoiceBubble({
              */
             "relative z-10 rounded-full outline-none transition-[transform,filter,opacity] duration-700 ease-out",
             "hover:scale-[1.02] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-primary/50 motion-reduce:transform-none",
+            // With no card behind it, the sphere needs its own separation from
+            // whatever the pane below is drawing — a cast shadow, not a frame.
+            "drop-shadow-[0_10px_28px_rgba(0,0,0,0.5)]",
             active
               ? "[filter:saturate(1)_brightness(1)]"
               : "[filter:saturate(0.45)_brightness(0.72)] hover:[filter:saturate(0.7)_brightness(0.85)]",
@@ -591,7 +664,21 @@ export function VoiceBubble({
         </button>
       </div>
 
-      <span className="flex shrink-0 items-center gap-1.5">
+      {/*
+        The status line says something only when there is something to say. An
+        idle bubble printing "READY" over a terminal is a label for a state the
+        desaturated orb already reads as — so at rest it stays in the DOM for
+        screen readers and leaves the screen alone. It is still a drag surface,
+        which is why it keeps its element either way.
+      */}
+      <span
+        data-drag-surface
+        className={cn(
+          quiet
+            ? "sr-only"
+            : cn(BUBBLE_SURFACE, "flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1"),
+        )}
+      >
         <span
           aria-hidden="true"
           data-state={voiceState}
@@ -622,7 +709,12 @@ export function VoiceBubble({
       {active && transcription && (
         <p
           data-testid="voice-bubble-transcript"
-          className="line-clamp-3 max-w-full shrink-0 text-center text-[13px] leading-relaxed text-muted-foreground"
+          data-drag-surface
+          className={cn(
+            BUBBLE_SURFACE,
+            "line-clamp-3 max-w-full shrink-0 rounded-2xl px-3 py-2",
+            "text-center text-[13px] leading-relaxed text-muted-foreground",
+          )}
         >
           {transcription}
         </p>
@@ -633,7 +725,10 @@ export function VoiceBubble({
           key={receipt.batchId}
           data-testid="voice-orb-drop-context"
           aria-live="polite"
-          className="flex w-full max-w-full shrink-0 items-start gap-2 rounded-control border border-border/70 bg-card/50 px-2.5 py-2 text-left"
+          className={cn(
+            BUBBLE_SURFACE,
+            "flex w-full max-w-full shrink-0 items-start gap-2 rounded-2xl px-2.5 py-2 text-left",
+          )}
         >
           <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full bg-primary/15 text-primary">
             <Check className="h-2.5 w-2.5" aria-hidden="true" />
@@ -690,8 +785,10 @@ export function VoiceBubble({
       />
 
       {/* The action row: attach, talk, put away, mute — four equal circles so
-          none of them reads as the "main" one; the orb above is the main one. */}
-      <div className="flex shrink-0 items-center gap-2.5 pt-0.5">
+          none of them reads as the "main" one; the orb above is the main one.
+          The row itself takes no pointer events, so the gaps between the discs
+          belong to the terminal behind them. */}
+      <div className="pointer-events-none flex shrink-0 items-center gap-2">
         <button
           type="button"
           data-no-drag
@@ -771,6 +868,11 @@ export function VoiceBubble({
           )}
         </button>
       </div>
+
+      {/* What finished while the user was talking — one card, newest unread
+          only. It sits below the controls so it can grow without ever pushing
+          the orb or the buttons somewhere else. */}
+      <VoiceBubbleNotice onJump={jumpToNotice} />
     </div>
   );
 }

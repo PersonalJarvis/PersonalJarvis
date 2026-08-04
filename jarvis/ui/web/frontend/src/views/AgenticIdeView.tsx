@@ -788,6 +788,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           open={voiceOpen}
           onClose={closeVoiceBubble}
           onScreen={onScreen}
+          // The same jump the bell's list performs, from the bubble's update
+          // card: switch workspace if the pane lives in another one, then bring
+          // that pane into view.
+          onJumpToPane={(id, pane) => void jumpToPane(id, pane)}
           promptTarget={
             session.terminals.some(
               (terminal) =>

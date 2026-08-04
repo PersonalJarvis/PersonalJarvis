@@ -3822,7 +3822,9 @@
       "close": "Sprach-Bubble schließen",
       "mute": "Stimme von {0} für diese Sitzung stummschalten",
       "unmute": "Stummschaltung von {0} aufheben",
-      "start_failed": "Das Zuhören konnte nicht gestartet werden — möglicherweise läuft bereits ein Gespräch."
+      "start_failed": "Das Zuhören konnte nicht gestartet werden — möglicherweise läuft bereits ein Gespräch.",
+      "notice_jump": "Zu {0} springen",
+      "notice_dismiss": "Diese Meldung ausblenden"
     },
     "voice_drop": {
       "hover": "Für den nächsten Prompt an {0} ablegen",
