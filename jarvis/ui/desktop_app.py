@@ -226,6 +226,9 @@ class _AsyncLogWriter:
         try:
             self._queue.put_nowait(str(message))
         except queue.Full:
+            # Silence is the point: a log sink that blocks or raises would stall
+            # whichever thread emitted the record. The drop is not lost — the
+            # count surfaces as a WARNING line in the next emitted batch.
             with self._drop_lock:
                 self._dropped += 1
 
@@ -247,6 +250,8 @@ class _AsyncLogWriter:
                 try:
                     item = self._queue.get_nowait()
                 except queue.Empty:
+                    # Not a failure: an empty queue simply ends this batch and
+                    # the outer loop blocks on the next record.
                     break
                 if item is _LOG_STOP:
                     stopping = True
@@ -329,6 +334,9 @@ class _AsyncLogWriter:
                 reverse=True,
             )
         except OSError:
+            # Listing the log directory failed (removed, or locked mid-scan on
+            # Windows). Pruning is housekeeping — skipping one round keeps a
+            # few extra rotated files, which beats raising inside the writer.
             return
         for stale in rotated[self._retention :]:
             with suppress(OSError):

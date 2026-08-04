@@ -299,6 +299,8 @@ class WindowFocusWatcher:
             try:
                 self._queue.get_nowait()
             except asyncio.QueueEmpty:
+                # Not a failure: an empty queue is exactly the drained state
+                # this loop exists to reach.
                 break
         self._last_hwnd = 0
         self._last_emit_ns = 0
