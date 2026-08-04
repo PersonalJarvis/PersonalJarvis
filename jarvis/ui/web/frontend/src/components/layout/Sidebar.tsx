@@ -21,6 +21,8 @@ import {
   Loader2,
   type LucideIcon,
   ChevronRight,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { useEventStore, type SectionId } from "@/store/events";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
@@ -180,6 +182,18 @@ export interface SidebarProps {
    * one-offs) at its designed width.
    */
   width?: number;
+  /**
+   * Is the sidebar deliberately collapsed to its icon rail?
+   *
+   * Separate from `width` because the two answer different questions. The width
+   * is a drag preference and survives a collapse — expanding restores the
+   * column the user sized, not the designed default. Collapsing is a STATE, and
+   * the app opens in it: the sidebar is navigation, and navigation is not what
+   * the window is for. Left optional so the sidebar still renders standalone.
+   */
+  collapsed?: boolean;
+  /** Toggle `collapsed`. Absent = the toggle button is not offered. */
+  onToggleCollapsed?: () => void;
 }
 
 /** Width the sidebar was designed at, and the one a double-click restores. */
@@ -205,7 +219,11 @@ export const SIDEBAR_RAIL_WIDTH = 64;
  */
 export const SIDEBAR_RAIL_AT_WIDTH = 168;
 
-export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
+export function Sidebar({
+  width = SIDEBAR_DEFAULT_WIDTH,
+  collapsed = false,
+  onToggleCollapsed,
+}: SidebarProps = {}) {
   const t = useT();
   const active = useEventStore((s) => s.activeSection);
   const setActive = useEventStore((s) => s.setActiveSection);
@@ -307,7 +325,10 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
   // realtime control, the brain card's provider and model — steps aside; the
   // navigation itself never does, because losing it would make the rail a dead
   // end rather than a narrow sidebar.
-  const railed = width < SIDEBAR_RAIL_AT_WIDTH;
+  // Two independent ways into the rail: the explicit toggle, and dragging the
+  // seam past the snap point. Either one alone is enough — a user who dragged
+  // the column narrow gets icons without having to also find the button.
+  const railed = collapsed || width < SIDEBAR_RAIL_AT_WIDTH;
 
   return (
     // No right border: the draggable seam beside it draws that line now, and
@@ -405,6 +426,28 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
               )}
               aria-hidden
             />
+          )}
+          {onToggleCollapsed && (
+            <button
+              type="button"
+              data-testid="sidebar-collapse-toggle"
+              onClick={onToggleCollapsed}
+              aria-expanded={!railed}
+              title={railed ? t("sidebar.expand") : t("sidebar.collapse")}
+              aria-label={railed ? t("sidebar.expand") : t("sidebar.collapse")}
+              className={cn(
+                "flex shrink-0 items-center justify-center rounded-md text-muted-foreground",
+                "transition-colors hover:bg-accent/60 hover:text-foreground",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                railed ? "h-7 w-7" : "-mr-1 h-7 w-7",
+              )}
+            >
+              {railed ? (
+                <PanelLeftOpen className="h-4 w-4" aria-hidden />
+              ) : (
+                <PanelLeftClose className="h-4 w-4" aria-hidden />
+              )}
+            </button>
           )}
         </div>
         {!railed && (

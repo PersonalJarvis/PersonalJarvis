@@ -2140,11 +2140,17 @@ class CodexSubscriptionRealtimeProvider:
             # project is before the user's first word arrives.
             await session._deliver_context(getattr(cfg, "instructions", ""))
             await session._deliver_history(getattr(cfg, "history", ()))
-            # Then the language, so the FIRST reply is already pinned. Without
-            # this the opening answer came back in whatever the far end chose,
-            # and only the second turn (the first ``update_session``) was
-            # corrected — the language indicator disagreeing with the voice.
-            await session._pin_language(getattr(cfg, "language", ""))
+            # Then the language — but ONLY when the user explicitly pinned one
+            # (brain.reply_language). At open nobody has spoken yet, so the
+            # resolved value is just DEFAULT_LOCALE; hard-pinning it nailed
+            # every call's first reply to English no matter what language the
+            # user then spoke, and the correction structurally arrived one
+            # turn late (the server answers on its own VAD before the first
+            # local transcript resolves). Unpinned sessions rely on the base
+            # instructions, which tell the model to mirror the language of
+            # the latest actual user audio.
+            if getattr(cfg, "language_is_pinned", False):
+                await session._pin_language(getattr(cfg, "language", ""))
             return session
         except BaseException:
             try:

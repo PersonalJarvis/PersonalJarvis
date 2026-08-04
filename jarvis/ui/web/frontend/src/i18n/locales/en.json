@@ -394,6 +394,8 @@
     "indicator_label": "Voice state"
   },
   "sidebar": {
+    "collapse": "Collapse the navigation",
+    "expand": "Expand the navigation",
     "wake_hint": "Say your wake word…",
     "brain_label": "Brain",
     "brain_tooltip": "Switch brain provider",
@@ -1602,14 +1604,15 @@
     },
     "overlay_style": {
       "title": "Display style",
-      "description": "Choose how {name} appears on screen during voice activity. The bar is the slim default; the mascot is the classic orb; or hide it entirely.",
+      "description": "Choose how {name} appears on screen during voice activity. The bar is the slim default; the mascot is the classic companion; the voice orb is a glowing sphere; or hide it entirely. Every floating style can be dragged to any monitor.",
       "label": "Style",
       "save": "Save",
       "saved": "Display style switched.",
       "restart_required": "Saved — restart {name} to apply.",
       "options": {
         "jarvis_bar": "Bar (default)",
-        "mascot": "Mascot orb",
+        "mascot": "Mascot",
+        "voice_orb": "Voice orb",
         "none": "None (hidden)"
       }
     },
@@ -2118,12 +2121,14 @@
       "recommended": "Recommended",
       "options": {
         "jarvis_bar": "Jarvis Bar",
-        "mascot": "Orb",
+        "mascot": "Mascot",
+        "voice_orb": "Voice orb",
         "none": "No overlay"
       },
       "captions": {
         "jarvis_bar": "A slim floating voice bar, always within reach.",
-        "mascot": "A floating companion orb that reacts as you talk.",
+        "mascot": "A floating companion that reacts as you talk.",
+        "voice_orb": "A glowing sphere of drifting light — drag it to any screen.",
         "none": "Just the app window — no floating surface on screen."
       },
       "needs_restart": "Almost there — this style needs a quick restart to take effect.",

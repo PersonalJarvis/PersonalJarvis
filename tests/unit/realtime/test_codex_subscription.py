@@ -274,16 +274,13 @@ async def test_direct_sdp_open_uses_safe_experimental_transport_contract() -> No
     assert "persona" in base
 
     # Jarvis's own persona/context reaches the model as developer context —
-    # ChatGPT-Live has no client-settable session-instructions field.
-    # Persona first, then the resolved output language: the FIRST reply has to
-    # be pinned too, not just every reply after the first ``update_session``.
+    # ChatGPT-Live has no client-settable session-instructions field. With no
+    # explicit reply-language preference there is NO opening pin: nobody has
+    # spoken yet, so the "resolved" language is only DEFAULT_LOCALE, and
+    # hard-pinning it nailed every call's first reply to English. The base
+    # instructions tell the model to mirror the latest actual user audio.
     assert client.text_appends == [
         ("thread-1", "Speak concise English.", "developer"),
-        (
-            "thread-1",
-            codex_subscription_mod._language_pin_text("en"),
-            "developer",
-        ),
     ]
     _thread_id, start = client.realtime_starts[0]
     assert start == {
@@ -321,8 +318,9 @@ async def test_reopened_session_restores_bounded_same_call_history() -> None:
         )
     )
 
-    # Persona, then the restored history, then the resolved language pin.
-    assert len(client.text_appends) == 3
+    # Persona, then the restored history. No opening language pin: this
+    # session carries no explicit reply-language preference.
+    assert len(client.text_appends) == 2
     thread_id, restored, role = client.text_appends[1]
     assert thread_id == "thread-1"
     assert role == "developer"
@@ -412,13 +410,8 @@ async def test_language_update_is_developer_context_and_speech_is_authoritative(
     await session.send_speech("Trusted answer")
 
     assert client.text_appends == [
-        # Pinned once when the session opened...
-        (
-            "thread-1",
-            codex_subscription_mod._language_pin_text("en"),
-            "developer",
-        ),
-        # ...and again for the language this turn resolved to.
+        # No opening pin without an explicit reply-language preference — the
+        # first pin is the one this turn actually resolved to.
         (
             "thread-1",
             codex_subscription_mod._language_pin_text("es"),
@@ -426,6 +419,28 @@ async def test_language_update_is_developer_context_and_speech_is_authoritative(
         ),
     ]
     assert client.speech_appends == [("thread-1", "Trusted answer")]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_open_pins_language_only_for_an_explicit_reply_language() -> None:
+    """brain.reply_language = de must pin the FIRST reply, auto must not."""
+    client = _Client()
+    session = await _provider(client).open_session(
+        RealtimeSessionConfig(
+            transport_offer_sdp="v=0\r\no=offer",
+            language="de",
+            language_is_pinned=True,
+        )
+    )
+
+    assert client.text_appends == [
+        (
+            "thread-1",
+            codex_subscription_mod._language_pin_text("de"),
+            "developer",
+        ),
+    ]
     await session.close()
 
 
@@ -438,7 +453,11 @@ async def test_same_language_is_reasserted_at_every_local_turn_boundary() -> Non
     """
     client = _Client()
     session = await _provider(client).open_session(
-        RealtimeSessionConfig(language="de", transport_offer_sdp="v=0\r\no=offer")
+        RealtimeSessionConfig(
+            language="de",
+            language_is_pinned=True,
+            transport_offer_sdp="v=0\r\no=offer",
+        )
     )
 
     await session.update_session(language="de")
@@ -2333,6 +2352,7 @@ async def test_context_and_history_writes_never_authorize_a_response() -> None:
         RealtimeSessionConfig(
             instructions="You are Nova, the user's own assistant.",
             history=({"role": "user", "text": "Earlier question"},),
+            language_is_pinned=True,
         )
     )
 

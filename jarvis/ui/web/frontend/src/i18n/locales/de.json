@@ -394,6 +394,8 @@
     "indicator_label": "Sprachstatus"
   },
   "sidebar": {
+    "collapse": "Navigation einklappen",
+    "expand": "Navigation ausklappen",
     "wake_hint": "Sag dein Wake-Word…",
     "brain_label": "Brain",
     "brain_tooltip": "Brain-Provider wechseln",
@@ -1602,14 +1604,15 @@
     },
     "overlay_style": {
       "title": "Anzeige-Stil",
-      "description": "Wähle, wie {name} bei Sprachaktivität auf dem Bildschirm erscheint. Die Bar ist der schlanke Standard; das Maskottchen ist der klassische Orb; oder ganz ausblenden.",
+      "description": "Wähle, wie {name} bei Sprachaktivität auf dem Bildschirm erscheint. Die Bar ist der schlanke Standard; das Maskottchen ist der klassische Begleiter; der Voice-Orb ist eine leuchtende Kugel; oder ganz ausblenden. Jeder schwebende Stil lässt sich auf jeden Monitor ziehen.",
       "label": "Stil",
       "save": "Speichern",
       "saved": "Anzeige-Stil gewechselt.",
       "restart_required": "Gespeichert — {name} neu starten zum Übernehmen.",
       "options": {
         "jarvis_bar": "Bar (Standard)",
-        "mascot": "Maskottchen-Orb",
+        "mascot": "Maskottchen",
+        "voice_orb": "Voice-Orb",
         "none": "Keins (ausgeblendet)"
       }
     },
@@ -2118,12 +2121,14 @@
       "recommended": "Empfohlen",
       "options": {
         "jarvis_bar": "Jarvis-Leiste",
-        "mascot": "Orb",
+        "mascot": "Maskottchen",
+        "voice_orb": "Voice-Orb",
         "none": "Kein Overlay"
       },
       "captions": {
         "jarvis_bar": "Eine schmale schwebende Sprachleiste, immer griffbereit.",
-        "mascot": "Ein schwebender Begleiter-Orb, der auf deine Stimme reagiert.",
+        "mascot": "Ein schwebender Begleiter, der auf deine Stimme reagiert.",
+        "voice_orb": "Eine leuchtende Kugel aus ziehendem Licht — auf jeden Bildschirm ziehbar.",
         "none": "Nur das App-Fenster — kein schwebendes Element auf dem Bildschirm."
       },
       "needs_restart": "Fast geschafft — dieser Stil wird nach einem kurzen Neustart aktiv.",

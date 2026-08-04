@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useBrainStatus } from "@/hooks/useBrainStatus";
@@ -24,6 +24,9 @@ import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
 import { installDictationFocusTracker } from "@/lib/dictationTarget";
 import { SubscriptionRealtimeTransportBroker } from "@/components/voice/SubscriptionRealtimeTransportBroker";
+
+/** Where the collapsed/expanded choice for the nav sidebar is remembered. */
+const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
 
 export default function App() {
   useWebSocket();
@@ -65,6 +68,55 @@ export default function App() {
     max: 520,
   });
 
+  /*
+   * The sidebar starts COLLAPSED.
+   *
+   * Navigation is how you get to the thing, never the thing itself, and the
+   * window is at its most useful when the work has the width. The icons stay on
+   * screen, each with its label on hover, so nothing becomes unreachable — this
+   * is a narrower sidebar, not a hidden one.
+   *
+   * Persisted separately from the drag width on purpose: expanding restores the
+   * column the user sized, not the designed default. A storage read that throws
+   * (private-mode WebView, storage disabled) degrades to the collapsed default
+   * rather than taking the shell down with it.
+   */
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(NAV_COLLAPSED_KEY) !== "false";
+    } catch {
+      return true;
+    }
+  });
+  const toggleNav = useCallback(() => {
+    setNavCollapsed((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem(NAV_COLLAPSED_KEY, next ? "true" : "false");
+      } catch {
+        /* storage unavailable — the choice simply does not survive a restart */
+      }
+      return next;
+    });
+  }, []);
+  // Dragging the seam is itself an "I want the sidebar" gesture: a drag that
+  // left the rail state behind would snap straight back to icons and read as a
+  // broken handle.
+  const startSidebarResize = useCallback(
+    (event: React.PointerEvent) => {
+      if (navCollapsed) {
+        setNavCollapsed(false);
+        try {
+          window.localStorage.setItem(NAV_COLLAPSED_KEY, "false");
+        } catch {
+          /* see above */
+        }
+      }
+      sidebar.startResize(event);
+    },
+    [navCollapsed, sidebar],
+  );
+
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-background text-foreground">
       <SubscriptionRealtimeTransportBroker />
@@ -74,11 +126,15 @@ export default function App() {
         aria-hidden
       />
 
-      <Sidebar width={sidebar.size} />
+      <Sidebar
+        width={sidebar.size}
+        collapsed={navCollapsed}
+        onToggleCollapsed={toggleNav}
+      />
 
       <PaneResizer
         orientation="vertical"
-        onPointerDown={sidebar.startResize}
+        onPointerDown={startSidebarResize}
         onDoubleClick={sidebar.reset}
         onNudge={sidebar.nudge}
         active={sidebar.isResizing}

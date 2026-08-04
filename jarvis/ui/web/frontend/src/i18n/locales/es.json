@@ -394,6 +394,8 @@
     "indicator_label": "Estado de voz"
   },
   "sidebar": {
+    "collapse": "Contraer la navegación",
+    "expand": "Expandir la navegación",
     "wake_hint": "Di tu palabra de activación…",
     "brain_label": "Cerebro",
     "brain_tooltip": "Cambiar proveedor de IA",
@@ -1602,14 +1604,15 @@
     },
     "overlay_style": {
       "title": "Estilo de visualización",
-      "description": "Elige cómo aparece {name} en pantalla durante la actividad de voz. La barra es el valor predeterminado; el mascota es el orbe clásico; o ocúltalo por completo.",
+      "description": "Elige cómo aparece {name} en pantalla durante la actividad de voz. La barra es el valor predeterminado; la mascota es el acompañante clásico; el orbe de voz es una esfera luminosa; o ocúltalo por completo. Cualquier estilo flotante se puede arrastrar a cualquier monitor.",
       "label": "Estilo",
       "save": "Guardar",
       "saved": "Estilo de visualización cambiado.",
       "restart_required": "Guardado: reinicia {name} para aplicar.",
       "options": {
         "jarvis_bar": "Barra (predeterminado)",
-        "mascot": "Orbe mascota",
+        "mascot": "Mascota",
+        "voice_orb": "Orbe de voz",
         "none": "Ninguno (oculto)"
       }
     },
@@ -2118,12 +2121,14 @@
       "recommended": "Recomendado",
       "options": {
         "jarvis_bar": "Barra de Jarvis",
-        "mascot": "Orbe",
+        "mascot": "Mascota",
+        "voice_orb": "Orbe de voz",
         "none": "Sin superposición"
       },
       "captions": {
         "jarvis_bar": "Una barra de voz flotante y delgada, siempre a mano.",
-        "mascot": "Un orbe acompañante flotante que reacciona cuando hablas.",
+        "mascot": "Un acompañante flotante que reacciona cuando hablas.",
+        "voice_orb": "Una esfera luminosa de luz en movimiento — arrástrala a cualquier pantalla.",
         "none": "Solo la ventana de la app — sin elementos flotantes en pantalla."
       },
       "needs_restart": "Casi listo — este estilo se aplica tras un breve reinicio.",
