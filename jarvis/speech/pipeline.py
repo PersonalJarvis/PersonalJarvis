@@ -155,6 +155,17 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("jarvis.speech.pipeline")
 
+# Supervisor state for "a realtime transport is opening but cannot carry the
+# call yet". A subscription transport spends 15-45 s here, and the session is
+# already accepted into LISTENING by then — so without its own state every
+# surface claims the user is being heard while the provider has not accepted a
+# single frame (ST-7). The orb surface already speaks this vocabulary
+# (``jarvis/overlay/surface.py``); the supervisor enum and the orb bus bridge
+# are what carry it there. ``Supervisor.set_state`` ignores a state it does not
+# know, so this degrades to the previous behaviour with one warning rather than
+# raising on an install whose enum predates it.
+_REALTIME_CONNECTING_STATE = "CONNECTING"
+
 
 async def _run_voice_critical_thread(fn: Callable[[], Any]) -> Any:
     """Run blocking voice startup work outside the shared default executor.
@@ -7747,6 +7758,9 @@ class SpeechPipeline:
         held_muted_reply: dict[str, Any] | None = None
         muted_reply_flush_task: asyncio.Task[Any] | None = None
         turn_complete = asyncio.Event()
+        # One warning per session when the supervisor cannot represent the
+        # connecting phase — a loud-once note, never a per-message log spam.
+        connecting_state_reported = False
         speaking = False
         post_output_echo_guard_until = 0.0
         # End of the tail's physically-audible phase (device latency residue);
@@ -7945,8 +7959,52 @@ class SpeechPipeline:
         async def _send_json(message: dict[str, Any]) -> None:
             nonlocal semantic_turn_committed, speaking
             nonlocal surface_playback_epoch, surface_playback_task
+            nonlocal connecting_state_reported
             kind = str(message.get("type", ""))
-            if kind == "audio_ready":
+            if kind == "audio_starting":
+                # The provider handshake is ABOUT to run and can legitimately
+                # take tens of seconds. Until this arrived, the session was
+                # accepted into LISTENING (see the activation path) and nothing
+                # touched that again until the transport was up — so the bar,
+                # the orb and the web UI all claimed the user was being heard
+                # while the provider had not accepted a single frame (ST-7).
+                self._active_realtime_language = str(
+                    message.get("language", "") or ""
+                )
+                log.info(
+                    "Realtime desktop session starting: provider=%s language=%s "
+                    "budget=%ss",
+                    message.get("provider", "unknown"),
+                    self._active_realtime_language or "unknown",
+                    message.get("handshake_budget_s", "unknown"),
+                )
+                await self._transition(_REALTIME_CONNECTING_STATE)
+                supervisor = getattr(self, "_supervisor", None)
+                if (
+                    supervisor is not None
+                    and not connecting_state_reported
+                    and getattr(supervisor, "state", "") != _REALTIME_CONNECTING_STATE
+                ):
+                    # The supervisor ignores states it does not know, by design.
+                    # Say so once instead of leaving the surface silently on its
+                    # previous state — that silence IS the bug this branch fixes.
+                    connecting_state_reported = True
+                    log.warning(
+                        "Supervisor does not know the %s state; the bar and orb "
+                        "keep their previous state through the handshake",
+                        _REALTIME_CONNECTING_STATE,
+                    )
+            elif kind == "language":
+                # Mid-call language flip from the ONE resolver. Recorded so the
+                # surface can label the call honestly; never re-derived here.
+                self._active_realtime_language = str(
+                    message.get("language", "") or ""
+                )
+                log.info(
+                    "Realtime desktop call language: %s",
+                    self._active_realtime_language or "unknown",
+                )
+            elif kind == "audio_ready":
                 if speaking:
                     # A transport that just completed its handshake cannot be
                     # mid-output: an open segment here is stale state from

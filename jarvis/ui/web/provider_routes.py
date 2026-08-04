@@ -868,7 +868,17 @@ def _resolve_cfg(request: Request):
         return cfg_attr
     try:
         return cfg_mod.load_config()
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — the screen degrades, it never 500s
+        # Swallowed silently this failure was indistinguishable from "nothing
+        # is configured": a broken jarvis.toml made every downstream probe read
+        # an absent config and the card announced "Codex CLI is not installed"
+        # — the wrong problem and the wrong fix (AP-30).
+        log.warning(
+            "Provider routes could not load the configuration (%s: %s); "
+            "provider status will be reported as unconfigured",
+            type(exc).__name__,
+            exc,
+        )
         return None
 
 
@@ -877,7 +887,15 @@ def _codex_binary_path(request: Request | None = None) -> str | None:
     if cfg is None:
         try:
             cfg = cfg_mod.load_config()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — fall back to PATH resolution
+            # Same trap: without the log, a broken config silently becomes
+            # "no pinned binary path", which reads downstream as a missing CLI.
+            log.warning(
+                "Codex binary path unavailable — configuration could not be "
+                "loaded (%s: %s); falling back to PATH resolution",
+                type(exc).__name__,
+                exc,
+            )
             cfg = None
     return getattr(getattr(cfg, "codex", None), "binary_path", "") or None
 
