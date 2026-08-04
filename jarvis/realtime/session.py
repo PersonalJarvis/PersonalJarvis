@@ -592,6 +592,45 @@ _DELEGATE_BRIDGE_TEXTS: dict[str, tuple[str, ...]] = {
 }
 
 
+#: Why the call is ending when NO voice engine could be opened. Carries every
+#: supported locale, resolved through the session's one language resolver
+#: (CLAUDE.md §1 runtime rule 3) — never a de/en-only table and never a
+#: per-layer default. Deliberately two distinct causes rather than one generic
+#: apology: "it did not come up in time" and "it could not be reached" send the
+#: user to different places, and the whole point of speaking here is that the
+#: call used to end after the full handshake budget with nothing said at all.
+_HANDSHAKE_FAILURE_MESSAGES: dict[str, dict[str, str]] = {
+    "timeout": {
+        "de": (
+            "Die Sprachverbindung kam nicht rechtzeitig zustande, "  # i18n-allow: localized runtime voice output
+            "deshalb habe ich abgebrochen."
+        ),
+        "en": (
+            "The voice connection did not come up in time, so I stopped."
+        ),
+        "es": (  # i18n-allow: localized runtime voice output
+            "La conexión de voz no se estableció a tiempo, así que lo detuve."
+        ),
+    },
+    "unavailable": {
+        "de": (
+            "Ich konnte die Sprachverbindung gerade nicht aufbauen."  # i18n-allow: localized runtime voice output
+        ),
+        "en": "I couldn't establish the voice connection just now.",
+        "es": (  # i18n-allow: localized runtime voice output
+            "No pude establecer la conexión de voz ahora mismo."
+        ),
+    },
+}
+
+
+def _handshake_failure_message(cause: str, language: str) -> str:
+    variants = _HANDSHAKE_FAILURE_MESSAGES.get(
+        cause, _HANDSHAKE_FAILURE_MESSAGES["unavailable"]
+    )
+    return variants.get(language) or variants["en"]
+
+
 def _delegate_bridge_texts(language: str) -> tuple[str, ...]:
     return _DELEGATE_BRIDGE_TEXTS.get(language, _DELEGATE_BRIDGE_TEXTS["en"])
 
@@ -1856,7 +1895,54 @@ class RealtimeVoiceSession:
 
         summary = "; ".join(self._provider_errors) or "no provider could open a session"
         await self._publish_error("RealtimeHandshakeError", summary, recoverable=True)
+        await self._announce_handshake_failure(summary)
         raise RuntimeError(f"No realtime provider could open a session: {summary}")
+
+    async def _announce_handshake_failure(self, summary: str) -> None:
+        """Say WHY the call is ending when no voice engine could be opened.
+
+        A provider that refuses to cross into usage-billed voice is doing the
+        right thing — that billing boundary must stay. But the surface turns
+        the resulting handshake failure into ``reason=error``, so a
+        subscription transport that spends its full declared budget and then
+        fails ended the call after up to 45 s of total silence with nothing
+        said at all. Refusing to spend the user's money is correct; refusing
+        it SILENTLY is the defect.
+
+        Deliberately quiet when the classic pipeline may still pick this call
+        up: there the user gets a normal answer, and announcing a failure
+        would be false.
+        """
+        if self.allow_classic_fallback:
+            return
+        lowered = summary.lower()
+        cause = (
+            "timeout"
+            if (
+                "timeouterror" in lowered
+                or "budget" in lowered
+                or "in time" in lowered
+            )
+            else "unavailable"
+        )
+        spoken = _handshake_failure_message(cause, self._language)
+        log.warning(
+            "realtime[%s] no voice engine could be opened and metered "
+            "fallback is refused — ending the call with a spoken reason "
+            "(cause=%s): %s",
+            self.session_id,
+            cause,
+            summary,
+        )
+        try:
+            # _surface_speech_message already registers the echo reference.
+            await self._send_json(self._surface_speech_message(spoken))
+        except Exception:  # noqa: BLE001 — the handshake failure still propagates
+            log.warning(
+                "realtime[%s] could not voice the handshake failure notice",
+                self.session_id,
+                exc_info=True,
+            )
 
     def _start_pump(self) -> None:
         if self._pump_task is None or self._pump_task.done():
@@ -3693,6 +3779,14 @@ class RealtimeVoiceSession:
             "type": "error_spoken",
             "text": text,
             "language": self._language,
+            # Which realtime engine this line belongs to. The desktop surface
+            # resolves its realtime-scoped TTS from ambient state that is only
+            # set once a handshake SUCCEEDED, so a notice about a handshake
+            # that failed had no provider to resolve against and stayed
+            # text-only — silent on exactly the path that needs to be heard.
+            # Naming it here keeps strict mode separation intact (it is still
+            # the realtime provider's own TTS family, never the pipeline's).
+            "provider": self.active_provider,
         }
         if self._active_voice:
             message["voice"] = self._active_voice

@@ -75,3 +75,49 @@ def test_event_can_mark_a_self_initiated_interruption():
 
     assert RealtimeEvent(type="interrupted").self_initiated is False
     assert RealtimeEvent(type="interrupted", self_initiated=True).self_initiated
+
+
+def test_no_event_language_field_defaults_to_one_particular_language():
+    """CLAUDE.md §1: supported locales are equal, so a language field whose
+    publisher omitted it must fall back to the SHARED default.
+
+    These defaults were the literal "de", so any event published without a
+    language stamped German onto a Spanish or English turn — and the consumers
+    that pick a TTS voice from it then spoke German back at the user.
+    """
+    import dataclasses
+
+    from jarvis.core import events as events_module
+    from jarvis.core.turn_language import DEFAULT_LOCALE
+
+    offenders = []
+    for name in dir(events_module):
+        candidate = getattr(events_module, name)
+        if not dataclasses.is_dataclass(candidate):
+            continue
+        for field in dataclasses.fields(candidate):
+            if "lang" not in field.name:
+                continue
+            default = field.default
+            if isinstance(default, str) and default and default != DEFAULT_LOCALE:
+                offenders.append(f"{name}.{field.name} = {default!r}")
+    assert not offenders, (
+        "language fields must default to DEFAULT_LOCALE, never to one "
+        f"particular language: {offenders}"
+    )
+
+
+def test_the_voice_language_fields_carry_the_shared_default():
+    from jarvis.core.events import (
+        AnnouncementRequested,
+        SpeechSpoken,
+        VoiceSessionStarted,
+        VoiceTurnCompleted,
+    )
+    from jarvis.core.turn_language import DEFAULT_LOCALE
+
+    assert VoiceSessionStarted().language == DEFAULT_LOCALE
+    assert VoiceTurnCompleted().user_lang == DEFAULT_LOCALE
+    assert VoiceTurnCompleted().jarvis_lang == DEFAULT_LOCALE
+    assert SpeechSpoken().language == DEFAULT_LOCALE
+    assert AnnouncementRequested().language == DEFAULT_LOCALE

@@ -1925,6 +1925,23 @@ class _StubExecutor:
         return ToolResult(success=True, output="opened")
 
 
+
+def _spoke_surface_line(jsons, text, language="en"):
+    """Whether the surface was asked to speak exactly this line.
+
+    Field-wise on purpose: ``error_spoken`` is a growing message contract (it
+    now also names the realtime provider so the desktop surface can resolve a
+    realtime-scoped TTS for it), and whole-dict equality makes every future
+    addition look like a regression in tests that only care about the words.
+    """
+    return any(
+        item.get("type") == "error_spoken"
+        and item.get("text") == text
+        and item.get("language") == language
+        for item in jsons
+    )
+
+
 def _delegate_cfg(tool_mode="delegate"):
     cfg = _cfg()
     if tool_mode is not None:
@@ -3769,7 +3786,7 @@ async def test_text_only_provider_answer_uses_surface_tts_without_brain_retry():
     await sess.wait_finished()
 
     assert brain.calls == []
-    assert {"type": "error_spoken", "text": answer, "language": "en"} in jsons
+    assert _spoke_surface_line(jsons, answer)
     completed = [event for event in bus.events if isinstance(event, VoiceTurnCompleted)]
     assert len(completed) == 1
     assert completed[0].jarvis_text == answer
@@ -3803,7 +3820,7 @@ async def test_empty_provider_turn_without_brain_speaks_local_error():
     await sess.wait_finished()
 
     fallback = "An error occurred."
-    assert {"type": "error_spoken", "text": fallback, "language": "en"} in jsons
+    assert _spoke_surface_line(jsons, fallback)
     completed = [event for event in bus.events if isinstance(event, VoiceTurnCompleted)]
     assert len(completed) == 1
     assert completed[0].jarvis_text == fallback
@@ -3841,11 +3858,7 @@ async def test_empty_recovery_response_uses_surface_tts_without_rerunning_brain(
     await asyncio.wait_for(sess.wait_finished(), timeout=2)
 
     assert [call[0] for call in brain.calls] == [user_text]
-    assert {
-        "type": "error_spoken",
-        "text": recovered_reply,
-        "language": "en",
-    } in jsons
+    assert _spoke_surface_line(jsons, recovered_reply)
     completed = [event for event in bus.events if isinstance(event, VoiceTurnCompleted)]
     assert len(completed) == 1
     assert completed[0].jarvis_text == recovered_reply
@@ -4243,11 +4256,7 @@ async def test_direct_realtime_promise_without_tool_fails_closed_honestly():
     await sess.wait_finished()
 
     assert provider.session.interrupts == 1
-    assert {
-        "type": "error_spoken",
-        "text": action_not_started_phrase("en"),
-        "language": "en",
-    } in jsons
+    assert _spoke_surface_line(jsons, action_not_started_phrase("en"))
     await sess.end(reason="test")
 
 
@@ -4629,11 +4638,7 @@ async def test_delegate_empty_spoken_answer_uses_surface_tts_fallback():
     completed = next(event for event in bus.events if isinstance(event, VoiceTurnCompleted))
     assert [event.text for event in responses] == ["The action completed."]
     assert completed.jarvis_text == "The action completed."
-    assert {
-        "type": "error_spoken",
-        "text": "The action completed.",
-        "language": "en",
-    } in jsons
+    assert _spoke_surface_line(jsons, "The action completed.")
     await sess.end(reason="test")
 
 
@@ -6727,4 +6732,162 @@ async def test_a_self_initiated_interruption_is_not_read_as_user_speech():
 
     # The transport declares rebuild_on_transport_death, so ENDING the
     # stream would only make the pump reopen it. End the call instead.
+    await sess.end(reason="test")
+
+
+class _UnreachableProvider(SubscriptionLikeProvider):
+    """A provider whose handshake never succeeds."""
+
+    def __init__(self, error):
+        super().__init__([])
+        self._error = error
+
+    async def open_session(self, cfg):
+        raise self._error
+
+
+def _no_metered_fallback_session(provider, *, jsons=None, language_cfg=None):
+    """A subscription-shaped session that refuses usage-billed fallback."""
+    cfg = _delegate_cfg("delegate")
+    if language_cfg is not None:
+        cfg.brain.reply_language = language_cfg
+    return RealtimeVoiceSession(
+        session_id="handshake-test",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=(
+            (lambda m: jsons.append(m) or asyncio.sleep(0))
+            if jsons is not None
+            else (lambda _m: asyncio.sleep(0))
+        ),
+        provider=provider,
+        config=cfg,
+        half_duplex=True,
+        surface="desktop",
+        allow_classic_fallback=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_exhausted_handshake_budget_says_why_before_it_gives_up():
+    """ST-8: the call used to end after the full budget in total silence.
+
+    A subscription transport declares a long handshake budget and refuses to
+    cross into usage-billed voice. Both are correct. What was missing is the
+    ending: the surface turns the handshake failure into reason=error, so the
+    user waited up to 45 s and then the call simply stopped with nothing said.
+    """
+    provider = _UnreachableProvider(
+        TimeoutError("realtime handshake exceeded 45.0s provider budget")
+    )
+    jsons = []
+    sess = _no_metered_fallback_session(provider, jsons=jsons)
+
+    with pytest.raises(RuntimeError):
+        await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+
+    spoken = [m for m in jsons if m.get("type") == "error_spoken"]
+    assert spoken, "the user must be told why the call is ending"
+    notice = spoken[0]
+    assert notice["text"].strip(), "the notice must carry real words"
+    assert notice["language"] == sess._language
+    # The desktop surface resolves its realtime-scoped TTS from the provider;
+    # on a failed handshake its ambient copy was never set, so the payload has
+    # to name it or the notice stays text-only (mode separation stays intact).
+    assert notice["provider"] == provider.name
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_the_handshake_notice_names_the_cause_it_actually_hit():
+    """Cause-aware, not one generic apology.
+
+    "It did not come up in time" and "it could not be reached" send the user
+    to different places, so the two must not collapse into the same sentence.
+    """
+    timeout_jsons = []
+    timeout_sess = _no_metered_fallback_session(
+        _UnreachableProvider(
+            TimeoutError("realtime handshake exceeded 45.0s provider budget")
+        ),
+        jsons=timeout_jsons,
+    )
+    with pytest.raises(RuntimeError):
+        await timeout_sess.handle_control(
+            {"type": "audio_start", "sample_rate": 16_000}
+        )
+
+    other_jsons = []
+    other_sess = _no_metered_fallback_session(
+        _UnreachableProvider(RuntimeError("the dedicated profile is logged out")),
+        jsons=other_jsons,
+    )
+    with pytest.raises(RuntimeError):
+        await other_sess.handle_control(
+            {"type": "audio_start", "sample_rate": 16_000}
+        )
+
+    timeout_text = next(
+        m for m in timeout_jsons if m.get("type") == "error_spoken"
+    )["text"]
+    other_text = next(
+        m for m in other_jsons if m.get("type") == "error_spoken"
+    )["text"]
+    assert timeout_text != other_text, (
+        "a timeout and an unreachable engine must not read identically"
+    )
+    await timeout_sess.end(reason="test")
+    await other_sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_the_handshake_notice_follows_the_pinned_reply_language():
+    """One resolver decides, here as everywhere (CLAUDE.md §1 runtime rule 1).
+
+    Every supported locale is equal: a Spanish-pinned user must not be told in
+    English (or German) that the call is ending.
+    """
+    seen = {}
+    for pin in ("de", "en", "es"):
+        jsons = []
+        sess = _no_metered_fallback_session(
+            _UnreachableProvider(
+                TimeoutError("realtime handshake exceeded 45.0s provider budget")
+            ),
+            jsons=jsons,
+            language_cfg=pin,
+        )
+        with pytest.raises(RuntimeError):
+            await sess.handle_control(
+                {"type": "audio_start", "sample_rate": 16_000}
+            )
+        notice = next(m for m in jsons if m.get("type") == "error_spoken")
+        assert notice["language"] == pin
+        seen[pin] = notice["text"]
+        await sess.end(reason="test")
+
+    assert len(set(seen.values())) == 3, (
+        f"each supported locale needs its own wording, got {seen}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_recoverable_handshake_failure_stays_silent():
+    """Silence is correct when the classic pipeline still answers the user.
+
+    The notice exists because the call ENDS. When usage-billed fallback is
+    permitted the pipeline picks the same call up and the user gets a normal
+    answer; announcing a failure there would be false.
+    """
+    provider = _UnreachableProvider(
+        TimeoutError("realtime handshake exceeded 45.0s provider budget")
+    )
+    jsons = []
+    sess = _session(provider, jsons=jsons)  # allow_classic_fallback defaults True
+
+    with pytest.raises(RuntimeError):
+        await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+
+    assert not [m for m in jsons if m.get("type") == "error_spoken"], (
+        "the classic pipeline owns this call; nothing should be announced"
+    )
     await sess.end(reason="test")

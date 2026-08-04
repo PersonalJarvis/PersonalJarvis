@@ -14,6 +14,16 @@ from typing import Any, Final, Literal
 from uuid import UUID, uuid4
 
 from .protocols import HarnessResult, HarnessTask, RiskTier, Transcript
+from .turn_language import DEFAULT_LOCALE
+
+# Every supported locale is equal (CLAUDE.md §1): a language field whose
+# publisher omitted it must fall back to the SHARED default, never to one
+# particular language. These defaults used to be the literal "de", so an event
+# published without a language stamped German onto a Spanish or English turn —
+# and the consumers that pick a TTS voice from it then spoke German back.
+# ``turn_language`` is pure regex/set lookups with no jarvis imports, so this
+# cannot introduce an import cycle.
+_DEFAULT_EVENT_LANGUAGE: Final[str] = DEFAULT_LOCALE
 
 
 def _now_ns() -> int:
@@ -516,7 +526,7 @@ class SpeechSpoken(Event):
     wildcard subscriber and never touches the voice hot path (AP-9 / AD-OE2).
     """
     text: str = ""
-    language: str = "de"
+    language: str = _DEFAULT_EVENT_LANGUAGE
     spoken_kind: str = "other"
     # Optional technical diagnostic that was NOT spoken aloud — e.g. the raw
     # exit code + harness reason behind a failed Computer-Use action. The voice
@@ -795,7 +805,7 @@ class AnnouncementRequested(Event):
     # ruff/UP037 suggests using "normal"/"interrupt" as bare names —
     # that is exactly wrong for `Literal[...]`; the strings ARE the values.
     priority: Literal["normal", "interrupt"] = "normal"  # noqa: UP037
-    language: str = "de"
+    language: str = _DEFAULT_EVENT_LANGUAGE
     # Discriminator for the new ack_brain Flash-Brain producer. None keeps
     # backwards compatibility with the existing MissionAnnouncer callers
     # that only pass text+priority+language. "progress" (2026-06-09, CU
@@ -1487,7 +1497,7 @@ class VoiceSessionStarted(Event):
     """Wake word detected — a new voice session is starting."""
     session_id: str = ""
     wake_keyword: str = ""
-    language: str = "de"
+    language: str = _DEFAULT_EVENT_LANGUAGE
 
 
 @dataclass(frozen=True, slots=True)
@@ -1522,9 +1532,9 @@ class VoiceTurnCompleted(Event):
     session_id: str = ""
     turn_id: str = ""
     user_text: str = ""
-    user_lang: str = "de"
+    user_lang: str = _DEFAULT_EVENT_LANGUAGE
     jarvis_text: str = ""
-    jarvis_lang: str = "de"
+    jarvis_lang: str = _DEFAULT_EVENT_LANGUAGE
     tier: str = ""
     provider: str = ""
     model: str = ""
