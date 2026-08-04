@@ -1066,6 +1066,11 @@ class RealtimeVoiceSession:
         # the condition is visible instead of invisible (AP-30).
         self._half_duplex_muted_since: float | None = None
         self._half_duplex_mute_reported = 0.0
+        # When provider audio last actually reached the surface. A reply that
+        # is still playing must never be cut short by the mute release below,
+        # and "is it still playing" is a question only this timestamp answers:
+        # ``_output_active`` says a turn was opened, not that it is alive.
+        self._last_output_audio_at = 0.0
         # Per-turn stall watchdog (see _TURN_STALL_TIMEOUT_S). Armed by
         # _ensure_turn_started, cancelled by _reset_turn_tracking, so its
         # lifetime is exactly one turn and it can never fire between turns.
@@ -1952,11 +1957,20 @@ class RealtimeVoiceSession:
             )
 
     def _note_half_duplex_mute(self) -> None:
-        """Report a microphone that half-duplex has been holding shut too long.
+        """Release, or failing that report, a microphone held shut too long.
 
-        A reply lasts seconds; a mute that outlives one is a stuck turn, and
-        the user experiences it as "it just stopped listening to me" with
-        nothing anywhere to say why.
+        A reply lasts seconds; a mute that outlives one with no audio still
+        flowing is a turn that ended without ever saying so, and the user
+        experiences it as "it just stopped listening to me". Every clear of
+        ``_output_active`` needs an event that arrives on the provider stream,
+        and a turn ended by a recoverable error or by a missing terminal item
+        produces none — so the mute had no exit at all and the six-second
+        warning was the only trace it ever left.
+
+        The release is deliberately gated on SILENCE rather than on elapsed
+        mute time alone: a long reply that is still playing keeps its
+        microphone shut, exactly as half-duplex intends. Only a turn that is
+        both overdue AND no longer producing audio is treated as over.
         """
         now = time.monotonic()
         if self._half_duplex_muted_since is None:
@@ -1964,6 +1978,21 @@ class RealtimeVoiceSession:
             return
         muted_s = now - self._half_duplex_muted_since
         if muted_s < _HALF_DUPLEX_MUTE_ALERT_S:
+            return
+        silent_since = self._last_output_audio_at or self._half_duplex_muted_since
+        silent_s = now - silent_since
+        if silent_s >= _HALF_DUPLEX_MUTE_ALERT_S:
+            log.warning(
+                "realtime[%s] releasing a half-duplex mute held %.1fs with no "
+                "provider audio for %.1fs - the turn ended without a boundary, "
+                "so the microphone is reopened rather than left deaf",
+                self.session_id,
+                muted_s,
+                silent_s,
+            )
+            self._reset_output_state(reason="half-duplex mute outlived its turn")
+            self._half_duplex_muted_since = None
+            self._half_duplex_mute_reported = 0.0
             return
         if now - self._half_duplex_mute_reported < _HALF_DUPLEX_MUTE_REPEAT_S:
             return
@@ -1996,7 +2025,12 @@ class RealtimeVoiceSession:
         self._rebuild_drop_reported = 0.0
         if self._half_duplex and self._output_active:
             self._note_half_duplex_mute()
-            return
+            if self._output_active:
+                return
+            # The mute was just released. Let THIS frame through rather than
+            # dropping it: it is the first sound of whatever the user is
+            # saying, and swallowing it would clip the very utterance the
+            # release exists to rescue.
         self._half_duplex_muted_since = None
         self._half_duplex_mute_reported = 0.0
         try:
@@ -6321,6 +6355,7 @@ class RealtimeVoiceSession:
             except Exception:  # noqa: BLE001, S110 — best-effort telemetry
                 pass
         self._note_audio_flow(pcm, chunk)
+        self._last_output_audio_at = time.monotonic()
         self._output_samples_sent += len(pcm) // 2
         # Real provider audio: advance the echo guard's playback horizon by
         # this chunk's audible duration (BUG-089).

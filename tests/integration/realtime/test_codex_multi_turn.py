@@ -30,6 +30,7 @@ import pytest
 from jarvis.core.bus import EventBus
 from jarvis.core.protocols import AudioChunk
 from jarvis.realtime.protocol import RealtimeEvent
+from jarvis.realtime import session as session_mod
 from jarvis.realtime.session import RealtimeVoiceSession
 
 # Every await in this module is bounded by this. A regression must report as a
@@ -478,28 +479,24 @@ async def test_a_reply_split_by_a_long_internal_pause_stays_one_answer() -> None
         await _end(session)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "MT-1: an audible turn that never receives a terminal boundary leaves "
-        "_output_active latched True, and under half duplex handle_audio_frame "
-        "then drops every microphone frame for the rest of the call "
-        "(session.py:1911-1913). Nothing clears it on a timer: "
-        "_note_half_duplex_mute (session.py:1868-1891) only LOGS the condition "
-        "every 10 s, and its own docstring names the symptom — 'it just stopped "
-        "listening to me'. Today the codex adapter's 1.2 s quiescence backstop "
-        "masks this, so the session depends on provider goodwill for a "
-        "guarantee it owns itself."
-    ),
-)
 @pytest.mark.asyncio
-async def test_a_turn_without_any_terminal_item_does_not_wedge_the_next_one() -> None:
+async def test_a_turn_without_any_terminal_item_does_not_wedge_the_next_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """ChatGPT-Live's terminal response item is not guaranteed to arrive.
 
-    When it does not, the turn never closes — and under half duplex the
+    When it does not, the turn never closes - and under half duplex the
     microphone stays muted, so the user is talking into a session that cannot
-    hear them. The next genuine utterance must still land.
+    hear them. The next genuine utterance must still land, which means the
+    session has to own an unmute path instead of trusting the provider to send
+    a well-formed boundary.
+
+    The release is deliberately gated on a mute that is BOTH overdue and no
+    longer producing audio, so this shortens that window rather than waiting
+    out the production value - and a reply still streaming audio keeps its
+    microphone shut, which the sibling tests cover.
     """
+    monkeypatch.setattr(session_mod, "_HALF_DUPLEX_MUTE_ALERT_S", 0.05)
     session, _provider, wire, surface = await _open_call()
     try:
         wire.push(
@@ -510,6 +507,11 @@ async def test_a_turn_without_any_terminal_item_does_not_wedge_the_next_one() ->
             # No turn_complete, deliberately.
         )
         await surface.wait_binary(at_least=1)
+
+        # One frame arms the mute clock; the window then passes with no further
+        # provider audio, which is what marks the turn as over.
+        await session.handle_audio_frame(_pcm())
+        await asyncio.sleep(0.08)
 
         # The next utterance must reach the provider and open its own turn.
         before = len(wire.sent_audio)
@@ -526,23 +528,10 @@ async def test_a_turn_without_any_terminal_item_does_not_wedge_the_next_one() ->
         await _end(session)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "MT-2: same latched _output_active as MT-1, but on a far more reachable "
-        "trigger. A RECOVERABLE provider error arriving mid-reply is routine on "
-        "this transport — the adapter emits one for a failed notification "
-        "stream (codex_subscription.py:828-839) and for a dead media track "
-        "(:841-849), neither of which is followed by a turn boundary. The "
-        "session logs the error, keeps the call alive, and never unmutes the "
-        "microphone, so the user's next words reach nothing. Half duplex has NO "
-        "unmute path the session owns itself: every clear of _output_active "
-        "(session.py:3035, 3746, 3796, 4611, 6325) needs the provider to send a "
-        "well-formed boundary first."
-    ),
-)
 @pytest.mark.asyncio
-async def test_a_provider_error_closing_a_turn_still_releases_the_microphone() -> None:
+async def test_a_provider_error_closing_a_turn_still_releases_the_microphone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Scopes MT-1: which non-``turn_complete`` endings DO release the mute.
 
     The adapter ends a turn on an error without a terminal boundary in several
@@ -550,6 +539,7 @@ async def test_a_provider_error_closing_a_turn_still_releases_the_microphone() -
     microphone there, MT-1 is narrow; if it does not, half duplex has no
     unmute path at all except a well-behaved provider.
     """
+    monkeypatch.setattr(session_mod, "_HALF_DUPLEX_MUTE_ALERT_S", 0.05)
     session, _provider, wire, surface = await _open_call()
     try:
         since = surface.mark()
@@ -570,10 +560,15 @@ async def test_a_provider_error_closing_a_turn_still_releases_the_microphone() -
             since=since,
         )
 
+        # One frame arms the mute clock; the window then passes with no further
+        # provider audio, which is what marks the turn as over.
+        await session.handle_audio_frame(_pcm())
+        await asyncio.sleep(0.08)
+
         before = len(wire.sent_audio)
         await asyncio.wait_for(session.handle_audio_frame(_pcm()), TIMEOUT_S)
         assert len(wire.sent_audio) > before, (
-            "an error boundary left the microphone muted too — half duplex has "
+            "an error boundary left the microphone muted too - half duplex has "
             "no unmute path that the session itself owns"
         )
     finally:
