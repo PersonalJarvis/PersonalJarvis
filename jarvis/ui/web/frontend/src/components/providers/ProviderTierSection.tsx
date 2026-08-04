@@ -727,16 +727,29 @@ export function TierSection({
   health?: SectionHealth;
 }) {
   const tierHasActive = providers.some((p) => p.active);
-  // Configured (or active) providers first — the wall of empty key forms used
+  // The provider this tier actually RUNS on leads the list. Somebody who just
+  // picked one — onboarding's local path being the sharpest case — has to find
+  // it at the top, not somewhere inside the catalog order below cards they
+  // never touched. Capability-driven: whatever is active leads, no provider id
+  // is named here (AP-21).
+  //
+  // Anchored on the id that was active when this list FIRST rendered, never on
+  // the live one: re-sorting on every change would yank a card to the top
+  // under the pointer the moment it is activated. The anchor re-arms when the
+  // tier is re-entered (the view remounts this list per tab/mode change), so
+  // the next visit leads with the new choice.
+  const [leadId] = useState<string | null>(
+    () => providers.find((p) => p.active)?.id ?? null,
+  );
+  // Configured (or active) providers next — the wall of empty key forms used
   // to bury the one or two cards the user actually set up. `active` counts so
   // an active-but-keyless anomaly (e.g. a free-tier provider) can never hide
   // below untouched cards; among configured cards nothing reorders on a switch
   // (both stay rank 0), so a card never jumps under the pointer mid-click.
   // Stable within each group (Array.sort is stable).
-  const sorted = [...providers].sort(
-    (a, b) =>
-      Number(b.configured || b.active) - Number(a.configured || a.active),
-  );
+  const rank = (p: ProviderDescriptor) =>
+    p.id === leadId ? 2 : Number(p.configured || p.active);
+  const sorted = [...providers].sort((a, b) => rank(b) - rank(a));
   return (
     <ul className="space-y-3">
       {sorted.map((p) => (

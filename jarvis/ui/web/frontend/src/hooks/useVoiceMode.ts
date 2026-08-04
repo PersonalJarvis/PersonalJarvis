@@ -7,6 +7,7 @@ import {
   type RealtimeTransportIssue,
   type RealtimeTransportIssueDetail,
 } from "@/lib/realtimeTransportIssue";
+import { putVoiceMode, type VoiceEngineModeValue } from "@/lib/voiceEngineMode";
 import { useEventStore } from "@/store/events";
 
 type VoiceModeResp = {
@@ -168,15 +169,8 @@ export function useVoiceMode() {
   }, [qc]);
 
   const m = useMutation({
-    mutationFn: async (mode: string) => {
-      const r = await fetch("/api/settings/voice-mode", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ mode, persist: true }),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      return r.json();
-    },
+    mutationFn: async (mode: string) =>
+      putVoiceMode(mode as VoiceEngineModeValue),
     // Optimistic: flip the cached mode BEFORE the PUT resolves, so the
     // Pipeline|Realtime segment's filled "live" state follows the click
     // instantly (the persist can take seconds on a busy backend, and the UI

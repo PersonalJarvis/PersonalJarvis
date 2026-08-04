@@ -2101,7 +2101,7 @@
       "local_detected": "Ollama auf diesem Rechner gefunden — Jarvis kann komplett lokal denken, ganz ohne Key.",
       "local_detected_empty": "Ollama läuft, hat aber noch kein Modell — lade zuerst eins (z. B. ollama pull qwen3.5).",
       "local_use_button": "Lokales Modell verwenden",
-      "local_active": "Lokales Gehirn aktiv — Ollama antwortet von diesem Rechner.",
+      "local_active": "Lokales Gehirn aktiv — Ollama antwortet von diesem Rechner, und die Sprache steht auf Pipeline, damit es auch genutzt wird.",
       "local_missing": "Kein API-Key zur Hand? Installiere Ollama und Jarvis läuft komplett lokal — ohne Cloud-Konto.",
       "local_missing_link": "Ollama holen",
       "continue": "Onboarding fortsetzen"
