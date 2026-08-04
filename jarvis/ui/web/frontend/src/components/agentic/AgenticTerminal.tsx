@@ -403,11 +403,28 @@ export function AgenticTerminal({
   // Latest callbacks/appearance without re-running the connect effect.
   const onStatusRef = useRef(onStatus);
   const onAttachErrorRef = useRef(onAttachError);
-  const initialRef = useRef({ appearance, fontSize });
+  /*
+   * The text size this pane draws at, as of NOW.
+   *
+   * A ref because the connect effect must not re-run when the user changes the
+   * size — rebuilding the terminal would drop the agent's screen and reconnect
+   * its socket for what is a one-line restyle. But it is written on EVERY
+   * render, never frozen at mount: the effect below rebuilds the terminal for
+   * reasons of its own (`geometryReady` flipping when the grid is re-measured,
+   * a pane restart, a rename), and a frozen value hands every one of those
+   * rebuilds the size this pane opened with rather than the size the user is
+   * looking at. That is the reported bug — the toolbar reads 20, the pane the
+   * user last touched is 20, and every pane rebuilt since the change is back
+   * at the 13 the grid started with, with no further size change coming to
+   * correct it (see the `fontSize` effect: it fires on CHANGES).
+   */
+  const fontSizeRef = useRef(fontSize);
   // The ground this pane draws on, as of NOW — the socket tells the backend, so
   // that the agent's CLI is answered with the colours it is actually drawing on
   // when it asks. Read at connect time, hence a ref rather than the prop: the
-  // connect effect must not re-run when the user flips the theme.
+  // connect effect must not re-run when the user flips the theme. Same rule as
+  // the size above: current on every render, so a rebuild cannot resurrect the
+  // theme this pane happened to open with.
   const appearanceRef = useRef(appearance);
   const activeRef = useRef(active);
   const focusedRef = useRef(focused);
@@ -416,6 +433,7 @@ export function AgenticTerminal({
   const layoutBusyRef = useRef(layoutBusy);
   onStatusRef.current = onStatus;
   onAttachErrorRef.current = onAttachError;
+  fontSizeRef.current = fontSize;
   appearanceRef.current = appearance;
   activeRef.current = active;
   focusedRef.current = focused;
@@ -436,7 +454,7 @@ export function AgenticTerminal({
       // measured a different stack from the one it draws with is the bug that
       // module exists to prevent.
       fontFamily: TERMINAL_FONT_STACK,
-      fontSize: initialRef.current.fontSize,
+      fontSize: fontSizeRef.current,
       // Roomier than a console default — the single biggest readability win for
       // an agent that prints prose, diffs and file trees rather than log lines.
       // Kept integral-friendly: fractional cell heights round differently per
@@ -466,7 +484,7 @@ export function AgenticTerminal({
       windowsPty: /windows/i.test(navigator.userAgent)
         ? { backend: "conpty" as const }
         : undefined,
-      theme: themeFor(initialRef.current.appearance),
+      theme: themeFor(appearanceRef.current),
     });
     // Before anything is written to this terminal: the agent's CLI asks what
     // its terminal is and which colours it draws on within milliseconds of
