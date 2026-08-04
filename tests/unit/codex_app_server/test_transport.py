@@ -76,6 +76,7 @@ def isolated_profile_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(transport, "_subscription_login_process", None)
     monkeypatch.setattr(transport, "_subscription_profile_mutating", False)
     monkeypatch.setattr(transport, "_subscription_active_transports", set())
+    monkeypatch.setattr(transport, "_subscription_transport_owner", None)
     monkeypatch.setattr(transport, "_subscription_transport_process_lock", None)
     monkeypatch.setattr(transport, "_subscription_mutation_process_lock", None)
     monkeypatch.setattr(transport, "_subscription_snapshot_cache", None)
@@ -369,7 +370,12 @@ async def test_lazy_start_handshake_scrubs_api_billing_environment_and_reaps_tre
     assert child_env["RUST_LOG"] == "warn"
     assert child_env["RUST_BACKTRACE"] == "0"
     assert child_env["CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED"] == "1"
-    assert kwargs["creationflags"] & transport.NO_WINDOW_CREATIONFLAGS
+    # Windows-only by construction: NO_WINDOW_CREATIONFLAGS is 0 elsewhere, so
+    # asserting the bit off Windows only ever asserted 0 and failed there.
+    if sys.platform == "win32":
+        assert kwargs["creationflags"] & transport.NO_WINDOW_CREATIONFLAGS
+    else:
+        assert kwargs["creationflags"] == 0
 
     process = harness.processes[0]
     assert process.stdin.messages[0]["method"] == "initialize"
@@ -416,6 +422,10 @@ async def test_posix_child_runs_behind_parent_lifeline_and_inherits_profile_lock
     assert kwargs["start_new_session"] is True
     assert kwargs["pass_fds"][0] == 91
     assert len(kwargs["pass_fds"]) == 2
+    # The supervisor spawns the real child with close_fds, so the profile lock
+    # only reaches app-server when it is re-declared in the lifeline argv.
+    assert argv[4:6] == ("--keep-fd", "91")
+    assert argv[separator - 1] == "91"
     assert client._lifeline_write_fd is not None
     await client.close()
     assert client._lifeline_write_fd is None
@@ -429,8 +439,38 @@ async def test_posix_lifeline_setup_failure_closes_both_pipe_descriptors(
     harness = SpawnHarness(monkeypatch)
     closed: list[int] = []
     monkeypatch.setattr(transport.os, "pipe", lambda: (80, 81))
-    monkeypatch.setattr(transport.os, "set_inheritable", lambda *_args: None)
     monkeypatch.setattr(transport.os, "close", closed.append)
+
+    def refuse_inheritable(*_args: object) -> None:
+        raise OSError("inheritable flag refused")
+
+    monkeypatch.setattr(transport.os, "set_inheritable", refuse_inheritable)
+    client = CodexAppServerClient()
+
+    with pytest.raises(OSError, match="inheritable flag refused"):
+        await client.ensure_started()
+
+    assert closed == [80, 81]
+    assert harness.calls == []
+    assert harness.all_trees[0].closed is True
+
+
+@pytest.mark.asyncio
+async def test_posix_profile_lock_failure_creates_no_pipe_at_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The lock is resolved BEFORE the pipe, because its descriptors have to
+    reach the lifeline argv — so a lock failure has nothing to leak."""
+    monkeypatch.setattr(transport.sys, "platform", "linux")
+    harness = SpawnHarness(monkeypatch)
+    pipes = 0
+
+    def count_pipe() -> tuple[int, int]:
+        nonlocal pipes
+        pipes += 1
+        return (80, 81)
+
+    monkeypatch.setattr(transport.os, "pipe", count_pipe)
 
     def unavailable_lock(_client: CodexAppServerClient) -> tuple[int, ...]:
         raise CodexSubscriptionUnavailable("profile lock unavailable")
@@ -441,7 +481,7 @@ async def test_posix_lifeline_setup_failure_closes_both_pipe_descriptors(
     with pytest.raises(CodexSubscriptionUnavailable, match="profile lock unavailable"):
         await client.ensure_started()
 
-    assert closed == [80, 81]
+    assert pipes == 0
     assert harness.calls == []
     assert harness.all_trees[0].closed is True
 
@@ -1036,12 +1076,10 @@ def test_public_auth_snapshot_uses_live_state_without_cli_probe(
     client._ready = True
     client._trusted_binary_path = "trusted-codex-test"
     owner_loop = asyncio.new_event_loop()
-    monkeypatch.setattr(
-        transport,
-        "_shared_clients",
-        {("codex-test", owner_loop): client},
-    )
+    client._owner_loop = owner_loop
+    monkeypatch.setattr(transport, "_shared_clients", {"codex-test": client})
     monkeypatch.setattr(transport, "_subscription_active_transports", {id(client)})
+    monkeypatch.setattr(transport, "_subscription_transport_owner", client)
     monkeypatch.setattr(
         transport,
         "_read_codex_capability",
@@ -1684,27 +1722,35 @@ async def test_shared_client_ignores_active_codex_account_profiles(
 
 
 @pytest.mark.asyncio
-async def test_shared_clients_are_scoped_to_their_event_loop(
+async def test_shared_client_is_process_wide_and_refuses_a_second_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """One client per binary, process-wide.
+
+    A per-loop client could only ever be one that can never reserve the
+    single-owner profile, so a second loop is refused at ACQUISITION with a
+    message naming what to do — not handed a client that fails deep inside a
+    call with "already owned by another client".
+    """
     SpawnHarness(monkeypatch)
     await transport.close_shared_codex_app_servers()
     current = transport.get_shared_codex_app_server("codex-test")
+    assert transport.get_shared_codex_app_server("codex-test") is current
 
-    async def acquire_on_foreign_loop() -> int:
-        loop = asyncio.get_running_loop()
-        client = transport.get_shared_codex_app_server("codex-test")
-        identifier = id(client)
-        await client.close()
-        with transport._shared_clients_lock:
-            transport._shared_clients.pop(("codex-test", loop), None)
-        return identifier
+    def acquire_on_foreign_loop() -> BaseException | None:
+        async def acquire() -> BaseException | None:
+            try:
+                transport.get_shared_codex_app_server("codex-test")
+            except BaseException as exc:  # noqa: BLE001 - returned for assertion
+                return exc
+            return None
 
-    foreign_identifier = await asyncio.to_thread(
-        lambda: asyncio.run(acquire_on_foreign_loop())
-    )
+        return asyncio.run(acquire())
 
-    assert foreign_identifier != id(current)
+    error = await asyncio.to_thread(acquire_on_foreign_loop)
+
+    assert isinstance(error, CodexSubscriptionUnavailable)
+    assert "already running elsewhere" in str(error)
     await transport.close_shared_codex_app_servers()
 
 
@@ -1736,7 +1782,7 @@ async def test_second_client_cannot_share_the_subscription_profile(
     second = CodexAppServerClient()
 
     await first.ensure_started()
-    with pytest.raises(CodexSubscriptionUnavailable, match="another client"):
+    with pytest.raises(CodexSubscriptionUnavailable, match="already running elsewhere"):
         await second.ensure_started()
 
     assert len(harness.processes) == 1
@@ -1938,9 +1984,11 @@ def test_effective_config_audit_requires_empty_host_layers_and_session_origins()
 
 
 @pytest.mark.asyncio
-async def test_dedicated_home_is_revalidated_before_thread_start(
+async def test_dedicated_home_is_revalidated_before_a_warm_thread_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The first thread start rides the startup audit; every later one
+    revalidates the profile before it may send a thread/start frame."""
     harness = SpawnHarness(monkeypatch)
     validations = 0
 
@@ -1956,20 +2004,30 @@ async def test_dedicated_home_is_revalidated_before_thread_start(
     monkeypatch.setattr(transport, "_validated_subscription_home", validate_home)
     client = CodexAppServerClient()
 
+    # Startup validates the profile twice (before spawn and after the audit);
+    # the first thread start rides that, the warm one hits the poisoned third.
+    await client.thread_start()
     with pytest.raises(CodexSubscriptionUnavailable, match="configuration"):
         await client.thread_start()
 
-    assert not any(
-        message.get("method") == "thread/start"
+    assert [
+        message.get("method")
         for message in harness.processes[0].stdin.messages
-    )
+    ].count("thread/start") == 1
     await client.close()
 
 
 @pytest.mark.asyncio
-async def test_account_is_rechecked_immediately_before_every_thread_start(
+async def test_account_is_rechecked_before_every_warm_thread_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A live account switch between calls still stops the next thread.
+
+    The cold start's own account/read covers the thread start that triggered
+    it; every WARM thread start re-reads the live account, because
+    ``codex login --with-api-key`` can switch the shared process while it
+    stays alive.
+    """
     account_reads = 0
 
     def responder(process: FakeProcess, message: dict[str, Any]) -> None:
@@ -1982,7 +2040,7 @@ async def test_account_is_rechecked_immediately_before_every_thread_start(
             _respond(process, request_id, {})
         elif method == "account/read":
             account_reads += 1
-            account_type = "chatgpt" if account_reads <= 2 else "apiKey"
+            account_type = "chatgpt" if account_reads <= 1 else "apiKey"
             _respond(
                 process,
                 request_id,
@@ -2005,7 +2063,9 @@ async def test_account_is_rechecked_immediately_before_every_thread_start(
         await client.thread_start()
 
     methods = [item.get("method") for item in harness.processes[0].stdin.messages]
-    assert methods.count("account/read") == 3
+    # One at startup (which the first thread start rides) plus one for the
+    # warm second start — not one per start on top of the startup read.
+    assert methods.count("account/read") == 2
     assert methods.count("thread/start") == 1
 
 
