@@ -1314,6 +1314,13 @@ class VoskKwsProvider:
         An unprefixed phrase has no competitor to offer — it always stands.
         Infrastructure errors accept (a broken extra check must never make the
         detector deaf; the spelling path never consults this at all).
+
+        Since 2026-08-04 this also DECIDES a contested shape (``SHAPE_UNDECIDED``)
+        rather than only confirming a clean one. The fail-open polarity is kept
+        deliberately: it matches the authoritative confirm this runs inside, and
+        a candidate only gets here after the grammar re-score (conf >= 0.9), the
+        energy gate and BOTH hard shape bounds — so a broken competitor
+        recognizer degrades to those four gates, not to no gate at all.
         """
         if self._competition_grammar is None:
             return True
