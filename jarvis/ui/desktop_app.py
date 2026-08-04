@@ -69,6 +69,18 @@ _LOCK_ACQUIRE_TIMEOUT = 0.0
 #: window, far shorter than a user reaching for the wake word.
 _REALTIME_WARM_DELAY_S = 5.0
 
+#: How long the warm waits for voice to report itself usable before warming
+#: anyway. Voice never becoming usable is normal on a host with no microphone,
+#: and the browser/bridge surfaces can still place a call there — so the gate
+#: bounds the wait instead of cancelling the warm.
+_REALTIME_WARM_VOICE_GATE_S = 45.0
+
+#: Floor between two warm attempts. The warm is re-armed after every call so a
+#: transport that died mid-session is reopened before the next wake word; this
+#: keeps a burst of short calls (or a rapid hangup loop) from re-verifying the
+#: account once per call.
+_REALTIME_WARM_MIN_INTERVAL_S = 20.0
+
 
 def _local_voice_permission_granted(
     *,
@@ -2115,6 +2127,25 @@ class DesktopApp:
             )
             speech_task.add_done_callback(_log_speech_and_orb_done)
 
+            # === 1b) Realtime transport pre-warm, beside the wake listener ===
+            # Deliberately NOT inside ``_heavy_backend_bg``: that task waits on
+            # the wake-model gate AND the whole ``server.start()`` chain before
+            # it schedules anything, so the warm could not begin until roughly
+            # 30-40 s after launch — while the wake word is armed within ~1 s.
+            # A user who spoke in that window paid the provider's full cold
+            # start (documented 15-25 s for the ChatGPT-subscription transport)
+            # inside their own call, with the bar already claiming to listen.
+            #
+            # AP-26 is preserved by construction: the worker below does nothing
+            # until VoiceBootStatus reports ``voice_usable``, i.e. AFTER the
+            # mark ``check_boot_budget.py`` measures, and nothing on the boot
+            # path ever awaits it — so neither VOICE_USABLE nor APP_INTERACTIVE
+            # can move because of it.
+            loop.create_task(
+                self._run_realtime_transport_warm(server.bus),
+                name="realtime-transport-warm",
+            )
+
             # === 2) Everything else, BEHIND the live wake listener ==========
             # The heavy backend keeps its original internal order (server.start()
             # before brain/mcp/workflows/conductor) so no task that depended on a
@@ -2235,37 +2266,6 @@ class DesktopApp:
                         )
 
                 loop.create_task(_provision_wake_model(), name="wake-model-provision")
-
-                async def _warm_realtime_transport() -> None:
-                    """Pre-open the selected realtime transport, off the boot path.
-
-                    Same slot and the same reasoning as the wake-model provision
-                    above: created AFTER the app-interactive mark and after the
-                    server start, so neither boot-budget mark can move (AP-26).
-                    The extra delay keeps a process spawn and a network account
-                    check out of the brain/MCP build's CPU and disk window.
-
-                    Without it, the Codex subscription adapter spawns its
-                    app-server and verifies the account inside the first call's
-                    handshake — measured 2026-08-02 at ~1.5 s of 3.0 s.
-                    """
-                    try:
-                        await asyncio.sleep(_REALTIME_WARM_DELAY_S)
-                        from jarvis.core.config import load_config
-                        from jarvis.realtime.factory import (
-                            realtime_warm_selected_transports,
-                        )
-
-                        await realtime_warm_selected_transports(load_config())
-                    except Exception:  # noqa: BLE001 — warming never crashes boot
-                        from loguru import logger as _warm_log
-                        _warm_log.opt(exception=True).debug(
-                            "Off-boot realtime transport warm skipped."
-                        )
-
-                loop.create_task(
-                    _warm_realtime_transport(), name="realtime-transport-warm"
-                )
 
             loop.create_task(_heavy_backend_bg(), name="heavy-backend")
             loop.call_soon(self._start_virtual_cursor)
@@ -2846,6 +2846,106 @@ class DesktopApp:
         ).start()
         logger.info("Quit scheduled (Terms declined; hard-exit fallback armed).")
         return True
+
+    async def _run_realtime_transport_warm(self, bus: Any) -> None:
+        """Keep the selected realtime transport pre-opened, for the whole session.
+
+        A realtime provider backed by an external application login has a real
+        cold start: it spawns its app-server, verifies the live account, and
+        audits its profile before it can accept a single audio frame. Paid
+        inside a call that cost is the difference between "it answers" and
+        "it went quiet for twenty seconds", so it is paid out here instead.
+
+        This is a WORKER, not a one-shot, because a warmed transport does not
+        stay warm: the shared client is torn down on any transport error, and
+        the previous single boot-time warm never noticed. Every completed call
+        re-arms it, so a transport that died mid-session is reopened before the
+        next wake word rather than during it.
+
+        Never fatal and never silent: a failed warm only means the next call
+        pays what it pays today, and it says so (AP-30). Cross-platform by
+        construction — the work is a bus subscription plus whatever the
+        provider's own capability probe does, and a host with no eligible
+        provider simply warms nothing.
+        """
+        from loguru import logger as _warm_log
+
+        # Bound once so every failure below reports through a plainly named
+        # call: a logger reached through a chained ``.opt(...)`` is invisible
+        # to the silent-handler gate, which is exactly the check that keeps
+        # an advisory warm path from failing without a trace (AP-30).
+        _warm_log_exc = _warm_log.opt(exception=True)
+
+        from jarvis.core.events import VoiceBootStatus, VoiceSessionEnded
+
+        warm_requested = asyncio.Event()
+        voice_usable = asyncio.Event()
+        last_completed = 0.0
+
+        async def _on_voice_boot_status(evt: Any) -> None:
+            if getattr(evt, "voice_usable", False):
+                voice_usable.set()
+
+        async def _on_voice_session_ended(evt: Any) -> None:
+            # Re-arm on the way out of every call, whatever ended it: a
+            # provider failure is exactly the case where the transport is most
+            # likely to need reopening, and it is also the case that used to
+            # leave the next call cold with nothing to fix it.
+            del evt
+            warm_requested.set()
+
+        try:
+            bus.subscribe(VoiceBootStatus, _on_voice_boot_status)
+            bus.subscribe(VoiceSessionEnded, _on_voice_session_ended)
+        except Exception:  # noqa: BLE001 — a headless/bare bus keeps the warm
+            _warm_log_exc.warning(
+                "Realtime transport warm could not subscribe to the voice "
+                "lifecycle; it will warm once and not re-arm after calls."
+            )
+
+        try:
+            await asyncio.wait_for(
+                voice_usable.wait(), timeout=_REALTIME_WARM_VOICE_GATE_S
+            )
+        except TimeoutError:
+            # No microphone, a failed warm-up, or a headless host: the browser
+            # and bridge surfaces can still start a call, so warm anyway.
+            _warm_log.info(
+                "Realtime transport warm: voice never reported usable within "
+                "{:.0f}s; warming the transport anyway.",
+                _REALTIME_WARM_VOICE_GATE_S,
+            )
+        # Keeps the process spawn and the account round trip out of the
+        # brain/MCP build's CPU and disk window.
+        await asyncio.sleep(_REALTIME_WARM_DELAY_S)
+        warm_requested.set()
+
+        while True:
+            await warm_requested.wait()
+            # ``time.monotonic`` rather than the loop clock: this worker must
+            # not care which loop implementation it is running on.
+            elapsed = time.monotonic() - last_completed
+            if last_completed and elapsed < _REALTIME_WARM_MIN_INTERVAL_S:
+                await asyncio.sleep(_REALTIME_WARM_MIN_INTERVAL_S - elapsed)
+            warm_requested.clear()
+            try:
+                from jarvis.core.config import load_config
+                from jarvis.realtime.factory import (
+                    realtime_warm_selected_transports,
+                )
+
+                # ``load_config`` parses TOML off disk; keep it off the loop
+                # that also serves every WebSocket frame, route and pane.
+                cfg = await asyncio.to_thread(load_config)
+                await realtime_warm_selected_transports(cfg)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — warming is advisory, never fatal
+                _warm_log_exc.warning(
+                    "Realtime transport warm failed; the next call pays the "
+                    "provider's cold start."
+                )
+            last_completed = time.monotonic()
 
     async def _start_speech_and_orb(
         self,

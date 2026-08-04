@@ -292,8 +292,18 @@ def test_desktop_voice_start_does_not_wait_for_brain_ready(monkeypatch, tmp_path
     def _cursor() -> None:
         events.append("cursor")
 
+    async def _realtime_warm(*_args: Any, **_kwargs: Any) -> None:
+        # The realtime transport warm is a long-lived, event-driven worker: it
+        # waits for VoiceBootStatus and then parks on the post-call re-arm for
+        # the rest of the session. ``_FakeLoop`` above runs every created
+        # coroutine to completion, so the real one would never return here.
+        # Its own coverage lives in test_desktop_realtime_transport_warm.py;
+        # this test only cares that it is scheduled beside the wake listener.
+        events.append("realtime_warm")
+
     monkeypatch.setattr(app, "_start_speech_and_orb", _speech)
     monkeypatch.setattr(app, "_start_virtual_cursor", _cursor)
+    monkeypatch.setattr(app, "_run_realtime_transport_warm", _realtime_warm)
     _FakeWebServer.events = events
     try:
         app._run_backend()
