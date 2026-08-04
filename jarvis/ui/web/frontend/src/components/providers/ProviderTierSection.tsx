@@ -1010,7 +1010,13 @@ export function ProviderCard({
     }
   }
 
-  // A single click AND a double click on the card both activate the provider.
+  // A click anywhere on the card activates the provider. There is deliberately
+  // NO separate onDoubleClick: a double click already delivers two `click`
+  // events, and binding both handlers made it fire activate() THREE times —
+  // on a card that only answers with "connect this provider first", that meant
+  // three identical warnings per double click (six after two), stacked into a
+  // wall over the connect button itself.
+  //
   // We explicitly filter clicks on interactive sub-elements (inputs, buttons,
   // links) so that a click into the password field or on the
   // "Replace"/trash icon does NOT accidentally trigger a switch. The radio
@@ -1096,7 +1102,6 @@ export function ProviderCard({
     {consentDialog}
     <div
       onClick={handleCardActivate}
-      onDoubleClick={handleCardActivate}
       title={
         descriptor.active
           ? t("apikeys_view.active_tooltip")
@@ -1515,13 +1520,11 @@ export function ActiveControl({
 
   return (
     <label
+      // The radio owns its own activation; letting the click bubble would run
+      // the card handler for the same gesture and send a second API call.
+      // (The card no longer binds onDoubleClick, so there is nothing else to
+      // stop here.)
       onClick={(e) => e.stopPropagation()}
-      onDoubleClick={(e) => {
-        // A double click on the radio label must NOT also trigger the
-        // card's onDoubleClick — otherwise activate() would fire twice
-        // (idempotent, but sends two API calls).
-        e.stopPropagation();
-      }}
       className={cn(
         "inline-flex shrink-0 select-none items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs transition-colors focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 focus-within:ring-offset-background",
         disabled ? "cursor-not-allowed" : "cursor-pointer",

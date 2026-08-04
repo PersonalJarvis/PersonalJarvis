@@ -152,3 +152,64 @@ describe("reasoning trace (thinkingSteps / thinkingTraces)", () => {
     expect(useEventStore.getState().chatThinking).toBe(false);
   });
 });
+
+/**
+ * Regression guard for the stacked-notification wall (2026-08-04).
+ *
+ * A provider card answers a click it cannot honour with a fixed sentence
+ * ("Connect your ChatGPT subscription to use this voice provider."). Every
+ * click emitted a fresh toast, and the card bound BOTH onClick and
+ * onDoubleClick, so one double click emitted three. Two attempts produced six
+ * identical boxes stacked down the right edge — covering the connect button
+ * the message was telling the user to press. Repeats must collapse into one
+ * toast with a counter.
+ */
+describe("useEventStore.pushToast repeat collapsing", () => {
+  beforeEach(() => {
+    useEventStore.setState({ toasts: [] });
+  });
+
+  it("collapses an identical repeated notice into one counted toast", () => {
+    const { pushToast } = useEventStore.getState();
+    const line = "Connect your ChatGPT subscription to use this voice provider.";
+    for (let i = 0; i < 6; i += 1) pushToast("warning", line);
+
+    const { toasts } = useEventStore.getState();
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].count).toBe(6);
+    expect(toasts[0].message).toBe(line);
+  });
+
+  it("keeps genuinely different notices apart", () => {
+    const { pushToast } = useEventStore.getState();
+    pushToast("warning", "Connect your ChatGPT subscription.");
+    pushToast("warning", "OpenAI Realtime needs a key.");
+    pushToast("error", "Connect your ChatGPT subscription.");
+
+    const { toasts } = useEventStore.getState();
+    expect(toasts).toHaveLength(3);
+    expect(toasts.every((toast) => toast.count === 1)).toBe(true);
+  });
+
+  it("keeps two saved files as two toasts with their own actions", () => {
+    const { pushToast } = useEventStore.getState();
+    pushToast("success", "Saved", { filePath: "/tmp/a.md", filename: "a.md" });
+    pushToast("success", "Saved", { filePath: "/tmp/b.md", filename: "b.md" });
+
+    const { toasts } = useEventStore.getState();
+    expect(toasts).toHaveLength(2);
+    expect(toasts.map((toast) => toast.filePath)).toEqual([
+      "/tmp/a.md",
+      "/tmp/b.md",
+    ]);
+  });
+
+  it("a repeat pushes the dismissal out instead of inheriting the first expiry", () => {
+    const { pushToast } = useEventStore.getState();
+    pushToast("info", "still here");
+    const first = useEventStore.getState().toasts[0].expiresAt;
+    pushToast("info", "still here");
+    const refreshed = useEventStore.getState().toasts[0].expiresAt;
+    expect(refreshed).toBeGreaterThanOrEqual(first);
+  });
+});

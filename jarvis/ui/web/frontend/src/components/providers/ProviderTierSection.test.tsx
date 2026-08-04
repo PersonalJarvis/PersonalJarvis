@@ -845,3 +845,80 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     expect(screen.queryByText("Yes")).toBeNull();
   });
 });
+
+/**
+ * Regression guard for the stacked-notification wall (2026-08-04).
+ *
+ * A card the user cannot activate yet answers each click with one fixed
+ * sentence. The card used to bind BOTH onClick and onDoubleClick to the same
+ * handler, so a double click ran it three times (click, click, dblclick) and
+ * two attempts left six identical toasts stacked over the connect button the
+ * message points at. One gesture must produce at most one visible notice.
+ */
+describe("ProviderCard — an unavailable card does not build a warning wall", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+    useI18nStore.getState().setUi("en", { push: false });
+    useEventStore.setState({ toasts: [] });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  function unconnectedSubscriptionCard(): ProviderDescriptor {
+    return {
+      ...dictationCard(),
+      id: "codex-subscription-realtime",
+      label: "ChatGPT subscription (Codex)",
+      tier: "realtime",
+      auth_mode: "codex",
+      secret_keys: [],
+      secrets_set: {},
+      billing: "subscription",
+      configured: false,
+      optional: false,
+      polish_family: null,
+      codex_status: {
+        installed: true,
+        connected: false,
+        mode: "not_connected",
+        message: "The dedicated Codex voice profile has not been created yet.",
+        reason_code: "login_required",
+      },
+    } as ProviderDescriptor;
+  }
+
+  it("raises ONE notice for a double click, not three", async () => {
+    installFetchMock();
+    renderCard(unconnectedSubscriptionCard());
+
+    const title = screen.getByText("ChatGPT subscription (Codex)");
+    // Exactly what a user does: a real double click delivers two click events
+    // plus one dblclick. Only the clicks may reach the handler now.
+    fireEvent.click(title);
+    fireEvent.click(title);
+    fireEvent.doubleClick(title);
+
+    await waitFor(() =>
+      expect(useEventStore.getState().toasts.length).toBeGreaterThan(0),
+    );
+    const { toasts } = useEventStore.getState();
+    expect(toasts).toHaveLength(1);
+    // Collapsed, and honest about how often it was raised.
+    expect(toasts[0].count).toBe(2);
+  });
+
+  it("never activates a card whose login is still missing", async () => {
+    const calls = installFetchMock();
+    renderCard(unconnectedSubscriptionCard());
+
+    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+
+    await waitFor(() =>
+      expect(useEventStore.getState().toasts.length).toBe(1),
+    );
+    expect(calls.some((c) => c.url.includes("/api/realtime/switch"))).toBe(false);
+  });
+});

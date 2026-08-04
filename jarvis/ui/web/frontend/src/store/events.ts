@@ -169,6 +169,19 @@ export interface Toast {
   message: string;
   ts: number;
   /**
+   * How often this identical notice was raised while it was already on screen.
+   * Repeats COLLAPSE into one toast carrying this counter instead of stacking:
+   * a provider card that answers every click with the same "connect this first"
+   * line used to build a six-high wall of identical boxes covering the very
+   * button that resolves it.
+   */
+  count: number;
+  /**
+   * Wall-clock ms at which this toast auto-dismisses. A repeat pushes it out,
+   * so the expiry timer must re-check it rather than firing blindly.
+   */
+  expiresAt: number;
+  /**
    * Absolute path of a file that was just saved to the user's Downloads. When
    * set (desktop only), the toast renders "Show in folder" / "Open" actions and
    * stays up longer so the user has time to click them. Empty in the browser/VPS.
@@ -369,6 +382,27 @@ const TOAST_FILE_TTL_MS = 12000;
 // map so a long session cannot grow it unbounded (insertion order = age).
 const MAX_TRACES = 24;
 
+/**
+ * Arm the auto-dismiss timer for one toast.
+ *
+ * A repeat refreshes ``expiresAt`` and arms a NEW timer, so an older timer must
+ * not dismiss a toast that has since been pushed out — it re-checks the expiry
+ * and lets the newest timer own the removal. Without that check, the second of
+ * two rapid repeats would vanish after the FIRST one's remaining time.
+ */
+function scheduleToastExpiry(
+  get: () => EventStore,
+  id: string,
+  ttl: number,
+): void {
+  setTimeout(() => {
+    const toast = get().toasts.find((candidate) => candidate.id === id);
+    if (!toast) return;
+    if (toast.expiresAt > Date.now()) return;
+    get().dismissToast(id);
+  }, ttl);
+}
+
 export const useEventStore = create<EventStore>((set, get) => ({
   events: [],
   voiceState: "idle",
@@ -419,18 +453,52 @@ export const useEventStore = create<EventStore>((set, get) => ({
     set({ transcription: text, transcriptionFinal: isFinal }),
 
   pushToast: (kind, message, opts) => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const filePath = opts?.filePath;
+    const ttl = filePath ? TOAST_FILE_TTL_MS : TOAST_TTL_MS;
+    const now = Date.now();
+    const expiresAt = now + ttl;
+
+    // Collapse a repeat of a notice that is still on screen. Every surface that
+    // answers a click with a fixed sentence ("connect this provider first") can
+    // otherwise emit it once per click — and a double click on a card emits it
+    // twice more — until the stack buries the control the user needs to press.
+    // File toasts are matched on their path too, so two different saved files
+    // stay two separate toasts with their own actions.
+    const existing = get().toasts.find(
+      (toast) =>
+        toast.kind === kind &&
+        toast.message === message &&
+        toast.filePath === filePath,
+    );
+    if (existing) {
+      set((state) => ({
+        toasts: state.toasts.map((toast) =>
+          toast.id === existing.id
+            ? { ...toast, count: toast.count + 1, ts: now, expiresAt }
+            : toast,
+        ),
+      }));
+      scheduleToastExpiry(get, existing.id, ttl);
+      return;
+    }
+
+    const id = `toast-${now}-${Math.random().toString(36).slice(2, 7)}`;
     set((state) => ({
       toasts: [
         ...state.toasts,
-        { id, kind, message, ts: Date.now(), filePath, filename: opts?.filename },
+        {
+          id,
+          kind,
+          message,
+          ts: now,
+          count: 1,
+          expiresAt,
+          filePath,
+          filename: opts?.filename,
+        },
       ],
     }));
-    setTimeout(
-      () => get().dismissToast(id),
-      filePath ? TOAST_FILE_TTL_MS : TOAST_TTL_MS,
-    );
+    scheduleToastExpiry(get, id, ttl);
   },
 
   dismissToast: (id) =>
