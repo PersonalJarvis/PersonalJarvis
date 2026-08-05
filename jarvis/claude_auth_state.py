@@ -1,6 +1,6 @@
 """Process-local Claude auth-dead flag (fingerprinted, self-expiring).
 
-Why this exists (2026-07-06 incident, missions 019f36e5 + 019f38b1): the
+Why this exists (2026-07-06 incident, missions 019f104c + 019f104d): the
 Claude Max OAuth access token in ``~/.claude/.credentials.json`` expired and
 nothing on the host refreshed it anymore, yet ``claude status`` reported
 connected=True (presence-only check) and the worker factory kept routing every

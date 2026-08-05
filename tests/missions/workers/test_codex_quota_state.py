@@ -1,6 +1,6 @@
 """Process-local codex (ChatGPT) quota-cooldown flag.
 
-Live pattern (mission_019f3cd8 + the wall of failed missions, 2026-07-07):
+Live pattern (mission_019f104e + the wall of failed missions, 2026-07-07):
 the codex ChatGPT plan hit its usage cap ("You've hit your usage limit …
 try again at Jul 31st"), but `codex status` still reported connected=True.
 The worker factory therefore re-picked codex on EVERY mission and retry,

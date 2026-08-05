@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { attachTerminalBridge } from "./editActions";
 import {
@@ -22,6 +22,8 @@ import {
 let removeTracker: (() => void) | null = null;
 
 beforeEach(() => {
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   resetDictationTarget();
   removeTracker = installDictationFocusTracker();
 });
@@ -30,6 +32,7 @@ afterEach(() => {
   removeTracker?.();
   removeTracker = null;
   document.body.replaceChildren();
+  vi.restoreAllMocks();
 });
 
 function mountField(value = ""): HTMLTextAreaElement {
@@ -79,11 +82,23 @@ describe("deliverDictationText", () => {
     const field = mountField("");
     field.focus();
     const button = document.createElement("button");
+    button.dataset.jarvisDictationTrigger = "true";
     document.body.appendChild(button);
     button.focus();
 
     expect(deliverDictationText("still mine")).toBe("field");
     expect(field.value).toBe("still mine");
+  });
+
+  it("does not fall back to a stale field after an unrelated control took focus", () => {
+    const field = mountField("");
+    field.focus();
+    const button = document.createElement("button");
+    document.body.appendChild(button);
+    button.focus();
+
+    expect(deliverDictationText("not the old field")).toBe("none");
+    expect(field.value).toBe("");
   });
 
   it("does not deliver into a field whose view was unmounted", () => {
@@ -124,6 +139,24 @@ describe("deliverDictationText", () => {
     expect(deliverDictationText("second")).toBe("field");
     expect(first.value).toBe("");
     expect(second.value).toBe("second");
+  });
+
+  it("does not paste a broadcast from a background client", () => {
+    const field = mountField("");
+    field.focus();
+    vi.mocked(document.hasFocus).mockReturnValue(false);
+
+    expect(deliverDictationText("one client only")).toBe("inactive");
+    expect(field.value).toBe("");
+  });
+
+  it("does not paste a broadcast from a hidden client", () => {
+    const field = mountField("");
+    field.focus();
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+
+    expect(deliverDictationText("one tab only")).toBe("inactive");
+    expect(field.value).toBe("");
   });
 });
 

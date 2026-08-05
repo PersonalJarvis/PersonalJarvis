@@ -1,13 +1,11 @@
 # UltraWiki — the semantic memory mode
 
-> **Status: implemented and shipping in v1.2.1.** This folder contains the
-> architecture and product specification. The runnable implementation lives in
-> [`jarvis/ultrawiki/`](../jarvis/ultrawiki/), its REST API in
-> [`jarvis/ui/web/ultrawiki_routes.py`](../jarvis/ui/web/ultrawiki_routes.py),
-> its CLI commands in
-> [`jarvis/cli_ctl/commands/ultrawiki.py`](../jarvis/cli_ctl/commands/ultrawiki.py),
-> and its desktop UI under
-> [`jarvis/ui/web/frontend/src/components/ultrawiki/`](../jarvis/ui/web/frontend/src/components/ultrawiki/).
+> **Status: design only. Nothing here is implemented yet.** This folder is the
+> specification that coding agents will later build from. It was written from
+> scratch on 2026-07-24, based on the Cerebras Knowledge architecture
+> (see [Prior art](#prior-art)) and twelve maintainer decisions recorded below.
+> Earlier design documents that once lived in this folder were deliberately
+> discarded; this set does not build on them.
 
 UltraWiki is the second mode of the Jarvis Wiki section. Where the normal wiki
 is a local, keyword-searched collection of markdown pages, UltraWiki is a
@@ -19,12 +17,12 @@ about the user's own life with **cited, exact facts**, fast enough to feed the
 
 The north-star query used as the worked example throughout these documents:
 
-> **"When was I at dinner with Viktoria in San Francisco?"**
+> **"When did Alex have dinner with Testoria in Exampleville?"**
 >
-> → *"On 23 June 2024, at Trestle in San Francisco. Sources: WhatsApp export
-> (23 Jun), calendar event 'Dinner w/ Viktoria'."*
+> → *"On 15 March 2024, at Example Bistro in Exampleville. Sources: WhatsApp export
+> (15 Mar), calendar event 'Dinner w/ Testoria'."*
 
-Answering that well requires entities (who is Viktoria), time (a date IS the
+Answering that well requires entities (who is Testoria), time (a date IS the
 answer), places, activity semantics (dinner ≈ restaurant ≈ essen), and reading
 the right thread out of years of history in a few hundred milliseconds.
 <!-- i18n-allow: "essen" is a German activity-synonym example the multilingual matcher must handle -->

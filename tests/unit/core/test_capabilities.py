@@ -224,9 +224,9 @@ class TestRegistryHasActionIntent:
     def test_filler_particle_halt_is_not_an_action(self) -> None:
         # The German discourse particle "halt" (a filler word, roughly
         # "just"/"simply") is NOT a command — it must not collide with the
-        # stop-verb stem in the universal catalogue. A regression showed that
-        # the filler could trip has_action_intent and force-spawn a worker on a
-        # pure chat turn. The fixtures below
+        # stop-verb stem in the universal catalogue. Live bug 2026-06-19: the
+        # filler tripped has_action_intent and force-spawned a worker on a pure
+        # chat turn. The fixtures below
         # are intentionally German (the content under test).
         assert self.reg.has_action_intent("Das ist halt so.") is False  # i18n-allow
         assert (
@@ -339,7 +339,7 @@ class TestSeedRegistry:
         """Wiki destination wins even when the fact mentions travel."""
         cap = self.reg.resolve_intent(
             "Kannst du bitte mein Wiki-System eintragen, dass ich morgen nach "  # i18n-allow
-            "San Francisco reisen will?"  # i18n-allow: production transcript under test
+            "Beispielstadt reisen will?"  # i18n-allow
         )
 
         assert cap is not None

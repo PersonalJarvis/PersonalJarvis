@@ -74,7 +74,7 @@ selecting a topic opens its page with neighbours and its moments.
 | Edge width | shared moments |
 | Time bar under each topic | *when* that topic lived in your history — width is its lifetime, position is when, colour is recency |
 
-The time bar is the signature: at a glance "Berlin" runs the whole way
+The time bar is the signature: at a glance "Exampletown" runs the whole way
 through while "Bora Bora" was one bright week in July. No list of counts
 shows that shape.
 

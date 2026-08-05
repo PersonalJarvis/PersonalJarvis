@@ -57,8 +57,8 @@ finding in this audit is smaller than either.
 Neither is a code bug; both are live and both produce the reported symptoms.
 
 **D-1 — an orphaned custom model disables the fastest engine.**
-`[wake].custom_model_path` points at `hey_nico.onnx` while `[wake].phrase` is
-`"Hey Alex"`. Every boot logs *"Custom wake model 'hey_nico.onnx' belongs to a
+`[wake].custom_model_path` points at `hey_nova.onnx` while `[wake].phrase` is
+`"Hey Alex"`. Every boot logs *"Custom wake model 'hey_nova.onnx' belongs to a
 different phrase — resolving 'Hey Alex' through the normal engine chain."* The
 `custom_onnx` path — the only one AP-25 names as capable of being both instant
 and ghost-free — is therefore never used. Fix: point it at a model trained for
@@ -475,7 +475,7 @@ installed models, so the pin is harmless here. Do not "fix" it.
 Each wave is independently shippable and leaves the tree green.
 
 **Wave 0 — stop the moving target (minutes, config only).**
-D-1 orphaned `hey_nico.onnx`; D-2 pin the engine explicitly. Also make `auto`
+D-1 orphaned `hey_nova.onnx`; D-2 pin the engine explicitly. Also make `auto`
 log its reason and prefer stability.
 
 **Wave 1 — the measured wins (largest felt improvement).**

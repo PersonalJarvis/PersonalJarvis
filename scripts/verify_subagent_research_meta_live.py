@@ -33,7 +33,7 @@ DEADLINE_S = 720.0
 
 MESSAGE = (
     "Spawn a sub-agent which will help me find out what I have to be aware of "
-    "when comparing renewable transit systems."
+    "when I move to Exampleland."
 )
 TERMINAL = {"APPROVED", "FAILED", "CANCELLED"}
 

@@ -121,8 +121,8 @@ TRIP = [
     },
     {
         "external_id": "c",
-        "question": "What is the weather in Berlin?",
-        "entities": ["Berlin"],
+        "question": "What is the weather in Exampletown?",
+        "entities": ["Exampletown"],
         "timestamp": "2026-05-01T10:00:00Z",
     },
 ]
@@ -189,7 +189,7 @@ def test_moments_are_newest_first_with_their_evidence_link(env):
 
     body = env.client.get("/api/ultrawiki/explore/moments").json()
 
-    assert [m["title"] for m in body["moments"]][0] == "What is the weather in Berlin?"
+    assert [m["title"] for m in body["moments"]][0] == "What is the weather in Exampletown?"
     assert body["moments"][0]["permalink"] == "app://c"
     assert body["total"] == 3
 
@@ -197,9 +197,9 @@ def test_moments_are_newest_first_with_their_evidence_link(env):
 def test_moments_can_be_scoped_to_one_entity(env):
     seed(env, TRIP)
 
-    body = env.client.get("/api/ultrawiki/explore/moments", params={"entity": "berlin"}).json()
+    body = env.client.get("/api/ultrawiki/explore/moments", params={"entity": "exampletown"}).json()
 
-    assert [m["title"] for m in body["moments"]] == ["What is the weather in Berlin?"]
+    assert [m["title"] for m in body["moments"]] == ["What is the weather in Exampletown?"]
 
 
 def test_moments_can_be_scoped_to_one_month(env):

@@ -321,7 +321,7 @@ class GmailRestTool:
         the two-turn echo-confirm before sending. Reads (``list_messages`` /
         ``get_message``) are ``safe`` so a morning briefing can check unread
         mail without a spurious send confirmation (forensic 2026-06-19,
-        session dc533e39). An unrecognised action stays conservative
+        session 10000119). An unrecognised action stays conservative
         (``ask``), never silently safe."""
         action = (args.get("action") or "list_messages").strip()
         if action in ("list_messages", "get_message"):

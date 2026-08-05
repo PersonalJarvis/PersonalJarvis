@@ -2,17 +2,24 @@ import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { WSClient } from "@/lib/ws";
-import { deliverDictationText, isForThisWindow } from "@/lib/dictationTarget";
+import {
+  deliverDictationText,
+  documentOwnsDictation,
+  isForThisWindow,
+} from "@/lib/dictationTarget";
+import { clearVoiceInputLevel, setVoiceInputLevel } from "@/lib/voiceInputLevel";
 import {
   SECTION_LABELS,
+  VOICE_STATES,
   isSectionId,
   useEventStore,
   type ChatMessage,
   type VoiceState,
 } from "@/store/events";
 import { useSubAgentStore, SUB_AGENT_EVENT_NAMES } from "@/store/jarvisAgents";
-import { WSEventEnvelope, WSWelcome } from "@/schema/ws";
+import { WSAudioLevel, WSEventEnvelope, WSWelcome } from "@/schema/ws";
 import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from "@/i18n";
+import { hydrateUiTheme } from "@/hooks/useTheme";
 
 let singleton: WSClient | null = null;
 
@@ -62,6 +69,7 @@ export function useWebSocket(): void {
         // one falls through to the honest offline state.
         setWarming(code === 1013 || Boolean(info?.authRetryPending));
         setConnected(false);
+        clearVoiceInputLevel("native");
       },
       onMessage: (raw) => {
         const welcome = WSWelcome.safeParse(raw);
@@ -92,6 +100,12 @@ export function useWebSocket(): void {
           // authoritative "backend is up" signal — useAssistantNameSeed
           // listens for this event and re-fetches the resolved name.
           window.dispatchEvent(new CustomEvent("jarvis:assistant-name-changed"));
+          return;
+        }
+
+        const audioLevel = WSAudioLevel.safeParse(raw);
+        if (audioLevel.success) {
+          setVoiceInputLevel(audioLevel.data.input, "native");
           return;
         }
 
@@ -160,6 +174,9 @@ export function useWebSocket(): void {
           if (typeof state === "string") {
             const lower = state.toLowerCase();
             if (isVoiceState(lower)) setVoice(lower);
+            // A state boundary invalidates the previous phase's sample. Native
+            // capture will immediately supply a fresh value while listening.
+            clearVoiceInputLevel("native");
             // The live-transcript box has no other reset path: without this,
             // the last utterance of a session survives into READY/IDLE and the
             // next session, masquerading as a frozen live transcript (live
@@ -226,10 +243,30 @@ export function useWebSocket(): void {
         if (env.event_name === "ErrorOccurred") {
           // Brain errors abort the wait cycle, otherwise the indicator hangs
           // until the 60s timeout. We ignore other layer errors here.
-          const p = env.payload as { layer?: string; source_layer?: string };
+          const p = env.payload as {
+            layer?: string;
+            source_layer?: string;
+            message?: string;
+            recoverable?: boolean;
+          };
           if (p.layer === "brain" || p.source_layer === "brain") {
             setChatThinking(false);
             console.log("[ChatThinking] brain-error → false");
+          }
+          // A realtime provider failed or crossed families mid-call. This is
+          // the ONLY channel that reaches the desktop surface, where the
+          // provider_warning / provider_fallback control frames never leave
+          // the pipeline — so without it a call that silently moved to another
+          // provider (and another billing path, AP-22) said nothing at all.
+          const layer = p.layer ?? p.source_layer ?? "";
+          if (layer.startsWith("realtime.")) {
+            const detail = typeof p.message === "string" ? p.message.trim() : "";
+            pushToast(
+              p.recoverable === false ? "error" : "warning",
+              detail || translate("use_web_socket.realtime_provider_issue"),
+            );
+            // The live provider/model may have changed with it.
+            void queryClient.invalidateQueries({ queryKey: ["voice-mode"] });
           }
         }
 
@@ -251,6 +288,13 @@ export function useWebSocket(): void {
             target?: string;
           };
           const text = typeof p.text === "string" ? p.text : "";
+          // The server fans this event out to every connected UI. Background
+          // tabs/windows are observers; letting each one update its own target
+          // is how one utterance was pasted into several shared terminals.
+          if (!documentOwnsDictation()) {
+            if (p.is_final) useEventStore.getState().setDictationInterim("");
+            return;
+          }
           if (!p.is_final) {
             useEventStore.getState().setDictationInterim(text);
           } else {
@@ -260,8 +304,9 @@ export function useWebSocket(): void {
               ? deliverDictationText(text)
               : "none";
             if (delivered !== "none") {
-              // Straight into the field or terminal, so no sequence bump for
-              // the composer — just drop the live tail.
+              // Inserted here, or deliberately left to the one foreground UI
+              // client that owns this broadcast. Either way, no sequence bump
+              // for this client's composer — just drop the live tail.
               store.setDictationInterim("");
             } else {
               // The composer is the historical sink and still the right
@@ -373,6 +418,18 @@ export function useWebSocket(): void {
           }
         }
 
+        // Live theme switch (Control API / another client). ThemeProvider owns
+        // the repaint; this only relays the value, so the provider stays the one
+        // place that writes the class on <html>.
+        if (env.event_name === "UiThemeChanged") {
+          const p = env.payload as { theme?: string };
+          if (p.theme === "dark" || p.theme === "light" || p.theme === "system") {
+            window.dispatchEvent(
+              new CustomEvent("jarvis:theme-changed", { detail: { theme: p.theme } }),
+            );
+          }
+        }
+
         // A voice command / the Control API writes config via the atomic writer,
         // which fires ConfigReloaded (not UiLanguageChanged). Re-hydrate the
         // affected language setting so the UI reflects it live.
@@ -381,6 +438,15 @@ export function useWebSocket(): void {
           const keys = Array.isArray(p.changed_keys) ? (p.changed_keys as string[]) : [];
           if (keys.includes("ui.language")) void hydrateUiLanguage();
           if (keys.includes("brain.reply_language")) void hydrateReplyLanguage();
+          if (keys.includes("ui.theme")) void hydrateUiTheme();
+          // Relayed for cards that own a config value nothing else tracks (the
+          // per-provider realtime model/voice pins). Each listener filters the
+          // keys it cares about, so this stays one cheap fan-out.
+          window.dispatchEvent(
+            new CustomEvent("jarvis:config-reloaded", {
+              detail: { changed_keys: keys },
+            }),
+          );
         }
 
         if (env.event_name === "ToastNotification") {
@@ -444,6 +510,7 @@ export function useWebSocket(): void {
     singleton = client;
 
     return () => {
+      clearVoiceInputLevel("native");
       client.close();
       singleton = null;
       mounted.current = false;
@@ -465,5 +532,8 @@ export function useWebSocket(): void {
 }
 
 function isVoiceState(v: unknown): v is VoiceState {
-  return v === "idle" || v === "listening" || v === "thinking" || v === "speaking" || v === "error";
+  // Derived from the union's own member list, never a second hand-kept literal
+  // set: a supervisor state this guard rejects is dropped in silence and the
+  // indicator freezes on whatever it showed before (BUG-008 class).
+  return typeof v === "string" && (VOICE_STATES as readonly string[]).includes(v);
 }

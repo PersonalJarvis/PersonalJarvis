@@ -39,7 +39,9 @@ def test_subscription_provider_is_structurally_conformant_without_api_key() -> N
     assert provider.input_sample_rate == 24_000
     assert provider.output_sample_rate == 24_000
     assert provider.credential_candidates == ()
-    assert provider.requires_webrtc_offer is True
+    # Jarvis owns the WebRTC peer in-process (ChatGPT-Live carries audio on
+    # the media track), so no UI has to broker a signalling offer any more.
+    assert provider.requires_webrtc_offer is False
 
 
 @pytest.mark.asyncio

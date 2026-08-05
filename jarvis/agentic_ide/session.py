@@ -90,7 +90,12 @@ from .agent_sessions import (
 )
 from .folders import ProjectProfile, probe_project
 from .names import free_positions, normalize, position_of, resolve
-from .terminal_input import THEME_COLOURS, TerminalQueryResponder
+from .terminal_input import (
+    THEME_COLOURS,
+    TerminalQueryResponder,
+    classify_terminal_input,
+    is_pointer_noise_only,
+)
 from .transcript import ReplayBuffer, Transcript
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -778,6 +783,15 @@ class PaneViewer:
     rows: int
 
 
+@dataclass(frozen=True, slots=True)
+class PendingPromptAttachmentBatch:
+    """One explicitly targeted drop waiting for a spoken pane prompt."""
+
+    batch_id: str
+    attachments: tuple[Any, ...]
+    files: tuple[str, ...]
+
+
 @dataclass(slots=True)
 class Terminal:
     """One named pane: a call-sign, an agent, and its live PTY (if attached)."""
@@ -834,6 +848,13 @@ class Terminal:
     # agent is working only when nobody is at the keyboard. Without it, pausing
     # mid-sentence in a pane reads as an agent that just finished.
     last_input_at: float | None = None
+    # When this pane's PTY was last RESIZED — a re-join with a new geometry, a
+    # grid re-layout, the repaint nudge. A full-screen TUI answers a size change
+    # by redrawing its whole frame, and that redraw is output plus a changed
+    # screen: exactly the two signals the activity detector reads as "working".
+    # Movement in the shadow of this stamp is the pane being redrawn, not the
+    # agent working — see `activity._resize_shadowed`.
+    last_resize_at: float | None = None
     prompts_sent: int = 0
     last_prompt: str = ""
     # The current process's records are kept as a fallback if the local history
@@ -841,6 +862,20 @@ class Terminal:
     # UI is opened, never in the workspace-state hot path.
     prompt_records: list[prompt_history.PromptHistoryEntry] = field(
         default_factory=list, repr=False, compare=False
+    )
+    # Explicitly targeted drops waiting for this pane's next spoken prompt.
+    # A batch is reserved by identity before composition and removed only after
+    # a successful PTY write. The lock protects short state transitions; model
+    # and PTY awaits never run while it is held. Ephemeral by design: this is a
+    # pending gesture, not workspace history worth restoring after a restart.
+    pending_prompt_attachment_batches: list[PendingPromptAttachmentBatch] = field(
+        default_factory=list, repr=False, compare=False
+    )
+    pending_prompt_attachment_reservations: set[str] = field(
+        default_factory=set, repr=False, compare=False
+    )
+    pending_prompt_attachment_lock: asyncio.Lock = field(
+        default_factory=asyncio.Lock, repr=False, compare=False
     )
     # When the last prompt was handed to this pane, as a wall-clock timestamp.
     #
@@ -870,6 +905,12 @@ class Terminal:
     last_submit_at: float | None = None
     # Did the last prompt actually leave the input line? None = none sent yet.
     submitted: bool | None = None
+    # A hand-pressed Enter on an injected prompt is being checked against the
+    # screen. Kept explicit so another Enter stays on the verified path rather
+    # than being mistaken for a brand-new manual instruction.
+    manual_submit_pending: bool = False
+    manual_submit_token: int = 0
+    bracketed_paste_active: bool = False
     # Did it arrive with its line structure intact? False means the pane
     # rejected the pasted block and the single-line fallback carried it — worth
     # seeing in the log, because it silently costs prompt readability.
@@ -927,24 +968,12 @@ class Terminal:
     # Has this pane's screen been observed STANDING STILL since its current
     # process started?
     #
-    # The line between "the agent carried on by itself" and "its CLI is drawing
-    # itself back onto the screen". Both are movement, and movement is the only
-    # thing the activity detector reads (see `.activity`) — so a resumed pane
-    # repainting its banner and its old transcript reads exactly like an agent
-    # at work, for the several seconds that takes.
-    #
-    # **The bug this fixes.** Both readers of that signal got it wrong in the
-    # same window: the notification sweep retracted `continuation_pending`
-    # ("it is already working, it needs no nudge") and the scan filtered the
-    # pane out — so every restored pane lost its offer to continue within two
-    # sweeps of coming back, and the button reported zero for ever. Reported as
-    # "the Continue feature does not work".
-    #
-    # A start-up burst always ends at a prompt, so "has stood still at least
-    # once" separates the two without knowing anything about what any CLI
-    # draws. Raised by the notification sweep on an observed still screen (two
-    # looks, never a single one), cleared on every spawn. Never persisted — it
-    # describes the process now running in the pane.
+    # This says only that restore/startup repainting has settled. It never proves
+    # work: that requires a submission stamped with this process generation.
+    # Keeping the claims separate prevents both startup replay and later MCP or
+    # status redraws from retracting a valid Continue offer. Raised by the
+    # notification sweep on an observed still screen (two looks, never one),
+    # cleared on every spawn, and never persisted.
     idle_seen: bool = False
     # What this pane is DOING, as the activity sweep last observed it: working,
     # waiting, asking, starting, exited, failed (see `.activity`). Empty until
@@ -1060,6 +1089,10 @@ class Terminal:
         reading = self.reading()
         return {
             "key": self.key,
+            # The call-sign key is reusable after a pane closes. The chat rail
+            # needs the pane lifetime to keep arrival order honest across a
+            # workspace remount and to put a replacement T1 at the bottom.
+            "history_id": self.history_id,
             "name": self.name,
             "agent": self.agent,
             "display_name": self.display_name,
@@ -1178,6 +1211,19 @@ class Session:
     # current session, and a restart should land the user back in normal mode
     # rather than silently keeping a narrowed assistant.
     focus_mode: bool = False
+    # Ephemeral UI context for deictic voice/chat references. In chat view one
+    # pane fills the stage, so "this terminal" has a concrete, visible meaning;
+    # in the grid every pane is visible and no default is honest. This state is
+    # reported by the mounted frontend and deliberately excluded from resume
+    # snapshots: after a restart the UI reports what it actually shows again.
+    surface_chat_visible: bool = False
+    surface_terminal: str = ""
+    # The written prompt bar and the voice orb share one explicit pane target.
+    # Unlike ``surface_terminal``, this remains meaningful in grid view: every
+    # pane may be visible, but the selected prompt chip says exactly where the
+    # next dropped file or instruction belongs.
+    surface_on_screen: bool = False
+    surface_prompt_target: str = ""
     # When this workspace was last brought to the front. Orders the "most
     # recently used" answer the resume snapshot and the UI both want, which is
     # NOT the order the workspaces were opened in.
@@ -1217,6 +1263,21 @@ class Session:
         if matched is None:
             return None
         return next((t for t in self.terminals if t.name == matched), None)
+
+    def contextual_terminal(self) -> Terminal | None:
+        """The one pane visibly filling chat view, if there is exactly one."""
+        if not self.surface_chat_visible or not self.surface_terminal:
+            return None
+        return self.find(self.surface_terminal)
+
+    def prompt_target_terminal(self) -> Terminal | None:
+        """The pane selected by the visible prompt bar and voice orb."""
+        if not self.surface_on_screen or not self.surface_prompt_target:
+            return None
+        selected = self.find(self.surface_prompt_target)
+        if selected is None or not accepts_prompts(selected.agent):
+            return None
+        return selected
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1330,18 +1391,27 @@ def _watch(
     on_exit: Any,
     cols: int,
     rows: int,
-) -> None:
-    """Attach a viewer to ``term`` and make it the owner.
+    *,
+    claim_owner: bool = True,
+) -> bool:
+    """Attach a viewer to ``term`` and optionally make it the owner.
 
     Newest last, and never twice: a socket that re-attaches (a resize, a resume
     retry) replaces its own entry rather than being fed the same bytes twice.
+    A background viewer may watch without taking the one shared PTY geometry
+    away from the window that is actually in front of the user.
     """
     term.watchers = [w for w in term.watchers if not _same_viewer(w.output, on_output)]
     term.watchers.append(PaneViewer(on_output, on_exit, cols, rows))
     if len(term.watchers) > MAX_WATCHERS:
         del term.watchers[0 : len(term.watchers) - MAX_WATCHERS]
-    term.viewer_output = on_output
-    term.viewer_exit = on_exit
+    owner_is_attached = any(
+        _same_viewer(watched.output, term.viewer_output) for watched in term.watchers
+    )
+    if claim_owner or term.viewer_output is None or not owner_is_attached:
+        term.viewer_output = on_output
+        term.viewer_exit = on_exit
+    return _same_viewer(term.viewer_output, on_output)
 
 
 def _viewers(term: Terminal) -> list[Any]:
@@ -1442,6 +1512,12 @@ class Registry:
         # rewrite the same config file eight times — and that file grows to tens
         # of kilobytes on a heavy user (see jarvis.workspace.trust).
         self._pre_trusted: set[tuple[str, str]] = set()
+        # One async gate per redirected account. Waiting here consumes no
+        # default-executor thread; only the task that owns the gate enters the
+        # synchronous setup lock in ``_prepare_spawn``. This prevents a restore
+        # burst for one account from starving unrelated ``asyncio.to_thread``
+        # work (BUG-043).
+        self._account_prepare_locks: dict[str, asyncio.Lock] = {}
         # Admits a few agent cold starts at a time (see COLD_START_LIMIT).
         # Created on first use rather than here: a semaphore belongs to the loop
         # it is first awaited on, and the registry is also built in tests that
@@ -2234,6 +2310,36 @@ class Registry:
         logger.info("Agentic IDE focus mode {}", "on" if enabled else "off")
         return session.focus_mode
 
+    def set_surface_context(
+        self,
+        *,
+        workspace_id: str,
+        chat_view: bool,
+        on_screen: bool,
+        terminal: str | None,
+        prompt_target: str | None = None,
+    ) -> bool:
+        """Record which single pane the active UI visibly puts on its stage.
+
+        A stale grid can finish a request after the user changed workspace, so
+        only the active workspace may write this context. Invalid or hidden
+        selections clear the default rather than leaving a believable old one.
+        """
+        session = self.session
+        if session is None or session.id != workspace_id:
+            return False
+        session.surface_on_screen = bool(on_screen)
+        session.surface_chat_visible = bool(chat_view and on_screen)
+        selected = session.find(terminal or "") if session.surface_chat_visible else None
+        session.surface_terminal = selected.name if selected is not None else ""
+        prompt = session.find(prompt_target or "") if session.surface_on_screen else None
+        session.surface_prompt_target = (
+            prompt.name
+            if prompt is not None and accepts_prompts(prompt.agent)
+            else ""
+        )
+        return True
+
     # ------------------------------------------------------------------ pty
     def _locate(self, key: str, workspace_id: str | None) -> tuple[Session, Terminal] | None:
         """One pane and the workspace holding it, by call-sign.
@@ -2295,6 +2401,7 @@ class Registry:
         workspace_id: str | None = None,
         appearance: str | None = None,
         on_replay: Any = None,
+        claim_owner: bool = True,
     ) -> Terminal:
         """Point a viewer at terminal ``key`` — one attach at a time per pane.
 
@@ -2334,6 +2441,7 @@ class Registry:
                 workspace_id=workspace_id,
                 appearance=appearance,
                 on_replay=on_replay,
+                claim_owner=claim_owner,
             )
 
     async def _attach_locked(
@@ -2346,6 +2454,7 @@ class Registry:
         workspace_id: str | None = None,
         appearance: str | None = None,
         on_replay: Any = None,
+        claim_owner: bool = True,
     ) -> Terminal:
         """Point a viewer at terminal ``key``, starting its agent if needed.
 
@@ -2418,26 +2527,34 @@ class Registry:
 
         manager = self._manager()
         if term.pty_id and manager.has(term.pty_id):
-            # The agent never stopped. Take over the viewer slot: the previous
-            # viewer is either gone (a socket that closed) or is being replaced
-            # by this one, so the newest viewer always wins. The one it replaces
-            # may still be TIDYING UP — see ``detach``, which is what stops that
-            # tidy-up from clearing the slot this line just filled.
+            # The agent never stopped. A foreground viewer takes over the owner
+            # slot; a background viewer only joins the output fanout. A viewer
+            # that is being replaced may still be TIDYING UP — see ``detach``,
+            # which is what stops that tidy-up from clearing the live owner.
             #
             # Winning the slot is about OWNERSHIP (the size, the handover), not
             # about who may look: a viewer that was here first keeps receiving
             # this pane's output until its own socket goes away.
-            _watch(term, on_output, on_exit, cols, rows)
-            term.reattached = True
-            term.stopping = False
-            geometry_changed = (term.transcript.cols, term.transcript.rows) != (
+            owns_viewer = _watch(
+                term,
+                on_output,
+                on_exit,
                 cols,
                 rows,
+                claim_owner=claim_owner,
+            )
+            term.reattached = True
+            term.stopping = False
+            geometry_changed = owns_viewer and (
+                (term.transcript.cols, term.transcript.rows) != (cols, rows)
             )
             if geometry_changed:
                 geometry_changed = manager.resize(term.pty_id, cols, rows)
                 if geometry_changed:
                     term.transcript.resize(cols, rows)
+                    # The TUI is about to redraw itself for the new geometry;
+                    # that redraw must not read as the agent working.
+                    term.last_resize_at = time.time()
             needs_repaint = term.replay.truncated
             if geometry_changed and is_coding_agent(term.agent):
                 # A cursor-addressed TUI stream is meaningful only at the size
@@ -2484,9 +2601,22 @@ class Registry:
         # on the second subscription keeps its transcripts in that account's
         # directory, and asking the default one would report "no conversation"
         # for a conversation that is right there.
+        # Off the event loop, because it is a directory walk and not a stat: the
+        # check searches the CLI's history BY ID across every project folder it
+        # has ever written (`agent_sessions._claude_conversation_exists`), which
+        # on a long-lived install is hundreds of folders — measured here at
+        # 9 ms per pane over 541 of them. Run inline it froze the whole server
+        # for that long, once per restored pane, at the one moment the loop is
+        # busiest: a restore mounts every pane in one commit, so a dozen panes
+        # meant a dozen stalls interleaved with their own spawns. It only ever
+        # runs on a pane that HAS a handle, which is why the restore path was
+        # the only one that ever felt it. `_mark_restored_continuations` already
+        # takes the same call to a thread for the same reason.
         home = account_home(term.agent, term.account)
         continuing = resume_argv(term.agent, term.resume)
-        if continuing is not None and not has_conversation(term.agent, term.resume, home):
+        if continuing is not None and not await asyncio.to_thread(
+            has_conversation, term.agent, term.resume, home
+        ):
             logger.info(
                 "Agentic IDE: {} has no conversation to continue — starting fresh",
                 term.name,
@@ -2599,15 +2729,37 @@ class Registry:
             for viewer in _exit_viewers(term):
                 await viewer(code)
 
-        # One of a few starts at a time (see COLD_START_LIMIT). The wait covers
-        # the account preparation too: that is filesystem work on the same
-        # directory every pane of an account shares, so letting eight of them
-        # queue on its lock while eight CLIs boot is the same pile-up one step
-        # earlier.
-        async with self._cold_start_slot():
-            # Off the event loop: getting the pane's account ready is filesystem
-            # work (a few stat calls once it is in place — see `_prepare_spawn`).
+        # BEFORE the slot, not inside it — and that ordering is the whole point.
+        #
+        # Off the event loop either way: getting the pane's account ready is
+        # filesystem work (a few stat calls once it is in place — see
+        # `_prepare_spawn`). But it also takes that account's setup lock, and
+        # every pane of one account shares one config dir and therefore one
+        # lock. Held inside the slot, a pane that is merely QUEUED on that lock
+        # still occupies one of the few cold-start slots while doing nothing —
+        # so a workspace of panes on the same account collapsed a gate meant to
+        # admit COLD_START_LIMIT starts at once down to roughly one, and the
+        # restore came back one terminal at a time.
+        #
+        # Serializing here is not the pile-up the gate exists to prevent. That
+        # pile-up is coding CLIs BOOTING — plugins, hooks, an `npx` process tree
+        # per MCP server. The account gate is async so waiters do not occupy the
+        # shared executor while one thread owns the filesystem setup lock.
+        redirected_home = _redirected_home(term)
+        if redirected_home is None:
             env = await asyncio.to_thread(self._prepare_spawn, term, session.folder)
+        else:
+            account_key = os.path.normcase(str(redirected_home))
+            account_gate = self._account_prepare_locks.setdefault(
+                account_key, asyncio.Lock()
+            )
+            async with account_gate:
+                env = await asyncio.to_thread(
+                    self._prepare_spawn, term, session.folder
+                )
+
+        # One of a few starts at a time (see COLD_START_LIMIT).
+        async with self._cold_start_slot():
             try:
                 pty_session = await manager.spawn(
                     shell_argv=argv,
@@ -2647,6 +2799,18 @@ class Registry:
         # Cleared rather than left alone so a restarted pane cannot inherit the
         # previous process's last output either.
         term.last_output_at = None
+        term.manual_submit_pending = False
+        term.manual_submit_token += 1
+        term.bracketed_paste_active = False
+        # The previous process's activity stamp goes with it. `stamp` resets
+        # `activity_since` only when the WORD changes, so a pane that was
+        # "waiting", restarted, and settled back to "waiting" kept the old
+        # since — and the tooltip claimed the fresh agent had been waiting for
+        # however long the dead one had. Until the next sweep (≤2 s) readers
+        # fall back to a one-look answer, which is honest about not knowing.
+        term.activity = ""
+        term.activity_at = 0.0
+        term.activity_since = 0.0
         # And this process has not stood still yet, whatever the previous one
         # did. Everything it is about to draw is a CLI painting itself, not an
         # agent working — see the field.
@@ -2871,14 +3035,44 @@ class Registry:
         owner, term = found
         if not term.pty_id:
             return False
+        manager = self._manager()
+        if is_pointer_noise_only(data):
+            # A wheel tick, a click, a focus flip: the terminal talking, not a
+            # person typing. It echoes nothing, so it must not arm the typing
+            # shadow — stamping it made a busy pane read "done" for STILL_S
+            # whenever it was scrolled or merely clicked. The TUI still gets
+            # the bytes; it asked for them.
+            return manager.write(term.pty_id, data)
+        is_submit, edits_prompt, paste_active = classify_terminal_input(
+            data, term.bracketed_paste_active
+        )
+        confirm_pending_prompt = bool(
+            is_submit
+            and not edits_prompt
+            and term.last_prompt
+            and (term.submitted is False or term.manual_submit_pending)
+        )
+        # Do not mutate activity or receipt state for bytes the PTY refused.
+        written = manager.write(term.pty_id, data)
+        if not written:
+            return False
+        term.bracketed_paste_active = paste_active
         # Somebody is typing in here. Recorded on EVERY keystroke (unlike the
         # submit handling below), because the activity detector needs to tell
         # the agent's own output apart from the echo of a person at the
         # keyboard — see `activity._printing_now`.
         term.last_input_at = time.time()
+        if term.manual_submit_pending and edits_prompt:
+            # The screen observer is checking whether the PREVIOUS prompt
+            # disappeared. Any later edit can make that happen without a
+            # submission (Ctrl+U is the clearest example), so its verdict is
+            # stale. Resolve the injected prompt conservatively as unsent.
+            term.manual_submit_pending = False
+            term.manual_submit_token += 1
+            term.submitted = False
         # Gated on a SUBMIT rather than on any keystroke: scrolling, arrow keys
         # and a half-typed line are not an instruction.
-        if "\r" in data or "\n" in data:
+        if is_submit:
             # The user submitted something in the pane themselves, so this one
             # is being driven again and is no longer waiting to be nudged.
             # Dropping the pane off that list for a mere keypress would hide a
@@ -2889,15 +3083,79 @@ class Registry:
             # makes its next stop worth reporting — a pane driven only by hand
             # never goes through `send_prompt`, so without this hook the bell
             # would stay silent for everybody who types their own prompts.
-            term.last_submit_at = term.last_input_at
-            term.submit_generation = term.process_generation
+            if confirm_pending_prompt:
+                # Enter may accept a completion rather than submit. Return the
+                # receipt to "unconfirmed" until the same screen check used by
+                # the injection path sees the prompt leave the input box.
+                term.submitted = None
+                term.manual_submit_pending = True
+                self._schedule_manual_submit_confirmation(owner, term)
+            else:
+                term.last_submit_at = term.last_input_at
+                term.submit_generation = term.process_generation
             # And the pane's conversation may have just begun, which for most
             # coding CLIs is the first moment its id exists on disk at all. A
             # pane driven only by hand never goes through `send_prompt`, so
             # without this hook it would keep the gap that cost every non-Claude
             # pane its resume handle.
-            self._lookup_after_conversation(owner, term)
-        return self._manager().write(term.pty_id, data)
+            if not term.manual_submit_pending:
+                self._lookup_after_conversation(owner, term)
+        return True
+
+    def _schedule_manual_submit_confirmation(self, owner: Session, term: Terminal) -> None:
+        """Verify a hand-pressed Enter before changing an unsent receipt."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # A synchronous embedding cannot observe the terminal over time.
+            # Keep the receipt unconfirmed instead of making up an answer.
+            logger.debug(
+                "Agentic IDE: cannot verify manual Enter for {} without an event loop",
+                term.name,
+            )
+            return
+
+        payload = term.last_prompt
+        generation = term.process_generation
+        term.manual_submit_token += 1
+        token = term.manual_submit_token
+
+        async def _confirm() -> None:
+            try:
+                submitted = await self._observe_manual_submission(term, payload)
+                if (
+                    term.process_generation != generation
+                    or term.last_prompt != payload
+                    or term.manual_submit_token != token
+                ):
+                    return
+                term.manual_submit_pending = False
+                term.submitted = submitted
+                if submitted:
+                    term.last_submit_at = time.time()
+                    term.submit_generation = term.process_generation
+                    self._lookup_after_conversation(owner, term)
+                await announce_prompt(term)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - confirmation must not kill input
+                logger.warning(
+                    "Agentic IDE: could not verify manual Enter for {}: {}", term.name, exc
+                )
+
+        task = loop.create_task(_confirm())
+        owner.lookups.add(task)
+        task.add_done_callback(owner.lookups.discard)
+
+    async def _observe_manual_submission(self, term: Terminal, payload: str) -> bool:
+        """Passively watch whether a hand-pressed Enter emptied the input box."""
+        needle = _submit_needle(payload)
+        checks = max(1, int(_SUBMIT_WINDOW_S / _SUBMIT_POLL_S)) if _SUBMIT_POLL_S else 1
+        for _ in range(checks):
+            await asyncio.sleep(_SUBMIT_POLL_S)
+            if not _input_line_holds(term.transcript.tail(10), needle):
+                return True
+        return False
 
     async def _nudge_repaint(self, term: Terminal, cols: int, rows: int) -> None:
         """Ask the agent in ``term`` to draw its whole interface again.
@@ -2922,13 +3180,63 @@ class Registry:
             return
         manager = self._manager()
         try:
+            # The whole point of the nudge is a full repaint — which must read
+            # as the redraw it is, not as the agent suddenly working. Stamped
+            # BEFORE the first resize as well as after the second: the sleep
+            # between them yields the loop, so the shrunken frame's redraw can
+            # arrive before this coroutine runs again.
+            term.last_resize_at = time.time()
             # Two is the floor a TUI can still lay out; below it some redraw
             # into a single row and never recover the frame.
             manager.resize(pty_id, cols, max(rows - 1, 2))
             await asyncio.sleep(REPAINT_NUDGE_S)
             manager.resize(pty_id, cols, rows)
+            term.last_resize_at = time.time()
         except Exception as exc:  # noqa: BLE001 - a stale screen beats a failed reconnect
             logger.debug("Agentic IDE: could not nudge {} into a repaint: {}", term.name, exc)
+
+    def claim_viewer(
+        self,
+        key: str,
+        cols: int,
+        rows: int,
+        workspace_id: str | None = None,
+        viewer: Any = None,
+    ) -> bool:
+        """Give a foreground viewer ownership and restore its PTY geometry."""
+        if viewer is None:
+            return False
+        found = self._locate(key, workspace_id)
+        if found is None:
+            return False
+        term = found[1]
+        if not term.pty_id:
+            return False
+        claimed = next(
+            (watched for watched in term.watchers if _same_viewer(watched.output, viewer)),
+            None,
+        )
+        if claimed is None:
+            return False
+        claimed.cols = cols
+        claimed.rows = rows
+        # Most recently foregrounded last: if this owner closes, ``detach`` can
+        # promote the viewer the user interacted with most recently before it.
+        term.watchers = [
+            watched
+            for watched in term.watchers
+            if not _same_viewer(watched.output, viewer)
+        ]
+        term.watchers.append(claimed)
+        term.viewer_output = claimed.output
+        term.viewer_exit = claimed.exit
+        return self.resize(
+            term.key,
+            cols,
+            rows,
+            workspace_id,
+            viewer=claimed.output,
+        )
 
     def resize(
         self,
@@ -3001,6 +3309,10 @@ class Registry:
             return True
         if not self._manager().resize(term.pty_id, cols, rows):
             return False
+        # The TUI answers the new size with a full redraw — shadow it so a
+        # finished pane does not read as "working" every time the grid
+        # re-lays itself out (chat view toggle, maximize, a dragged seam).
+        term.last_resize_at = time.time()
         if is_coding_agent(term.agent):
             # Future viewers must not replay cursor moves produced for the old
             # grid into the new one. The live viewer already has its screen;
@@ -3568,10 +3880,16 @@ class Registry:
         term.last_prompt_at = time.time()
         # The same stamp under the name the activity watcher reads, so a pane
         # driven by Jarvis and one driven by hand prove the same thing the same
-        # way. Set even for a hard False: the text is in the pane's input box,
-        # and whatever it does next was still asked of it.
-        term.last_submit_at = term.last_prompt_at
-        term.submit_generation = term.process_generation
+        # way. NOT set on a hard False: the verification watched the text SIT
+        # in the input box, so no job was handed over — and stamping it anyway
+        # turned the echo of an unsubmitted prompt into a "Finished and waiting
+        # at its prompt" bell for work that never started. The moment the user
+        # presses Enter on that box themselves, `write` stamps it for real.
+        if submitted is not False:
+            term.last_submit_at = term.last_prompt_at
+            term.submit_generation = term.process_generation
+        term.manual_submit_pending = False
+        term.manual_submit_token += 1
         term.submitted = submitted
         term.sent_multiline = multiline and submitted is True
         history_entry = prompt_history.PromptHistoryEntry(
@@ -3650,10 +3968,17 @@ class Registry:
         typed = payload + (" " if _opens_completion(last_line) else "")
         if multiline:
             typed = f"{PASTE_START}{typed}{PASTE_END}"
+        # Injected text echoes exactly like hand-typing, and the activity
+        # detector must read it the same way: movement in the shadow of these
+        # writes is the prompt being TYPED, never the agent already working —
+        # and, for a prompt the pane refuses to submit, never the agent
+        # "finishing" a job it was never given.
+        term.last_input_at = time.time()
         if not manager.write(term.pty_id or "", typed):
             raise SessionError(f"Could not write to {term.name}.")
 
         arrived = await self._await_arrival(term, payload)
+        term.last_input_at = time.time()
         manager.write(term.pty_id or "", "\r")
         left_the_box = await self._confirm_submitted(term, payload, manager)
 

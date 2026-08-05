@@ -97,7 +97,7 @@ export const S5ReadBack: React.FC = () => {
             you ask
           </div>
           <div style={{ fontFamily: INTER, fontSize: 22, color: COLORS.body }}>
-            “What music does Alex like?”
+            “What music does the example user like?”
           </div>
         </div>
 
@@ -137,8 +137,8 @@ export const S5ReadBack: React.FC = () => {
           <div style={{ fontFamily: MONO, fontSize: 20, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
             <span style={{ color: COLORS.gold }}>## Wiki context</span>
             {"\n"}
-            <span style={{ color: COLORS.body }}>- Alex prefers 80s music. </span>
-            <span style={{ color: COLORS.gold }}>[[entities/alex]]</span>
+            <span style={{ color: COLORS.body }}>- The example user prefers demo music. </span>
+            <span style={{ color: COLORS.gold }}>[[entities/example-user]]</span>
             {"\n\n"}
             <span style={{ color: COLORS.faint }}>…prepended before the assistant answers.</span>
           </div>

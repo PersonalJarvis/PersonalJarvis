@@ -173,7 +173,7 @@ def test_morning_routine_specifics() -> None:
     assert "schedule" in trig_types
     assert fm.requires_tools == []
     assert fm.execution == "inline"
-    assert fm.config.get("weather_location") == "Berlin"
+    assert fm.config.get("weather_location") == "Exampletown"
 
 
 def test_deep_work_mode_specifics() -> None:

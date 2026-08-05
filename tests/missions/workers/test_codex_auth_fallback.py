@@ -1,6 +1,6 @@
 """Regression for the 2026-06-08 'all sub-missions fail on codex' incident.
 
-Forensic ground truth (`data/missions.db` mission 019ea8db + jarvis_desktop.log):
+Forensic ground truth (`data/missions.db` mission 019f1023 + jarvis_desktop.log):
 the user's codex ChatGPT OAuth token expired ("Failed to refresh token. ...
 Please log in again."), but `codex status` still reported connected=True. Two
 stacked defects followed:
@@ -263,7 +263,7 @@ async def test_codex_auth_expired_falls_back_to_claude(
 
 # --- 2026-07-07 incident: usage-capped codex + dead Claude looped forever -----
 #
-# Forensic ground truth (jarvis_desktop.log 15:50-15:52, mission_019f3cd8-1dd4):
+# Forensic ground truth (jarvis_desktop.log 15:50-15:52, mission_019f104e-0001):
 # the ChatGPT plan was usage-capped until Jul 31, `codex status` still said
 # connected=True, and the Claude Max OAuth login was dead. Every iteration then
 # spawned codex (~28 s to the cap error), fell back HARDCODED to Claude ("Not
@@ -467,7 +467,7 @@ async def test_codex_shell_write_recovers_from_failed_patch(
 async def test_codex_hardcap_timeout_preserves_work_and_flags_timed_out(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Live bug (mission 019eacb8): codex wrote a real deliverable then ran past
+    """Live bug (mission 019f1024): codex wrote a real deliverable then ran past
     its wall-clock cap. The worker must (1) set the structured `timed_out` flag,
     (2) keep "timeout" in the result, and (3) PRESERVE the partial stdout so the
     file_change tool_use survives parsing — instead of `stdout_bytes=b""` which
@@ -554,7 +554,7 @@ async def test_codex_hardcap_timeout_preserves_work_and_flags_timed_out(
 async def test_claude_session_limit_falls_back_to_codex(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Live mission 019eb2fd (2026-06-10 21:23): with sub_jarvis.provider =
+    """Live mission 019f102c (2026-06-10 21:23): with sub_jarvis.provider =
     claude-api and the Claude Max five-hour window exhausted, every mission
     died in ~16 s with "You've hit your session limit · resets 11:10pm".
     codex (a separate subscription) was healthy the whole time. Mirror of
@@ -564,7 +564,7 @@ async def test_claude_session_limit_falls_back_to_codex(
     claude_limit_line = (
         b'{"type":"result","subtype":"success","is_error":true,'
         b'"result":"You\'ve hit your session limit \xc2\xb7 resets 11:10pm '
-        b'(Europe/Berlin)","session_id":"s1"}\n'
+        b'(Etc/UTC)","session_id":"s1"}\n'
     )
     codex_ndjson = (
         b'{"type":"thread.started","thread_id":"t9"}\n'
@@ -758,7 +758,7 @@ async def test_claude_unavailable_model_retries_without_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An approved-access model the subscription lacks (claude-fable-5, live
-    mission 019ec615 2026-06-14) must transparently retry on the CLI default
+    mission 019f102e 2026-06-14) must transparently retry on the CLI default
     so the mission completes — not die as task_error."""
     unavailable = (
         b'{"type":"result","subtype":"success","is_error":true,'

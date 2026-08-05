@@ -205,7 +205,7 @@ async def test_continuation_cancels_pending_clarifying_question() -> None:
 # --------------------------------------------------------------------------- #
 # Floor guard: the clarify question must never speak OVER a resuming user.     #
 #                                                                             #
-# Live incident 2026-06-17 14:47 (session <SESSION_ID>): the user trailed off on  #
+# Live incident 2026-06-17 14:47 (session 10000014): the user trailed off on  #
 # "...liegt sie im..." → the ContinuationBuffer held it (reason=trailing_      #
 # ellipsis) and force-armed the clarify timer. 4 ms later the user RESUMED     #
 # speaking the continuation ("im Lead zu Vergleich zu anderen"), but the       #

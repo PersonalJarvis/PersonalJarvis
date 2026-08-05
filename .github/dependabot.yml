@@ -23,7 +23,7 @@ updates:
       interval: weekly
       day: monday
       time: "07:00"
-      timezone: "Europe/Berlin"
+      timezone: "Etc/UTC"
     open-pull-requests-limit: 5
     labels:
       - dependencies
@@ -44,7 +44,7 @@ updates:
       interval: weekly
       day: monday
       time: "07:00"
-      timezone: "Europe/Berlin"
+      timezone: "Etc/UTC"
     open-pull-requests-limit: 5
     labels:
       - dependencies

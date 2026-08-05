@@ -423,7 +423,7 @@ class _WikiRecallTool:
 
 
 class _AliasCallingBrain:
-    """Live incident 2026-07-05 (session <SESSION_ID>, 19:49:56): the tool surface
+    """Live incident 2026-07-05 (session 10000110, 19:49:56): the tool surface
     mixes hyphen names (wiki-recall) and underscore names (run_shell), so the
     model cross-normalized and called 'run-shell'. The exact-match lookup missed
     and the turn ended in the canned 'missing the right tool' refusal."""
@@ -711,7 +711,7 @@ async def test_conversational_turn_blocks_llm_chosen_spawn() -> None:
 
     result = await loop.run(
         [],
-        user_utterance="Ah, ich will gucken, wo ich als nächstes hinziehe.",  # i18n-allow: live utterance
+        user_utterance="Ich überlege, welchen Ansatz ich für das Beispielprojekt wähle.",  # i18n-allow: synthetic utterance
     )
 
     assert executor.calls == [], "unrequested spawn must never reach the executor"

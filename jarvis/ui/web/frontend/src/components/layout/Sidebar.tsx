@@ -21,6 +21,8 @@ import {
   Loader2,
   type LucideIcon,
   ChevronRight,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { useEventStore, type SectionId } from "@/store/events";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
@@ -45,6 +47,10 @@ interface NavItem {
   // English fallback shown when `labelKey` has no translation yet in the active
   // locale (the i18n resolver returns the key itself on a miss).
   fallbackLabel?: string;
+  // Draws a small "Beta" pill after the label — the Agentic IDE runs real
+  // coding-agent CLIs against the user's own filesystem, which is a step
+  // riskier than the rest of the app, so the row says so up front.
+  beta?: boolean;
 }
 
 // Resolve a nav row's label, preferring the active-locale translation and
@@ -155,6 +161,7 @@ const NAV_GROUPS: NavItem[][] = [
       labelKey: "nav.agentic_ide",
       icon: SquareTerminal,
       fallbackLabel: "Agentic IDE",
+      beta: true,
     },
   ],
 ];
@@ -164,7 +171,12 @@ const VOICE_STATE_STYLE: Record<string, { dot: string; pulse: boolean }> = {
   listening: { dot: "bg-emerald-400", pulse: true },
   thinking: { dot: "bg-primary", pulse: true },
   speaking: { dot: "bg-primary", pulse: true },
+  // The user muted or suspended the pipeline: neither working nor broken.
+  paused: { dot: "bg-amber-400", pulse: false },
   error: { dot: "bg-destructive", pulse: false },
+  // Not a supervisor state — the surface's own "a realtime transport is
+  // negotiating" phase, which no backend state covers.
+  connecting: { dot: "bg-amber-400", pulse: true },
 };
 
 export interface SidebarProps {
@@ -175,6 +187,18 @@ export interface SidebarProps {
    * one-offs) at its designed width.
    */
   width?: number;
+  /**
+   * Is the sidebar deliberately collapsed to its icon rail?
+   *
+   * Separate from `width` because the two answer different questions. The width
+   * is a drag preference and survives a collapse — expanding restores the
+   * column the user sized, not the designed default. Collapsing is a STATE, and
+   * the app opens in it: the sidebar is navigation, and navigation is not what
+   * the window is for. Left optional so the sidebar still renders standalone.
+   */
+  collapsed?: boolean;
+  /** Toggle `collapsed`. Absent = the toggle button is not offered. */
+  onToggleCollapsed?: () => void;
 }
 
 /** Width the sidebar was designed at, and the one a double-click restores. */
@@ -200,7 +224,11 @@ export const SIDEBAR_RAIL_WIDTH = 64;
  */
 export const SIDEBAR_RAIL_AT_WIDTH = 168;
 
-export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
+export function Sidebar({
+  width = SIDEBAR_DEFAULT_WIDTH,
+  collapsed = false,
+  onToggleCollapsed,
+}: SidebarProps = {}) {
   const t = useT();
   const active = useEventStore((s) => s.activeSection);
   const setActive = useEventStore((s) => s.setActiveSection);
@@ -237,31 +265,41 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
     s.events.filter((e) => e.name === "AgentStateChange").length > 0 ? undefined : 0,
   );
 
+  // Read before the status line because BOTH depend on it now: the footer card
+  // follows the VOICE MODE rather than the pipeline brain (in realtime mode the
+  // pipeline brain is dormant, and showing it there misled the user —
+  // "OpenRouter" while Gemini Live was doing all the talking), and the status
+  // line needs its connecting phase. A RUNNING realtime session's live
+  // provider/model outrank the configured pick (a mid-call cross-family
+  // fallback must be visible, AP-22); when idle the resolved provider + its
+  // pinned/default model are shown.
+  const voiceMode = useVoiceMode();
+
   // The window connects in ~1s but the voice feature warms up ~20s in the
   // background. During that gap show a "Voice starting…" spinner instead of the
   // normal idle "Ready" dot (which would falsely imply the mic already works).
   // Disconnected outranks warmup — "Offline" is the honest state with no socket.
   // voiceWarming / bootWarming / warming come from the shared useVoiceReadiness
   // hook so the sidebar dot, the banner and the chat empty-state never disagree.
-  const showSpinner = warming;
-  const vs = VOICE_STATE_STYLE[voiceState] ?? VOICE_STATE_STYLE.idle;
+  const showSpinner = warming || voiceMode.connecting;
+  const vs = voiceMode.connecting
+    ? VOICE_STATE_STYLE.connecting
+    : VOICE_STATE_STYLE[voiceState] ?? VOICE_STATE_STYLE.idle;
+  // A negotiating realtime transport outranks the pipeline's own state: the
+  // subscription route needs 15-45 s before it can hear anything, and showing
+  // the stale pre-call state there is what made a live handshake look frozen.
   const voiceLabel = !connected
     ? bootWarming
       ? t("voice_state.booting")
       : t("voice_state.offline")
     : voiceWarming
       ? t("voice_state.starting")
-      : t(`voice_state.${voiceState}`);
+      : voiceMode.connecting
+        ? t("voice_state.connecting")
+        : t(`voice_state.${voiceState}`);
 
   const providerLabel = useMemo(() => prettyProviderName(brainProvider), [brainProvider]);
 
-  // The footer card follows the VOICE MODE, not always the pipeline brain:
-  // in realtime mode the pipeline brain is dormant, so showing it there
-  // misled the user ("OpenRouter" while Gemini Live was doing all the talking).
-  // A RUNNING realtime session's live provider/model outrank the configured
-  // pick (a mid-call cross-family fallback must be visible, AP-22); when idle
-  // the resolved provider + its pinned/default model are shown.
-  const voiceMode = useVoiceMode();
   const realtimeFooter = voiceMode.mode === "realtime";
   const liveRealtimeSession =
     realtimeFooter &&
@@ -292,7 +330,10 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
   // realtime control, the brain card's provider and model — steps aside; the
   // navigation itself never does, because losing it would make the rail a dead
   // end rather than a narrow sidebar.
-  const railed = width < SIDEBAR_RAIL_AT_WIDTH;
+  // Two independent ways into the rail: the explicit toggle, and dragging the
+  // seam past the snap point. Either one alone is enough — a user who dragged
+  // the column narrow gets icons without having to also find the button.
+  const railed = collapsed || width < SIDEBAR_RAIL_AT_WIDTH;
 
   return (
     // No right border: the draggable seam beside it draws that line now, and
@@ -301,8 +342,31 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
       style={{ width: railed ? SIDEBAR_RAIL_WIDTH : width }}
       data-testid="sidebar"
       data-railed={railed ? "true" : "false"}
-      className="flex h-full shrink-0 flex-col bg-card/40 backdrop-blur"
+      className="relative isolate flex h-full shrink-0 flex-col"
     >
+      {/*
+        The frosted backing, as a SEPARATE non-scrolling layer.
+
+        It used to be `bg-card/40 backdrop-blur` on this <aside> itself — which
+        made the element carrying `backdrop-filter` the ancestor of the
+        scrolling <nav> below. WebKit composites such an element from a backdrop
+        snapshot that it does NOT reliably invalidate when a descendant scrolls,
+        so on macOS the sidebar kept PAINTING the rows at their old offsets
+        while hit-testing them at the new ones: the pointer sat on one entry and
+        the click landed on another a couple of rows up, worst at the top of the
+        list and correct again at the bottom, until something forced a full
+        repaint. Chromium (the Windows WebView2) composites this case eagerly,
+        which is why it only ever showed up on a Mac.
+
+        Splitting the blur out fixes the cause rather than the symptom: nothing
+        that scrolls lives inside a backdrop-filtered element any more. The
+        layer is `-z-10` inside an `isolate` stacking context, so it paints
+        behind the rows and cannot swallow their clicks.
+      */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 bg-card/40 backdrop-blur"
+      />
       <div className={cn("border-b border-border", railed ? "px-2 py-3" : "px-4 py-4")}>
         <div
           className={cn(
@@ -368,6 +432,28 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
               aria-hidden
             />
           )}
+          {onToggleCollapsed && (
+            <button
+              type="button"
+              data-testid="sidebar-collapse-toggle"
+              onClick={onToggleCollapsed}
+              aria-expanded={!railed}
+              title={railed ? t("sidebar.expand") : t("sidebar.collapse")}
+              aria-label={railed ? t("sidebar.expand") : t("sidebar.collapse")}
+              className={cn(
+                "flex shrink-0 items-center justify-center rounded-md text-muted-foreground",
+                "transition-colors hover:bg-accent/60 hover:text-foreground",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                railed ? "h-7 w-7" : "-mr-1 h-7 w-7",
+              )}
+            >
+              {railed ? (
+                <PanelLeftOpen className="h-4 w-4" aria-hidden />
+              ) : (
+                <PanelLeftClose className="h-4 w-4" aria-hidden />
+              )}
+            </button>
+          )}
         </div>
         {!railed && (
           <>
@@ -423,6 +509,7 @@ export function Sidebar({ width = SIDEBAR_DEFAULT_WIDTH }: SidebarProps = {}) {
                 label={resolveNavLabel(t, item)}
                 active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
                 badge={item.id === "agents" ? agentsCount : undefined}
+                betaLabel={item.beta ? t("nav.agentic_ide_beta") : undefined}
                 alert={item.id === "apikeys" ? apikeysHasError : false}
                 alertTitle={t("sidebar.apikeys_alert")}
                 warn={item.id === "skills" ? pluginsNeedReconnect : false}
@@ -496,6 +583,7 @@ function NavRow({
   label,
   active,
   badge,
+  betaLabel,
   alert = false,
   alertTitle,
   warn = false,
@@ -507,6 +595,9 @@ function NavRow({
   label: string;
   active: boolean;
   badge?: number;
+  /** Small pill rendered right after the label (e.g. "Beta") — set from
+   *  `item.beta`, translated by the caller so this component stays i18n-free. */
+  betaLabel?: string;
   /** Draw a red status dot on the row — a section this row fronts has a provider
    *  that is set up but failing, so the problem is visible app-wide. */
   alert?: boolean;
@@ -524,16 +615,18 @@ function NavRow({
   const Icon = item.icon;
   // On the rail the label is gone from the screen, so it has to survive
   // somewhere: as the hover text and as the accessible name. Without both, the
-  // narrow sidebar would be a column of unlabelled glyphs.
+  // narrow sidebar would be a column of unlabelled glyphs. The beta pill has no
+  // room on the rail either, so it folds into the same hover text.
   const hint = alert ? alertTitle : warn ? warnTitle : undefined;
+  const fullLabel = betaLabel ? `${label} (${betaLabel})` : label;
   return (
     <li>
       <button
         type="button"
         data-testid={`nav-row-${item.id}`}
         onClick={onClick}
-        aria-label={railed ? label : undefined}
-        title={railed ? (hint ? `${label} — ${hint}` : label) : hint}
+        aria-label={railed ? fullLabel : undefined}
+        title={railed ? (hint ? `${fullLabel} — ${hint}` : fullLabel) : hint}
         className={cn(
           "group relative flex w-full items-center rounded-lg text-sm transition-all",
           railed ? "justify-center px-0 py-2" : "gap-3 px-3 py-2",
@@ -549,7 +642,19 @@ function NavRow({
             active ? "text-primary" : "text-muted-foreground group-hover:text-foreground",
           )}
         />
-        {!railed && <span className="flex-1 text-left">{label}</span>}
+        {!railed && (
+          <span className="flex flex-1 items-center gap-1.5 text-left">
+            {label}
+            {betaLabel && (
+              <span
+                data-testid={`nav-beta-${item.id}`}
+                className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-primary"
+              >
+                {betaLabel}
+              </span>
+            )}
+          </span>
+        )}
         {/* On the rail the status dots ride ON the icon rather than after the
             label there is no room for — the signal is the point, not the row. */}
         {alert && (

@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Power, Zap } from "lucide-react";
+import { Monitor, Moon, Power, Sun, Zap } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useAutostart } from "@/hooks/useAutostart";
+import { useTheme, type ThemePreference } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 
@@ -26,7 +27,88 @@ export function AppSettingsGroup() {
       <h3 className="font-display text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         {t("settings_view.app_settings_group_title")}
       </h3>
+      <AppearanceRow />
       <AutostartRow />
+    </div>
+  );
+}
+
+const THEME_OPTIONS: ReadonlyArray<{
+  value: ThemePreference;
+  icon: typeof Sun;
+  labelKey: string;
+}> = [
+  { value: "dark", icon: Moon, labelKey: "settings_view.appearance.dark" },
+  { value: "light", icon: Sun, labelKey: "settings_view.appearance.light" },
+  { value: "system", icon: Monitor, labelKey: "settings_view.appearance.system" },
+];
+
+/**
+ * Colour theme picker — three exclusive choices rather than a dark/light switch,
+ * because "follow the system" is a third state a toggle cannot express.
+ *
+ * The repaint is instant and local (ThemeProvider writes the class on <html>);
+ * the PUT that persists it to ``[ui] theme`` runs in the background. So the
+ * control never feels like it is waiting on the network, and a failed write
+ * costs the user only the persistence, not the switch.
+ */
+function AppearanceRow() {
+  const t = useT();
+  const { preference, theme, setPreference } = useTheme();
+
+  return (
+    <div className="rounded-lg border border-border bg-card/60 p-4">
+      <div className="flex items-start gap-3">
+        {theme === "dark" ? (
+          <Moon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        ) : (
+          <Sun className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h4 className="font-medium">{t("settings_view.appearance.title")}</h4>
+            <div
+              role="radiogroup"
+              aria-label={t("settings_view.appearance.title")}
+              className="inline-flex rounded-lg border border-border bg-background/60 p-0.5"
+            >
+              {THEME_OPTIONS.map(({ value, icon: Icon, labelKey }) => {
+                const active = preference === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setPreference(value)}
+                    className={
+                      "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors " +
+                      (active
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:bg-secondary hover:text-foreground")
+                    }
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {t(labelKey)}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t("settings_view.appearance.description")}
+          </p>
+          {preference === "system" && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              {t(
+                theme === "dark"
+                  ? "settings_view.appearance.system_now_dark"
+                  : "settings_view.appearance.system_now_light",
+              )}
+            </p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

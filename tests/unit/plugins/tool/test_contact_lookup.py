@@ -78,7 +78,7 @@ async def test_lookup_returns_contact_details() -> None:
             relationship="friend",
             emails=["christoph@example.com"],
             phones=["+4915112345678"],
-            address={"street": "Hauptstr. 1", "city": "Berlin"},
+            address={"street": "Hauptstr. 1", "city": "Exampletown"},
             note_md="Old university friend.",
         )
     ])
@@ -89,7 +89,7 @@ async def test_lookup_returns_contact_details() -> None:
     assert "Christoph" in out
     assert "christoph@example.com" in out
     assert "+4915112345678" in out
-    assert "Berlin" in out
+    assert "Exampletown" in out
 
 
 @pytest.mark.asyncio

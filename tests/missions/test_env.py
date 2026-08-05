@@ -404,7 +404,7 @@ def test_oauth_token_routed_to_oauth_slot_not_api_key(tmp_path: Path) -> None:
     ANTHROPIC_OAUTH_TOKEN, never in ANTHROPIC_API_KEY. claude --print
     strictly validates ANTHROPIC_API_KEY as a classic key and rejects
     OAuth tokens with "Invalid API key". Live repro on 2026-05-18
-    mission_019e3c1a-948e: stream.jsonl contained exactly one
+    mission_019f100b-0001: stream.jsonl contained exactly one
     result-is_error=True frame with that error message.
     """
     with patch.dict("os.environ", {}, clear=True):

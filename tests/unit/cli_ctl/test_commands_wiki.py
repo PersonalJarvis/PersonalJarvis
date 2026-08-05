@@ -35,7 +35,7 @@ def test_ingest_sends_guarded_write_request(capture_api):
         [
             "wiki",
             "ingest",
-            "The user will travel to San Francisco tomorrow.",
+            "The user will travel to Exampleville tomorrow.",
             "--source",
             "test:cli",
         ],
@@ -45,7 +45,7 @@ def test_ingest_sends_guarded_write_request(capture_api):
     assert call["method"] == "POST"
     assert call["path"] == "/api/wiki/ingest"
     assert call["body"] == {
-        "text": "The user will travel to San Francisco tomorrow.",
+        "text": "The user will travel to Exampleville tomorrow.",
         "source": "test:cli",
     }
 

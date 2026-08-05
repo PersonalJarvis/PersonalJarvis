@@ -48,7 +48,7 @@ def test_directive_preserves_user_facing_content_exception() -> None:
 
 
 # --- OUTPUT_SHAPE_DIRECTIVE ---------------------------------------------------
-# Root cause (2026-06-22, mission 019ef052): the user asked for a SINGLE HTML
+# Root cause (2026-06-22, mission 019f1046): the user asked for a SINGLE HTML
 # file; the worker shipped four (index.html + app.js + styles.css + assets/).
 # The standing _QUALITY_DIRECTIVE ("never downgrade to a minimal version,
 # skeleton is a floor not a ceiling") reads a single self-contained file as a

@@ -44,20 +44,22 @@ log = logging.getLogger(__name__)
 # still tried before the chain gives up.
 _PROVIDER_COOLDOWN_S = 900.0
 
-# provider name -> (monotonic timestamp of last hard failure, short reason)
-_provider_failures: dict[str, tuple[float, str]] = {}
+# (lane scope, provider name) -> (monotonic failure timestamp, short reason).
+# Modality-specific failures must not demote a provider for ordinary text work.
+_provider_failures: dict[tuple[str, str], tuple[float, str]] = {}
 
 
-def _note_provider_failure(provider: str, reason: str) -> None:
-    _provider_failures[provider] = (time.monotonic(), reason)
+def _note_provider_failure(provider: str, reason: str, *, scope: str = "wiki") -> None:
+    _provider_failures[(scope, provider)] = (time.monotonic(), reason)
 
 
-def _in_cooldown(provider: str) -> bool:
-    entry = _provider_failures.get(provider)
+def _in_cooldown(provider: str, *, scope: str = "wiki") -> bool:
+    key = (scope, provider)
+    entry = _provider_failures.get(key)
     if entry is None:
         return False
     if time.monotonic() - entry[0] >= _PROVIDER_COOLDOWN_S:
-        del _provider_failures[provider]
+        del _provider_failures[key]
         return False
     return True
 
@@ -79,6 +81,8 @@ def _record_chain_recovery(label: str) -> None:
 
 def _order_by_cooldown(
     chain: list[tuple[str, str | None]],
+    *,
+    scope: str = "wiki",
 ) -> tuple[list[tuple[str, str | None]], list[str]]:
     """Healthy providers first, recently-failed ones demoted to the end.
 
@@ -88,7 +92,7 @@ def _order_by_cooldown(
     healthy: list[tuple[str, str | None]] = []
     cooled: list[tuple[str, str | None]] = []
     for entry in chain:
-        (cooled if _in_cooldown(entry[0]) else healthy).append(entry)
+        (cooled if _in_cooldown(entry[0], scope=scope) else healthy).append(entry)
     return healthy + cooled, [provider for provider, _model in cooled]
 
 
@@ -234,6 +238,8 @@ async def complete_with_fallback(
     allow_lone_rejection: Callable[[str], bool] | None = None,
     content_verdict: Callable[[str], bool] | None = None,
     provider_options: Mapping[str, Mapping[str, Any]] | None = None,
+    record_health: bool = True,
+    failure_scope: str = "wiki",
 ) -> tuple[Any, str] | None:
     """Try each ``(provider, model)`` until one returns an aggregated response.
 
@@ -262,6 +268,13 @@ async def complete_with_fallback(
     Live 2026-07-23: a single mis-kinded 'cloudflare-plugin' activity candidate
     demanded a companion page no provider produced, wedging the chain and
     listing all 8 providers as broken on every journal trigger.
+
+    ``record_health=False`` isolates an optional side lane from the normal Wiki
+    health strip. UltraWiki media enrichment uses the same provider machinery,
+    but an unreadable picture neither means normal Markdown capture is broken
+    nor has authority to clear a real capture failure after a later success.
+    ``failure_scope`` likewise isolates the short provider cooldown: an image-
+    specific 400 must not demote that same provider for ordinary text curation.
     """
     from jarvis.memory.wiki.curator_llm import instantiate_curator_brain
 
@@ -275,8 +288,9 @@ async def complete_with_fallback(
     # reach the chain-failure banner (see ``content_verdict`` above).
     content_rejections: list[str] = []
     allowed_rejection_fallback: tuple[Any, str, str] | None = None
+    shared_pipeline_failure = False
 
-    ordered, demoted = _order_by_cooldown(chain)
+    ordered, demoted = _order_by_cooldown(chain, scope=failure_scope)
     if demoted and ordered != chain:
         log.info(
             "%s: demoting recently-failed provider(s) to the end of the "
@@ -303,24 +317,64 @@ async def complete_with_fallback(
                 detail,
             )
             failure_summaries.append(f"{provider} instantiate failed: {detail}")
-            _note_provider_failure(provider, detail)
+            _note_provider_failure(provider, detail, scope=failure_scope)
             continue
         if brain is None:
             failure_summaries.append(f"{provider} unavailable")
             continue
         try:
-            agg = await asyncio.wait_for(aggregate(brain.complete(request)), timeout=timeout_s)
+            stream = brain.complete(request)
+        except Exception as exc:  # noqa: BLE001 — synchronous provider failure
+            detail = _exception_summary(exc)
+            log.warning(
+                "%s: provider %s failed before streaming (%s) — trying next provider",
+                label,
+                provider,
+                detail,
+            )
+            failure_summaries.append(f"{provider} {detail}")
+            _note_provider_failure(provider, detail, scope=failure_scope)
+            continue
+        try:
+            # Calling the caller-owned adapter is deliberately separate from
+            # awaiting it. A synchronous exception here is a shared pipeline
+            # contract bug, not six independent provider failures. Stop once,
+            # keep every provider healthy, and report the local stage honestly.
+            pending_aggregate = aggregate(stream)
+        except Exception as exc:  # noqa: BLE001 — local adapter fault
+            detail = _exception_summary(exc)
+            log.error(
+                "%s: response aggregation setup failed (%s) — stopping the "
+                "provider chain because the shared adapter is broken",
+                label,
+                detail,
+            )
+            failure_summaries.append(f"{label} aggregation setup failed: {detail}")
+            shared_pipeline_failure = True
+            break
+        try:
+            agg = await asyncio.wait_for(pending_aggregate, timeout=timeout_s)
             # Transport-level success: the provider is reachable again.
             # A validation rejection below re-records it as failed.
-            _provider_failures.pop(provider, None)
+            _provider_failures.pop((failure_scope, provider), None)
             if validate is not None:
                 try:
                     rejection = validate(agg)
-                except Exception as exc:  # noqa: BLE001 - validator faults mean unusable output
-                    rejection = (
-                        "response validation failed: "
-                        f"{_exception_summary(exc)}"
+                    if rejection is not None and not isinstance(rejection, str):
+                        raise TypeError(
+                            "response validators must return a rejection string or None"
+                        )
+                except Exception as exc:  # noqa: BLE001 - local validator fault
+                    detail = _exception_summary(exc)
+                    log.error(
+                        "%s: response validator failed (%s) — stopping the "
+                        "provider chain because the shared validator is broken",
+                        label,
+                        detail,
                     )
+                    failure_summaries.append(f"{label} response validation failed: {detail}")
+                    shared_pipeline_failure = True
+                    break
                 if rejection:
                     safe_rejection = safe_preview(rejection, max_chars=240)
                     allowed = (
@@ -344,7 +398,8 @@ async def complete_with_fallback(
                                 provider,
                                 safe_rejection,
                             )
-                            _record_chain_recovery(label)
+                            if record_health:
+                                _record_chain_recovery(label)
                             return agg, provider
                         # If every later provider fails, their failure must not
                         # erase this valid bounded answer.
@@ -363,7 +418,8 @@ async def complete_with_fallback(
                                     provider,
                                     safe_rejection,
                                 )
-                                _record_chain_recovery(label)
+                                if record_health:
+                                    _record_chain_recovery(label)
                                 return agg, provider
                             # A lone verdict this caller does not trust as
                             # final stays a retryable failure — one weak
@@ -417,7 +473,9 @@ async def complete_with_fallback(
                     failure_summaries.append(
                         f"{provider} unusable output: {safe_rejection}"
                     )
-                    _note_provider_failure(provider, safe_rejection)
+                    _note_provider_failure(
+                        provider, safe_rejection, scope=failure_scope
+                    )
                     try:
                         telemetry.inc("wiki_provider_output_rejected")
                     except Exception:  # noqa: BLE001 - telemetry cannot break fallback
@@ -427,7 +485,8 @@ async def complete_with_fallback(
                             exc_info=True,
                         )
                     continue
-            _record_chain_recovery(label)
+            if record_health:
+                _record_chain_recovery(label)
             return agg, provider
         except TimeoutError:
             log.warning(
@@ -437,7 +496,7 @@ async def complete_with_fallback(
                 timeout_s,
             )
             failure_summaries.append(f"{provider} timeout ({timeout_s:.1f}s)")
-            _note_provider_failure(provider, "timeout")
+            _note_provider_failure(provider, "timeout", scope=failure_scope)
             continue
         except Exception as exc:  # noqa: BLE001 — try the next family, never dead-end on one
             detail = _exception_summary(exc)
@@ -448,7 +507,7 @@ async def complete_with_fallback(
                 detail,
             )
             failure_summaries.append(f"{provider} {detail}")
-            _note_provider_failure(provider, detail)
+            _note_provider_failure(provider, detail, scope=failure_scope)
             continue
 
     if allowed_rejection_fallback is not None:
@@ -462,7 +521,8 @@ async def complete_with_fallback(
                 provider,
                 safe_rejection,
             )
-            _record_chain_recovery(label)
+            if record_health:
+                _record_chain_recovery(label)
             return agg, provider
         # A lone content verdict this caller does not trust as final: the
         # chain ends as a retryable failure instead of terminal proof.
@@ -491,29 +551,41 @@ async def complete_with_fallback(
         )
         return None
 
-    log.error(
-        "%s: ALL %d wiki provider(s) failed or returned unusable output — "
-        "nothing was written. Check provider health and structured-output logs.",
-        label,
-        len(chain),
-    )
+    if shared_pipeline_failure:
+        log.error(
+            "%s: the shared response pipeline failed — nothing was written. "
+            "Provider health was left unchanged.",
+            label,
+        )
+    else:
+        log.error(
+            "%s: ALL %d wiki provider(s) failed or returned unusable output — "
+            "nothing was written. Check provider health and structured-output logs.",
+            label,
+            len(chain),
+        )
     try:
-        telemetry.inc("wiki_all_providers_failed")
+        telemetry.inc(
+            "wiki_provider_pipeline_failed"
+            if shared_pipeline_failure
+            else "wiki_all_providers_failed"
+        )
     except Exception:  # noqa: BLE001 — telemetry must never break the pipeline
         log.debug("%s: telemetry inc failed", label, exc_info=True)
-    try:
-        from jarvis.memory.wiki.health import health
+    if record_health:
+        try:
+            from jarvis.memory.wiki.health import health
 
-        health.record_chain_failure(
-            safe_preview(
-                "; ".join(failure_summaries)
-                if failure_summaries
-                else f"{label}: empty provider chain",
-                max_chars=800,
+            health.record_chain_failure(
+                safe_preview(
+                    "; ".join(failure_summaries)
+                    if failure_summaries
+                    else f"{label}: empty provider chain",
+                    max_chars=800,
+                )
             )
-        )
-    except Exception:  # noqa: BLE001 — health recording must never break the pipeline
-        log.debug("%s: health record_chain_failure failed", label, exc_info=True)
+        except Exception:  # noqa: BLE001 — health recording must never break the pipeline
+            log.debug("%s: health record_chain_failure failed", label, exc_info=True)
     return None
 
 

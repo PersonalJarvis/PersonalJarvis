@@ -1,7 +1,7 @@
 """Headless launcher must claim primary-instance status via the lock.
 
 Root cause of the 94 `crash_recovery` false-negatives (live forensic
-2026-05-31, missions 019e6fea / 019e7095): a headless Jarvis run NEVER set
+2026-05-31, missions 019f1018 / 019f1019): a headless Jarvis run NEVER set
 ``JARVIS_PRIMARY_INSTANCE``, so ``server.py:_init_mission_stack`` defaulted it
 to ``"1"`` (primary) and the headless boot ran ``startup_recover`` against the
 shared ``missions.db`` — sweeping the DESKTOP instance's actively-running

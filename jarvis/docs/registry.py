@@ -51,7 +51,7 @@ class DocRegistry:
     def __init__(
         self,
         roots: list[Path],
-        index_db: Path,
+        index_db: Path | None,
         bus: Any | None = None,
         debounce_ms: int = 500,
     ) -> None:

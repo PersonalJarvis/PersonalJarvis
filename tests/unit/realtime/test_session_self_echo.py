@@ -413,7 +413,7 @@ def _bug101_events():
         ),
         RealtimeEvent(
             type="input_transcript",
-            # Session c77b7a88 turn 4: the barge capture forwarded the
+            # Session 10000004 turn 4: the barge capture forwarded the
             # speakers' own word, truncated to a single token.
             text="Thanksgiving",
             is_final=True,

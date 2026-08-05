@@ -8,7 +8,7 @@ graded a German news essay with a code rubric (correctness/security/side_effects
 and demanded reachable web citations a web-less worker cannot produce — and even
 called real 2026 model releases "hallucinated future claims" (a CRITIC-epistemics
 gap that web_search on the worker cannot close) -> 3x revise ->
-``critic_loop_exhausted`` (live mission 019ecb56, 2026-06-15).
+``critic_loop_exhausted`` (live mission 019f1037, 2026-06-15).
 
 The fix keeps the Critic in FULL control on every round (a web_search-sourced
 report is approved on merit there), and only adds a LAST-RESORT net: when the

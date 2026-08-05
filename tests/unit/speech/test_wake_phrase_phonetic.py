@@ -1,7 +1,7 @@
 """Sound-folding makes the wake matcher robust to ASR spelling variance.
 
 A small local Whisper mis-spells a proper-noun wake word in sound-equivalent
-ways ("Nico" -> "Niko" / "Nicko" / "Nikko" / "Neko"). The exact-token match then
+ways ("Nova" -> "Nova" / "Nicko" / "Nikko" / "Neko"). The exact-token match then
 fails and the wake needs repeating. Folding sound-equivalent spellings (c/k/ck,
 ph/f, y/i, doubled letters) BEFORE the fuzzy compare collapses those variants
 onto one form so they match — WITHOUT loosening the ratio threshold, so clearly
@@ -17,11 +17,11 @@ from jarvis.speech.wake_phrase import compile_wake_matcher
 
 @pytest.mark.parametrize(
     "heard",
-    ["Nico", "Niko", "Nicko", "Nikko", "Neko", "hey niko", "ok, niko"],
+    ["Nova", "Nova", "Nicko", "Nikko", "Neko", "hey nova", "ok, nova"],
 )
 def test_sound_equivalent_spellings_of_the_wake_word_match(heard: str) -> None:
-    m = compile_wake_matcher("Nico")
-    assert m.search(heard) is not None, f"{heard!r} should match the 'Nico' wake"
+    m = compile_wake_matcher("Nova")
+    assert m.search(heard) is not None, f"{heard!r} should match the 'Nova' wake"
 
 
 @pytest.mark.parametrize(
@@ -29,8 +29,8 @@ def test_sound_equivalent_spellings_of_the_wake_word_match(heard: str) -> None:
     ["Marco", "Hallo", "Computer", "das war die Welt", "Schule fertig"],  # i18n-allow
 )
 def test_clearly_different_words_still_do_not_match(heard: str) -> None:
-    m = compile_wake_matcher("Nico")
-    assert m.search(heard) is None, f"{heard!r} must NOT match the 'Nico' wake"
+    m = compile_wake_matcher("Nova")
+    assert m.search(heard) is None, f"{heard!r} must NOT match the 'Nova' wake"
 
 
 def test_sound_folding_helps_a_longer_name_too() -> None:

@@ -1,7 +1,7 @@
 """Generic, channel-agnostic confirmation phrasing for an ``ask``-tier tool run
 through the two-turn confirmation flow.
 
-Why this exists (forensic 2026-06-18, session 2995997b): an ``ask``-tier tool
+Why this exists (forensic 2026-06-18, session 10000010): an ``ask``-tier tool
 (gmail send) invoked on the voice path blocks in ``ApprovalWorkflow.wait()`` for a
 UI approval the voice user never gives. The 20 s no-first-frame ceiling then
 beheads the working turn and Jarvis speaks the brain-timeout fallback. There is

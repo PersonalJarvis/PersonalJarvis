@@ -84,6 +84,10 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   closeWorkspace: vi.fn(),
   fetchNativePickerSupport: vi.fn(),
   openNativePicker: vi.fn(),
+  syncAgenticIdeSurface: vi.fn(async () => undefined),
+  fetchAllVoiceAttachments: vi.fn(async () => ({ batches: [] })),
+  attachToTerminal: vi.fn(),
+  removeVoiceAttachment: vi.fn(async () => undefined),
   // The grid polls this to keep the pane headers current.
   fetchTerminalRecaps: vi.fn(async () => ({
     workspace_id: null,
@@ -108,10 +112,7 @@ vi.mock("@/lib/agenticIdeApi", () => ({
 
 import { AgenticIdeView } from "./AgenticIdeView";
 import * as api from "@/lib/agenticIdeApi";
-import {
-  GRID_HORIZONTAL_PADDING_PX,
-  MIN_PANE_WIDTH_PX,
-} from "@/components/agentic/layout";
+import { GRID_HORIZONTAL_PADDING_PX } from "@/components/agentic/layout";
 
 const AGENTS: api.AgentsResponse = {
   terminal_available: true,
@@ -274,6 +275,10 @@ beforeEach(() => {
   // the user came for. The tests below that type an instruction want it open,
   // and the remembered height is how a user who wants it open gets it.
   window.localStorage.setItem("jarvis.agenticIde.composerHeight.v2", "176");
+  // The wizard's view step preselects the remembered reading mode, and the
+  // grid reads the same key on mount — a value left behind by one test must
+  // not decide how the next one's workspace opens.
+  window.localStorage.removeItem("jarvis.agenticIde.workspaceView");
   vi.mocked(api.fetchIdeAgents).mockResolvedValue(AGENTS);
   vi.mocked(api.fetchIdeState).mockResolvedValue(EMPTY_STATE);
   vi.mocked(api.fetchFolders).mockResolvedValue({
@@ -287,10 +292,10 @@ beforeEach(() => {
         is_repo: true,
       },
     ],
-    device_name: "Studio MacBook",
+    device_name: "Alexs MacBook",
   });
   vi.mocked(api.fetchRecents).mockResolvedValue({
-    device_name: "Studio MacBook",
+    device_name: "Alexs MacBook",
     recents: [],
   });
   vi.mocked(api.searchFolders).mockResolvedValue({
@@ -399,7 +404,7 @@ describe("Agentic IDE launcher", () => {
     await waitFor(() => expect(next.disabled).toBe(false));
   });
 
-  it("walks through folder, layout, agents and review before opening", async () => {
+  it("walks through folder, layout, agents, view and review before opening", async () => {
     vi.mocked(api.startIdeSession).mockResolvedValue(
       stateWith(sessionWith(["Mika", "Nova"])),
     );
@@ -426,10 +431,22 @@ describe("Agentic IDE launcher", () => {
     fireEvent.click(screen.getAllByText("workspace_launcher.agents.all")[0]);
     expect(screen.getByText("2 / 2")).toBeTruthy();
 
+    fireEvent.click(screen.getByRole("button", { name: /choose the view/i }));
+    expect(
+      screen.getByRole("heading", { name: /choose how to read the workspace/i }),
+    ).toBeTruthy();
+    // The full terminal grid is the preselected answer, not an open question.
+    expect(
+      screen.getByTestId("view-choice-grid").getAttribute("aria-checked"),
+    ).toBe("true");
+
     fireEvent.click(screen.getByRole("button", { name: /review workspace/i }));
     expect(
       screen.getByRole("heading", { name: /review before opening/i }),
     ).toBeTruthy();
+    expect(screen.getByTestId("review-view-mode").textContent).toBe(
+      "Terminal grid",
+    );
     fireEvent.click(screen.getByRole("button", { name: /open workspace/i }));
 
     await waitFor(() =>
@@ -440,6 +457,38 @@ describe("Agentic IDE launcher", () => {
     );
     // Panes are rendered once the session exists.
     expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
+  });
+
+  it("opens the workspace in chat view when the view step says so", async () => {
+    vi.mocked(api.startIdeSession).mockResolvedValue(
+      stateWith(sessionWith(["Mika", "Nova"])),
+    );
+    render(<AgenticIdeView />);
+    await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
+    await openAgents();
+    fireEvent.click(screen.getAllByText("workspace_launcher.agents.all")[0]);
+
+    fireEvent.click(screen.getByRole("button", { name: /choose the view/i }));
+    fireEvent.click(screen.getByTestId("view-choice-chat"));
+    expect(
+      screen.getByTestId("view-choice-chat").getAttribute("aria-checked"),
+    ).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: /review workspace/i }));
+    expect(screen.getByTestId("review-view-mode").textContent).toBe(
+      "Chat view",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /open workspace/i }));
+
+    // The grid reads the stored preference on mount, so the workspace comes up
+    // with the chat rail showing instead of the wall of terminals.
+    expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
+    expect(
+      window.localStorage.getItem("jarvis.agenticIde.workspaceView"),
+    ).toBe("chat");
+    const rail = screen.getByTestId("agentic-chat-rail");
+    expect(rail.className).toContain("flex");
+    expect(rail.className).not.toContain("hidden");
   });
 
   it("keeps an aggregate agent split across backward navigation", async () => {
@@ -502,19 +551,19 @@ describe("Agentic IDE launcher", () => {
     }
   }
 
-  /** Columns and bands the stage lays its panes out in. */
+  /** Columns and rows the stage lays its panes out in. */
   const columnsOf = (stage: HTMLElement) => stage.style.gridTemplateColumns;
   const rowsOf = (stage: HTMLElement) => stage.style.gridTemplateRows;
-
   /**
-   * A pixel width the way the readout writes it.
+   * The width the stage draws the workspace at — always its own frame.
    *
-   * Widths are grouped with a NARROW NO-BREAK SPACE (U+202F) so a number
-   * never breaks across two lines. Spelled as an escape rather than pasted:
-   * the two characters are indistinguishable in an editor, and only one of
-   * them matches.
+   * It used to be set inline to more than 100 % when the workspace was wider
+   * than the window, which was the honest preview of a grid you scrolled
+   * sideways. Nothing scrolls now (maintainer, 2026-08-04), so an inline width
+   * appearing here at all would mean the preview is promising a workspace the
+   * running grid will not build.
    */
-  const grouped = (digits: string) => digits.replace(/ /g, "\u202F");
+  const widthOf = (stage: HTMLElement) => stage.style.width;
 
   it("sets any count from one control instead of cards plus a custom row", async () => {
     // Two ways to set one number meant two competing "selected" states. One
@@ -605,85 +654,84 @@ describe("Agentic IDE launcher", () => {
     ).toBe(true);
   });
 
-  it("previews 12 terminals as 6 and 6 when the window is wide enough", async () => {
-    // 2328 px of workspace minus the grid's padding fits six 380 px panes, so
-    // the twelve wrap into two even bands — the arrangement the user asked for.
+  it("previews 12 terminals as 12 columns, all of them on one screen", async () => {
+    // One line, and one screenful. A wrap would have paid for the new panes
+    // with the height of the ones already open (2026-08-03); a scroll would
+    // have put half of them off the side (2026-08-04). Twelve columns share
+    // the window instead.
     const stage = await stageAt(2328, "12");
-    expect(columnsOf(stage)).toBe("repeat(6, minmax(0, 1fr))");
-    expect(rowsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
+    expect(columnsOf(stage)).toBe("repeat(12, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    expect(widthOf(stage)).toBe("");
   });
 
-  it("previews the narrower arrangement a narrow window will really produce", async () => {
-    // The same twelve in a 1314 px workspace: only three panes stay readable
-    // per line, so the grid makes 3 × 4. The preview promised 6 + 6 here once,
-    // which is the drift this test exists to catch.
+  it("previews the same twelve in a narrow window, still all on one screen", async () => {
+    // Neither the arrangement nor how much of it you see depends on the window
+    // any more — only how wide each pane ends up, which the readout says.
     const stage = await stageAt(1314, "12");
-    expect(columnsOf(stage)).toBe("repeat(3, minmax(0, 1fr))");
-    expect(rowsOf(stage)).toBe("repeat(4, minmax(0, 1fr))");
+    expect(columnsOf(stage)).toBe("repeat(12, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    expect(widthOf(stage)).toBe("");
   });
 
   it("keeps a small workspace on one line at any usable width", async () => {
     const stage = await stageAt(1314, "3");
     expect(columnsOf(stage)).toBe("repeat(3, minmax(0, 1fr))");
     expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    // Nothing to scroll past, so the stage is an ordinary full-width grid.
+    expect(widthOf(stage)).toBe("");
   });
 
   it("previews four terminals side by side in a 2K workspace", async () => {
     // An aspect-ratio rule used to fold these into 2 x 2. It re-dealt the
     // running workspace on the fourth split (reported 2026-07-31), so rows are
-    // the user's choice now and only width wraps — the preview says the same.
+    // the user's choice now — the preview says the same.
     const stage = await stageAt(2048, "4", 1164);
     expect(columnsOf(stage)).toBe("repeat(4, minmax(0, 1fr))");
     expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    expect(widthOf(stage)).toBe("");
   });
 
-  it("draws one pane per terminal and never more than the stage can hold", async () => {
+  it("draws one pane per terminal and never grows the box to fit them", async () => {
     // The old dot preview sat in a fixed 40×40 px box with nothing bounding it,
     // so a high count in a narrow window grew a tall column of dots straight out
-    // through the card, over the buttons above and below. The stage divides a
-    // FIXED height between its rows instead, so no count can overflow it — the
-    // panes get thinner, the box does not grow.
+    // through the card, over the buttons above and below. The stage is a FIXED
+    // frame, and every pane is drawn inside it however many there are.
     const stage = await stageAt(800, "12");
     expect(stage.children.length).toBe(12);
-    expect(columnsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
-    expect(rowsOf(stage)).toBe("repeat(6, minmax(0, 1fr))");
+    expect(columnsOf(stage)).toBe("repeat(12, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    expect(widthOf(stage)).toBe("");
   });
 
-  it("names the window width its arrangement depends on", async () => {
-    // The reported bug: the preview said "2 across, 4 down" in a 1050 px window
-    // and the workspace opened 4 × 2 once maximised. Both are right — what was
-    // missing is that the arrangement has a condition at all.
+  it("names the width each pane ends up with, and warns when that is tight", async () => {
+    // The reported bug behind this readout: an arrangement stated without its
+    // consequence. The consequence changed on 2026-08-04 — nothing scrolls, so
+    // a high count is paid for in pane WIDTH — and the sentence says that.
     await stageAt(1050, "8");
 
     const readout = screen.getByTestId("workspace-stage-readout");
-    expect(readout.textContent).toContain("2 across");
-    expect(readout.textContent).toContain("4 down");
-    // 8 panes × the readable minimum + the grid's own padding — the width at
-    // which they all fit on one line, stated so a maximise cannot turn the
-    // preview into a broken promise. Computed rather than written out, because
-    // tightening the grid's padding moves this number without changing
-    // anything the test is actually about.
-    //
-    // `grouped` spells out the narrow no-break space the readout separates
-    // thousands with: an invisible literal here reads as a plain space,
-    // passes review, and fails the run.
-    const oneBandWidth = 8 * MIN_PANE_WIDTH_PX + GRID_HORIZONTAL_PADDING_PX;
-    expect(readout.textContent).toContain(
-      grouped(String(oneBandWidth).replace(/\B(?=(\d{3})+(?!\d))/g, " ")),
-    );
-    // 1 056, not 1 050: the view rounds the measured width to 16 px steps so a
-    // one-pixel drift cannot churn the layout, and the readout reports the width
-    // the arrangement was actually decided from rather than a truer-looking one.
-    expect(readout.textContent).toContain(grouped("1 056"));
+    expect(readout.textContent).toContain("8 across");
+    expect(readout.textContent).toContain("All on one screen");
+    // Never a promise of somewhere else to look: every pane is on this screen.
+    expect(readout.textContent).not.toMatch(/scroll/i);
+    // 1 056, not 1 050: the view rounds the measured width to 16 px steps, and
+    // 8 panes share it minus the grid's own padding. Computed rather than
+    // written out, because tightening that padding moves the number without
+    // changing anything the test is about.
+    const each = Math.round((1056 - GRID_HORIZONTAL_PADDING_PX) / 8);
+    expect(readout.textContent).toContain(`${each} px each`);
+    expect(readout.textContent).toMatch(/narrow for an agent/i);
   });
 
-  it("says all side by side once the window really is wide enough", async () => {
+  it("drops the warning once the panes really are roomy", async () => {
     await stageAt(3200, "8");
 
     const readout = screen.getByTestId("workspace-stage-readout");
     expect(readout.textContent).toContain("8 across");
-    expect(readout.textContent).toContain("1 down");
-    expect(readout.textContent).toMatch(/wide enough/i);
+    expect(readout.textContent).toContain("All on one screen");
+    expect(readout.textContent).not.toMatch(/narrow for an agent/i);
+    expect(readout.textContent).not.toMatch(/scroll/i);
   });
 
   it("says so plainly when the machine has no terminal backend", async () => {
@@ -754,7 +802,7 @@ describe("Agentic IDE running workspace", () => {
     render(<AgenticIdeView />);
 
     await screen.findByTestId("pane-Mika");
-    const box = screen.getByPlaceholderText(/type an instruction for mika/i);
+    const box = screen.getByLabelText(/instruction for mika/i);
     fireEvent.change(box, { target: { value: "run the tests" } });
     fireEvent.click(screen.getByRole("button", { name: /send/i }));
 
@@ -777,7 +825,7 @@ describe("Agentic IDE running workspace", () => {
     render(<AgenticIdeView />);
 
     await screen.findByTestId("pane-Mika");
-    fireEvent.change(screen.getByPlaceholderText(/type an instruction/i), {
+    fireEvent.change(screen.getByLabelText(/instruction for/i), {
       target: { value: "hello" },
     });
     fireEvent.click(screen.getByRole("button", { name: /send/i }));

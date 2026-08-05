@@ -20,7 +20,7 @@ multi-layer drift bug class (CLAUDE.md / BUG-008):
     (``deliverable.py``) — keeps the user's Downloads and the spoken
     "N files saved" count free of scratch.
 
-Live forensic 2026-06-21 (mission_019eeb34-bb67): a browser/QA worker launched
+Live forensic 2026-06-21 (mission_019f1043-0001): a browser/QA worker launched
 four headless Chrome instances with profiles under
 ``qa-artifacts/chrome-profile-<hex>/`` and gitignored them (``chrome-profile-*/``).
 The ``--ignored`` union re-imported all 199 cache / shader / journal blobs
@@ -180,7 +180,7 @@ def is_deliverable_path(rel: str, *, managed_files: frozenset[str] = frozenset()
 # different shape: it reads file CONTENT and looks ACROSS the deliverable set to
 # spot a script whose only purpose is to emit ANOTHER deliverable.
 #
-# Live forensic 2026-06-22 (mission_019ef099): the user asked by voice for "one
+# Live forensic 2026-06-22 (mission_019f1047): the user asked by voice for "one
 # HTML file" and the worker shipped city_guide.html PLUS generate_guide.py
 # — a Python script that embeds the whole page as a string literal and writes
 # the sibling .html — PLUS a hero image. The user opened the .py in a browser,

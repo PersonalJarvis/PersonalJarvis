@@ -49,7 +49,7 @@ def test_deletion_is_not_counted() -> None:
 
 
 def test_real_live_mission_diff() -> None:
-    """The exact diff captured for mission_019e6858-ab9a today."""
+    """The exact diff captured for mission_019f1016-0001 today."""
     diff = (
         "diff --git a/test.html b/test.html\n"
         "new file mode 100644\n"

@@ -109,7 +109,7 @@ INJECTION_PATTERNS: Final[list[tuple[str, re.Pattern[str], InjectionSeverity]]] 
         # Critic could ever review it (live forensics 2026-05-13).
         #
         # 2026-05-17 (BUG-LIVE-08): downgraded severity from "high" to
-        # "med" after live mission 019e35e2 was killed because Sonnet's
+        # "med" after live mission 019f100a was killed because Sonnet's
         # legitimate explanatory output included phrases like
         # "see CLAUDE.md for context" / "follow the AGENTS.md contract".
         # Those are normal worker prose, not prompt-injection attacks
@@ -215,7 +215,7 @@ def extract_worker_authored_text(stream_text: str) -> str:
     not output: a worker that reads its own repo's safety blacklist or
     a doc explaining `rm -rf /` has not authored an attack.
 
-    Live mission 019eadaf-272d (2026-06-09) proved the failure mode:
+    Live mission 019f1025-0001 (2026-06-09) proved the failure mode:
     after 20 minutes of work and a clean 30 KB diff, the worker was
     killed via WorkerKilled(injection_detected) because the raw
     stream.jsonl contained `rm -rf /` (from jarvis.toml.example's own

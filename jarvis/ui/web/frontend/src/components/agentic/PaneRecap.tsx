@@ -25,8 +25,8 @@
  * So the long form is a real card now: rendered in a portal so the pane's own
  * `overflow: hidden` cannot clip it, wide enough to read a paragraph in, given
  * the app's card surface rather than a bespoke one, and interactive — it says
- * who wrote the recap and when, it can be refreshed, and the pencil lets the
- * user write the header themselves.
+ * who wrote the recap and when, it can be refreshed, and a labelled action lets
+ * the user write the header themselves.
  *
  * ## Why a portal
  *
@@ -38,26 +38,28 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Loader2, Pencil, RotateCw, Sparkles, Terminal, User, X } from "lucide-react";
+import {
+  ChevronDown,
+  Loader2,
+  Pencil,
+  RotateCw,
+  Sparkles,
+  Terminal,
+  User,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { RecapReason, RecapSource } from "@/lib/agenticIdeApi";
 
 /** How wide the card gets before it starts wrapping, and its floor on a phone. */
-const CARD_WIDTH = 440;
+const CARD_WIDTH = 400;
 const VIEWPORT_MARGIN = 12;
 /**
  * Room the card needs below the header before it opens downwards. Below this it
  * flips above the pane instead — a card that opens off the bottom of the window
  * is the same unreadable as one clipped by the pane.
  */
-const ROOM_NEEDED = 260;
-/**
- * How long the card survives the pointer leaving it. Long enough to cross the
- * gap between the header line and the card, short enough that brushing past a
- * pane on the way somewhere else does not leave a card hanging.
- */
-const CLOSE_DELAY_MS = 160;
-
+const ROOM_NEEDED = 300;
 /** The same two caps the backend enforces, so the counter cannot lie. */
 export const MAX_HEADLINE = 200;
 export const MAX_DETAIL = 2000;
@@ -108,6 +110,8 @@ function ago(at: number): string {
 interface Anchor {
   left: number;
   width: number;
+  arrowX: number;
+  placement: "above" | "below";
   /** One of the two is set: the card hangs below the header, or above it. */
   top?: number;
   bottom?: number;
@@ -117,16 +121,24 @@ interface Anchor {
 function anchorTo(node: HTMLElement | null): Anchor | null {
   if (!node || typeof window === "undefined") return null;
   const rect = node.getBoundingClientRect();
+  const headerRect = node.closest("header")?.getBoundingClientRect() ?? rect;
   const width = Math.min(CARD_WIDTH, window.innerWidth - VIEWPORT_MARGIN * 2);
   const left = Math.max(
     VIEWPORT_MARGIN,
-    Math.min(rect.left, window.innerWidth - width - VIEWPORT_MARGIN),
+    Math.min(headerRect.left + 8, window.innerWidth - width - VIEWPORT_MARGIN),
   );
+  const arrowX = Math.max(20, Math.min(rect.left + rect.width / 2 - left, width - 20));
   const below = window.innerHeight - rect.bottom;
   if (below < ROOM_NEEDED && rect.top > below) {
-    return { left, width, bottom: window.innerHeight - rect.top + 6 };
+    return {
+      left,
+      width,
+      arrowX,
+      placement: "above",
+      bottom: window.innerHeight - rect.top + 8,
+    };
   }
-  return { left, width, top: rect.bottom + 6 };
+  return { left, width, arrowX, placement: "below", top: rect.bottom + 8 };
 }
 
 export interface PaneRecapProps {
@@ -144,7 +156,7 @@ export interface PaneRecapProps {
   /** When the model wrote it, or when the user did. Unix seconds; 0 for derived. */
   generatedAt?: number;
   light: boolean;
-  /** Write this pane's recap. Absent leaves the pencil off the header. */
+  /** Write this pane's recap. Absent leaves the edit action out of the card. */
   onSave?: (headline: string, detail: string) => Promise<void>;
   /** Hand the pane back to the automatic recap. */
   onClear?: () => Promise<void>;
@@ -169,19 +181,8 @@ export function PaneRecap({
 }: PaneRecapProps) {
   const lineRef = useRef<HTMLButtonElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
-  const closeTimer = useRef<number | null>(null);
-  /**
-   * When the card was last dismissed on purpose.
-   *
-   * Escape returns focus to the header line, and the header line opens the card
-   * on focus — so without this, dismissing it re-opens it immediately. The same
-   * guard covers the pointer that is still resting on the line after a click.
-   */
-  const dismissedAt = useRef(0);
 
   const [open, setOpen] = useState(false);
-  /** Opened by a click rather than by hovering: it stays until dismissed. */
-  const [sticky, setSticky] = useState(false);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState<"save" | "clear" | "refresh" | null>(null);
   const [failure, setFailure] = useState("");
@@ -190,40 +191,16 @@ export function PaneRecap({
   const headline = (recap ?? "").trim();
   const body = (detail ?? "").trim();
 
-  const cancelClose = useCallback(() => {
-    if (closeTimer.current !== null) {
-      window.clearTimeout(closeTimer.current);
-      closeTimer.current = null;
-    }
-  }, []);
-
   const close = useCallback(() => {
-    cancelClose();
-    dismissedAt.current = Date.now();
     setOpen(false);
-    setSticky(false);
     setEditing(false);
     setFailure("");
-  }, [cancelClose]);
-
-  /** Leaving the trigger or the card closes it — unless it was clicked open. */
-  const closeSoon = useCallback(() => {
-    if (sticky || editing) return;
-    cancelClose();
-    closeTimer.current = window.setTimeout(() => setOpen(false), CLOSE_DELAY_MS);
-  }, [cancelClose, editing, sticky]);
+  }, []);
 
   const reveal = useCallback(() => {
-    // Dismissing means dismissed: neither the focus Escape hands back to the
-    // header line nor a pointer still resting on it may spring the card open
-    // again in the same breath.
-    if (Date.now() - dismissedAt.current < 250) return;
-    cancelClose();
     setAnchor(anchorTo(lineRef.current));
     setOpen(true);
-  }, [cancelClose]);
-
-  useEffect(() => () => cancelClose(), [cancelClose]);
+  }, []);
 
   // The card is positioned in viewport coordinates, so anything that moves the
   // pane underneath it — scrolling the workspace, resizing the window, dragging
@@ -293,66 +270,36 @@ export function PaneRecap({
   };
 
   const tipId = `pane-recap-card-${name}`;
+  const attribution = credit(source, writer);
 
   return (
-    <span
-      className="flex min-w-0 flex-1 items-center gap-1"
-      onMouseEnter={reveal}
-      onMouseLeave={closeSoon}
-    >
+    <span className="flex min-w-0 flex-1 items-center">
       <button
         ref={lineRef}
         type="button"
+        aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? tipId : undefined}
         aria-label={`What ${name} is doing`}
         data-testid={`pane-recap-${name}`}
-        onFocus={reveal}
-        onBlur={closeSoon}
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation();
-          if (sticky) close();
-          else {
-            setSticky(true);
-            reveal();
-          }
+          if (open) close();
+          else reveal();
         }}
-        className="block min-w-0 flex-1 truncate rounded-sm text-left text-[11px] leading-tight outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-primary/60"
+        className="flex min-w-0 flex-1 items-center gap-1 rounded-sm text-left text-[11px] leading-tight outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-primary/60"
         style={{ color: light ? "#5f5f68" : "#9b9ba6" }}
       >
-        {headline}
-      </button>
-
-      {/* The pencil. Quiet until the header is hovered or something in it has
-          focus, like every other pane action — but it is the affordance the
-          whole editing feature hangs off, so it is never more than a hover
-          away, and it stays lit while the card it opened is open. */}
-      {onSave && (
-        <button
-          type="button"
-          aria-label={`Write ${name}'s recap yourself`}
-          title={`Write ${name}'s recap yourself`}
-          data-testid={`pane-recap-edit-${name}`}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            setSticky(true);
-            setEditing(true);
-            reveal();
-          }}
+        <span className="min-w-0 flex-1 truncate">{headline}</span>
+        <ChevronDown
+          aria-hidden="true"
           className={cn(
-            "flex h-5 w-5 shrink-0 items-center justify-center rounded transition-all",
-            light ? "hover:bg-black/10" : "hover:bg-white/10",
-            open
-              ? "opacity-100"
-              : "opacity-0 focus-visible:opacity-100 group-hover/header:opacity-100",
+            "h-3 w-3 shrink-0 opacity-55 transition-transform duration-150",
+            open && "rotate-180 opacity-90",
           )}
-          style={{ color: light ? "#6b6b73" : "#9a9aa5" }}
-        >
-          <Pencil className="h-3 w-3" />
-        </button>
-      )}
+        />
+      </button>
 
       {open &&
         anchor &&
@@ -364,8 +311,7 @@ export function PaneRecap({
             role="dialog"
             aria-label={`What ${name} is doing`}
             data-testid={`pane-recap-card-${name}`}
-            onMouseEnter={cancelClose}
-            onMouseLeave={closeSoon}
+            data-placement={anchor.placement}
             onMouseDown={(e) => e.stopPropagation()}
             style={{
               position: "fixed",
@@ -375,20 +321,42 @@ export function PaneRecap({
                 ? { top: anchor.top }
                 : { bottom: anchor.bottom }),
             }}
-            className="z-[60] flex flex-col gap-2.5 rounded-xl border border-border bg-card/95 p-3.5 text-left shadow-2xl backdrop-blur-sm"
+            className={cn(
+              "z-[60] flex max-h-[70vh] flex-col gap-3 rounded-xl border border-border/90 bg-card p-4 text-left",
+              "shadow-[0_18px_48px_-22px_rgba(0,0,0,0.85)]",
+              "animate-in fade-in-0 zoom-in-95 duration-150",
+              anchor.placement === "below"
+                ? "slide-in-from-top-1"
+                : "slide-in-from-bottom-1",
+            )}
           >
+            <span
+              aria-hidden="true"
+              className={cn(
+                "absolute h-2.5 w-2.5 -translate-x-1/2 rotate-45 bg-card",
+                anchor.placement === "below"
+                  ? "-top-[6px] border-l border-t border-border/90"
+                  : "-bottom-[6px] border-b border-r border-border/90",
+              )}
+              style={{ left: anchor.arrowX }}
+            />
             <div className="flex items-center justify-between gap-2">
-              <span className="min-w-0 truncate text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                {name} · {displayName}
+              <span className="flex min-w-0 items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary/80" />
+                <span className="truncate">
+                  <strong className="font-semibold text-foreground/85">{name}</strong>
+                  <span className="mx-1.5 opacity-40">/</span>
+                  {displayName}
+                </span>
               </span>
               <button
                 type="button"
                 aria-label="Close"
                 data-testid={`pane-recap-close-${name}`}
                 onClick={close}
-                className="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className="-mr-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
-                <X className="h-3 w-3" />
+                <X className="h-3.5 w-3.5" />
               </button>
             </div>
 
@@ -412,14 +380,14 @@ export function PaneRecap({
                     place it is allowed to wrap, which is the whole reason
                     somebody opened the card. */}
                 <p
-                  className="text-[13px] font-medium leading-snug text-foreground"
+                  className="font-display text-[14px] font-semibold leading-snug tracking-tight text-foreground"
                   data-testid={`pane-recap-headline-${name}`}
                 >
                   {headline}
                 </p>
                 {body && body !== headline && (
                   <p
-                    className="max-h-[40vh] overflow-y-auto whitespace-pre-line text-[12.5px] leading-relaxed text-muted-foreground"
+                    className="max-h-[36vh] overflow-y-auto whitespace-pre-line pr-1 text-[12.5px] leading-[1.65] text-muted-foreground"
                     data-testid={`pane-recap-detail-${name}`}
                   >
                     {body}
@@ -427,7 +395,7 @@ export function PaneRecap({
                 )}
                 {WHY[reason] && (
                   <p
-                    className="rounded-lg bg-muted/50 px-2.5 py-1.5 text-[11px] leading-relaxed text-muted-foreground"
+                    className="border-l-2 border-primary/45 bg-primary/[0.035] px-3 py-2 text-[11px] leading-relaxed text-muted-foreground"
                     data-testid={`pane-recap-why-${name}`}
                   >
                     {WHY[reason]}
@@ -447,21 +415,20 @@ export function PaneRecap({
             )}
 
             {!editing && (
-              <div className="flex items-center justify-between gap-2 border-t border-border/60 pt-2">
-                <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
-                  {credit(source, writer).icon}
-                  <span className="truncate">{credit(source, writer).label}</span>
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 border-t border-border/60 pt-2.5">
+                <span className="mr-auto flex min-w-0 items-center gap-1.5 rounded-full border border-border/60 bg-muted/35 px-2 py-1 text-[10px] text-muted-foreground">
+                  {attribution.icon}
+                  <span className="truncate">{attribution.label}</span>
                   {generatedAt > 0 && (
                     <span className="shrink-0 opacity-70">· {ago(generatedAt)}</span>
                   )}
                 </span>
-                <span className="flex shrink-0 items-center gap-1">
+                <span className="flex shrink-0 items-center gap-1.5">
                   {onSave && (
                     <CardAction
                       label="Write it yourself"
                       testId={`pane-recap-card-edit-${name}`}
                       onClick={() => {
-                        setSticky(true);
                         setEditing(true);
                       }}
                     >
@@ -523,9 +490,10 @@ function CardAction({
         e.stopPropagation();
         onClick();
       }}
-      className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+      className="flex h-7 items-center gap-1.5 rounded-md border border-transparent px-2 text-[10px] font-medium text-muted-foreground transition-colors hover:border-border/70 hover:bg-muted hover:text-foreground disabled:opacity-40"
     >
       {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : children}
+      <span>{label}</span>
     </button>
   );
 }
@@ -590,7 +558,7 @@ function RecapEditor({
           data-testid={`pane-recap-input-${name}`}
           onChange={(e) => setLine(e.target.value)}
           onKeyDown={onKeyDown}
-          className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-[12.5px] text-foreground outline-none focus:border-primary/60"
+          className="w-full rounded-lg border border-border bg-muted/25 px-2.5 py-2 text-[12.5px] text-foreground outline-none transition-colors focus:border-primary/60 focus:bg-background"
         />
       </label>
       <label className="flex flex-col gap-1">
@@ -605,7 +573,7 @@ function RecapEditor({
           data-testid={`pane-recap-detail-input-${name}`}
           onChange={(e) => setBody(e.target.value)}
           onKeyDown={onKeyDown}
-          className="w-full resize-y rounded-lg border border-border bg-background px-2.5 py-1.5 text-[12.5px] leading-relaxed text-foreground outline-none focus:border-primary/60"
+          className="w-full resize-y rounded-lg border border-border bg-muted/25 px-2.5 py-2 text-[12.5px] leading-relaxed text-foreground outline-none transition-colors focus:border-primary/60 focus:bg-background"
         />
       </label>
       <div className="flex items-center justify-between gap-2">
@@ -630,7 +598,7 @@ function RecapEditor({
             onClick={submit}
             disabled={saving}
             data-testid={`pane-recap-save-${name}`}
-            className="flex items-center gap-1 rounded-md bg-primary/20 px-2.5 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/30 disabled:opacity-50"
+            className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-semibold text-primary-foreground transition-[filter] hover:brightness-95 disabled:opacity-50"
           >
             {saving && <Loader2 className="h-3 w-3 animate-spin" />}
             Save

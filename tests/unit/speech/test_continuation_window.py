@@ -76,7 +76,7 @@ def test_recombine_when_unarmed_returns_none():
 
 # ---------------------------------------------------------------------------
 # note_speech_resumed — freeze the grace countdown when the user starts talking
-# (live bug 2026-06-18, session <SESSION_ID>: ~3 s to formulate next fragment >
+# (live bug 2026-06-18, session 10000113: ~3 s to formulate next fragment >
 # 2.5 s grace -> became a fresh turn instead of being recombined).
 # ---------------------------------------------------------------------------
 

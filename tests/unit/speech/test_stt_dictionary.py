@@ -179,13 +179,13 @@ class TestVocabularyWords:
     def test_fuzzy_ambiguous_between_entries_is_left_alone(self) -> None:
         # "Nicko" is within distance 1 of BOTH entries — ambiguous, so the
         # corrector must not guess.
-        c = corrector_for(("Nico", []), ("Niko", []))
+        c = corrector_for(("Nova", []), ("Nova", []))
         assert c.correct("call Nicko today") == "call Nicko today"
 
     def test_multiword_casing_with_umlaut(self) -> None:
         # The umlaut pins Unicode word-boundary handling.
-        c = corrector_for(("Nico Müller", []))  # i18n-allow: umlauted proper name under test
-        assert c.correct("write to nico müller") == "write to Nico Müller"  # i18n-allow: umlauted proper name under test
+        c = corrector_for(("Nova Müller", []))  # i18n-allow: umlauted proper name under test
+        assert c.correct("write to nova müller") == "write to Nova Müller"  # i18n-allow: umlauted proper name under test
 
     def test_email_entry_matches_boundary(self) -> None:
         c = corrector_for(("veltroc@example.com", []))

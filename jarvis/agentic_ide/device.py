@@ -3,9 +3,9 @@
 Why this needs its own module: the obvious sources are all wrong for a label a
 human reads. ``Path.home().name`` gives the account name ("Administrator"),
 which says nothing about the device. ``platform.node()`` gives the network
-hostname, which on macOS is a mangled derivative ("studio-macbook.local", or
-worse "Studio-MacBook-Pro-2.example.net"). What the owner actually set —
-"Studio MacBook" — lives in a per-OS place:
+hostname, which on macOS is a mangled derivative ("alexs-macbook.local", or
+worse "Alexs-MacBook-Pro-2.fritz.box"). What the owner actually set — "Alex's
+MacBook" — lives in a per-OS place:
 
 * **macOS**   ``scutil --get ComputerName`` (the Sharing pane's "Computer Name")
 * **Linux**   ``hostnamectl --pretty`` ("Pretty hostname"), else /etc/hostname
@@ -58,7 +58,7 @@ def _run(argv: list[str]) -> str | None:
 def _strip_hostname_noise(name: str) -> str:
     """Drop the network suffix and separators a hostname carries.
 
-    "Studio-MacBook-Pro.local" -> "Studio MacBook Pro". Only applied to a
+    "Alexs-MacBook-Pro.local" -> "Alexs MacBook Pro". Only applied to a
     hostname fallback; a real ComputerName is used verbatim.
     """
     base = name.split(".", 1)[0]
@@ -67,7 +67,7 @@ def _strip_hostname_noise(name: str) -> str:
 
 @lru_cache(maxsize=1)
 def device_name() -> str:
-    """Human-facing name of this machine ("Studio MacBook", "STUDIO-PC")."""
+    """Human-facing name of this machine ("Alex's MacBook", "STUDIO-PC")."""
     if sys.platform == "darwin":
         friendly = _run(["scutil", "--get", "ComputerName"])
         if friendly:

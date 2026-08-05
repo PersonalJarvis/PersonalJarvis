@@ -26,7 +26,7 @@ from jarvis.brain.wiki_relevance import should_consult_memory
     [
         # de (CLAUDE.md §1, closed-list item 4 — speech input under test)
         "Was soll ich heute Abend machen?",  # i18n-allow: German input under test
-        "Wie komme ich am besten nach Berlin?",  # i18n-allow: German input under test
+        "Wie komme ich am besten nach Exampletown?",  # i18n-allow: German input under test
         "Hast du Ideen fuer das Wochenende?",  # i18n-allow: German input under test
         "Was ist der schnellste Weg zum Flughafen?",  # i18n-allow: German input under test
         "Lohnt sich das ueberhaupt noch?",  # i18n-allow: German input under test
@@ -63,7 +63,7 @@ def test_planning_beats_the_general_knowledge_skip() -> None:
     explicit ordering rule the advice reading would be lost.
     """
     assert should_consult_memory("What is the best way to get home?").consult is True
-    assert should_consult_memory("What is the fastest way to Berlin?").consult is True
+    assert should_consult_memory("What is the fastest way to Exampletown?").consult is True
 
 
 # ---------------------------------------------------------------------------

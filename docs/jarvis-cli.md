@@ -10,7 +10,7 @@ platforms: a single CLI that surfaces the full capability plane of a service. Yo
 point it at a running Jarvis and drive it.
 
 > Full command list: [`jarvis-cli-reference.md`](jarvis-cli-reference.md)
-> (auto-generated). Architecture context: [`architecture-overview.md`](architecture-overview.md).
+> (auto-generated). Design rationale: [`superpowers/specs/2026-06-21-jarvis-cli-design.md`](superpowers/specs/2026-06-21-jarvis-cli-design.md).
 
 ## How it works
 

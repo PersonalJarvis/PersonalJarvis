@@ -588,9 +588,9 @@ async def test_click_on_already_focused_target_passes_and_type_proceeds(patched)
     patched.focus_hit = True     # the click point sits in the focused control
     brain = FakeBrain([
         '[{"action":"click","x":300,"y":88,"target":"address bar"},'
-        '{"action":"type","text":"weather berlin"}]',
+        '{"action":"type","text":"weather exampletown"}]',
         '{"action": "done", "reason": "typed the search"}',
-        '{"done": true, "proof": "the address bar shows weather berlin"}',
+        '{"done": true, "proof": "the address bar shows weather exampletown"}',
     ])
     executor = FakeExecutor()
     chunks = await _run(_ctx(brain, executor))

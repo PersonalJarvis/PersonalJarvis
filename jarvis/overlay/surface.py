@@ -45,9 +45,9 @@ class OverlaySurface(Protocol):
 
     Implementations must degrade (log + no-op), never raise, and be idempotent —
     ``start``/``stop`` may be called more than once, in any order. ``set_state``
-    accepts the orb's coarse lifecycle state (``"idle" | "listening" | "thinking"
-    | "speaking" | "error" | "paused"``); a backend that cannot render a given
-    state maps it to the nearest visual it can show.
+    accepts the orb's coarse lifecycle state (``"idle" | "connecting" |
+    "listening" | "thinking" | "speaking" | "error" | "paused"``); a backend that
+    cannot render a given state maps it to the nearest visual it can show.
     """
 
     def start(self) -> None:
@@ -70,8 +70,19 @@ class OverlaySurface(Protocol):
 # The orb's coarse lifecycle states (mirrors the modes ``ui/orb/bus_bridge.py``
 # drives: idle/listen/think/speak) plus the tray's error/paused. Backends map
 # these onto whatever visual vocabulary they own.
+#
+# ``connecting`` covers the window between accepting a call and the voice engine
+# actually being able to carry it. A realtime provider can legitimately spend
+# many seconds opening its transport, and until this state existed the only
+# thing the surface could say during that window was ``listening`` — which
+# claims the user is being heard while the provider has not accepted a single
+# frame yet. It maps to the orb's ``think`` visual because that is the nearest
+# thing the orb owns for "busy, not yet listening"; the orb has no dedicated
+# connecting animation and inventing one is a rendering change, not a
+# vocabulary change.
 _ORB_STATE_TO_ORB_MODE: dict[str, str] = {
     "idle": "idle",
+    "connecting": "think",
     "listening": "listen",
     "thinking": "think",
     "speaking": "speak",
@@ -81,7 +92,11 @@ _ORB_STATE_TO_ORB_MODE: dict[str, str] = {
 
 # The set of states for which the orb should be visible on screen. ``idle`` keeps
 # the orb hidden (the live behaviour: the orb pops on wake, hides when idle).
-_VISIBLE_STATES: frozenset[str] = frozenset({"listening", "thinking", "speaking"})
+# ``connecting`` is visible: it exists precisely so a slow transport open is
+# something the user can SEE, instead of a silent gap behind a "listening" orb.
+_VISIBLE_STATES: frozenset[str] = frozenset(
+    {"connecting", "listening", "thinking", "speaking"}
+)
 
 
 class TkColorKeyOverlay:

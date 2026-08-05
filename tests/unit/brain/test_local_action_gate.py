@@ -331,7 +331,7 @@ def test_general_desktop_control_routes_to_computer_use(text: str) -> None:
 
 # ---------------------------------------------------------------------------
 # Sub-agent research mission misroute (live bug 2026-06-15, sessions.db session
-# 236877e6 14:12): "Ich möchte, dass du eine Sub-Agent-Mission startest und dann
+# 10000106 14:12): "Ich möchte, dass du eine Sub-Agent-Mission startest und dann
 # recherchierst …" was classified COMPUTER_USE and run on the screenshot harness
 # ("ich erledige das direkt am Bildschirm"), which then 403'd on its provider so
 # the user heard "das hat nicht geklappt". Root cause: the open/launch verb
@@ -376,7 +376,7 @@ def test_subagent_research_mission_falls_through_to_force_spawn(utterance: str) 
     explicit sub-agent research mission: it falls through (None) so the brain's
     force-spawn path dispatches a real research worker. Before the fix this
     returned COMPUTER_USE (screenshot harness) → "ich erledige das am Bildschirm"
-    → provider 403 → spoken failure (sessions.db 236877e6, 2026-06-15)."""
+    → provider 403 → spoken failure (sessions.db 10000106, 2026-06-15)."""
     plan = match_local_action(utterance, _registry=None)
     assert plan is None, (
         f"{utterance!r} wrongly produced a local plan {plan} — must fall "
@@ -809,7 +809,7 @@ class TestBrowserUrlFastPath:
 
 
 # ---------------------------------------------------------------------------
-# Browser+SEARCH fast-path (live bug 2026-06-15, sessions.db session c995c9bc):
+# Browser+SEARCH fast-path (live bug 2026-06-15, sessions.db session 10000117):
 # "Open the Chrome browser for me and Google where I can find the new X-Post
 # from Donald Trump" took the single-step DIRECT open and silently DROPPED the
 # entire search clause — only Chrome launched ("Gestartet: chrome"), nothing was
@@ -981,7 +981,7 @@ class TestBrowserSearchFastPath:
 
 # requires_external_integration — real-world booking/transaction requests no
 # generic sub-agent worker can fulfil (no travel/lodging/ticketing tool exists).
-# Live gap 2026-06-14: "book me a trip from Melbourne to Tokyo" was NOT caught
+# Live gap 2026-06-14: "book me a trip from Exampleville to Tokyo" was NOT caught
 # (the noun list had mail/calendar/Spotify/food-delivery but no travel nouns),
 # so it force-spawned a worker that produced no file -> 3-loop empty-diff
 # critic_loop_exhausted FAIL, and the spawn ACK falsely promised the booking.
@@ -993,11 +993,11 @@ class TestBrowserSearchFastPath:
 @pytest.mark.parametrize(
     "text",
     [
-        "book me a trip from Melbourne to Tokyo",
-        "Buche mir eine Reise von Melbourne nach Tokio",
+        "book me a trip from Exampleville to Tokyo",
+        "Buche mir eine Reise von Exampleville nach Tokio",
         "buche mir einen Flug nach Tokio",
         "book a flight to London for me",
-        "reserviere mir ein Hotel in Berlin",
+        "reserviere mir ein Hotel in Exampletown",
         "book a hotel in Paris",
         "reserviere einen Tisch im Restaurant heute Abend",
         "book a table at a restaurant tonight",

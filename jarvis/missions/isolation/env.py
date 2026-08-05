@@ -226,7 +226,7 @@ def build_worker_env(
     # accounts with `SeCreateSymbolicLinkPrivilege`, which the default
     # interactive user does not have unless Developer Mode is enabled).
     #
-    # Live forensic 2026-05-16 mission_019e3288: the Critic spawn died
+    # Live forensic 2026-05-16 mission_019f1007: the Critic spawn died
     # with `EPERM: operation not permitted, symlink '…/dist/extensions/
     # browser/skills/browser-automation' -> '…/openclaw_state/plugin-
     # skills/browser-automation'`, two non-zero returncodes in a row →
@@ -318,7 +318,7 @@ def live_claude_oauth_status(
       fail-open).
     - ``"expired"``: bearers exist but every one has died in place. Injecting
       one guarantees a 401 — the isolated worker cannot refresh (2026-07-06
-      incident, missions 019f36e5 + 019f38b1: token expired 02:53, every
+      incident, missions 019f104c + 019f104d: token expired 02:53, every
       spawn died "401 Invalid authentication credentials").
     - ``"absent"``: no readable ``sk-ant-oat`` bearer at all.
 

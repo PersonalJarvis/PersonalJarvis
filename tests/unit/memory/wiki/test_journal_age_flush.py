@@ -22,7 +22,7 @@ def test_oldest_pending_ms_returns_first_pending(tmp_path: Path) -> None:
     now = [1_000_000]
     j = _mk_journal(tmp_path, now)
     j.append(
-        [CandidateFact(fact="Fact one about Joy.", kind="fact", subjects=("joy",))],
+        [CandidateFact(fact="Fact one about ExampleRelative.", kind="fact", subjects=("examplerelative",))],
         source_label="test",
         turn_hash="h1",
     )
@@ -41,7 +41,7 @@ def test_oldest_pending_ms_ignores_consolidated_rows(tmp_path: Path) -> None:
     now = [1_000_000]
     j = _mk_journal(tmp_path, now)
     j.append(
-        [CandidateFact(fact="Fact one about Joy.", kind="fact", subjects=("joy",))],
+        [CandidateFact(fact="Fact one about ExampleRelative.", kind="fact", subjects=("examplerelative",))],
         source_label="test",
         turn_hash="h1",
     )
@@ -52,7 +52,7 @@ def test_oldest_pending_ms_ignores_consolidated_rows(tmp_path: Path) -> None:
         turn_hash="h2",
     )
     rows = j.pending()
-    j.mark([rows[0].id], status="consolidated", decision="add", target_path="entities/joy.md")
+    j.mark([rows[0].id], status="consolidated", decision="add", target_path="entities/examplerelative.md")
 
     oldest = j.oldest_pending_ms()
     assert oldest is not None

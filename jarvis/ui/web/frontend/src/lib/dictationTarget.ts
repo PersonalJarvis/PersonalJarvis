@@ -24,11 +24,17 @@
  *
  * ## How the target is chosen
  *
- * The element that has focus when the transcript arrives, and — as a fallback —
- * the last editable one that had it. The fallback is load-bearing rather than
- * defensive: a dictation started from a button (the composer's microphone, a
- * toolbar) moves focus onto that button, and "insert where the caret was" is
- * what every dictation tool does and what people expect.
+ * First, the document itself must still be visible and focused. WebSocket
+ * events are broadcast to every connected UI client; without that ownership
+ * check, an old tab or a second desktop window can paste the same transcript
+ * into its own remembered field. Within the one owning document, the target is
+ * the element that has focus when the transcript arrives, and — as a fallback —
+ * the last editable one that had it. That fallback is allowed only while an
+ * explicitly marked dictation control has focus. An unrelated toolbar or pane
+ * click must invalidate the old field as a destination; otherwise "current
+ * field" quietly becomes "whatever field was used earlier." A real dictation
+ * button still moves focus onto itself, and "insert where the caret was" remains
+ * available for that deliberate case.
  *
  * A remembered element that has since left the DOM is skipped, so switching
  * sections cannot deliver into a field that is no longer on screen.
@@ -46,10 +52,12 @@ import { captureEditSnapshot, pasteInto } from "./editActions";
 /**
  * What became of one transcript.
  *
- * `none` is the honest answer, not a swallowed failure: nothing on screen could
- * take the text. The caller says so — see `useWebSocket`.
+ * `inactive` means another visible, focused UI client owns this broadcast, so
+ * this client must consume it without inserting or falling back to its chat
+ * composer. `none` is the honest answer when the owning document has nowhere
+ * to put the text. The caller says so — see `useWebSocket`.
  */
-export type DictationDelivery = "field" | "terminal" | "none";
+export type DictationDelivery = "field" | "terminal" | "inactive" | "none";
 
 /** The last editable element that had focus, for the button case above. */
 let lastEditable: HTMLElement | null = null;
@@ -72,6 +80,14 @@ function editableTarget(element: Element | null): HTMLElement | null {
   return null;
 }
 
+/** Whether focus moved away from a field specifically to start dictation. */
+function permitsRememberedTarget(element: Element | null): boolean {
+  return (
+    element instanceof HTMLElement &&
+    element.closest("[data-jarvis-dictation-trigger]") !== null
+  );
+}
+
 /**
  * Watch focus so a dictation started from a button still lands in the field.
  *
@@ -83,8 +99,9 @@ export function installDictationFocusTracker(
 ): () => void {
   const onFocusIn = (event: Event): void => {
     const found = editableTarget(event.target as Element | null);
-    // Only ever REPLACED by another editable target, never cleared by one:
-    // clicking a button must not lose the field the user was just typing in.
+    // Keep the field available for an explicitly marked dictation trigger.
+    // Ordinary controls cannot use it because `deliverDictationText` checks
+    // what currently owns focus before considering this remembered element.
     if (found) lastEditable = found;
   };
   target.addEventListener("focusin", onFocusIn, true);
@@ -94,6 +111,11 @@ export function installDictationFocusTracker(
 /** Forget the remembered field. Exists for tests and for a full view teardown. */
 export function resetDictationTarget(): void {
   lastEditable = null;
+}
+
+/** Whether this document is the single UI client allowed to consume dictation. */
+export function documentOwnsDictation(target: Document = document): boolean {
+  return target.visibilityState === "visible" && target.hasFocus();
 }
 
 /** The final-transcript half of a `DictationTranscript` event. */
@@ -141,7 +163,16 @@ export function isForThisWindow(
 export function deliverDictationText(text: string): DictationDelivery {
   if (!text.trim()) return "none";
   if (typeof document === "undefined") return "none";
-  for (const candidate of [document.activeElement, lastEditable]) {
+  // A single server event reaches every open Jarvis tab/window. Only the
+  // foreground document may turn that broadcast into an edit; all others are
+  // observers. Checking again at the last possible moment closes the race where
+  // focus moves after the WebSocket handler starts but before insertion.
+  if (!documentOwnsDictation()) return "inactive";
+  const active = document.activeElement;
+  const candidates = permitsRememberedTarget(active)
+    ? [active, lastEditable]
+    : [active];
+  for (const candidate of candidates) {
     const element = editableTarget(candidate);
     if (!element) continue;
     const snapshot = captureEditSnapshot(element);

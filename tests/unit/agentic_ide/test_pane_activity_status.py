@@ -27,7 +27,7 @@ import pytest
 
 from jarvis.agentic_ide import notifications
 from jarvis.agentic_ide import session as session_mod
-from jarvis.agentic_ide.activity import STAMP_FRESH_S, observed
+from jarvis.agentic_ide.activity import RESIZE_SHADOW_S, STAMP_FRESH_S, observed
 from jarvis.agentic_ide.session import PLAIN_TERMINAL, Registry
 from tests.fakes.fake_pty_manager import FakePtyManager
 
@@ -75,6 +75,12 @@ def _sweep(registry: Registry, at: float) -> None:
     notifications.watcher().poll(registry, now=at, emit=False)
 
 
+def _instruct(term: Any, at: float) -> None:
+    """Prove the current process received the work represented by a test."""
+    term.last_submit_at = at
+    term.submit_generation = term.process_generation
+
+
 def _watched(registry: Registry, term: Any, *, moves: bool) -> None:
     """Two sweeps on the REAL clock — one look cannot see movement.
 
@@ -112,6 +118,7 @@ async def test_a_moving_pane_is_reported_as_working_whatever_it_runs(
 ) -> None:
     """And one whose picture keeps changing is still on the job."""
     _session, term = await _pane(registry, tmp_path, agent=agent, name="Px")
+    _instruct(term, time.time() - 1)
     term.transcript.feed(screen)
 
     _watched(registry, term, moves=True)
@@ -132,6 +139,7 @@ async def test_output_outside_the_fingerprint_still_counts_as_working(
     nothing for between 19 and 69 seconds.
     """
     _session, term = await _pane(registry, tmp_path)
+    _instruct(term, time.time() - 1)
     term.transcript.feed(REST_SCREENS["claude"])
     now = time.time()
     _sweep(registry, now - notifications.SWEEP_INTERVAL_S)
@@ -162,6 +170,64 @@ async def test_a_keystroke_echo_is_still_not_the_agent_working(
     assert term.to_dict()["activity"] == "waiting"
 
 
+async def test_a_resize_repaint_is_not_the_agent_working(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The other exclusion: a redraw for a new geometry is not work.
+
+    The reported bug (2026-08-01). Switching between the grid and the chat
+    view, maximizing, dragging a seam or changing tabs resizes every pane, a
+    TUI answers a size change with a full repaint, and that repaint is fresh
+    output AND a changed picture — so every FINISHED pane in the workspace
+    read as "working" at exactly the moment the user looked at the list.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    term.transcript.feed(REST_SCREENS["claude"])
+    now = time.time()
+    _sweep(registry, now - notifications.SWEEP_INTERVAL_S)
+    # The grid re-laid itself out: PTY resized, TUI repainted — both signals.
+    term.last_resize_at = now - 0.5
+    term.last_output_at = now
+    term.transcript.clear()
+    term.transcript.feed(REST_SCREENS["claude"] + "\r\n ")
+    _sweep(registry, now)
+
+    assert term.to_dict()["activity"] == "waiting"
+
+
+async def test_output_after_the_resize_shadow_still_counts_as_working(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The shadow is a window, not a mute button.
+
+    An agent genuinely working through a resize keeps printing after the
+    redraw; its next stamp falls outside the shadow and must count again —
+    otherwise a resize would hide real work instead of a repaint.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    _instruct(term, time.time() - 1)
+    term.transcript.feed(REST_SCREENS["claude"])
+    now = time.time()
+    _sweep(registry, now - notifications.SWEEP_INTERVAL_S)
+    term.last_resize_at = now - RESIZE_SHADOW_S - 1.0
+    term.last_output_at = now
+    _sweep(registry, now)
+
+    assert term.to_dict()["activity"] == "working"
+
+
+async def test_a_grid_relayout_stamps_the_resize_shadow(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The viewer's resize path leaves the stamp the detector reads."""
+    _session, term = await _pane(registry, tmp_path)
+    assert term.last_resize_at is None
+
+    assert registry.resize("Alex", 120, 40) is True
+
+    assert term.last_resize_at is not None
+
+
 # --------------------------------------------- the reading reaches a client
 
 
@@ -173,6 +239,7 @@ async def test_the_state_carries_what_the_sweep_saw(registry: Registry, tmp_path
     single look.
     """
     _session, term = await _pane(registry, tmp_path)
+    _instruct(term, 499.0)
     term.transcript.feed("\r\n· Scurrying… (2m 4s)\r\n")
     _sweep(registry, 500.0)
     term.transcript.clear()
@@ -304,6 +371,7 @@ async def test_the_caption_never_contradicts_the_badge(registry: Registry, tmp_p
 async def test_the_caption_says_working_when_it_is(registry: Registry, tmp_path: Path) -> None:
     """And the other way round, or the wording would just be pessimistic."""
     _session, term = await _pane(registry, tmp_path)
+    _instruct(term, time.time() - 1)
     term.transcript.feed(REST_SCREENS["claude"])
     _watched(registry, term, moves=True)
 

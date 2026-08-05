@@ -37,7 +37,7 @@
  *
  * The start view is labelled with the machine's own name rather than the account
  * folder: "Administrator" says nothing about which computer you are looking at,
- * "Studio MacBook" does.
+ * "Alex's MacBook" does.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {

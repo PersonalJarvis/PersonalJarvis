@@ -134,7 +134,7 @@ def test_a_tool_free_inline_skill_is_injected(skills_root: Path) -> None:
 
 def test_nothing_is_injected_without_a_match(skills_root: Path) -> None:
     _install(skills_root)
-    assert _Session()._skill_directive("wie ist das wetter in berlin") == ""  # i18n-allow
+    assert _Session()._skill_directive("wie ist das wetter in exampletown") == ""  # i18n-allow
 
 
 @pytest.mark.parametrize("text", ["", "   "])

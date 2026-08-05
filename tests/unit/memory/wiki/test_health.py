@@ -17,7 +17,7 @@ def test_snapshot_starts_unknown_but_valid():
 
 def test_record_write_success_and_failure_round_trip():
     h = WikiHealth()
-    h.record_write(True, pages=["entities/joy.md"], error=None, source="tool")
+    h.record_write(True, pages=["entities/examplerelative.md"], error=None, source="tool")
     assert h.snapshot()["last_write"]["ok"] is True
     h.record_write(False, pages=[], error="all providers failed", source="tool")
     last = h.snapshot()["last_write"]
@@ -58,7 +58,7 @@ def test_snapshot_is_json_safe():
     h = WikiHealth()
     h.record_bootstrap(True)
     h.record_write(True, pages=["log.md"], error=None, source="bridge")
-    h.record_index(True, operation="upsert", path="entities/joy.md")
+    h.record_index(True, operation="upsert", path="entities/examplerelative.md")
     json.dumps(h.snapshot())  # must not raise
 
 

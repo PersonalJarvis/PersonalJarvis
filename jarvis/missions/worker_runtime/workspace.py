@@ -83,7 +83,7 @@ def _agents_md(mission_id: str) -> str:
     spawn time (Welle-1-Spike B-9 verified). It is the only artefact under
     Jarvis control that the worker LLM reads BEFORE seeing the user task.
 
-    Live repro 2026-05-15 (mission_019e2d35, gemini-3.1-pro-preview): the
+    Live repro 2026-05-15 (mission_019f1005, gemini-3.1-pro-preview): the
     worker burned 24-26k tokens, claimed `"Habe Datei erfolgreich erstellt"`  # i18n-allow (quotes the worker LLM's actual reply text)
     (English: "Have successfully created file") in its reply text, but
     never invoked the `Write`/`file_write` tool —

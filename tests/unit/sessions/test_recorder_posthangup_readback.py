@@ -5,7 +5,7 @@ hangup gate so an offloaded result is never silently dropped (AD-OE6). But the
 every later non-lifecycle event, so the readback was voiced yet never recorded:
 the transcript showed an empty trailing turn while the user heard a full answer.
 
-Live forensic 2026-06-19, session ``514cddc0`` / mission ``019edf4c``: the
+Live forensic 2026-06-19, session ``10000112`` / mission ``019f103e``: the
 readback "Hey. Lass mich zwei Dinge trennen …" fired 27 s after a hotkey
 hangup and appeared in neither ``voice_turns`` nor ``voice_events``.
 """

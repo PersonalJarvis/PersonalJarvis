@@ -18,7 +18,7 @@ function fakeDragEvent() {
 }
 
 const meta: OutputsDragMeta = {
-  slug: "mission_019ecc78",
+  slug: "mission_019f103b",
   utterance: "Build the landing page",
   status: "success",
 };
@@ -32,7 +32,7 @@ describe("startMissionDrag", () => {
     expect(e.setData).toHaveBeenCalledTimes(1);
     const [mime, json] = e.setData.mock.calls[0];
     expect(mime).toBe(MISSION_DND_MIME);
-    expect(JSON.parse(json).slug).toBe("mission_019ecc78");
+    expect(JSON.parse(json).slug).toBe("mission_019f103b");
     expect(JSON.parse(json).utterance).toBe("Build the landing page");
   });
 

@@ -494,7 +494,7 @@ skills:
 # ---------------------------------------------------------------------------
 global_negatives:
   # -- smalltalk / conversation -------------------------------------------
-  - text: "wie ist das wetter heute in berlin"
+  - text: "wie ist das wetter heute in exampletown"
     channel: relevance
     reason: smalltalk
   - text: "erzaehl mir einen witz"

@@ -28,6 +28,134 @@ remaining GTK source gap; reveal/open actions remain available on Linux.
 uses a parent-lifeline process-group supervisor on macOS and Linux, while
 Windows retains kernel Job Object containment.
 
+**Fix pass 2026-08-03 (subscription realtime voice).** Four defects of the
+same shape as P-29 — the feature was reachable only on the maintainer's OS:
+
+- **Linux login terminals.** The visible `codex login` accepted exactly
+  `gnome-terminal`, `konsole` and literal `xterm`, so XFCE, MATE, Cinnamon and
+  anyone on kitty/alacritty/foot/wezterm could not connect subscription voice
+  AT ALL — while the Providers card still offered an enabled Connect button.
+  `jarvis/codex_auth.py::_LINUX_LOGIN_TERMINALS` now carries fourteen entries
+  with their documented foreground/no-fork forms, and
+  `linux_login_terminal_available()` is the pre-click capability probe so a
+  desktop that genuinely has none reports `lifecycle_unavailable` with an
+  actionable reason instead of an error toast after the click.
+- **Linux browser hand-off.** Windows (ShellExecute) and macOS (`open`) opened
+  the OAuth page themselves; the Linux login child was handed an environment
+  with no `DISPLAY`/`WAYLAND_DISPLAY`/`XAUTHORITY`, so the user had to copy a
+  device-code URL out of the terminal. Those session handles now reach the
+  child through both allowlists. Deliberately partial: the forced file
+  credential store still strips `DBUS_SESSION_BUS_ADDRESS` and
+  `XDG_RUNTIME_DIR`, so a pure-Wayland session without XWayland keeps the
+  printed URL — the keyring-isolation guarantee outranks the convenience.
+- **POSIX login containment.** Process-tree containment for the login guardian
+  was Windows-only, so a Jarvis crash on macOS/Linux left terminal → guardian
+  → `codex login` alive with the profile lock still held and every later
+  connect reporting a permanent "busy". `make_process_tree` already returns a
+  real POSIX process-group reaper; the login path now uses it, and only the
+  Windows breakaway flag remains Windows-shaped.
+- **POSIX delegate cleanup + macOS PATH.** The Codex CLI that executes
+  subscription-voice actions was tree-killed only on Windows (`taskkill /T`),
+  leaking the real `codex` child on every capped or cancelled turn off
+  Windows; it now leads its own process group and gets the SIGTERM/SIGKILL
+  sibling. It also resolved its binary with a bare `shutil.which`, so a
+  GUI-launched macOS app could show the subscription as connected while every
+  action failed with "Codex CLI not found" — both sites now share
+  `CodexAuthService._resolve_binary` and its `ensure_cli_paths()` repair.
+
+**Fix pass 2026-08-03 (subscription voice, second round).** The 2026-08-03 pass
+above fixed which terminals are offered; this one fixes what happens after one
+is launched. Same shape again — a guarantee that held only on Windows.
+
+- **Login containment now binds to the guardian, not to the launcher.** The
+  previous pass gave the login a POSIX process-group reaper, but on macOS the
+  spawned process is `osascript`, which asks the ALREADY-RUNNING Terminal.app to
+  `do script` — so the guardian is a grandchild of Terminal, in no process group
+  Jarvis owns. GNOME is the same story through `gnome-terminal-server`. The
+  reaper was signalling a group that contained only the launcher, and a Jarvis
+  crash still left the guardian holding the profile lock with every later
+  Connect reporting a permanent "busy". A process tree cannot cross those
+  boundaries and neither can an inherited pipe, so the lifeline is now a
+  **parent-liveness lock file**: Jarvis holds it for the whole login, the kernel
+  drops it on any kind of death, and the guardian polls it and ends the login if
+  it can take it (`jarvis/codex_auth.py::_hold_parent_liveness_lock`,
+  `jarvis/codex_login_guard.py::_parent_liveness_lost`, exit code
+  `EXIT_PARENT_GONE`). The probe is deliberately conservative — anything it
+  cannot read counts as "Jarvis is alive", because ending a healthy login is
+  worse than one stale lock.
+- **`wezterm` released the profile lock mid-write.** Plain `wezterm start` hands
+  the window to a running `wezterm-gui` and returns at once, so `cleanup_login`
+  ran its post-check and released the lock while `codex` was still writing
+  `auth.json` — exactly the hazard the terminal table's own docstring describes.
+  Now `--always-new-process`. Every entry additionally carries the REASON its
+  flags keep it in the foreground, pinned per entry by a test.
+- **Terminal matching is exact, not prefix.** `startswith` accepted Debian's
+  `gnome-terminal.wrapper` for the `gnome-terminal` entry (and handed it flags
+  that wrapper rejects) and accepted anything merely beginning with `st`. Both
+  launched something that could not host the login, and the failure then
+  surfaced as a guardian handshake error. Matching is now exact with a tiny
+  justified alias map, and a login whose guardian never wrote its first
+  acknowledgement names the TERMINAL as the cause instead of the guardian.
+- **The POSIX lifeline no longer swallows a forwarded descriptor.**
+  `child_lifeline.py` re-spawns the real child with `close_fds=True`, so the
+  profile-lock descriptor the caller passes in was dropped at exec and the lock
+  was held by the supervisor rather than by the app-server child it was meant
+  for. The supervisor now accepts `--keep-fd N` and forwards it. Harmless today
+  because the two processes die together — but the caller's guarantee was simply
+  not true, and the first change that lets the supervisor exit first would have
+  turned it into two processes writing one profile.
+- **Checked, not a defect: the macOS Apple-Silicon PyAV pin.** Base pins
+  `av==15.1.0` for that cell with no `python_version` guard while `[local-voice]`
+  and `[tts-eval]` carried `python_version < '3.14'` and a comment claiming
+  wheels only up to 3.13 — which reads as a broken install on macOS arm64 +
+  CPython 3.14. It is not one: the PyPI file list for `av 15.1.0` carries
+  `cp311/cp312/cp313/cp314` `macosx_13_0_arm64` wheels. The base pin was right
+  and the comment was wrong; the comment is corrected and the redundant guard
+  removed. The pin itself stays — `av 16+` raises the Apple-Silicon floor to
+  macOS 14, and 15.1 is what keeps the supported macOS 13 floor.
+
+**Fix pass 2026-08-03 (keyboard + pointer, from live Mac reports).** Three
+defects of one shape — a surface OFFERS something on every OS and only one OS
+can actually deliver it, with nothing raising in between:
+
+- **Keybind picker.** The Quartz keycode table covered letters, digits,
+  F1-F12 and the arrows. The picker also offers the whole nav cluster, the
+  entire numpad and F13-F20, and the Windows backend registers all of them —
+  so on macOS those shortcuts recorded, validated, saved and rendered as
+  bound, then never fired. Fixed in `backends/quartz.py`; a parity test now
+  reads the bindable tokens out of the frontend source, so adding a cap
+  without its keycode fails instead of shipping a dead shortcut.
+- **Event-tap permission probe.** The TCC grant check ran on EVERY reconcile,
+  i.e. two native ObjC calls per keystroke the machine sees, inside the tap
+  callback. macOS DISABLES a tap whose callback overruns its deadline — the
+  "works sometimes, or not at all" report. Now throttled (1 s TTL) while
+  staying fail-closed.
+- **Computer-Use numpad.** `base._NAMED_KEYS` accepts `numpad0`-`numpad9`
+  plus the five operators and Windows maps every one; the POSIX table mapped
+  none, so the identical action died off-Windows with
+  `ValueError: Unknown key: 'numpad5'`. Addressed by raw virtual key
+  (Carbon `kVK_ANSI_Keypad*` / `XK_KP_*`).
+- **Sidebar pointer offset** (macOS only, not previously registered): the
+  `<aside>` carried `backdrop-blur`, making the `backdrop-filter` element an
+  ANCESTOR of the scrolling `<nav>`. WebKit does not reliably invalidate that
+  backdrop snapshot when a descendant scrolls, so the sidebar painted rows at
+  their old offsets while hit-testing them at the new ones. The frosted
+  backing is now its own non-scrolling layer. **Awaiting confirmation on real
+  Mac hardware** — it cannot be reproduced on Windows, where Chromium
+  composites the case eagerly.
+
+P-26 is removed: a Mac user CAN now record a ⌘ shortcut (`metaToken` emits
+`cmd` on darwin, and `KeyboardMap` no longer draws the Meta cap reserved).
+
+**Known, deliberate, and NOT a macOS gap:** the punctuation keys (`- = [ ] \
+; ' , . /` and backtick) plus CapsLock are drawn `dead` in the picker on
+every OS. `event.code` is keyed to US-layout positions, so binding by
+position would record "BracketLeft" while the keycap the user actually
+pressed prints something else entirely on any non-US layout. Reported from a
+Mac as "you cannot pick all the keys"; it is cross-platform by design, not a
+parity defect. Changing it means choosing position- over label-fidelity for
+all three OSes at once.
+
 ## Audit verdict summary
 
 **No hard breakers found.** No feature crashes on macOS or headless Linux;
@@ -53,6 +181,8 @@ experiences today.
 
 | # | Impact | Area | Gap | Evidence | Behavior off-Windows |
 |---|---|---|---|---|---|
+| P-30 | Medium | Subscription voice | ChatGPT-Live carries its audio ONLY on a WebRTC media track, so the transport needs `aiortc` + PyAV in-process. Upstream publishes no compiler-free Windows ARM64 dependency chain, so base excludes `aiortc` on that one cell — and the same absence occurs anywhere the wheel chain cannot install. `webrtc_available()` exists but is called ONLY inside the endpoint constructor, so no surface asks it before advertising the provider | `pyproject.toml` (the `aiortc` marker), `jarvis/realtime/webrtc_transport.py::webrtc_available`, `jarvis/plugins/realtime/codex_subscription.py::external_login_ready`, `can_open_duplex_session`, `jarvis/ui/web/provider_routes.py::_codex_subscription_status_payload` | **Today, dishonest:** with a valid Codex login the card reports `ready`, `PUT /voice-mode` accepts `realtime`, and the call then fails at connect time with "needs the 'aiortc' package. Install Jarvis's requirements" — advice a Windows ARM64 user can never act on. Every other realtime provider and all standard voice stay available. **Wanted:** the media-stack probe joins the login probe, the card reports `lifecycle_unavailable` with a per-platform reason before the click, and the message stops prescribing an install that cannot work |
+| P-29 | Low | Subscription voice | The dedicated ChatGPT-subscription voice login is an interactive browser flow, so a headless Linux host — and a graphical Linux desktop that ships no terminal emulator able to host the login for its full lifetime — can never CONNECT the profile there (an existing login still reports ready and calls work through the browser voice bridge) | `jarvis/codex_app_server.py::_login_required_state`, `_linux_login_terminal_missing`, `start_codex_subscription_login`, `jarvis/codex_auth.py::_LINUX_LOGIN_TERMINALS` | Both cases report the same `lifecycle_unavailable` truth on every surface (card, activation, voice-mode, Test), each with its own actionable reason — "run Jarvis on a desktop" or "install one of these terminals" — and never an enabled Connect button that can only produce an error toast |
 | P-24 | Medium | Dictation shortcut | The global dictation/call shortcut needs `pynput` on Linux/X11, and `pynput` hard-requires `evdev` — which is published **source-only** (verified on PyPI 2026-07-28: evdev 1.9.3 ships an sdist and no wheels) and compiles against the kernel headers. Putting it in `[full]` would break the one advertised install path on a stock `python:3.11-slim`, so it is the opt-in `[desktop-linux]` extra instead. Wayland is a separate, unfixable-by-install case: the compositor owns global shortcuts by design (the XDG `GlobalShortcuts` portal lets the *compositor* assign the keys, and no wlroots compositor implements it at all) | `pyproject.toml` (`desktop-linux`), `jarvis/platform/probes.py::has_hotkey`, `jarvis/trigger/backends/noop.py::explain_unavailable` | X11 without the extra: no global shortcut, and the log/UI now names the actual cause and the exact `pip install` that fixes it (it used to blame Wayland unconditionally). Wayland: no global shortcut at all — bind a compositor shortcut to `jarvis api dictation start`. On both, dictation still works from the Jarvis Bar, the Dictation view and the CLI, and voice still works via the wake word |
 | P-25 | Medium | Dictation insertion | Pasting the transcript into another application is blocked, silently, in three OS-specific situations: Windows UIPI when the foreground window is elevated and Jarvis is not (`SendInput` reports success and the input is discarded), macOS Secure Input while a password field is focused, and Wayland outright (no synthetic input). Detection exists for the first two; Wayland is refused up front | `jarvis/dictation/insert.py::describe_target`, `jarvis/platform/input_isolation.py::windows_foreground_window_is_elevated`, `macos_secure_input_enabled` | All three degrade to the SAME honest outcome instead of silence: the transcript is left on the clipboard, the result is reported as `clipboard_only`, and the bar plus the Dictation view say why and that Ctrl+V will paste it. macOS Secure Input detection is implemented but has not been verified on real hardware from this machine |
 | P-02 | Low | Awareness | Idle detection has no Wayland backend (Windows GetLastInputInfo, macOS Quartz, Linux X11 `xprintidle` all exist since 2026-07-16); Wayland exposes no global idle time without portal support | `jarvis/awareness/watchers/idle.py` | Wayland: one honest log line, watcher does not start |
@@ -72,10 +202,10 @@ experiences today.
 | P-18 | Low | Agent accounts | Multi-subscription switching gives each account its own CLI config directory (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`) — the CLIs' own documented override. On macOS, Claude Code keeps its credentials in the **Keychain** rather than in that directory, and whether a second config dir earns a second Keychain entry is UNVERIFIED on this hardware (everything here was measured on Windows) | `jarvis/agent_accounts.py::describe`, `env_overrides` | Windows/Linux: a second Claude seat works as designed (its `.credentials.json` lives in its own folder). macOS: the added account may come back reporting **"Not signed in"** after a completed sign-in — which is the honest outcome, not a crash: the switcher never claims a login it cannot read, so a pane is never silently routed to the first account's credentials. Codex is unaffected on all three OSes (`auth.json` is a plain file). Next Mac session: add a second Claude account, sign in, and check whether `describe()` reports it connected |
 
 | P-20 | Low | Coding-CLI panes | Kimi Code panes deliberately ship WITHOUT multi-subscription switching, unlike Claude Code and Codex. Three independent reasons, all recorded on the registry entry: the wound-down Python generation ignores `KIMI_CODE_HOME` entirely, so seats created on a machine that has it would all silently resolve to one login; its configuration and its credentials share a single `config.toml`, so no setup can be carried to a new seat without carrying the key with it; and its credential layout is unverified against a live install of the current generation | `jarvis/workspace/agents.py` (the `kimi` entry), `jarvis/agent_accounts.py::platforms` | All OSes: one Kimi login, and the account switcher honestly does not offer the CLI at all rather than showing a switch that does nothing. Unblocked by verifying the current generation's credential layout and gating the override on the generation probe |
+| P-22 | Low | Orb window | The floating orb window (both looks: the Gigi mascot and the procedural **voice orb**) is a Tk window whose transparency comes from a colour key. Windows keys it out natively; macOS uses Aqua-Tk's `-transparent` in the companion host; on Linux the attribute is accepted only under a **compositing** window manager, and not at all on Wayland | `ui/orb/overlay.py::_apply_color_key`, `_build_renderer`, `jarvis/ui/jarvisbar/host.py::_build_surface` | Windows/macOS: full parity, including drag-to-any-monitor and the live mascot↔voice-orb switch. Linux with a compositor (GNOME/KDE/picom): works. Linux without one, and Wayland: the window would be an opaque magenta square, so it is NOT shown — the surface logs one actionable English line and stays hidden; voice, tray and the app window are unaffected. Note the Jarvis Bar degrades DIFFERENTLY on such a session (it keeps drawing and shows its key colour — pre-existing, `jarvis/ui/jarvisbar/overlay.py:738`), so "None (hidden)" is the honest display style on a non-compositing Linux desktop until the bar adopts the same gate |
 | P-21 | Low | Coding-CLI panes | OpenCode panes ship single-login for the same class of reason: the only variable that moves its credentials and session database is `XDG_DATA_HOME`, which is a SHARED variable rather than a dedicated override — redirecting it per pane would also redirect any other XDG-aware tool the agent spawns inside that pane | `jarvis/workspace/agents.py` (the `opencode` entry) | All OSes: one OpenCode login. Verified on Windows that `XDG_DATA_HOME` does move `auth.json` and the session database; the blast radius on macOS and Linux has not been measured, which is why it is not wired up |
 | P-22 | Low | Coding-CLI panes | Kimi Code uses the bundled Git Bash as its shell environment on Windows, so without Git for Windows installed the binary answers `--version` correctly and the agent then cannot run a single shell command | Kimi vendor docs; `jarvis/workspace/agents.py` (the `kimi` entry) | Windows without Git for Windows: the pane opens, the CLI reports a healthy version, and shell commands fail inside it. macOS/Linux unaffected. `KIMI_SHELL_PATH` points at a non-standard `bash.exe`. An install check that only runs `--version` cannot see this |
 | P-23 | Info | Coding-CLI panes | Kimi Code's alternate screen cannot be disabled (an open upstream request notes it is the outlier versus Claude Code, Codex and the Gemini CLI), so it may conflict with the pane's own scrollback the way a Claude Code pane once did | Upstream issue; `jarvis/agentic_ide/screen.py` | All OSes equally — not an OS gap, recorded here because it is the same class of pane defect and is expected to need the same kind of fix |
-| P-26 | Low | Keybind recorder | A Mac user cannot RECORD a Command (⌘) shortcut, even though the backend validator accepts `cmd+…` on darwin. Two frontend layers close the door: `modifierTokens` maps `metaKey` to the `win` token (there is one token for "the Meta key", and it is named after the Windows key), and `KeyboardMap` then renders that cap disabled with a "Reserved by the system" tooltip — correct on a PC, wrong on a Mac, where ⌘ is the natural modifier for exactly this kind of shortcut. Deliberately deferred, not overlooked: separating the two Meta keys means a new token that the hotkey backends (`global_hotkeys._KEY_MAP`, `pynput._GENERIC_MODIFIER_ALIASES`) must also learn, and the shipped defaults (`ctrl+right_alt+j` push-to-talk, `ctrl+right_alt+space` hands-free) need no ⌘ on any OS | `jarvis/ui/web/frontend/src/hooks/useHotkey.ts::modifierTokens`, `src/views/settings/KeyboardMap.tsx` (`reserved = token === "win"`), `jarvis/trigger/hotkey.py::validate_hotkey` | macOS: every shipped default works, and Ctrl/Option/Shift combos record and save normally — only ⌘-based combos are unreachable from the UI (a `cmd+…` combo already present in `jarvis.toml` keeps working). Windows/Linux: correct as-is, the Windows/Super key genuinely is OS-reserved |
 | P-27 | Low | Mouse-button shortcuts | A shortcut may now be a MOUSE BUTTON (middle, and the two side buttons — `mouse_middle` / `mouse_x1` / `mouse_x2`). All three OSes are implemented in the same change and share one token vocabulary, but the delivery is not uniform: Windows needs nothing extra (the backend polls `GetAsyncKeyState`, which reports mouse buttons); macOS needs pyobjc `Quartz` plus the Accessibility + Input Monitoring grants the hotkey tap already requires; Linux/X11 needs `pynput`, which is the opt-in `[desktop-linux]` extra for the reason recorded in P-24 (`evdev` is source-only). Wayland cannot do it at all — no global button grab exists, the same design reason keyboard shortcuts degrade there. The left and right buttons are deliberately not bindable on any OS: their meaning follows the system "swap mouse buttons" setting, so a shortcut recorded as "left" would fire on the physical right button for a left-handed user | `jarvis/trigger/hotkey.py::mouse_hotkeys_available`, `backends/global_hotkeys.py::_MOUSE_TOKEN_TO_VK`, `backends/pynput.py::_start_mouse_listener`, `backends/quartz.py::_MOUSE_BUTTON_TO_TOKEN` | Every host answers the capability question BEFORE offering the control: `mouse_hotkeys_available()` returns an English sentence naming what is missing and what still works, and a backend that cannot start its mouse hook logs the same thing and keeps the KEYBOARD shortcuts alive rather than failing the whole binding. macOS/Linux desktop with the extras: full parity with Windows. Wayland and headless: key combinations only |
 
 ## Maintenance

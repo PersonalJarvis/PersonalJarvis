@@ -1,6 +1,6 @@
 """Robust Node.js resolution for worker spawns.
 
-Live forensic 2026-06-20: jarvis was launched (by the hermes-agent runtime) with
+Synthetic regression fixture: jarvis was launched (by the hermes-agent runtime) with
 a PATH that did NOT contain the Node.js directory. ``shutil.which("node")`` —
 which searches the inherited PATH — therefore returned None, so any node-direct
 spawn fell back to the fragile ``codex.CMD`` shim (whose own bare-``node``

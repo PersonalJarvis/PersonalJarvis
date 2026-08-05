@@ -233,6 +233,45 @@ def _streaming_pipeline(brain) -> SpeechPipeline:
 
 
 @pytest.mark.asyncio
+async def test_voice_stream_opts_into_pending_orb_context() -> None:
+    """A spoken turn, unlike ordinary BrainManager callers, consumes orb drops."""
+    received: dict[str, object] = {}
+
+    class _CapturingBrain:
+        async def generate_stream(self, text, **kwargs):
+            received.update(kwargs)
+            yield "Done."
+
+    pipeline = _streaming_pipeline(_CapturingBrain())
+
+    await pipeline._brain_streaming("Inspect the attached layout", "en")
+
+    assert received["consume_pending_voice_attachments"] is True
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_voice_opts_into_pending_orb_context() -> None:
+    """The callback-based voice mode carries the same explicit modality."""
+    received: dict[str, object] = {}
+
+    class _CapturingBrain:
+        async def generate(self, text, **kwargs):
+            received.update(kwargs)
+            return "Done."
+
+    pipeline = _streaming_pipeline(_CapturingBrain())
+
+    result = await pipeline._brain_with_ack(
+        "Inspect the attached layout",
+        "en",
+        consume_pending_voice_attachments=True,
+    )
+
+    assert result == "Done."
+    assert received["consume_pending_voice_attachments"] is True
+
+
+@pytest.mark.asyncio
 async def test_real_streaming_interrupt_fires_before_first_chunk():
     """Interrupt must fire while the brain is still thinking (no token yet),
     proving _brain_first_frame_played is NOT set in the synchronous setup."""

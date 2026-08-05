@@ -905,3 +905,83 @@ def test_login_status_logged_in_false_when_creds_missing(
     with TestClient(server_with_brain.app) as client:
         resp = client.get("/api/providers/openclaw/login/status")
         assert resp.status_code == 404
+
+
+# ----------------------------------------------------------------------
+# /api/providers/{pid}/pullable-models + /pull  (in-app local downloads)
+# ----------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_pull(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Stub the pull module so the routes never touch a real Ollama server."""
+    from jarvis.brain import ollama_pull
+
+    calls: dict[str, Any] = {"started": [], "status": []}
+
+    async def _recommendations() -> dict[str, Any]:
+        return {
+            "server": "http://localhost:11434",
+            "server_reachable": True,
+            "message": "",
+            "memory_gb": 32.0,
+            "models": [{"id": "qwen3-vl", "installed": False, "fit": "comfortable"}],
+            "installed": [],
+        }
+
+    async def _start_pull(model: str) -> dict[str, Any]:
+        calls["started"].append(model)
+        return {"state": "running", "model": model, "message": "Starting…"}
+
+    async def _pull_status(model: str) -> dict[str, Any]:
+        calls["status"].append(model)
+        return {"state": "running", "model": model, "percent": 12.5}
+
+    monkeypatch.setattr(ollama_pull, "recommendations", _recommendations)
+    monkeypatch.setattr(ollama_pull, "start_pull", _start_pull)
+    monkeypatch.setattr(ollama_pull, "pull_status", _pull_status)
+    return calls
+
+
+def test_pullable_models_lists_the_shortlist(
+    server_with_brain: WebServer, fake_pull: dict[str, Any]
+) -> None:
+    with TestClient(server_with_brain.app) as client:
+        resp = client.get("/api/providers/ollama/pullable-models")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["server_reachable"] is True
+        assert body["models"][0]["id"] == "qwen3-vl"
+
+
+def test_pull_starts_a_download_and_reports_progress(
+    server_with_brain: WebServer, fake_pull: dict[str, Any]
+) -> None:
+    with TestClient(server_with_brain.app) as client:
+        started = client.post("/api/providers/ollama/pull", json={"model": "qwen3-vl"})
+        assert started.status_code == 200
+        assert started.json()["state"] == "running"
+        status = client.get("/api/providers/ollama/pull/status", params={"model": "qwen3-vl"})
+        assert status.status_code == 200
+        assert status.json()["percent"] == 12.5
+    assert fake_pull["started"] == ["qwen3-vl"]
+
+
+def test_pull_rejects_a_provider_whose_server_cannot_be_told_to_fetch(
+    server_with_brain: WebServer, fake_pull: dict[str, Any]
+) -> None:
+    """A generic OpenAI-compatible server has no download API — the honest
+    answer is 400 with the reason, never a silent no-op."""
+    with TestClient(server_with_brain.app) as client:
+        resp = client.post("/api/providers/local-openai/pull", json={"model": "x"})
+        assert resp.status_code == 400
+        assert "no download API" in resp.json()["detail"]
+    assert fake_pull["started"] == []
+
+
+def test_pull_on_an_unknown_provider_is_404(
+    server_with_brain: WebServer, fake_pull: dict[str, Any]
+) -> None:
+    with TestClient(server_with_brain.app) as client:
+        resp = client.get("/api/providers/nope/pullable-models")
+        assert resp.status_code == 404

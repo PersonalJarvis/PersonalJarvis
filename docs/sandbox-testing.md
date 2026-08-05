@@ -4,7 +4,7 @@ A throwaway, fully isolated copy of Jarvis, provisioned from a fresh clone of th
 public GitHub repo, so you experience **exactly what a stranger downloading it
 gets** — without touching your real config, data, or saved API keys.
 
-Operational context: [`device-parity-debugging.md`](device-parity-debugging.md).
+Design: [`docs/superpowers/specs/2026-06-24-jarvis-sandbox-testing-design.md`](superpowers/specs/2026-06-24-jarvis-sandbox-testing-design.md).
 
 ## Why you can't just run a second copy
 

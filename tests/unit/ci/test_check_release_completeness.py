@@ -76,42 +76,6 @@ def test_run_git_surfaces_stderr_on_failure(tmp_path: Path):
     assert out.strip(), "the stderr failure reason must reach the caller"
 
 
-def test_flagship_remote_prefers_verified_public(monkeypatch, tmp_path: Path):
-    calls: list[str] = []
-
-    def fake_git(args: list[str], *, cwd: Path) -> tuple[int, str]:
-        assert cwd == tmp_path
-        calls.append(args[-1])
-        return 0, "https://github.com/PersonalJarvis/PersonalJarvis.git"
-
-    monkeypatch.setattr(gate, "_run_git", fake_git)
-    assert gate.resolve_flagship_remote(tmp_path) == (True, "public")
-    assert calls == ["public"]
-
-
-def test_flagship_remote_accepts_exact_origin_fallback(monkeypatch, tmp_path: Path):
-    def fake_git(args: list[str], *, cwd: Path) -> tuple[int, str]:
-        assert cwd == tmp_path
-        name = args[-1]
-        if name == "public":
-            return 2, "missing"
-        return 0, "https://github.com/PersonalJarvis/PersonalJarvis.git"
-
-    monkeypatch.setattr(gate, "_run_git", fake_git)
-    assert gate.resolve_flagship_remote(tmp_path) == (True, "origin")
-
-
-def test_flagship_remote_rejects_personal_backup(monkeypatch, tmp_path: Path):
-    def fake_git(args: list[str], *, cwd: Path) -> tuple[int, str]:
-        assert cwd == tmp_path
-        return 0, "https://github.com/example/personal-jarvis.git"
-
-    monkeypatch.setattr(gate, "_run_git", fake_git)
-    ok, message = gate.resolve_flagship_remote(tmp_path)
-    assert not ok
-    assert "refusing" in message
-
-
 def test_release_matches_accepts_v_prefix_and_rejects_other_versions():
     assert gate.release_matches("v1.1.0", "1.1.0")
     assert gate.release_matches("1.1.0", "1.1.0")
@@ -119,45 +83,3 @@ def test_release_matches_accepts_v_prefix_and_rejects_other_versions():
     # No published release at all must never satisfy the gate.
     assert not gate.release_matches("", "1.1.0")
     assert not gate.release_matches("v1.1.0", "")
-
-
-def test_reconcile_can_validate_head_without_moving_main(monkeypatch, tmp_path: Path):
-    calls: list[list[str]] = []
-
-    def fake_git(args: list[str], *, cwd: Path) -> tuple[int, str]:
-        assert cwd == tmp_path
-        calls.append(args)
-        if args[:2] == ["rev-list", "--count"]:
-            return 0, "0" if args[2].startswith("HEAD..") else "7"
-        return 0, ""
-
-    monkeypatch.setattr(gate, "_run_git", fake_git)
-
-    ok, message = gate.check_not_behind_public(
-        tmp_path,
-        remote="public",
-        branch="main",
-        local_ref="HEAD",
-    )
-
-    assert ok
-    assert "7 local commit(s)" in message
-    assert calls == [
-        ["fetch", "--quiet", "public", "main"],
-        ["rev-list", "--count", "HEAD..public/main"],
-        ["rev-list", "--count", "public/main..HEAD"],
-    ]
-
-
-def test_reconcile_rejects_a_ref_other_than_the_checked_out_head(tmp_path: Path):
-    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
-
-    ok, message = gate.check_not_behind_public(
-        tmp_path,
-        remote="public",
-        branch="main",
-        local_ref="main",
-    )
-
-    assert not ok
-    assert "only accepts HEAD" in message

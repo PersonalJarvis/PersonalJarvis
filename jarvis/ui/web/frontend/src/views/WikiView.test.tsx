@@ -142,8 +142,8 @@ const POPULATED_TREE: WikiTreeResponse = {
       kind: "entity",
       count: 2,
       files: [
-        { slug: "alex", title: "Alex", mtime: 1, size: 100 },
-        { slug: "sam", title: "Sam", mtime: 2, size: 200 },
+        { slug: "example-user", title: "Example User", mtime: 1, size: 100 },
+        { slug: "example-parent", title: "Example Parent", mtime: 2, size: 200 },
       ],
     },
     { name: "concepts", kind: "concept", count: 0, files: [] },
@@ -160,33 +160,33 @@ const POPULATED_TREE: WikiTreeResponse = {
   stats: { total_pages: 3, total_links: 8, last_curator_run: "2026-05-13T13:59:00" },
 };
 
-const SAM_PAGE: WikiPageResponse = {
+const EXAMPLE_PARENT_PAGE: WikiPageResponse = {
   ok: true,
-  slug: "sam",
+  slug: "example-parent",
   kind: "entity",
-  title: "Sam",
-  path: "entities/sam.md",
+  title: "Example Parent",
+  path: "entities/example-parent.md",
   frontmatter: {
     type: "entity",
     entity_kind: "person",
-    slug: "sam",
+    slug: "example-parent",
     aliases: [],
     created: "2026-05-13",
     updated: "2026-05-13",
   },
-  body_md: "# Sam\n\n## Relationships\n\nCollaborates with [[alex]] on the community garden.\n",
-  wikilinks: ["alex"],
+  body_md: "# Example Parent\n\n## Relationships\n\nRelated to [[example-user]] in this synthetic fixture.\n",
+  wikilinks: ["example-user"],
   stats: { words: 17, bytes: 289, mtime: 1 },
 };
 
-const SAM_BACKLINKS: WikiBacklinksResponse = {
+const EXAMPLE_PARENT_BACKLINKS: WikiBacklinksResponse = {
   ok: true,
-  slug: "sam",
+  slug: "example-parent",
   backlinks: [
     {
-      slug: "alex",
-      title: "Alex",
-      snippet: "...Coordinates the community garden with [[sam]]...",
+      slug: "example-user",
+      title: "Example User",
+      snippet: "...Related to [[example-parent]] in this synthetic fixture...",
     },
   ],
 };
@@ -219,8 +219,8 @@ describe("WikiView — populated tree", () => {
   beforeEach(() => {
     installFetchMock({
       "/api/wiki/tree": () => POPULATED_TREE,
-      "/api/wiki/page/": () => SAM_PAGE,
-      "/api/wiki/backlinks/": () => SAM_BACKLINKS,
+      "/api/wiki/page/": () => EXAMPLE_PARENT_PAGE,
+      "/api/wiki/backlinks/": () => EXAMPLE_PARENT_BACKLINKS,
     });
   });
 
@@ -234,8 +234,8 @@ describe("WikiView — populated tree", () => {
     // Three populated leaves are visible because entities and projects open
     // by default (per mockup contract).
     await waitFor(() => {
-      expect(screen.getByText("alex.md")).toBeDefined();
-      expect(screen.getByText("sam.md")).toBeDefined();
+      expect(screen.getByText("example-user.md")).toBeDefined();
+      expect(screen.getByText("example-parent.md")).toBeDefined();
       expect(screen.getByText("pixel-art-editor.md")).toBeDefined();
     });
 
@@ -284,15 +284,15 @@ describe("WikiView — populated tree", () => {
     renderWithClient(<WikiView />);
 
     await waitFor(() => {
-      expect(screen.getByText("sam.md")).toBeDefined();
+      expect(screen.getByText("example-parent.md")).toBeDefined();
     });
 
-    fireEvent.click(screen.getByText("sam.md"));
+    fireEvent.click(screen.getByText("example-parent.md"));
 
     await waitFor(() => {
       expect(screen.getByTestId("wiki-page-renderer")).toBeDefined();
     });
-    expect(screen.getByTestId("wiki-page-title").textContent).toBe("Sam");
+    expect(screen.getByTestId("wiki-page-title").textContent).toBe("Example Parent");
   }, 10_000);
 });
 
@@ -306,7 +306,7 @@ describe("WikiView — health strip", () => {
     last_write: {
       ts: 1750000000,
       ok: true,
-      pages: ["alex"],
+      pages: ["example-user"],
       error: null,
       source: "curator",
     },
@@ -347,7 +347,7 @@ describe("WikiView — health strip", () => {
       ts: 1750000000,
       ok: false,
       pages: [],
-      error: "Permission denied writing entities/alex.md",
+      error: "Permission denied writing entities/example-user.md",
       source: "curator",
     },
     last_chain_failure: null,
@@ -418,7 +418,7 @@ describe("WikiView — health strip", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("wiki-health-write").textContent).toContain(
-        "Permission denied writing entities/alex.md",
+        "Permission denied writing entities/example-user.md",
       );
     });
     expect(
@@ -450,25 +450,25 @@ describe("WikiView — health strip", () => {
 
 describe("PageRenderer — wikilink behaviour", () => {
   it("preprocessWikilinks rewrites [[slug]] / [[folder/slug]] / [[slug|label]]", () => {
-    expect(preprocessWikilinks("see [[alex]] here")).toBe(
-      "see [alex](#wiki:alex) here",
+    expect(preprocessWikilinks("see [[example-user]] here")).toBe(
+      "see [example-user](#wiki:example-user) here",
     );
-    expect(preprocessWikilinks("see [[entities/alex]] here")).toBe(
-      "see [alex](#wiki:alex) here",
+    expect(preprocessWikilinks("see [[entities/example-user]] here")).toBe(
+      "see [example-user](#wiki:example-user) here",
     );
-    expect(preprocessWikilinks("see [[alex|the son]] here")).toBe(
-      "see [the son](#wiki:alex) here",
+    expect(preprocessWikilinks("see [[example-user|the related entity]] here")).toBe(
+      "see [the related entity](#wiki:example-user) here",
     );
   });
 
   it("clicking a wikilink fires onWikilinkClick with the target slug", async () => {
     installFetchMock({
       "/api/wiki/tree": () => POPULATED_TREE,
-      "/api/wiki/page/sam": () => SAM_PAGE,
+      "/api/wiki/page/example-parent": () => EXAMPLE_PARENT_PAGE,
     });
     const onClick = vi.fn();
     renderWithClient(
-      <PageRenderer slug="sam" onWikilinkClick={onClick} />,
+      <PageRenderer slug="example-parent" onWikilinkClick={onClick} />,
     );
 
     await waitFor(() => {
@@ -476,25 +476,25 @@ describe("PageRenderer — wikilink behaviour", () => {
     });
 
     const link = document.querySelector(
-      "a.wikilink[data-target-slug='alex']",
+      "a.wikilink[data-target-slug='example-user']",
     ) as HTMLAnchorElement | null;
     expect(link).not.toBeNull();
     fireEvent.click(link!);
-    expect(onClick).toHaveBeenCalledWith("alex");
+    expect(onClick).toHaveBeenCalledWith("example-user");
   });
 
   it("renders a broken wikilink with the `.broken` class when the slug is unknown", async () => {
     const brokenPage: WikiPageResponse = {
-      ...SAM_PAGE,
+      ...EXAMPLE_PARENT_PAGE,
       body_md: "Refers to [[nonexistent-slug]] which doesn't exist.\n",
       wikilinks: ["nonexistent-slug"],
     };
     installFetchMock({
       "/api/wiki/tree": () => POPULATED_TREE,
-      "/api/wiki/page/sam": () => brokenPage,
+      "/api/wiki/page/example-parent": () => brokenPage,
     });
     renderWithClient(
-      <PageRenderer slug="sam" onWikilinkClick={vi.fn()} />,
+      <PageRenderer slug="example-parent" onWikilinkClick={vi.fn()} />,
     );
 
     await waitFor(() => {
@@ -513,19 +513,19 @@ describe("PageHeader — frontmatter pills", () => {
   it("renders pills for known frontmatter keys and skips slug + aliases", () => {
     render(
       <PageHeader
-        slug="sam"
+        slug="example-parent"
         kind="entity"
-        title="Sam"
+        title="Example Parent"
         frontmatter={{
           type: "entity",
           entity_kind: "person",
-          slug: "sam",
+          slug: "example-parent",
           aliases: ["herry", "h"],
           created: "2026-05-13",
           updated: "2026-05-13",
         }}
         vaultRoot="C:/vault/Jarvis"
-        vaultRelPath="entities/sam.md"
+        vaultRelPath="entities/example-parent.md"
       />,
     );
 

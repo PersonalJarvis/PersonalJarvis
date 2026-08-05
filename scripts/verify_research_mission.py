@@ -4,7 +4,7 @@ Dispatches a REAL research mission that REQUIRES live web data through the real
 worker -> critic pipeline (isolated short-path DB, live [brain.sub_jarvis]
 provider). Before the fix the codex worker had no web access, fabricated current
 events, and the critic rejected the hallucinations 3x -> critic_loop_exhausted
-(live mission 019ecb56). With `-c tools.web_search=true` the worker can search
+(live mission 019f1037). With `-c tools.web_search=true` the worker can search
 and cite real sources, so the critic can approve.
 
     "C:\\Program Files\\Python311\\python.exe" scripts/verify_research_mission.py

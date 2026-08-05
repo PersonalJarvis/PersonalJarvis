@@ -62,7 +62,7 @@ async def stack(tmp_path: Path):
 def test_render_is_deterministic_and_link_clean(tmp_path: Path) -> None:
     vault_root = tmp_path / "vault"
     (vault_root / "entities").mkdir(parents=True)
-    (vault_root / "entities" / "lena.md").write_text("x", encoding="utf-8")
+    (vault_root / "entities" / "examplefriend.md").write_text("x", encoding="utf-8")
 
     now = _dt.datetime(2026, 6, 10, 12, 0)
     body = render_memory_page(
@@ -77,7 +77,7 @@ def test_render_is_deterministic_and_link_clean(tmp_path: Path) -> None:
     assert "1 entities" in body
     assert "Candidate journal backlog: 3 pending" in body
     assert "2 added" in body
-    assert "[[entities/lena]]" in body
+    assert "[[entities/examplefriend]]" in body
     # Identical inputs render identical output (no hidden clock reads).
     assert body == render_memory_page(
         vault_root=vault_root,
@@ -91,7 +91,7 @@ def test_render_is_deterministic_and_link_clean(tmp_path: Path) -> None:
 async def test_first_refresh_creates_schema_valid_meta_page(stack) -> None:
     vault_root, curator, journal = stack
     journal.append(
-        [CandidateFact(fact="Lena moved to Hamburg.")],
+        [CandidateFact(fact="ExampleFriend moved to Exampleville.")],
         source_label="s", turn_hash="h",
     )
 

@@ -75,13 +75,13 @@ def test_collision_different_bytes_gets_suffix(tmp_path: Path) -> None:
     _make_artifact(mission, "01__t", "proof.html", "NEW")
 
     delivered = deliver_to_user_folder(
-        mission, mission_short_id="019e70d0-6c19", override_dir=str(target)
+        mission, mission_short_id="019f101b-0001", override_dir=str(target)
     )
 
     assert len(delivered) == 1
     # Original preserved, new file got the deterministic mission-id suffix.
     assert (target / "proof.html").read_text(encoding="utf-8") == "OLD"
-    assert delivered[0].name == "proof__019e70d0-6c19.html"
+    assert delivered[0].name == "proof__019f101b-0001.html"
     assert delivered[0].read_text(encoding="utf-8") == "NEW"
 
 
@@ -101,15 +101,15 @@ def test_build_delivered_summary_empty() -> None:
 
 
 def test_skips_browser_profile_scratch(tmp_path: Path) -> None:
-    """Defence-in-depth for the chrome-profile leak (mission_019eeb34-bb67):
+    """Defence-in-depth for the chrome-profile leak (mission_019f1043-0001):
     the user-folder mirror must NOT flood Downloads with a browser/QA worker's
     gitignored Chrome user-data profiles that a pre-fix archive captured. The
     real deliverable (incl. one inside qa-artifacts/ next to the junk) must
     still be delivered."""
     mission = tmp_path / "mission_abc"
-    files = mission / "tasks" / "019eeb34-bc50" / "artifacts" / "files"
+    files = mission / "tasks" / "019f1043-0002" / "artifacts" / "files"
     # Genuine deliverables.
-    _make_artifact(mission, "019eeb34-bc50", "index.html", "<h1>real</h1>")
+    _make_artifact(mission, "019f1043-0002", "index.html", "<h1>real</h1>")
     (files / "qa-artifacts").mkdir(parents=True, exist_ok=True)
     (files / "qa-artifacts" / "melbourne-plan-render.png").write_bytes(b"PNGdata")
     # Browser scratch the archive should never have copied.
@@ -120,7 +120,7 @@ def test_skips_browser_profile_scratch(tmp_path: Path) -> None:
 
     target = tmp_path / "delivered"
     delivered = deliver_to_user_folder(
-        mission, mission_short_id="019eeb34", override_dir=str(target)
+        mission, mission_short_id="019f1043", override_dir=str(target)
     )
 
     names = sorted(p.name for p in delivered)

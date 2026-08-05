@@ -1,6 +1,6 @@
 """Gemini tool-loop history must ride as NATIVE function parts.
 
-Live forensic 2026-07-17 (delegated research turns, and turn af736681
+Live forensic 2026-07-17 (delegated research turns, and turn 20000012
 rounds 4-5): the old conversion JSON-dumped an assistant tool_use turn into
 plain text, so from round 2 of a tool loop Gemini saw its OWN prior calls as
 JSON prose and mimicked that format — every later "tool call" leaked as text

@@ -1,3 +1,3 @@
 # Meeting Notes
 
-Dinner with Viktoria at seven, downtown.
+Fictional demo meeting with Example Contact at seven.

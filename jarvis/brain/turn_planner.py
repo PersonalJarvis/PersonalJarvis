@@ -246,6 +246,19 @@ _ASSISTANT_DAYPLAN_RE = re.compile(
     r"\bque (?:haces|estas haciendo)\b"
     r"(?:[^.?!]{0,24}?\b(?:hoy|manana|ahora)\b)?"
 )
+
+# German ASR commonly collapses the English loanword "laggt" into "legt" and
+# the game noun "Spiel" shares its spelling with the imperative "spiel".  Both
+# are weak action matches, but inside a declarative subject phrase or a noun
+# phrase they describe the conversation/game instead of asking Jarvis to act.
+# Strip only those weak spans; an explicit command elsewhere in the utterance
+# still routes through the orchestrator.
+_GERMAN_NONCOMMAND_ACTION_SPAN_RE = re.compile(
+    r"\b(?:es|das)\s+leg(?:t|te)\b|"
+    r"\b(?:im|am|beim|vom|zum|das|ein|eine|dieses|"  # i18n-allow: German speech-input matching data
+    r"mein|dein|sein|ihr|unser|euer)\s+"  # i18n-allow: German speech-input matching data
+    r"spiel(?:s|e|en)?\b"  # i18n-allow: German speech-input matching data
+)
 # Calendar trivia: asking which day/weekday/date it is (today/tomorrow/...)
 # is answerable by the realtime model itself — the session instructions carry
 # the current local date — yet the time word ("morgen", "tomorrow") used to
@@ -576,6 +589,7 @@ def plan_turn(
     # i18n-allow: names the German idiom tokens under suppression
     weak_scan_text = _ASSISTANT_DAYPLAN_RE.sub(" ", normalized)
     weak_scan_text = _DATE_TRIVIA_RE.sub(" ", weak_scan_text)
+    weak_scan_text = _GERMAN_NONCOMMAND_ACTION_SPAN_RE.sub(" ", weak_scan_text)
 
     action_intent = bool(_ACTION_FALLBACK_RE.search(weak_scan_text))
     if capability_registry is not None:

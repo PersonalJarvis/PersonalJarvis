@@ -55,7 +55,7 @@ def _result_text(content) -> str:  # noqa: ANN001 — tolerant of str | list | d
 #     `item.type` is agent_message / file_change / command_execution /
 #     mcp_tool_call / web_search. (``codex_direct_worker._translate`` maps these
 #     to claude shapes for the LIVE event stream, but the on-disk log the Critic
-#     grades stays RAW codex — live mission 019ec761, 2026-06-15: a codex
+#     grades stays RAW codex — live mission 019f1035, 2026-06-15: a codex
 #     informational answer was invisible -> readonly_answer None -> empty-diff
 #     veto fired 3x -> critic_loop_exhausted.)
 #   * Gemini CLI (`--output-format text`): plain text, no JSON frames at all.
@@ -299,7 +299,7 @@ def _result_is_error(blk: dict) -> bool:  # noqa: ANN001 — tolerant
 
     Claude marks failures either with an explicit ``is_error: true`` flag or by
     embedding a ``<tool_use_error>`` marker in the result text (the form the
-    live mission_019e7abd iter1 produced: *File has not been read yet*).
+    live mission_019f101c iter1 produced: *File has not been read yet*).
     """
     if blk.get("is_error") is True:
         return True
@@ -321,7 +321,7 @@ def extract_write_targets(stream_text: str) -> tuple[str, ...]:
     be correlated to a result) or whose result never arrived (truncated stream)
     is NOT credited — otherwise a malformed frame could let a pre-existing file
     masquerade as freshly written and re-open the false-APPROVE vector the
-    GROUND-TRUTH-RULE exists to close (BUG-LIVE-05, mission_019e2c18). The
+    GROUND-TRUTH-RULE exists to close (BUG-LIVE-05, mission_019f1004). The
     Kontrollierer additionally pairs each returned path with an on-disk
     existence check (:meth:`Kontrollierer._augment_diff_with_external_writes`),
     so a confirmed write whose file does not exist is still rejected downstream.
@@ -799,7 +799,7 @@ def diff_has_action_evidence(diff_text: str) -> bool:
     transcript is narrative ("I will create index.html…"), so the frame-based
     extractor finds nothing. The git diff is where those writes ARE observable,
     so it must count as evidence — otherwise the capability-honesty gate
-    overrides every such mission to failure (live mission 019eefda, 2026-06-22:
+    overrides every such mission to failure (live mission 019f1045, 2026-06-22:
     agy wrote an 80 KB index.html, the gate still said "made no tool call" and
     burned all three critic loops). Crediting the diff is consistent with the
     GROUND-TRUTH-RULE, not a weakening of it: a prose-only claim with an EMPTY
@@ -817,7 +817,7 @@ def diff_has_action_evidence(diff_text: str) -> bool:
 # A pure question ("which city would you recommend for Australia?", "explain
 # how X works") has NO file deliverable — the spoken answer IS the result. The
 # Worker-Critic empty-diff veto would otherwise reject it as "no work done"
-# (live mission 019ec638, 2026-06-14: a travel question failed
+# (live mission 019f1030, 2026-06-14: a travel question failed
 # critic_loop_exhausted). We classify the REQUEST, never the worker's claim, so
 # a do-task that produced nothing is still vetoed (the hallucination guard).
 
@@ -827,7 +827,7 @@ def diff_has_action_evidence(diff_text: str) -> bool:
 # hallucination ("I created the file" with no Write), so it stays vetoed. A
 # request WITHOUT any of these verbs has no artefact to fake — its deliverable
 # is the text itself (a trip plan, an answer, a recommendation), so a no-diff
-# text answer is a valid completion (live missions 019ec66c/019ec674/019ec708:
+# text answer is a valid completion (live missions 019f1031/019f1032/019f1033:
 # "plan / book a trip" failed critic_loop_exhausted because the deliverable is a
 # plan, not a file). Keep this list comprehensive; advisory verbs
 # (plan/book/recommend/suggest/research/…) deliberately stay OUT.
@@ -886,7 +886,7 @@ _INFO_TRIGGER_RE = re.compile(
 # here because the launch verbs ``start``/``starte``/``launch`` ALSO live in
 # ``_ACTION_VERB_RE`` (a legit "open/launch an app" action), so an unstripped
 # "Mission starten" masks a genuine research request as a do-task and routes it
-# to the adversarial code-critic (live mission 019ecb56, 2026-06-15:
+# to the adversarial code-critic (live mission 019f1037, 2026-06-15:
 # critic_loop_exhausted on a working AI-news report). Stripping the spawn-meta
 # clause can only REMOVE text, never add an info trigger — so a real do-task
 # whose deliverable verb sits OUTSIDE the meta clause ("start a worker that
@@ -1090,7 +1090,7 @@ def readonly_answer(
     in-worktree ``diff --git`` hunk), and (c) — when ``prompt`` is supplied and
     classifies as a question/informational request — a pure conversational
     answer with NO tool calls (the spoken answer IS the deliverable; live
-    mission 019ec638, 2026-06-14).
+    mission 019f1030, 2026-06-14).
 
     The anti-hallucination contract is intact: shape (c) is gated on the
     *request* being informational (``is_informational_request``), never on the
@@ -1125,7 +1125,7 @@ def readonly_answer(
 # the mission to the adversarial CODE-critic, which graded a German news essay
 # with a code rubric (correctness/security/side_effects) and demanded reachable
 # web citations a web-less worker cannot produce -> 3x revise ->
-# critic_loop_exhausted (live mission 019ecb56, 2026-06-15). When the WHOLE
+# critic_loop_exhausted (live mission 019f1037, 2026-06-15). When the WHOLE
 # deliverable is substantive prose for an informational request, the document IS
 # the answer: grade it as prose, not as code. The anti-hallucination contract is
 # intact — this keys off the REQUEST being informational AND a real, non-stub
@@ -1279,7 +1279,7 @@ def summarize_answers(answers: list[str], *, cap: int = 600) -> str:
     When the joined text overflows ``cap`` this is spoken back to the user via
     TTS, so a hard ``[:cap-1]`` slice ended the readback mid-word — the voice
     cut off inside a token and the user heard it as Jarvis "hanging up
-    mid-sentence" (live forensic 2026-06-19, session 514cddc0: a 2486-char
+    mid-sentence" (live forensic 2026-06-19, session 10000112: a 2486-char
     answer became "…eine schlechtere Auswander…"). Truncate on the last
     sentence boundary in the back half of the budget instead; failing that, on
     the last word boundary. The trailing ``…`` always fits inside ``cap``.

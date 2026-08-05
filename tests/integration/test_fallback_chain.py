@@ -80,7 +80,7 @@ async def test_all_providers_fail_returns_clear_error():
 
 @pytest.mark.asyncio
 async def test_all_providers_fail_publishes_response_generated_for_transcript():
-    """Regression (live 2026-06-20, session 09eef351): the total-failure apology
+    """Regression (live 2026-06-20, session 10000102): the total-failure apology
     must reach the SessionRecorder so the voice transcript shows what Jarvis said.
 
     The recorder fills ``voice_turns.jarvis_text`` ONLY from a ``ResponseGenerated``

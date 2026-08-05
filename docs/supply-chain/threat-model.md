@@ -93,7 +93,7 @@ Each scenario follows: **pre-condition → action → blast radius → pre-Wave-
 - **Blast radius.** Full release-signing compromise.
 - **Pre-Wave-1 mitigation.** None — and Personal Jarvis has no self-hosted runner yet, which is *why* this isn't a current threat.
 - **Wave-1 mitigation.** Workflow runs on `runs-on: ubuntu-latest` (GitHub-hosted, ephemeral VM, fresh per job). Self-hosted runners are explicitly forbidden until a Wave-3-grade isolation review (rebuilder farm, network egress block, attestation).
-- **Residual gap.** None as long as the constraint holds. The constraint is codified in `install/TRUST_ROOT.md`.
+- **Residual gap.** None as long as the constraint holds. Codify the constraint in `docs/supply-chain/TRUST_ROOT.md`.
 
 ---
 
@@ -240,8 +240,8 @@ treated as code, not as marketing.
 > Companion documents:
 > - `install/TRUST_ROOT.md` §3 — user-facing trust roots + key custody (the
 >   private key is held only as a GitHub Actions secret; §3.3).
-> - `docs/supply-chain/wave2-key-ceremony.md` — public rotation procedure,
->   verifier contract, and recovery procedure.
+> - `docs/supply-chain/wave2-key-ceremony.md` — exhaustive ceremony log
+>   + verifier contract + recovery procedure.
 
 ### 7.1 The single-axis gap that Wave 2 closes
 

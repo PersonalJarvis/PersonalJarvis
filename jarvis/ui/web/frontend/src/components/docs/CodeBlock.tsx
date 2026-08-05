@@ -15,8 +15,27 @@ import { useT } from "@/i18n";
  * If the language isn't recognized, fall back to ``txt`` without highlighting.
  */
 type ShikiHighlighterApi = {
-  codeToHtml: (code: string, opts: { lang: string; theme: string }) => string;
+  codeToHtml: (
+    code: string,
+    opts: {
+      lang: string;
+      themes: { light: string; dark: string };
+      defaultColor: string;
+    },
+  ) => string;
 };
+
+/**
+ * Both themes are baked into ONE highlight pass.
+ *
+ * Shiki's dual-theme mode writes the light colour into `color:` and the dark
+ * one into a `--shiki-dark` custom property on the same span; the rule in
+ * index.css picks whichever the app is currently in. That means switching the
+ * theme costs nothing — no re-highlight, no second Shiki download, no flash of
+ * unstyled code — which matters because these blocks appear inside long guides
+ * where re-rendering would jump the scroll position.
+ */
+const CODE_THEMES = { light: "github-light", dark: "github-dark-default" } as const;
 
 const highlighterPromises = new Map<string, Promise<ShikiHighlighterApi>>();
 
@@ -48,7 +67,7 @@ async function loadHighlighter(language: string): Promise<ShikiHighlighterApi> {
   if (cached) return cached;
   const promise = import("shiki").then(async (shiki) => {
     return await shiki.createHighlighter({
-      themes: ["github-dark-default"],
+      themes: [CODE_THEMES.light, CODE_THEMES.dark],
       langs: [language],
     });
   });
@@ -89,7 +108,8 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
         try {
           const out = highlighter.codeToHtml(code, {
             lang,
-            theme: "github-dark-default",
+            themes: CODE_THEMES,
+            defaultColor: "light",
           });
           setHtml(out);
         } catch {
@@ -116,7 +136,7 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
   };
 
   return (
-    <div className="not-prose group relative my-4 overflow-hidden rounded-md border border-border bg-[#0a0c10]">
+    <div className="not-prose group relative my-4 overflow-hidden rounded-md border border-border bg-muted/40">
       {/* Header-Bar */}
       <div className="flex items-center justify-between border-b border-border/40 bg-muted/20 px-3 py-1">
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground">

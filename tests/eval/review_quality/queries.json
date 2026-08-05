@@ -95,7 +95,7 @@
     {
       "id": "ska-002",
       "bucket": "skill_authoring",
-      "task": "Schreib einen Skill der jeden Morgen um 8:30 die Wetter-Vorhersage für Berlin abruft (open-meteo) und mir per TTS die Top-3-Stunden mit Regen ansagt. Cron-Trigger.",
+      "task": "Schreib einen Skill der jeden Morgen um 8:30 die Wetter-Vorhersage für Exampletown abruft (open-meteo) und mir per TTS die Top-3-Stunden mit Regen ansagt. Cron-Trigger.",
       "rubric_id": "skill_authoring",
       "expected_status": "pass",
       "expected_max_iterations": 3,

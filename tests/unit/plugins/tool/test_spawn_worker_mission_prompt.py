@@ -1,6 +1,6 @@
 """Tests for the mission-prompt construction in spawn_worker.
 
-Live incident 2026-05-29 (mission 019e70a9): the user's request reached the
+Live incident 2026-05-29 (mission 019f101a): the user's request reached the
 worker as a VAD-cut fragment. STT captured only 'die Detailwürfelspiele.html'
 (1.7s of speech); the brain still understood the intent and emitted
 action='eine HTML-Seite namens Würfelspiel.html baut', but the mission prompt
@@ -127,7 +127,7 @@ def test_empty_everything_returns_empty() -> None:
 
 
 def test_mission_prompt_carries_quality_directive() -> None:
-    """Live incident 2026-05-31 (mission 019e7e04): the router's brief told the
+    """Live incident 2026-05-31 (mission 019f101d): the router's brief told the
     worker to build a 'Grundgerüst', the worker (Opus) obeyed and shipped a
     12-line stub, and the mission passed. Every dispatched mission prompt must
     lead with a standing quality directive so a lazy/minimal brief cannot
@@ -180,7 +180,7 @@ async def test_execute_dispatches_enriched_prompt_not_raw_fragment() -> None:
 
 
 def test_forcespawn_strips_spawn_meta_from_worker_task() -> None:
-    """Regression for an explicit renewable-transit research mission: an explicit
+    """Live regression (2026-06-16, "move to Exampleland" mission): an explicit
     voice trigger ("spawn a sub-agent which will help me find out X") routes to
     the force-spawn path (action=""), where the verbatim utterance became the
     worker's task. The worker then read "spawn a sub-agent" as ITS task — which
@@ -190,7 +190,7 @@ def test_forcespawn_strips_spawn_meta_from_worker_task() -> None:
     prompt = _build_mission_prompt(
         utterance=(
             "Create and spawn a sub-agent which will help me find out what I "
-            "have to be aware of when comparing renewable transit systems"
+            "have to be aware of when I move to Exampleland"
         ),
         action="",
     )
@@ -199,7 +199,7 @@ def test_forcespawn_strips_spawn_meta_from_worker_task() -> None:
     assert "spawn a sub-agent" not in low
     assert "create and spawn" not in low
     # the actual research task survives verbatim
-    assert "renewable transit systems" in prompt
+    assert "move to Exampleland" in prompt
     # the standing quality directive is still present
     assert "production-quality" in low
 
@@ -211,7 +211,7 @@ def test_forcespawn_german_spawn_meta_stripped() -> None:
     prompt = _build_mission_prompt(
         utterance=(
             "Spawne einen Sub-Agenten, der herausfindet, was ich beim "  # i18n-allow
-            "USA-Umzug beachten muss"  # i18n-allow
+            "Beispielland-Umzug beachten muss"  # i18n-allow
         ),
         action="",
     )
@@ -219,7 +219,7 @@ def test_forcespawn_german_spawn_meta_stripped() -> None:
     assert "sub-agent" not in low
     assert "sub-agenten" not in low
     # the real task survives
-    assert "USA-Umzug" in prompt
+    assert "Beispielland-Umzug" in prompt
 
 
 def test_forcespawn_topic_request_does_not_leave_an_orphaned_article() -> None:
@@ -281,7 +281,7 @@ def test_forcespawn_no_meta_utterance_unchanged() -> None:
 def test_quality_directive_has_honest_impossibility_escape() -> None:
     """Latency (2026-06-14): the standing quality directive must let the worker
     exit fast on a task it genuinely cannot do, instead of spiralling under the
-    'never downgrade / build the finished artefact' floor (live mission 019ec708:
+    'never downgrade / build the finished artefact' floor (live mission 019f1033:
     'book a trip' ran 535s producing nothing). The floor governs the QUALITY of a
     doable task, never a mandate to fake an undoable one."""
     prompt = _build_mission_prompt(
@@ -296,7 +296,7 @@ def test_quality_directive_has_honest_impossibility_escape() -> None:
 
 
 def test_quality_directive_respects_explicit_form_constraint() -> None:
-    """Live incident 2026-06-22 (mission 019ef052): the user asked for a SINGLE
+    """Live incident 2026-06-22 (mission 019f1046): the user asked for a SINGLE
     HTML file, the worker shipped four (index.html + app.js + styles.css +
     assets/), and the mission passed. The 'never downgrade to a minimal version /
     skeleton is a floor not a ceiling' clause read a single self-contained file

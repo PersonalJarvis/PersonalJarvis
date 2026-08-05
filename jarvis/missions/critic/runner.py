@@ -8,7 +8,7 @@ worker path.
 2026-05-17 (CRIT-1 from audit-team 10): when the resolved primary provider
 is ``claude-api`` we bypass the Jarvis-Agent worker harness entirely and spawn ``claude --print``
 directly (analogous to ``ClaudeDirectWorker``). Live forensics on
-mission_019e35a4 today showed the external ``openclaw`` CLI (2026.5.7) silently ignores the
+mission_019f1009 today showed the external ``openclaw`` CLI (2026.5.7) silently ignores the
 ``cliBackends["claude-cli"]`` override we inject into ``openclaw.json``
 (``provider_chain.py:486-505`` for the worker, ``_ensure_critic_agent_registered``
 below for the critic), routes the LLM call through the ``anthropic`` Messages
@@ -123,7 +123,7 @@ _RE_TOOL_USE_MARKER = re.compile(r'\[TOOL_USE\]\s*([^\s\]]+)')
 _RE_DISPATCH_RESULT = re.compile(r'"dispatch-result"[^}]*?"tool"\s*:\s*"([^"]+)"', re.DOTALL)
 # 4. Codex ``exec --json`` NDJSON: real actions are ``item.started`` /
 #    ``item.completed`` events whose item type is command_execution /
-#    file_change / mcp_tool_call / web_search. Live mission 019eb17d
+#    file_change / mcp_tool_call / web_search. Live mission 019f1027
 #    (2026-06-10): a codex worker genuinely analysed Gmail and wrote
 #    email-analyse.html, but the gate saw zero evidence (it only knew the
 #    Claude tool_use shape) and discarded three 12-minute iterations.
@@ -511,7 +511,7 @@ def enforce_capability_honesty(
     # narrate over a PTY/pipe (no tool_use frame), so frame-based extraction is
     # always empty for them; crediting the diff is what lets a genuinely
     # completed CLI mission pass instead of looping 3× to exhaustion (live
-    # mission 019eefda, 2026-06-22). It is NOT a weakening of the honesty gate:
+    # mission 019f1045, 2026-06-22). It is NOT a weakening of the honesty gate:
     # a prose-only claim with an EMPTY diff still has no evidence and is still
     # overridden (see test_gate_still_blocks_prose_only_email_claim). The one
     # exception is a real SEND action (email/SMS/chat) — a file write does not
@@ -646,7 +646,7 @@ def build_critic_cmd(
 # ("I'm deliberately not calling ExitPlanMode: ...") instead of the verdict,
 # which made the codex-critic fail with CriticSchemaInvalid and the whole
 # mission show as `error` in the Outputs view even though the worker had
-# written the file correctly (live repro 2026-05-24, mission_019e5952).
+# written the file correctly (live repro 2026-05-24, mission_019f100e).
 #
 # Fix: codex exec supports `--output-schema <FILE>` (OpenAI structured
 # output) which FORCES schema-valid JSON. OpenAI strict mode rejects the
@@ -867,7 +867,7 @@ class CriticRunner:
         # LLM then read the log claim "file successfully created" and approved
         # without checking the diff — classic hearsay-evidence sycophancy
         # (Kim & Kim EMNLP 2025, Snorkel "Self-Critique Paradox" 2025). Live
-        # repro mission_019e2c18 (2026-05-15): worker tools = [exec,
+        # repro mission_019f1004 (2026-05-15): worker tools = [exec,
         # memory_search] only, no file_write, no file on disk, Critic
         # approved with confidence=0.9 citing log_line:46.
         #
@@ -904,12 +904,12 @@ class CriticRunner:
         #     real external action, nothing written to the worktree. The old
         #     check matched only Claude's ``"type":"tool_use"`` shape, so a
         #     codex worker burned all three loops here (2026-06-10, sibling
-        #     blindness to the honesty-gate fix for mission 019eb17d).
+        #     blindness to the honesty-gate fix for mission 019f1027).
         # ``_extract_tool_call_evidence`` recognises all harness formats —
         # the honesty gate and this pre-gate must judge by the SAME evidence.
         # The hard veto STAYS for an empty diff with NO genuine tool-call
         # record — the "claims success without invoking any tool"
-        # hallucination (BUG-LIVE-02, mission_019e2c18): there is nothing on
+        # hallucination (BUG-LIVE-02, mission_019f1004): there is nothing on
         # disk for the LLM to grade, so log text alone cannot earn an approve.
         # Correlated, non-errored MCP results are observable external-action
         # evidence even though they leave no worktree file. Surface them through
@@ -963,7 +963,7 @@ class CriticRunner:
             # A pure question / informational request has NO file deliverable —
             # the worker's spoken answer IS the result. Auto-revising it burned
             # all three critic loops -> critic_loop_exhausted -> FAILED (live
-            # mission 019ec638, 2026-06-14: "which city would you recommend for
+            # mission 019f1030, 2026-06-14: "which city would you recommend for
             # a trip to Australia?"). readonly_answer() keys this off the
             # REQUEST shape (is_informational_request), NEVER the worker's claim,
             # so a DO-task that only claims "done" with no tools still falls
@@ -1001,7 +1001,7 @@ class CriticRunner:
             # Honest capability refusal: the worker invoked NO tools, wrote
             # nothing, and its answer says it CANNOT do the task ("book me a
             # trip" -> "I can't access travel booking systems"; live mission
-            # 019ec674, 2026-06-14). Re-prompting cannot grant a missing
+            # 019f1032, 2026-06-14). Re-prompting cannot grant a missing
             # capability, so a 3-loop revise -> critic_loop_exhausted is pure
             # waste and surfaces a scary "three attempts failed" ERROR for a
             # request that was simply impossible. Return a ONE-SHOT reject ->
@@ -1226,7 +1226,7 @@ class CriticRunner:
         # only rescues a substantive research/advisory document the critic would
         # otherwise TERMINALLY fail: a one-shot `reject`, or a `revise` on the
         # final iteration (which the orchestrator turns into
-        # critic_loop_exhausted). Live mission 019ecb56 (2026-06-15): a complete
+        # critic_loop_exhausted). Live mission 019f1037 (2026-06-15): a complete
         # AI-news report failed 3x because the critic graded prose with a code
         # rubric and called real 2026 model releases "hallucinated future
         # claims" — a critic-epistemics gap web_search on the worker cannot
@@ -1301,7 +1301,7 @@ class CriticRunner:
         ``<state_dir>/openclaw.json`` (`agents.list[]`). We can write that
         ourselves in milliseconds and skip the subprocess entirely. The
         materialised shape matches what ``openclaw agents add`` produces
-        on success (verified against mission_019e358e/openclaw.json):
+        on success (verified against mission_019f1008/openclaw.json):
 
             {
               "agents": {
@@ -1393,7 +1393,7 @@ class CriticRunner:
         # The Critic must inject the SAME block — without it the Jarvis-Agent worker
         # falls back to the anthropic Messages-API path and the Critic
         # call dies with HTTP 400 "out of extra usage". Live repro:
-        # mission_019e35a4 today (2026-05-17 13:14) — Critic stderr
+        # mission_019f1009 today (2026-05-17 13:14) — Critic stderr
         # exactly that error. Fixing here makes the Critic use the same
         # OAuth path as the Worker.
         #
@@ -1511,7 +1511,7 @@ class CriticRunner:
         )
 
         primary_provider, primary_model = _resolve_critic_provider_model()
-        # Auth-viability gate (2026-07-07, mission 019f3d18 / BUG-042 defect 5):
+        # Auth-viability gate (2026-07-07, mission 019f1051 / BUG-042 defect 5):
         # this branch used to spawn `claude --print` UNCONDITIONALLY — with a
         # dead Claude CLI auth both critic attempts exited 1, the mission died
         # `critic_unavailable`, and the worker's delivered work (already graded
@@ -1582,7 +1582,7 @@ class CriticRunner:
             # ChatGPT OAuth token ("Please log in again"). Fall back to the
             # claude critic so a dead codex login does not fail a mission with
             # `critic_unavailable` even though the worker delivered real work
-            # (2026-06-08 incident, mission 019ea8a5: claude worker, 7.8 KB diff,
+            # (2026-06-08 incident, mission 019f1022: claude worker, 7.8 KB diff,
             # codex critic → critic_unavailable). Run `codex login` to use the
             # codex critic again.
             if claude_cli_viable:
@@ -1732,7 +1732,7 @@ class CriticRunner:
             # calling ExitPlanMode: ...") instead of the requested JSON verdict
             # — which failed every critic with CriticSchemaInvalid and made
             # missions show "error" in the Outputs view even when the worker
-            # had written the file correctly (live repro mission_019e5960).
+            # had written the file correctly (live repro mission_019f100f).
             # bypassPermissions (same as the worker) makes claude answer the
             # prompt directly. The critic is read-only by intent: the diff is
             # in the prompt and the prompt never asks for a write — and since
@@ -1774,7 +1774,7 @@ class CriticRunner:
             try:
                 # create_worker_subprocess sources the Windows flags and degrades
                 # CREATE_BREAKAWAY_FROM_JOB gracefully (WinError 5) — same fix as
-                # the worker (live mission 019ec61b, 2026-06-14: the critic spawn
+                # the worker (live mission 019f102f, 2026-06-14: the critic spawn
                 # died on breakaway in the app's restrictive job).
                 proc = await create_worker_subprocess(
                     cmd,
@@ -1829,7 +1829,7 @@ class CriticRunner:
         if proc.returncode != 0:
             stderr_text = stderr_b.decode("utf-8", errors="replace")[:1000]
             stdout_text = stdout_b.decode("utf-8", errors="replace")
-            # Model-unavailable recovery (live mission 019ec61b, 2026-06-14):
+            # Model-unavailable recovery (live mission 019f102f, 2026-06-14):
             # the critic model (FRONTIER_MODEL=claude-fable-5) is approved-
             # access-only and the Claude Max subscription can't reach it via
             # the CLI. The CLI default IS accessible — retry once without
@@ -2395,7 +2395,7 @@ def _field_max_length(field_name: str) -> int | None:
 def _validate_verdict_tolerant(payload: str) -> CriticVerdict:
     """Validate critic JSON, tolerating only over-long TTS summary fields.
 
-    Live root cause (mission 019e7f6d, 2026-05-31 21:08/21:09): the critic
+    Live root cause (mission 019f101e, 2026-05-31 21:08/21:09): the critic
     returned a fully valid ``approve`` verdict over a rich 597-line HTML
     deliverable, but ``summary`` (322 chars) and ``summary_de`` (322 chars)
     exceeded the ``max_length=280`` TTS cap on ``CriticVerdict``. Pydantic

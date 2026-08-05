@@ -43,7 +43,7 @@ def test_every_preview_sampler_has_a_cataloged_realtime_provider() -> None:
     from jarvis.brain.model_catalog import REALTIME_VOICES
 
     assert set(provider_routes._REALTIME_PREVIEW_SAMPLERS) <= set(REALTIME_VOICES)
-    assert "codex-subscription-realtime" not in provider_routes._REALTIME_PREVIEW_SAMPLERS
+    assert "codex-subscription-realtime" in provider_routes._REALTIME_PREVIEW_SAMPLERS
 
 
 def test_unknown_provider_is_404() -> None:
@@ -85,6 +85,30 @@ def test_missing_credential_is_409(monkeypatch: pytest.MonkeyPatch) -> None:
     response = _preview(TestClient(_app()), "openai-realtime", voice="alloy")
     assert response.status_code == 409
     assert "credentials" in response.json()["detail"]
+
+
+def test_subscription_preview_does_not_require_an_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _pid: None)
+
+    async def sampler(*_args, **_kwargs) -> tuple[bytes, int]:
+        return b"\x01\x02" * 240, 24_000
+
+    sampler.requires_api_key = False  # type: ignore[attr-defined]
+    monkeypatch.setitem(
+        provider_routes._REALTIME_PREVIEW_SAMPLERS,
+        "codex-subscription-realtime",
+        sampler,
+    )
+
+    response = _preview(
+        TestClient(_app()),
+        "codex-subscription-realtime",
+        voice="cove",
+    )
+
+    assert response.status_code == 200
 
 
 def test_happy_path_returns_playable_wav(monkeypatch: pytest.MonkeyPatch) -> None:

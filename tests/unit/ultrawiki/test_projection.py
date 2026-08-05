@@ -183,13 +183,13 @@ async def test_entities_sharing_a_moment_become_neighbours(store):
     await seed_source(store)
     await seed_distilled(store, "a", question="Trip", entities=["Bora Bora", "Tahiti"])
     await seed_distilled(store, "b", question="Trip again", entities=["Bora Bora", "Tahiti"])
-    await seed_distilled(store, "c", question="Elsewhere", entities=["Berlin"])
+    await seed_distilled(store, "c", question="Elsewhere", entities=["Exampletown"])
 
     projection = await build_projection(store)
 
     bora = projection.entity_by_key["bora bora"]
     assert bora.neighbors == (("tahiti", 2),)
-    assert projection.entity_by_key["berlin"].neighbors == ()
+    assert projection.entity_by_key["exampletown"].neighbors == ()
 
 
 # ---------------------------------------------------------------------------
@@ -298,12 +298,12 @@ async def test_tombstoned_items_leave_the_projection(store):
 async def test_malformed_distillation_json_is_skipped_not_fatal(store):
     await seed_source(store)
     await seed_distilled(store, "bad", raw_distill_json="{not json")
-    await seed_distilled(store, "good", question="Fine", entities=["Berlin"])
+    await seed_distilled(store, "good", question="Fine", entities=["Exampletown"])
 
     projection = await build_projection(store)
 
     assert [m.title for m in projection.moments] == ["Fine"]
-    assert [e.key for e in projection.entities] == ["berlin"]
+    assert [e.key for e in projection.entities] == ["exampletown"]
 
 
 async def test_non_string_entity_values_are_ignored(store):
@@ -317,7 +317,7 @@ async def test_non_string_entity_values_are_ignored(store):
                 "question": "Q",
                 "summary": "",
                 "resolution": "",
-                "entities": ["Berlin", 42, None, {"name": "x"}],
+                "entities": ["Exampletown", 42, None, {"name": "x"}],
                 "refs": [],
             }
         ),
@@ -325,7 +325,7 @@ async def test_non_string_entity_values_are_ignored(store):
 
     projection = await build_projection(store)
 
-    assert [e.key for e in projection.entities] == ["berlin"]
+    assert [e.key for e in projection.entities] == ["exampletown"]
 
 
 async def test_empty_corpus_projects_to_an_empty_model(store):

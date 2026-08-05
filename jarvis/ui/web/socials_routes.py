@@ -76,7 +76,11 @@ def _seed_entries() -> list[dict[str, Any]]:
         ("discord", "Discord", "https://discord.gg/x7USduHxbc"),
         ("github", "GitHub (Repo)", OFFICIAL_REPO_URL),
         ("github", "GitHub (Profile)", "https://github.com/PersonalJarvis"),
-        ("website", "Website", "https://personaljarvis.ai/"),
+        # X: the project's public X presence. Maintainer directive 2026-07-18:
+        # the former @PersonalJarvis account is defunct; the project posts from
+        # the maintainer's public handle @Ruben_Luetke, so every X link in the
+        # repo points there. Users edit or remove the entry via the UI.
+        ("x", "Personal Jarvis", "https://x.com/Ruben_Luetke"),
         ("instagram", "Instagram", "https://www.instagram.com/personaljarvis/"),
     ]
     return [

@@ -142,7 +142,7 @@ def _prompted(registry: Registry) -> list[str]:
 
 
 def _spoken(registry: Registry) -> str:
-    """The live utterance with the two addressed panes filled in."""
+    """The synthetic utterance with the two addressed panes filled in."""
     names = _names(registry)
     return LIVE_FAILURE.format(a=names[0], b=names[4])
 

@@ -270,7 +270,7 @@ def test_unrelated_lookup_does_not_inherit_old_evidence_domain() -> None:
 def test_mission_findings_follow_up_inherits_the_completed_mission() -> None:
     context = (
         "[Trusted Jarvis-Agent mission result] Research finished. "
-        'Result metadata: {"mission_id":"019f5ca2-e30f"}',
+        'Result metadata: {"mission_id":"019f1052-0001"}',
     )
 
     plan = plan_turn(
@@ -345,6 +345,33 @@ def test_common_assistant_action_verbs_route_to_orchestrator(utterance: str) -> 
 )
 def test_guarded_non_action_words_stay_native(utterance: str) -> None:
     assert plan_turn(utterance).path is TurnPath.NATIVE_REALTIME
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Es legt immer noch krass.",  # i18n-allow: exact German ASR fixture
+        "Es laggt im Spiel immer noch krass.",  # i18n-allow: German fixture
+        "Das Spiel ist gut.",  # i18n-allow: German speech-input fixture
+    ],
+)
+def test_german_game_and_lag_reports_stay_native(utterance: str) -> None:
+    """ASR-homophone reports must not pay the orchestrator latency penalty."""
+    assert plan_turn(utterance).path is TurnPath.NATIVE_REALTIME
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Spiel Musik.",  # i18n-allow: German speech-input fixture
+        "Leg einen Termin an.",  # i18n-allow: German speech-input fixture
+        "Öffne das Spiel.",  # i18n-allow: German speech-input fixture
+        "Du spielst jetzt Musik.",  # i18n-allow: German speech-input fixture
+        "Du legst jetzt einen Termin an.",  # i18n-allow: German fixture
+    ],
+)
+def test_german_game_and_lay_commands_still_use_orchestrator(utterance: str) -> None:
+    assert plan_turn(utterance).path is TurnPath.ORCHESTRATOR
 
 
 @pytest.mark.parametrize(

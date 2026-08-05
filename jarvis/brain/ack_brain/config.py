@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 # Providers accepted in the [ack_brain].provider field. Adding a new
 # provider means: add an entry here, add an entry_point in pyproject.toml,
@@ -71,7 +71,11 @@ class OllamaAckProviderConfig(_ProviderBase):
 class _ProvidersBundle(BaseModel):
     """Container for all provider-specific sub-configs."""
 
-    model_config = ConfigDict(extra="forbid")
+    # Ack generation is optional and must never stop the whole application from
+    # booting when a newer install has persisted a provider sub-table that this
+    # version does not know yet. The factory capability-checks REGISTRY entries
+    # before use, so retaining forward-compatible data is safe here.
+    model_config = ConfigDict(extra="allow")
 
     gemini: GeminiAckProviderConfig = Field(
         default_factory=lambda: GeminiAckProviderConfig(model="gemini-3.1-flash")
@@ -236,12 +240,3 @@ class AckBrainConfig(BaseModel):
     # jarvis/brain/ack_brain/spawn_announcement.py.
     spawn_announcements: bool = Field(default=True)
     providers: _ProvidersBundle = Field(default_factory=_ProvidersBundle)
-
-    @field_validator("provider")
-    @classmethod
-    def _provider_must_be_supported(cls, v: str) -> str:
-        if v not in SUPPORTED_PROVIDERS:
-            raise ValueError(
-                f"unknown provider {v!r}; supported: {SUPPORTED_PROVIDERS}"
-            )
-        return v

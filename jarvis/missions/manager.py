@@ -88,7 +88,7 @@ class MissionManager:
 
         Historical context: the old default ``recover=True`` caused the
         94-occurrence crash_recovery false-negative (live forensic 2026-05-31,
-        missions 019e7095 / 019e6fea) because headless instances never set
+        missions 019f1019 / 019f1018) because headless instances never set
         ``JARVIS_PRIMARY_INSTANCE`` and the server defaulted to primary.
 
         ``stale_after_ms`` is forwarded to :func:`startup_recover` (default

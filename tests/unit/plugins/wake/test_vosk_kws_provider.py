@@ -144,12 +144,22 @@ class _FakeRecognizer:
     ``model.grammar_conf`` (the verify re-score input). Free mode (no
     grammar): FinalResult returns ``model.free_text`` with timed words in the
     same span — the knob the confirm-path tests turn.
+
+    Competition mode (the three-alternative "<phrase> / <prefix> [unk] / [unk]"
+    grammar): returns ``model.competition_text``, defaulting to the phrase.
+    Measured against the real en model (2026-08-04, one German and one US
+    voice): the competitor grammar keeps the phrase for 8/8 genuine calls and
+    for 0/20 unrelated utterances, so a test whose free ear heard unrelated
+    speech scripts "[unk]" here — otherwise the mock, not the decoder, would be
+    deciding the precision assertions.
     """
 
     def __init__(self, model, rate, grammar=None):  # noqa: ANN001
         self._model = model
         self._grammar = grammar
         self._chunks = 0
+        alternatives = json.loads(grammar) if grammar else []
+        self._is_competition = len(alternatives) == 3
 
     def SetWords(self, flag):  # noqa: ANN001, N802
         pass
@@ -171,6 +181,12 @@ class _FakeRecognizer:
         return json.dumps({"text": ""})
 
     def FinalResult(self):  # noqa: N802
+        if self._is_competition and self._model.competition_text is not None:
+            text = self._model.competition_text
+            return json.dumps({
+                "text": text,
+                "result": _timed_words(text, self._model.grammar_conf),
+            })
         if self._grammar is not None:
             phrase = self._model.phrase.lower()
             return json.dumps({
@@ -190,6 +206,9 @@ class _FakeModel:
         self.free_text = "hey nova"
         self.grammar_conf = 0.95
         self.fire_after = 3
+        # None = the competitor grammar also lands on the phrase (the genuine
+        # case). A test that scripts unrelated speech sets "[unk]" here.
+        self.competition_text = None
 
 
 @pytest.fixture()
@@ -282,6 +301,9 @@ async def test_confirm_rejection_suppresses_the_fire(fake_vosk) -> None:
         for _ in range(50):
             if fake_vosk["model"] is not None:
                 fake_vosk["model"].free_text = fake_vosk_model_free_text
+                # ...and what the competitor grammar does with that same audio:
+                # measured 0/20 on unrelated speech, it lands on "[unk]".
+                fake_vosk["model"].competition_text = "[unk]"
                 return
             await asyncio.sleep(0.01)
 
@@ -474,6 +496,11 @@ def test_free_words_outside_the_span_cannot_confirm(fake_vosk) -> None:
     p._ensure_model()
     m = fake_vosk["model"]
     m.free_text = "ganz andere worte hier hey nowa"  # i18n-allow: utterance under test
+    # The words AT the span are unrelated, so the competitor grammar prefers
+    # "[unk]" over the phrase for that audio (measured 0/20 on real unrelated
+    # utterances) — the shape route cannot rescue what the spelling route
+    # rejected here.
+    m.competition_text = "[unk]"
     # free words start at 0.5s and stride 0.35s -> "hey nowa" sits ~1.9-2.6s,
     # far outside the grammar span (0.5-1.15s +-0.3) -> localised confirm
     # sees only unrelated words and rejects.
@@ -548,6 +575,7 @@ async def test_rejected_candidate_storm_is_backpressured(
     )
     p._ensure_model()
     fake_vosk["model"].free_text = "unrelated room speech"
+    fake_vosk["model"].competition_text = "[unk]"
 
     verify_calls = 0
     fresh_rec_calls = 0

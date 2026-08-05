@@ -17,9 +17,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { ProviderCard } from "@/components/providers/ProviderTierSection";
+import {
+  PROVIDER_STATE_CHIPS,
+  ProviderCard,
+  type ProviderStateChip,
+} from "@/components/providers/ProviderTierSection";
 import type { ProviderDescriptor, ProviderTestResult } from "@/hooks/useProviders";
 import { useI18nStore, type UiLanguage } from "@/i18n";
+import enLocale from "@/i18n/locales/en.json";
+
+/** The rendered label of one state chip, resolved through its i18n key.
+ *
+ * These chips used to be bare English literals in the component, so a test
+ * asserting the literal could not tell a translated chip from an untranslated
+ * one. Going through the key keeps the assertion about the STATE, not about
+ * one locale's wording. */
+function chipLabel(chip: ProviderStateChip): string {
+  const [namespace, key] = PROVIDER_STATE_CHIPS[chip].key.split(".");
+  const bucket = (enLocale as unknown as Record<string, Record<string, string>>)[
+    namespace
+  ];
+  return bucket[key];
+}
+
+const EXPERIMENTAL_CONSENT_KEY =
+  "jarvis.experimentalConsent.codex-subscription-realtime";
+
 import { useEventStore } from "@/store/events";
 
 interface Call {
@@ -125,12 +148,16 @@ function codexRealtimeCard(
   };
 }
 
-function renderCard(descriptor: ProviderDescriptor, onChanged: () => void = () => {}) {
+function renderCard(
+  descriptor: ProviderDescriptor,
+  onChanged: () => void = () => {},
+  onActivateOptimistic: (tier: string, id: string) => void = () => {},
+) {
   return render(
     <ProviderCard
       descriptor={descriptor}
       onChanged={onChanged}
-      onActivateOptimistic={() => {}}
+      onActivateOptimistic={onActivateOptimistic}
       autoActivateOnSave={false}
     />,
   );
@@ -147,6 +174,7 @@ function polishPin(calls: Call[]): Record<string, unknown> {
 
 describe("ProviderCard — dictation polish activation", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -207,6 +235,7 @@ describe("ProviderCard — dictation polish activation", () => {
 
 describe("ProviderCard — a switched-to polish provider proves it works", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     vi.restoreAllMocks();
     useI18nStore.getState().setUi("en", { push: false });
     useEventStore.setState({ toasts: [] });
@@ -307,6 +336,7 @@ describe("ProviderCard — a switched-to polish provider proves it works", () =>
 
 describe("ProviderCard: ChatGPT subscription Realtime", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     vi.restoreAllMocks();
     useEventStore.setState({ toasts: [] });
     useI18nStore.getState().setUi("en", { push: false });
@@ -442,6 +472,248 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
     },
   );
 
+  it("renders a transient busy status as a neutral check, never as a defect", () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: false,
+          connected: false,
+          mode: "not_connected",
+          message: "Dedicated subscription voice status is being checked or changed.",
+          reason_code: "busy",
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText("Checking the ChatGPT voice status — one moment."),
+    ).toBeTruthy();
+    // Busy means "state unknown for a moment" — the card must not fall back
+    // to the install invitation or the reconnect warning.
+    expect(screen.queryByText("npm i -g @openai/codex")).toBeNull();
+    expect(
+      screen.queryByText(
+        "The protected Codex voice profile is no longer valid. Connect with ChatGPT rebuilds it fresh.",
+      ),
+    ).toBeNull();
+    // The state chip next to the provider name must not shout "missing" (red)
+    // about an install the probe has not judged yet.
+    expect(screen.queryByText(chipLabel("missing"))).toBeNull();
+    expect(screen.getByText(chipLabel("checking"))).toBeTruthy();
+    // The connect action stays available: login validates itself and a busy
+    // flicker must not lock the user out of it.
+    const connect = screen.getByRole("button", {
+      name: "Connect with ChatGPT",
+    }) as HTMLButtonElement;
+    expect(connect.disabled).toBe(false);
+
+    // Clicking the card during busy must not demand a redo of a working
+    // login — it answers with the same neutral "checking" note.
+    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+    expect(toastsOf("warning")).toEqual([]);
+    expect(toastsOf("info")).toEqual([
+      "Checking the ChatGPT voice status — one moment.",
+    ]);
+  });
+
+  it("surfaces the precise backend diagnosis on a real setup defect", () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: true,
+          connected: false,
+          mode: "not_connected",
+          message: "Subscription voice requires Codex CLI codex-cli 0.146.0.",
+          reason_code: "setup_invalid",
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText(
+        "The protected Codex voice profile is no longer valid. Connect with ChatGPT rebuilds it fresh.",
+      ),
+    ).toBeTruthy();
+    const detail = screen.getByTestId("codex-setup-detail").textContent ?? "";
+    expect(detail).toContain("Details:");
+    expect(detail).toContain(
+      "Subscription voice requires Codex CLI codex-cli 0.146.0.",
+    );
+  });
+
+  it("keeps model and voice pickers mounted through a busy window", async () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: false,
+          connected: false,
+          mode: "not_connected",
+          message: "Dedicated subscription voice status is being checked or changed.",
+          reason_code: "busy",
+        },
+      }),
+    );
+
+    // The realtime options control mounts (it loads its options async) even
+    // while the card is only transiently unsure about the login — the card
+    // must not visibly flicker its pickers away during "one moment".
+    expect(await screen.findByLabelText(/model/i)).toBeTruthy();
+  });
+
+  it("tells the user to finish a running login instead of restarting it", () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: true,
+          connected: false,
+          mode: "not_connected",
+          message: "Dedicated ChatGPT subscription login is in progress.",
+          reason_code: "login_in_progress",
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText(
+        "The ChatGPT login is running — finish it in the browser window.",
+      ),
+    ).toBeTruthy();
+    const connect = screen.getByRole("button", {
+      name: "Connect with ChatGPT",
+    }) as HTMLButtonElement;
+    expect(connect.disabled).toBe(true);
+    expect(screen.queryByText("npm i -g @openai/codex")).toBeNull();
+  });
+
+  it("treats an unsupported OS as terminal, not as a missing install", () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: false,
+          connected: false,
+          mode: "not_connected",
+          message: "This operating-system architecture is not approved.",
+          reason_code: "lifecycle_unavailable",
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText(
+        "Subscription voice is not yet available on this operating system. API Realtime and standard voice still work.",
+      ),
+    ).toBeTruthy();
+    // No install invitation for a CLI that would not help, and no active
+    // Connect button that can only end in an error toast.
+    expect(screen.queryByText("npm i -g @openai/codex")).toBeNull();
+    const connect = screen.getByRole("button", {
+      name: "Connect with ChatGPT",
+    }) as HTMLButtonElement;
+    expect(connect.disabled).toBe(true);
+    // The state chip stays neutral — nothing is "missing" on an OS the
+    // feature does not support.
+    expect(screen.queryByText(chipLabel("missing"))).toBeNull();
+    expect(screen.getByText(chipLabel("unavailable"))).toBeTruthy();
+  });
+
+  it("shows the sticky plan diagnosis after a refused activation", () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: true,
+          connected: false,
+          mode: "not_connected",
+          message:
+            "Subscription voice permits only personal ChatGPT accounts; workspace, enterprise, education, and unknown plans are refused.",
+          reason_code: "plan_unsupported",
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText("This ChatGPT plan does not support subscription voice."),
+    ).toBeTruthy();
+    expect(screen.getByTestId("codex-setup-detail").textContent).toContain(
+      "personal ChatGPT accounts",
+    );
+  });
+
+  it("lets a plan-blocked card retry activation through the backend", async () => {
+    const calls = installFetchMock();
+    // Not this test's subject: the route was acknowledged earlier, so the
+    // dialog stays away (it asks once per provider, never on every switch).
+    window.localStorage.setItem(EXPERIMENTAL_CONSENT_KEY, "1");
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        codex_status: {
+          installed: true,
+          connected: false,
+          mode: "not_connected",
+          message:
+            "Subscription voice permits only personal ChatGPT accounts; workspace, enterprise, education, and unknown plans are refused.",
+          reason_code: "plan_unsupported",
+        },
+      }),
+    );
+
+    // The backend's live account gate is the ONLY judge that can clear the
+    // sticky block — the click must reach it instead of dead-ending in a
+    // local toast.
+    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (candidate) =>
+            candidate.method === "POST" &&
+            candidate.url.includes("/realtime/switch"),
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("shows the pinned install path for a wrong codex release", () => {
+    installFetchMock();
+    renderCard(
+      codexRealtimeCard({
+        configured: false,
+        install_hint: "npm i -g @openai/codex@0.146.0",
+        codex_status: {
+          installed: false,
+          connected: false,
+          mode: "not_connected",
+          message: "Subscription voice requires Codex CLI 0.146.0.",
+          reason_code: "not_installed",
+        },
+      }),
+    );
+
+    expect(
+      screen.getByText(
+        "Install the supported Codex version before connecting ChatGPT.",
+      ),
+    ).toBeTruthy();
+    // The actionable fix — the pinned command — must render, and the precise
+    // requirement appears as the diagnostic detail.
+    expect(screen.getByText("npm i -g @openai/codex@0.146.0")).toBeTruthy();
+    expect(screen.getByTestId("codex-setup-detail").textContent).toContain(
+      "Subscription voice requires Codex CLI 0.146.0.",
+    );
+  });
+
   it("asks for a ChatGPT subscription login without suggesting an API key", () => {
     installFetchMock();
     renderCard(
@@ -493,7 +765,7 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
 
   it("activates through the Realtime switch without the Brain API-key guard", async () => {
     const calls = installFetchMock();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    window.localStorage.setItem(EXPERIMENTAL_CONSENT_KEY, "1");
     renderCard(codexRealtimeCard());
 
     fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
@@ -514,17 +786,139 @@ describe("ProviderCard: ChatGPT subscription Realtime", () => {
 
   it("does not activate until the user accepts the experimental boundary", async () => {
     const calls = installFetchMock();
-    vi.spyOn(window, "confirm").mockReturnValue(false);
-    renderCard(codexRealtimeCard());
+    const optimistic = vi.fn();
+    renderCard(codexRealtimeCard(), () => {}, optimistic);
 
     fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
 
-    await waitFor(() => expect(window.confirm).toHaveBeenCalledOnce());
+    // An in-app dialog, not window.confirm: the desktop shell renders that as
+    // a raw "127.0.0.1 says" box and it blocks the whole window.
+    const cancel = await screen.findByText("Cancel");
+    fireEvent.click(cancel);
     expect(
       calls.some(
         (candidate) =>
           candidate.method === "POST" && candidate.url === "/api/realtime/switch",
       ),
     ).toBe(false);
+    // The consent dialog comes BEFORE the optimistic radio flip: a declined
+    // dialog used to leave the highlight stuck on the new card with no
+    // refetch to roll it back.
+    expect(optimistic).not.toHaveBeenCalled();
+  });
+
+  it("flips the radio optimistically only after the consent is accepted", async () => {
+    installFetchMock();
+    const optimistic = vi.fn();
+    renderCard(codexRealtimeCard(), () => {}, optimistic);
+
+    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+
+    const accept = await screen.findByText("Yes");
+    expect(optimistic).not.toHaveBeenCalled();
+    fireEvent.click(accept);
+
+    await waitFor(() =>
+      expect(optimistic).toHaveBeenCalledWith(
+        "realtime",
+        "codex-subscription-realtime",
+      ),
+    );
+  });
+
+  it("asks for the experimental acknowledgement once, not on every switch", async () => {
+    installFetchMock();
+    window.localStorage.setItem(EXPERIMENTAL_CONSENT_KEY, "1");
+    const optimistic = vi.fn();
+    renderCard(codexRealtimeCard(), () => {}, optimistic);
+
+    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+
+    // Straight through: re-asking every time taught the user to click the
+    // notice away unread, which defeats the point of showing it at all.
+    await waitFor(() =>
+      expect(optimistic).toHaveBeenCalledWith(
+        "realtime",
+        "codex-subscription-realtime",
+      ),
+    );
+    expect(screen.queryByText("Yes")).toBeNull();
+  });
+});
+
+/**
+ * Regression guard for the stacked-notification wall (2026-08-04).
+ *
+ * A card the user cannot activate yet answers each click with one fixed
+ * sentence. The card used to bind BOTH onClick and onDoubleClick to the same
+ * handler, so a double click ran it three times (click, click, dblclick) and
+ * two attempts left six identical toasts stacked over the connect button the
+ * message points at. One gesture must produce at most one visible notice.
+ */
+describe("ProviderCard — an unavailable card does not build a warning wall", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+    useI18nStore.getState().setUi("en", { push: false });
+    useEventStore.setState({ toasts: [] });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  function unconnectedSubscriptionCard(): ProviderDescriptor {
+    return {
+      ...dictationCard(),
+      id: "codex-subscription-realtime",
+      label: "ChatGPT subscription (Codex)",
+      tier: "realtime",
+      auth_mode: "codex",
+      secret_keys: [],
+      secrets_set: {},
+      billing: "subscription",
+      configured: false,
+      optional: false,
+      polish_family: null,
+      codex_status: {
+        installed: true,
+        connected: false,
+        mode: "not_connected",
+        message: "The dedicated Codex voice profile has not been created yet.",
+        reason_code: "login_required",
+      },
+    } as ProviderDescriptor;
+  }
+
+  it("raises ONE notice for a double click, not three", async () => {
+    installFetchMock();
+    renderCard(unconnectedSubscriptionCard());
+
+    const title = screen.getByText("ChatGPT subscription (Codex)");
+    // Exactly what a user does: a real double click delivers two click events
+    // plus one dblclick. Only the clicks may reach the handler now.
+    fireEvent.click(title);
+    fireEvent.click(title);
+    fireEvent.doubleClick(title);
+
+    await waitFor(() =>
+      expect(useEventStore.getState().toasts.length).toBeGreaterThan(0),
+    );
+    const { toasts } = useEventStore.getState();
+    expect(toasts).toHaveLength(1);
+    // Collapsed, and honest about how often it was raised.
+    expect(toasts[0].count).toBe(2);
+  });
+
+  it("never activates a card whose login is still missing", async () => {
+    const calls = installFetchMock();
+    renderCard(unconnectedSubscriptionCard());
+
+    fireEvent.click(screen.getByText("ChatGPT subscription (Codex)"));
+
+    await waitFor(() =>
+      expect(useEventStore.getState().toasts.length).toBe(1),
+    );
+    expect(calls.some((c) => c.url.includes("/api/realtime/switch"))).toBe(false);
   });
 });

@@ -45,7 +45,7 @@ async function readStdinJson() {
 /**
  * A calendar start/end value. A bare date ("2026-06-28") becomes an all-day
  * event; anything else is treated as an RFC3339 dateTime with an optional
- * IANA timeZone (e.g. "Europe/Berlin").
+ * IANA timeZone (e.g. "Etc/UTC").
  * @param {string} value
  * @param {string|undefined} timeZone
  */

@@ -90,9 +90,9 @@ def test_enum_values_are_stable_wire_strings():
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        ("  Viktoria   Novak ", "viktoria novak"),
-        ("VIKTORIA NOVAK", "viktoria novak"),
-        ("Novak, Viktoria.", "novak, viktoria"),
+        ("  Testoria   Novak ", "testoria novak"),
+        ("TESTORIA NOVAK", "testoria novak"),
+        ("Novak, Testoria.", "novak, testoria"),
         ("-ultra-wiki-", "ultra-wiki"),
         ("a", None),  # below the floor
         ("x" * (MAX_NAME_CHARS + 1), None),  # above the ceiling
@@ -185,7 +185,7 @@ def test_normalize_handle_cases(raw, expected):
 
 
 def test_normalize_contact_slug():
-    assert normalize_contact_slug(" Viktoria-Novak ") == "viktoria-novak"
+    assert normalize_contact_slug(" Testoria-Novak ") == "testoria-novak"
     assert normalize_contact_slug("") is None
 
 
@@ -208,7 +208,7 @@ def test_normalize_identifier_dispatches_and_refuses_unknown_kinds():
         ("ultra wiki", "ultra-wiki"),
         ("ultrawiki", "ultra-wiki"),
         # Token order differences.
-        ("viktoria novak", "novak viktoria"),
+        ("testoria novak", "novak testoria"),
     ],
 )
 def test_near_duplicates_reach_the_proposal_threshold(left, right):
@@ -237,10 +237,10 @@ def test_identical_names_score_one_but_are_still_not_deterministic():
 
 
 def test_nickname_rule_covers_the_canonical_example():
-    """"Viki" is not similar to "Viktoria Novak" by any string metric, yet it
+    """"Test" is not similar to "Testoria Novak" by any string metric, yet it
     is the textbook probable match."""
-    assert nickname_score("viki", "viktoria novak") == NICKNAME_SCORE
-    assert name_similarity("viki", "viktoria novak") >= PROPOSE_THRESHOLD
+    assert nickname_score("test", "testoria novak") == NICKNAME_SCORE
+    assert name_similarity("test", "testoria novak") >= PROPOSE_THRESHOLD
 
 
 @pytest.mark.parametrize(
@@ -248,7 +248,7 @@ def test_nickname_rule_covers_the_canonical_example():
     [
         ("ana", "anastasia"),  # below the length floor
         ("rick", "patrick"),  # different first character
-        ("vi ki", "viktoria novak"),  # a multi-word "nickname" is not one
+        ("vi ki", "testoria novak"),  # a multi-word "nickname" is not one
         ("marc", "marcelinodefigueroa"),  # dwarfed by the long form
     ],
 )
@@ -257,7 +257,7 @@ def test_nickname_rule_refuses_loose_abbreviations(short, long):
 
 
 def test_similarity_is_symmetric_and_bounded():
-    for left, right in (("viki", "viktoria"), ("john smith", "jane smith")):
+    for left, right in (("test", "testoria"), ("john smith", "jane smith")):
         score = name_similarity(left, right)
         assert score == name_similarity(right, left)
         assert 0.0 <= score <= 1.0
@@ -294,13 +294,13 @@ def test_escape_like_neutralizes_wildcards():
 
 def test_match_evidence_round_trips_through_json_shape():
     evidence = MatchEvidence(
-        tier=MatchTier.PROBABLE, kind="name_similar", value="viki", score=0.8412345
+        tier=MatchTier.PROBABLE, kind="name_similar", value="test", score=0.8412345
     )
     payload = evidence.to_dict()
     assert payload == {
         "tier": "probable",
         "kind": "name_similar",
-        "value": "viki",
+        "value": "test",
         "score": 0.8412,
     }
     assert MatchEvidence.from_dict(payload).kind == "name_similar"

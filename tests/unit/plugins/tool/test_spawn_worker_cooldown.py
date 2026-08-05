@@ -1,6 +1,6 @@
 """Tests for the per-tool spawn cooldown.
 
-Live regression 2026-05-27 (mission_019e6983-{82e7,a83b,b0be}): ONE user
+Live regression 2026-05-27 (mission_019f1017-{82e7,a83b,b0be}): ONE user
 voice request ("Subagent für HTML-Slideshow") produced THREE mission cards  # i18n-allow: verbatim forensic quote of the live German voice utterance under test
 in the Outputs UI within 10 seconds. Root cause: the user's long utterance
 was VAD-fragmented across multiple turns, and each turn that landed in the

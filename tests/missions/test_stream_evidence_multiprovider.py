@@ -1,7 +1,7 @@
 """Provider-agnostic evidence extraction: the critic gates must SEE a codex or
 gemini worker's real work and final answer, not only claude's stream-json shape.
 
-Root cause (2026-06-15 deep-dive, live mission 019ec761 + DB forensics): every
+Root cause (2026-06-15 deep-dive, live mission 019f1035 + DB forensics): every
 extractor in ``jarvis.missions.stream_evidence`` parsed ONLY claude frames
 (``type==assistant/user/result`` with ``tool_use``/``tool_result`` blocks). A
 codex worker writes ``item.completed`` frames and a gemini worker writes plain
@@ -92,12 +92,12 @@ def test_codex_desktop_launch_is_credited() -> None:
     assert any("start chrome" in cmd for cmd, _ in actions)
 
 
-# --- codex: informational answer is spoken back (THE 019ec761 fix) ----------
+# --- codex: informational answer is spoken back (THE 019f1035 fix) ----------
 def test_codex_informational_answer_is_spoken_back() -> None:
-    stream = _codex_agent("I recommend Melbourne for its culture and coffee scene.")
+    stream = _codex_agent("I recommend Exampleville for its culture and coffee scene.")
     answer = readonly_answer("", stream, prompt=INFO_PROMPT)
     assert answer is not None
-    assert "Melbourne" in answer
+    assert "Exampleville" in answer
 
 
 def test_codex_honest_refusal_is_surfaced() -> None:

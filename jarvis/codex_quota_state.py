@@ -4,7 +4,7 @@ Why this exists: the codex ChatGPT plan can be usage-capped ("You've hit your
 usage limit … try again at Jul 31st") while ``codex status`` still reports
 connected=True — the login is fine, the plan just can't run right now. Without
 a memory of that cap, the worker factory re-picked codex on EVERY mission and
-retry iteration (2026-07-07 incident, mission_019f3cd8-1dd4): each spawn burned
+retry iteration (2026-07-07 incident, mission_019f104e-0001): each spawn burned
 ~28 s until the cap error returned, the in-worker fallback then died on a dead
 Claude login, and after three identical iterations the mission failed — while a
 healthy OpenRouter key sat unused (AP-22).

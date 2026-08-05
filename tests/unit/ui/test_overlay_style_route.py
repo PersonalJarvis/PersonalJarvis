@@ -7,6 +7,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from jarvis.ui.overlay_styles import OVERLAY_STYLES
 from jarvis.ui.web.settings_routes import router
 
 
@@ -26,12 +27,27 @@ def test_get_returns_current_and_options():
     assert r.status_code == 200
     body = r.json()
     assert body["style"] == "mascot"
-    assert set(body["options"]) == {"jarvis_bar", "mascot", "none"}
+    assert body["options"] == list(OVERLAY_STYLES)
 
 
 def test_put_rejects_unknown_style():
     r = _client().put("/api/settings/overlay-style", json={"style": "bogus"})
     assert r.status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("sent", "stored"),
+    [("whisper_bar", "jarvis_bar"), ("orb", "mascot"), ("Voice_Orb", "voice_orb")],
+)
+def test_put_normalizes_legacy_and_cased_values(monkeypatch, sent, stored):
+    # An old frontend bundle (or an old jarvis.toml round-trip) must not get a
+    # 400 for a value that still has a meaning today.
+    import jarvis.core.config_writer as cw
+
+    monkeypatch.setattr(cw, "set_overlay_style", lambda style, **k: None)
+    r = _client().put("/api/settings/overlay-style", json={"style": sent})
+    assert r.status_code == 200
+    assert r.json()["style"] == stored
 
 
 def test_put_persists_and_live_applies(monkeypatch):

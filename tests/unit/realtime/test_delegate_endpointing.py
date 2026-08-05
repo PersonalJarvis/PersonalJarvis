@@ -393,13 +393,13 @@ async def test_undelivered_readback_falls_back_to_surface_tts(
         await session.end(reason="test")
 
     fallbacks = [m for m in messages if m.get("type") == "error_spoken"]
-    assert fallbacks == [
-        {
-            "type": "error_spoken",
-            "text": "Tomorrow is Friday.",
-            "language": "en",
-        }
-    ]
+    # Compared field by field rather than as a whole dict: the surface message
+    # carries diagnostic fields (which provider produced the turn) that are
+    # free to grow, and pinning the exact shape here would fail every time one
+    # is added without saying anything about the behaviour under test.
+    assert len(fallbacks) == 1
+    assert fallbacks[0]["text"] == "Tomorrow is Friday."
+    assert fallbacks[0]["language"] == "en"
 
 
 @pytest.mark.asyncio

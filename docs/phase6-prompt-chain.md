@@ -48,8 +48,8 @@ Written by the user — typically:
 
 **Delivers:**
 - `jarvis/missions/workers/base.py` — `WorkerHarness` protocol.
-- `jarvis/missions/workers/claude_direct_worker.py` — the Claude CLI stream-json consumer with resumable sessions.
-- `jarvis/missions/workers/codex_worker.py` — `codex exec --json` with isolated per-worker configuration.
+- `jarvis/missions/workers/jarvis_agent.py` — the external `openclaw agent --output-format stream-json --include-partial-messages` consumer with `--resume <session_id>` support.
+- `jarvis/missions/workers/codex.py` — `codex exec --json --sandbox workspace-write --ask-for-approval never` with per-worker `CODEX_HOME`.
 - `jarvis/missions/workers/stream_consumer.py` — line-buffered async NDJSON reader with tee to `<run_dir>/logs/stream.jsonl`.
 - `jarvis/missions/workers/supervisor.py` — done/stuck/waiting detection (process-exit + `result` event + `api_retry` honor + 90s idle + 900s hard cap).
 - `jarvis/missions/isolation/worktree.py` — `git worktree add -b agent/<task-id>`.

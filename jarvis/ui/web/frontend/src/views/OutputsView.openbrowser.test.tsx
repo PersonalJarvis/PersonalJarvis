@@ -37,7 +37,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-const SLUG = "mission_synthetic-test";
+const SLUG = "mission_019f1049-0001";
 
 function installFetchMock(artifacts: ArtifactSummary[]) {
   const sessions: OutputSummary[] = [
@@ -100,7 +100,7 @@ function renderView() {
 }
 
 const REPORT: ArtifactSummary = {
-  path: "tasks/019e3288/artifacts/files/report.md",
+  path: "tasks/019f1007/artifacts/files/report.md",
   size: 64,
   mtime: 1_750_000_100,
   is_text: true,
@@ -131,7 +131,7 @@ describe("OutputsView — Browser opener reaches the real browser", () => {
     // Absolute http(s) url ending at the artifact's render endpoint.
     expect(calledWith).toMatch(/^https?:\/\//);
     expect(calledWith).toContain(
-      `/api/outputs/${SLUG}/files/tasks/019e3288/artifacts/files/report.md/view`,
+      `/api/outputs/${SLUG}/files/tasks/019f1007/artifacts/files/report.md/view`,
     );
     // The WebView2-dropped bare window.open must NOT be used for the browser pick.
     expect(winOpen).not.toHaveBeenCalled();

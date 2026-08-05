@@ -127,7 +127,7 @@ def _wake(stt, *, timeout_s: float, busy_hang_s: float) -> RollingWhisperWake:
     # (production polls at 0.2 s, far above the resolution).
     return RollingWhisperWake(
         stt,
-        pattern=re.compile(r"nico", re.IGNORECASE),
+        pattern=re.compile(r"nova", re.IGNORECASE),
         poll_interval_s=0.05,
         cooldown_s=0.0,
         save_debug_wavs=False,

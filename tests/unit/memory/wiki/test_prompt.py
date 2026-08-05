@@ -455,13 +455,13 @@ def test_consolidator_prompt_carries_the_graph_visibility_rule() -> None:
 def test_consolidator_prompt_elevates_explicit_persistence_requests() -> None:
     candidate = SimpleNamespace(
         id=8,
-        fact="The user plans to travel to San Francisco tomorrow.",
+        fact="The user plans to travel to Exampleville tomorrow.",
         kind="plan",
         subjects=("user",),
         evidence_turn_id="sf-turn",
         evidence_excerpt=(
             "Evidence user turn [sf-turn]: Kannst du bitte hinzufügen, dass "  # i18n-allow
-            "ich morgen nach San Francisco reisen möchte?"  # i18n-allow
+            "ich morgen nach Exampleville reisen möchte?"  # i18n-allow
         ),
     )
 
@@ -475,7 +475,7 @@ def test_consolidator_prompt_elevates_explicit_persistence_requests() -> None:
     assert "commands with no separately asserted durable content" in system
     assert "the one-shot action" in system
     assert "request itself remains non-durable" in system
-    assert "San Francisco" in user
+    assert "Exampleville" in user
 
 
 # ---------------------------------------------------------------------

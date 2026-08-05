@@ -5,7 +5,7 @@ The historical backend was the DuckDuckGo *Instant Answer* API
 (AbstractText / RelatedTopics). It has NO real-time index, so freshness
 queries — music charts, news, prices, sports, "what's trending" — come back
 202/empty and the brain (correctly) reports it found nothing. See the
-2026-06-15 "top ten songs" forensic (session 95a404b4) and the 2026-06-10
+2026-06-15 "top ten songs" forensic (session 10000114) and the 2026-06-10
 weather forensic.
 
 This module replaces that single backend with a priority chain that returns

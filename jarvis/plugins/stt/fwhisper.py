@@ -300,8 +300,8 @@ def ensure_cuda_libraries_findable() -> None:
         try:
             # Lets the loaded libraries find their own dependencies by name.
             directory_handle = add_dll_directory(str(directory))
-        except OSError as exc:
-            log.debug("Could not add CUDA DLL search directory %s: %s", directory, exc)
+        except OSError:  # Explicit DLL preloads below remain the portable fallback.
+            pass
         loaded: list[str] = []
         library_handles: list[Any] = []
         for name in _CUDA_DLL_PRELOAD:
@@ -530,7 +530,7 @@ class FasterWhisperProvider:
         # AND the VAD "listening bubble" probe (``_probe_stt = _stt`` for a custom
         # wake phrase). ctranslate2's ``WhisperModel`` is NOT thread-safe for
         # concurrent ``transcribe`` on one model object — two overlapping calls
-        # hang (the 12-minute custom-wake "Hey Nico" silent wedge, forensic
+        # hang (the 12-minute custom-wake "Hey Nova" silent wedge, forensic
         # 2026-06-29) or return garbage. This lock makes the model call mutually
         # exclusive per instance so the two callers serialize instead of racing.
         self._infer_lock = threading.Lock()
@@ -795,7 +795,7 @@ class FasterWhisperProvider:
         # ctranslate2 decode). The SAME instance is shared by the rolling-whisper
         # wake poll loop AND the VAD "listening bubble" probe; ctranslate2 is not
         # thread-safe for concurrent transcribe on one model. A *blocking* lock
-        # would let a HUNG call (the 2-hour "Hey Nico" wedge, forensic 2026-06-29:
+        # would let a HUNG call (the 2-hour "Hey Nova" wedge, forensic 2026-06-29:
         # every transcribe timed out at 8 s forever) pile every later call up
         # behind it. Non-blocking instead: if a call is already in flight, skip
         # (raise ``TranscribeBusy``) so the caller re-polls; a run of these is the

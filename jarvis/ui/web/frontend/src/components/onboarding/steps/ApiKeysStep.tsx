@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, HardDrive, KeyRound, Radio, Waypoints } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { switchBrainProvider } from "@/hooks/useProviders";
+import { putVoiceMode } from "@/lib/voiceEngineMode";
 import { useT } from "@/i18n";
 import type { StepProps } from "../OnboardingFlow";
 
@@ -48,6 +49,13 @@ function LocalPathCard() {
     setError(null);
     try {
       await switchBrainProvider("ollama");
+      // Picking the local brain has to pin the PIPELINE engine as well.
+      // Realtime replaces STT + Brain + TTS with one full-duplex cloud model
+      // and never consults `[brain].primary`, and `[voice].mode` defaults to
+      // realtime — so activating the local brain alone left the user on the
+      // realtime cards with their choice having changed nothing audible.
+      // Persisted, because onboarding ends in a restart.
+      await putVoiceMode("pipeline");
       setActive(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

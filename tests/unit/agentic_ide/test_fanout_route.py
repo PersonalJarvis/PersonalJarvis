@@ -44,7 +44,7 @@ def _offline_planner(monkeypatch: pytest.MonkeyPatch) -> None:
     That is the configuration an arbitrary downloader has, so pinning the route
     against it is the point rather than a shortcut (§3).
     """
-    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: None)
+    monkeypatch.setattr(work_split, "_resolve_splitter", lambda: (None, ""))
 
     async def fake_compose(utterance: str, **kwargs: object) -> ComposedPrompt:
         name = kwargs["terminal_name"]

@@ -20,7 +20,7 @@
     "invalid": "That Control Key was not accepted.",
     "unavailable": "Could not reach Jarvis. Try again.",
     "where_title": "Where do I find the Control Key?",
-    "where_hint": "It was never sent to you — it is generated automatically for this Jarvis install. Open Jarvis on the computer it is installed on: under API Keys there is a dedicated key section named after your assistant (e.g. \"Nico Key\") where you can show it, copy it, or replace it with one of your own.",
+    "where_hint": "It was never sent to you — it is generated automatically for this Jarvis install. Open Jarvis on the computer it is installed on: under API Keys there is a dedicated key section named after your assistant (e.g. \"Nova Key\") where you can show it, copy it, or replace it with one of your own.",
     "where_hint_server": "On a headless server it is stored in the .control_api_key file inside the Jarvis data folder."
   },
   "file_toast": {
@@ -62,6 +62,7 @@
     "update_network_error": "network error"
   },
   "nav": {
+    "chat_workspace": "Chat",
     "chats": "Chats",
     "agents": "{name}-Agents",
     "extensions": "Skills, Plugins & MCPs",
@@ -92,6 +93,7 @@
     "feedback": "Feedback",
     "agent_instructions": "{name}.md",
     "agentic_ide": "Agentic IDE",
+    "agentic_ide_beta": "Beta",
     "voice": "{name} Voice",
     "voice_shortcuts": "Shortcuts",
     "voice_language": "Language",
@@ -388,9 +390,14 @@
     "starting": "Voice starting…",
     "warming_title": "{name} is starting up",
     "warming_hint": "Getting ready to listen – one moment, you'll be able to speak shortly.",
-    "ready_title": "Ready – you can speak now"
+    "ready_title": "Ready – you can speak now",
+    "connecting": "Connecting…",
+    "paused": "Paused",
+    "indicator_label": "Voice state"
   },
   "sidebar": {
+    "collapse": "Collapse the navigation",
+    "expand": "Expand the navigation",
     "wake_hint": "Say your wake word…",
     "brain_label": "Brain",
     "brain_tooltip": "Switch brain provider",
@@ -415,7 +422,15 @@
     "realtime_browser_tts_unavailable": "This browser has no usable system voice. The answer is still available as text; connect a TTS provider for audio.",
     "realtime_pipeline_fallback": "Classic pipeline fallback",
     "realtime_unavailable": "Connect or configure a Realtime provider",
-    "realtime_error": "Couldn’t start voice. Test the active Realtime provider under API Keys, then retry."
+    "realtime_error": "Couldn’t start voice. Test the active Realtime provider under API Keys, then retry.",
+    "realtime_provider_fallback": "{0} became unavailable, so the call moved to another provider — billing may differ. {1}",
+    "realtime_provider_fallback_short": "The call moved off {0} to another provider.",
+    "realtime_provider_warning": "The realtime provider reported a recoverable problem; the call continues.",
+    "realtime_provider_unknown": "the previous provider",
+    "realtime_webrtc_degraded": "The WebRTC transport could not be set up; audio continues over the audio socket.",
+    "realtime_transport_capability_missing": "This window did not receive the desktop permission needed to open the subscription transport. Restart the app.",
+    "realtime_transport_offer_unsupported": "This window cannot create the WebRTC connection the subscription transport needs. Use an API Realtime provider instead.",
+    "realtime_transport_socket_unreachable": "The subscription transport channel could not be reached. Restart the app, then try again."
   },
   "provider_billing": {
     "api": "API, billed per token",
@@ -1135,6 +1150,7 @@
     "configured": "Configured",
     "loading_providers": "Loading providers…",
     "load_error": "Could not load provider list",
+    "backend_unavailable": "The local app service is not responding. This is not an internet or cloud-provider error. Retrying automatically.",
     "retry": "retry",
     "tier_brain": "Brain Provider",
     "tier_tts": "Voice Output (TTS)",
@@ -1186,6 +1202,9 @@
     "model_picker_activate_hint": "Activate this provider to choose its voice or model.",
     "active_tooltip": "Already active",
     "click_to_activate": "Click to activate this provider",
+    "provider_active": "Active",
+    "provider_set_active": "Set active",
+    "provider_activating": "Activating…",
     "needs_codex": "First connect Codex or save API key, then activate",
     "needs_login": "First sign in with Google, then activate",
     "needs_key": "First save API key, then activate",
@@ -1195,10 +1214,10 @@
     "not_recommended": "Not recommended",
     "optional": "Optional",
     "optional_tooltip": "Nice to have, not required. Without it everything else keeps working exactly as before.",
-    "experimental": "Experimental",
+    "experimental": "Beta",
     "subscription_realtime_description": "Uses the ChatGPT plan connected through Codex. No API key is needed.",
-    "experimental_subscription_fallback": "This path uses Codex's experimental Realtime protocol. The app won't silently switch to metered API voice. If it cannot start, the call stops; select an API Realtime provider if you want usage billing.",
-    "experimental_subscription_consent": "Before you turn this on: your live audio and transcript go through your ChatGPT plan using an experimental Codex route. That covers the realtime voice session and its direct conversational replies. If work is handed to a separately configured Brain or tool provider, that provider keeps its own billing. Use this only on a personal, unmanaged computer. The route can change without notice. If it breaks, the call stops; the app never switches to paid API voice on its own. Continue?",
+    "experimental_subscription_fallback": "Beta: voice over the subscription is not finished yet — it runs on Codex's experimental Realtime protocol, so expect rough edges. The app won't silently switch to metered API voice. If it cannot start, the call stops; select an API Realtime provider if you want usage billing.",
+    "experimental_subscription_consent": "Before you turn this on: this path is still in beta. Your live audio and transcript go through your ChatGPT plan using an experimental Codex route. That covers the realtime voice session and its direct conversational replies. If work is handed to a separately configured Brain or tool provider, that provider keeps its own billing. Use this only on a personal, unmanaged computer. The route can change without notice. If it breaks, the call stops; the app never switches to paid API voice on its own. Continue?",
     "health_needs_setup": "Setup needed",
     "health_error": "Not working",
     "health_ok": "Working",
@@ -1207,8 +1226,13 @@
     "realtime_model_label": "Realtime model",
     "realtime_voice_label": "Voice",
     "realtime_provider_default": "Provider default (recommended)",
+    "realtime_options_loading": "Loading voice options…",
+    "realtime_options_error": "Voice options could not be loaded.",
+    "realtime_options_retry": "Try again",
+    "realtime_model_managed": "Managed",
+    "realtime_model_managed_hint": "ChatGPT selects the subscription model. Choose an API Realtime provider to pin a GPT Realtime model.",
     "guide_realtime_title": "Which model should I pick?",
-    "guide_realtime_body": "OpenAI: GPT Realtime (the provider default) sounds the most natural; GPT Realtime Mini is the budget pick. Google: Gemini 3.1 Flash Live is the current Live flagship. \"Provider default\" always resolves to the recommended model, so you can simply leave it.",
+    "guide_realtime_body": "OpenAI API: GPT Realtime 2.1 is the current flagship and 2.1 Mini is the budget pick. ChatGPT subscription: OpenAI manages the model, so only the voice is selectable. Google: Gemini 3.1 Flash Live is the current Live flagship.",
     "guide_computer_use_title": "Which provider should power the Tool Model?",
     "guide_computer_use_body": "The Tool Model handles every action Jarvis takes for you — including Computer-Use, which reads screenshots of your screen, so it needs a model that understands images; the picker hides text-only models. If unsure, keep your main Brain provider and its default model.",
     "reco_title": "Personal recommendation",
@@ -1218,7 +1242,38 @@
     "reco_computer_use_why": "the snappiest tool latency.",
     "reco_subagents_pick": "ChatGPT or Claude Max subscription",
     "reco_subagents_why": "flat rate for heavy background work.",
-    "mode_status_unknown": "Engine status has not loaded yet - the switch unlocks as soon as the backend answers. If this persists, restart the app."
+    "mode_status_unknown": "Engine status has not loaded yet - the switch unlocks as soon as the backend answers. If this persists, restart the app.",
+    "runtime_connecting": "Connecting the Realtime session — this can take up to a minute on a subscription transport.",
+    "state_active": "active",
+    "state_ready": "ready",
+    "state_checking": "checking",
+    "state_unavailable": "unavailable",
+    "state_blocked": "blocked",
+    "state_missing": "missing",
+    "state_not_connected": "not connected",
+    "state_open": "open",
+    "activate_tooltip_active": "This provider is active",
+    "activate_tooltip_activate": "Activate this provider",
+    "activate_tooltip_blocked": "Provider cannot be activated",
+    "auth_mode_api_key": "API key auth",
+    "auth_mode_codex": "ChatGPT / Codex login",
+    "auth_mode_antigravity": "Google subscription login",
+    "auth_mode_none": "Local — no auth",
+    "agents_only_short": "Available for {0} only",
+    "agents_only_toast": "{0} is only available for {1}.",
+    "agents_only_note": "{0} only. This provider cannot be used as the main Brain or Computer-Use planner because it does not receive screenshots.",
+    "local_optional_key_hint": "Local provider — runs without credentials. The key below is optional, only for servers that enforce one (e.g. vLLM --api-key).",
+    "local_no_credentials_hint": "Local provider — no credentials needed.",
+    "polish_verify_failed": "{0} is selected, but it did not answer: {1}",
+    "switch_note_next_start": " (active from next voice start)",
+    "switch_done_brain": "Brain → {0}",
+    "switch_done_tts": "Voice output → {0}",
+    "switch_done_stt": "Voice input → {0}",
+    "switch_done_computer_use": "Computer-Use → {0}",
+    "switch_done_dictation": "Dictation wording → {0}",
+    "switch_done_realtime": "Realtime → {0}",
+    "experimental_note": "Beta: this provider is not finished yet and uses an unstable protocol that can change without notice. If it cannot start, the call stops.",
+    "experimental_consent": "Before you turn this on: this provider is still in beta and uses an experimental, unstable route that can change without notice. If it breaks, the call stops instead of switching to another provider on its own. Continue?"
   },
   "apikeys_test": {
     "button": "Test",
@@ -1244,6 +1299,14 @@
     "cleared": "Server URL reset to the default",
     "hint_default": "Leave empty to use the default address shown above.",
     "hint_required": "This provider needs a server URL — enter where your local server runs."
+  },
+  "apikeys_model_pull": {
+    "title": "Models on this machine",
+    "memory": "{0} GB RAM",
+    "size": "~{0} GB",
+    "installed": "Installed",
+    "download": "Download",
+    "custom_placeholder": "Any model name, e.g. mistral"
   },
   "apikeys_model": {
     "heading": "Model",
@@ -1276,7 +1339,8 @@
     "filter_hint_starred": "Hand-picked best models.",
     "filter_hint_free": "Zero-cost models — no API credit needed.",
     "filter_hint_frontier": "When price doesn't matter — the most capable models.",
-    "filter_hint_value": "The best performance for the price."
+    "filter_hint_value": "The best performance for the price.",
+    "probe_slow_note": "Still checking — the first call to a large local model loads it into memory and can take minutes."
   },
   "apikeys_voice": {
     "heading": "Voice",
@@ -1379,31 +1443,10 @@
     },
     "screen_context": {
       "title": "Screen Context",
-      "description": "Lets {name} use one current screenshot as context only when you explicitly ask. A visible border appears first; the image is consumed by that turn and then deleted.",
+      "description": "When you ask about your screen, {name} takes one screenshot, answers that turn with it, and deletes it. A visible border appears first. It never operates your desktop — that stays with Computer-Use, which only runs when you ask for an action.",
       "available": "Ready on {0} monitor(s).",
       "unavailable": "Screen capture is unavailable. Check the system permission and desktop session; headless and Wayland systems degrade safely.",
-      "denylist": "Never capture these apps or window titles (one per line)",
-      "denylist_placeholder": "Password Manager\nPrivate Banking",
-      "patterns": "Additional sensitive patterns (label:regular expression)",
-      "patterns_placeholder": "customer_id:CUST-[0-9]+",
-      "default_patterns": "Redact detectable password fields and matching card, token, key, and secret text",
-      "ocr": "Use optional OCR for pixel redaction and missing accessibility text",
-      "capture_status": "Capture backend",
-      "indicator_status": "Visible border",
-      "vision_status": "Vision model",
-      "accessibility_status": "Accessibility text",
-      "ocr_status": "Optional OCR",
-      "placeholders_are_examples": "The text shown in the empty field is only an example; it is not an active privacy rule.",
-      "retention_label": "Retention (seconds, 1–600)",
-      "save_privacy": "Save privacy rules",
-      "discard": "Discard held captures now",
-      "test_capture": "Test one capture",
-      "test_success": "Capture test passed and was deleted immediately: {0}",
-      "test_failed": "The capture test did not complete.",
-      "held": "Currently held: {0}.",
-      "retention": "Conversation captures are consumed immediately. An unused API capture is deleted after {0} seconds. Nothing is written to disk.",
       "saved": "Screen Context settings saved.",
-      "discarded": "All held screen captures were discarded.",
       "capturing": "Screen Context is looking at the requested surface.",
       "completed": "Screen captured: {0}×{1}, {2} redaction(s)."
     },
@@ -1572,14 +1615,15 @@
     },
     "overlay_style": {
       "title": "Display style",
-      "description": "Choose how {name} appears on screen during voice activity. The bar is the slim default; the mascot is the classic orb; or hide it entirely.",
+      "description": "Choose how {name} appears on screen during voice activity. The bar is the slim default; the mascot is the classic companion; the voice orb is a glowing sphere; or hide it entirely. Every floating style can be dragged to any monitor.",
       "label": "Style",
       "save": "Save",
       "saved": "Display style switched.",
       "restart_required": "Saved — restart {name} to apply.",
       "options": {
         "jarvis_bar": "Bar (default)",
-        "mascot": "Mascot orb",
+        "mascot": "Mascot",
+        "voice_orb": "Voice orb",
         "none": "None (hidden)"
       }
     },
@@ -1644,7 +1688,16 @@
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "Manual path for Windows PATH issues. Empty uses 'codex' from PATH.",
     "safety_title": "Safety Whitelist",
-    "safety_description": "Patterns executed without confirmation, even at risk-tier 'ask'. Avoids confirmation fatigue."
+    "safety_description": "Patterns executed without confirmation, even at risk-tier 'ask'. Avoids confirmation fatigue.",
+    "appearance": {
+      "title": "Appearance",
+      "description": "The colour theme of the whole app. Dark is the default; light is a warm paper look. Switches instantly.",
+      "dark": "Dark",
+      "light": "Light",
+      "system": "System",
+      "system_now_dark": "Following your system, which is currently dark.",
+      "system_now_light": "Following your system, which is currently light."
+    }
   },
   "telephony_view": {
     "title": "Telephony (experimental)",
@@ -1909,7 +1962,11 @@
     "status_login_required": "Connect your ChatGPT subscription to use this voice provider.",
     "status_not_installed": "Install the supported Codex version before connecting ChatGPT.",
     "status_lifecycle_unavailable": "Subscription voice is not yet available on this operating system. API Realtime and standard voice still work.",
-    "status_setup_invalid": "The protected Codex voice profile needs attention. Review the setup guide, then reconnect.",
+    "status_setup_invalid": "The protected Codex voice profile is no longer valid. Connect with ChatGPT rebuilds it fresh.",
+    "status_busy": "Checking the ChatGPT voice status — one moment.",
+    "status_login_in_progress": "The ChatGPT login is running — finish it in the browser window.",
+    "status_plan_unsupported": "This ChatGPT plan does not support subscription voice.",
+    "setup_detail_label": "Details:",
     "install_command_copied": "Install command copied",
     "connected_chatgpt": "Connected through your ChatGPT subscription.",
     "disconnect": "Disconnect",
@@ -2058,7 +2115,7 @@
       "local_detected": "Ollama detected on this machine — Jarvis can think fully local, no key needed.",
       "local_detected_empty": "Ollama is running but has no model yet — pull one first (e.g. ollama pull qwen3.5).",
       "local_use_button": "Use local model",
-      "local_active": "Local brain active — Ollama answers from this machine.",
+      "local_active": "Local brain active — Ollama answers from this machine, and voice is set to Pipeline so it is actually used.",
       "local_missing": "No API key at hand? Install Ollama and Jarvis runs fully local — no cloud account needed.",
       "local_missing_link": "Get Ollama",
       "continue": "Continue onboarding"
@@ -2075,12 +2132,14 @@
       "recommended": "Recommended",
       "options": {
         "jarvis_bar": "Jarvis Bar",
-        "mascot": "Orb",
+        "mascot": "Mascot",
+        "voice_orb": "Voice orb",
         "none": "No overlay"
       },
       "captions": {
         "jarvis_bar": "A slim floating voice bar, always within reach.",
-        "mascot": "A floating companion orb that reacts as you talk.",
+        "mascot": "A floating companion that reacts as you talk.",
+        "voice_orb": "A glowing sphere of drifting light — drag it to any screen.",
         "none": "Just the app window — no floating surface on screen."
       },
       "needs_restart": "Almost there — this style needs a quick restart to take effect.",
@@ -2289,7 +2348,14 @@
     "node_details": "{0} ({1}) · {2} {3}",
     "backlink_one": "backlink",
     "backlink_many": "backlinks",
-    "unresolved": "unresolved"
+    "unresolved": "unresolved",
+    "dimension_label": "Map view",
+    "dimension_2d": "2D",
+    "dimension_3d": "3D",
+    "dimension_2d_title": "Show the map flat",
+    "dimension_3d_title": "Show the map in space, rotate it by dragging",
+    "dimension_unavailable": "This machine cannot render 3D graphics, so the map stays flat.",
+    "loading_3d": "Loading the 3D map…"
   },
   "tree_sidebar": {
     "load_error": "Could not load the wiki.",
@@ -2683,7 +2749,8 @@
     "jarvis_opened": "{name} opened",
     "prompt_sent": "Prompt sent to",
     "prompt_not_submitted": "the prompt is in its input box, not sent",
-    "dictation_nowhere": "No text field had focus, so the dictation was not inserted. It is in the dictation history."
+    "dictation_nowhere": "No text field had focus, so the dictation was not inserted. It is in the dictation history.",
+    "realtime_provider_issue": "The realtime provider reported a problem."
   },
   "chat_thread": {
     "message_to": "Message to",
@@ -3206,6 +3273,27 @@
       "nothing_ingested_step_sync": "Press Sync on that source and watch the import strip fill up.",
       "nothing_ingested_note": "Keyword search works seconds after the first sync; semantic answers grow as the background pipeline embeds and distills."
     },
+    "words": {
+      "tab": "Words",
+      "placeholder": "One word — e.g. a concept you cannot name exactly",
+      "submit": "Find",
+      "explainer": "Finds the words closest in meaning to yours, then searches with all of them — so passages count even when they never spell your word out.",
+      "idle": "Type a word to see the words nearest it in meaning, and the passages they lead to.",
+      "searching": "Looking for related words and the passages they reach…",
+      "failed": "Word search failed: {0}",
+      "neighbours_meaning": "Closest in meaning to “{0}”",
+      "neighbours_company": "Words that keep company with “{0}”",
+      "chip_hint_meaning": "{0} alike · seen in {1} items · click to search this word",
+      "chip_hint_company": "{0} characteristic · seen in {1} items · click to search this word",
+      "passages_heading": "Passages ({0})",
+      "span": "passage {0} · characters {1}–{2}",
+      "matched_terms": "shows: {0}",
+      "lexicon_state": "The word index holds {0} of {1} terms so far; it keeps filling in the background.",
+      "leg_word": "your word",
+      "leg_semantic": "meaning",
+      "leg_related": "related word",
+      "leg_neighbourhood": "neighbourhood"
+    },
     "slots": {
       "title": "Capability slots",
       "storage_title": "Storage",
@@ -3658,6 +3746,12 @@
       "starting": "Its agent is still starting — it will be continued as soon as it is up.",
       "result_queued": "{0} still starting; they carry on the moment they are up: {1}."
     },
+    "even": {
+      "label": "Even out the terminal sizes",
+      "hint": "Give every terminal the same size. Nothing is moved — the boundaries even out where they already are.",
+      "already": "Every terminal already has the same size.",
+      "grid_only": "Sizes even out in the terminal grid — there are no boundaries to even here."
+    },
     "arrange": {
       "carrying": "drop it on a terminal",
       "swap": "Swap with {0}",
@@ -3705,6 +3799,14 @@
       "confirm": "Close selected",
       "close_failed": "These terminals could not be closed: {0}"
     },
+    "display": {
+      "appearance": "Terminal appearance",
+      "light": "Light terminals",
+      "dark": "Dark terminals",
+      "text_size": "Terminal text size",
+      "smaller": "Smaller terminal text",
+      "larger": "Larger terminal text"
+    },
     "notifications": {
       "title": "Notifications",
       "hint": "Terminals that finished, asked something, or stopped.",
@@ -3721,6 +3823,42 @@
       "kind_exited": "STOPPED",
       "kind_failed": "FAILED",
       "gone": "{0} is not in this workspace any more — that terminal was closed since the notification arrived."
+    },
+    "voice_bubble": {
+      "assistant_fallback": "Assistant",
+      "button_label": "Voice bubble",
+      "button_open": "Open the voice bubble — talk to {0}",
+      "button_close": "Close the voice bubble",
+      "ready": "Ready",
+      "listening": "Listening…",
+      "thinking": "Thinking…",
+      "speaking": "Speaking",
+      "paused": "Paused",
+      "error": "Voice trouble",
+      "hang_up": "Hang up",
+      "hang_up_title": "Hang up the conversation",
+      "talk": "Talk to {0}",
+      "talk_title": "Talk to {0} — or just say the wake word",
+      "mic_start": "Start a conversation with {0}",
+      "mic_stop": "End the conversation",
+      "close": "Close the voice bubble",
+      "mute": "Mute {0}'s voice for this session",
+      "unmute": "Unmute {0}'s voice",
+      "start_failed": "Could not start listening — a conversation may already be running.",
+      "notice_jump": "Go to {0}",
+      "notice_dismiss": "Hide this update"
+    },
+    "voice_drop": {
+      "hover": "Drop for {0}'s next prompt",
+      "reading": "Reading files for {0}'s next prompt…",
+      "ready_one": "1 file is ready for {1}'s next prompt.",
+      "ready_many": "{0} files are ready for {1}'s next prompt.",
+      "using": "Adding {0} file(s) to {1}'s prompt…",
+      "target_fallback": "an agent",
+      "empty": "That drop did not contain a usable file.",
+      "no_target": "Open or select an agent terminal before attaching a file.",
+      "choose": "Choose files",
+      "remove": "Remove this pending context"
     }
   },
   "prompt_writer": {

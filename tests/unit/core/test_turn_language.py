@@ -184,7 +184,7 @@ def test_thin_two_word_interjection_inherits_conversation() -> None:
 def test_substantive_turn_switches_conversation_language() -> None:
     # A full sentence in the other language is a real switch, not an interjection.
     assert resolve_output_language(
-        "auto", "german", "What is the weather like in Berlin tomorrow?",
+        "auto", "german", "What is the weather like in Exampletown tomorrow?",
         conversation_language="de",
     ) == "en"
 
@@ -213,7 +213,7 @@ def test_conversation_language_used_as_default_for_ambiguous_substantive() -> No
     # A longer but signal-less turn (proper nouns) inherits the conversation
     # rather than snapping to the global default.
     assert resolve_output_language(
-        "auto", None, "Spotify Netflix Berlin", conversation_language="de"
+        "auto", None, "Spotify Netflix Exampletown", conversation_language="de"
     ) == "de"
 
 
@@ -255,7 +255,7 @@ def test_an_unplaceable_tag_stays_unknown_rather_than_guessing() -> None:
 
 
 def test_ambiguous_text_leaves_the_tag_standing() -> None:
-    assert resolve_transcript_language("English", "Spotify Berlin") == "en"
+    assert resolve_transcript_language("English", "Spotify Exampletown") == "en"
 
 
 def test_no_tag_at_all_is_answered_from_the_text() -> None:

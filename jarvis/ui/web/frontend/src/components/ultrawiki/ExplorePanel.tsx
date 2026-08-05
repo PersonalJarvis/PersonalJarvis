@@ -26,7 +26,7 @@
  * Both are derived from the data. There is no decorative colour in here.
  *
  * The time bar is the signature of this view: at a glance you see that
- * "Berlin" runs the whole way through while "Bora Bora" was one bright week
+ * "Exampletown" runs the whole way through while "Bora Bora" was one bright week
  * in July — a shape no list of counts can show.
  */
 import { useMemo, useState } from "react";
@@ -351,7 +351,7 @@ function EntityRow({
       {/* The signature of this view: where in your history this topic lived.
           Width is its lifetime, position is when, warmth is how recent. */}
       <span
-        className="mt-1 block h-[3px] w-full rounded-full bg-white/[0.06]"
+        className="mt-1 block h-[3px] w-full rounded-full bg-sheen/[0.06]"
         aria-hidden
       >
         <span

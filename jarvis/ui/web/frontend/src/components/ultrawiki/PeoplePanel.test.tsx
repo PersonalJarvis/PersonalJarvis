@@ -145,7 +145,7 @@ const EVENTS = [
     time_anchor: "stated",
     recorded_at: "2026-07-04T22:00:00Z",
     date_label: "4 July 2026",
-    place: "Hamburg",
+    place: "Exampleville",
     place_entity_id: null,
     confidence: 0.9,
     source_id: "src1",

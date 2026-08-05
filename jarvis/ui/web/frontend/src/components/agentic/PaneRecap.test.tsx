@@ -56,12 +56,12 @@ describe("the recap card", () => {
     expect(card.textContent).toContain("Claude Code");
   });
 
-  it("opens on hover as well, and closes when the pointer leaves", () => {
+  it("does not cover the terminal when the pointer only passes over the line", () => {
     render(<PaneRecap {...BASE} recap="Rewrote the auth middleware" />);
 
     const line = screen.getByTestId("pane-recap-Mika");
     fireEvent.mouseEnter(line.parentElement!);
-    expect(screen.getByTestId("pane-recap-card-Mika")).toBeTruthy();
+    expect(screen.queryByTestId("pane-recap-card-Mika")).toBeNull();
   });
 
   it("closes on Escape", () => {
@@ -142,11 +142,14 @@ describe("why the recap is what it is", () => {
 });
 
 describe("writing the recap yourself", () => {
-  it("opens the editor from the pencil in the header", async () => {
+  it("opens the editor from the clearly labelled action in the card", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(<PaneRecap {...BASE} recap="Running pytest" onSave={onSave} />);
 
-    fireEvent.click(screen.getByTestId("pane-recap-edit-Mika"));
+    fireEvent.click(screen.getByTestId("pane-recap-Mika"));
+    const edit = screen.getByTestId("pane-recap-card-edit-Mika");
+    expect(edit.textContent).toContain("Write it yourself");
+    fireEvent.click(edit);
 
     const line = screen.getByTestId("pane-recap-input-Mika") as HTMLInputElement;
     // Pre-filled with what is on screen: correcting a recap is the common case,
@@ -171,7 +174,8 @@ describe("writing the recap yourself", () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(<PaneRecap {...BASE} recap="Running pytest" onSave={onSave} />);
 
-    fireEvent.click(screen.getByTestId("pane-recap-edit-Mika"));
+    fireEvent.click(screen.getByTestId("pane-recap-Mika"));
+    fireEvent.click(screen.getByTestId("pane-recap-card-edit-Mika"));
     fireEvent.keyDown(screen.getByTestId("pane-recap-input-Mika"), {
       key: "Enter",
       ctrlKey: true,
@@ -184,7 +188,8 @@ describe("writing the recap yourself", () => {
     const onSave = vi.fn().mockRejectedValue(new Error("That workspace is not open."));
     render(<PaneRecap {...BASE} recap="Running pytest" onSave={onSave} />);
 
-    fireEvent.click(screen.getByTestId("pane-recap-edit-Mika"));
+    fireEvent.click(screen.getByTestId("pane-recap-Mika"));
+    fireEvent.click(screen.getByTestId("pane-recap-card-edit-Mika"));
     fireEvent.click(screen.getByTestId("pane-recap-save-Mika"));
 
     await waitFor(() =>
@@ -196,10 +201,12 @@ describe("writing the recap yourself", () => {
     expect(screen.getByTestId("pane-recap-input-Mika")).toBeTruthy();
   });
 
-  it("leaves the pencil off a card that cannot be edited", () => {
+  it("keeps editing out of both the header and a read-only card", () => {
     render(<PaneRecap {...BASE} recap="Running pytest" />);
 
     expect(screen.queryByTestId("pane-recap-edit-Mika")).toBeNull();
+    fireEvent.click(screen.getByTestId("pane-recap-Mika"));
+    expect(screen.queryByTestId("pane-recap-card-edit-Mika")).toBeNull();
   });
 });
 
@@ -211,7 +218,9 @@ describe("the card's actions", () => {
     );
 
     fireEvent.click(screen.getByTestId("pane-recap-Mika"));
-    fireEvent.click(screen.getByTestId("pane-recap-refresh-Mika"));
+    const refresh = screen.getByTestId("pane-recap-refresh-Mika");
+    expect(refresh.textContent).toContain("Summarize this pane again");
+    fireEvent.click(refresh);
 
     await waitFor(() => expect(onRefresh).toHaveBeenCalled());
     // The card stays open — you asked for a new sentence, you want to read it.

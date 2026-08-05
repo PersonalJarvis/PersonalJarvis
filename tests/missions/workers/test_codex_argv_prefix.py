@@ -1,6 +1,6 @@
 """CodexDirectWorker must not depend on the fragile ``codex.CMD`` shim.
 
-Live forensic 2026-06-20 (missions 019ee554 / 019ee555 / 019ee558, the
+Live forensic 2026-06-20 (missions 019f1040 / 019f1041 / 019f1042, the
 "all subagent missions fail" incident): jarvis was launched by an
 agent runtime (hermes-agent) with a PATH that did NOT contain the Node.js
 directory. The worker invoked ``codex.CMD`` — an npm batch shim whose tail line

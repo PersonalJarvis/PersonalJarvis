@@ -32,12 +32,16 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, get_args
+
+if TYPE_CHECKING:
+    pass
 
 from jarvis import __version__
 from jarvis.core.process_tree import ProcessTree, make_process_tree
@@ -104,10 +108,42 @@ _ALLOWED_SUBSCRIPTION_HOME_ENTRIES: Final = frozenset(
     {
         "auth.json",
         "installation_id",
+        # Codex 0.146 writes this tiny one-time migration marker into its
+        # CODEX_HOME on a normal run. Without it in the allowlist the
+        # fail-closed profile check bricked every install right after the
+        # CLI's first use of the profile.
+        ".sandbox_migration",
         "tmp",
         _SUBSCRIPTION_PROFILE_MARKER,
     }
 )
+# Desktop-shell droppings, not Codex state: Finder writes ``.DS_Store`` the
+# moment anyone LOOKS at the folder, Explorer writes ``Thumbs.db`` /
+# ``desktop.ini``, and copying the profile across a network share leaves
+# AppleDouble ``._`` siblings. These are ignored rather than allowlisted —
+# they carry nothing to validate, and treating one as "the profile contains
+# configuration" used to delete a working ChatGPT login on the next Connect.
+_OS_METADATA_ENTRY_NAMES: Final = frozenset(
+    {
+        ".ds_store",
+        ".localized",
+        ".spotlight-v100",
+        ".trashes",
+        ".fseventsd",
+        "desktop.ini",
+        "thumbs.db",
+        "ehthumbs.db",
+        "$recycle.bin",
+        "system volume information",
+    }
+)
+
+
+def _is_os_metadata_entry(name: str) -> bool:
+    lowered = name.lower()
+    return lowered in _OS_METADATA_ENTRY_NAMES or lowered.startswith("._")
+
+
 _ARG0_RUNTIME_DIR_RE: Final = re.compile(r"^codex-arg0[A-Za-z0-9]{6}$")
 _MAX_ARG0_RUNTIME_DIRS: Final = 32
 _PERSONAL_CHATGPT_PLANS: Final = frozenset(
@@ -135,8 +171,42 @@ _SUBSCRIPTION_ENV_ALLOWLIST: Final = frozenset(
         "APPDATA",
         "LOCALAPPDATA",
         "CODEX_HOME",
+        # Locale and terminal shape. These say how text is ENCODED and drawn,
+        # never who anyone is: without them the child falls back to the C
+        # locale and mangles every non-ASCII byte it handles. The interactive
+        # login child already inherits exactly these
+        # (``jarvis/codex_auth.py::_ISOLATED_CODEX_ENV_ALLOWLIST``); the
+        # transport dropping them was an undocumented divergence.
+        "LANG",
+        "TERM",
+        "NO_COLOR",
+        # TLS trust roots. Not credentials — they name WHICH certificate
+        # authorities to believe, and on hosts that carry their roots in the
+        # environment (corporate images, Nix, conda, many container bases)
+        # dropping them left the child with no trust store at all: `codex
+        # login status` reads a local file and succeeds, so the card said
+        # "connected" while every call died in the TLS handshake.
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
     }
 )
+# ``LC_*`` is an open family (LC_ALL, LC_CTYPE, LC_MESSAGES, ...), so it is
+# matched by prefix. Same reasoning as LANG above: encoding, not identity.
+_SUBSCRIPTION_ENV_ALLOWED_PREFIXES: Final = ("LC_",)
+
+
+def _subscription_env_allowed(name: str) -> bool:
+    """Whether one inherited environment variable may reach the child."""
+    upper = name.upper()
+    if upper in _OPENAI_BILLING_ENV_NAMES:
+        # Belt and braces: the allowlist already excludes every billing token,
+        # but a future entry added there must not silently re-open the
+        # usage-billed path this transport exists to avoid.
+        return False
+    return upper in _SUBSCRIPTION_ENV_ALLOWLIST or upper.startswith(
+        _SUBSCRIPTION_ENV_ALLOWED_PREFIXES
+    )
 
 _DISABLED_APP_SERVER_FEATURES: Final = (
     "shell_tool",
@@ -217,6 +287,42 @@ class CodexSubscriptionProfileMissing(CodexSubscriptionUnavailable):
     """The dedicated subscription-voice profile does not exist yet."""
 
 
+class CodexSubscriptionBinaryUnsupported(CodexSubscriptionUnavailable):
+    """No installed Codex matches the pinned, hash-approved release.
+
+    Maps to ``reason_code="not_installed"``: the actionable truth for a
+    wrong-version or unknown build is "install the supported release", with
+    the pinned install command — not "your profile needs attention".
+    """
+
+
+class CodexSubscriptionPlanUnsupported(CodexSubscriptionUnavailable):
+    """The live account check refused this ChatGPT plan permanently.
+
+    A transient startup failure must NOT carry this class: activation stores
+    it as the sticky ``plan_unsupported`` diagnosis that outlives the toast.
+    """
+
+
+class CodexSubscriptionRuntimeStateInvalid(CodexSubscriptionUnavailable):
+    """Codex's own ephemeral scratch under ``tmp/`` is not a shape we accept.
+
+    Separate from a bad PROFILE because the recovery differs: this state is
+    regenerated by the CLI on every run and contains no credential, so the
+    honest repair is to clear ``tmp/`` — never to delete the profile, which
+    would take a working ChatGPT login with it over a leftover scratch file.
+    """
+
+
+class CodexSubscriptionInspectionFailed(CodexSubscriptionUnavailable):
+    """An OS read error prevented judging the profile — transiently unknown.
+
+    Distinct from a genuinely invalid profile: an antivirus-locked directory
+    or a slow disk must surface as ``busy`` ("checking"), never as "create a
+    fresh voice-only login".
+    """
+
+
 class CodexAppServerDisconnected(CodexAppServerError):
     """The app-server process exited or its JSONL stream broke."""
 
@@ -229,14 +335,120 @@ class CodexNotificationOverflow(CodexAppServerError):
     """A subscriber stopped consuming realtime notifications fast enough."""
 
 
+#: A machine token is safe to forward; free text is not. Anything that is not
+#: a short, lowercase, punctuation-free identifier stays redacted.
+_RPC_ERROR_TOKEN_RE: Final = re.compile(r"^[a-z0-9_]{1,64}$")
+_RPC_ERROR_STATUS_KEYS: Final = (
+    "httpStatus",
+    "http_status",
+    "statusCode",
+    "status_code",
+    "status",
+)
+_RPC_ERROR_TYPE_KEYS: Final = ("type", "errorType", "error_type", "reason")
+
+
+def _rpc_error_detail(error: Any) -> tuple[int | None, str | None]:
+    """Extract ONLY an HTTP status and a bounded error-type token.
+
+    Everything else in an app-server error — the message, the account label,
+    the upstream request detail — stays redacted, which is why this transport
+    used to surface a plan/quota refusal and a broken transport as the same
+    opaque "rejected (code -32000)". Those two need opposite reactions from
+    the user, so the two machine-readable fields that tell them apart are
+    forwarded and nothing more.
+    """
+    if not isinstance(error, Mapping):
+        return None, None
+    scopes: list[Mapping[str, Any]] = [error]
+    for key in ("data", "error"):
+        nested = error.get(key)
+        if isinstance(nested, Mapping):
+            scopes.append(nested)
+            deeper = nested.get("error")
+            if isinstance(deeper, Mapping):
+                scopes.append(deeper)
+    status: int | None = None
+    token: str | None = None
+    for scope in scopes:
+        if status is None:
+            for key in _RPC_ERROR_STATUS_KEYS:
+                candidate = scope.get(key)
+                if isinstance(candidate, bool):
+                    continue
+                if isinstance(candidate, int) and 100 <= candidate <= 599:
+                    status = candidate
+                    break
+        if token is None:
+            for key in _RPC_ERROR_TYPE_KEYS:
+                candidate = scope.get(key)
+                if not isinstance(candidate, str):
+                    continue
+                normalized = candidate.strip().lower()
+                if _RPC_ERROR_TOKEN_RE.fullmatch(normalized):
+                    token = normalized
+                    break
+    return status, token
+
+
 class CodexAppServerRPCError(CodexAppServerError):
     """A redacted JSON-RPC error returned by app-server."""
 
-    def __init__(self, method: str, code: int | None) -> None:
+    def __init__(
+        self,
+        method: str,
+        code: int | None,
+        *,
+        http_status: int | None = None,
+        error_type: str | None = None,
+    ) -> None:
         self.method = method
         self.code = code
-        suffix = f" (code {code})" if code is not None else ""
+        self.http_status = http_status
+        self.error_type = error_type
+        details = []
+        if code is not None:
+            details.append(f"code {code}")
+        if http_status is not None:
+            # Spelled as a bare status so the shared classifier
+            # (jarvis/brain/provider_test.py::classify_provider_error) reads
+            # 402/429 as an account state instead of "possible integration bug".
+            details.append(f"http {http_status}")
+        if error_type is not None:
+            details.append(f"type {error_type}")
+        suffix = f" ({'; '.join(details)})" if details else ""
         super().__init__(f"Codex app-server rejected {method}{suffix}.")
+
+
+# SSOT for the subscription-status reason-code vocabulary. Mirrors (five-layer
+# anti-drift guard, BUG-008 class): the runtime membership guard in
+# ``jarvis/ui/web/provider_routes.py::_codex_subscription_status_payload``
+# (unknown values degrade to busy with a warning), the TS union in
+# ``useProviders.ts``, the exhaustive ``CODEX_STATUS_KEY_BY_REASON`` record in
+# ``ProviderTierSection.tsx`` (a new member fails the TS build until mapped;
+# the i18n parity test derives its key list from it), and one
+# ``apikeys_codex.status_*`` i18n key per member in de/en/es. The Python side
+# is pinned by ``test_reason_code_vocabulary_is_pinned``.
+# "busy" is transient: the profile is briefly owned by another probe, a
+# login/logout, or a starting voice transport. Not a setup defect; callers
+# keep their last known state instead of asking the user to reconnect.
+CodexSubscriptionReasonCode = Literal[
+    "ready",
+    "login_required",
+    # An interactive login is running right now: the card must invite the
+    # user to FINISH it in the browser, never to start a second one.
+    "login_in_progress",
+    "lifecycle_unavailable",
+    "not_installed",
+    "setup_invalid",
+    # The connected ChatGPT account can never activate this provider (for
+    # example a business/enterprise plan) — sticky until login/logout.
+    "plan_unsupported",
+    "busy",
+]
+CODEX_SUBSCRIPTION_REASON_CODES: Final = frozenset(
+    get_args(CodexSubscriptionReasonCode)
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,13 +460,7 @@ class CodexAppServerCapability:
     binary_path: str | None
     version: str | None
     reason: str
-    reason_code: Literal[
-        "ready",
-        "login_required",
-        "lifecycle_unavailable",
-        "not_installed",
-        "setup_invalid",
-    ] = "setup_invalid"
+    reason_code: CodexSubscriptionReasonCode = "setup_invalid"
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,7 +564,14 @@ def _validate_current_owner(metadata: os.stat_result) -> None:
 
 
 def _validate_regular_private_file(path: Path) -> None:
-    metadata = path.lstat()
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        # An unreadable entry (antivirus hold, slow disk) is transiently
+        # unknown, never proof of a broken profile.
+        raise CodexSubscriptionInspectionFailed(
+            "The dedicated Codex voice profile could not be inspected."
+        ) from exc
     if _is_link_or_reparse(path) or not stat.S_ISREG(metadata.st_mode):
         raise CodexSubscriptionUnavailable(
             "The dedicated Codex voice profile contains an unsafe filesystem entry."
@@ -409,7 +622,13 @@ def _validate_private_directory(
     exact_posix_mode: int | None = None,
     require_owner_only: bool = False,
 ) -> None:
-    metadata = path.lstat()
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        # Transiently unreadable, not proven-broken (see the file variant).
+        raise CodexSubscriptionInspectionFailed(
+            "The dedicated Codex voice profile could not be inspected."
+        ) from exc
     if _is_link_or_reparse(path) or not stat.S_ISDIR(metadata.st_mode):
         raise CodexSubscriptionUnavailable(
             "The dedicated Codex voice profile contains an unsafe directory."
@@ -447,7 +666,7 @@ def _is_trusted_codex_runtime_binary(
         target = _TRUSTED_CODEX_TARGETS.get(
             (sys.platform, _normalized_machine())
         )
-        return target is not None and _sha256_file(canonical) == target[3]
+        return target is not None and _sha256_file_cached(canonical) == target[3]
     except OSError:  # An unreadable binary is reported as an unavailable capability.
         return False
 
@@ -463,7 +682,7 @@ def _validate_windows_arg0_wrapper(
             raise ValueError("wrapper is too large")
         body = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError, ValueError) as exc:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionRuntimeStateInvalid(
             "The dedicated Codex voice profile contains an invalid runtime wrapper."
         ) from exc
     match = re.fullmatch(
@@ -474,7 +693,7 @@ def _validate_windows_arg0_wrapper(
         Path(match.group(1)),
         trusted_binary_path=trusted_binary_path,
     ):
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionRuntimeStateInvalid(
             "The dedicated Codex voice profile contains an untrusted runtime wrapper."
         )
 
@@ -484,9 +703,15 @@ def _validate_unix_arg0_alias(
     *,
     trusted_binary_path: str | None = None,
 ) -> None:
-    metadata = path.lstat()
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        # Transiently unreadable, not proven-broken (see the sibling wraps).
+        raise CodexSubscriptionInspectionFailed(
+            "The dedicated Codex voice profile runtime could not be inspected."
+        ) from exc
     if not stat.S_ISLNK(metadata.st_mode):
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionRuntimeStateInvalid(
             "The dedicated Codex voice profile contains an invalid runtime alias."
         )
     _validate_current_owner(metadata)
@@ -494,14 +719,14 @@ def _validate_unix_arg0_alias(
         raw_target = Path(os.readlink(path))
         target = raw_target if raw_target.is_absolute() else path.parent / raw_target
     except OSError as exc:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionRuntimeStateInvalid(
             "The dedicated Codex voice profile contains an unreadable runtime alias."
         ) from exc
     if not _is_trusted_codex_runtime_binary(
         target,
         trusted_binary_path=trusted_binary_path,
     ):
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionRuntimeStateInvalid(
             "The dedicated Codex voice profile contains an untrusted runtime alias."
         )
 
@@ -511,39 +736,55 @@ def _validate_arg0_runtime_dir(
     *,
     trusted_binary_path: str | None = None,
 ) -> None:
+    """Judge one ``tmp/arg0/codex-arg0XXXXXX`` scratch directory.
+
+    Membership is a NAME ALLOWLIST over a required ``.lock``, not set
+    equality. The exact file set was only ever measured on Windows; the macOS
+    and Linux sets were assumptions, and one file more or fewer (a Codex point
+    release, a platform that ships no sandbox helper) turned a healthy install
+    into ``setup_invalid``. The real security boundary is per entry and
+    unchanged: every non-lock child must still resolve to the approved binary
+    (``_validate_unix_arg0_alias`` / ``_validate_windows_arg0_wrapper``), so a
+    name that merely went missing proves nothing and an extra name still has
+    to survive that check.
+    """
     _validate_private_directory(path)
     try:
-        children = {entry.name: entry for entry in path.iterdir()}
+        children = {
+            entry.name: entry
+            for entry in path.iterdir()
+            if not _is_os_metadata_entry(entry.name)
+        }
     except OSError as exc:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionInspectionFailed(
             "The dedicated Codex voice profile runtime could not be inspected."
         ) from exc
-    expected = {".lock"}
     if sys.platform == "win32":
-        expected.update({"apply_patch.bat", "applypatch.bat"})
-    elif sys.platform == "darwin":
-        expected.update({"apply_patch", "applypatch", "codex-execve-wrapper"})
-    elif sys.platform.startswith("linux"):
-        expected.update(
-            {
-                "apply_patch",
-                "applypatch",
-                "codex-execve-wrapper",
-                "codex-linux-sandbox",
-            }
-        )
+        allowed = {"apply_patch.bat", "applypatch.bat"}
+    elif sys.platform == "darwin" or sys.platform.startswith("linux"):
+        allowed = {
+            "apply_patch",
+            "applypatch",
+            "codex-execve-wrapper",
+            "codex-linux-sandbox",
+        }
     else:
         raise CodexSubscriptionUnavailable(
             "This platform's Codex runtime layout is not approved."
         )
-    if set(children) != expected:
-        raise CodexSubscriptionUnavailable(
+    lock_file = children.get(".lock")
+    if lock_file is None:
+        raise CodexSubscriptionRuntimeStateInvalid(
+            "The dedicated Codex voice profile runtime is missing its lock."
+        )
+    unknown = sorted(set(children) - allowed - {".lock"})
+    if unknown:
+        raise CodexSubscriptionRuntimeStateInvalid(
             "The dedicated Codex voice profile contains unexpected runtime files."
         )
-    lock_file = children[".lock"]
     _validate_regular_private_file(lock_file)
     if lock_file.stat().st_size != 0:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionRuntimeStateInvalid(
             "The dedicated Codex voice profile contains an invalid runtime lock."
         )
     for name, child in children.items():
@@ -600,13 +841,17 @@ def _validate_codex_runtime_state(
             ) from exc
     _validate_private_directory(runtime_root)
     try:
-        runtime_children = {entry.name: entry for entry in runtime_root.iterdir()}
+        runtime_children = {
+            entry.name: entry
+            for entry in runtime_root.iterdir()
+            if not _is_os_metadata_entry(entry.name)
+        }
     except OSError as exc:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionInspectionFailed(
             "The dedicated Codex voice runtime could not be inspected."
         ) from exc
     if set(runtime_children) != {"arg0"}:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionRuntimeStateInvalid(
             "The dedicated Codex voice profile contains unexpected runtime state."
         )
     arg0_root = runtime_children["arg0"]
@@ -615,18 +860,22 @@ def _validate_codex_runtime_state(
         exact_posix_mode=0o700 if os.name == "posix" else None,
     )
     try:
-        process_dirs = tuple(arg0_root.iterdir())
+        process_dirs = tuple(
+            entry
+            for entry in arg0_root.iterdir()
+            if not _is_os_metadata_entry(entry.name)
+        )
     except OSError as exc:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionInspectionFailed(
             "The dedicated Codex voice runtime could not be inspected."
         ) from exc
     if len(process_dirs) > _MAX_ARG0_RUNTIME_DIRS:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionRuntimeStateInvalid(
             "The dedicated Codex voice profile contains excessive runtime state."
         )
     for process_dir in process_dirs:
         if _ARG0_RUNTIME_DIR_RE.fullmatch(process_dir.name) is None:
-            raise CodexSubscriptionUnavailable(
+            raise CodexSubscriptionRuntimeStateInvalid(
                 "The dedicated Codex voice profile contains an unknown runtime directory."
             )
         _validate_arg0_runtime_dir(
@@ -640,7 +889,7 @@ def _validate_codex_runtime_state(
     if trusted_runtime_binary is not None and not _is_trusted_codex_runtime_binary(
         trusted_runtime_binary
     ):
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionRuntimeStateInvalid(
             "The dedicated Codex voice profile references an untrusted runtime binary."
         )
 
@@ -665,7 +914,7 @@ def _validated_subscription_home(
     try:
         canonical_root = root.resolve(strict=True)
     except OSError as exc:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionInspectionFailed(
             "Jarvis's private data directory could not be verified."
         ) from exc
     candidate = canonical_root / _SUBSCRIPTION_HOME_DIRNAME
@@ -694,9 +943,15 @@ def _validated_subscription_home(
     try:
         entries = tuple(canonical_home.iterdir())
     except OSError as exc:
-        raise CodexSubscriptionUnavailable(
+        raise CodexSubscriptionInspectionFailed(
             "The dedicated Codex voice profile could not be inspected."
         ) from exc
+    # Desktop-shell sidecars are skipped entirely: they are not Codex state,
+    # and judging one as "the profile contains configuration" made merely
+    # opening the folder in Finder or Explorer cost the user their login.
+    entries = tuple(
+        entry for entry in entries if not _is_os_metadata_entry(entry.name)
+    )
     unexpected = [
         entry.name
         for entry in entries
@@ -708,8 +963,25 @@ def _validated_subscription_home(
             "Create a fresh voice-only login."
         )
     for entry in entries:
-        if entry.name in {"auth.json", _SUBSCRIPTION_PROFILE_MARKER}:
+        if entry.name in {
+            "auth.json",
+            ".sandbox_migration",
+            _SUBSCRIPTION_PROFILE_MARKER,
+        }:
             _validate_regular_private_file(entry)
+        if entry.name == ".sandbox_migration":
+            # A tiny one-time CLI marker; anything larger is not that file.
+            try:
+                oversized = entry.stat().st_size > 4096
+            except OSError as exc:
+                raise CodexSubscriptionInspectionFailed(
+                    "The dedicated Codex voice profile could not be inspected."
+                ) from exc
+            if oversized:
+                raise CodexSubscriptionUnavailable(
+                    "The dedicated Codex voice profile contains an unexpected "
+                    "runtime file."
+                )
 
     _validate_codex_runtime_state(
         canonical_home,
@@ -734,8 +1006,106 @@ def _validated_subscription_home(
     return canonical_home
 
 
+def _rebuild_invalid_subscription_home() -> None:
+    """Remove an invalid Jarvis-owned voice profile so login can rebuild it.
+
+    Reached only from an explicit user action (Connect / Disconnect): the
+    directory is Jarvis's own — never user documents — and its only meaningful
+    content is the dedicated login the user is actively replacing or removing.
+    Without this, ``setup_invalid`` was an in-app dead end whose card text
+    demanded a reconnect that failed on the very same validation (CLAUDE.md
+    §3: recoverable IN-APP). A symlinked profile is detached, never followed.
+    """
+    from jarvis.core.paths import user_data_dir
+
+    try:
+        root = user_data_dir().resolve(strict=True)
+    except OSError as exc:
+        raise CodexSubscriptionUnavailable(
+            "Jarvis's private data directory could not be verified."
+        ) from exc
+    candidate = root / _SUBSCRIPTION_HOME_DIRNAME
+    try:
+        if not candidate.exists() and not candidate.is_symlink():
+            return
+        if _is_link_or_reparse(candidate):
+            # Detach the link/junction itself; never follow it.
+            candidate.unlink()
+            return
+        shutil.rmtree(candidate)
+    except OSError as exc:
+        raise CodexSubscriptionUnavailable(
+            "The invalid Codex voice profile could not be removed. Delete the "
+            f"'{_SUBSCRIPTION_HOME_DIRNAME}' folder in Jarvis's data "
+            "directory manually."
+        ) from exc
+
+
+def _clear_subscription_runtime_state() -> None:
+    """Delete only Codex's ephemeral ``tmp/`` scratch inside the profile.
+
+    The scratch is regenerated on the CLI's next run and holds no credential,
+    so an unrecognised file in there must cost the user a directory Codex
+    rebuilds by itself — never the ChatGPT login sitting next to it.
+    """
+    from jarvis.core.paths import user_data_dir
+
+    try:
+        root = user_data_dir().resolve(strict=True)
+    except OSError as exc:
+        raise CodexSubscriptionUnavailable(
+            "Jarvis's private data directory could not be verified."
+        ) from exc
+    runtime_root = root / _SUBSCRIPTION_HOME_DIRNAME / "tmp"
+    try:
+        if not runtime_root.exists() and not runtime_root.is_symlink():
+            return
+        if _is_link_or_reparse(runtime_root):
+            # Detach the link itself; never follow it out of the profile.
+            runtime_root.unlink()
+            return
+        shutil.rmtree(runtime_root)
+    except OSError as exc:
+        raise CodexSubscriptionRuntimeStateInvalid(
+            "The Codex voice runtime state could not be cleared. Close any "
+            "running Codex process and try again."
+        ) from exc
+
+
 def _prepare_subscription_login_home() -> Path:
-    home = _validated_subscription_home(create=True, require_marker=False)
+    try:
+        home = _validated_subscription_home(create=True, require_marker=False)
+    except CodexSubscriptionInspectionFailed:
+        # Transiently unreadable is NOT license to delete anything.
+        raise
+    except CodexSubscriptionRuntimeStateInvalid:
+        # Codex's own scratch, not the login. Clear ONLY that and re-validate;
+        # the profile — and the ChatGPT login inside it — survives. If it still
+        # fails, the honest error reaches the user instead of a silent wipe.
+        _clear_subscription_runtime_state()
+        home = _validated_subscription_home(create=True, require_marker=False)
+    except CodexSubscriptionUnavailable:
+        # The profile is invalid and the user explicitly asked for a fresh
+        # login — rebuild the Jarvis-owned directory from scratch. The short
+        # retry rides out Windows' delete-pending window (an indexer or AV
+        # briefly holding the freshly removed directory open).
+        _rebuild_invalid_subscription_home()
+        last_error: CodexSubscriptionUnavailable | None = None
+        for _attempt in range(3):
+            try:
+                home = _validated_subscription_home(
+                    create=True, require_marker=False
+                )
+                break
+            except CodexSubscriptionUnavailable as exc:
+                # Windows delete-pending can briefly block the recreate.
+                last_error = exc
+                time.sleep(0.2)
+        else:
+            raise CodexSubscriptionUnavailable(
+                "The Codex voice profile could not be rebuilt. "
+                "Try Connect again in a moment."
+            ) from last_error
     marker = home / _SUBSCRIPTION_PROFILE_MARKER
     auth_file = home / "auth.json"
     if not marker.exists() and auth_file.exists():
@@ -801,6 +1171,108 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+_SHA256_CACHE_MAX_ENTRIES: Final = 16
+_SHA256_IDENTITY = tuple[int, int, int, int, int]
+_sha256_cache: dict[str, tuple[_SHA256_IDENTITY, str]] = {}
+_sha256_cache_lock = threading.Lock()
+
+
+def _file_identity_signature(identity: os.stat_result) -> _SHA256_IDENTITY:
+    """Everything about a file that must be equal for its digest to be reused."""
+    return (
+        identity.st_dev,
+        identity.st_ino,
+        identity.st_size,
+        identity.st_mtime_ns,
+        # POSIX ctime changes on every write regardless of utimes-forgery; on
+        # Windows this is creation time and merely harmless extra identity.
+        identity.st_ctime_ns,
+    )
+
+
+def _forget_cached_digest(path: Path) -> None:
+    """Drop a memoized digest so the next reader hashes the file again."""
+    key = os.path.normcase(str(path))
+    with _sha256_cache_lock:
+        _sha256_cache.pop(key, None)
+
+
+def _sha256_file_cached(path: Path) -> str:
+    """Memoized ``_sha256_file`` keyed on the file's identity signature.
+
+    Hashing the ~100 MB native Codex binary dominated the cost of every status
+    probe, profile validation, and call start — and each of those runs several
+    times per voice call. The signature (device, inode, size, mtime_ns,
+    ctime_ns) is read fresh on EVERY call, so any ordinary change to the file
+    re-hashes it; the digest is then kept for the process lifetime instead of
+    expiring on a wall-clock timer, because a timer bounded nothing an
+    attacker could not simply wait out while costing a full re-hash on every
+    tick.
+
+    The memo authorizes STATUS and profile-validation reads only. The copy
+    that actually RUNS with the user's ChatGPT identity is hashed without the
+    memo immediately before spawn (``_verify_spawn_binary``), and that
+    un-memoized verdict overwrites — or purges — the memo, so the executing
+    path can never be laundered by a cached digest.
+    """
+    try:
+        identity = path.stat()
+    except OSError:  # An unreadable identity cannot be memoized — hash fresh.
+        return _sha256_file(path)
+    key = os.path.normcase(str(path))
+    signature = _file_identity_signature(identity)
+    with _sha256_cache_lock:
+        entry = _sha256_cache.get(key)
+        if entry is not None and entry[0] == signature:
+            return entry[1]
+    digest = _sha256_file(path)
+    with _sha256_cache_lock:
+        if len(_sha256_cache) >= _SHA256_CACHE_MAX_ENTRIES:
+            _sha256_cache.clear()
+        _sha256_cache[key] = (signature, digest)
+    return digest
+
+
+def _verify_spawn_binary(binary_path: str) -> None:
+    """Full, un-memoized hash check of the exact file about to be executed.
+
+    The memoized hash is fine for status polling; the copy that runs with the
+    user's ChatGPT identity gets one fresh verification right before spawn so
+    a stale memo can never launder an in-place swap into execution. A
+    microsecond rename-over between this check and exec remains possible on
+    every platform (no portable fexecve); the guard binds the hash to the
+    path at verification time, which is the strongest portable guarantee.
+
+    This un-memoized verdict is also the memo's corrector: a match refreshes
+    the entry, a mismatch purges it, so a digest the memo believes can never
+    outlive the evidence that it is wrong.
+    """
+    path = Path(binary_path)
+    target = _TRUSTED_CODEX_TARGETS.get((sys.platform, _normalized_machine()))
+    try:
+        identity: os.stat_result | None = path.stat()
+    except OSError:  # Unreadable identity: verify anyway, just do not memoize.
+        identity = None
+    try:
+        digest = _sha256_file(path)
+    except OSError:
+        # The file could not be hashed at all — a memo that still claims this
+        # path is approved would outlive the only evidence we have.
+        _forget_cached_digest(path)
+        raise
+    if target is None or digest != target[3]:
+        _forget_cached_digest(path)
+        raise CodexSubscriptionUnavailable(
+            "The Codex executable changed since it was verified."
+        )
+    if identity is not None:
+        with _sha256_cache_lock:
+            _sha256_cache[os.path.normcase(str(path))] = (
+                _file_identity_signature(identity),
+                digest,
+            )
+
+
 def _codex_package_roots(launcher: Path) -> list[Path]:
     """Return local npm package roots without invoking npm or trusting PATH order."""
     search_dirs = [launcher.parent, *list(launcher.parents)[:8]]
@@ -829,13 +1301,19 @@ def _codex_package_roots(launcher: Path) -> list[Path]:
 
 
 def _trusted_native_codex_binary(resolved_binary: str, version: str | None) -> str:
-    if version != _SUPPORTED_CODEX_VERSION:
-        raise CodexSubscriptionUnavailable(
-            f"Subscription voice requires Codex CLI {_SUPPORTED_CODEX_VERSION}."
-        )
+    """Locate the SHA-256-approved native executable for the pinned release.
+
+    The hash is the authority: a candidate matching an official artifact IS
+    the pinned build, whatever the launcher's ``--version`` said. The version
+    string is advisory only — the npm ``codex`` launcher needs a working
+    ``node`` on PATH just to print it, and a service process without node used
+    to fail the whole feature here although the native binary was intact.
+    """
     target = _TRUSTED_CODEX_TARGETS.get((sys.platform, _normalized_machine()))
     if target is None:
-        raise CodexSubscriptionUnavailable(
+        # A platform gate, not a setup defect: maps to lifecycle_unavailable,
+        # whose card text says the feature is not available on this OS yet.
+        raise CodexSubscriptionContainmentUnavailable(
             "This operating-system architecture is not approved for the experimental "
             "Codex subscription voice transport."
         )
@@ -876,13 +1354,110 @@ def _trusted_native_codex_binary(resolved_binary: str, version: str | None) -> s
             seen.add(key)
             if _is_link_or_reparse(canonical) or not canonical.is_file():
                 continue
-            if _sha256_file(canonical) == expected_hash:
+            if _sha256_file_cached(canonical) == expected_hash:
                 return str(canonical)
         except OSError:  # Unreadable installation candidates are skipped during discovery.
             continue
-    raise CodexSubscriptionUnavailable(
+    if version is not None and version.startswith("codex-cli") and (
+        version != _SUPPORTED_CODEX_VERSION
+    ):
+        # The launcher answered with a real but different release — name the
+        # required one instead of a generic hash complaint.
+        raise CodexSubscriptionBinaryUnsupported(
+            "Subscription voice requires Codex CLI "
+            f"{_SUPPORTED_CODEX_VERSION.removeprefix('codex-cli ')}."
+        )
+    raise CodexSubscriptionBinaryUnsupported(
         "The installed Codex 0.146 executable does not match an official approved build."
     )
+
+
+_CLI_VERSION_RE: Final = re.compile(
+    r"codex-cli \d+\.\d+\.\d+(?:[-+][0-9A-Za-z.]+)?"
+)
+
+
+_HEADLESS_LOGIN_REASON: Final = (
+    "Interactive subscription-voice login is unavailable on headless Linux. "
+    "Run Jarvis on a desktop to connect this dedicated profile."
+)
+_NO_LOGIN_TERMINAL_REASON: Final = (
+    "Interactive subscription-voice login needs a terminal emulator this "
+    "desktop does not provide. Install one (for example gnome-terminal, "
+    "konsole, xfce4-terminal, kitty or alacritty) and connect again."
+)
+
+
+def _headless_linux() -> bool:
+    """A Linux host with no graphical session at all."""
+    return (
+        sys.platform.startswith("linux")
+        and not os.environ.get("DISPLAY")
+        and not os.environ.get("WAYLAND_DISPLAY")
+    )
+
+
+def _linux_login_terminal_missing() -> bool:
+    """True on a graphical Linux host with no terminal able to host the login.
+
+    Separate from the headless check: a screen exists, so the old probe said
+    "login_required" and the card offered a Connect that could only ever fail.
+    """
+    if not sys.platform.startswith("linux") or _headless_linux():
+        return False
+    try:
+        from jarvis.codex_auth import (  # noqa: PLC0415
+            linux_login_terminal_available,
+        )
+
+        return not linux_login_terminal_available()
+    except Exception:  # noqa: BLE001 - an unknown probe must not block a login
+        log.debug("Linux login-terminal probe failed", exc_info=True)
+        return False
+
+
+def _login_required_reason_code() -> CodexSubscriptionReasonCode:
+    """The honest "please log in" state for THIS host.
+
+    On a headless Linux host the interactive browser login is impossible, so
+    inviting it would only produce an error toast after the click — the
+    pre-click truth there is ``lifecycle_unavailable`` (visible degradation,
+    CLAUDE.md §3). The same holds for a graphical Linux desktop that ships no
+    terminal able to host the login for its full lifetime. An EXISTING login
+    still reports ready on such hosts.
+    """
+    if _headless_linux() or _linux_login_terminal_missing():
+        return "lifecycle_unavailable"
+    return "login_required"
+
+
+def _login_required_state(reason: str) -> tuple[str, CodexSubscriptionReasonCode]:
+    """Reason text and code for a missing login, coherent on every surface.
+
+    When the code degrades to ``lifecycle_unavailable`` (headless host), the
+    text degrades WITH it: otherwise the 409/400 details and the Test verdict
+    would keep asking for the exact login the card refuses to offer.
+    """
+    code = _login_required_reason_code()
+    if code == "lifecycle_unavailable":
+        reason = (
+            _HEADLESS_LOGIN_REASON
+            if _headless_linux()
+            else _NO_LOGIN_TERMINAL_REASON
+        )
+    return reason, code
+
+
+def _displayable_cli_version(raw: str | None) -> str | None:
+    """Return the probe output only when it is an actual version string.
+
+    The npm launcher prints a localized shell error instead of a version when
+    ``node`` is missing; that text must never reach the UI's version chip or
+    count as an installed version. The strict pattern also keeps ANSI noise
+    and unbounded output off the chip.
+    """
+    text = " ".join(str(raw or "").split())
+    return text if _CLI_VERSION_RE.fullmatch(text) else None
 
 
 def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
@@ -910,12 +1485,16 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             reason="Codex CLI is not installed.",
             reason_code="not_installed",
         )
-    version = service._probe_version(resolved)
+    version = _displayable_cli_version(service._probe_version(resolved))
     try:
         resolved_binary = _trusted_native_codex_binary(
             resolved,
             version,
         )
+        # A hash match proves the pinned official build even when the npm
+        # launcher could not print its version (for example: no node on the
+        # service PATH).
+        version = _SUPPORTED_CODEX_VERSION
     except CodexSubscriptionContainmentUnavailable as exc:  # Expected platform gate becomes status.
         return CodexAppServerCapability(
             available=False,
@@ -924,6 +1503,18 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             version=version,
             reason=str(exc),
             reason_code="lifecycle_unavailable",
+        )
+    except CodexSubscriptionBinaryUnsupported as exc:
+        # The pinned release is absent (wrong version or unknown build). The
+        # actionable state is "install the supported release" — the card then
+        # shows the pinned npm command instead of a profile warning.
+        return CodexAppServerCapability(
+            available=False,
+            chatgpt_authenticated=False,
+            binary_path=resolved,
+            version=version,
+            reason=str(exc),
+            reason_code="not_installed",
         )
     except CodexSubscriptionUnavailable as exc:
         # Convert setup failure into a safe status snapshot.
@@ -942,13 +1533,25 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             trusted_binary_path=resolved_binary,
         )
     except CodexSubscriptionProfileMissing as exc:  # Missing login becomes an actionable snapshot.
+        reason, reason_code = _login_required_state(str(exc))
         return CodexAppServerCapability(
             available=False,
             chatgpt_authenticated=False,
             binary_path=resolved_binary,
             version=version,
-            reason=str(exc),
-            reason_code="login_required",
+            reason=reason,
+            reason_code=reason_code,
+        )
+    except CodexSubscriptionInspectionFailed as exc:
+        # An OS read hiccup is transiently unknown, never a proven-broken
+        # profile that tells the user to recreate their login.
+        return CodexAppServerCapability(
+            available=False,
+            chatgpt_authenticated=False,
+            binary_path=resolved_binary,
+            version=version,
+            reason=f"{exc} Retrying shortly.",
+            reason_code="busy",
         )
     except CodexSubscriptionUnavailable as exc:  # Unsafe profile state becomes a status snapshot.
         return CodexAppServerCapability(
@@ -981,13 +1584,24 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
         )
     except CodexSubscriptionProfileMissing as exc:
         # Missing login remains a normal not-ready state.
+        reason, reason_code = _login_required_state(str(exc))
         return CodexAppServerCapability(
             available=False,
             chatgpt_authenticated=False,
             binary_path=resolved_binary,
             version=version,
-            reason=str(exc),
-            reason_code="login_required",
+            reason=reason,
+            reason_code=reason_code,
+        )
+    except CodexSubscriptionInspectionFailed as exc:
+        # Transiently unreadable, not proven-broken (see the first block).
+        return CodexAppServerCapability(
+            available=False,
+            chatgpt_authenticated=False,
+            binary_path=resolved_binary,
+            version=version,
+            reason=f"{exc} Retrying shortly.",
+            reason_code="busy",
         )
     except CodexSubscriptionUnavailable as exc:  # Profile validation failure is returned to the UI.
         return CodexAppServerCapability(
@@ -998,20 +1612,40 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             reason=str(exc),
             reason_code="setup_invalid",
         )
+    if login_mode == "probe_failed":
+        # The CLI could not be asked (spawn failure or timeout). That is a
+        # transiently unknown state — publishing it as "login required" would
+        # flip a connected card to "not connected" on one slow subprocess.
+        return CodexAppServerCapability(
+            available=False,
+            chatgpt_authenticated=False,
+            binary_path=resolved_binary,
+            version=version,
+            reason="The Codex login status probe failed; retrying shortly.",
+            reason_code="busy",
+        )
     chatgpt_login = logged_in and login_mode == "chatgpt"
+    if chatgpt_login:
+        return CodexAppServerCapability(
+            available=True,
+            # Advisory only: the CLI emits a fixed PII-free mode string. The
+            # live account/read RPC below proves ChatGPT mode and the plan.
+            chatgpt_authenticated=True,
+            binary_path=resolved_binary,
+            version=version,
+            reason="Dedicated ChatGPT login is available.",
+            reason_code="ready",
+        )
+    reason, reason_code = _login_required_state(
+        "Use Jarvis's subscription-voice login to connect ChatGPT."
+    )
     return CodexAppServerCapability(
         available=True,
-        # Advisory only: the CLI emits a fixed PII-free mode string. The live
-        # account/read RPC below proves ChatGPT mode and the plan.
-        chatgpt_authenticated=chatgpt_login,
+        chatgpt_authenticated=False,
         binary_path=resolved_binary,
         version=version,
-        reason=(
-            "Dedicated ChatGPT login is available."
-            if chatgpt_login
-            else "Use Jarvis's subscription-voice login to connect ChatGPT."
-        ),
-        reason_code="ready" if chatgpt_login else "login_required",
+        reason=reason,
+        reason_code=reason_code,
     )
 
 
@@ -1027,7 +1661,7 @@ def _subscription_environment(
     environment = {
         name: value
         for name, value in os.environ.items()
-        if name.upper() in _SUBSCRIPTION_ENV_ALLOWLIST
+        if _subscription_env_allowed(name)
     }
     environment.update(
         {
@@ -1382,10 +2016,23 @@ class CodexAppServerClient:
         self._sink_server: asyncio.Server | None = None
         self._sink_base_url: str | None = None
         self._trusted_binary_path: str | None = None
-        self._profile_transport_reserved = False
+        # Ownership epoch of this client's profile reservation; None when the
+        # client holds none. Releases quote it so stale teardown can never
+        # touch a newer reservation.
+        self._profile_transport_epoch: int | None = None
         self._owner_loop: asyncio.AbstractEventLoop | None = None
         self._transport_provider_id = f"jarvis_voice_{secrets.token_hex(16)}"
         self._ready = False
+        # Set once ``close()`` ran. A closed client has released its profile
+        # reservation and deleted its workspace, so restarting it would fight
+        # the successor for the single-owner profile; callers acquire a fresh
+        # one from ``get_shared_codex_app_server`` instead.
+        self._closed = False
+        # The live process whose FULL startup audit (profile, live account,
+        # config requirements, effective config) just passed. ``thread_start``
+        # consumes this to skip repeating that identical audit microseconds
+        # later; every WARM thread start still re-audits.
+        self._startup_audit_process: asyncio.subprocess.Process | None = None
 
     def _assert_owner_loop(self) -> asyncio.AbstractEventLoop:
         loop = asyncio.get_running_loop()
@@ -1398,34 +2045,58 @@ class CodexAppServerClient:
         return loop
 
     async def capability_status(self) -> CodexAppServerCapability:
-        """Return a bounded, PII-free ChatGPT-login capability snapshot."""
+        """Return a bounded, PII-free ChatGPT-login capability snapshot.
+
+        The caller must already own the profile (``ensure_started`` reserves
+        the transport first): this probe runs the Codex CLI against
+        ``CODEX_HOME`` and racing it with a login, logout, or another probe
+        can corrupt the profile's auth and runtime files.
+        """
         try:
             # The subprocesses inside this synchronous probe each have their own
             # hard timeout.  Do not wrap ``to_thread`` in ``wait_for``: cancelling
             # that await leaves the worker thread running against CODEX_HOME and
             # would release the profile mutation gate too early.
-            return await asyncio.to_thread(_read_codex_capability, self._binary_path)
+            binary_path = self._binary_path
+
+            def _probe_and_publish() -> CodexAppServerCapability:
+                # While this client reserves the transport, ordinary status
+                # probes answer "busy". Publishing this authoritative result
+                # keeps every concurrent status caller truthful during
+                # app-server startup and wakes waiters parked on the busy
+                # window. Probe AND publish stay in the worker thread: the
+                # login mutex can be held across filesystem work, and the
+                # event loop must never block on it.
+                capability = _read_codex_capability(binary_path)
+                with _subscription_login_lock:
+                    _store_subscription_snapshot_locked(binary_path, capability)
+                return capability
+
+            return await asyncio.to_thread(_probe_and_publish)
         except TimeoutError:  # The returned status reports this bounded probe failure.
+            # Transiently unknown — everywhere else a failed PROBE maps to
+            # busy, never to a proven-broken setup.
             return CodexAppServerCapability(
                 available=False,
                 chatgpt_authenticated=False,
                 binary_path=None,
                 version=None,
-                reason="Codex login status timed out.",
-                reason_code="setup_invalid",
+                reason="Codex login status timed out; retrying shortly.",
+                reason_code="busy",
             )
         except Exception as exc:  # noqa: BLE001 - status must degrade honestly
             log.warning(
                 "Codex subscription status failed (%s); app-server stays disabled",
                 type(exc).__name__,
+                exc_info=True,
             )
             return CodexAppServerCapability(
                 available=False,
                 chatgpt_authenticated=False,
                 binary_path=None,
                 version=None,
-                reason="Codex login status could not be verified.",
-                reason_code="setup_invalid",
+                reason="Codex login status could not be verified; retrying shortly.",
+                reason_code="busy",
             )
 
     @property
@@ -1443,31 +2114,112 @@ class CodexAppServerClient:
         self._assert_owner_loop()
         if self.ready:
             return
+        if self._closed:
+            # Restarting a closed client would race the successor for the
+            # single-owner profile and wedge it behind an unactionable
+            # "already owned" error. Name the recovery instead.
+            raise CodexSubscriptionUnavailable(
+                "This subscription-voice transport was closed. Start voice "
+                "again to open a new one."
+            )
         async with self._start_lock:
             if self.ready:
                 return
+            if self._closed:
+                raise CodexSubscriptionUnavailable(
+                    "This subscription-voice transport was closed. Start voice "
+                    "again to open a new one."
+                )
             if self._process is not None:
                 await self._close_process(
                     CodexAppServerDisconnected("Codex app-server exited."),
                     expected=False,
                 )
 
-            _reserve_subscription_transport(self)
-            self._profile_transport_reserved = True
+            # Off the event loop: reserving may wait out a running status
+            # probe. Cancellation safety lives entirely in worker threads: a
+            # cancel can interrupt any await here (even a shielded one, on a
+            # second cancel), so no loop-side variable may decide whether the
+            # reservation needs releasing. The reserve worker records its own
+            # outcome; on cancellation a detached worker waits for it to
+            # settle and releases the orphan, so the profile can never stay
+            # parked on "voice is starting" forever.
+            # Exactly-one-decider contract: the reserve worker and the
+            # abandoner agree under a tiny lock who releases the epoch, so no
+            # interleaving of cancellation, executor scheduling, or a second
+            # ensure_started can leak the reservation OR release a newer one
+            # (the epoch token makes stale releases no-ops). No timeouts: a
+            # give-up path would turn executor saturation into a permanent
+            # claim leak, because the worker would still claim later with
+            # nobody left to release.
+            decision_lock = threading.Lock()
+            abandoned = threading.Event()
+            published_epoch: list[int] = []
+
+            def _reserve() -> None:
+                # A raising reserve holds nothing and propagates through the
+                # awaited future; only a SUCCESSFUL reserve needs a decider.
+                epoch = _reserve_subscription_transport(self)
+                with decision_lock:
+                    if not abandoned.is_set():
+                        self._profile_transport_epoch = epoch
+                        published_epoch.append(epoch)
+                        return
+                # The caller was cancelled before we finished: nobody will
+                # ever use this reservation, so this worker releases it.
+                _release_subscription_transport(self, epoch)
+
+            reserve_future = asyncio.get_running_loop().run_in_executor(
+                None, _reserve
+            )
+            # A cancelled awaiter leaves the worker's exception unretrieved;
+            # consume it so asyncio does not log a spurious GC error.
+            reserve_future.add_done_callback(
+                lambda f: None if f.cancelled() else f.exception()
+            )
+            try:
+                await asyncio.shield(reserve_future)
+            except asyncio.CancelledError:
+                with decision_lock:
+                    abandoned.set()
+                    epoch = published_epoch[0] if published_epoch else None
+                    if epoch is not None and self._profile_transport_epoch == epoch:
+                        self._profile_transport_epoch = None
+                if epoch is not None:
+                    # Already published before the cancel: release off-loop.
+                    try:
+                        threading.Thread(
+                            target=_release_subscription_transport,
+                            args=(self, epoch),
+                            name="codex-reserve-abandon",
+                            daemon=True,
+                        ).start()
+                    except RuntimeError:
+                        # Thread exhaustion: a brief inline release beats
+                        # leaking the reservation until restart.
+                        _release_subscription_transport(self, epoch)
+                raise
+
+            async def _release_after_failure() -> None:
+                epoch = self._profile_transport_epoch
+                self._profile_transport_epoch = None
+                if epoch is not None:
+                    await asyncio.shield(
+                        asyncio.to_thread(
+                            _release_subscription_transport, self, epoch
+                        )
+                    )
 
             try:
                 capability = await self.capability_status()
             except BaseException:
-                _release_subscription_transport(self)
-                self._profile_transport_reserved = False
+                await _release_after_failure()
                 raise
             if not capability.available:
-                _release_subscription_transport(self)
-                self._profile_transport_reserved = False
+                await _release_after_failure()
                 raise CodexSubscriptionUnavailable(capability.reason)
             if not capability.binary_path:
-                _release_subscription_transport(self)
-                self._profile_transport_reserved = False
+                await _release_after_failure()
                 raise CodexSubscriptionUnavailable("Codex CLI binary is unavailable.")
             try:
                 self._trusted_binary_path = capability.binary_path
@@ -1486,6 +2238,9 @@ class CodexAppServerClient:
                     self._workspace,
                 )
                 await self._ensure_sink_started()
+                await asyncio.to_thread(
+                    _verify_spawn_binary, capability.binary_path
+                )
                 await self._spawn(capability.binary_path)
                 await self._initialize_live_process()
                 await self._verify_live_chatgpt_account()
@@ -1501,7 +2256,35 @@ class CodexAppServerClient:
                     trusted_binary_path=self._trusted_binary_path,
                 )
                 self._ready = True
-            except BaseException:
+                # The audit that just passed is byte-for-byte the one
+                # ``thread_start`` performs. Record which process it covers so
+                # the very next thread start rides it instead of repeating
+                # three RPC round trips and a profile walk on the SAME process
+                # microseconds later.
+                self._startup_audit_process = self._process
+
+                def _announce_ready() -> None:
+                    # Status callers waiting out the "voice is starting"
+                    # window can now read the ready transport state directly.
+                    # Off-loop: the login mutex can be held across filesystem
+                    # work by a probe thread. Shielded so a cancellation
+                    # cannot drop the job from the executor queue and leave
+                    # waiters running into their timeout.
+                    with _subscription_login_lock:
+                        _subscription_state_changed.notify_all()
+
+                await asyncio.shield(asyncio.to_thread(_announce_ready))
+            except BaseException as exc:
+                if isinstance(exc, CodexSubscriptionPlanUnsupported):
+                    # The COLD activation path discovers the refused plan
+                    # here, inside startup — record the sticky diagnosis where
+                    # the truth appears, or every surface keeps claiming ready
+                    # after the one honest toast fades.
+                    await asyncio.shield(
+                        asyncio.to_thread(
+                            set_codex_subscription_activation_block, str(exc)
+                        )
+                    )
                 await self._close_process(
                     CodexAppServerDisconnected("Codex app-server initialization failed."),
                     expected=False,
@@ -1544,7 +2327,7 @@ class CodexAppServerClient:
             )
         plan_type = account.get("planType") if isinstance(account, Mapping) else None
         if plan_type not in _PERSONAL_CHATGPT_PLANS:
-            raise CodexSubscriptionUnavailable(
+            raise CodexSubscriptionPlanUnsupported(
                 "Subscription voice permits only personal ChatGPT accounts; workspace, "
                 "enterprise, education, and unknown plans are refused."
             )
@@ -1554,7 +2337,20 @@ class CodexAppServerClient:
         await self.ensure_started()
         try:
             await self._verify_live_chatgpt_account()
-        except CodexSubscriptionUnavailable:
+        except CodexSubscriptionUnavailable as exc:
+            if isinstance(exc, CodexSubscriptionPlanUnsupported):
+                # Recorded where the truth is discovered — this gate is also
+                # the LIVE call path, so a plan that turns unsupported after
+                # activation still flips every status surface to the sticky
+                # diagnosis instead of leaving them all claiming "ready".
+                # Off-loop and shielded like its cold-start and warm-path
+                # siblings: an activation timeout must not drop the queued
+                # recording job.
+                await asyncio.shield(
+                    asyncio.to_thread(
+                        set_codex_subscription_activation_block, str(exc)
+                    )
+                )
             await self._close_process(
                 CodexAppServerDisconnected(
                     "Codex app-server authentication is not ChatGPT."
@@ -1604,8 +2400,7 @@ class CodexAppServerClient:
                     b"Connection: close\r\n\r\n"
                 )
                 await writer.drain()
-            except (ConnectionError, OSError):
-                # The diagnostic sink peer may close before its reply.
+            except (ConnectionError, OSError):  # Diagnostic peer may close before reply.
                 pass
             finally:
                 writer.close()
@@ -1936,22 +2731,34 @@ class CodexAppServerClient:
             )
         try:
             if sys.platform != "win32":
+                # Off-loop: the login mutex this helper takes can be held by a
+                # probe thread across filesystem work; the audio loop must not
+                # wait on it.
+                profile_lock_fds = await asyncio.to_thread(
+                    _subscription_transport_pass_fds, self
+                )
                 lifeline_read_fd, lifeline_write_fd = os.pipe()
                 os.set_inheritable(lifeline_read_fd, True)
                 os.set_inheritable(lifeline_write_fd, False)
+                keep_fd_args: list[str] = []
+                for descriptor in profile_lock_fds:
+                    # The lifeline supervisor spawns the REAL child with
+                    # close_fds, so every descriptor above stdio stopped here
+                    # unless it is re-declared. Without these pairs the profile
+                    # lock was held by the supervisor, not by the app-server
+                    # the docstring promises holds it.
+                    keep_fd_args.extend(("--keep-fd", str(descriptor)))
                 command = [
                     sys.executable,
                     "-I",
                     _CHILD_LIFELINE_SCRIPT,
                     str(lifeline_read_fd),
+                    *keep_fd_args,
                     "--",
                     *command,
                 ]
                 kwargs["start_new_session"] = True
-                kwargs["pass_fds"] = (
-                    *_subscription_transport_pass_fds(self),
-                    lifeline_read_fd,
-                )
+                kwargs["pass_fds"] = (*profile_lock_fds, lifeline_read_fd)
         except BaseException:
             tree.close()
             for descriptor in (lifeline_read_fd, lifeline_write_fd):
@@ -2100,19 +2907,24 @@ class CodexAppServerClient:
                 stdin.write(payload)
                 await stdin.drain()
             except (BrokenPipeError, ConnectionError, OSError) as exc:
-                await self._close_process(
-                    CodexAppServerDisconnected("Codex app-server input closed."),
-                    expected=False,
-                )
+                # Identity guard (mirror of _reader_loop's finally): a drain
+                # that outlived a teardown-and-restart must not close the NEW
+                # process or release the successor's reservation.
+                if process is self._process:
+                    await self._close_process(
+                        CodexAppServerDisconnected("Codex app-server input closed."),
+                        expected=False,
+                    )
                 raise CodexAppServerDisconnected("Codex app-server input closed.") from exc
 
     async def _reader_loop(self, process: asyncio.subprocess.Process) -> None:
         stream = process.stdout
         if stream is None:
-            await self._close_process(
-                CodexAppServerDisconnected("Codex app-server stdout is unavailable."),
-                expected=False,
-            )
+            if process is self._process:
+                await self._close_process(
+                    CodexAppServerDisconnected("Codex app-server stdout is unavailable."),
+                    expected=False,
+                )
             return
         try:
             while True:
@@ -2187,8 +2999,14 @@ class CodexAppServerClient:
             if "error" in message:
                 error = message.get("error")
                 code = error.get("code") if isinstance(error, Mapping) else None
+                http_status, error_type = _rpc_error_detail(error)
                 future.set_exception(
-                    CodexAppServerRPCError(pending_method, code if isinstance(code, int) else None)
+                    CodexAppServerRPCError(
+                        pending_method,
+                        code if isinstance(code, int) else None,
+                        http_status=http_status,
+                        error_type=error_type,
+                    )
                 )
             else:
                 future.set_result(message.get("result"))
@@ -2340,7 +3158,22 @@ class CodexAppServerClient:
         extra: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Start a verified ChatGPT-only transport thread outside the workspace."""
-        del base_instructions, developer_instructions, cwd, model, ephemeral
+        # cwd/model/ephemeral stay caller-proof: the audit below pins them to
+        # the safe values, so a caller cannot widen the boundary. Instructions
+        # are different — they are the voice's identity, one-speaker rule and
+        # language rule. Discarding them here (as an earlier revision did)
+        # silently shipped the "dumb pipe" transport text instead, so the live
+        # model never learned it may request handoffs and answered greetings
+        # out of persona. The transport constants remain the fail-closed floor
+        # whenever a caller passes nothing.
+        del cwd, model, ephemeral
+        base_text = (
+            str(base_instructions or "").strip() or _TRANSPORT_BASE_INSTRUCTIONS
+        )
+        developer_text = (
+            str(developer_instructions or "").strip()
+            or _TRANSPORT_DEVELOPER_INSTRUCTIONS
+        )
         await self.ensure_started()
         if extra:
             raise CodexSubscriptionUnavailable(
@@ -2351,7 +3184,7 @@ class CodexAppServerClient:
             {
                 "allowProviderModelFallback": False,
                 "approvalPolicy": "never",
-                "baseInstructions": _TRANSPORT_BASE_INSTRUCTIONS,
+                "baseInstructions": base_text,
                 "config": {
                     "analytics": {"enabled": False},
                     "cli_auth_credentials_store": "file",
@@ -2422,7 +3255,7 @@ class CodexAppServerClient:
                     "tools": {"web_search": False},
                 },
                 "cwd": self._safe_thread_cwd(),
-                "developerInstructions": _TRANSPORT_DEVELOPER_INSTRUCTIONS,
+                "developerInstructions": developer_text,
                 "dynamicTools": None,
                 "environments": [],
                 "ephemeral": True,
@@ -2439,20 +3272,49 @@ class CodexAppServerClient:
         # this check with its thread/start frame.
         async with self._thread_start_lock:
             await self.ensure_started()
+            # ...with ONE exception: a cold start that finished inside this
+            # very call already ran the identical audit against the identical
+            # process, and nothing but this coroutine has touched it since.
+            # Repeating it cost three RPC round trips plus a profile walk (and
+            # a ~100 MB re-hash on a cold memo) on every first call. The token
+            # is consumed here, under the same lock that serializes the
+            # thread/start frame, so exactly one thread start can ride it and
+            # every WARM start still re-audits.
+            live_process = self._process
+            audit_is_fresh = (
+                live_process is not None
+                and self._startup_audit_process is live_process
+            )
+            self._startup_audit_process = None
             try:
-                await asyncio.to_thread(
-                    _validated_subscription_home,
-                    create=False,
-                    require_marker=True,
-                    trusted_binary_path=self._trusted_binary_path,
-                )
-                await self._verify_live_chatgpt_account()
-                self._audit_config_requirements(
-                    await self._read_config_requirements()
-                )
-                self._audit_effective_config(await self._read_effective_config())
+                if not audit_is_fresh:
+                    await asyncio.to_thread(
+                        _validated_subscription_home,
+                        create=False,
+                        require_marker=True,
+                        trusted_binary_path=self._trusted_binary_path,
+                    )
+                    await self._verify_live_chatgpt_account()
+                    self._audit_config_requirements(
+                        await self._read_config_requirements()
+                    )
+                    self._audit_effective_config(
+                        await self._read_effective_config()
+                    )
             except CodexSubscriptionUnavailable as exc:
-                error = CodexSubscriptionUnavailable(str(exc))
+                if isinstance(exc, CodexSubscriptionPlanUnsupported):
+                    # The WARM call path re-judges the live account before
+                    # every thread — the same recording rule as the cold
+                    # start applies, or a plan that changed between calls
+                    # would fail every call while every surface says ready.
+                    await asyncio.shield(
+                        asyncio.to_thread(
+                            set_codex_subscription_activation_block, str(exc)
+                        )
+                    )
+                # Preserve the subclass: callers and future recorders may
+                # discriminate on it.
+                error = type(exc)(str(exc))
                 await self._close_process(
                     CodexAppServerDisconnected(
                         "Codex app-server safety state changed."
@@ -2501,21 +3363,39 @@ class CodexAppServerClient:
         )
         return _result_dict("turn/start", await self.request("turn/start", params))
 
+    async def _teardown_request(
+        self, method: str, params: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Send a teardown RPC, but never START a process just to send it.
+
+        ``request`` lazily starts app-server, which is right for real work and
+        wrong for cleanup: when the process is already gone, so is the
+        ephemeral thread this call would tidy up, and the plain ``request``
+        path paid a 15-25 s cold start only to have the caller's short cleanup
+        budget expire and poison the client. Nothing is hidden — the skip is
+        logged, and a LIVE process still gets the real RPC and its real error.
+        """
+        if not self.running:
+            log.debug(
+                "Skipping Codex %s: the app-server process is already gone",
+                method,
+            )
+            return {}
+        return _result_dict(
+            method, await self._request_live(method, params, timeout_s=None)
+        )
+
     async def turn_interrupt(self, thread_id: str, turn_id: str) -> dict[str, Any]:
         """Interrupt one exact app-server turn by its schema-defined ids."""
-        return _result_dict(
+        return await self._teardown_request(
             "turn/interrupt",
-            await self.request(
-                "turn/interrupt",
-                {"threadId": thread_id, "turnId": turn_id},
-            ),
+            {"threadId": thread_id, "turnId": turn_id},
         )
 
     async def thread_unsubscribe(self, thread_id: str) -> dict[str, Any]:
         """Unload a completed ephemeral voice thread from app-server."""
-        return _result_dict(
-            "thread/unsubscribe",
-            await self.request("thread/unsubscribe", {"threadId": thread_id}),
+        return await self._teardown_request(
+            "thread/unsubscribe", {"threadId": thread_id}
         )
 
     async def realtime_start(
@@ -2556,6 +3436,14 @@ class CodexAppServerClient:
         if model is not None and model.strip():
             params["model"] = model.strip()
         if offer_sdp is not None:
+            # The upstream v3 SDP parser reads line-by-line and answers
+            # "Failed to parse offer: failed to unmarshal SDP: EOF" for an
+            # offer whose LAST line has no terminator — which is exactly what
+            # Jarvis's ingress validation produces (it strips the offer).
+            # Proven live 2026-08-01: the identical offer passes WITH a
+            # trailing CRLF and fails without one.
+            if not offer_sdp.endswith("\n"):
+                offer_sdp = offer_sdp + "\r\n"
             params["transport"] = {"type": "webrtc", "sdp": offer_sdp}
 
         sdp_subscription = self.subscribe(thread_id) if offer_sdp is not None else None
@@ -2566,13 +3454,38 @@ class CodexAppServerClient:
             )
             answer_sdp: str | None = None
             if sdp_subscription is not None:
-                notification = await sdp_subscription.wait_for(
-                    "thread/realtime/sdp", timeout_s=sdp_timeout_s
-                )
-                candidate = notification.params.get("sdp")
-                if not isinstance(candidate, str) or not candidate:
-                    raise CodexAppServerError("Codex app-server returned an invalid WebRTC answer.")
-                answer_sdp = candidate
+                # Wait for the answer, but FAIL FAST on a realtime error or
+                # close: the upstream refusal (for example the 403 that ended
+                # the experimental v1 protocol) used to hide behind a blind
+                # 15s timeout instead of reaching the user as its honest text.
+                deadline = asyncio.get_running_loop().time() + sdp_timeout_s
+                while True:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        raise CodexAppServerTimeout(
+                            "Timed out waiting for the Codex WebRTC answer."
+                        )
+                    notification = await sdp_subscription.get(remaining)
+                    if notification.method == "thread/realtime/sdp":
+                        candidate = notification.params.get("sdp")
+                        if not isinstance(candidate, str) or not candidate:
+                            raise CodexAppServerError(
+                                "Codex app-server returned an invalid WebRTC answer."
+                            )
+                        answer_sdp = candidate
+                        break
+                    if notification.method == "thread/realtime/error":
+                        message = " ".join(
+                            str(notification.params.get("message", "") or "").split()
+                        )[:300]
+                        raise CodexAppServerError(
+                            "Codex realtime start failed: "
+                            + (message or "unspecified realtime error")
+                        )
+                    if notification.method == "thread/realtime/closed":
+                        raise CodexAppServerError(
+                            "Codex realtime transport closed before answering."
+                        )
             return CodexRealtimeStartResult(response=response, answer_sdp=answer_sdp)
         finally:
             if sdp_subscription is not None:
@@ -2626,28 +3539,47 @@ class CodexAppServerClient:
         )
 
     async def realtime_stop(self, thread_id: str) -> dict[str, Any]:
-        return _result_dict(
-            "thread/realtime/stop",
-            await self.request("thread/realtime/stop", {"threadId": thread_id}),
+        return await self._teardown_request(
+            "thread/realtime/stop", {"threadId": thread_id}
         )
 
     async def _close_process(self, error: CodexAppServerDisconnected, *, expected: bool) -> None:
         process = self._process
         if process is None:
             self._ready = False
+            self._startup_audit_process = None
             self._close_lifeline()
-            if self._profile_transport_reserved:
-                _release_subscription_transport(self)
-                self._profile_transport_reserved = False
+            if self._profile_transport_epoch is not None:
+                # Epoch first, release off-loop and shielded: a cancellation
+                # must neither skip the release nor drop the queued job (a
+                # queued to_thread future CAN be cancelled before its thread
+                # starts — shield keeps it alive).
+                epoch = self._profile_transport_epoch
+                self._profile_transport_epoch = None
+                await asyncio.shield(
+                    asyncio.to_thread(_release_subscription_transport, self, epoch)
+                )
             return
         self._process = None
         self._ready = False
+        self._startup_audit_process = None
         tree = self._process_tree
         self._process_tree = None
         reader_task = self._reader_task
         stderr_task = self._stderr_task
         self._reader_task = None
         self._stderr_task = None
+        # Captured SYNCHRONOUSLY with self._process = None: the reaping below
+        # awaits for seconds without _start_lock, and a parallel ensure_started
+        # may re-reserve (new epoch) and re-spawn (new lifeline FD) meanwhile.
+        # Reading these fields late in the finally would tear down the NEW
+        # life's state — closing the fresh child's lifeline kills its process
+        # group on POSIX, and releasing the fresh epoch strips a live call's
+        # profile reservation.
+        lifeline_fd = self._lifeline_write_fd
+        self._lifeline_write_fd = None
+        release_epoch = self._profile_transport_epoch
+        self._profile_transport_epoch = None
 
         for _method, future in tuple(self._pending.values()):
             if not future.done():
@@ -2663,82 +3595,273 @@ class CodexAppServerClient:
             with suppress(Exception):
                 stdin.close()
 
-        current = asyncio.current_task()
-        tasks = [
-            task
-            for task in (reader_task, stderr_task)
-            if task is not None and task is not current and not task.done()
-        ]
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        # Everything past stdin-close awaits repeatedly; a SECOND cancellation
+        # landing on any of those awaits must still run the resource cleanup
+        # (job-object handle, lifeline FD, reservation epoch) — hence the
+        # try/finally around the whole reaping tail.
+        try:
+            current = asyncio.current_task()
+            tasks = [
+                task
+                for task in (reader_task, stderr_task)
+                if task is not None and task is not current and not task.done()
+            ]
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
-        if process.returncode is None:
-            # EOF is Codex's graceful app-server shutdown path. Give its
-            # Arg0PathEntryGuard time to remove the locked tmp/arg0 directory
-            # before terminating the contained tree.
-            with suppress(TimeoutError):
-                await asyncio.wait_for(
-                    process.wait(), timeout=_SHUTDOWN_TIMEOUT_S
-                )
-        if process.returncode is None:
-            with suppress(ProcessLookupError, OSError):
-                process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=_SHUTDOWN_TIMEOUT_S)
-            except TimeoutError:  # The grace expired, so hard-kill the contained tree.
+            if process.returncode is None:
+                # EOF is Codex's graceful app-server shutdown path. Give its
+                # Arg0PathEntryGuard time to remove the locked tmp/arg0
+                # directory before terminating the contained tree.
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        process.wait(), timeout=_SHUTDOWN_TIMEOUT_S
+                    )
+            if process.returncode is None:
                 with suppress(ProcessLookupError, OSError):
-                    process.kill()
+                    process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=_SHUTDOWN_TIMEOUT_S)
+                except TimeoutError:  # The grace expired, so hard-kill the contained tree.
+                    with suppress(ProcessLookupError, OSError):
+                        process.kill()
                 with suppress(Exception):
                     await asyncio.wait_for(process.wait(), timeout=_SHUTDOWN_TIMEOUT_S)
-        if tree is not None:
-            tree.close()
-        self._close_lifeline()
-        if self._profile_transport_reserved:
-            _release_subscription_transport(self)
-            self._profile_transport_reserved = False
-        if not expected:
-            log.warning("Codex app-server connection reset")
+        finally:
+            # Sync resource cleanup first (safe under any cancellation), the
+            # awaited release last: its shield keeps the queued job alive even
+            # if this await is interrupted again. ONLY the entry-time local
+            # copies are used here — never re-read from self (see above).
+            if tree is not None:
+                tree.close()
+            if lifeline_fd is not None:
+                with suppress(OSError):
+                    os.close(lifeline_fd)
+            if release_epoch is not None:
+                await asyncio.shield(
+                    asyncio.to_thread(
+                        _release_subscription_transport, self, release_epoch
+                    )
+                )
+            if not expected:
+                log.warning("Codex app-server connection reset")
 
     async def close(self) -> None:
-        """Reap the app-server tree and release local temporary state."""
+        """Reap the app-server tree and release local temporary state.
+
+        Closing also RETIRES this client from the shared registry. Without
+        that, ``get_shared_codex_app_server`` kept handing the same corpse to
+        the next caller — whose ``ensure_started`` then paid a full cold start
+        against a client whose workspace had already been deleted. Eviction is
+        idempotent and runs even when the teardown itself fails, because a
+        client nobody can use must never be reachable.
+        """
         self._assert_owner_loop()
-        async with self._start_lock:
-            await self._close_process(
-                CodexAppServerDisconnected("Codex app-server client closed."),
-                expected=True,
-            )
-            workspace = self._workspace
-            self._workspace = None
-            self._child_environment = {}
-            sink_server = self._sink_server
-            self._sink_server = None
-            self._sink_base_url = None
-            if sink_server is not None:
-                sink_server.close()
-                with suppress(Exception):
-                    await sink_server.wait_closed()
-            if workspace is not None:
-                with suppress(OSError):
-                    await asyncio.to_thread(shutil.rmtree, workspace.root)
+        try:
+            async with self._start_lock:
+                await self._close_process(
+                    CodexAppServerDisconnected("Codex app-server client closed."),
+                    expected=True,
+                )
+                workspace = self._workspace
+                self._workspace = None
+                self._child_environment = {}
+                sink_server = self._sink_server
+                self._sink_server = None
+                self._sink_base_url = None
+                if sink_server is not None:
+                    sink_server.close()
+                    with suppress(Exception):
+                        await sink_server.wait_closed()
+                if workspace is not None:
+                    with suppress(OSError):
+                        await asyncio.to_thread(shutil.rmtree, workspace.root)
+        finally:
+            self._closed = True
+            _evict_shared_codex_app_server(self)
 
     async def poison(self) -> None:
         """Fail closed after an uncertain remote cleanup."""
         await self.close()
 
 
-_shared_clients: dict[
-    tuple[str, asyncio.AbstractEventLoop], CodexAppServerClient
-] = {}
+# Keyed on the binary path ALONE, never on the acquiring event loop. The
+# resource behind a client is process-global (one OS profile lock, one
+# app-server child bound to it), so a per-loop client could only ever be a
+# client that can never reserve the profile — the second loop got one and
+# every call from it failed with "already owned by another client".
+_shared_clients: dict[str, CodexAppServerClient] = {}
 _shared_clients_lock = threading.Lock()
+# Invariant: WORKER threads may hold this lock across filesystem work (the
+# cross-process profile lock is acquired under it: mkdir, resolve, ACL
+# validation — its OS locking call itself is non-blocking). Event-loop code
+# must therefore NEVER take this lock directly — always go through
+# asyncio.to_thread (shielded where a cancellation must not drop the job).
 _subscription_login_lock = threading.Lock()
 _subscription_login_in_flight = False
 _subscription_login_process: Any | None = None
 _subscription_profile_mutating = False
 _subscription_active_transports: set[int] = set()
+# The one client currently holding the reservation. Kept as an object (not
+# just its id) so an off-loop reserve can tell a live owner from one whose
+# event loop died, and so status reads do not depend on the client still
+# being registered.
+_subscription_transport_owner: CodexAppServerClient | None = None
 _subscription_transport_process_lock: Any | None = None
+# Monotonic ownership token for the transport reservation: bumped on every
+# reserve (including same-client adoption), quoted by every release. A stale
+# holder's release becomes a no-op instead of tearing down a live reservation.
+_subscription_transport_epoch: int = 0
 _subscription_mutation_process_lock: Any | None = None
+
+# Status probes must never report a broken setup just because the profile is
+# briefly owned by another probe or mutation (the UI fires several concurrent
+# refreshes; each losing caller used to flap the card to "needs attention").
+# Concurrent callers wait on this condition (it shares _subscription_login_lock)
+# and share the owner's result. The last completed probe is cached briefly so a
+# refresh burst costs one CLI probe instead of one per request.
+# Slightly above the login flow's 5s status polling so a poll usually hits
+# the cache instead of paying a fresh CLI probe on every tick.
+_SUBSCRIPTION_SNAPSHOT_CACHE_TTL_S: Final = 8.0
+_SUBSCRIPTION_SNAPSHOT_WAIT_TIMEOUT_S: Final = 10.0
+# A snapshot served while the profile is briefly owned elsewhere may be stale,
+# but never arbitrarily old: beyond this bound the caller reports busy instead
+# of a status another process may have changed long ago.
+_SUBSCRIPTION_SNAPSHOT_STALE_MAX_S: Final = 60.0
+# How long user actions (login, logout, call start) wait for a read-only
+# status probe to release the profile before failing honestly.
+_SUBSCRIPTION_PROBE_WAIT_S: Final = 5.0
+_subscription_state_changed = threading.Condition(_subscription_login_lock)
+_subscription_snapshot_cache: CodexAppServerCapability | None = None
+_subscription_snapshot_cache_key: str = ""
+_subscription_snapshot_cache_at: float = 0.0
+# True when the cached entry memoizes a RAISED probe (not a real status). A
+# failure memo exists only to keep coalesced waiters off a broken CLI within
+# the fresh TTL; it must never be served as "what was true before" on the
+# stale path, or one transient hiccup would paint the card broken for the
+# whole next busy window.
+_subscription_snapshot_cache_is_failure = False
+# True only while codex_subscription_auth_snapshot itself owns the profile.
+# Distinguishes the read-only probe from real mutations (login/logout), so
+# user actions can wait out a probe instead of failing with a message that
+# blames a login that does not exist.
+_subscription_status_probe_active = False
+
+
+def _subscription_cache_key(binary_path: str | None) -> str:
+    return (binary_path or "").strip() or "<default>"
+
+
+def _cached_subscription_snapshot_locked(
+    binary_path: str | None, *, allow_stale: bool
+) -> CodexAppServerCapability | None:
+    """Return the last completed probe result; caller holds the login lock.
+
+    ``allow_stale`` serves the last known status while the profile is briefly
+    owned elsewhere, bounded by ``_SUBSCRIPTION_SNAPSHOT_STALE_MAX_S``.
+    In-process mutations invalidate the cache when they BEGIN and again when
+    they finish; a probe that was already mid-flight when a mutation started
+    may still store its (pre-mutation) result during the mutation window, so
+    a stale read can briefly reflect the pre-mutation truth until the
+    mutation's closing invalidation lands.
+    """
+    if _subscription_snapshot_cache is None:
+        return None
+    if _subscription_snapshot_cache_key != _subscription_cache_key(binary_path):
+        return None
+    if allow_stale and _subscription_snapshot_cache_is_failure:
+        return None
+    age = time.monotonic() - _subscription_snapshot_cache_at
+    limit = (
+        _SUBSCRIPTION_SNAPSHOT_STALE_MAX_S
+        if allow_stale
+        else _SUBSCRIPTION_SNAPSHOT_CACHE_TTL_S
+    )
+    if age <= limit:
+        return _subscription_snapshot_cache
+    return None
+
+
+def _store_subscription_snapshot_locked(
+    binary_path: str | None,
+    snapshot: CodexAppServerCapability,
+    *,
+    is_failure: bool = False,
+) -> None:
+    global _subscription_snapshot_cache, _subscription_snapshot_cache_key
+    global _subscription_snapshot_cache_at
+    global _subscription_snapshot_cache_is_failure
+
+    _subscription_snapshot_cache = snapshot
+    _subscription_snapshot_cache_key = _subscription_cache_key(binary_path)
+    _subscription_snapshot_cache_at = time.monotonic()
+    _subscription_snapshot_cache_is_failure = is_failure
+    # Waiters parked on a busy window get the fresh result immediately.
+    _subscription_state_changed.notify_all()
+
+
+def _invalidate_subscription_snapshot_locked() -> None:
+    """Drop the cached status after anything that can change the profile."""
+    global _subscription_snapshot_cache, _subscription_snapshot_cache_key
+    global _subscription_snapshot_cache_at
+    global _subscription_snapshot_cache_is_failure
+    global _subscription_activation_block
+
+    _subscription_snapshot_cache = None
+    _subscription_snapshot_cache_key = ""
+    _subscription_snapshot_cache_at = 0.0
+    _subscription_snapshot_cache_is_failure = False
+    # The sticky activation block is deliberately NOT cleared here: cache
+    # invalidation happens on every mutation attempt, including an ABORTED
+    # re-login, and a closed browser window is no evidence the refused plan
+    # changed. The block clears only on explicit new evidence — a VERIFIED
+    # fresh login, a logout, or a passed activation.
+
+
+# Sticky reason the connected login cannot activate (for example a
+# business/enterprise ChatGPT plan, refused by the live account check). The
+# one honest 409 toast fades in seconds; without this, every surface keeps
+# claiming "ready" for an account that can never work.
+_subscription_activation_block: str | None = None
+
+
+def _set_subscription_activation_block_locked(message: str | None) -> None:
+    """Caller holds ``_subscription_login_lock``."""
+    global _subscription_activation_block
+
+    _subscription_activation_block = (message or "").strip() or None
+
+
+def set_codex_subscription_activation_block(message: str | None) -> None:
+    """Record (or clear with ``None``) why activation is impossible."""
+    with _subscription_login_lock:
+        _set_subscription_activation_block_locked(message)
+
+
+def codex_subscription_activation_block() -> str | None:
+    with _subscription_login_lock:
+        return _subscription_activation_block
+
+
+def _await_status_probe_completion_locked() -> None:
+    """Wait briefly for a status probe to release the profile.
+
+    Caller holds ``_subscription_login_lock``. A status probe is read-only and
+    short; failing a user action because a background refresh happens to own
+    the profile — with an error naming a login that does not exist — is worse
+    than waiting the probe out.
+    """
+    deadline = time.monotonic() + _SUBSCRIPTION_PROBE_WAIT_S
+    while _subscription_status_probe_active:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise CodexSubscriptionUnavailable(
+                "A subscription-voice status check is still running. "
+                "Try again in a moment."
+            )
+        _subscription_state_changed.wait(timeout=remaining)
 
 
 def _subscription_transport_pass_fds(
@@ -2768,10 +3891,50 @@ def _subscription_transport_pass_fds(
         return (descriptor,)
 
 
-def _reserve_subscription_transport(client: CodexAppServerClient) -> None:
-    global _subscription_transport_process_lock
+def _owner_loop_is_dead(client: CodexAppServerClient) -> bool:
+    """True when this client's owning event loop can never run it again."""
+    loop = client._owner_loop
+    return loop is not None and loop.is_closed()
+
+
+def _reap_dead_loop_transport_locked(client: CodexAppServerClient) -> None:
+    """Kill an orphan whose owning loop died; caller holds the login lock.
+
+    Mirrors the shutdown sweep's dead-loop branch: the loop that owns the
+    child can never reap it, so the tree is killed and the lifeline closed
+    BEFORE the reservation is handed on — an orphan must never keep running
+    against ``CODEX_HOME`` while the profile reads as free.
+    """
+    orphan_process = client._process
+    client._process = None
+    orphan_tree = client._process_tree
+    client._process_tree = None
+    client._ready = False
+    if orphan_process is not None and orphan_process.returncode is None:
+        with suppress(ProcessLookupError, OSError):
+            orphan_process.kill()
+    if orphan_tree is not None:
+        with suppress(Exception):
+            orphan_tree.close()
+    with suppress(Exception):
+        client._close_lifeline()
+    client._profile_transport_epoch = None
+
+
+def _reserve_subscription_transport(client: CodexAppServerClient) -> int:
+    """Reserve the profile for this client and return an ownership epoch.
+
+    The epoch is the anti-stale-release token: every reservation (including a
+    re-reservation by the same client after a crash or cancelled start) bumps
+    it, and ``_release_subscription_transport`` only honors the CURRENT epoch.
+    Without it, an abandon worker or a slow ``_close_process`` from a previous
+    life could tear down a reservation a newer start legitimately owns.
+    """
+    global _subscription_transport_process_lock, _subscription_transport_epoch
+    global _subscription_transport_owner
 
     with _subscription_login_lock:
+        _await_status_probe_completion_locked()
         if _subscription_profile_mutating:
             raise CodexSubscriptionUnavailable(
                 "The subscription-voice profile is being changed."
@@ -2782,24 +3945,86 @@ def _reserve_subscription_transport(client: CodexAppServerClient) -> None:
                 _subscription_active_transports == {client_id}
                 and _subscription_transport_process_lock is not None
             ):
-                return
+                # Adoption: the new start supersedes any stale holder, whose
+                # pending releases become no-ops via the epoch bump.
+                _subscription_transport_owner = client
+                _subscription_transport_epoch += 1
+                return _subscription_transport_epoch
+            owner = _subscription_transport_owner
+            if (
+                owner is not None
+                and owner is not client
+                and _subscription_active_transports == {id(owner)}
+                and _subscription_transport_process_lock is not None
+                and _owner_loop_is_dead(owner)
+            ):
+                # The holder's event loop is gone for good: it can never
+                # release the reservation itself, and refusing forever would
+                # make subscription voice unusable until a restart. Reap its
+                # orphan and hand the SAME process lock to the new owner.
+                log.warning(
+                    "Reclaiming the subscription-voice reservation from a "
+                    "client whose event loop is closed"
+                )
+                _reap_dead_loop_transport_locked(owner)
+                _subscription_active_transports.discard(id(owner))
+                _subscription_active_transports.add(client_id)
+                _subscription_transport_owner = client
+                _subscription_transport_epoch += 1
+                return _subscription_transport_epoch
             raise CodexSubscriptionUnavailable(
-                "Subscription voice is already owned by another client or event loop."
+                "Subscription voice is already running elsewhere in Jarvis. "
+                "End the active voice session before starting another one."
             )
         _subscription_transport_process_lock = _acquire_subscription_process_lock()
         _subscription_active_transports.add(client_id)
+        _subscription_transport_owner = client
+        _subscription_transport_epoch += 1
+        return _subscription_transport_epoch
 
 
-def _release_subscription_transport(client: CodexAppServerClient) -> None:
-    global _subscription_transport_process_lock
+def _force_drop_subscription_transport(client: CodexAppServerClient) -> None:
+    """Unconditionally drop a dead client's reservation (no epoch check).
+
+    Safe ONLY for a client whose owner loop is closed: it can never reserve
+    again, and no other client can hold the reservation while its id is in
+    the set. Without this, a close that nulled the epoch before its loop died
+    left the profile permanently "starting" with login/logout refused.
+    """
+    global _subscription_transport_process_lock, _subscription_transport_owner
 
     with _subscription_login_lock:
         _subscription_active_transports.discard(id(client))
+        if _subscription_transport_owner is client:
+            _subscription_transport_owner = None
         if not _subscription_active_transports:
             process_lock = _subscription_transport_process_lock
             _subscription_transport_process_lock = None
             if process_lock is not None:
                 process_lock.close()
+            _subscription_state_changed.notify_all()
+
+
+def _release_subscription_transport(
+    client: CodexAppServerClient, epoch: int
+) -> None:
+    """Release the reservation, but only when ``epoch`` is still current."""
+    global _subscription_transport_process_lock, _subscription_transport_owner
+
+    with _subscription_login_lock:
+        if epoch != _subscription_transport_epoch:
+            # A newer reservation owns the profile now; this release belongs
+            # to a superseded holder and must not touch the live state.
+            return
+        _subscription_active_transports.discard(id(client))
+        if _subscription_transport_owner is client:
+            _subscription_transport_owner = None
+        if not _subscription_active_transports:
+            process_lock = _subscription_transport_process_lock
+            _subscription_transport_process_lock = None
+            if process_lock is not None:
+                process_lock.close()
+            _subscription_state_changed.notify_all()
 
 
 def _release_subscription_mutation_process_lock_locked() -> None:
@@ -2834,33 +4059,67 @@ def _launch_subscription_login_reaper(target: Any) -> None:
     ).start()
 
 
+def _evict_shared_codex_app_server(client: CodexAppServerClient) -> None:
+    """Retire a client from the shared registry. Safe to call repeatedly."""
+    with _shared_clients_lock:
+        for key in [
+            key for key, entry in _shared_clients.items() if entry is client
+        ]:
+            _shared_clients.pop(key, None)
+
+
 def get_shared_codex_app_server(
     binary_path: str | None = None,
 ) -> CodexAppServerClient:
-    """Return the shared client for Jarvis's fixed subscription-voice identity."""
+    """Return the shared client for Jarvis's fixed subscription-voice identity.
+
+    One client per binary, process-wide. A caller on a different event loop is
+    refused HERE with an actionable message rather than being handed a client
+    that cannot reserve the single-owner profile and fails deep inside a call.
+    """
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError as exc:
         raise CodexSubscriptionUnavailable(
             "The shared Codex app-server must be acquired from its owning event loop."
         ) from exc
-    binary_key = (binary_path or "").strip() or "<default>"
-    key = (binary_key, loop)
+    key = (binary_path or "").strip() or "<default>"
     with _shared_clients_lock:
         client = _shared_clients.get(key)
-        if client is None:
-            client = CodexAppServerClient(binary_path=binary_path)
-            client._owner_loop = loop
-            _shared_clients[key] = client
+        if client is not None:
+            owner = client._owner_loop
+            if owner is loop:
+                return client
+            if owner is not None and not owner.is_closed():
+                raise CodexSubscriptionUnavailable(
+                    "Subscription voice is already running elsewhere in "
+                    "Jarvis. End the active voice session before starting "
+                    "another one."
+                )
+            # The owning loop is gone for good; this entry can never be used
+            # or closed again. Retire it here — the reservation it may still
+            # hold is reclaimed off-loop by the next reserve, which can kill
+            # the orphan safely.
+            log.warning(
+                "Replacing a Codex app-server client whose owner loop is closed"
+            )
+            _shared_clients.pop(key, None)
+        client = CodexAppServerClient(binary_path=binary_path)
+        client._owner_loop = loop
+        _shared_clients[key] = client
     return client
 
 
-def _local_subscription_auth_snapshot_locked() -> CodexAppServerCapability | None:
+def _local_subscription_auth_snapshot_locked(
+    binary_path: str | None = None,
+) -> CodexAppServerCapability | None:
     """Return an in-memory status while the dedicated profile is already owned.
 
     The caller holds ``_subscription_login_lock``.  Starting another Codex CLI
     against the same profile during login, logout, startup, or a live transport
     can race its auth and runtime files, so these states must never be probed.
+    ``binary_path`` only fills cosmetic fields (the version chip) from the
+    cache; ownership decisions never depend on it.
     """
     if _subscription_login_in_flight:
         return CodexAppServerCapability(
@@ -2869,24 +4128,52 @@ def _local_subscription_auth_snapshot_locked() -> CodexAppServerCapability | Non
             binary_path=None,
             version=None,
             reason="Dedicated ChatGPT subscription login is in progress.",
-            reason_code="login_required",
+            # Its own state, not login_required: the card must invite the
+            # user to FINISH the running browser login, never to start a
+            # second one.
+            reason_code="login_in_progress",
+        )
+    if _subscription_profile_mutating:
+        # Checked before the transport branch: during disconnect-and-logout
+        # both are set, and reporting the closing transport as still ready
+        # would be a lie for the whole teardown window.
+        return CodexAppServerCapability(
+            available=False,
+            chatgpt_authenticated=False,
+            binary_path=None,
+            version=None,
+            reason="Dedicated subscription voice status is being checked or changed.",
+            reason_code="busy",
         )
     if _subscription_active_transports:
-        with _shared_clients_lock:
-            active_clients = tuple(
-                client
-                for client in _shared_clients.values()
-                if id(client) in _subscription_active_transports
-            )
-        ready_client = next((client for client in active_clients if client.ready), None)
+        # The reservation holder is tracked directly: it stays authoritative
+        # even after the client was retired from the shared registry (a closed
+        # owner loop), where a registry scan would have found nothing and
+        # reported a live call as "starting".
+        owner = _subscription_transport_owner
+        ready_client = (
+            owner
+            if owner is not None
+            and id(owner) in _subscription_active_transports
+            and owner.ready
+            else None
+        )
         if ready_client is not None:
+            # The bounded cache read applies the age ceiling and the
+            # failure-memo exclusion — never read the raw cache here.
+            cached = _cached_subscription_snapshot_locked(
+                binary_path, allow_stale=True
+            )
+            cached_version = cached.version if cached is not None else None
             return CodexAppServerCapability(
                 available=True,
                 chatgpt_authenticated=True,
                 binary_path=(
                     ready_client._trusted_binary_path or ready_client._binary_path
                 ),
-                version=None,
+                # Cosmetic: keep the version chip alive during a call instead
+                # of blanking it while the profile cannot be probed.
+                version=cached_version,
                 reason="Dedicated ChatGPT subscription voice is active.",
                 reason_code="ready",
             )
@@ -2896,16 +4183,7 @@ def _local_subscription_auth_snapshot_locked() -> CodexAppServerCapability | Non
             binary_path=None,
             version=None,
             reason="Dedicated ChatGPT subscription voice is starting.",
-            reason_code="setup_invalid",
-        )
-    if _subscription_profile_mutating:
-        return CodexAppServerCapability(
-            available=False,
-            chatgpt_authenticated=False,
-            binary_path=None,
-            version=None,
-            reason="Dedicated subscription voice status is being checked or changed.",
-            reason_code="setup_invalid",
+            reason_code="busy",
         )
     return None
 
@@ -2913,33 +4191,106 @@ def _local_subscription_auth_snapshot_locked() -> CodexAppServerCapability | Non
 def codex_subscription_auth_snapshot(
     binary_path: str | None = None,
 ) -> CodexAppServerCapability:
-    """Return a lightweight snapshot without starting ``codex app-server``."""
-    global _subscription_mutation_process_lock, _subscription_profile_mutating
+    """Return a lightweight snapshot without starting ``codex app-server``.
 
-    with _subscription_login_lock:
-        local_snapshot = _local_subscription_auth_snapshot_locked()
-        if local_snapshot is not None:
-            return local_snapshot
-        try:
-            _subscription_mutation_process_lock = (
-                _acquire_subscription_process_lock()
+    Concurrent callers never see a fake broken setup: while another probe or a
+    profile mutation owns the profile, this serves the last completed result,
+    or waits briefly for the owner and re-evaluates. Only a cold start that
+    stays contended past the bounded wait reports the transient ``busy`` state.
+    """
+    global _subscription_mutation_process_lock, _subscription_profile_mutating
+    global _subscription_status_probe_active
+
+    deadline = time.monotonic() + _SUBSCRIPTION_SNAPSHOT_WAIT_TIMEOUT_S
+    with _subscription_state_changed:
+        while True:
+            local_snapshot = _local_subscription_auth_snapshot_locked(binary_path)
+            if local_snapshot is not None:
+                if local_snapshot.reason_code != "busy":
+                    return local_snapshot
+                cached = _cached_subscription_snapshot_locked(
+                    binary_path, allow_stale=True
+                )
+                if cached is not None:
+                    return cached
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return local_snapshot
+                _subscription_state_changed.wait(timeout=remaining)
+                continue
+            cached = _cached_subscription_snapshot_locked(
+                binary_path, allow_stale=False
             )
-        except CodexSubscriptionUnavailable as exc:  # Expected lock failure becomes status.
-            return CodexAppServerCapability(
-                available=False,
-                chatgpt_authenticated=False,
-                binary_path=None,
-                version=None,
-                reason=str(exc),
-                reason_code="setup_invalid",
-            )
-        _subscription_profile_mutating = True
+            if cached is not None:
+                return cached
+            try:
+                _subscription_mutation_process_lock = (
+                    _acquire_subscription_process_lock()
+                )
+            except CodexSubscriptionUnavailable as exc:
+                # Another process (a second Jarvis instance or CLI session)
+                # briefly owns the profile. Serve the last known status; a
+                # transient lock is not a setup defect.
+                stale = _cached_subscription_snapshot_locked(
+                    binary_path, allow_stale=True
+                )
+                if stale is not None:
+                    log.debug(
+                        "Subscription profile owned by another process (%s); "
+                        "serving the last known status.",
+                        exc,
+                    )
+                    return stale
+                return CodexAppServerCapability(
+                    available=False,
+                    chatgpt_authenticated=False,
+                    binary_path=None,
+                    version=None,
+                    reason=str(exc),
+                    reason_code="busy",
+                )
+            _subscription_profile_mutating = True
+            _subscription_status_probe_active = True
+            break
     try:
-        return _read_codex_capability(binary_path)
+        snapshot = _read_codex_capability(binary_path)
+    except Exception as exc:
+        # Cache the failure briefly so waiters coalesced behind this probe do
+        # not each retry the broken CLI serially; the owner still raises so
+        # its caller sees the real error. A RAISED probe is "transiently
+        # unknown" (busy), never a proven-broken setup: presenting one
+        # antivirus-slowed hash or tempdir hiccup as "reconnect your account"
+        # is the exact lie this pipeline exists to prevent.
+        with _subscription_login_lock:
+            _store_subscription_snapshot_locked(
+                binary_path,
+                CodexAppServerCapability(
+                    available=False,
+                    chatgpt_authenticated=False,
+                    binary_path=None,
+                    version=None,
+                    reason=(
+                        "The Codex status probe failed "
+                        f"({type(exc).__name__}); retrying shortly."
+                    ),
+                    reason_code="busy",
+                ),
+                # Flagged so the stale path never serves this memo as "what
+                # was true before" — it exists only to keep coalesced waiters
+                # off a broken CLI within the fresh TTL.
+                is_failure=True,
+            )
+        raise
+    else:
+        with _subscription_login_lock:
+            _store_subscription_snapshot_locked(binary_path, snapshot)
+        return snapshot
     finally:
         with _subscription_login_lock:
             _release_subscription_mutation_process_lock_locked()
             _subscription_profile_mutating = False
+            _subscription_status_probe_active = False
+            _subscription_state_changed.notify_all()
 
 
 def start_codex_subscription_login(
@@ -2951,16 +4302,14 @@ def start_codex_subscription_login(
 
     from jarvis.codex_auth import CodexAuthService
 
-    if (
-        sys.platform.startswith("linux")
-        and not os.environ.get("DISPLAY")
-        and not os.environ.get("WAYLAND_DISPLAY")
-    ):
-        raise CodexSubscriptionUnavailable(
-            "Interactive subscription-voice login is unavailable on headless Linux. "
-            "Run Jarvis on a desktop to connect this dedicated profile."
-        )
+    if _headless_linux():
+        raise CodexSubscriptionUnavailable(_HEADLESS_LOGIN_REASON)
+    if _linux_login_terminal_missing():
+        # Same pre-click truth the card shows, so the click and the card can
+        # never disagree about why this desktop cannot host the login.
+        raise CodexSubscriptionUnavailable(_NO_LOGIN_TERMINAL_REASON)
     with _subscription_login_lock:
+        _await_status_probe_completion_locked()
         if _subscription_profile_mutating or _subscription_login_in_flight:
             raise CodexSubscriptionUnavailable(
                 "A subscription-voice login is already in progress."
@@ -2974,6 +4323,7 @@ def start_codex_subscription_login(
         )
         _subscription_profile_mutating = True
         _subscription_login_in_flight = True
+        _invalidate_subscription_snapshot_locked()
 
     log_dir: Path | None = None
     try:
@@ -3016,6 +4366,8 @@ def start_codex_subscription_login(
             _release_subscription_mutation_process_lock_locked()
             _subscription_profile_mutating = False
             _subscription_login_in_flight = False
+            _invalidate_subscription_snapshot_locked()
+            _subscription_state_changed.notify_all()
         raise CodexSubscriptionUnavailable(str(exc)) from exc
     except BaseException:
         if log_dir is not None:
@@ -3024,6 +4376,8 @@ def start_codex_subscription_login(
             _release_subscription_mutation_process_lock_locked()
             _subscription_profile_mutating = False
             _subscription_login_in_flight = False
+            _invalidate_subscription_snapshot_locked()
+            _subscription_state_changed.notify_all()
         raise
 
     with _subscription_login_lock:
@@ -3033,15 +4387,17 @@ def start_codex_subscription_login(
         global _subscription_login_in_flight, _subscription_login_process
         global _subscription_profile_mutating
 
+        login_verified = False
         try:
             process.wait()
             try:
                 post_login = _read_codex_capability(capability.binary_path)
-                if not (
+                login_verified = bool(
                     post_login.available
                     and post_login.chatgpt_authenticated
                     and post_login.reason_code == "ready"
-                ):
+                )
+                if not login_verified:
                     log.warning(
                         "Dedicated subscription login did not produce a verified "
                         "ChatGPT login (%s)",
@@ -3070,8 +4426,42 @@ def start_codex_subscription_login(
                     _subscription_login_in_flight = False
                     _subscription_profile_mutating = False
                     _release_subscription_mutation_process_lock_locked()
+                    _invalidate_subscription_snapshot_locked()
+                    if login_verified:
+                        # A VERIFIED fresh login is new evidence — the next
+                        # activation re-judges the plan. An aborted login
+                        # window keeps the recorded verdict.
+                        _set_subscription_activation_block_locked(None)
+                    _subscription_state_changed.notify_all()
 
-    _launch_subscription_login_reaper(cleanup_login)
+    try:
+        _launch_subscription_login_reaper(cleanup_login)
+    except BaseException:
+        # Without a reaper the login flags would stay set until restart and
+        # the profile would wedge as "login in progress". The guarded process
+        # has no kill(); its guardian owns the OS profile lock, so ask it to
+        # reap and release (the documented guardian path), then restore a
+        # clean not-logged-in state.
+        release_guard = getattr(process, "release_profile_lock", None)
+        if callable(release_guard):
+            try:
+                release_guard()
+            except (OSError, RuntimeError) as exc:
+                log.warning(
+                    "Login guard release failed after reaper launch failure (%s)",
+                    type(exc).__name__,
+                )
+        if log_dir is not None:
+            shutil.rmtree(log_dir, ignore_errors=True)
+        with _subscription_login_lock:
+            if _subscription_login_process is process:
+                _subscription_login_process = None
+            _subscription_login_in_flight = False
+            _subscription_profile_mutating = False
+            _release_subscription_mutation_process_lock_locked()
+            _invalidate_subscription_snapshot_locked()
+            _subscription_state_changed.notify_all()
+        raise
     return process
 
 
@@ -3081,10 +4471,28 @@ def _delete_codex_subscription_auth_locked() -> tuple[bool, str | None]:
         home = _validated_subscription_home(create=False, require_marker=True)
     except CodexSubscriptionProfileMissing:  # Logging out an absent profile is idempotent success.
         return True, None
+    except CodexSubscriptionInspectionFailed as exc:
+        # Transiently unreadable — refuse honestly instead of deleting blind.
+        return False, f"{exc} Try again in a moment."
+    except CodexSubscriptionUnavailable:
+        # Disconnecting must work IN-APP even when the profile is invalid:
+        # removing the whole Jarvis-owned directory deletes the credential
+        # AND clears the invalid state in one explicit user action.
+        try:
+            _rebuild_invalid_subscription_home()
+        except CodexSubscriptionUnavailable as exc:
+            # The route returns this honest failure as its 409 detail.
+            return False, str(exc)
+        return True, None
     auth_file = home / "auth.json"
     if not auth_file.exists() and not auth_file.is_symlink():
         return True, None
-    _validate_regular_private_file(auth_file)
+    try:
+        _validate_regular_private_file(auth_file)
+    except CodexSubscriptionInspectionFailed as exc:
+        # Same contract as the profile-level branch above: transiently
+        # unreadable refuses honestly instead of escaping as a raw error.
+        return False, f"{exc} Try again in a moment."
     try:
         auth_file.unlink()
     except OSError as exc:  # Return a path-free deletion error to the authenticated caller.
@@ -3093,19 +4501,34 @@ def _delete_codex_subscription_auth_locked() -> tuple[bool, str | None]:
             "Dedicated subscription credentials could not be removed "
             f"({type(exc).__name__}).",
         )
-    _validated_subscription_home(create=False, require_marker=True)
+    try:
+        _validated_subscription_home(create=False, require_marker=True)
+    except CodexSubscriptionUnavailable:  # noqa: S110 - the logout already succeeded; this recheck is advisory.
+        # The credential IS deleted — reporting failure here would show a
+        # 409 for a logout that actually happened.
+        log.warning(
+            "Post-logout profile revalidation failed; the login file is gone",
+            exc_info=True,
+        )
     return True, None
 
 
 def logout_codex_subscription(
     binary_path: str | None = None,
 ) -> tuple[bool, str | None]:
-    """Delete only the dedicated file-backed login; missing is success."""
+    """Delete only the dedicated file-backed login; missing is success.
+
+    Synchronous and potentially slow (it can wait out a status probe and does
+    filesystem work under the profile lock) — call it from a worker thread,
+    never on the event loop. The HTTP route uses the async
+    ``disconnect_and_logout_codex_subscription`` wrapper instead.
+    """
     global _subscription_mutation_process_lock, _subscription_profile_mutating
 
     del binary_path  # Kept for the stable route/helper signature.
 
     with _subscription_login_lock:
+        _await_status_probe_completion_locked()
         if _subscription_profile_mutating or _subscription_login_in_flight:
             raise CodexSubscriptionUnavailable(
                 "Subscription voice cannot log out while login is in progress."
@@ -3118,24 +4541,26 @@ def logout_codex_subscription(
             _acquire_subscription_process_lock()
         )
         _subscription_profile_mutating = True
+        _invalidate_subscription_snapshot_locked()
     try:
         return _delete_codex_subscription_auth_locked()
     finally:
         with _subscription_login_lock:
             _release_subscription_mutation_process_lock_locked()
             _subscription_profile_mutating = False
+            _invalidate_subscription_snapshot_locked()
+            # The judged login is gone; the plan verdict goes with it.
+            _set_subscription_activation_block_locked(None)
+            _subscription_state_changed.notify_all()
 
 
-async def disconnect_and_logout_codex_subscription(
-    binary_path: str | None = None,
-) -> tuple[bool, str | None]:
-    """Atomically block starts, close the transport, and delete its login."""
+def _begin_subscription_disconnect_mutation() -> None:
+    """Claim the profile for disconnect; runs off-loop (it may wait briefly)."""
     global _subscription_mutation_process_lock, _subscription_profile_mutating
     global _subscription_transport_process_lock
 
-    del binary_path  # Kept for the stable route/helper signature.
-
     with _subscription_login_lock:
+        _await_status_probe_completion_locked()
         if _subscription_profile_mutating or _subscription_login_in_flight:
             raise CodexSubscriptionUnavailable(
                 "Subscription voice cannot log out while login is in progress."
@@ -3153,29 +4578,102 @@ async def disconnect_and_logout_codex_subscription(
                 _acquire_subscription_process_lock()
             )
         _subscription_profile_mutating = True
+        _invalidate_subscription_snapshot_locked()
+
+
+def _finish_subscription_disconnect_mutation() -> None:
+    """Release the disconnect claim; runs off-loop (the mutex may be busy)."""
+    global _subscription_mutation_process_lock, _subscription_profile_mutating
+    global _subscription_transport_process_lock
+
+    with _subscription_login_lock:
+        if _subscription_active_transports:
+            if _subscription_transport_process_lock is not None:
+                log.error(
+                    "Subscription voice has two process-lock owners during logout"
+                )
+                _release_subscription_mutation_process_lock_locked()
+            else:
+                _subscription_transport_process_lock = (
+                    _subscription_mutation_process_lock
+                )
+                _subscription_mutation_process_lock = None
+        else:
+            _release_subscription_mutation_process_lock_locked()
+        _subscription_profile_mutating = False
+        _invalidate_subscription_snapshot_locked()
+        # The judged login is gone; the plan verdict goes with it.
+        _set_subscription_activation_block_locked(None)
+        _subscription_state_changed.notify_all()
+
+
+async def disconnect_and_logout_codex_subscription(
+    binary_path: str | None = None,
+) -> tuple[bool, str | None]:
+    """Atomically block starts, close the transport, and delete its login."""
+    del binary_path  # Kept for the stable route/helper signature.
+
+    # Cleanup binds to OUR claim only: _begin... raising because a FOREIGN
+    # owner is mutating must not clear that owner's state. The whole
+    # decide-and-release lives in worker threads synchronized by a
+    # threading.Event — never in a loop-side variable — because a SECOND
+    # task cancellation interrupts even a shielded await, and a decision
+    # read on the loop at that moment would miss a claim the worker is
+    # about to complete (the permanent-wedge class).
+    claim_settled = threading.Event()
+    claim_failed: list[BaseException] = []
+
+    def _claim() -> None:
+        try:
+            _begin_subscription_disconnect_mutation()
+        except BaseException as exc:
+            claim_failed.append(exc)
+            raise
+        finally:
+            claim_settled.set()
+
+    def _settle() -> None:
+        # Off-loop: waits for the claim thread to settle, then releases our
+        # claim. Once this thread starts it always finishes, whatever happens
+        # to the coroutine that spawned it. The wait is unbounded on purpose:
+        # a give-up timeout would turn executor saturation into a permanent
+        # claim leak (the claim thread still runs later, with nobody left to
+        # release it), while the claim itself is bounded by construction
+        # (probe wait <= 5s plus lock acquisition).
+        claim_settled.wait()
+        if not claim_failed:
+            _finish_subscription_disconnect_mutation()
+
+    claim_future = asyncio.get_running_loop().run_in_executor(None, _claim)
+    # A cancelled awaiter leaves the worker's exception unretrieved; consume
+    # it so asyncio does not log a spurious GC error.
+    claim_future.add_done_callback(
+        lambda f: None if f.cancelled() else f.exception()
+    )
     try:
-        await close_shared_codex_app_servers()
+        await asyncio.shield(claim_future)
+        await asyncio.shield(close_shared_codex_app_servers())
         return await asyncio.to_thread(_delete_codex_subscription_auth_locked)
     finally:
-        with _subscription_login_lock:
-            if _subscription_active_transports:
-                if _subscription_transport_process_lock is not None:
-                    log.error(
-                        "Subscription voice has two process-lock owners during logout"
-                    )
-                    _release_subscription_mutation_process_lock_locked()
-                else:
-                    _subscription_transport_process_lock = (
-                        _subscription_mutation_process_lock
-                    )
-                    _subscription_mutation_process_lock = None
-            else:
-                _release_subscription_mutation_process_lock_locked()
-            _subscription_profile_mutating = False
+        # Shield keeps the settle job alive even if this await is interrupted
+        # by another cancellation; the job itself cannot be skipped because
+        # nothing can cancel an executor future the loop never cancels.
+        await asyncio.shield(asyncio.to_thread(_settle))
 
 
 async def codex_subscription_login_ready(binary_path: str | None = None) -> bool:
-    """Return the lightweight dedicated-profile login snapshot."""
+    """Return the lightweight dedicated-profile login snapshot.
+
+    Transient ``busy`` fails OPEN, mirroring the realtime provider's
+    ``external_login_ready``: a caller acting on this answer performs the
+    authoritative live account verification anyway, while failing closed here
+    turns a healthy install into "connect this provider first" for the busy
+    window.
+    """
+    if await asyncio.to_thread(codex_subscription_activation_block):
+        # The live account gate refused this login permanently; readiness
+        # surfaces must stop advertising a provider that can never start.
+        return False
     try:
         snapshot = await asyncio.to_thread(
             codex_subscription_auth_snapshot,
@@ -3184,6 +4682,8 @@ async def codex_subscription_login_ready(binary_path: str | None = None) -> bool
     except (CodexAppServerError, OSError):
         # Readiness probes fail closed without starting transport.
         return False
+    if snapshot.reason_code == "busy":
+        return True
     return bool(snapshot.available and snapshot.chatgpt_authenticated)
 
 
@@ -3194,13 +4694,45 @@ async def close_shared_codex_app_servers() -> None:
         entries = tuple(_shared_clients.items())
     failures: list[BaseException] = []
     for key, client in entries:
-        owner_loop = key[1]
+        owner_loop = client._owner_loop or current_loop
         try:
             if owner_loop is current_loop:
                 await client.close()
             elif owner_loop.is_running():
                 future = asyncio.run_coroutine_threadsafe(client.close(), owner_loop)
                 await asyncio.wrap_future(future)
+            elif owner_loop.is_closed():
+                # The owner loop is gone for good; this entry can never be
+                # closed properly again. Escalating forever would make every
+                # later logout answer 409 for the process lifetime — drop the
+                # entry and free its reservation best-effort instead.
+                log.warning(
+                    "Dropping Codex app-server entry whose owner loop is closed"
+                )
+                # The dead loop can never reap its child: kill the tree and
+                # close the lifeline best-effort BEFORE freeing the profile,
+                # so no orphan keeps running against CODEX_HOME while the
+                # reservation reads as free.
+                orphan_process = client._process
+                client._process = None
+                orphan_tree = client._process_tree
+                client._process_tree = None
+                if orphan_process is not None and orphan_process.returncode is None:
+                    with suppress(ProcessLookupError, OSError):
+                        orphan_process.kill()
+                if orphan_tree is not None:
+                    with suppress(Exception):
+                        orphan_tree.close()
+                with suppress(Exception):
+                    client._close_lifeline()
+                # Unconditional: a close that nulled the epoch before its
+                # loop died would otherwise leave the reservation forever.
+                client._profile_transport_epoch = None
+                await asyncio.shield(
+                    asyncio.to_thread(
+                        _force_drop_subscription_transport, client
+                    )
+                )
             else:
                 raise CodexSubscriptionUnavailable(
                     "A Codex app-server owner loop is unavailable for safe shutdown."
@@ -3230,7 +4762,14 @@ __all__ = [
     "CodexRealtimeStartResult",
     "CodexSubscriptionProfileMissing",
     "CodexSubscriptionContainmentUnavailable",
+    "CodexSubscriptionBinaryUnsupported",
+    "CodexSubscriptionInspectionFailed",
+    "CodexSubscriptionPlanUnsupported",
+    "CodexSubscriptionRuntimeStateInvalid",
     "CodexSubscriptionUnavailable",
+    "CODEX_SUBSCRIPTION_REASON_CODES",
+    "codex_subscription_activation_block",
+    "set_codex_subscription_activation_block",
     "codex_subscription_auth_snapshot",
     "codex_subscription_home",
     "codex_subscription_login_ready",

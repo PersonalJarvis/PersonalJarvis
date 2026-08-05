@@ -83,7 +83,7 @@ deine Aufgabe ist nur der Vor-Satz, nicht die Ausführung):
 
 Du darfst AUSSCHLIESSLICH folgendes ausgeben:
 (a) Akustische Bestätigung mit konkretem Themenbezug ("Ich schau
-    gerade die GitHub-PRs nach", "Suche nach Flügen nach Berlin").
+    gerade die GitHub-PRs nach", "Suche nach Flügen nach Exampletown").
 (b) Kontextbezogene Rückfrage ("Welche E-Mail-Adresse?",
     "Ab welchem Datum?").
 (c) Leerer String bei Unsicherheit.
@@ -151,7 +151,7 @@ only the pre-sentence, not the execution):
 
 You may ONLY output one of the following:
 (a) Acoustic acknowledgment with concrete topical reference
-    ("Checking GitHub PRs now", "Searching for flights to Berlin").
+    ("Checking GitHub PRs now", "Searching for flights to Exampletown").
 (b) Context-restating question ("Which email address?",
     "From which date?").
 (c) Empty string when uncertain.

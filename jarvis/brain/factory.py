@@ -425,7 +425,7 @@ def _load_tools_for_tier(
                 # this the Brain would freeze the tool dict at build-time, and
                 # the post-bootstrap ``set_mission_manager`` call would have
                 # no effect on an already-built BrainManager. See
-                # docs/jarvis-agents-bridge.md AD-1 + the regression in
+                # docs/jarvis-agents-bridge.md AD-OC1 + the regression in
                 # tests/integration/test_worker_lazy_bootstrap.py.
                 #
                 # The Kontrollierer-Resolver mirrors the manager-resolver:

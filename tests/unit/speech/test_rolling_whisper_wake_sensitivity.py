@@ -86,10 +86,10 @@ async def test_quiet_wake_above_silence_floor_reaches_transcription() -> None:
     # peak ~0.015 — above the silence floor, BELOW the legacy 0.02 peak gate that
     # blocked it on a quiet mic. With the relaxed gate it must reach Whisper and
     # wake. Uses the DEFAULT gates (no min_peak override) — that is the point.
-    stt = _PhraseSTT("hey nico")
+    stt = _PhraseSTT("hey nova")
     wake = RollingWhisperWake(
         stt,
-        pattern=re.compile(r"nico", re.IGNORECASE),
+        pattern=re.compile(r"nova", re.IGNORECASE),
         poll_interval_s=0.01,
         cooldown_s=0.0,
         save_debug_wavs=False,
@@ -99,7 +99,7 @@ async def test_quiet_wake_above_silence_floor_reaches_transcription() -> None:
     feeder = asyncio.create_task(_feed_until(src, stop, _const_chunk(491)))  # peak 0.015
     try:
         kw = await asyncio.wait_for(_first_keyword(wake, src), timeout=3.0)
-        assert kw == "nico"
+        assert kw == "nova"
         assert stt.calls >= 1, "quiet wake never reached Whisper — peak gate too high"
     finally:
         stop.set()
@@ -119,10 +119,10 @@ async def test_quiet_genuine_wake_below_legacy_confidence_floor_is_accepted() ->
     # Live base/cpu model scores a clean quiet wake at ~0.25 — under the legacy
     # 0.28 floor (rejected before) but well above a near-zero hallucination. With
     # real-speech no_speech_prob it must wake. Uses the DEFAULT confidence floor.
-    stt = _PhraseSTT("Hey Nico", confidence=0.25, no_speech_prob=0.05)
+    stt = _PhraseSTT("Hey Nova", confidence=0.25, no_speech_prob=0.05)
     wake = RollingWhisperWake(
         stt,
-        pattern=re.compile(r"hey\W+nico", re.IGNORECASE),
+        pattern=re.compile(r"hey\W+nova", re.IGNORECASE),
         poll_interval_s=0.01,
         cooldown_s=0.0,
         save_debug_wavs=False,
@@ -134,7 +134,7 @@ async def test_quiet_genuine_wake_below_legacy_confidence_floor_is_accepted() ->
     feeder = asyncio.create_task(_feed_until(src, stop, _const_chunk(12000)))
     try:
         kw = await asyncio.wait_for(_first_keyword(wake, src), timeout=3.0)
-        assert kw.lower() == "hey nico"
+        assert kw.lower() == "hey nova"
     finally:
         stop.set()
         await src.put(None)
@@ -182,7 +182,7 @@ async def test_stats_count_a_sub_peak_window_as_gated_without_calling_whisper() 
     # A window below the peak gate (room hiss) must be counted as gated_peak and
     # must NOT spend a Whisper call — the user can see audio is arriving but too
     # quiet, instead of a silent nothing.
-    stt = _PhraseSTT("hey nico")  # would match if ever called
+    stt = _PhraseSTT("hey nova")  # would match if ever called
     wake = RollingWhisperWake(
         stt,
         pattern=_NeverMatch(),
@@ -214,10 +214,10 @@ async def test_stats_count_a_sub_peak_window_as_gated_without_calling_whisper() 
 
 
 async def test_stats_count_a_match_as_matched_and_transcribed() -> None:
-    stt = _PhraseSTT("hey nico")
+    stt = _PhraseSTT("hey nova")
     wake = RollingWhisperWake(
         stt,
-        pattern=re.compile(r"nico", re.IGNORECASE),
+        pattern=re.compile(r"nova", re.IGNORECASE),
         poll_interval_s=0.01,
         cooldown_s=0.0,
         save_debug_wavs=False,
@@ -229,7 +229,7 @@ async def test_stats_count_a_match_as_matched_and_transcribed() -> None:
     feeder = asyncio.create_task(_feed_until(src, stop, _const_chunk(12000)))
     try:
         kw = await asyncio.wait_for(_first_keyword(wake, src), timeout=3.0)
-        assert kw == "nico"
+        assert kw == "nova"
         s = wake.stats()
         assert s["matched"] == 1
         assert s["transcribed"] >= 1

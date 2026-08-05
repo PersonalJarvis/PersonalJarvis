@@ -338,11 +338,11 @@ def test_summarize_answers_joins_and_caps() -> None:
 
 def test_summarize_answers_truncates_on_sentence_boundary_not_mid_word() -> None:
     """A spoken readback that overflows the cap must end on a complete word /
-    sentence, never mid-word. Live forensic 2026-06-19 (session 514cddc0): the
+    sentence, never mid-word. Live forensic 2026-06-19 (session 10000112): the
     hard ``[:cap-1]`` cut produced "…eine schlechtere Auswander…" — the TTS
     spoke a fragment and stopped mid-word, which the user heard as Jarvis
     "hanging up mid-sentence"."""
-    text = ("Distributed systems require careful planning. " * 40).strip()
+    text = ("Emigrating abroad is a serious decision. " * 40).strip()
     assert len(text) > 600
     out = summarize_answers([text], cap=600)
 
@@ -369,7 +369,7 @@ def test_summarize_answers_word_boundary_without_punctuation() -> None:
 
 # --- is_informational_request + conversational (no-tool) answer ------------
 #
-# Live mission 019ec638 (2026-06-14): "which city would you recommend for a
+# Live mission 019f1030 (2026-06-14): "which city would you recommend for a
 # trip to Australia?" was dispatched as a heavy mission. The worker answered
 # correctly in text but wrote no file, so the empty-diff veto rejected it 3×
 # and the mission FAILED (critic_loop_exhausted). A pure question's deliverable
@@ -433,7 +433,7 @@ def test_is_informational_request_false_for_noun_phrase_do_tasks() -> None:
 
 def test_is_informational_request_true_for_advisory_imperatives() -> None:
     """Doable advisory / planning imperatives have NO file deliverable — the plan
-    or answer IS the result. Live mission 019ec708 (2026-06-14): "plan a trip"
+    or answer IS the result. Live mission 019f1033 (2026-06-14): "plan a trip"
     failed because the old rule required an interrogative lead word it lacks. The
     rule covers questions AND advisory triggers (plan/suggest/research/…) alike."""
     assert is_informational_request("plan a trip from London to Taiwan")
@@ -459,7 +459,7 @@ def test_is_informational_request_false_for_do_and_transaction_tasks() -> None:
     assert not is_informational_request("Rename all the test files.")
     assert not is_informational_request("Send an email to the team.")
     # impossible transactions — handled by capability-refusal, NOT informational
-    assert not is_informational_request("Please book me a trip from Melbourne to Tokyo.")
+    assert not is_informational_request("Please book me a trip from Exampleville to Tokyo.")
     assert not is_informational_request("Buy me a flight to Tokyo for under 800 euros.")
     # but "book" the NOUN inside a real advisory request stays informational
     assert is_informational_request("Recommend a good book about the Roman Empire.")
@@ -467,7 +467,7 @@ def test_is_informational_request_false_for_do_and_transaction_tasks() -> None:
 
 def test_is_informational_request_true_despite_start_mission_meta() -> None:
     """Routing meta-language ("start a Sub-Edge-Mission that …", "start a worker
-    that …") must NOT mask a genuine research request. Live mission 019ecb56
+    that …") must NOT mask a genuine research request. Live mission 019f1037
     (2026-06-15): a German "please start a Sub-Edge-Mission in which you research
     the current AI news" was mis-classified as a do-task because the launch verb
     (German ``starten``) lives in the action-verb list — the mission then ran the
@@ -494,13 +494,14 @@ def test_is_informational_request_true_despite_start_mission_meta() -> None:
 
 
 def test_is_informational_request_true_for_make_me_deep_research_phrase() -> None:
-    """Live mission 019ecbb8 used "make me a deep research" to mean a research
+    """Live mission 019f1039 used "make me a deep research" to mean a research
     brief, not a file/code side effect. The generic "make" action verb must not
     mask the surrounding informational research request."""
     assert is_informational_request(
         "I would like you to help me research about the topic with the "
-        "sub-agent and the topic is how urban gardens affect summer heat "
-        "and how the evidence compares across several cities; make me a deep "
+        "sub-agent and the topic is how I can move to Exampleland from Germany "
+        "and how my chances are realistically if you compare it with "
+        "countries like Mexico or something like that and make me a deep "
         "research with the sub-agent."
     )
 
@@ -521,7 +522,7 @@ def test_start_mission_meta_strip_does_not_unmask_real_do_tasks() -> None:
 
 
 def test_is_informational_request_true_for_create_spawn_subagent_research() -> None:
-    """Regression for an explicit renewable-transit research mission: the
+    """Live regression (2026-06-16, "move to Exampleland" mission): the explicit
     voice phrasing "Create and spawn a sub-agent which will help me find out X"
     was mis-classified as a do-task because the leading creation verb "Create"
     survived the spawn-meta strip and tripped the action-verb veto. A creation
@@ -530,12 +531,12 @@ def test_is_informational_request_true_for_create_spawn_subagent_research() -> N
     research request ("find out what I have to be aware of …") is seen."""
     assert is_informational_request(
         "Create and spawn a sub-agent which will help me find out what I have "
-        "to be aware of when comparing renewable transit systems."
+        "to be aware of when I move to Exampleland."
     )
     # behind the standing quality directive (the real dispatched shape)
     assert is_informational_request(
         f"{_DIRECTIVE}\n\nCreate and spawn a sub-agent which will help me find "
-        "out what I have to be aware of when comparing renewable transit systems."
+        "out what I have to be aware of when I move to Exampleland."
     )
     # the direct form ("create a sub-agent to research …")
     assert is_informational_request(
@@ -544,7 +545,7 @@ def test_is_informational_request_true_for_create_spawn_subagent_research() -> N
     # German inflected routing noun
     assert is_informational_request(
         "Spawne einen Sub-Agenten, der herausfindet, was ich beim "  # i18n-allow
-        "USA-Umzug beachten muss."  # i18n-allow
+        "Beispielland-Umzug beachten muss."  # i18n-allow
     )
 
 
@@ -615,7 +616,7 @@ def test_readonly_answer_rejects_worker_clarification_as_a_result() -> None:
 
 # --- informational_file_answer: research request answered in a prose document --
 #
-# Root cause of mission_019ecb56 (2026-06-15): "recherchiere AI-News" is an
+# Root cause of mission_019f1037 (2026-06-15): "recherchiere AI-News" is an
 # informational request, but the worker reasonably wrote the answer into a
 # Markdown REPORT (KI-News-Bericht.md). A non-empty diff routed it to the
 # adversarial CODE-critic, which demanded reachable web citations a web-less
@@ -698,7 +699,7 @@ def test_informational_file_answer_none_when_code_mixed_in() -> None:
 
 # --- extract_write_targets: out-of-worktree deliverable verification --------
 #
-# Root cause of mission_019e7abd (2026-05-30): the worker wrote a file to an
+# Root cause of mission_019f101c (2026-05-30): the worker wrote a file to an
 # absolute path OUTSIDE its git worktree (the user's Desktop\M\). `_capture_diff`
 # is worktree-scoped → empty diff → the Critic's GROUND-TRUTH-RULE failed it 3×
 # even though the file existed and was correct. `extract_write_targets` is the
@@ -805,7 +806,7 @@ def test_readonly_answer_returns_answer_for_external_only_diff() -> None:
     """An external-target-only diff (out-of-worktree deliverable) carries no
     in-worktree `diff --git` hunk, so the worker's final answer — which names
     the delivered file — must still be spoken back, not suppressed as a 'code
-    task'. Regression for the mission_019e7abd fix: after the external-write
+    task'. Regression for the mission_019f101c fix: after the external-write
     augmentation the diff is non-empty, and a naive truthiness gate would
     silence the readback."""
     external_diff = (

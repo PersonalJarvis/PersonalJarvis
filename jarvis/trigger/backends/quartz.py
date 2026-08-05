@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 
 from jarvis.trigger.backends.global_hotkeys import MOUSE_BUTTON_TOKENS
 from jarvis.trigger.backends.pynput import (
@@ -50,6 +51,22 @@ log = logging.getLogger(__name__)
 # Fixed ANSI virtual keycodes (Carbon kVK_ANSI_* / kVK_* constants) -> the
 # canonical lowercase tokens `_parse_combo_tokens` produces. Physical-position
 # matching keeps this table layout-independent and TSM-free.
+#
+# COMPLETENESS IS A CONTRACT, not a nicety. The recorder offers a key, the
+# validator accepts it, the route saves it and the row renders it as bound —
+# and then a key MISSING here simply never enters ``self._held``, so the chord
+# can never match. There is no error anywhere in that chain: the user sees a
+# saved shortcut that does nothing, on this OS only. That is exactly what
+# happened to the whole nav cluster (Home/End/PageUp/PageDown/Insert), the
+# entire numpad and F13-F20, every one of which the picker draws as a live,
+# clickable cap (``keyboardLayout.ts`` NAV_ROWS, ``codeToKeyToken``'s
+# ``Numpad*`` / ``F13+`` branches) while the Windows backend registers them
+# fine.
+#
+# So the rule for this table: it must cover every token
+# ``codeToKeyToken`` / ``_NAMED_KEY_TOKENS`` can emit. Adding a bindable cap to
+# the picker without adding its keycode here is the same silent-dead-shortcut
+# bug again. ``tests/unit/trigger/test_quartz_backend.py`` pins the parity.
 _KEYCODE_TO_TOKEN: dict[int, str] = {
     0x00: "a", 0x0B: "b", 0x08: "c", 0x02: "d", 0x0E: "e", 0x03: "f",
     0x05: "g", 0x04: "h", 0x22: "i", 0x26: "j", 0x28: "k", 0x25: "l",
@@ -62,7 +79,26 @@ _KEYCODE_TO_TOKEN: dict[int, str] = {
     0x33: "backspace", 0x75: "delete",
     0x7A: "f1", 0x78: "f2", 0x63: "f3", 0x76: "f4", 0x60: "f5", 0x61: "f6",
     0x62: "f7", 0x64: "f8", 0x65: "f9", 0x6D: "f10", 0x67: "f11", 0x6F: "f12",
+    # F13-F20 live on the full-size Apple keyboard (and on every PC keyboard
+    # plugged into a Mac). They are the SAFEST keys to bind — nothing else
+    # claims them — and ``_SOLO_SAFE_KEYS`` allows f1..f24 solo for that reason.
+    0x69: "f13", 0x6B: "f14", 0x71: "f15", 0x6A: "f16",
+    0x40: "f17", 0x4F: "f18", 0x50: "f19", 0x5A: "f20",
     0x7B: "left", 0x7C: "right", 0x7D: "down", 0x7E: "up",
+    # Nav cluster. ``kVK_Help`` is the physical key an external PC keyboard
+    # sends for Insert, which is how the picker labels that cap.
+    0x72: "insert", 0x73: "home", 0x74: "page_up",
+    0x77: "end", 0x79: "page_down",
+    # Numpad. The digits are ``numpad_N`` and the operators carry the
+    # ``*_key`` names, both matching what ``codeToKeyToken`` emits and what the
+    # Windows library registers. Keypad Enter folds onto the same ``enter``
+    # token the main Return key uses — the picker maps ``NumpadEnter`` there
+    # too, so one spelling covers both physical keys.
+    0x52: "numpad_0", 0x53: "numpad_1", 0x54: "numpad_2", 0x55: "numpad_3",
+    0x56: "numpad_4", 0x57: "numpad_5", 0x58: "numpad_6", 0x59: "numpad_7",
+    0x5B: "numpad_8", 0x5C: "numpad_9",
+    0x45: "add_key", 0x4E: "subtract_key", 0x43: "multiply_key",
+    0x4B: "divide_key", 0x41: "decimal_key", 0x4C: "enter",
 }
 
 # CGEventFlags modifier masks -> canonical modifier tokens. `ctrl_r` is folded
@@ -85,6 +121,13 @@ _MOUSE_BUTTON_TO_TOKEN: dict[int, str] = {
     4: "mouse_x2",
 }
 
+# How long a grant verdict stays good inside the event-tap callback. Short
+# enough that revoking Accessibility mid-session stops the shortcuts about as
+# fast as a human can switch back from System Settings; long enough that
+# ordinary typing does not re-probe TCC natively dozens of times a second.
+# See :meth:`QuartzHotkeyBackend._permitted`.
+_PERMISSION_TTL_S = 1.0
+
 
 class QuartzHotkeyBackend:
     """Quartz event-tap hotkey backend for macOS (AD-8).
@@ -100,6 +143,10 @@ class QuartzHotkeyBackend:
         self._got_event = False
         self._held: set[str] = set()
         self._permission_check = _macos_hotkey_permissions_granted
+        # Last grant verdict + when it was taken (see ``_permitted``). ``None``
+        # means "never probed", so the first event of a session always asks.
+        self._permission_cache: bool | None = None
+        self._permission_checked_at = 0.0
         self._tap: object | None = None
         self._source: object | None = None
         self._runloop: object | None = None
@@ -139,12 +186,45 @@ class QuartzHotkeyBackend:
             combo["tokens"] & MOUSE_BUTTON_TOKENS for combo in combos
         )
 
-    def _reconcile(self) -> None:
-        """Fire press/release handlers on chord down/up transitions."""
+    def _permitted(self) -> bool:
+        """The grant verdict, re-probed at most every ``_PERMISSION_TTL_S``.
+
+        The probe itself is deliberately uncached one level down
+        (``permissions.py::_state``) so a revoked grant is seen live — but it
+        is a native TCC call (``AXIsProcessTrusted`` + ``IOHIDCheckAccess``),
+        and it used to run on EVERY reconcile. That put two ObjC round trips
+        into the event-tap callback for every keystroke the machine sees —
+        not just ours, since a session tap observes the whole system. Typing
+        an ordinary sentence therefore fired dozens of native probes a second
+        inside a callback macOS holds the input pipeline on.
+
+        That is not merely slow, it is how the shortcuts go dead: a tap whose
+        callback overruns its deadline is DISABLED by the OS
+        (``kCGEventTapDisabledByTimeout``). We re-enable it above, but the
+        events during the gap are gone — which is exactly the reported "the
+        shortcut works sometimes, or not at all" on a Mac.
+
+        A short TTL keeps the fail-closed contract intact: a grant revoked
+        mid-session still takes effect within a second, and a revocation also
+        kills the tap outright, so this check is the belt to that suspenders.
+        """
+        now = time.monotonic()
+        if (
+            self._permission_cache is not None
+            and now - self._permission_checked_at < _PERMISSION_TTL_S
+        ):
+            return self._permission_cache
         try:
-            permitted = self._permission_check()
+            permitted = self._permission_check() is True
         except Exception:  # noqa: BLE001 — the probe must never kill the tap
             permitted = False
+        self._permission_cache = permitted
+        self._permission_checked_at = now
+        return permitted
+
+    def _reconcile(self) -> None:
+        """Fire press/release handlers on chord down/up transitions."""
+        permitted = self._permitted()
         if permitted is not True:
             # A grant can be revoked while the tap thread is alive: clear every
             # partial chord and refuse the callback (same contract as pynput).
@@ -449,6 +529,10 @@ class QuartzHotkeyBackend:
         for combo in self._combos:
             combo["down"] = False
         self._started = False
+        # A re-arm must ask TCC again rather than trust a verdict taken before
+        # the user was sent to System Settings.
+        self._permission_cache = None
+        self._permission_checked_at = 0.0
 
     def unregister(self) -> None:
         """Drop the armed bindings. The tap is torn down in ``stop``."""

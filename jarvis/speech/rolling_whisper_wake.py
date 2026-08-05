@@ -68,7 +68,7 @@ _DEBUG_WAVS_ENV = os.environ.get("JARVIS_WAKE_DEBUG_WAVS", "").strip().lower() i
 # After this many CONSECUTIVE transcription failures (a timeout = the local
 # Whisper hung, or a "busy" skip because a prior call is wedged holding the
 # model), rebuild the wake model fresh via ``stt.recover()``. Forensic
-# 2026-06-29: a custom wake ("Hey Nico") went dead for 2 HOURS — every transcribe
+# 2026-06-29: a custom wake ("Hey Nova") went dead for 2 HOURS — every transcribe
 # timed out at 8 s, abandoned, retried, hung again, forever; an app restart did
 # not even clear it. The timeout only BOUNDS a hang; it never RECOVERS. A run of
 # failures with zero successes is the wedge signature (a legitimate VAD-probe
@@ -268,7 +268,7 @@ class RollingWhisperWake:
         min_rms: float = 0.003,
         # 2026-06-29 (mission "wake only triggers when shouting"): the raw peak
         # gate runs BEFORE transcription on a quiet mic, so a normal-volume
-        # custom wake ("Hey Nico") whose window peaks below the legacy 0.02 was
+        # custom wake ("Hey Nova") whose window peaks below the legacy 0.02 was
         # dropped silently — only a shout cleared it. 2026-06-30: lowered further
         # 0.012 -> 0.008 because a downloader on an even quieter built-in laptop
         # mic still peaked below 0.012. 0.008 still sits well above the ~0.0046
@@ -312,7 +312,7 @@ class RollingWhisperWake:
         # blocked on that one ``await`` forever — the chunk consumer stayed alive
         # (audio kept flowing, max-rms up to 0.27 while the user spoke) but ZERO
         # transcripts were produced for 12 min and the custom wake word ("Hey
-        # Nico") was permanently dead. A genuine transcription of a ~1.8 s window
+        # Nova") was permanently dead. A genuine transcription of a ~1.8 s window
         # is ~0.1 s (GPU) to ~1 s (CPU base), so a multi-second cap never cuts a
         # real one but lets the loop ABANDON a hung call and re-poll fresh audio
         # (self-healing — the "no dead state blocks waking" guarantee). Mirrors

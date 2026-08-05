@@ -1,7 +1,7 @@
 """Plausibility-gate behaviour for OpenAppTool.
 
 Two regressions from the CU Discord-post mission (2026-06-16, session
-38134fab) where ``open_app`` rejected the user's own desktop app:
+10000109) where ``open_app`` rejected the user's own desktop app:
 
 1. The gate only knew the hardcoded whitelist + PATH, so an INSTALLED app that
    registers only a Start-Menu .lnk (per-user Electron/Tauri builds — the

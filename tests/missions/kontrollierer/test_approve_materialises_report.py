@@ -23,9 +23,9 @@ from jarvis.missions.events import MissionApproved
 from jarvis.missions.kontrollierer.orchestrator import Kontrollierer
 
 _LONG_ANSWER = (
-    "To deploy community garden sensors in Example City, confirm site access, "
-    "document the network layout, select weather-resistant enclosures, and "
-    "schedule installation with the volunteer team."
+    "To relocate to Exampleville you need a entry permit, housing secured early, "
+    "a local payment account, and an local registration as soon as you arrive. Budget for a high cost "
+    "of living and start the permit process months ahead of the move."
 )
 
 
@@ -88,32 +88,32 @@ def orch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Kontrollierer:
 
 def _mission_dir(o: Kontrollierer, mission_id: str) -> Path:
     d = o._isolation_root / f"mission_{mission_id[:13]}"
-    (d / "tasks" / "019edf4c-task1").mkdir(parents=True, exist_ok=True)
+    (d / "tasks" / "019f103e-task1").mkdir(parents=True, exist_ok=True)
     return d
 
 
 async def test_approve_materialises_report_for_text_answer(orch: Kontrollierer) -> None:
     """Informational mission (text answer, no file) → a report document appears."""
-    mission_id = "019edf4c-f827aaaa"
+    mission_id = "019f103e-0001aaaa"
     mdir = _mission_dir(orch, mission_id)
     orch._task_answers[mission_id] = [_LONG_ANSWER]
 
     await orch._approve_mission(
-        mission_id, _FakePlan("a deployment guide"), prompt="Deploy sensors in Example City"
+        mission_id, _FakePlan("a relocation guide"), prompt="Relocate to Exampleville"
     )
 
     reports = list(mdir.rglob("artifacts/files/*.md"))
     assert reports, "approve must materialise a report for a text-answer mission"
-    assert "confirm site access" in reports[0].read_text(encoding="utf-8")
+    assert "entry permit" in reports[0].read_text(encoding="utf-8")
 
 
 async def test_approve_no_duplicate_report_when_file_deliverable_exists(
     orch: Kontrollierer,
 ) -> None:
     """A real file deliverable already present → no extra report is written."""
-    mission_id = "019edf4c-f827bbbb"
+    mission_id = "019f103e-0001bbbb"
     mdir = _mission_dir(orch, mission_id)
-    files = mdir / "tasks" / "019edf4c-task1" / "artifacts" / "files"
+    files = mdir / "tasks" / "019f103e-task1" / "artifacts" / "files"
     files.mkdir(parents=True, exist_ok=True)
     (files / "landing.html").write_text("<html/>", encoding="utf-8")
     orch._task_answers[mission_id] = [_LONG_ANSWER]
@@ -146,9 +146,9 @@ async def test_approve_builds_english_summary_en_for_file_deliverable(
     in German. With no worker answer (answer_summary empty) the summary comes
     straight from the deliverable builders — the deterministic German leak.
     """
-    mission_id = "019edf4c-f827dddd"
+    mission_id = "019f103e-0001dddd"
     mdir = _mission_dir(orch, mission_id)
-    files = mdir / "tasks" / "019edf4c-task1" / "artifacts" / "files"
+    files = mdir / "tasks" / "019f103e-task1" / "artifacts" / "files"
     files.mkdir(parents=True, exist_ok=True)
     (files / "landing.html").write_text("<html/>", encoding="utf-8")
     # No _task_answers → answer_summary is empty → the deliverable builders run.
@@ -182,12 +182,12 @@ async def test_approve_mirrors_materialised_report_to_user_folder(
         deliv_mod, "resolve_deliverables_dir", lambda override=None: delivery_dir
     )
 
-    mission_id = "019edf4c-f827cccc"
+    mission_id = "019f103e-0001cccc"
     mdir = _mission_dir(o, mission_id)
     o._task_answers[mission_id] = [_LONG_ANSWER]
 
     await o._approve_mission(
-        mission_id, _FakePlan(), prompt="Deploy sensors in Example City"
+        mission_id, _FakePlan(), prompt="Relocate to Exampleville"
     )
 
     reports = list(mdir.rglob("artifacts/files/*.md"))

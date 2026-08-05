@@ -124,7 +124,7 @@ def test_capture_diff_returns_empty_string_for_untouched_worktree(
 # These tests run the real WorktreeManager + materialize_worker_contract flow
 # against a lean workspace and assert the worker's file shows up in the captured
 # diff while the materialized AGENTS.md contract stays out of it (live mission
-# 019eb17d). Skips when git is absent.
+# 019f1027). Skips when git is absent.
 
 _GIT_AVAILABLE = shutil.which("git") is not None
 
@@ -172,7 +172,7 @@ def test_capture_diff_on_lean_workspace_strips_materialized_contract(
         mission_slug="news", task_id="01-lean-contract", needs_repo=False
     )
     try:
-        materialize_worker_contract(ws, "019eb17d-0000-7000-8000-000000000000")
+        materialize_worker_contract(ws, "019f1027-0000-7000-8000-000000000000")
         assert (ws / "AGENTS.md").exists(), "contract must be on disk"
         (ws / "robot-haiku.txt").write_text("silicon dreams\n", encoding="utf-8")
 
@@ -556,7 +556,7 @@ def test_archive_skips_managed_contract_files(
 
 
 # --- committed-deliverable capture (live forensic 2026-07-03, mission
-#     019f26d0-bb07) -----------------------------------------------------------
+#     019f104b-0001) -----------------------------------------------------------
 #
 # A worker built a complete `schokolade-99.html`, then `git add` + `git commit`-ed
 # it (as coding agents habitually do). After a commit the file is TRACKED, so
@@ -638,14 +638,14 @@ def test_archive_captures_committed_deliverable(
     lean_manager: WorktreeManager, kontrollierer: Kontrollierer, tmp_path: Path
 ) -> None:
     """The core regression: a worker that commits its file still yields the file
-    (not a `.md` summary) in artifacts/files/. Reproduces mission 019f26d0-bb07.
+    (not a `.md` summary) in artifacts/files/. Reproduces mission 019f104b-0001.
     """
     ws = lean_manager.create(
         mission_slug="choc", task_id="01-a", needs_repo=False
     )
     mission_dir = tmp_path / "mission_root"
     mission_dir.mkdir()
-    task_id = "019f26d0be1f0000"
+    task_id = "019f104b00010000"
     try:
         (ws / "schokolade-99.html").write_text(
             "<!doctype html><html><h1>99% Schokolade</h1></html>\n",
@@ -673,7 +673,7 @@ def test_archive_captures_committed_deliverable(
 def test_archive_skips_browser_profile_scratch(
     worktree: Path, kontrollierer: Kontrollierer, tmp_path: Path
 ) -> None:
-    """Live forensic 2026-06-21 (mission_019eeb34-bb67): a browser/QA worker
+    """Live forensic 2026-06-21 (mission_019f1043-0001): a browser/QA worker
     launched headless Chrome with a ``--user-data-dir`` under ``qa-artifacts/``
     and correctly gitignored the profiles (``chrome-profile-*/``). The archive's
     ``--ignored`` enumeration union re-imported all 199 cache / journal blobs
@@ -752,7 +752,7 @@ def test_archive_skips_sandbox_local_uv_cache(
     artifacts = kontrollierer._archive_task_artifacts(
         worktree=worktree,
         mission_dir=mission_dir,
-        task_id="019fa4bc91100000",
+        task_id="019f105300010000",
     )
 
     assert artifacts is not None

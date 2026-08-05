@@ -2,6 +2,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  PROVIDER_BACKEND_UNREACHABLE,
   sectionHealthForSubject,
   sectionHealthFromProviderTest,
   type ProviderTestResult,
@@ -42,6 +43,24 @@ afterEach(() => {
 });
 
 describe("provider status loading", () => {
+  it("labels a local API outage and reconnects automatically", async () => {
+    const provider = { id: "openai-realtime", configured: true };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(jsonResponse({ providers: [provider] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useProviders({ retryDelaysMs: [100] }));
+    await waitFor(() =>
+      expect(result.current.error).toBe(PROVIDER_BACKEND_UNREACHABLE),
+    );
+    await waitFor(() => expect(result.current.providers).toEqual([provider]));
+
+    expect(result.current.error).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("does not let an older response overwrite newer provider truth", async () => {
     const oldRequest = deferred<Response>();
     const freshProvider = { id: "codex-subscription-realtime", configured: true };

@@ -44,8 +44,8 @@ const ENTITIES = [
     neighbors: [{ key: "bora bora", label: "Bora Bora", shared: 10 }],
   },
   {
-    key: "berlin",
-    label: "Berlin",
+    key: "exampletown",
+    label: "Exampletown",
     mentions: 3,
     first_seen: "2026-06-24T10:00:00Z",
     last_seen: "2026-07-25T10:00:00Z",
@@ -136,7 +136,7 @@ describe("browsing", () => {
     expect(rows.map((row) => row.getAttribute("data-entity-key"))).toEqual([
       "bora bora",
       "tahiti",
-      "berlin",
+      "exampletown",
     ]);
   });
 
@@ -153,8 +153,8 @@ describe("browsing", () => {
     installRoutes();
     renderPanel();
 
-    const bar = await screen.findByTestId("explore-span-berlin");
-    // Berlin runs the whole corpus; Bora Bora is a short late burst.
+    const bar = await screen.findByTestId("explore-span-exampletown");
+    // Exampletown runs the whole corpus; Bora Bora is a short late burst.
     const berlinWidth = Number(bar.getAttribute("data-width"));
     const boraBar = screen.getByTestId("explore-span-bora bora");
     expect(berlinWidth).toBeGreaterThan(Number(boraBar.getAttribute("data-width")));
@@ -163,7 +163,7 @@ describe("browsing", () => {
   it("filters the list as the user types, without refetching", async () => {
     const fetchMock = installRoutes();
     renderPanel();
-    await screen.findByTestId("explore-entity-berlin");
+    await screen.findByTestId("explore-entity-exampletown");
     const callsBefore = fetchMock.mock.calls.length;
 
     fireEvent.change(screen.getByTestId("explore-search"), {
@@ -171,7 +171,7 @@ describe("browsing", () => {
     });
 
     await waitFor(() => {
-      expect(screen.queryByTestId("explore-entity-berlin")).toBeNull();
+      expect(screen.queryByTestId("explore-entity-exampletown")).toBeNull();
     });
     expect(screen.getByTestId("explore-entity-bora bora")).toBeTruthy();
     expect(fetchMock.mock.calls.length).toBe(callsBefore);
@@ -180,7 +180,7 @@ describe("browsing", () => {
   it("says so when a search matches nothing", async () => {
     installRoutes();
     renderPanel();
-    await screen.findByTestId("explore-entity-berlin");
+    await screen.findByTestId("explore-entity-exampletown");
 
     fireEvent.change(screen.getByTestId("explore-search"), {
       target: { value: "zzz" },
@@ -290,7 +290,7 @@ describe("the three columns", () => {
     // edge off every moment and could never shrink back out of it.
     installRoutes();
     renderPanel();
-    await screen.findByTestId("explore-entity-berlin");
+    await screen.findByTestId("explore-entity-exampletown");
 
     const columns = screen.getByTestId("explore-columns");
     expect(columns.className).toContain("min-w-0");

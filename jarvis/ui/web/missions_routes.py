@@ -584,7 +584,7 @@ async def rerun_mission(
             ),
         )
 
-    # Idempotency / liveness guard (forensic 2026-06-22, mission 019eefcb-cee2):
+    # Idempotency / liveness guard (forensic 2026-06-22, mission 019f1044-0001):
     # the source mission stays terminal forever as an audit record, so it is
     # re-runnable indefinitely — and a burst of /rerun POSTs (a click-storm or a
     # frontend re-render loop) used to dispatch one NEW child per request: nine

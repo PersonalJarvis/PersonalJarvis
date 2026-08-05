@@ -11,7 +11,86 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
-## [1.2.1] — 2026-08-01
+## [1.2.2] — 2026-08-05
+
+This release makes realtime subscription voice and the Agentic IDE more
+dependable while adding richer voice controls and knowledge-map views.
+
+### Added
+
+- Added native realtime voice transport with in-app readiness diagnostics,
+  input-level feedback, browser microphone controls, and a complete action path.
+- Added 3D UltraWiki memory maps with 2D/3D switching on both knowledge surfaces.
+- Added Agentic IDE chat-or-terminal workspace choices, voice-orb context, prompt
+  receipts, persistent terminal sizing, and clearer working/done state feedback.
+- Added a real light theme selectable in Settings, replacing a switch that
+  previously changed nothing.
+- Added a draggable voice bubble to the Agentic IDE that replaces the fixed
+  voice side column and speaks status updates from wherever it sits.
+- Added UltraWiki word search over a meaning-neighbourhood of terms, so a
+  query finds pages that use related words, not only the literal ones.
+- Added the voice orb as a fourth on-screen display style: the glowing sphere
+  from the Agentic IDE now also runs as a free-floating desktop window, so it
+  can be dragged onto any monitor instead of living inside the app. Switching
+  between the mascot and the voice orb applies immediately, without a restart.
+  On a Linux session without per-pixel transparency the orb window stays hidden
+  with one actionable log line rather than showing an opaque square.
+- Added a REST-mounted project and chat library behind the Agentic IDE chat
+  surface, so conversations and projects are reachable from the CLI too.
+- Added an icon-rail sidebar: the navigation collapses by default and has an
+  explicit toggle, giving the workspace more room.
+- Added the Agentic IDE chat surface itself: a starting screen, a composer and
+  quick actions, so a conversation can begin without opening a terminal pane.
+- Added in-app downloading of local brain models, so the Ollama card fetches
+  what it needs itself instead of sending you to a terminal.
+
+### Fixed
+
+- Prevented subscription voice from hearing itself, inventing user turns,
+  fragmenting replies, losing action responses, or going silent after teardown.
+- Preserved the beginning of deliberate push-to-talk and call-hotkey speech,
+  including quick follow-ups during the wake-word echo lock.
+- Kept screen-context questions out of Computer-Use and routed provider failures
+  across available families instead of leaving core paths silent.
+- Hardened Agentic IDE pane recovery, scrolling, writer failures, terminal links,
+  copy shortcuts, and live-tail switching.
+- Repaired autostart, window focus, input capture, and audio ducking on macOS and
+  Windows, and made every pickable key bindable as a hotkey on macOS.
+- Moved desktop log writing to a dedicated thread so logging can no longer stall
+  the thread that emitted the record.
+- Stopped the wake-word shape gate from rejecting genuine wakes over its own
+  spelling assumptions; verification now relies only on word-agnostic evidence.
+- Made subscription realtime calls honest end to end: the surface shows a real
+  connecting state during a provider's cold start, the reply language is pinned
+  when the call opens, a stalled turn recovers instead of hanging, per-call cost
+  is reported truthfully, and the transport pre-warms early and works on macOS
+  and Linux, not only Windows.
+- Stopped a config write from silently dropping every section it was not asked
+  to touch, which could erase provider pins and most of a working configuration.
+- Kept the Agentic IDE workspace on one screen with sideways scrolling, made a
+  pane drop land where the pointer aims, and stopped a provider card that cannot
+  be activated from stacking a wall of identical warnings.
+- Made the onboarding local-brain button select the local brain instead of a
+  cloud one, and stopped the sidebar painting rows at stale positions on macOS.
+- Delivered the opening words of a spoken sentence instead of the fragment that
+  survived the recognizer's warm-up, and let a delegated turn own its own answer
+  rather than losing it to the turn that handed off.
+- Stopped a local model that is still loading from being reported as broken, and
+  stopped a text-only local model from advertising vision it does not have.
+- Stopped the realtime transport from re-sending the whole instruction block on
+  every turn, leaving a finished turn unclosed, or honouring a direct-speech
+  clearance after its audio must have ended.
+- Made the pre-push secret guard scan with built-in patterns when the privacy
+  gate is unavailable, instead of loading nothing and reporting a clean push.
+
+### Changed
+
+- Labelled the Agentic IDE and the Codex subscription realtime route as Beta, so
+  their maturity is visible before you rely on them.
+
+---
+
+## [1.2.1] — 2026-07-31
 
 This corrective release reconnects the public 1.2.0 line with the complete
 maintained source tree and closes the release, install, and UI verification

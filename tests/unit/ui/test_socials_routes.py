@@ -29,7 +29,7 @@ from fastapi.testclient import TestClient
 DISCORD_URL = "https://discord.gg/x7USduHxbc"
 REPO_URL = "https://github.com/PersonalJarvis/PersonalJarvis"
 PROFILE_URL = "https://github.com/PersonalJarvis"
-WEBSITE_URL = "https://personaljarvis.ai/"
+JARVIS_X_URL = "https://x.com/Ruben_Luetke"
 INSTAGRAM_URL = "https://www.instagram.com/personaljarvis/"
 
 
@@ -66,16 +66,19 @@ def test_get_seeds_on_first_run(client: TestClient) -> None:
     # Discord is the first (top) card.
     assert entries[0]["platform"] == "discord"
     assert entries[0]["url"] == DISCORD_URL
-    # The two GitHub links, project website, and Instagram profile
+    # The two GitHub links, the official X account, and the Instagram profile
     # follow. The first-run seed ships ONLY the project's own public accounts.
     urls = [e["url"] for e in entries]
     assert REPO_URL in urls
     assert PROFILE_URL in urls
-    assert WEBSITE_URL in urls
+    assert JARVIS_X_URL in urls  # the project's public X presence
     assert INSTAGRAM_URL in urls
     assert any(e["platform"] == "instagram" for e in entries)
-    website_labels = [e["label"] for e in entries if e["platform"] == "website"]
-    assert website_labels == ["Website"]
+    # Maintainer directive 2026-07-18: the project's X presence is the
+    # maintainer's public handle (@Ruben_Luetke) — the former @PersonalJarvis
+    # account is defunct, so every X link points at the live handle.
+    x_labels = [e["label"] for e in entries if e["platform"] == "x"]
+    assert x_labels == ["Personal Jarvis"]
     # Every entry carries the stable wire shape.
     for e in entries:
         assert set(e) >= {"id", "platform", "label", "url", "enabled", "order"}

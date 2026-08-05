@@ -1,6 +1,6 @@
 """Tests for the capability-honesty gate's tool-call evidence extraction.
 
-Live mission 019eb17d-710a (2026-06-10): a codex worker REALLY analysed the
+Live mission 019f1027-0001 (2026-06-10): a codex worker REALLY analysed the
 user's Gmail inbox (sub-agent thread), REALLY wrote email-analyse.html
 (35 KB, real subjects verified on disk) — and the honesty gate still
 overrode the verdict to "Worker claimed success but made no tool call",
@@ -339,7 +339,7 @@ def test_failed_tool_call_cannot_satisfy_side_effect_honesty_gate() -> None:
 
 
 def test_gate_passes_codex_worker_with_real_actions() -> None:
-    """Regression for mission 019eb17d: codex evidence must survive the gate."""
+    """Regression for mission 019f1027: codex evidence must survive the gate."""
     stream = "\n".join(
         [
             _codex_item_line(
@@ -384,7 +384,7 @@ def test_gate_still_blocks_prose_only_email_claim() -> None:
 
 # --- prose/CLI workers (agy/Antigravity, gemini --yolo): the git diff is evidence ---
 #
-# Live mission 019eefda-7e5f (2026-06-22): the user picked Antigravity as the
+# Live mission 019f1045-0001 (2026-06-22): the user picked Antigravity as the
 # subagent provider; agy REALLY wrote an 80 KB index.html into the worktree, but
 # it emits only narrative PROSE over its PTY ("I will create index.html…"), never
 # a machine-readable tool_use frame. `_extract_tool_call_evidence` is therefore
@@ -453,7 +453,7 @@ def test_gate_credits_worktree_diff_for_prose_worker(
 ) -> None:
     """agy/gemini write real files but emit only prose — the git diff is the
     ground-truth artefact and must satisfy the honesty gate (regression for
-    live mission 019eefda, 2026-06-22: agy wrote an 80 KB index.html, the gate
+    live mission 019f1045, 2026-06-22: agy wrote an 80 KB index.html, the gate
     still said 'made no tool call' and burned all three critic loops)."""
     _force_requires_evidence(monkeypatch)
     check = enforce_capability_honesty(

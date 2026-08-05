@@ -109,7 +109,7 @@ FIRE_UTTERANCE = "aktiviere den fokus und den konzentrationsmodus"  # i18n-allow
 FOCUS_TAGS = ["konzentrationsmodus", "fokus"]
 NARROW_UTTERANCE = "aktiviere den konzentrationsmodus"  # i18n-allow
 #: Matches no skill at all — the "nothing happened" case.
-UNRELATED_UTTERANCE = "wie ist das wetter in berlin"  # i18n-allow
+UNRELATED_UTTERANCE = "wie ist das wetter in exampletown"  # i18n-allow
 
 
 def _make_manager(

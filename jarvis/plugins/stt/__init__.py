@@ -1092,7 +1092,7 @@ def build_wake_whisper(
         # the GPU transcribes a ~1.8 s window in ~150 ms, so it NEVER blows the
         # transcribe timeout (this is what eliminates the wedge) and hears the
         # proper noun accurately. The bias is KEPT (turbo WITHOUT bias mangles a
-        # short custom phrase — "Hey Nico" -> "cuf ich"); the earlier "bias
+        # short custom phrase — "Hey Nova" -> "cuf ich"); the earlier "bias
         # hallucinates the phrase onto SILENCE on the strong model" concern does
         # NOT apply here because the rolling wake path only transcribes windows
         # that already passed its rms/peak gates — it never feeds a silent window

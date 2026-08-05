@@ -1,6 +1,6 @@
 """Feed-dry stall de-click in ``AudioPlayer.play_chunks``.
 
-Live forensic 2026-07-21 08:40 (realtime session 43cb78d0, Gemini Live):
+Live forensic 2026-07-21 08:40 (realtime session 10000111, Gemini Live):
 the provider paused audio delivery 1850 ms mid-sentence. The device buffer
 drained, PortAudio underflowed, and the waveform was cut at speech
 amplitude — audible as a choppy mid-sentence pause with a click/crackle at

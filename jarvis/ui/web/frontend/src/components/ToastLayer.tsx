@@ -83,7 +83,24 @@ export function ToastLayer() {
               <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", ACCENT_FOR_KIND[toast.kind])} />
             )}
             <div className="min-w-0 flex-1 text-xs leading-relaxed">
-              <div className="break-words">{toast.message}</div>
+              <div className="flex items-start gap-2">
+                <span className="min-w-0 flex-1 break-words">{toast.message}</span>
+                {/* Repeats collapse into this counter instead of stacking a
+                    fresh box per click, which used to bury the control the
+                    message is asking the user to press. */}
+                {toast.count > 1 && (
+                  <span
+                    data-testid={`toast-repeat-${toast.count}`}
+                    aria-label={`Repeated ${toast.count} times`}
+                    className={cn(
+                      "mt-px shrink-0 rounded-full border border-current/30 px-1.5 py-px text-[10px] font-semibold tabular-nums",
+                      ACCENT_FOR_KIND[toast.kind],
+                    )}
+                  >
+                    ×{toast.count}
+                  </span>
+                )}
+              </div>
               {draggable && (
                 <div className="mt-1 text-[11px] font-medium text-primary/80">
                   {t("file_toast.drag_hint")}

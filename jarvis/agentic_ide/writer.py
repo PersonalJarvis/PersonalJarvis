@@ -27,11 +27,26 @@ per install. Nothing in this module names a vendor: the subscription rung asks
 the provider cards which providers bill that way (AP-21/22), so whichever CLI
 the user connected is the one that writes.
 
+**Choosing a writer and surviving one are different questions**
+(``resolve_rescue_writer``). The order above answers "who should write this",
+and a pin that cannot be honoured there degrades openly — that half is
+unchanged. What it does NOT answer is what happens when the chosen writer
+accepts the job and dies inside it: a depleted key answering 429, a CLI
+returning its own flag error on stdout, a provider timing out. Measured on the
+dev box 2026-08-02: the writer resolved to a key whose prepayment credits were
+gone, so EVERY composition ended on the raw spoken sentence while a signed-in
+subscription sat unused. Treating a runtime failure as "the user gets no
+brief" is the single-provider brick AP-22 exists to forbid, so a dead call
+crosses to the next rung instead. That is not a silent substitution: the
+composer names the writer that ended up writing, and the rung that died.
+
 Never raises. Every failure here costs a rougher prompt; none of them may cost
 the user their instruction.
 """
+
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from loguru import logger
@@ -106,6 +121,49 @@ def resolve_writer(*, cli_timeout_s: float | None = None) -> tuple[Any | None, s
     return _api_writer(config)
 
 
+# The rungs a dead call may cross to, best first. Deliberately the same three
+# the pins name, so "who writes" and "who rescues" can never drift apart.
+_RESCUE_ORDER = ("tool_model", "subscription", "api")
+
+
+def resolve_rescue_writer(
+    *, cli_timeout_s: float | None = None, exclude: Sequence[str] = ()
+) -> tuple[Any | None, str]:
+    """The next writer to try after one accepted the job and failed inside it.
+
+    ``exclude`` is the sources already tried, in the ``rung`` or ``rung:name``
+    shape ``resolve_writer`` returns; only the rung part is compared, because
+    re-probing the same tier with a different model name would just spend the
+    same dead credential twice.
+
+    Returns ``(None, "")`` when nothing is left, and the caller then uses its
+    deterministic layer. Only reached AFTER a real failure — an unhonourable
+    pin still degrades at resolution time rather than quietly landing on a
+    provider the user did not choose.
+    """
+    tried = {str(source).split(":", 1)[0] for source in exclude if source}
+    try:
+        config = _load_config()
+    except Exception:  # noqa: BLE001 - a rescue never breaks a turn
+        logger.info("Agentic IDE rescue writer could not be resolved", exc_info=True)
+        return None, ""
+
+    for rung in _RESCUE_ORDER:
+        if rung in tried:
+            continue
+        if rung == "tool_model":
+            brain, source = _tool_model_writer(config)
+        elif rung == "subscription":
+            brain = _try_subscription(config, cli_timeout_s)
+            source = f"subscription:{getattr(brain, 'name', None) or 'subscription'}"
+        else:
+            brain, source = _api_writer(config)
+        if brain is not None:
+            logger.info("Agentic IDE brief falls across to {} after a failed writer", source)
+            return brain, source
+    return None, ""
+
+
 def _try_subscription(config: Any, cli_timeout_s: float | None) -> Any | None:
     """A connected subscription brain, or None. A failure here is not fatal."""
     try:
@@ -151,4 +209,4 @@ def _tool_model_writer(config: Any) -> tuple[Any | None, str]:
     return brain, f"tool_model:{name}"
 
 
-__all__ = ["resolve_writer"]
+__all__ = ["resolve_rescue_writer", "resolve_writer"]

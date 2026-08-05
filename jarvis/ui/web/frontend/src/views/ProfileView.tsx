@@ -363,7 +363,7 @@ function AvatarBlock({ name, hasAvatar }: { name: string | null; hasAvatar: bool
         disabled={busy}
         title={hasAvatar ? t("profile_view.avatar_change") : t("profile_view.avatar_upload")}
         aria-label={hasAvatar ? t("profile_view.avatar_change") : t("profile_view.avatar_upload")}
-        className="group relative flex h-[4.5rem] w-[4.5rem] items-center justify-center overflow-hidden rounded-full border border-white/[0.09] bg-white/[0.04] outline-none transition-colors hover:border-primary/50 focus-visible:border-primary"
+        className="group relative flex h-[4.5rem] w-[4.5rem] items-center justify-center overflow-hidden rounded-full border border-sheen/[0.09] bg-sheen/[0.04] outline-none transition-colors hover:border-primary/50 focus-visible:border-primary"
       >
         {hasAvatar ? (
           <img
@@ -398,7 +398,7 @@ function AvatarBlock({ name, hasAvatar }: { name: string | null; hasAvatar: bool
           type="button"
           onClick={openPicker}
           disabled={busy}
-          className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+          className="rounded-full border border-sheen/[0.08] bg-sheen/[0.03] px-2.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
         >
           {hasAvatar ? t("profile_view.avatar_change") : t("profile_view.avatar_upload")}
         </button>
@@ -409,7 +409,7 @@ function AvatarBlock({ name, hasAvatar }: { name: string | null; hasAvatar: bool
             disabled={busy}
             title={t("profile_view.avatar_remove")}
             aria-label={t("profile_view.avatar_remove")}
-            className="rounded-full border border-white/[0.08] bg-white/[0.03] p-1.5 text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
+            className="rounded-full border border-sheen/[0.08] bg-sheen/[0.03] p-1.5 text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
           >
             <Trash2 className="h-3 w-3" />
           </button>
@@ -462,7 +462,7 @@ function AskCard({ meta }: { meta: Record<string, unknown> }) {
               type="button"
               data-testid="ask-next"
               onClick={() => setIdx((i) => i + 1)}
-              className="inline-flex items-center gap-1 rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-xs font-medium transition-colors hover:border-primary/40 hover:bg-primary/[0.06]"
+              className="inline-flex items-center gap-1 rounded-full border border-sheen/[0.08] bg-sheen/[0.03] px-3 py-1.5 text-xs font-medium transition-colors hover:border-primary/40 hover:bg-primary/[0.06]"
             >
               {t("profile_view.ask_next")}
               <ChevronRight className="h-3.5 w-3.5" />
@@ -526,7 +526,7 @@ function IconBtn({
       ? "text-primary hover:bg-primary/10"
       : tone === "danger"
         ? "text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-        : "text-muted-foreground hover:bg-white/[0.06] hover:text-foreground";
+        : "text-muted-foreground hover:bg-sheen/[0.06] hover:text-foreground";
   return (
     <button
       type="button"
@@ -612,7 +612,7 @@ function EditableFieldRow({
   // ------------------------------------------------------------------ display
   if (!editing) {
     return (
-      <div className="group flex items-baseline justify-between gap-4 border-b border-white/[0.05] py-2 last:border-b-0">
+      <div className="group flex items-baseline justify-between gap-4 border-b border-sheen/[0.05] py-2 last:border-b-0">
         <dt className={cn("shrink-0 text-xs", empty ? "text-muted-foreground/60" : "text-muted-foreground")}>
           {label}
         </dt>
@@ -622,7 +622,7 @@ function EditableFieldRow({
               {(value as unknown[]).map((item) => (
                 <span
                   key={String(item)}
-                  className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2 py-0.5 text-xs font-medium"
+                  className="rounded-full border border-sheen/[0.08] bg-sheen/[0.04] px-2 py-0.5 text-xs font-medium"
                 >
                   {String(item)}
                 </span>
@@ -657,7 +657,7 @@ function EditableFieldRow({
 
   // ------------------------------------------------------------------- editing
   return (
-    <div className="group flex items-baseline justify-between gap-4 border-b border-white/[0.05] py-2 last:border-b-0">
+    <div className="group flex items-baseline justify-between gap-4 border-b border-sheen/[0.05] py-2 last:border-b-0">
       <dt className="shrink-0 text-xs text-muted-foreground">{label}</dt>
       <dd className="flex min-w-0 max-w-[72%] flex-col items-end gap-1.5">
         {kind === "bool" ? (
@@ -672,7 +672,7 @@ function EditableFieldRow({
                   "rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors disabled:opacity-40",
                   value === b
                     ? "border-primary/50 bg-primary/[0.12] text-primary"
-                    : "border-white/[0.08] bg-white/[0.03] text-muted-foreground hover:border-primary/40",
+                    : "border-sheen/[0.08] bg-sheen/[0.03] text-muted-foreground hover:border-primary/40",
                 )}
               >
                 {b ? t("profile_view.value_yes") : t("profile_view.value_no")}
@@ -690,7 +690,7 @@ function EditableFieldRow({
                 {(value as unknown[]).map((item) => (
                   <span
                     key={String(item)}
-                    className="inline-flex items-center gap-1 rounded-full border border-white/[0.1] bg-white/[0.05] py-0.5 pl-2 pr-1 text-xs font-medium"
+                    className="inline-flex items-center gap-1 rounded-full border border-sheen/[0.1] bg-sheen/[0.05] py-0.5 pl-2 pr-1 text-xs font-medium"
                   >
                     {String(item)}
                     <button
@@ -831,7 +831,7 @@ function ErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
     return (
       <div className="flex flex-1 items-center justify-center p-8">
         <BoardCard glow className="max-w-md p-8 text-center">
-          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.04]">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-sheen/[0.08] bg-sheen/[0.04]">
             <UserCircle2 className="h-6 w-6 text-primary" />
           </div>
           <h3 className="font-display text-lg font-semibold tracking-tight">
@@ -934,7 +934,7 @@ function PersonRow({
         onClick={onClick}
         className={cn(
           "flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors",
-          active ? "bg-primary/[0.07]" : "hover:bg-white/[0.04]",
+          active ? "bg-primary/[0.07]" : "hover:bg-sheen/[0.04]",
         )}
       >
         <span
@@ -942,7 +942,7 @@ function PersonRow({
             "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border text-xs font-semibold transition-colors",
             active
               ? "border-primary/40 bg-primary/15 text-primary"
-              : "border-white/[0.08] bg-white/[0.05] text-foreground/80",
+              : "border-sheen/[0.08] bg-sheen/[0.05] text-foreground/80",
           )}
         >
           {initials(person.name)}
@@ -957,7 +957,7 @@ function PersonRow({
             )}
           </span>
         </span>
-        <span className="shrink-0 rounded-full border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 text-[10px] text-muted-foreground">
+        <span className="shrink-0 rounded-full border border-sheen/[0.08] bg-sheen/[0.03] px-2 py-0.5 text-[10px] text-muted-foreground">
           {person.relationship}
         </span>
         <ChevronRight
@@ -1009,7 +1009,7 @@ function PersonDetail({
         </Button>
       </div>
 
-      <dl className="space-y-3 border-t border-white/[0.06] pt-4 text-xs">
+      <dl className="space-y-3 border-t border-sheen/[0.06] pt-4 text-xs">
         <div className="flex items-baseline justify-between gap-3">
           <dt className="text-muted-foreground">{t("profile_view.person_relationship")}</dt>
           <dd className="font-medium text-foreground">{person.relationship}</dd>
@@ -1032,7 +1032,7 @@ function PersonDetail({
         </div>
       </dl>
 
-      <p className="mt-4 flex items-start gap-2 rounded-xl bg-white/[0.03] p-2.5 text-[10px] leading-relaxed text-muted-foreground">
+      <p className="mt-4 flex items-start gap-2 rounded-xl bg-sheen/[0.03] p-2.5 text-[10px] leading-relaxed text-muted-foreground">
         <Inbox className="mt-0.5 h-3 w-3 shrink-0" />
         {t("profile_view.person_file_hint").replace("{0}", person.slug)}
       </p>
@@ -1185,7 +1185,7 @@ function EmptyHint({
 }) {
   return (
     <div data-testid={testId} className="mt-2 flex items-center gap-3.5 py-2">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/[0.07] bg-white/[0.03]">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-sheen/[0.07] bg-sheen/[0.03]">
         <Icon className="h-4.5 w-4.5 h-[18px] w-[18px] text-muted-foreground" />
       </div>
       <div className="min-w-0 flex-1">
@@ -1213,7 +1213,7 @@ function ReviewRow({
     conf >= 0.7 ? "text-emerald-400" : conf >= 0.5 ? "text-amber-400" : "text-muted-foreground";
 
   return (
-    <li className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:border-primary/25">
+    <li className="rounded-xl border border-sheen/[0.06] bg-sheen/[0.02] p-4 transition-colors hover:border-primary/25">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1 space-y-2">
           {candidate.evidence && (
@@ -1475,12 +1475,12 @@ function SourceCard() {
       {data && (
         <div
           className={cn(
-            "overflow-hidden rounded-xl border bg-black/30 transition-shadow",
-            editing ? "border-primary/40" : "border-white/[0.06]",
+            "overflow-hidden rounded-xl border bg-scrim/30 transition-shadow",
+            editing ? "border-primary/40" : "border-sheen/[0.06]",
             isPulsing && !editing && "ring-1 ring-emerald-500/40 shadow-[0_0_20px_rgba(16,185,129,0.15)]",
           )}
         >
-          <div className="flex items-center gap-2.5 border-b border-white/[0.05] bg-white/[0.02] px-3.5 py-2.5">
+          <div className="flex items-center gap-2.5 border-b border-sheen/[0.05] bg-sheen/[0.02] px-3.5 py-2.5">
             <FileText className="h-3.5 w-3.5 text-primary" />
             <span className="truncate font-mono text-[10px] text-muted-foreground">{data.path}</span>
             <span className="ml-auto font-mono text-[10px] text-muted-foreground/50">

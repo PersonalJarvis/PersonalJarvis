@@ -48,6 +48,37 @@ DTYPE = "int16"
 CAPTURE_BLOCK_DURATION_S = BLOCKSIZE / SAMPLE_RATE
 
 
+# Reported latency of the capture stream that is currently open. Half-duplex
+# echo protection needs it: a microphone frame handed over at time T was
+# recorded that much EARLIER, so without it the guard releases frames that
+# still carry the assistant's own voice and the model ends up answering
+# itself. Kept module-level because the mic is a process-wide singleton and
+# the consumers (realtime session, wake loop) never own the stream object.
+_INPUT_LATENCY_CAP_S = 1.0
+_last_input_latency_s = 0.0
+
+
+def last_input_latency_s() -> float:
+    """Capture latency of the open microphone stream, 0.0 when unknown."""
+    return _last_input_latency_s
+
+
+def _remember_input_latency(stream: Any) -> None:
+    global _last_input_latency_s
+    raw = getattr(stream, "latency", None)
+    # PortAudio reports a scalar for a single stream; be liberal anyway, since
+    # a wrong value here silently weakens echo protection rather than raising.
+    if isinstance(raw, (tuple, list)):
+        raw = raw[0] if raw else None
+    try:
+        latency = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):  # Unknown host latency is represented by the zero floor.
+        latency = 0.0
+    if not (latency > 0.0):
+        latency = 0.0
+    _last_input_latency_s = min(_INPUT_LATENCY_CAP_S, latency)
+
+
 def capture_chunks_for_duration(seconds: float) -> int:
     """Return the default-size chunk count covering at least ``seconds``."""
     return max(1, math.ceil(max(0.0, float(seconds)) / CAPTURE_BLOCK_DURATION_S))
@@ -201,7 +232,7 @@ def _fallback_input_devices(primary_idx: int) -> list[int]:
     try:
         devices = sd.query_devices()
         hostapis = sd.query_hostapis()
-    except Exception:
+    except Exception:  # Device enumeration is an optional compatibility probe.
         return []
     if not (0 <= primary_idx < len(devices)):
         return []
@@ -499,7 +530,7 @@ def _default_input_sample_rate(device: int | str | None) -> int:
     try:
         try:
             info = sd.query_devices(device, "input")
-        except TypeError:
+        except TypeError:  # Older sounddevice releases lack the kind argument.
             info = sd.query_devices(device)
         return int(info.get("default_samplerate", 0) or 0)
     except Exception:  # noqa: BLE001 - device query is advisory
@@ -790,7 +821,7 @@ class MicrophoneCapture:
         if self._loop and not self._loop.is_closed():
             try:
                 self._loop.call_soon_threadsafe(self._safe_put, chunk)
-            except RuntimeError:
+            except RuntimeError:  # The event loop closed between the guard and handoff.
                 self._drops += 1
 
     def _safe_put(self, chunk: AudioChunk) -> None:
@@ -814,11 +845,11 @@ class MicrophoneCapture:
             # stays anchored to real wall-clock, not delivered-frame count.
             try:
                 self._queue.get_nowait()
-            except asyncio.QueueEmpty:
+            except asyncio.QueueEmpty:  # A concurrent consumer already freed the slot.
                 pass
             try:
                 self._queue.put_nowait(chunk)
-            except asyncio.QueueFull:
+            except asyncio.QueueFull:  # A concurrent producer won the replacement slot.
                 pass
             self._drops += 1
 
@@ -920,7 +951,7 @@ class MicrophoneCapture:
                             # outer candidate loop only sees the exception.
                             try:
                                 opened.close()
-                            except Exception:  # noqa: BLE001, S110
+                            except Exception:  # noqa: BLE001, S110 - preserve the original open failure
                                 pass
                             raise
                         return opened
@@ -929,6 +960,7 @@ class MicrophoneCapture:
                     _guarded_open, attempt, capture_rate, capture_blocksize
                 )
                 self._stream = stream
+                _remember_input_latency(stream)
                 self._device = attempt
                 self._using_physical_fallback = physical_fallback
                 if not physical_fallback:
@@ -1125,7 +1157,7 @@ class MicrophoneCapture:
             watchdog.cancel()
             try:
                 await watchdog
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # Cancellation is the successful watchdog teardown.
                 pass
             except Exception as exc:  # noqa: BLE001
                 _log.debug("Mic-Watchdog cleanup swallow: {}", exc)

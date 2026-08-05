@@ -1,6 +1,6 @@
 """Two-turn voice/chat confirmation deferral in the ``ToolExecutor``.
 
-Root cause (2026-06-18, session 2995997b): an ``ask``-tier tool on the voice path
+Root cause (2026-06-18, session 10000010): an ``ask``-tier tool on the voice path
 blocks in ``ApprovalWorkflow.wait()`` for a UI approval no conversational user can
 give; the turn is then beheaded with a misleading "took too long" phrase. Fix: on
 a conversational turn (``config_snapshot["voice_confirm"] = True``) the executor
@@ -204,7 +204,7 @@ async def test_safe_tier_is_not_deferred_even_with_voice_confirm() -> None:
 
 @pytest.mark.asyncio
 async def test_gmail_read_is_not_deferred_for_voice_confirm() -> None:
-    """Repro 2026-06-19 (session dc533e39): a read-only gmail call (the
+    """Repro 2026-06-19 (session 10000119): a read-only gmail call (the
     morning-routine "check unread mail" step) must NOT trigger the send
     confirmation on a voice turn. Before the per-action risk fix the whole
     gmail tool was ask-tier, so this input and response reproduced it:

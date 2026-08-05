@@ -1,4 +1,4 @@
-"""Pipeline provider cards select the engine that actually uses them."""
+"""Pipeline provider cards never change the user's voice-engine selection."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class _LivePipeline:
         return True
 
 
-def test_local_tts_selection_activates_and_persists_pipeline_mode(
+def test_local_tts_selection_preserves_realtime_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = JarvisConfig()
@@ -57,13 +57,12 @@ def test_local_tts_selection_activates_and_persists_pipeline_mode(
         "ok": True,
         "active": "piper-local",
         "persisted": True,
-        "voice_mode_persisted": True,
         "live_switched": True,
         "restart_required": False,
-        "session_restarted": True,
+        "session_restarted": False,
     }
     assert provider_writes == ["piper-local"]
-    assert mode_writes == ["pipeline"]
+    assert mode_writes == []
     assert pipeline.tts is built
-    assert pipeline.mode_calls == ["pipeline"]
-    assert cfg.voice.mode == "pipeline"
+    assert pipeline.mode_calls == []
+    assert cfg.voice.mode == "realtime"

@@ -63,7 +63,7 @@ KontrollierersResolver = Callable[[], "Any | None"]
 
 # Per-tool spawn cooldown. After a dispatched spawn, subsequent ``execute``
 # calls within this window return a voice-friendly ACK and do NOT dispatch
-# a second mission. Live regression 2026-05-27 (mission_019e6983-{82e7,
+# a second mission. Live regression 2026-05-27 (mission_019f1017-{82e7,
 # a83b,b0be}): one long voice utterance triggered THREE missions because the
 # VAD's max-utterance cut produced multiple turns, the brain saw each
 # fragment as a separate request and re-issued spawn_worker with the
@@ -107,7 +107,7 @@ _LEADING_CONNECTOR_RE: Final[re.Pattern[str]] = re.compile(
 
 
 # Standing quality directive prepended to EVERY dispatched mission prompt.
-# Live incident 2026-05-31 (mission 019e7e04): the user's voice request was
+# Live incident 2026-05-31 (mission 019f101d): the user's voice request was
 # VAD-truncated ("... wie soll"), the Gemini-Flash router tier compressed it
 # into a minimal brief ("Erstelle ein sinnvolles HTML-Grundgerüst oder frage
 # den User nach Details"), and the frontier Opus worker faithfully shipped a
@@ -128,14 +128,14 @@ _QUALITY_DIRECTIVE: Final[str] = (
     "constraint the user set on the SHAPE or scope of the deliverable (for "
     'example "a single self-contained HTML file" or "one script"): honoring such '
     "a constraint is part of satisfying the request, not a downgrade. "
-    # Form-constraint carve-out (2026-06-22, mission 019ef052): the "never
+    # Form-constraint carve-out (2026-06-22, mission 019f1046): the "never
     # downgrade to a minimal version" floor read a single-file request as a
     # forbidden minimal version, so a "single HTML file" brief shipped four files
     # (html+js+css+asset). The floor governs QUALITY, never the user's chosen form.
     # Honest-impossibility escape (latency 2026-06-14): without this, the "never
     # downgrade / build the finished artefact" floor pushes the worker to spiral
     # on a task it cannot actually do (e.g. "book a trip" with no booking tool —
-    # live mission 019ec708 ran 535s producing nothing). The floor applies to
+    # live mission 019f1033 ran 535s producing nothing). The floor applies to
     # the QUALITY of a doable task, never as a mandate to fake an undoable one.
     "If the task genuinely cannot be completed with the tools available to you "
     "(for example it requires a real-world action like booking, purchasing, "
@@ -212,7 +212,7 @@ def _build_mission_prompt(
     """Construct the worker's task instruction from the brain's tool-call args.
 
     The tool schema keeps ``utterance`` verbatim (no detail loss), so a
-    VAD-cut turn lands as a fragment (live 2026-05-29 mission 019e70a9: the
+    VAD-cut turn lands as a fragment (live 2026-05-29 mission 019f101a: the
     worker received only ``"die Detailwürfelspiele.html"`` while the brain had
     already interpreted ``action="eine HTML-Seite namens Würfelspiel.html
     baut"``). The worker reads ONLY the mission prompt, so a bare fragment
@@ -505,10 +505,10 @@ class SpawnWorkerTool:
         if not utterance:
             return ToolResult(success=False, error="empty utterance")
 
-        # Context-bleed guard: under a full provider
+        # Context-bleed guard (forensic 2026-06-20): under a full provider
         # collapse the turn ran on a degraded fallback model fed a long prior
-        # context, which echoed a previous synthetic research request
-        # into the spawn args although the user had requested a formatting task — the
+        # context, which echoed a PREVIOUS request (a synthetic planning ask)
+        # into the spawn args although the user had just said "Mask it up" — the
         # worker then built an entirely foreign task. ``ctx.user_utterance`` is
         # the verbatim transcribed turn: the ground truth for what was just
         # said. When the brain's utterance shares no content word with it, the
@@ -555,7 +555,7 @@ class SpawnWorkerTool:
         # Spawn cooldown — suppress duplicate spawns while a dispatch is in
         # flight AND within _COOLDOWN_SECONDS of the last arm. Live regression
         # 2026-05-27: a single user voice request fragmented across VAD turns
-        # produced THREE mission cards (mission_019e6983-{82e7,a83b,b0be}).
+        # produced THREE mission cards (mission_019f1017-{82e7,a83b,b0be}).
         # Guard here is a central choke-point for force-spawn, brain
         # function-call AND leak-recovery paths so no source can sneak around
         # it. The ``_active_dispatches > 0`` term makes this a liveness gate,

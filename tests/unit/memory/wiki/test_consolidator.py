@@ -39,17 +39,17 @@ from jarvis.memory.wiki.log_writer import LogWriter
 from jarvis.memory.wiki.page import MarkdownPageRepository
 from jarvis.memory.wiki.vault_index import VaultIndex
 
-LENA_BODY = (
+EXAMPLEFRIEND_BODY = (
     "---\n"
     "type: entity\n"
     "entity_kind: person\n"
-    "slug: lena\n"
-    "aliases: [Lena]\n"
+    "slug: examplefriend\n"
+    "aliases: [ExampleFriend]\n"
     "created: 2026-06-01\n"
     "updated: 2026-06-01\n"
     "---\n"
     "\n"
-    "# Lena\n"
+    "# ExampleFriend\n"
     "\n"
     "## Summary\n"
     "\n"
@@ -57,7 +57,7 @@ LENA_BODY = (
     "\n"
     "## Facts\n"
     "\n"
-    "- Lena lives in Hamburg.\n"
+    "- ExampleFriend lives in Exampleville.\n"
     "\n"
     "## Relationships\n"
     "\n"
@@ -94,19 +94,19 @@ def _gpu_body(vram_gb: int, *, extra_fact: str = "") -> str:
     )
 
 
-def _example_city_trip_body() -> str:
+def _san_francisco_trip_body() -> str:
     today = dt.date.today().isoformat()
     return (
         "---\n"
         "type: project\n"
-        "slug: example-city-trip\n"
+        "slug: exampleville-trip\n"
         "status: active\n"
         f"started: {today}\n"
         f"last_activity: {today}\n"
         "---\n\n"
-        "# Example City Trip\n\n"
+        "# Exampleville Trip\n\n"
         "## Goal\n\n"
-        "The user plans to travel to Example City tomorrow.\n\n"
+        "The user plans to travel to Exampleville tomorrow.\n\n"
         "## Current Status\n\n"
         "Planned.\n\n"
         "## Recent Activity\n\n"
@@ -114,7 +114,7 @@ def _example_city_trip_body() -> str:
         "## Open Threads\n\n"
         "- None recorded.\n\n"
         "## Related\n\n"
-        "- Example City.\n\n"
+        "- Exampleville.\n\n"
         "## Sources\n\n"
         "- conversation\n"
     )
@@ -261,7 +261,7 @@ def _write_aged(path: Path, content: str) -> None:
 async def test_add_creates_schema_valid_page(stack) -> None:
     vault_root, _curator, journal = stack
     journal.append(
-        [CandidateFact(fact="Lena moved to Hamburg.", kind="person", subjects=("lena",))],
+        [CandidateFact(fact="ExampleFriend moved to Exampleville.", kind="person", subjects=("examplefriend",))],
         source_label="voice-fact:1", turn_hash="h1",
     )
     cid = journal.pending()[0].id
@@ -269,8 +269,8 @@ async def test_add_creates_schema_valid_page(stack) -> None:
     brain = FakeBrain([_judge_json([{
         "candidate_id": cid,
         "decision": "add",
-        "target": "entities/lena.md",
-        "new_body": LENA_BODY,
+        "target": "entities/examplefriend.md",
+        "new_body": EXAMPLEFRIEND_BODY,
         "reason": "new person",
     }])])
     consolidator = _consolidator(stack, brain)
@@ -278,9 +278,9 @@ async def test_add_creates_schema_valid_page(stack) -> None:
     label = await consolidator.run_once()
 
     assert label == "journal-batch:1"
-    page = vault_root / "entities" / "lena.md"
+    page = vault_root / "entities" / "examplefriend.md"
     assert page.is_file()
-    assert "Lena lives in Hamburg." in page.read_text(encoding="utf-8")
+    assert "ExampleFriend lives in Exampleville." in page.read_text(encoding="utf-8")
     assert journal.pending() == []
     assert journal.backlog_count() == 0
 
@@ -288,24 +288,24 @@ async def test_add_creates_schema_valid_page(stack) -> None:
 @pytest.mark.asyncio
 async def test_update_merges_in_place_and_judge_saw_the_body(stack) -> None:
     vault_root, _curator, journal = stack
-    _write_aged(vault_root / "entities" / "lena.md", LENA_BODY)
+    _write_aged(vault_root / "entities" / "examplefriend.md", EXAMPLEFRIEND_BODY)
     journal.append(
         [CandidateFact(
-            fact="Lena got a new job at the animal clinic.",
-            kind="person", subjects=("lena",),
+            fact="ExampleFriend got a new job at the example studio.",
+            kind="person", subjects=("examplefriend",),
         )],
         source_label="voice-fact:2", turn_hash="h2",
     )
     cid = journal.pending()[0].id
 
-    updated_body = LENA_BODY.replace(
-        "- Lena lives in Hamburg.\n",
-        "- Lena lives in Hamburg.\n- Lena works at the animal clinic.\n",
+    updated_body = EXAMPLEFRIEND_BODY.replace(
+        "- ExampleFriend lives in Exampleville.\n",
+        "- ExampleFriend lives in Exampleville.\n- ExampleFriend works at the example studio.\n",
     )
     brain = FakeBrain([_judge_json([{
         "candidate_id": cid,
         "decision": "update",
-        "target": "entities/lena.md",
+        "target": "entities/examplefriend.md",
         "new_body": updated_body,
         "reason": "merge job fact",
     }])])
@@ -315,15 +315,15 @@ async def test_update_merges_in_place_and_judge_saw_the_body(stack) -> None:
 
     # Body-awareness: the judge prompt contained the EXISTING page body.
     prompt_text = brain.received_requests[0].messages[0].content
-    assert "Lena lives in Hamburg." in prompt_text
-    assert "entities/lena.md" in prompt_text
+    assert "ExampleFriend lives in Exampleville." in prompt_text
+    assert "entities/examplefriend.md" in prompt_text
 
     # In-place merge: ONE file, old fact retained, new fact added.
-    pages = list((vault_root / "entities").glob("lena*.md"))
-    assert pages == [vault_root / "entities" / "lena.md"]
+    pages = list((vault_root / "entities").glob("examplefriend*.md"))
+    assert pages == [vault_root / "entities" / "examplefriend.md"]
     content = pages[0].read_text(encoding="utf-8")
-    assert "- Lena lives in Hamburg." in content
-    assert "- Lena works at the animal clinic." in content
+    assert "- ExampleFriend lives in Exampleville." in content
+    assert "- ExampleFriend works at the example studio." in content
 
 
 ALEX_FULL_BODY = (
@@ -380,22 +380,22 @@ def _espresso_project_body() -> str:
     )
 
 
-def _example_city_place_body() -> str:
+def _san_francisco_place_body() -> str:
     today = dt.date.today().isoformat()
     return (
         "---\n"
         "type: entity\n"
         "entity_kind: place\n"
-        "slug: example-city\n"
-        "aliases: [Example City]\n"
+        "slug: exampleville\n"
+        "aliases: [Exampleville]\n"
         f"created: {today}\n"
         f"updated: {today}\n"
         "---\n\n"
-        "# Example City\n\n"
+        "# Exampleville\n\n"
         "## Summary\n\n"
         "The user's current city of residence.\n\n"
         "## Facts\n\n"
-        "- The user works at the Example City lab.\n\n"
+        "- The user lives in Exampleville.\n\n"
         "## Relationships\n\n"
         "- Home of [[entities/alex]].\n\n"
         "## Sources\n\n"
@@ -413,9 +413,9 @@ async def test_residence_profile_only_judge_falls_back_to_linked_place_page(
     journal.append(
         [
             CandidateFact(
-                fact="The user works at the Example City lab.",
+                fact="The user lives in Exampleville.",
                 kind="place",
-                subjects=("alex", "example-city"),
+                subjects=("alex", "exampleville"),
             )
         ],
         source_label="realtime:residence",
@@ -424,10 +424,10 @@ async def test_residence_profile_only_judge_falls_back_to_linked_place_page(
     cid = journal.pending()[0].id
     updated_profile = ALEX_FULL_BODY.replace(
         "- Enjoys great coffee.\n",
-        "- Enjoys great coffee.\n- Works at the Example City lab.\n",
+        "- Enjoys great coffee.\n- Lives in Exampleville.\n",
     ).replace(
         "## Relationships\n\n",
-        "## Relationships\n\n- Works at [[entities/example-city]].\n\n",
+        "## Relationships\n\n- Lives in [[entities/exampleville]].\n\n",
     )
     profile_only = _judge_json(
         [
@@ -452,8 +452,8 @@ async def test_residence_profile_only_judge_falls_back_to_linked_place_page(
             {
                 "candidate_id": cid,
                 "decision": "add",
-                "target": "entities/example-city.md",
-                "new_body": _example_city_place_body(),
+                "target": "entities/exampleville.md",
+                "new_body": _san_francisco_place_body(),
                 "reason": "graph-visible residence",
             },
         ]
@@ -472,10 +472,10 @@ async def test_residence_profile_only_judge_falls_back_to_linked_place_page(
     assert label == "journal-batch:1"
     assert registry.tried == ["gemini", "openrouter"]
     profile = (vault_root / "entities" / "alex.md").read_text(encoding="utf-8")
-    place = (vault_root / "entities" / "example-city.md").read_text(
+    place = (vault_root / "entities" / "exampleville.md").read_text(
         encoding="utf-8"
     )
-    assert "[[entities/example-city]]" in profile
+    assert "[[entities/exampleville]]" in profile
     assert "[[entities/alex]]" in place
     assert journal.pending() == []
 
@@ -485,20 +485,20 @@ async def test_residence_repairs_two_existing_isolated_pages_atomically(stack) -
     """The narrow secondary-update exception connects both existing pages."""
     vault_root, _curator, journal = stack
     _write_aged(vault_root / "entities" / "alex.md", ALEX_FULL_BODY)
-    isolated_place = _example_city_place_body().replace(
+    isolated_place = _san_francisco_place_body().replace(
         "- Home of [[entities/alex]].\n",
         "",
     )
     _write_aged(
-        vault_root / "entities" / "example-city.md",
+        vault_root / "entities" / "exampleville.md",
         isolated_place,
     )
     journal.append(
         [
             CandidateFact(
-                fact="The user works at the Example City lab.",
+                fact="The user lives in Exampleville.",
                 kind="place",
-                subjects=("alex", "example-city"),
+                subjects=("alex", "exampleville"),
             )
         ],
         source_label="realtime:existing-residence",
@@ -507,10 +507,10 @@ async def test_residence_repairs_two_existing_isolated_pages_atomically(stack) -
     cid = journal.pending()[0].id
     updated_profile = ALEX_FULL_BODY.replace(
         "- Enjoys great coffee.\n",
-        "- Enjoys great coffee.\n- Works at the Example City lab.\n",
+        "- Enjoys great coffee.\n- Lives in Exampleville.\n",
     ).replace(
         "## Relationships\n\n",
-        "## Relationships\n\n- Works at [[entities/example-city]].\n\n",
+        "## Relationships\n\n- Lives in [[entities/exampleville]].\n\n",
     )
     updated_place = isolated_place.replace(
         "## Relationships\n\n",
@@ -537,7 +537,7 @@ async def test_residence_repairs_two_existing_isolated_pages_atomically(stack) -
             {
                 "candidate_id": cid,
                 "decision": "update",
-                "target": "entities/example-city.md",
+                "target": "entities/exampleville.md",
                 "new_body": updated_place,
             },
         ]
@@ -555,11 +555,11 @@ async def test_residence_repairs_two_existing_isolated_pages_atomically(stack) -
 
     assert label == "journal-batch:1"
     assert registry.tried == ["gemini", "openrouter"]
-    assert "[[entities/example-city]]" in (
+    assert "[[entities/exampleville]]" in (
         vault_root / "entities" / "alex.md"
     ).read_text(encoding="utf-8")
     assert "[[entities/alex]]" in (
-        vault_root / "entities" / "example-city.md"
+        vault_root / "entities" / "exampleville.md"
     ).read_text(encoding="utf-8")
     assert journal.pending() == []
 
@@ -571,20 +571,20 @@ async def test_residence_with_existing_bidirectional_links_needs_one_update(
     vault_root, _curator, journal = stack
     connected_profile = ALEX_FULL_BODY.replace(
         "## Relationships\n\n",
-        "## Relationships\n\n- Works at [[entities/example-city]].\n\n",
+        "## Relationships\n\n- Lives in [[entities/exampleville]].\n\n",
     )
     _write_aged(vault_root / "entities" / "alex.md", connected_profile)
-    connected_place = _example_city_place_body()
+    connected_place = _san_francisco_place_body()
     _write_aged(
-        vault_root / "entities" / "example-city.md",
+        vault_root / "entities" / "exampleville.md",
         connected_place,
     )
     journal.append(
         [
             CandidateFact(
-                fact="The user enjoys working at the Example City lab.",
+                fact="The user feels settled in Exampleville.",
                 kind="place",
-                subjects=("alex", "example-city"),
+                subjects=("alex", "exampleville"),
             )
         ],
         source_label="realtime:connected-residence",
@@ -593,7 +593,7 @@ async def test_residence_with_existing_bidirectional_links_needs_one_update(
     cid = journal.pending()[0].id
     updated_profile = connected_profile.replace(
         "- Enjoys great coffee.\n",
-        "- Enjoys great coffee.\n- Enjoys working at the Example City lab.\n",
+        "- Enjoys great coffee.\n- Feels settled in Exampleville.\n",
     )
     brain = FakeBrain(
         [
@@ -617,11 +617,11 @@ async def test_residence_with_existing_bidirectional_links_needs_one_update(
     ).run_once()
 
     assert label == "journal-batch:1"
-    assert "Enjoys working at the Example City lab" in (
+    assert "Feels settled in Exampleville" in (
         vault_root / "entities" / "alex.md"
     ).read_text(encoding="utf-8")
     assert (
-        vault_root / "entities" / "example-city.md"
+        vault_root / "entities" / "exampleville.md"
     ).read_text(encoding="utf-8") == connected_place
     assert journal.pending() == []
 
@@ -792,9 +792,9 @@ async def test_failing_required_place_companion_keeps_candidate_pending(stack) -
     journal.append(
         [
             CandidateFact(
-                fact="The user works at the Example City lab.",
+                fact="The user lives in Exampleville.",
                 kind="place",
-                subjects=("alex", "example-city"),
+                subjects=("alex", "exampleville"),
             )
         ],
         source_label="realtime:residence-retry",
@@ -803,12 +803,12 @@ async def test_failing_required_place_companion_keeps_candidate_pending(stack) -
     cid = journal.pending()[0].id
     updated_profile = ALEX_FULL_BODY.replace(
         "- Enjoys great coffee.\n",
-        "- Enjoys great coffee.\n- Works at the Example City lab.\n",
+        "- Enjoys great coffee.\n- Lives in Exampleville.\n",
     ).replace(
         "## Relationships\n\n",
-        "## Relationships\n\n- Works at [[entities/example-city]].\n\n",
+        "## Relationships\n\n- Lives in [[entities/exampleville]].\n\n",
     )
-    poisoned_place = _example_city_place_body().replace(
+    poisoned_place = _san_francisco_place_body().replace(
         "The user's current city of residence.",
         "Stored with sk-proj-" + "A" * 24 + ".",
     )
@@ -825,7 +825,7 @@ async def test_failing_required_place_companion_keeps_candidate_pending(stack) -
                     {
                         "candidate_id": cid,
                         "decision": "add",
-                        "target": "entities/example-city.md",
+                        "target": "entities/exampleville.md",
                         "new_body": poisoned_place,
                     },
                 ]
@@ -840,8 +840,8 @@ async def test_failing_required_place_companion_keeps_candidate_pending(stack) -
     ).run_once()
 
     assert label == "journal-transient:1"
-    assert not (vault_root / "entities" / "example-city.md").exists()
-    assert "Works at the Example City lab" in (
+    assert not (vault_root / "entities" / "exampleville.md").exists()
+    assert "Lives in Exampleville" in (
         vault_root / "entities" / "alex.md"
     ).read_text(encoding="utf-8")
     assert len(journal.pending()) == 1
@@ -853,7 +853,7 @@ async def test_secondary_update_is_still_rejected(stack) -> None:
     secondary "update" of another existing page stays invalid."""
     vault_root, _curator, journal = stack
     _write_aged(vault_root / "entities" / "alex.md", ALEX_FULL_BODY)
-    _write_aged(vault_root / "entities" / "lena.md", LENA_BODY)
+    _write_aged(vault_root / "entities" / "examplefriend.md", EXAMPLEFRIEND_BODY)
     journal.append(
         [CandidateFact(
             fact="The user is pursuing a high-end espresso machine.",
@@ -874,8 +874,8 @@ async def test_secondary_update_is_still_rejected(stack) -> None:
         {
             "candidate_id": cid,
             "decision": "update",
-            "target": "entities/lena.md",
-            "new_body": LENA_BODY,
+            "target": "entities/examplefriend.md",
+            "new_body": EXAMPLEFRIEND_BODY,
             "reason": "sneaky second update",
         },
     ])])
@@ -885,8 +885,8 @@ async def test_secondary_update_is_still_rejected(stack) -> None:
 
     assert label == "judge-rejected:1"  # rejected response, chain exhausted
     assert (
-        vault_root / "entities" / "lena.md"
-    ).read_text(encoding="utf-8") == LENA_BODY
+        vault_root / "entities" / "examplefriend.md"
+    ).read_text(encoding="utf-8") == EXAMPLEFRIEND_BODY
     assert journal.pending() != []  # candidate stays visible for the next pass
 
 
@@ -899,10 +899,10 @@ async def test_rejected_batch_bisects_so_one_poison_candidate_cannot_wedge_the_q
     single-row batches instead of being held hostage forever."""
     vault_root, _curator, journal = stack
     _write_aged(vault_root / "entities" / "alex.md", ALEX_FULL_BODY)
-    _write_aged(vault_root / "entities" / "lena.md", LENA_BODY)
+    _write_aged(vault_root / "entities" / "examplefriend.md", EXAMPLEFRIEND_BODY)
     journal.append(
         [
-            CandidateFact(fact="Lena lives in Hamburg.", kind="person", subjects=("lena",)),
+            CandidateFact(fact="ExampleFriend lives in Exampleville.", kind="person", subjects=("examplefriend",)),
             CandidateFact(fact="The user enjoys great coffee.", subjects=("alex",)),
         ],
         source_label="voice:poison-batch",
@@ -917,8 +917,8 @@ async def test_rejected_batch_bisects_so_one_poison_candidate_cannot_wedge_the_q
             {
                 "candidate_id": first,
                 "decision": "update",
-                "target": "entities/lena.md",
-                "new_body": LENA_BODY,
+                "target": "entities/examplefriend.md",
+                "new_body": EXAMPLEFRIEND_BODY,
                 "reason": "profile note",
             },
             {
@@ -987,14 +987,14 @@ async def test_explicit_persistence_noop_crosses_to_write_provider(stack) -> Non
     vault_root, _curator, journal = stack
     evidence = (
         "Evidence user turn [sf-turn]: Kannst du bitte hinzufügen, dass ich "  # i18n-allow
-        "morgen nach Example City reisen möchte?"  # i18n-allow
+        "morgen nach Exampleville reisen möchte?"  # i18n-allow
     )
     journal.append(
         [
             CandidateFact(
-                fact="The user plans to travel to Example City tomorrow.",
+                fact="The user plans to travel to Exampleville tomorrow.",
                 kind="plan",
-                subjects=("example-city-trip",),
+                subjects=("exampleville-trip",),
                 evidence_turn_id="sf-turn",
                 evidence_excerpt=evidence,
             )
@@ -1019,8 +1019,8 @@ async def test_explicit_persistence_noop_crosses_to_write_provider(stack) -> Non
                     {
                         "candidate_id": cid,
                         "decision": "add",
-                        "target": "projects/example-city-trip.md",
-                        "new_body": _example_city_trip_body(),
+                        "target": "projects/exampleville-trip.md",
+                        "new_body": _san_francisco_trip_body(),
                         "reason": "the user explicitly asked to keep the dated plan",
                     }
                 ]
@@ -1037,9 +1037,9 @@ async def test_explicit_persistence_noop_crosses_to_write_provider(stack) -> Non
     assert label == "journal-batch:1"
     assert registry.tried == ["gemini", "openrouter"]
     assert journal.pending() == []
-    page = vault_root / "projects" / "example-city-trip.md"
+    page = vault_root / "projects" / "exampleville-trip.md"
     assert page.is_file()
-    assert "travel to Example City tomorrow" in page.read_text(encoding="utf-8")
+    assert "travel to Exampleville tomorrow" in page.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
@@ -1068,22 +1068,22 @@ def test_explicit_persistence_clause_detector_covers_supported_languages(
 @pytest.mark.asyncio
 async def test_explicit_wiki_save_allows_exact_existing_fact_noop(stack) -> None:
     vault_root, _curator, journal = stack
-    page = vault_root / "projects" / "example-city-trip.md"
-    existing_body = _example_city_trip_body().replace(
-        "The user plans to travel to Example City tomorrow.",
-        "Plans to travel to Example City tomorrow.",
+    page = vault_root / "projects" / "exampleville-trip.md"
+    existing_body = _san_francisco_trip_body().replace(
+        "The user plans to travel to Exampleville tomorrow.",
+        "Plans to travel to Exampleville tomorrow.",
     )
     _write_aged(page, existing_body)
     journal.append(
         [
             CandidateFact(
-                fact="The user plans to travel to Example City tomorrow.",
+                fact="The user plans to travel to Exampleville tomorrow.",
                 kind="plan",
-                subjects=("example-city-trip",),
+                subjects=("exampleville-trip",),
                 evidence_turn_id="sf-repeat",
                 evidence_excerpt=(
                     "Evidence user turn [sf-repeat]: Add to my wiki that I "
-                    "plan to travel to Example City tomorrow."
+                    "plan to travel to Exampleville tomorrow."
                 ),
             )
         ],
@@ -1118,13 +1118,13 @@ async def test_explicit_save_allows_unsupported_evidence_noop(stack) -> None:
     journal.append(
         [
             CandidateFact(
-                fact="The user has already booked the Example City trip.",
+                fact="The user has already booked the Exampleville trip.",
                 kind="plan",
-                subjects=("example-city-trip",),
+                subjects=("exampleville-trip",),
                 evidence_turn_id="sf-unsupported",
                 evidence_excerpt=(
                     "Evidence user turn [sf-unsupported]: Remember that I may "
-                    "travel to Example City tomorrow."
+                    "travel to Exampleville tomorrow."
                 ),
             )
         ],
@@ -1194,18 +1194,18 @@ async def test_one_shot_command_with_relative_clause_remains_noop(stack) -> None
 @pytest.mark.asyncio
 async def test_update_that_drops_existing_fact_falls_back_safely(stack) -> None:
     vault_root, _curator, journal = stack
-    page = vault_root / "entities" / "lena.md"
-    _write_aged(page, LENA_BODY)
+    page = vault_root / "entities" / "examplefriend.md"
+    _write_aged(page, EXAMPLEFRIEND_BODY)
     journal.append(
-        [CandidateFact(fact="Lena works at the animal clinic.", subjects=("lena",))],
+        [CandidateFact(fact="ExampleFriend works at the example studio.", subjects=("examplefriend",))],
         source_label="voice:preservation-fallback",
         turn_hash="preservation-fallback",
     )
     cid = journal.pending()[0].id
-    destructive = LENA_BODY.replace("- Lena lives in Hamburg.\n", "")
-    preserved = LENA_BODY.replace(
-        "- Lena lives in Hamburg.\n",
-        "- Lena lives in Hamburg.\n- Lena works at the animal clinic.\n",
+    destructive = EXAMPLEFRIEND_BODY.replace("- ExampleFriend lives in Exampleville.\n", "")
+    preserved = EXAMPLEFRIEND_BODY.replace(
+        "- ExampleFriend lives in Exampleville.\n",
+        "- ExampleFriend lives in Exampleville.\n- ExampleFriend works at the example studio.\n",
     )
     registry = ScriptedProviderRegistry(
         {
@@ -1214,7 +1214,7 @@ async def test_update_that_drops_existing_fact_falls_back_safely(stack) -> None:
                     {
                         "candidate_id": cid,
                         "decision": "update",
-                        "target": "entities/lena.md",
+                        "target": "entities/examplefriend.md",
                         "new_body": destructive,
                     }
                 ]
@@ -1224,7 +1224,7 @@ async def test_update_that_drops_existing_fact_falls_back_safely(stack) -> None:
                     {
                         "candidate_id": cid,
                         "decision": "update",
-                        "target": "entities/lena.md",
+                        "target": "entities/examplefriend.md",
                         "new_body": preserved,
                     }
                 ]
@@ -1241,8 +1241,8 @@ async def test_update_that_drops_existing_fact_falls_back_safely(stack) -> None:
     assert label == "journal-batch:1"
     assert registry.tried == ["gemini", "openrouter"]
     content = page.read_text(encoding="utf-8")
-    assert "Lena lives in Hamburg." in content
-    assert "Lena works at the animal clinic." in content
+    assert "ExampleFriend lives in Exampleville." in content
+    assert "ExampleFriend works at the example studio." in content
 
 
 @pytest.mark.asyncio
@@ -1357,7 +1357,7 @@ async def test_update_may_drop_sources_noise_the_normaliser_strips(stack) -> Non
     update that tidies exactly what the write-path normaliser strips
     anyway passes the preservation guard."""
     vault_root, _curator, journal = stack
-    junky = LENA_BODY.replace(
+    junky = EXAMPLEFRIEND_BODY.replace(
         "## Sources\n\n- conversation\n",
         "## Sources\n\n"
         "- Realtime transcript: session `s1`, turn `t1`.\n"
@@ -1365,17 +1365,17 @@ async def test_update_may_drop_sources_noise_the_normaliser_strips(stack) -> Non
         "- Realtime transcript: session `s1`, turn `t1`.\n"
         "- Realtime transcript: session `t1`, turn `t1`.\n",
     )
-    _write_aged(vault_root / "entities" / "lena.md", junky)
+    _write_aged(vault_root / "entities" / "examplefriend.md", junky)
     journal.append(
-        [CandidateFact(fact="Lena enjoys hiking.", kind="person", subjects=("lena",))],
+        [CandidateFact(fact="ExampleFriend enjoys hiking.", kind="person", subjects=("examplefriend",))],
         source_label="voice:tidy-update",
         turn_hash="tidy-update",
     )
     cid = journal.pending()[0].id
 
-    tidied = LENA_BODY.replace(
-        "- Lena lives in Hamburg.\n",
-        "- Lena lives in Hamburg.\n- Lena enjoys hiking.\n",
+    tidied = EXAMPLEFRIEND_BODY.replace(
+        "- ExampleFriend lives in Exampleville.\n",
+        "- ExampleFriend lives in Exampleville.\n- ExampleFriend enjoys hiking.\n",
     ).replace(
         "## Sources\n\n- conversation\n",
         "## Sources\n\n- Realtime transcript: session `s1`, turn `t1`.\n",
@@ -1383,7 +1383,7 @@ async def test_update_may_drop_sources_noise_the_normaliser_strips(stack) -> Non
     brain = FakeBrain([_judge_json([{
         "candidate_id": cid,
         "decision": "update",
-        "target": "entities/lena.md",
+        "target": "entities/examplefriend.md",
         "new_body": tidied,
         "reason": "merge + tidy",
     }])])
@@ -1392,20 +1392,20 @@ async def test_update_may_drop_sources_noise_the_normaliser_strips(stack) -> Non
     label = await consolidator.run_once()
 
     assert label == "journal-batch:1"
-    content = (vault_root / "entities" / "lena.md").read_text(encoding="utf-8")
-    assert "- Lena enjoys hiking." in content
+    content = (vault_root / "entities" / "examplefriend.md").read_text(encoding="utf-8")
+    assert "- ExampleFriend enjoys hiking." in content
     assert content.count("session `s1`, turn `t1`") == 1
     assert journal.pending() == []
 
 
 def test_source_citation_uuid_in_inline_code_is_not_a_numeric_claim() -> None:
     """A schema-style Sources line cites opaque ids in inline code
-    (``session `f260abcc-…```` ). Fragmenting those ids into pseudo-numbers
+    (``session `20000002-…```` ). Fragmenting those ids into pseudo-numbers
     once rejected every provider for citing its own source reference."""
     row = SimpleNamespace(
         fact="The user uses Safari as their web browser.",
         evidence_excerpt=(
-            "Evidence user turn [e4fa3a8e-13c4-40c9-ae04-8e88bf702b6a]: "
+            "Evidence user turn [20000001-0000-4000-8000-000000000001]: "
             "open Safari please"
         ),
         subjects=("user", "safari"),
@@ -1414,8 +1414,8 @@ def test_source_citation_uuid_in_inline_code_is_not_a_numeric_claim() -> None:
         "# Safari\n\n## Summary\n\nThe user's web browser.\n\n"
         "## Sources\n\n"
         "- Realtime transcript: session "
-        "`f260abcc-b5a3-4c38-9502-3f6473ba0ae9`, turn "
-        "`8cf7b42d-5229-4617-91fe-d406b1e4fe6d`.\n"
+        "`20000002-0000-4000-8000-000000000002`, turn "
+        "`20000003-0000-4000-8000-000000000003`.\n"
     )
     assert (
         Consolidator._unsupported_numeric_values(
@@ -1429,11 +1429,11 @@ def test_numbers_copied_from_shown_neighbour_page_are_grounded() -> None:
     """A number the judge copied from a page in its own input is a
     cross-reference, not an invention; only truly new numbers are flagged."""
     row = SimpleNamespace(
-        fact="Lena lives in Hamburg.",
+        fact="ExampleFriend lives in Exampleville.",
         evidence_excerpt="",
-        subjects=("lena",),
+        subjects=("examplefriend",),
     )
-    body = "# Hamburg\n\nLena (born 1994) lives here.\n"
+    body = "# Exampleville\n\nLena (active since ExampleYear) lives here.\n"
     assert Consolidator._unsupported_numeric_values(
         body, row=row, existing_path=None
     ) == {"1994"}
@@ -1442,7 +1442,7 @@ def test_numbers_copied_from_shown_neighbour_page_are_grounded() -> None:
             body,
             row=row,
             existing_path=None,
-            neighbours=["# Lena\n\n- Born 1994.\n"],
+            neighbours=["# ExampleFriend\n\n- Active since ExampleYear.\n"],
         )
         == set()
     )
@@ -1602,10 +1602,10 @@ async def test_noop_marks_row_without_writing(stack) -> None:
     vault_root, _curator, journal = stack
     # Aged like the UPDATE/INVALIDATE fixtures for pattern consistency
     # (NOOP itself writes nothing, but copy-pasted setups should be safe).
-    _write_aged(vault_root / "entities" / "lena.md", LENA_BODY)
-    before = (vault_root / "entities" / "lena.md").read_text(encoding="utf-8")
+    _write_aged(vault_root / "entities" / "examplefriend.md", EXAMPLEFRIEND_BODY)
+    before = (vault_root / "entities" / "examplefriend.md").read_text(encoding="utf-8")
     journal.append(
-        [CandidateFact(fact="Lena lives in Hamburg.", kind="person", subjects=("lena",))],
+        [CandidateFact(fact="ExampleFriend lives in Exampleville.", kind="person", subjects=("examplefriend",))],
         source_label="voice-fact:3", turn_hash="h3",
     )
     cid = journal.pending()[0].id
@@ -1618,7 +1618,7 @@ async def test_noop_marks_row_without_writing(stack) -> None:
     await consolidator.run_once()
 
     assert journal.pending() == []
-    assert (vault_root / "entities" / "lena.md").read_text(encoding="utf-8") == before
+    assert (vault_root / "entities" / "examplefriend.md").read_text(encoding="utf-8") == before
 
 
 @pytest.mark.asyncio
@@ -1909,32 +1909,32 @@ async def test_invalidate_sets_frontmatter_and_deletes_nothing(stack) -> None:
     superseded page gets valid_until + a superseded-by wikilink to it (the
     same-batch arm of the create-or-refuse rule keeps the link alive)."""
     vault_root, _curator, journal = stack
-    _write_aged(vault_root / "entities" / "lena.md", LENA_BODY)
+    _write_aged(vault_root / "entities" / "examplefriend.md", EXAMPLEFRIEND_BODY)
     journal.append(
         [CandidateFact(
-            fact="Lena actually moved to Berlin, not Hamburg.",
-            kind="person", subjects=("lena",),
+            fact="ExampleFriend actually moved to Exampletown, not Exampleville.",
+            kind="person", subjects=("examplefriend",),
         )],
         source_label="voice-fact:4", turn_hash="h4",
     )
     cid = journal.pending()[0].id
 
-    berlin_body = LENA_BODY.replace("slug: lena\n", "slug: lena-berlin\n").replace(
-        "- Lena lives in Hamburg.", "- Lena lives in Berlin.",
+    exampletown_body = EXAMPLEFRIEND_BODY.replace("slug: examplefriend\n", "slug: examplefriend-exampletown\n").replace(
+        "- ExampleFriend lives in Exampleville.", "- ExampleFriend lives in Exampletown.",
     )
     brain = FakeBrain([_judge_json([
         {
             "candidate_id": cid,
             "decision": "add",
-            "target": "entities/lena-berlin.md",
-            "new_body": berlin_body,
+            "target": "entities/examplefriend-exampletown.md",
+            "new_body": exampletown_body,
             "reason": "corrected location page",
         },
         {
             "candidate_id": cid,
             "decision": "invalidate",
-            "target": "entities/lena.md",
-            "superseded_by": "lena-berlin",
+            "target": "entities/examplefriend.md",
+            "superseded_by": "examplefriend-exampletown",
             "reason": "contradiction",
         },
     ])])
@@ -1942,32 +1942,32 @@ async def test_invalidate_sets_frontmatter_and_deletes_nothing(stack) -> None:
 
     await consolidator.run_once()
 
-    page = vault_root / "entities" / "lena.md"
+    page = vault_root / "entities" / "examplefriend.md"
     assert page.is_file(), "invalidate must never delete"
     content = page.read_text(encoding="utf-8")
     assert "valid_until: " in content
     # The superseded-by wikilink survives because the replacing page was
     # created in the SAME batch (canonicalised to the typed alias form).
     assert "superseded-by:" in content
-    assert "[[entities/lena-berlin|lena-berlin]]" in content
+    assert "[[entities/examplefriend-exampletown|examplefriend-exampletown]]" in content
     # The body itself is byte-preserved.
-    assert "- Lena lives in Hamburg." in content
-    assert (vault_root / "entities" / "lena-berlin.md").is_file()
+    assert "- ExampleFriend lives in Exampleville." in content
+    assert (vault_root / "entities" / "examplefriend-exampletown.md").is_file()
     assert journal.pending() == []
 
 
 @pytest.mark.asyncio
 async def test_unsafe_superseded_by_cannot_inject_frontmatter(stack) -> None:
     vault_root, _curator, journal = stack
-    old_page = vault_root / "entities" / "lena.md"
-    _write_aged(old_page, LENA_BODY)
+    old_page = vault_root / "entities" / "examplefriend.md"
+    _write_aged(old_page, EXAMPLEFRIEND_BODY)
     journal.append(
-        [CandidateFact(fact="Lena moved to Berlin.", subjects=("lena",))],
+        [CandidateFact(fact="ExampleFriend moved to Exampletown.", subjects=("examplefriend",))],
         source_label="voice:yaml-guard",
         turn_hash="yaml-guard",
     )
     cid = journal.pending()[0].id
-    malicious = 'lena-berlin"\nowned: true'
+    malicious = 'examplefriend-exampletown"\nowned: true'
     brain = FakeBrain(
         [
             _judge_json(
@@ -1975,7 +1975,7 @@ async def test_unsafe_superseded_by_cannot_inject_frontmatter(stack) -> None:
                     {
                         "candidate_id": cid,
                         "decision": "invalidate",
-                        "target": "entities/lena.md",
+                        "target": "entities/examplefriend.md",
                         "superseded_by": malicious,
                     }
                 ]
@@ -1986,25 +1986,25 @@ async def test_unsafe_superseded_by_cannot_inject_frontmatter(stack) -> None:
     label = await _consolidator(stack, brain).run_once()
 
     assert label == "judge-rejected:1"
-    assert old_page.read_text(encoding="utf-8") == LENA_BODY
+    assert old_page.read_text(encoding="utf-8") == EXAMPLEFRIEND_BODY
     assert [row.id for row in journal.pending()] == [cid]
 
 
 @pytest.mark.asyncio
 async def test_multi_page_candidate_aborts_before_partial_write(stack) -> None:
     vault_root, _curator, journal = stack
-    old_page = vault_root / "entities" / "lena.md"
+    old_page = vault_root / "entities" / "examplefriend.md"
     # A fresh external edit on the invalidation target must also block the
     # sibling create in this candidate-level transaction.
-    old_page.write_text(LENA_BODY, encoding="utf-8")
+    old_page.write_text(EXAMPLEFRIEND_BODY, encoding="utf-8")
     journal.append(
-        [CandidateFact(fact="Lena moved to Berlin.", subjects=("lena",))],
+        [CandidateFact(fact="ExampleFriend moved to Exampletown.", subjects=("examplefriend",))],
         source_label="voice:transactional-contradiction",
         turn_hash="transactional-contradiction",
     )
     cid = journal.pending()[0].id
-    berlin_body = LENA_BODY.replace("slug: lena\n", "slug: lena-berlin\n").replace(
-        "- Lena lives in Hamburg.", "- Lena lives in Berlin.",
+    exampletown_body = EXAMPLEFRIEND_BODY.replace("slug: examplefriend\n", "slug: examplefriend-exampletown\n").replace(
+        "- ExampleFriend lives in Exampleville.", "- ExampleFriend lives in Exampletown.",
     )
     brain = FakeBrain(
         [
@@ -2013,14 +2013,14 @@ async def test_multi_page_candidate_aborts_before_partial_write(stack) -> None:
                     {
                         "candidate_id": cid,
                         "decision": "add",
-                        "target": "entities/lena-berlin.md",
-                        "new_body": berlin_body,
+                        "target": "entities/examplefriend-exampletown.md",
+                        "new_body": exampletown_body,
                     },
                     {
                         "candidate_id": cid,
                         "decision": "invalidate",
-                        "target": "entities/lena.md",
-                        "superseded_by": "lena-berlin",
+                        "target": "entities/examplefriend.md",
+                        "superseded_by": "examplefriend-exampletown",
                     },
                 ]
             )
@@ -2030,8 +2030,8 @@ async def test_multi_page_candidate_aborts_before_partial_write(stack) -> None:
     label = await _consolidator(stack, brain).run_once()
 
     assert label == "journal-transient:1"
-    assert not (vault_root / "entities" / "lena-berlin.md").exists()
-    assert old_page.read_text(encoding="utf-8") == LENA_BODY
+    assert not (vault_root / "entities" / "examplefriend-exampletown.md").exists()
+    assert old_page.read_text(encoding="utf-8") == EXAMPLEFRIEND_BODY
     assert [row.id for row in journal.pending()] == [cid]
 
 
@@ -2039,7 +2039,7 @@ async def test_multi_page_candidate_aborts_before_partial_write(stack) -> None:
 async def test_truncated_single_candidate_stays_pending_without_writes(stack) -> None:
     vault_root, _curator, journal = stack
     journal.append(
-        [CandidateFact(fact="Lena moved to Hamburg.", kind="person", subjects=("lena",))],
+        [CandidateFact(fact="ExampleFriend moved to Exampleville.", kind="person", subjects=("examplefriend",))],
         source_label="voice-fact:5", turn_hash="h5",
     )
     brain = FakeBrain(
@@ -2051,7 +2051,7 @@ async def test_truncated_single_candidate_stays_pending_without_writes(stack) ->
     label = await consolidator.run_once()
 
     assert label == "judge-truncated"
-    assert not (vault_root / "entities" / "lena.md").exists()
+    assert not (vault_root / "entities" / "examplefriend.md").exists()
     assert len(journal.pending()) == 1
     assert journal.backlog_count() == 1
 
@@ -2062,7 +2062,7 @@ async def test_truncated_batch_bisects_and_preserves_every_candidate(stack) -> N
     journal.append(
         [
             CandidateFact(
-                fact="Lena moved to Hamburg.", kind="person", subjects=("lena",)
+                fact="ExampleFriend moved to Exampleville.", kind="person", subjects=("examplefriend",)
             ),
             CandidateFact(
                 fact="Tom moved to Bremen.", kind="person", subjects=("tom",)
@@ -2072,8 +2072,8 @@ async def test_truncated_batch_bisects_and_preserves_every_candidate(stack) -> N
         turn_hash="split",
     )
     first, second = [row.id for row in journal.pending()]
-    tom_body = LENA_BODY.replace("Lena", "Tom").replace("lena", "tom").replace(
-        "Hamburg", "Bremen"
+    tom_body = EXAMPLEFRIEND_BODY.replace("ExampleFriend", "Tom").replace("examplefriend", "tom").replace(
+        "Exampleville", "Bremen"
     )
     brain = FakeBrain(
         [
@@ -2083,8 +2083,8 @@ async def test_truncated_batch_bisects_and_preserves_every_candidate(stack) -> N
                     {
                         "candidate_id": first,
                         "decision": "add",
-                        "target": "entities/lena.md",
-                        "new_body": LENA_BODY,
+                        "target": "entities/examplefriend.md",
+                        "new_body": EXAMPLEFRIEND_BODY,
                     }
                 ]
             ),
@@ -2106,7 +2106,7 @@ async def test_truncated_batch_bisects_and_preserves_every_candidate(stack) -> N
 
     assert label == "journal-batch:2"
     assert len(brain.received_requests) == 3
-    assert (vault_root / "entities" / "lena.md").is_file()
+    assert (vault_root / "entities" / "examplefriend.md").is_file()
     assert (vault_root / "entities" / "tom.md").is_file()
     assert journal.pending() == []
 
@@ -2117,21 +2117,21 @@ async def test_same_target_candidates_are_serialized_without_overwrite(stack) ->
     journal.append(
         [
             CandidateFact(
-                fact="Lena lives in Hamburg.", kind="person", subjects=("lena",)
+                fact="ExampleFriend lives in Exampleville.", kind="person", subjects=("examplefriend",)
             ),
             CandidateFact(
-                fact="Lena works at the animal clinic.",
+                fact="ExampleFriend works at the example studio.",
                 kind="person",
-                subjects=("lena",),
+                subjects=("examplefriend",),
             ),
         ],
         source_label="voice-fact:same-target",
         turn_hash="same-target",
     )
     first, second = [row.id for row in journal.pending()]
-    merged_body = LENA_BODY.replace(
-        "- Lena lives in Hamburg.\n",
-        "- Lena lives in Hamburg.\n- Lena works at the animal clinic.\n",
+    merged_body = EXAMPLEFRIEND_BODY.replace(
+        "- ExampleFriend lives in Exampleville.\n",
+        "- ExampleFriend lives in Exampleville.\n- ExampleFriend works at the example studio.\n",
     )
     brain = FakeBrain(
         [
@@ -2140,13 +2140,13 @@ async def test_same_target_candidates_are_serialized_without_overwrite(stack) ->
                     {
                         "candidate_id": first,
                         "decision": "add",
-                        "target": "entities/lena.md",
-                        "new_body": LENA_BODY,
+                        "target": "entities/examplefriend.md",
+                        "new_body": EXAMPLEFRIEND_BODY,
                     },
                     {
                         "candidate_id": second,
                         "decision": "add",
-                        "target": "entities/lena.md",
+                        "target": "entities/examplefriend.md",
                         "new_body": merged_body,
                     },
                 ]
@@ -2156,7 +2156,7 @@ async def test_same_target_candidates_are_serialized_without_overwrite(stack) ->
                     {
                         "candidate_id": second,
                         "decision": "update",
-                        "target": "entities/lena.md",
+                        "target": "entities/examplefriend.md",
                         "new_body": merged_body,
                     }
                 ]
@@ -2169,9 +2169,9 @@ async def test_same_target_candidates_are_serialized_without_overwrite(stack) ->
     assert [row.id for row in journal.pending()] == [second]
     assert await consolidator.run_once() == "journal-batch:1"
 
-    content = (vault_root / "entities" / "lena.md").read_text(encoding="utf-8")
-    assert "Lena lives in Hamburg." in content
-    assert "Lena works at the animal clinic." in content
+    content = (vault_root / "entities" / "examplefriend.md").read_text(encoding="utf-8")
+    assert "ExampleFriend lives in Exampleville." in content
+    assert "ExampleFriend works at the example studio." in content
     assert journal.pending() == []
 
 
@@ -2179,22 +2179,22 @@ async def test_same_target_candidates_are_serialized_without_overwrite(stack) ->
 async def test_recent_human_edit_keeps_candidate_pending(stack) -> None:
     vault_root, _curator, journal = stack
     # Deliberately fresh and not writer-authored: this is an external edit.
-    (vault_root / "entities" / "lena.md").write_text(LENA_BODY, encoding="utf-8")
+    (vault_root / "entities" / "examplefriend.md").write_text(EXAMPLEFRIEND_BODY, encoding="utf-8")
     journal.append(
         [
             CandidateFact(
-                fact="Lena works at the animal clinic.",
+                fact="ExampleFriend works at the example studio.",
                 kind="person",
-                subjects=("lena",),
+                subjects=("examplefriend",),
             )
         ],
         source_label="voice-fact:human-edit",
         turn_hash="human-edit",
     )
     cid = journal.pending()[0].id
-    updated_body = LENA_BODY.replace(
-        "- Lena lives in Hamburg.\n",
-        "- Lena lives in Hamburg.\n- Lena works at the animal clinic.\n",
+    updated_body = EXAMPLEFRIEND_BODY.replace(
+        "- ExampleFriend lives in Exampleville.\n",
+        "- ExampleFriend lives in Exampleville.\n- ExampleFriend works at the example studio.\n",
     )
     brain = FakeBrain(
         [
@@ -2203,7 +2203,7 @@ async def test_recent_human_edit_keeps_candidate_pending(stack) -> None:
                     {
                         "candidate_id": cid,
                         "decision": "update",
-                        "target": "entities/lena.md",
+                        "target": "entities/examplefriend.md",
                         "new_body": updated_body,
                     }
                 ]
@@ -2215,8 +2215,8 @@ async def test_recent_human_edit_keeps_candidate_pending(stack) -> None:
 
     assert label == "journal-transient:1"
     assert [row.id for row in journal.pending()] == [cid]
-    assert "animal clinic" not in (
-        vault_root / "entities" / "lena.md"
+    assert "example studio" not in (
+        vault_root / "entities" / "examplefriend.md"
     ).read_text(encoding="utf-8")
 
 
@@ -2230,7 +2230,7 @@ async def test_log_append_failure_does_not_retry_landed_page(stack) -> None:
 
     curator._log = _BrokenLog()  # noqa: SLF001 - post-write failure injection
     journal.append(
-        [CandidateFact(fact="Lena moved to Hamburg.", subjects=("lena",))],
+        [CandidateFact(fact="ExampleFriend moved to Exampleville.", subjects=("examplefriend",))],
         source_label="voice-fact:log-failure",
         turn_hash="log-failure",
     )
@@ -2242,8 +2242,8 @@ async def test_log_append_failure_does_not_retry_landed_page(stack) -> None:
                     {
                         "candidate_id": cid,
                         "decision": "add",
-                        "target": "entities/lena.md",
-                        "new_body": LENA_BODY,
+                        "target": "entities/examplefriend.md",
+                        "new_body": EXAMPLEFRIEND_BODY,
                     }
                 ]
             )
@@ -2253,7 +2253,7 @@ async def test_log_append_failure_does_not_retry_landed_page(stack) -> None:
     label = await _consolidator(stack, brain).run_once()
 
     assert label == "journal-batch:1"
-    assert (vault_root / "entities" / "lena.md").is_file()
+    assert (vault_root / "entities" / "examplefriend.md").is_file()
     assert journal.pending() == []
 
 
@@ -2271,12 +2271,12 @@ async def test_stage2_receives_user_evidence_and_persists_source_marker(stack) -
     assert journal.commit_capture_candidates(
         [
             CandidateFact(
-                fact="Lena moved to Hamburg.",
+                fact="ExampleFriend moved to Exampleville.",
                 kind="person",
-                subjects=("lena",),
+                subjects=("examplefriend",),
                 evidence_turn_id="turn-7",
                 evidence_excerpt=(
-                    "Evidence user turn [turn-7]: Lena moved to Hamburg."
+                    "Evidence user turn [turn-7]: ExampleFriend moved to Exampleville."
                 ),
             )
         ],
@@ -2292,8 +2292,8 @@ async def test_stage2_receives_user_evidence_and_persists_source_marker(stack) -
                     {
                         "candidate_id": cid,
                         "decision": "add",
-                        "target": "entities/lena.md",
-                        "new_body": LENA_BODY,
+                        "target": "entities/examplefriend.md",
+                        "new_body": EXAMPLEFRIEND_BODY,
                     }
                 ]
             )
@@ -2303,8 +2303,8 @@ async def test_stage2_receives_user_evidence_and_persists_source_marker(stack) -
     await _consolidator(stack, brain).run_once(review_keys=(review_key,))
 
     prompt = brain.received_requests[0].messages[0].content
-    assert "Evidence user turn [turn-7]: Lena moved to Hamburg." in prompt
-    page = (vault_root / "entities" / "lena.md").read_text(encoding="utf-8")
+    assert "Evidence user turn [turn-7]: ExampleFriend moved to Exampleville." in prompt
+    page = (vault_root / "entities" / "examplefriend.md").read_text(encoding="utf-8")
     assert "Realtime transcript: session `s-grounded`, turn `turn-7`." in page
 
 
@@ -2601,7 +2601,7 @@ def _age_rejection(consolidator: Consolidator, cid: int) -> None:
 async def test_judge_rejected_row_backs_off_before_the_next_round(stack) -> None:
     _vault_root, _curator, journal = stack
     journal.append(
-        [CandidateFact(fact="Lena moved to Hamburg.", kind="person", subjects=("lena",))],
+        [CandidateFact(fact="ExampleFriend moved to Exampleville.", kind="person", subjects=("examplefriend",))],
         source_label="voice-fact:1", turn_hash="h1",
     )
     brain = FakeBrain(["not json at all", "still not json"])
@@ -2621,7 +2621,7 @@ async def test_judge_rejected_row_backs_off_before_the_next_round(stack) -> None
 async def test_repeatedly_rejected_row_is_parked_as_skipped(stack) -> None:
     _vault_root, _curator, journal = stack
     journal.append(
-        [CandidateFact(fact="Lena moved to Hamburg.", kind="person", subjects=("lena",))],
+        [CandidateFact(fact="ExampleFriend moved to Exampleville.", kind="person", subjects=("examplefriend",))],
         source_label="voice-fact:1", turn_hash="h1",
     )
     cid = journal.pending()[0].id
@@ -2645,7 +2645,7 @@ async def test_repeatedly_rejected_row_is_parked_as_skipped(stack) -> None:
 async def test_valid_verdict_clears_the_rejection_history(stack) -> None:
     vault_root, _curator, journal = stack
     journal.append(
-        [CandidateFact(fact="Lena moved to Hamburg.", kind="person", subjects=("lena",))],
+        [CandidateFact(fact="ExampleFriend moved to Exampleville.", kind="person", subjects=("examplefriend",))],
         source_label="voice-fact:1", turn_hash="h1",
     )
     cid = journal.pending()[0].id
@@ -2654,8 +2654,8 @@ async def test_valid_verdict_clears_the_rejection_history(stack) -> None:
         _judge_json([{
             "candidate_id": cid,
             "decision": "add",
-            "target": "entities/lena.md",
-            "new_body": LENA_BODY,
+            "target": "entities/examplefriend.md",
+            "new_body": EXAMPLEFRIEND_BODY,
             "reason": "new person",
         }]),
     ])
@@ -2667,5 +2667,5 @@ async def test_valid_verdict_clears_the_rejection_history(stack) -> None:
 
     assert first.startswith("judge-rejected")
     assert second == "journal-batch:1"
-    assert (vault_root / "entities" / "lena.md").is_file()
+    assert (vault_root / "entities" / "examplefriend.md").is_file()
     assert consolidator._judge_rejections == {}

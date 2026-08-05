@@ -282,8 +282,7 @@ def ocr_supplement_with_regions(image: Any) -> OcrSupplement:
                     int(data.get("par_num", [0] * len(texts))[index]),
                     int(data.get("line_num", list(range(len(texts))))[index]),
                 )
-            except (IndexError, KeyError, TypeError, ValueError):
-                # One malformed OCR row is skipped while valid rows remain usable.
+            except (IndexError, KeyError, TypeError, ValueError):  # OCR rows can be sparse.
                 continue
             if width <= 0 or height <= 0:
                 continue

@@ -20,8 +20,14 @@ import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { AlertCircle, Terminal as TerminalIcon } from "lucide-react";
 import { useT } from "@/i18n";
+import { useThemeValue } from "@/hooks/useTheme";
+import { PANE_CHROME, themeFor } from "../agentic/terminalThemes";
 import { buildMissionSocketUrl, fetchMissionToken } from "@/lib/missionAuth";
 import { TERMINAL_FONT_STACK, syncTerminalFont } from "@/lib/terminalFont";
+import {
+  activateTerminalLink,
+  TERMINAL_OSC_LINK_HANDLER,
+} from "@/lib/terminalLinks";
 import {
   disposeTerminal,
   getTerminal,
@@ -51,6 +57,12 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
   const pausedRef = useRef(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  const appearance = useThemeValue();
+  // Via a ref in the setup effect so a theme switch never re-runs it — that
+  // would drop the PTY socket and, worse, dispose a terminal the registry is
+  // still handing out to the next worker selection.
+  const appearanceRef = useRef(appearance);
+  appearanceRef.current = appearance;
 
   const sendControl = useCallback(
     (type: "pause" | "resume") => {
@@ -78,16 +90,15 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
         lineHeight: 1.2,
         cursorBlink: false,
         scrollback: 5000,
-        theme: {
-          background: "#0b0d10",
-          foreground: "#e6e6e6",
-          cursor: "#ffd60a",
-          selectionBackground: "#3a4252",
-        },
+        linkHandler: TERMINAL_OSC_LINK_HANDLER,
+        // Shared with the Agentic IDE panes: all 16 ANSI slots, re-derived per
+        // ground. A worker's diffs and dimmed hints are drawn with the "bright"
+        // row, which is unreadable on paper unless it was built for paper.
+        theme: themeFor(appearanceRef.current),
       });
       const fit = new FitAddon();
       term.loadAddon(fit);
-      term.loadAddon(new WebLinksAddon());
+      term.loadAddon(new WebLinksAddon(activateTerminalLink));
       term.loadAddon(new SearchAddon());
       term.open(containerRef.current);
       fit.fit();
@@ -218,8 +229,18 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
     };
   }, [workerId, sendControl, t]);
 
+  // Recolour in place on a theme switch — the buffer, the scrollback and the
+  // live socket all survive; only the palette is swapped.
+  useEffect(() => {
+    const term = termRef.current;
+    if (term) term.options.theme = themeFor(appearance);
+  }, [appearance]);
+
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden rounded-md border border-border bg-[#0b0d10]">
+    <div
+      className="relative flex h-full w-full flex-col overflow-hidden rounded-md border border-border"
+      style={{ background: PANE_CHROME[appearance].shell }}
+    >
       <header className="flex items-center justify-between gap-2 border-b border-border bg-card/40 px-3 py-2">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <TerminalIcon className="h-3.5 w-3.5 text-primary" />

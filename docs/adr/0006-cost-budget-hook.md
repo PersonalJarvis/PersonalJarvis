@@ -3,7 +3,7 @@ title: "ADR-0006: Cost-Budget im Brain"
 slug: adr-0006-cost-budget-hook
 diataxis: adr
 status: active
-owner: sam
+owner: maintainers
 last_reviewed: 2026-04-29
 phase: 5
 audience: developer

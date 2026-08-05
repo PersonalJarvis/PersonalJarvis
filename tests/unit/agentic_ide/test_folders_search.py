@@ -94,17 +94,17 @@ def test_device_name_falls_back_to_the_hostname(monkeypatch: pytest.MonkeyPatch)
     """Every per-OS lookup failing must still yield something readable."""
     device.reset_cache()
     monkeypatch.setattr(device, "_run", lambda argv: None)
-    monkeypatch.setattr(device.platform, "node", lambda: "Studio-MacBook-Pro.local")
+    monkeypatch.setattr(device.platform, "node", lambda: "Alexs-MacBook-Pro.local")
     monkeypatch.delenv("COMPUTERNAME", raising=False)
-    assert device.device_name() == "Studio MacBook Pro"
+    assert device.device_name() == "Alexs MacBook Pro"
     device.reset_cache()
 
 
 def test_device_name_prefers_the_friendly_macos_name(monkeypatch: pytest.MonkeyPatch) -> None:
     device.reset_cache()
     monkeypatch.setattr(device.sys, "platform", "darwin")
-    monkeypatch.setattr(device, "_run", lambda argv: "Studio MacBook")
-    assert device.device_name() == "Studio MacBook"
+    monkeypatch.setattr(device, "_run", lambda argv: "Alex’s MacBook")
+    assert device.device_name() == "Alex’s MacBook"
     device.reset_cache()
 
 

@@ -38,7 +38,7 @@ def test_agy_worker_argv_is_print_plus_skip_permissions(tmp_path) -> None:
     # deliverable into its home-relative brain/<session>/ (or scratch/<project>/)
     # dir — the worktree stays empty, the Critic sees an empty `git diff HEAD`,
     # and EVERY antigravity mission fails `critic_loop_exhausted`
-    # (forensic 2026-06-27, mission_019f07cb et al.).
+    # (forensic 2026-06-27, mission_019f1048 et al.).
     assert "--add-dir" in argv
     assert argv[argv.index("--add-dir") + 1] == str(tmp_path)
     # gemini-CLI flags must NOT appear — agy doesn't understand them.

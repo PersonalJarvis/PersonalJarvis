@@ -102,7 +102,7 @@ class ComputerUseTool:
     # THIS output verbatim as the final answer and skip the second brain
     # iteration, exactly like spawn_worker — otherwise the model sees the
     # internal English steering instruction below and echoes it as its own
-    # assistant text (live bug 2026-06-18, session <SESSION_ID>). tool_use_loop
+    # assistant text (live bug 2026-06-18, session 10000113). tool_use_loop
     # honours this flag at jarvis/brain/tool_use_loop.py:662-666 / 709-728.
     suppress_response: bool = True
     description: str = (
@@ -281,7 +281,7 @@ class ComputerUseTool:
                 # harness stdout) as the readback, so an informational request
                 # ("...and check which tabs I have open") is actually answered
                 # instead of a content-free "Done." (live bug 2026-06-18,
-                # session <SESSION_ID>). Falls back to the plain done phrase when the
+                # session 10000107). Falls back to the plain done phrase when the
                 # mission left no usable observation. Pure parse, no LLM (AP-11).
                 output = getattr(result, "output", None)
                 stdout = output.get("stdout") if isinstance(output, dict) else None

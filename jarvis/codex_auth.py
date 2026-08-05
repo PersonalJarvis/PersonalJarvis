@@ -38,6 +38,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -65,6 +66,31 @@ _VERSION_CACHE: dict[str, str | None] = {}
 # dynamic-loader, keyring, or agent-session state.  Keep this list deliberately
 # small: these are OS process essentials, not a denylist that has to predict the
 # next credential variable name.
+#: Graphical-session handles a login child needs to OPEN THE BROWSER itself.
+#:
+#: Windows (ShellExecute) and macOS (``open``) need nothing here, so this set is
+#: inert on those hosts by construction — the names simply do not exist. On
+#: Linux their absence is what forced the user to copy the device-code URL out
+#: of the terminal by hand while the other two OSes opened the page for them.
+#: These are session handles, not credentials: no provider key, token, proxy or
+#: keyring name is admitted by adding them.
+#:
+#: Deliberately partial: ``_subprocess_environment`` still strips
+#: ``DBUS_SESSION_BUS_ADDRESS`` and ``XDG_RUNTIME_DIR`` whenever the file
+#: credential store is forced, because those two are exactly how a Secret
+#: Service would be reached — the file-store guarantee outranks convenience.
+#: X11 (and XWayland, which is nearly every Wayland desktop) opens the page
+#: from ``DISPLAY`` + ``XAUTHORITY`` alone; a pure-Wayland session without
+#: XWayland still falls back to the printed device-code URL.
+_GRAPHICAL_SESSION_ENV_NAMES: frozenset[str] = frozenset(
+    {
+        "DBUS_SESSION_BUS_ADDRESS",
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XAUTHORITY",
+        "XDG_RUNTIME_DIR",
+    }
+)
 _ISOLATED_CODEX_ENV_ALLOWLIST: frozenset[str] = frozenset(
     {
         "COMSPEC",
@@ -84,19 +110,210 @@ _ISOLATED_CODEX_ENV_ALLOWLIST: frozenset[str] = frozenset(
         "USERPROFILE",
         "WINDIR",
     }
-)
+) | _GRAPHICAL_SESSION_ENV_NAMES
 _DESKTOP_LAUNCHER_ENV_ALLOWLIST: frozenset[str] = frozenset(
     {
-        "DBUS_SESSION_BUS_ADDRESS",
         "DESKTOP_SESSION",
-        "DISPLAY",
-        "WAYLAND_DISPLAY",
-        "XAUTHORITY",
         "XDG_CURRENT_DESKTOP",
-        "XDG_RUNTIME_DIR",
         "XDG_SESSION_TYPE",
     }
+) | _GRAPHICAL_SESSION_ENV_NAMES
+
+#: Linux terminals that can host a Codex login for its FULL lifetime.
+#:
+#: The login guardian owns the profile lock until the codex child exits, so a
+#: launcher that returns the moment it has handed the work to a terminal SERVER
+#: would release that lock while ``auth.json`` is still being written. Every
+#: entry therefore carries that terminal's documented foreground / no-fork /
+#: no-server form PLUS the reason those exact flags are what achieves it. The
+#: reason is not decoration: it is what a reviewer needs in order to judge a new
+#: entry, and ``tests/unit/test_codex_auth.py`` pins one per entry so a future
+#: addition cannot be waved through without it.
+#:
+#: The list used to hold three names. A desktop without GNOME, KDE or a literal
+#: ``xterm`` — XFCE, MATE, Cinnamon, or anyone on kitty/alacritty/foot/wezterm —
+#: could therefore not connect subscription voice AT ALL, while the card happily
+#: invited the click. ``jarvis/core/interactive_terminal.py`` already knew most
+#: of these; the two lists disagreeing was the whole defect.
+_LINUX_LOGIN_TERMINALS: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    (
+        "gnome-terminal",
+        ("--wait", "--"),
+        "--wait holds the client open until the spawned child exits; without it "
+        "the client returns the moment gnome-terminal-server owns the window",
+    ),
+    ("konsole", ("--nofork", "-e"), "--nofork keeps konsole in the foreground"),
+    (
+        "xfce4-terminal",
+        ("--disable-server", "-x"),
+        "--disable-server stops the client handing off to a running instance",
+    ),
+    (
+        "mate-terminal",
+        ("--disable-factory", "-x"),
+        "--disable-factory stops the client handing off to the factory process",
+    ),
+    (
+        "tilix",
+        ("--new-process", "-e"),
+        "--new-process stops tilix delegating to its session server",
+    ),
+    (
+        "terminator",
+        ("--no-dbus", "-x"),
+        "--no-dbus stops terminator delegating to a running instance over D-Bus",
+    ),
+    (
+        "kitty",
+        (),
+        "kitty runs the command in a fresh foreground process; only the "
+        "--single-instance flag would delegate, and it is never passed here",
+    ),
+    ("alacritty", ("-e",), "alacritty has no daemon mode by default"),
+    (
+        "wezterm",
+        ("start", "--always-new-process", "--"),
+        "--always-new-process is REQUIRED: plain `wezterm start` hands the "
+        "window to a running wezterm-gui and returns immediately, which would "
+        "release the profile lock while codex is still writing auth.json",
+    ),
+    (
+        "foot",
+        (),
+        "the foot binary is the standalone server-less terminal; its client "
+        "counterpart footclient is deliberately not an entry here",
+    ),
+    ("urxvt", ("-e",), "urxvt is the standalone binary; urxvtc talks to urxvtd"),
+    ("rxvt", ("-e",), "rxvt has no daemon mode"),
+    ("xterm", ("-e",), "xterm has no daemon mode"),
+    ("st", ("-e",), "st has no daemon mode"),
 )
+
+#: Real-world basenames that ARE one of the supported terminals under a
+#: different file name. Deliberately tiny: every entry is a package that ships
+#: the same binary, never a guess. Anything not listed here and not an exact
+#: match is reported as unsupported rather than launched on a hunch.
+_LINUX_LOGIN_TERMINAL_ALIASES: dict[str, str] = {
+    "rxvt-unicode": "urxvt",
+}
+
+
+def _linux_login_terminal_entry(resolved_name: str) -> tuple[str, tuple[str, ...]] | None:
+    """Return ``(canonical_name, flags)`` for an EXACT resolved basename.
+
+    Matching used to be ``startswith``, which is why this is now its own
+    function with its own test. Two concrete failures came out of the prefix
+    rule: Debian's ``x-terminal-emulator`` resolving to
+    ``gnome-terminal.wrapper`` matched the ``gnome-terminal`` entry and was
+    handed ``--wait --``, flags that wrapper does not accept; and the ``st``
+    entry accepted ANY binary whose name merely began with ``st``. Both launched
+    something that could not host the login, and the failure then surfaced as a
+    guardian handshake error rather than as "this terminal is unsupported".
+    """
+    name = resolved_name.lower()
+    if name.endswith(".exe"):  # A Windows shim is never a Linux login terminal.
+        name = name[: -len(".exe")]
+    canonical = _LINUX_LOGIN_TERMINAL_ALIASES.get(name, name)
+    for entry_name, flags, _reason in _LINUX_LOGIN_TERMINALS:
+        if canonical == entry_name:
+            return entry_name, flags
+    return None
+
+
+def _hold_parent_liveness_lock(path: Path) -> int:
+    """Create the login's parent-liveness file and hold it locked.
+
+    Returns an open descriptor whose exclusive lock the guardian polls. Closing
+    it — or dying — tells the guardian that Jarvis is gone and that it must end
+    the login instead of holding the profile lock forever.
+
+    Raises ``RuntimeError`` when the lock cannot be taken, because a login
+    started without this safety net is exactly the failure it exists to prevent.
+    """
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise RuntimeError(
+            "The subscription-login liveness file could not be created."
+        ) from exc
+    try:
+        # One byte: msvcrt locks a byte RANGE, so an empty file cannot be locked
+        # on Windows at all.
+        os.write(descriptor, b"1")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        if sys.platform == "win32":
+            import msvcrt  # noqa: PLC0415 - Windows-only, off the import floor
+
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl  # noqa: PLC0415 - POSIX-only, off the import floor
+
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (ImportError, OSError, ValueError) as exc:
+        with suppress(OSError):
+            os.close(descriptor)
+        with suppress(OSError):
+            path.unlink()
+        raise RuntimeError(
+            "The subscription-login liveness lock could not be acquired."
+        ) from exc
+    return descriptor
+
+
+def _resolve_linux_login_terminal() -> tuple[str, tuple[str, ...]]:
+    """Pick a Linux terminal able to host the login until Codex exits.
+
+    Returns the resolved executable and the flags that put it in the
+    foreground. Raises with an actionable English message when this desktop
+    ships nothing usable — the caller turns that into the card's honest reason
+    instead of an unexplained failure.
+    """
+    supported = ", ".join(name for name, _flags, _reason in _LINUX_LOGIN_TERMINALS)
+    candidates = [
+        path
+        for path in (
+            shutil.which(name) for name, _flags, _reason in _LINUX_LOGIN_TERMINALS
+        )
+        if path
+    ]
+    generic = shutil.which("x-terminal-emulator")
+    if generic:
+        candidates.append(generic)
+    for candidate in candidates:
+        try:
+            resolved = str(Path(candidate).resolve())
+        except OSError:  # A dangling alternative symlink is simply not usable.
+            continue
+        entry = _linux_login_terminal_entry(Path(resolved).name)
+        if entry is not None:
+            return resolved, entry[1]
+    if candidates:
+        raise RuntimeError(
+            "The available desktop terminal cannot host a Codex login for its "
+            f"full lifetime. Install one of: {supported}."
+        )
+    raise RuntimeError(
+        "No supported desktop terminal is available for Codex login. "
+        f"Install one of: {supported}."
+    )
+
+
+def linux_login_terminal_available() -> bool:
+    """Whether a visible Linux login could actually be launched here.
+
+    A pre-click capability probe: the Connect action must not be offered on a
+    desktop where the launch is guaranteed to fail (the error-toast
+    anti-pattern the OS-parity register exists to prevent).
+    """
+    if sys.platform == "win32" or sys.platform == "darwin":
+        return True
+    try:
+        _resolve_linux_login_terminal()
+    except RuntimeError:
+        return False
+    return True
 
 
 def clear_version_cache() -> None:
@@ -245,12 +462,16 @@ class _GuardedCodexLoginProcess:
         acknowledgement: Path,
         release: Path,
         process_tree: Any | None = None,
+        parent_liveness_fd: int | None = None,
     ) -> None:
         self._process = process
         self._acknowledgement = acknowledgement
         self._release = release
         self._process_tree = process_tree
         self._process_tree_lock = threading.Lock()
+        # Held open for exactly as long as this login may run. The guardian
+        # reads it as "Jarvis is still here"; the kernel drops it if we die.
+        self._parent_liveness_fd = parent_liveness_fd
         self.pid = process.pid
         if process_tree is not None:
             monitor = threading.Thread(
@@ -268,8 +489,18 @@ class _GuardedCodexLoginProcess:
         with self._process_tree_lock:
             process_tree = self._process_tree
             self._process_tree = None
+            descriptor = self._parent_liveness_fd
+            self._parent_liveness_fd = None
         if process_tree is not None:
             process_tree.close()
+        if descriptor is not None:
+            # Reached only once this login is over for good, so the guardian's
+            # watchdog has already stopped and cannot mistake this release for
+            # a dead Jarvis.
+            try:
+                os.close(descriptor)
+            except OSError:  # Already closed by an earlier teardown path.
+                pass
 
     def _monitor_guardian_exit(self) -> None:
         try:
@@ -594,7 +825,7 @@ class CodexAuthService:
     def _guarded_login_command(
         self,
         binary: str,
-    ) -> tuple[list[str], Path, Path]:
+    ) -> tuple[list[str], Path, Path, Path]:
         """Build the fixed guardian argv for one dedicated profile login."""
         if (
             self._lifetime_lock_path is None
@@ -634,7 +865,8 @@ class CodexAuthService:
         nonce = secrets.token_hex(16)
         acknowledgement = guard_directory / f"login-{nonce}.ack"
         release = guard_directory / f"login-{nonce}.release"
-        if acknowledgement.exists() or release.exists():
+        liveness = guard_directory / f"login-{nonce}.alive"
+        if acknowledgement.exists() or release.exists() or liveness.exists():
             raise RuntimeError("The subscription-login coordination state is not fresh.")
         environment = self._subprocess_environment()
         if environment is None:
@@ -651,8 +883,9 @@ class CodexAuthService:
             self._trusted_binary_sha256,
             str(log_dir),
             json.dumps(environment, separators=(",", ":"), sort_keys=True),
+            str(liveness),
         ]
-        return command, acknowledgement, release
+        return command, acknowledgement, release, liveness
 
     def _read_auth(self) -> dict[str, Any] | None:
         """Parse ``<codex-home>/auth.json``; ``None`` if absent/unreadable."""
@@ -733,10 +966,35 @@ class CodexAuthService:
             )
         log.info("Starting 'codex login' (interactive)")
         command = self._command(binary, "login")
+        # Names the process that HOSTS the guardian, so a login that never comes
+        # up can be blamed on the right component instead of on the guardian.
+        launch_host: str | None = None
         guard_paths: tuple[Path, Path] | None = None
+        parent_liveness_fd: int | None = None
+        liveness_path: Path | None = None
         if self._lifetime_lock_path is not None:
-            command, acknowledgement, release = self._guarded_login_command(binary)
+            command, acknowledgement, release, liveness_path = (
+                self._guarded_login_command(binary)
+            )
             guard_paths = (acknowledgement, release)
+            parent_liveness_fd = _hold_parent_liveness_lock(liveness_path)
+
+        def drop_liveness() -> None:
+            """Release the liveness lock on any path that never reaches a login.
+
+            Every failure below must call this. A descriptor left open here
+            would tell a guardian that a Jarvis login is in flight when none is,
+            which is the inverse of the bug this lock exists to fix.
+            """
+            nonlocal parent_liveness_fd
+            if parent_liveness_fd is not None:
+                with suppress(OSError):
+                    os.close(parent_liveness_fd)
+                parent_liveness_fd = None
+                if liveness_path is not None:
+                    with suppress(OSError):
+                        liveness_path.unlink()
+
         if sys.platform == "win32":
             # Fresh visible console so the device/OAuth URL is reachable under
             # pythonw.exe. Do NOT redirect stdio — the output belongs in that
@@ -765,53 +1023,13 @@ class CodexAuthService:
                 )
                 command = ["/usr/bin/osascript", "-e", script]
             else:
-                terminal = next(
-                    (
-                        candidate
-                        for candidate in (
-                            shutil.which("gnome-terminal"),
-                            shutil.which("konsole"),
-                            shutil.which("xterm"),
-                        )
-                        if candidate
-                    ),
-                    None,
-                )
-                if terminal is None:
-                    terminal = shutil.which("x-terminal-emulator")
-                if terminal is None:
-                    raise RuntimeError(
-                        "No supported desktop terminal is available for Codex login."
-                    )
-                # Resolve Debian's x-terminal-emulator alternative before
-                # choosing flags. Generic terminal launchers may return as
-                # soon as they hand work to a terminal server, which would
-                # release the profile login guard while Codex still writes
-                # auth.json. Only backends with a documented wait/no-fork
-                # form are accepted.
-                resolved_terminal = str(Path(terminal).resolve())
-                terminal_name = Path(resolved_terminal).name.lower()
-                if terminal_name.startswith("gnome-terminal"):
-                    command = [
-                        resolved_terminal,
-                        "--wait",
-                        "--",
-                        *terminal_command,
-                    ]
-                elif terminal_name.startswith("konsole"):
-                    command = [
-                        resolved_terminal,
-                        "--nofork",
-                        "-e",
-                        *terminal_command,
-                    ]
-                elif terminal_name == "xterm":
-                    command = [resolved_terminal, "-e", *terminal_command]
-                else:
-                    raise RuntimeError(
-                        "The configured desktop terminal cannot provide a bounded "
-                        "Codex login lifetime."
-                    )
+                try:
+                    resolved_terminal, terminal_flags = _resolve_linux_login_terminal()
+                except BaseException:
+                    drop_liveness()
+                    raise
+                launch_host = Path(resolved_terminal).name
+                command = [resolved_terminal, *terminal_flags, *terminal_command]
             kwargs = {
                 "env": environment,
                 "start_new_session": True,
@@ -831,18 +1049,35 @@ class CodexAuthService:
         if environment is not None and "env" not in kwargs:
             kwargs["env"] = environment
         process_tree: Any | None = None
-        if guard_paths is not None and sys.platform == "win32":
+        if guard_paths is not None:
+            # Containment is a capability, not a Windows feature. On POSIX the
+            # guardian holds the profile lock, so a Jarvis crash used to leave
+            # terminal -> guardian -> `codex login` alive with the lock still
+            # taken, and every later connect attempt reported a permanent
+            # "busy". `make_process_tree` returns a real process-group reaper
+            # there and an honest no-op where neither exists.
             from jarvis.core.process_tree import make_process_tree  # noqa: PLC0415
 
             process_tree = make_process_tree("codex-subscription-login")
             if not bool(getattr(process_tree, "supports_containment", False)):
                 process_tree.close()
-                raise RuntimeError(
-                    "Windows process-tree containment is unavailable for Codex login."
+                if sys.platform == "win32":
+                    drop_liveness()
+                    raise RuntimeError(
+                        "Windows process-tree containment is unavailable for Codex login."
+                    )
+                # Elsewhere a missing reaper costs cleanup, not correctness:
+                # the lock is also released by the guardian's own handshake.
+                log.warning(
+                    "Codex subscription login runs without process-tree "
+                    "containment on this host; a crash may leave the login "
+                    "terminal behind."
                 )
-            kwargs["creationflags"] = int(kwargs.get("creationflags", 0)) | (
-                _CREATE_BREAKAWAY_FROM_JOB
-            )
+                process_tree = None
+            elif sys.platform == "win32":
+                kwargs["creationflags"] = int(kwargs.get("creationflags", 0)) | (
+                    _CREATE_BREAKAWAY_FROM_JOB
+                )
         try:
             try:
                 process = subprocess.Popen(  # noqa: S603 — fixed argv, shell=False
@@ -850,7 +1085,10 @@ class CodexAuthService:
                     **kwargs,
                 )
             except PermissionError:
-                if process_tree is None:
+                # Only the Windows breakaway flag is retryable; on POSIX a
+                # PermissionError is a real launch failure, not a containment
+                # policy the retry could relax.
+                if process_tree is None or sys.platform != "win32":
                     raise
                 kwargs["creationflags"] = int(kwargs.get("creationflags", 0)) & (
                     ~_CREATE_BREAKAWAY_FROM_JOB
@@ -862,6 +1100,7 @@ class CodexAuthService:
         except BaseException:
             if process_tree is not None:
                 process_tree.close()
+            drop_liveness()
             raise
 
         if process_tree is not None:
@@ -873,10 +1112,12 @@ class CodexAuthService:
                     process.terminate()
                 except OSError:
                     pass
+                drop_liveness()
                 raise RuntimeError(
-                    "Windows process-tree containment could not be established for Codex login."
+                    "Process-tree containment could not be established for Codex login."
                 ) from exc
         if guard_paths is None:
+            drop_liveness()
             return process
         if self._login_guard_handoff is None:
             if process_tree is not None:
@@ -886,6 +1127,7 @@ class CodexAuthService:
                     process.terminate()
                 except OSError:
                     pass
+            drop_liveness()
             raise RuntimeError("The subscription-login lock handoff is unavailable.")
         acknowledgement, release = guard_paths
         try:
@@ -895,12 +1137,32 @@ class CodexAuthService:
                 release,
                 self._login_guard_handoff,
             )
-            return _GuardedCodexLoginProcess(
+            handle = _GuardedCodexLoginProcess(
                 process,
                 acknowledgement,
                 release,
                 process_tree,
+                parent_liveness_fd,
             )
+            # Ownership moved: the handle closes the descriptor when the login
+            # is over for good, so this frame must not.
+            parent_liveness_fd = None
+            return handle
+        except RuntimeError as exc:
+            if process_tree is not None:
+                process_tree.close()
+            else:
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
+            drop_liveness()
+            raise self._explain_login_launch_failure(
+                exc,
+                process,
+                acknowledgement=acknowledgement,
+                launch_host=launch_host,
+            ) from exc
         except BaseException:
             if process_tree is not None:
                 process_tree.close()
@@ -909,10 +1171,64 @@ class CodexAuthService:
                     process.terminate()
                 except OSError:
                     pass
+            drop_liveness()
             raise
 
+    def _explain_login_launch_failure(
+        self,
+        exc: RuntimeError,
+        process: subprocess.Popen[bytes],
+        *,
+        acknowledgement: Path | None = None,
+        launch_host: str | None = None,
+    ) -> RuntimeError:
+        """Name the real cause when a visible login never came up.
+
+        Three different components can swallow this launch, and all three used
+        to surface as "the guardian exited before lock handoff" — true, useless,
+        and pointing at the wrong one:
+
+        * **macOS Automation (TCC) denied.** The login rides in Terminal.app via
+          ``osascript``, and a denied grant makes osascript exit non-zero at
+          once.
+        * **The terminal could not host the login.** If the guardian never wrote
+          even its first ``waiting`` acknowledgement, the guardian never ran —
+          so the process that was supposed to host it is the suspect, not the
+          guardian. Naming it turns an opaque handshake error into the one
+          sentence that identifies the component to replace.
+        * Anything else keeps the original message.
+        """
+        if not self._visible_login:
+            return exc
+        if sys.platform == "darwin" and process.poll() not in (None, 0):
+            return RuntimeError(
+                "The ChatGPT login window could not be opened. macOS is blocking "
+                "Jarvis from controlling Terminal: allow it under System Settings "
+                "> Privacy & Security > Automation, then connect again. "
+                f"({exc})"
+            )
+        never_acknowledged = acknowledgement is not None and not (
+            acknowledgement.exists() or acknowledgement.is_symlink()
+        )
+        if never_acknowledged and launch_host:
+            supported = ", ".join(
+                name for name, _flags, _reason in _LINUX_LOGIN_TERMINALS
+            )
+            return RuntimeError(
+                f"The terminal '{launch_host}' could not host the ChatGPT login: "
+                "it never started Jarvis's login guardian. Install one of these "
+                f"terminals and connect again: {supported}. ({exc})"
+            )
+        return exc
+
     def login_status(self) -> tuple[bool, str]:
-        """Return the CLI's PII-free login mode for this exact profile."""
+        """Return the CLI's PII-free login mode for this exact profile.
+
+        Mode ``probe_failed`` means the CLI could not be asked (spawn failure
+        or timeout) — a transiently unknown state, distinct from a CLI that
+        answered "not logged in". Callers that cache or publish this result
+        must not present ``probe_failed`` as a missing login.
+        """
         binary = self._resolve_binary()
         if binary is None:
             return False, "unknown"
@@ -926,8 +1242,8 @@ class CodexAuthService:
                 env=self._subprocess_environment(),
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            # The status probe is unavailable and therefore fails closed.
-            return False, "unknown"
+            # The probe itself failed; the login state is unknown, not absent.
+            return False, "probe_failed"
         output = (proc.stdout or proc.stderr or "").strip()
         if proc.returncode == 0 and output == "Logged in using ChatGPT":
             return True, "chatgpt"

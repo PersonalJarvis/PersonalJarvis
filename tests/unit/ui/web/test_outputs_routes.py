@@ -563,8 +563,8 @@ async def test_list_outputs_cancelled_with_live_child_exposes_continuation(
 ) -> None:
     """A CANCELLED card whose re-run child is still running must say so.
 
-    Synthetic regression scenario: the user clicked "Continue" on a cancelled
-    mission; that spawned a linked child which ran
+    Forensic 2026-06-28 (missions 019f1049 → 019f104a): the user clicked
+    "Continue" on a cancelled mission; that spawned a linked child which ran
     on (CRITIQUING), but the cancelled card kept showing a "Continue" button
     with no hint that its work was already live — two visually identical
     cards, one cancelled + continuable, one running. The list now resolves the
@@ -572,8 +572,8 @@ async def test_list_outputs_cancelled_with_live_child_exposes_continuation(
     event) and exposes it so the UI can replace "Continue" with a "running"
     indicator pointing at the child.
     """
-    parent = "11111111-1111-4111-8111-111111111111"
-    child = "22222222-2222-4222-8222-222222222222"
+    parent = "019f1049-0001-7000-8000-000000001049"
+    child = "019f104a-0001-7000-8000-00000000104a"
     _make_mission_dir(tmp_path, parent)
     _make_mission_dir(tmp_path, child)
     await _insert_mission(db_conn, mission_id=parent, state="CANCELLED")
@@ -629,7 +629,7 @@ async def test_list_outputs_running_mission_duration_ticks_from_created(
 ) -> None:
     """A RUNNING mission shows now-minus-created, not updated-minus-created.
 
-    Live bug (mission 019eae15-5a31, 2026-06-09): right after dispatch
+    Live bug (mission 019f1026-0001, 2026-06-09): right after dispatch
     created_ms == updated_ms, so the card rendered "RUNNING 0.0s" and
     froze there until the next mission event (potentially 20 minutes
     later). For non-terminal states the duration must be wall-clock
@@ -877,12 +877,12 @@ def test_is_deliverable_relpath() -> None:
 
 
 def test_is_deliverable_relpath_excludes_browser_scratch() -> None:
-    """Defence-in-depth (2026-06-21, mission_019eeb34-bb67): a browser/QA
+    """Defence-in-depth (2026-06-21, mission_019f1043-0001): a browser/QA
     worker's gitignored Chrome user-data profiles re-imported by the archive's
     --ignored union must NOT show in Outputs even though they live under the
     allowlisted ``tasks/<id>/artifacts/files/`` subtree. The real deliverable
     inside the same qa-artifacts/ dir must still pass."""
-    base = ("tasks", "019eeb34-bc50", "artifacts", "files")
+    base = ("tasks", "019f1043-0002", "artifacts", "files")
     # Browser scratch — rejected.
     assert not _is_deliverable_relpath(
         (*base, "qa-artifacts", "chrome-profile-dd6355b8", "GrShaderCache", "data_2")
@@ -907,7 +907,7 @@ def test_is_deliverable_relpath_excludes_browser_scratch() -> None:
 
 def test_is_deliverable_relpath_excludes_uv_cache_scratch() -> None:
     """A sandbox-local uv cache is process state, never a mission result."""
-    base = ("tasks", "019fa4bc-9110", "artifacts", "files")
+    base = ("tasks", "019f1053-0001", "artifacts", "files")
     assert not _is_deliverable_relpath(
         (*base, ".uv-cache-audit", "wheels-v6", "pypi", "fastapi.lock")
     )
@@ -922,8 +922,8 @@ async def test_list_artifacts_hides_uv_cache_from_existing_missions(
     app: FastAPI, tmp_path: Path
 ) -> None:
     """Read-side filtering repairs missions archived before the source fix."""
-    d = _make_mission_dir(tmp_path, "019fa4bc8d2b")
-    files = d / "tasks" / "019fa4bc-9110" / "artifacts" / "files"
+    d = _make_mission_dir(tmp_path, "019f10530002")
+    files = d / "tasks" / "019f1053-0001" / "artifacts" / "files"
     _seed(files / ".uv-cache-audit" / "wheels-v6" / "fastapi.lock", "")
     _seed(files / ".uv-cache-audit" / "builds-v0" / "pyvenv.cfg", "cache")
     _seed(files / "wiki-audit.md", "# Findings")
@@ -933,7 +933,7 @@ async def test_list_artifacts_hides_uv_cache_from_existing_missions(
 
     assert r.status_code == 200
     assert [item["path"] for item in r.json()["files"]] == [
-        "tasks/019fa4bc-9110/artifacts/files/wiki-audit.md"
+        "tasks/019f1053-0001/artifacts/files/wiki-audit.md"
     ]
 
 
@@ -941,7 +941,7 @@ async def test_list_artifacts_hides_uv_cache_from_existing_missions(
 async def test_list_artifacts_lists_only_deliverables(app: FastAPI, tmp_path: Path) -> None:
     """Only genuine deliverables are listed; the forensic ``diff.patch`` one
     level up in ``artifacts/`` is excluded (contract change 2026-05-30)."""
-    d = _make_mission_dir(tmp_path, "019e3288abcd")
+    d = _make_mission_dir(tmp_path, "019f1007abcd")
     _seed(d / "tasks" / "019e0000" / "artifacts" / "files" / "out.txt", "hello")
     _seed(d / "tasks" / "019e0000" / "artifacts" / "diff.patch", "diff --git")
     with TestClient(app) as client:
@@ -956,7 +956,7 @@ async def test_list_artifacts_lists_only_deliverables(app: FastAPI, tmp_path: Pa
 async def test_list_artifacts_skips_claude_config_scaffolding(app: FastAPI, tmp_path: Path) -> None:
     """The isolated ``CLAUDE_CONFIG_DIR`` (``run_dir/claude_config/``) seeded by
     ``build_worker_env`` must never leak into the Outputs view."""
-    d = _make_mission_dir(tmp_path, "019e3288abcd")
+    d = _make_mission_dir(tmp_path, "019f1007abcd")
     cfg = d / "claude_config"
     _seed(cfg / "sessions" / "45552.json", "{}")
     _seed(cfg / "projects" / "x" / "a.jsonl", "{}\n")
@@ -983,7 +983,7 @@ async def test_list_artifacts_skips_claude_config_scaffolding(app: FastAPI, tmp_
 async def test_list_artifacts_skips_codex_and_forensics(app: FastAPI, tmp_path: Path) -> None:
     """``.codex/`` (CODEX_HOME), worker ``logs/`` and ``reflections.md`` are
     internal scaffolding — only the deliverable survives the listing filter."""
-    d = _make_mission_dir(tmp_path, "019e3288abcd")
+    d = _make_mission_dir(tmp_path, "019f1007abcd")
     _seed(d / ".codex" / "cache" / "auth.json", "{}")
     _seed(d / "tasks" / "019e0000" / "logs" / "stream.jsonl", "{}\n")
     _seed(d / "reflections.md", "notes")
@@ -1001,7 +1001,7 @@ async def test_list_artifacts_skips_codex_and_forensics(app: FastAPI, tmp_path: 
 @pytest.mark.asyncio
 async def test_list_artifacts_lists_nested_deliverables(app: FastAPI, tmp_path: Path) -> None:
     """Deliverables in nested sub-dirs under ``artifacts/files/`` are kept."""
-    d = _make_mission_dir(tmp_path, "019e3288abcd")
+    d = _make_mission_dir(tmp_path, "019f1007abcd")
     _seed(
         d / "tasks" / "019e0000" / "artifacts" / "files" / "assets" / "logo.svg",
         "<svg/>",
@@ -1016,7 +1016,7 @@ async def test_list_artifacts_lists_nested_deliverables(app: FastAPI, tmp_path: 
 @pytest.mark.asyncio
 async def test_raw_serves_deliverable(app: FastAPI, tmp_path: Path) -> None:
     """The raw-file endpoint returns the contents of a genuine deliverable."""
-    d = _make_mission_dir(tmp_path, "019e3288abcd")
+    d = _make_mission_dir(tmp_path, "019f1007abcd")
     _seed(d / "tasks" / "019e0000" / "artifacts" / "files" / "out.txt", "payload")
     with TestClient(app) as client:
         r = client.get(f"/api/outputs/{d.name}/files/tasks/019e0000/artifacts/files/out.txt/raw")
@@ -1029,7 +1029,7 @@ async def test_raw_404s_for_scaffolding(app: FastAPI, tmp_path: Path) -> None:
     """Defense-in-depth: a direct raw-fetch of an internal claude_config file
     must 404 even though the file exists on disk — the same allowlist guards
     the raw endpoint, so scaffolding can be neither listed nor fetched."""
-    d = _make_mission_dir(tmp_path, "019e3288abcd")
+    d = _make_mission_dir(tmp_path, "019f1007abcd")
     _seed(d / "claude_config" / ".claude.json", '{"secret":"x"}')
     with TestClient(app) as client:
         r = client.get(f"/api/outputs/{d.name}/files/claude_config/.claude.json/raw")

@@ -563,7 +563,7 @@ def _claude_cli_auth_viable() -> bool:
 def _api_key_family_viable(provider: str) -> bool:
     """True when *provider* has a USABLE API key for the in-process worker.
 
-    Key EXISTENCE is not key viability (2026-07-07, mission 019f3d01 — the
+    Key EXISTENCE is not key viability (2026-07-07, mission 019f104f — the
     verify run of the codex-cooldown fix): the stored anthropic credential was
     a stale ``sk-ant-oat`` OAuth bearer — the copy of a login that no longer
     exists. The worker env builder deliberately DROPS that shape (guaranteed
@@ -592,7 +592,7 @@ def _api_key_family_viable(provider: str) -> bool:
         return False
     # A family a worker just proved quota-depleted / auth-dead is skipped
     # until its cooldown self-expires — fingerprinted, so saving a NEW key in
-    # the API-Keys view lifts the block instantly (mission 019f3d0f: gemini's
+    # the API-Keys view lifts the block instantly (mission 019f1050: gemini's
     # depleted prepaid credits were re-picked on every retry, BUG-042).
     from jarvis.api_family_quota_state import api_family_in_cooldown
     from jarvis.claude_auth_state import claude_auth_dead, credential_fingerprint
@@ -684,7 +684,7 @@ def _cross_family_last_resort_worker(
             "view to restore Claude."
         )
     # 2. ChatGPT subscription via the codex CLI OAuth login (no API key).
-    #    Quota-aware since 2026-07-07 (mission_019f3cd8-1dd4): a usage-capped
+    #    Quota-aware since 2026-07-07 (mission_019f104e-0001): a usage-capped
     #    plan keeps `codex status` connected=True, so login presence alone
     #    re-picked a codex that failed the cap check ~28 s into every mission
     #    while a healthy API key sat unused (AP-22). The cooldown self-expires,
@@ -1085,7 +1085,7 @@ async def bootstrap_missions(
             # credential is itself an OAuth bearer — i.e. a STALE copy of a
             # login that no longer exists. Injecting it is a guaranteed 401
             # ("Failed to authenticate. API Error: 401 Invalid authentication
-            # credentials", missions 019f36e5 + 019f38b1). Drop it so the
+            # credentials", missions 019f104c + 019f104d). Drop it so the
             # worker either runs on a different family (the factory's
             # viability gate) or fails with the honest "Not logged in".
             anthropic_key = None
@@ -1117,7 +1117,7 @@ async def bootstrap_missions(
         # BUG-023 fix (2026-05-16): the external openclaw worker CLI 2026.5.7
         # silently swallows `cliBackends["claude-cli"].args` injection, so
         # Sonnet via Jarvis-Agent never gets file_write tools (verified live
-        # in mission_019e3236).
+        # in mission_019f1006).
         # When the configured provider is `claude-api`, bypass Jarvis-Agent and
         # drive the `claude` CLI directly — that path was empirically
         # proven to actually invoke Write tools (see /tmp/probe5 + /tmp/probe6

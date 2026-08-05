@@ -72,7 +72,7 @@ _WEATHER_INTENT_RE = re.compile(
 )
 
 # Tokens stripped from a weather query before treating the remainder as a
-# location for geocoding ("weather Berlin tomorrow 11 June 2026" -> "Berlin").
+# location for geocoding ("weather Exampletown tomorrow 11 June 2026" -> "Exampletown").
 _WEATHER_NOISE: Final[frozenset[str]] = frozenset({
     # intent / question scaffolding (en)
     "weather", "forecast", "temperature", "like", "what", "what's", "whats",
@@ -254,10 +254,10 @@ class SearchWebTool:
     risk_tier: str = "safe"
     # [Frische-Grenze, 2026-06-20] search_web is for FRESH, time-sensitive facts
     # ONLY — evergreen / general knowledge is answered directly by the brain.
-    # Regression: an evergreen "how do solar panels work?" question fired
-    # search_web repeatedly with an empty answer. The Run Inspector labels a
-    # search_web call as research, so the user saw an unwanted tool call for a
-    # general-knowledge question. Pinned by
+    # Forensic: "what do I need to consider when emigrating abroad?" fired
+    # search_web 3x with an empty answer (sessions.db voice session 10000120,
+    # 16:12). The Run-Inspector labels a search_web call "Recherche", so the user
+    # read it as an unwanted research spawn for a trivial question. Pinned by
     # tests/unit/brain/test_search_web_freshness_doctrine.py.
     description: str = (
         "Web search via DuckDuckGo with a short summary — for FRESH, "
@@ -269,11 +269,11 @@ class SearchWebTool:
         "that', 'look it up'). "
         "DO NOT USE for evergreen/general knowledge you can answer directly "
         "yourself (geography, history, definitions, 'how does X work', general "
-        "procedures/processes like 'how do solar panels work', well-known "
-        "concepts) — answer such questions directly "
+        "procedures/processes like 'what do I need to consider when "
+        "emigrating', well-known concepts) — answer such questions directly "
         "from your own knowledge, without searching. "
         "For weather questions, put the location in the query (e.g. 'weather "
-        "Berlin tomorrow'). "
+        "Exampletown tomorrow'). "
         "For research questions, pass 2-3 DIFFERENT phrasings via 'queries' "
         "in ONE call (fetched concurrently) instead of searching again in a "
         "later round — one call should gather all the evidence you need. "

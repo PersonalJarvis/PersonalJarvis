@@ -38,13 +38,13 @@ def test_managed_block_excludes_pii(tmp_path):
         tmp_path,
         emails=["christoph@example.com"],
         phones=["+49 151 2345678"],
-        address={"street": "Musterweg 1", "city": "Berlin"},
+        address={"street": "Musterweg 1", "city": "Exampletown"},
     )
     page = render_person_page(contact, existing_text=None)
     assert "christoph@example.com" not in page
     assert "2345678" not in page
     assert "Musterweg" not in page
-    assert "Berlin" not in page
+    assert "Exampletown" not in page
 
 
 def test_fresh_page_has_person_frontmatter(tmp_path):

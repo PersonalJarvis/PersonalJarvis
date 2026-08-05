@@ -14,6 +14,16 @@ from typing import Any, Final, Literal
 from uuid import UUID, uuid4
 
 from .protocols import HarnessResult, HarnessTask, RiskTier, Transcript
+from .turn_language import DEFAULT_LOCALE
+
+# Every supported locale is equal (CLAUDE.md §1): a language field whose
+# publisher omitted it must fall back to the SHARED default, never to one
+# particular language. These defaults used to be the literal "de", so an event
+# published without a language stamped German onto a Spanish or English turn —
+# and the consumers that pick a TTS voice from it then spoke German back.
+# ``turn_language`` is pure regex/set lookups with no jarvis imports, so this
+# cannot introduce an import cycle.
+_DEFAULT_EVENT_LANGUAGE: Final[str] = DEFAULT_LOCALE
 
 
 def _now_ns() -> int:
@@ -389,6 +399,19 @@ class UiLanguageChanged(Event):
     language: str = ""  # "en" | "de" | "es"
 
 
+@dataclass(frozen=True, slots=True)
+class UiThemeChanged(Event):
+    """Fired when the app's colour theme changes.
+
+    The frontend listens for this over ``/ws`` (wildcard-forwarded) and repaints
+    live — no reload. Emitted by the settings endpoint and (indirectly, via
+    ``ConfigReloaded``) by the Control API, so ``jarvis api settings
+    put-appearance`` reaches an already-open window instead of waiting for a
+    restart.
+    """
+    theme: str = ""  # "dark" | "light" | "system"
+
+
 # ----------------------------------------------------------------------
 # Action-Lifecycle
 # ----------------------------------------------------------------------
@@ -503,7 +526,7 @@ class SpeechSpoken(Event):
     wildcard subscriber and never touches the voice hot path (AP-9 / AD-OE2).
     """
     text: str = ""
-    language: str = "de"
+    language: str = _DEFAULT_EVENT_LANGUAGE
     spoken_kind: str = "other"
     # Optional technical diagnostic that was NOT spoken aloud — e.g. the raw
     # exit code + harness reason behind a failed Computer-Use action. The voice
@@ -535,7 +558,7 @@ class ProfileUpdated(Event):
     The UI may render this as a badge "Jarvis learned X about you" —
     transparency is part of the design (the user should never be surprised).
     """
-    subject: str = ""           # "user" | "person:laura" | "soul"
+    subject: str = ""           # "user" | "person:examplecontact" | "soul"
     cluster: str = ""           # identity | communication | work_style | ...
     field: str = ""             # z.B. "humor_types" oder "observation"
     operation: str = "set"      # set | append | observation
@@ -782,7 +805,7 @@ class AnnouncementRequested(Event):
     # ruff/UP037 suggests using "normal"/"interrupt" as bare names —
     # that is exactly wrong for `Literal[...]`; the strings ARE the values.
     priority: Literal["normal", "interrupt"] = "normal"  # noqa: UP037
-    language: str = "de"
+    language: str = _DEFAULT_EVENT_LANGUAGE
     # Discriminator for the new ack_brain Flash-Brain producer. None keeps
     # backwards compatibility with the existing MissionAnnouncer callers
     # that only pass text+priority+language. "progress" (2026-06-09, CU
@@ -1474,7 +1497,7 @@ class VoiceSessionStarted(Event):
     """Wake word detected — a new voice session is starting."""
     session_id: str = ""
     wake_keyword: str = ""
-    language: str = "de"
+    language: str = _DEFAULT_EVENT_LANGUAGE
 
 
 @dataclass(frozen=True, slots=True)
@@ -1487,6 +1510,12 @@ class RealtimeSessionReady(Event):
     surface: str = ""
     input_sample_rate: int = 0
     output_sample_rate: int = 0
+    #: The call's output language as a bare tag ("de" / "en" / "es" / any
+    #: future supported locale), resolved by the ONE turn-language resolver.
+    #: ``VoiceSessionStarted`` carries the same value but is published for the
+    #: browser surface only, so on desktop this was the language nothing ever
+    #: told the UI. Consumers render it; they never re-derive it.
+    language: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1503,9 +1532,9 @@ class VoiceTurnCompleted(Event):
     session_id: str = ""
     turn_id: str = ""
     user_text: str = ""
-    user_lang: str = "de"
+    user_lang: str = _DEFAULT_EVENT_LANGUAGE
     jarvis_text: str = ""
-    jarvis_lang: str = "de"
+    jarvis_lang: str = _DEFAULT_EVENT_LANGUAGE
     tier: str = ""
     provider: str = ""
     model: str = ""

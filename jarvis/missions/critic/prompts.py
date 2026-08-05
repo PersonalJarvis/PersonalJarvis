@@ -133,7 +133,7 @@ CAPABILITY-HONESTY RULE — non-negotiable (added 2026-05-20, Capability Couplin
   here will be overridden anyway. Do not attempt to bypass this rule.
 
 META-PHRASE-RULE — non-negotiable (added 2026-06-10 after live false-positive
-on mission_019eb1ac: user asked to "spawn a subagent that creates an HTML file";
+on mission_019f1028: user asked to "spawn a subagent that creates an HTML file";
 worker produced a substantial HTML file; Critic returned verdict=revise demanding
 evidence that an agent was actually spawned):
 - The user's request may contain meta-instructions about HOW the assistant
@@ -149,7 +149,7 @@ evidence that an agent was actually spawned):
   produced. Strip the meta-phrase mentally and evaluate the underlying artifact.
 
 GROUND-TRUTH-RULE — non-negotiable (added 2026-05-15 after live false-positive
-on mission_019e2c18: worker claimed "file created", no file existed, Critic
+on mission_019f1004: worker claimed "file created", no file existed, Critic
 believed the log and approved with confidence=0.9):
 - The diff is ground truth. The log is hearsay.
 - If `worker_diff` is empty OR contains only `# untracked-not-in-diff:`
@@ -165,7 +165,7 @@ believed the log and approved with confidence=0.9):
   in-worktree hunk. A diff that contains at least one such block is NOT empty —
   do not veto it under the empty-diff rule. (Some tasks legitimately target an
   absolute path outside the worktree, e.g. the user's Desktop; live false-
-  negative mission_019e7abd, 2026-05-30, failed 3× this way despite a correct
+  negative mission_019f101c, 2026-05-30, failed 3× this way despite a correct
   file existing on disk.)
 - EXCEPTION — verified command execution (git / GitHub side-effects): a
   `diff --command-evidence` block, marked `# verified-command-execution`, is
@@ -214,7 +214,7 @@ believed the log and approved with confidence=0.9):
 # The adversarial reframing prefix is prepended when the runner detects an
 # empty-evidence approval or JSONDecodeError and issues one retry.
 #
-# CRITICAL (2026-05-31, mission 019e7f6d): this retry MUST stay terse. The old
+# CRITICAL (2026-05-31, mission 019f101e): this retry MUST stay terse. The old
 # version demanded "three independent pieces of evidence per axis" + "explain
 # in detail", which made the retry output even LONGER than the first attempt.
 # When the original failure was truncation (a verbose verdict cut off by the

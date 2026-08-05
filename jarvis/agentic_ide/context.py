@@ -124,6 +124,15 @@ def focus_context_block(max_chars: int = _MAX_CHARS) -> str:
     parts: list[str] = [_HEADER, ""]
     parts.extend(session.profile.summary_lines())
     parts.append("")
+    visible = session.contextual_terminal()
+    if visible is not None:
+        parts.append(
+            f"Chat view is on screen with {visible.name} as the one visible terminal. "
+            f"Deictic references such as 'this terminal', 'the terminal here', "
+            f"or 'what is it doing?' mean {visible.name}, unless the user "
+            "explicitly names another call-sign."
+        )
+        parts.append("")
     if session.terminals:
         tail_lines = (
             _LINES_PER_TERMINAL

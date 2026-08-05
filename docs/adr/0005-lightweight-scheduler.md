@@ -3,7 +3,7 @@ title: "ADR-0005: Lightweight-Scheduler"
 slug: adr-0005-lightweight-scheduler
 diataxis: adr
 status: active
-owner: sam
+owner: maintainers
 last_reviewed: 2026-04-29
 phase: 5
 audience: developer

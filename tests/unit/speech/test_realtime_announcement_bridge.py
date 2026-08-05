@@ -110,7 +110,7 @@ async def test_muted_subagent_readback_is_remembered_without_audio() -> None:
             text="The research report is ready.",
             language="en",
             kind="subagent",
-            detail='{"mission_id":"019f5ca2-e30f"}',
+            detail='{"mission_id":"019f1052-0001"}',
         )
     )
 
@@ -118,7 +118,7 @@ async def test_muted_subagent_readback_is_remembered_without_audio() -> None:
         {
             "text": "The research report is ready.",
             "spoken_kind": "subagent",
-            "detail": '{"mission_id":"019f5ca2-e30f"}',
+            "detail": '{"mission_id":"019f1052-0001"}',
         }
     ]
     assert realtime.calls == []

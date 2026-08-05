@@ -36,14 +36,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { IconButton } from "./controls";
-import {
-  MAX_PANES_PER_BAND,
-  paneGrid,
-  paneLines,
-  widthForOneBand,
-  wizardPanes,
-  workspaceBandCapacityFor,
-} from "./layout";
+import { paneGrid, paneWidthAt, panesAreComfortable, wizardPanes } from "./layout";
 
 /**
  * Counts that get a labelled tick on the track.
@@ -113,30 +106,17 @@ export function WorkspaceShape({
   names,
   workspaceWidthPx,
 }: WorkspaceShapeProps) {
-  const perBand = useMemo(
-    () => workspaceBandCapacityFor(workspaceWidthPx),
-    [workspaceWidthPx],
-  );
-  const grid = useMemo(
-    () => paneGrid(wizardPanes(count), perBand),
-    [count, perBand],
-  );
-  const bands = useMemo(() => paneLines(count, perBand), [count, perBand]);
+  const grid = useMemo(() => paneGrid(wizardPanes(count)), [count]);
 
   return (
     <div className="flex flex-col gap-3 p-3">
       <WorkspaceStage
         columns={grid.columns}
-        rows={bands}
+        rows={grid.rows}
         count={count}
         names={names}
       />
-      <Readout
-        columns={grid.columns}
-        bands={bands}
-        count={count}
-        workspaceWidthPx={workspaceWidthPx}
-      />
+      <Readout columns={grid.columns} workspaceWidthPx={workspaceWidthPx} />
     </div>
   );
 }
@@ -302,6 +282,13 @@ export function CountTrack({
  * Every pane is placed by `paneGrid` — the function the running workspace uses
  * — over the panes the backend will actually create (`wizardPanes`). The two
  * cannot drift apart without the running grid changing too.
+ *
+ * The stage is the whole workspace AND the whole window, because those are the
+ * same thing now: every column is drawn inside the frame, however many there
+ * are, and more terminals make each one narrower. It used to draw the grid
+ * wider than the frame and clip the remainder, which was the honest picture of
+ * a workspace you scrolled sideways — and is exactly what the maintainer asked
+ * to be rid of on 2026-08-04.
  */
 function WorkspaceStage({
   columns,
@@ -437,41 +424,39 @@ function StagePane({
 }
 
 /**
- * What the stage shows, in words, together with what it depends on.
+ * What the stage shows, in words, together with what it costs.
  *
  * The second half is the part that matters. An arrangement stated without its
- * condition is a bug this step actually had: correct on screen, wrong five
- * seconds later after a maximise, with nothing to explain the difference.
+ * consequence is a bug this step actually had: correct on screen, and silent
+ * about the thing the user would notice a minute later.
  */
 function Readout({
   columns,
-  bands,
-  count,
   workspaceWidthPx,
 }: {
   columns: number;
-  bands: number;
-  count: number;
   workspaceWidthPx: number;
 }) {
-  const oneBandAt = widthForOneBand(count);
-  const wrapped = bands > 1;
-  const canUnwrap =
-    wrapped && oneBandAt !== null && oneBandAt > Math.round(workspaceWidthPx);
+  // By COLUMNS rather than the raw count, so the sentence can never describe a
+  // different workspace from the stage above it.
+  const paneWidth = paneWidthAt(columns, workspaceWidthPx);
+  const comfortable = panesAreComfortable(columns, workspaceWidthPx);
 
+  /*
+   * There is no longer an "and the rest are off screen" case to warn about —
+   * every pane is on screen, always. What is left to say is the price of that
+   * promise, which the user pays in pane WIDTH, so the readout quotes it before
+   * they commit to the count rather than after.
+   */
   let condition: string;
-  if (!wrapped) {
-    condition = "All side by side — this window is wide enough.";
-  } else if (canUnwrap) {
-    condition = `Wrapped to keep every pane readable. From ${formatPx(
-      oneBandAt,
-    )} px wide they would all fit on one line — this window is ${formatPx(
-      Math.round(workspaceWidthPx),
-    )} px.`;
-  } else if (count > MAX_PANES_PER_BAND) {
-    condition = `More than ${MAX_PANES_PER_BAND} side by side is unreadable at any window size, so they wrap.`;
+  if (paneWidth === 0) {
+    condition = "All on one screen.";
+  } else if (comfortable) {
+    condition = `All on one screen, about ${formatPx(paneWidth)} px each.`;
   } else {
-    condition = "Wrapped to keep every pane readable.";
+    condition = `All on one screen, about ${formatPx(
+      paneWidth,
+    )} px each — narrow for an agent's output. Maximize a pane to read it full size.`;
   }
 
   return (
@@ -480,7 +465,7 @@ function Readout({
       className="text-xs leading-relaxed text-muted-foreground"
     >
       <span className="font-mono tabular-nums text-foreground">
-        {columns} across × {bands} down
+        {columns} across
       </span>{" "}
       · {condition}
     </p>

@@ -27,6 +27,7 @@ from typing import Any
 import pytest
 
 from jarvis.brain.ack_brain.config import (
+    SUPPORTED_PROVIDERS,
     GeminiAckProviderConfig,
     GrokAckProviderConfig,
     OllamaAckProviderConfig,
@@ -346,6 +347,12 @@ def test_registry_contains_all_known_adapter_classes() -> None:
     accidental removal from the package ``__all__``."""
     expected = {GeminiFlashAck, GrokFlashAck, OpenAIMiniAck, OllamaFlashAck}
     assert set(REGISTRY.values()) == expected
+
+
+def test_supported_provider_names_match_registry() -> None:
+    """Config documentation and runtime registration must not drift again."""
+
+    assert set(SUPPORTED_PROVIDERS) - {"follow_brain"} == set(REGISTRY)
 
 
 # ---------------------------------------------------------------------------

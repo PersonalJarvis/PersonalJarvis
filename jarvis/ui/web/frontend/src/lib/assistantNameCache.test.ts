@@ -23,9 +23,9 @@ describe("assistantNameCache", () => {
   });
 
   it("round-trips the resolved name for an instant next-boot paint", () => {
-    writeCachedAssistantName("Nico");
-    expect(readCachedAssistantName()).toBe("Nico");
-    expect(localStorage.getItem(ASSISTANT_NAME_CACHE_KEY)).toBe("Nico");
+    writeCachedAssistantName("Nova");
+    expect(readCachedAssistantName()).toBe("Nova");
+    expect(localStorage.getItem(ASSISTANT_NAME_CACHE_KEY)).toBe("Nova");
   });
 
   it("trims whitespace and ignores blank writes (never blanks the wordmark)", () => {

@@ -72,6 +72,18 @@ export interface ProviderDescriptor {
    */
   computer_use_active?: boolean;
   brain_switchable?: boolean;
+  /**
+   * Whether the provider's CLI is on this machine, as the BACKEND judges it.
+   *
+   * Deliberately not rendered by any card, and that is the decision rather
+   * than an oversight: for a Codex-auth card the backend already answers this
+   * inside `codex_status.installed`, and its one carve-out (during an
+   * ownership window, answer from PATH instead of the owned profile) protects
+   * exactly the states the card's install row suppresses anyway. Reading both
+   * would give the same question two answers that can disagree. Kept in the
+   * payload for `/api/providers` consumers outside this UI (the control CLI,
+   * the setup report).
+   */
   cli_installed: boolean | null;
   /** Plain-English "which key / subscription, and what for". */
   credential_help: string | null;
@@ -124,6 +136,13 @@ export interface ProviderDescriptor {
   /** Local/self-hosted cards: whether the card exposes an editable server URL
    *  (persisted via PUT /api/providers/{id}/base-url). */
   supports_base_url?: boolean;
+  /**
+   * Whether this card's server can be TOLD to download a model
+   * (POST /api/providers/{id}/pull). A capability flag rather than a provider
+   * name: a generic OpenAI-compatible server has no such API, an Ollama server
+   * does, and the UI decides on the flag alone.
+   */
+  supports_model_pull?: boolean;
   /** Placeholder while no override is stored; null = the user must set one. */
   default_base_url?: string | null;
   /** The stored server-URL override; null = the vendor default is in effect. */
@@ -151,9 +170,18 @@ export interface CodexStatus {
   reason_code?:
     | "ready"
     | "login_required"
+    // An interactive login is running: invite the user to FINISH it in the
+    // browser, never to start a second one.
+    | "login_in_progress"
     | "lifecycle_unavailable"
     | "not_installed"
-    | "setup_invalid";
+    | "setup_invalid"
+    // Sticky: the connected ChatGPT plan can never activate this provider.
+    | "plan_unsupported"
+    // Transient: the profile is briefly owned by another status probe, a
+    // login/logout, or a starting voice session. Not a setup defect — the UI
+    // shows a neutral "checking" line and never the reconnect warning.
+    | "busy";
   version?: string | null;
   accountLabel?: string | null;
   account_label?: string | null;
@@ -208,17 +236,27 @@ interface ProvidersResponse {
   providers: ProviderDescriptor[];
 }
 
+export const PROVIDER_BACKEND_UNREACHABLE = "backend_unreachable";
+const PROVIDER_RETRY_DELAYS_MS = [1_000, 2_000, 5_000, 10_000] as const;
+
+interface UseProvidersOptions {
+  retryDelaysMs?: readonly number[];
+}
+
 /**
  * Loads /api/providers and re-fetches on relevant WS events. The hook updates
  * the UI state live whenever a secret is set on the backend or a brain
  * provider was switched — without the component having to track that itself.
  */
-export function useProviders() {
+export function useProviders(options: UseProvidersOptions = {}) {
   const [providers, setProviders] = useState<ProviderDescriptor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const requestVersion = useRef(0);
   const requestController = useRef<AbortController | null>(null);
+  const retryAttempt = useRef(0);
+  const retryDelays = useRef<readonly number[]>(PROVIDER_RETRY_DELAYS_MS);
+  retryDelays.current = options.retryDelaysMs ?? PROVIDER_RETRY_DELAYS_MS;
 
   const refetch = useCallback(async () => {
     const version = ++requestVersion.current;
@@ -233,16 +271,34 @@ export function useProviders() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: ProvidersResponse = await res.json();
-      if (version === requestVersion.current) setProviders(data.providers);
+      if (version === requestVersion.current) {
+        retryAttempt.current = 0;
+        setProviders(data.providers);
+      }
     } catch (e) {
       if ((e as Error).name !== "AbortError" && version === requestVersion.current) {
-        setError((e as Error).message);
+        setError(
+          e instanceof TypeError
+            ? PROVIDER_BACKEND_UNREACHABLE
+            : (e as Error).message,
+        );
       }
     } finally {
       if (version === requestVersion.current) setLoading(false);
       if (requestController.current === controller) requestController.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    if (error !== PROVIDER_BACKEND_UNREACHABLE || retryDelays.current.length === 0) {
+      return;
+    }
+    const delays = retryDelays.current;
+    const delay = delays[Math.min(retryAttempt.current, delays.length - 1)];
+    retryAttempt.current += 1;
+    const timer = window.setTimeout(() => void refetch(), delay);
+    return () => window.clearTimeout(timer);
+  }, [error, refetch]);
 
   /**
    * Optimistically flip the active provider within a tier, in-memory, BEFORE
@@ -752,6 +808,94 @@ export async function localInstallStatus(
     throw new Error(body.detail ?? `HTTP ${res.status}`);
   }
   return body as LocalInstallProgress;
+}
+
+/** One curated model a local server can download, annotated for THIS machine. */
+export interface PullableModel {
+  id: string;
+  label: string;
+  size_gb: number;
+  purpose: string;
+  tools: boolean;
+  vision: boolean;
+  installed: boolean;
+  /** "comfortable" | "tight" | "unknown" — advisory, never a block. */
+  fit: string;
+  fit_note: string;
+}
+
+export interface PullableModels {
+  server: string;
+  server_reachable: boolean;
+  message: string;
+  memory_gb: number | null;
+  models: PullableModel[];
+  installed: string[];
+}
+
+/** Progress of ONE model download on the local server. */
+export interface ModelPullProgress {
+  state: "idle" | "running" | "done" | "error";
+  model: string;
+  message: string;
+  installed?: boolean;
+  completed?: number;
+  total?: number;
+  percent?: number;
+  already?: boolean;
+}
+
+/** The curated shortlist plus what this machine already holds. */
+export async function pullableModels(
+  providerId: string,
+): Promise<PullableModels> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/pullable-models`,
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as PullableModels;
+}
+
+/**
+ * Start downloading `model` into the local server. Returns as soon as the pull
+ * is running — a multi-gigabyte download takes minutes, so the caller polls
+ * `modelPullStatus` instead of awaiting it.
+ */
+export async function startModelPull(
+  providerId: string,
+  model: string,
+): Promise<ModelPullProgress> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/pull`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    },
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as ModelPullProgress;
+}
+
+/** Poll one download; `installed` reflects the server's inventory, not the run. */
+export async function modelPullStatus(
+  providerId: string,
+  model: string,
+): Promise<ModelPullProgress> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/pull/status?model=${encodeURIComponent(model)}`,
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as ModelPullProgress;
 }
 
 export async function switchSttProvider(

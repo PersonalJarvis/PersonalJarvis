@@ -51,7 +51,11 @@ describe("AgentInstructionsView", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AgentInstructionsView />);
     const editor = await screen.findByTestId("agent-instructions-editor");
-    fireEvent.click(screen.getByText("Start from template"));
+    const template = screen
+      .getByText("Start from template")
+      .closest("button") as HTMLButtonElement;
+    await waitFor(() => expect(template.disabled).toBe(false));
+    fireEvent.click(template);
     await waitFor(() =>
       expect((editor as HTMLTextAreaElement).value).toBe(EMPTY_STATE.template),
     );
@@ -98,8 +102,11 @@ describe("AgentInstructionsView", () => {
       vi.fn().mockResolvedValue({ ok: true, json: async () => EMPTY_STATE }),
     );
     render(<AgentInstructionsView />);
-    await screen.findByTestId("agent-instructions-editor");
-    fireEvent.click(screen.getByText("Start from template"));
+    const template = screen
+      .getByText("Start from template")
+      .closest("button") as HTMLButtonElement;
+    await waitFor(() => expect(template.disabled).toBe(false));
+    fireEvent.click(template);
     await waitFor(() =>
       expect(
         (screen.getByTestId("agent-instructions-editor") as HTMLTextAreaElement).value,
@@ -112,6 +119,9 @@ describe("AgentInstructionsView", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AgentInstructionsView />);
     const editor = await screen.findByTestId("agent-instructions-editor");
+    await waitFor(() =>
+      expect((editor as HTMLTextAreaElement).value).toBe(STATE.content),
+    );
     fireEvent.change(editor, { target: { value: "Changed then regret" } });
     fireEvent.click(screen.getByText("Revert changes"));
 
@@ -125,7 +135,10 @@ describe("AgentInstructionsView", () => {
       vi.fn().mockResolvedValue({ ok: true, json: async () => STATE }),
     );
     render(<AgentInstructionsView />);
-    await screen.findByTestId("agent-instructions-editor");
+    const editor = await screen.findByTestId("agent-instructions-editor");
+    await waitFor(() =>
+      expect((editor as HTMLTextAreaElement).value).toBe(STATE.content),
+    );
     const save = screen.getByText("Save instructions").closest("button") as HTMLButtonElement;
     expect(save.disabled).toBe(true);
   });

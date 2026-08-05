@@ -31,7 +31,7 @@ risk_policy:
 config:
   email_limit: 5
   calendar_days_ahead: 1
-  weather_location: "Berlin"
+  weather_location: "Exampletown"
   weather_format: metric
 token_budget_estimate: 3000
 execution: inline

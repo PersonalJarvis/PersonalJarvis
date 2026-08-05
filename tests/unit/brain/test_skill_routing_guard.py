@@ -631,7 +631,7 @@ async def test_no_skill_match_keeps_local_action_fast_path() -> None:
 # find the post on screen", even when the plugin's API/MCP integration is
 # absent.
 #
-# Live bug 2026-06-21 (sessions.db turn 67276501-…): the marketplace
+# Live bug 2026-06-21 (sessions.db turn 10000101-…): the marketplace
 # `plugin-discord` skill matched the bare word "Discord", suppressed the
 # deterministic Computer-Use fast path, and the turn fell through to a
 # tool-less CLI talker (antigravity) that hallucinated a permissions refusal

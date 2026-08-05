@@ -63,11 +63,11 @@ Real work goes to a **third**: a coding agent that runs in an isolated copy of t
 workspace, gets reviewed by a critic, and comes back with a file.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/model-tiers.png" alt="The API Keys screen with one tab per model tier: Realtime, Tool Model, and Agents" width="860" />
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/model-tiers.png" alt="The API Keys screen in the desktop app, with one tab per model tier: Realtime, Tool Model, and Agents" width="900" />
 </p>
 
 <p align="center">
-  <sub>One tab per tier in the app, each with its own provider. You only need keys for the tiers you actually use.</sub>
+  <sub>One tab per tier, each with its own provider, and you only need keys for the tiers you use. Every provider says how it bills: a subscription login you already have, or an API key charged per token.</sub>
 </p>
 
 ## Demo
@@ -267,11 +267,13 @@ voice: *"what is Mika doing?"*, *"tell Nova to run the tests"*. A focus mode nar
 to that workspace for as long as you want, then switches back cleanly.
 
 <p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/agentic-ide-demo.gif" alt="A prompt arriving in one agent's terminal in the Agentic IDE, with the thinking counter running underneath it" width="620" />
+  <a href="https://youtu.be/wFBdmdOn6EU">
+    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/agentic-ide-demo.gif" alt="Three coding agents side by side in the Agentic IDE, one receiving a prompt while its thinking counter runs" width="860" />
+  </a>
 </p>
 
 <p align="center">
-  <sub>A prompt lands in one agent's terminal, carrying the task, the key files and how that part of the code works today. The counter underneath shows how long the agent has been thinking.</sub>
+  <sub>A prompt lands in terminal 1, carrying the task, the key files and how that part of the code works today. The counter underneath shows how long that agent has been thinking &middot; <a href="https://youtu.be/wFBdmdOn6EU">watch the full Agentic IDE demo on YouTube</a></sub>
 </p>
 
 ### Knowledge Wiki

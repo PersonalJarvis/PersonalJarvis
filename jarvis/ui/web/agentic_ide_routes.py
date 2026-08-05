@@ -37,6 +37,9 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``GET    /terminals/{name}/prompts``   → every prompt handed to that pane
 * ``POST   /terminals/{name}/prompt``    → type a prompt into it and press Enter
 * ``POST   /terminals/{name}/attach``    → drop/paste files onto a pane
+* ``GET    /voice-attachments``          → every pending orb-drop receipt
+* ``GET    /terminals/{name}/voice-attachments`` → pending orb-drop receipts
+* ``DELETE /terminals/{name}/voice-attachments/{batch_id}`` → cancel one drop
 * ``WS     /pty/{name}``                 → the pane's live terminal stream
 
 ``{name}`` accepts the call-sign ("t2", "T2") or a spoken phrase containing it
@@ -69,6 +72,7 @@ from jarvis.agentic_ide import (
     interrupted,
     native_picker,
     notifications,
+    prompt_attachments,
     prompt_history,
     recap_engine,
     recents,
@@ -90,6 +94,7 @@ from jarvis.agentic_ide.session import (
     MAX_TERMINAL_NAME,
     MAX_TERMINALS,
     MAX_WORKSPACES,
+    PendingPromptAttachmentBatch,
     Session,
     SessionError,
     SessionNotReady,
@@ -118,7 +123,6 @@ router = APIRouter(prefix="/api/agentic-ide", tags=["agentic-ide"])
 #: anybody. Panes still coming up after this are reported as undelivered rather
 #: than waited for indefinitely.
 SPAWN_READY_TIMEOUT_S = 20.0
-
 
 async def _announce_coding_mode(request: Request) -> None:
     """Tell every connected client what the coding mode is NOW.
@@ -285,6 +289,25 @@ class CloseTerminalsRequest(BaseModel):
 class ModeRequest(BaseModel):
     enabled: bool = Field(
         description="True narrows Jarvis to this workspace; False returns to normal."
+    )
+
+
+class SurfaceContextRequest(BaseModel):
+    """Which terminal the Agentic-IDE UI shows and targets for prompts."""
+
+    workspace_id: str = Field(description="Workspace currently rendered by this view.")
+    chat_view: bool = Field(description="True only while the one-pane chat view is selected.")
+    on_screen: bool = Field(description="Whether the Agentic-IDE section is visible.")
+    terminal: str | None = Field(
+        default=None,
+        description="Visible pane call-sign; null when no single pane is shown.",
+    )
+    prompt_target: str | None = Field(
+        default=None,
+        description=(
+            "Pane selected by the prompt bar and voice orb; null when no pane "
+            "can accept an instruction."
+        ),
     )
 
 
@@ -529,7 +552,7 @@ class FoldersResponse(BaseModel):
     parent: str | None
     entries: list[FolderItem]
     error: str | None = None
-    # Human-facing name of this machine ("Studio MacBook"), so the picker can
+    # Human-facing name of this machine ("Alex's MacBook"), so the picker can
     # label the start points with the device rather than the account folder
     # ("Administrator" tells the user nothing about which computer this is).
     device_name: str | None = None
@@ -1735,6 +1758,24 @@ async def set_mode(request: Request, req: ModeRequest) -> dict:
     return {"ok": True, "focus_mode": enabled}
 
 
+@router.put("/surface-context", summary="Report the visible Agentic-IDE terminal")
+async def set_surface_context(req: SurfaceContextRequest) -> dict:
+    """Keep deictic voice/chat references aligned with the visible chat pane.
+
+    The state is ephemeral and active-workspace scoped. Grid view clears it,
+    because several terminals are visible there and guessing one would be less
+    honest than asking for a call-sign.
+    """
+    accepted = get_registry().set_surface_context(
+        workspace_id=req.workspace_id,
+        chat_view=req.chat_view,
+        on_screen=req.on_screen,
+        terminal=req.terminal,
+        prompt_target=req.prompt_target,
+    )
+    return {"ok": True, "accepted": accepted}
+
+
 @router.get("/ui-preferences", summary="Remembered workspace display preferences")
 async def get_ui_preferences() -> dict:
     """How the workspace should look, as this machine last left it.
@@ -2230,6 +2271,20 @@ async def get_prompt_history(
     )
 
 
+def _terminal_or_http_error(name: str) -> tuple[Session, Terminal]:
+    """Resolve a globally unique pane name with consistent HTTP errors."""
+    registry = get_registry()
+    found = registry.find_terminal(name)
+    if found is not None:
+        return found
+    if not registry.sessions:
+        raise HTTPException(status_code=409, detail="No Agentic-IDE session is running.")
+    known = ", ".join(t.name for s in registry.sessions for t in s.terminals) or "none"
+    raise HTTPException(
+        status_code=404, detail=f"No terminal called {name!r}. Running: {known}."
+    )
+
+
 @router.get("/terminals/{name}/report", summary="What one terminal is doing")
 async def terminal_report(name: str, lines: int = 40) -> dict:
     """Status plus the recent readable output of the terminal called ``name``."""
@@ -2237,6 +2292,83 @@ async def terminal_report(name: str, lines: int = 40) -> dict:
         return get_registry().report(name, lines)
     except SessionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/voice-attachments",
+    summary="List every file batch waiting for a spoken terminal prompt",
+)
+async def all_terminal_voice_attachments() -> dict:
+    """Hydrate the persistent orb panel after navigation or a remount."""
+    batches: list[dict] = []
+    for session in get_registry().sessions:
+        for term in session.terminals:
+            async with term.pending_prompt_attachment_lock:
+                batches.extend(
+                    {
+                        "terminal": term.name,
+                        "batch_id": batch.batch_id,
+                        "files": list(batch.files),
+                        "reserved": (
+                            batch.batch_id
+                            in term.pending_prompt_attachment_reservations
+                        ),
+                    }
+                    for batch in term.pending_prompt_attachment_batches
+                )
+    return {"batches": batches}
+
+
+@router.get(
+    "/terminals/{name}/voice-attachments",
+    summary="List files waiting for a terminal's next spoken prompt",
+)
+async def terminal_voice_attachments(name: str) -> dict:
+    """Return authoritative pending batches for the orb receipt."""
+    found = get_registry().find_terminal(name)
+    if found is None:
+        # A closed pane owns no pending context. Returning an empty authoritative
+        # list lets a preserved voice panel retire its old receipt cleanly.
+        return {"terminal": name, "batches": []}
+    _session, term = found
+    async with term.pending_prompt_attachment_lock:
+        batches = [
+            {
+                "batch_id": batch.batch_id,
+                "files": list(batch.files),
+                "reserved": (
+                    batch.batch_id in term.pending_prompt_attachment_reservations
+                ),
+            }
+            for batch in term.pending_prompt_attachment_batches
+        ]
+    return {"terminal": term.name, "batches": batches}
+
+
+@router.delete(
+    "/terminals/{name}/voice-attachments/{batch_id}",
+    summary="Remove files waiting for a terminal's spoken prompt",
+)
+async def remove_terminal_voice_attachments(name: str, batch_id: str) -> dict:
+    """Cancel one unconsumed orb drop; stored files remain in the workspace."""
+    found = get_registry().find_terminal(name)
+    if found is None:
+        return {"terminal": name, "batch_id": batch_id, "removed": False}
+    _session, term = found
+    async with term.pending_prompt_attachment_lock:
+        if batch_id in term.pending_prompt_attachment_reservations:
+            raise HTTPException(
+                status_code=409,
+                detail="That attachment batch is already being added to a prompt.",
+            )
+        before = len(term.pending_prompt_attachment_batches)
+        term.pending_prompt_attachment_batches[:] = [
+            batch
+            for batch in term.pending_prompt_attachment_batches
+            if batch.batch_id != batch_id
+        ]
+        removed = len(term.pending_prompt_attachment_batches) != before
+    return {"terminal": term.name, "batch_id": batch_id, "removed": removed}
 
 
 @router.post("/terminals/{name}/attach", summary="Drop or paste files onto a terminal")
@@ -2248,6 +2380,7 @@ async def terminal_attach(
     note: str | None = Form(default=None),  # noqa: B008
     analyze: bool = Form(default=False),  # noqa: B008
     deliver: bool = Form(default=True),  # noqa: B008
+    stage_for_voice: bool = Form(default=False),  # noqa: B008
 ) -> dict:
     """Put dropped or pasted files in front of the agent in terminal ``name``.
 
@@ -2277,20 +2410,26 @@ async def terminal_attach(
       pane, for a caller that is assembling a prompt rather than handing the
       agent a path right now. The files are on disk and referenced either way,
       so nothing is lost if the user then walks away.
+    * ``stage_for_voice=true`` keeps the returned analyses on this pane until
+      its next spoken prompt is composed. It requires ``deliver=false`` so one
+      gesture cannot both type a loose path and attach the same file to a later
+      brief.
     """
+    if stage_for_voice and deliver:
+        raise HTTPException(
+            status_code=422,
+            detail="Staging a voice-prompt attachment requires deliver=false.",
+        )
+    # Staging without analysis would preserve only a filename, which is exactly
+    # what makes screenshots useless to text-only coding CLIs. Treat the staging
+    # flag as the stronger request instead of relying on every client to send
+    # both booleans forever.
+    analyze = analyze or stage_for_voice
     registry = get_registry()
     # Resolved across every open workspace, not just the front one: call-signs
     # are unique across them, and a file dropped on a pane belongs to THAT
     # pane's folder — which is also where a copied file has to land.
-    found = registry.find_terminal(name)
-    if found is None:
-        if not registry.sessions:
-            raise HTTPException(status_code=409, detail="No Agentic-IDE session is running.")
-        known = ", ".join(t.name for s in registry.sessions for t in s.terminals) or "none"
-        raise HTTPException(
-            status_code=404, detail=f"No terminal called {name!r}. Running: {known}."
-        )
-    session, term = found
+    session, term = _terminal_or_http_error(name)
 
     references: list[str] = []
     stored_names: list[str] = []
@@ -2378,9 +2517,20 @@ async def terminal_attach(
             detail="That drop carried nothing this pane could use.",
         )
 
-    analysis: list[dict] = []
+    analysis_items: list[drop_analysis.DropAnalysis] = []
     if analyze and readable:
-        analysis = [item.to_dict() for item in await _analyze_drops(readable)]
+        analysis_items = await _analyze_drops(readable)
+
+    voice_batch: PendingPromptAttachmentBatch | None = None
+    if stage_for_voice and analysis_items:
+        try:
+            voice_batch = await prompt_attachments.enqueue(
+                term, analysis_items, stored_names
+            )
+        except prompt_attachments.PromptAttachmentQueueFull as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    analysis = [item.to_dict() for item in analysis_items]
 
     payload = " ".join(references)
     if note and note.strip():
@@ -2416,6 +2566,8 @@ async def terminal_attach(
         "submitted": bool(submit and delivered),
         "delivered": delivered,
         "analysis": analysis,
+        "staged_for_voice": len(analysis_items) if stage_for_voice else 0,
+        "voice_batch_id": voice_batch.batch_id if voice_batch else None,
     }
 
 
@@ -2807,7 +2959,8 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
     """Bidirectional bridge between one xterm pane and its agent's PTY.
 
     Wire protocol (JSON both ways) — client: ``{t:"i",d}`` input,
-    ``{t:"r",cols,rows}`` resize; server: ``{t:"o",d}`` output, ``{t:"ready"}``,
+    ``{t:"r",cols,rows}`` resize, ``{t:"claim",cols,rows}`` foreground
+    ownership; server: ``{t:"o",d}`` output, ``{t:"ready"}``,
     ``{t:"exit",code}``, ``{t:"error",message}``.
 
     The optional ``workspace`` query parameter names the workspace this pane
@@ -2841,6 +2994,11 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
     rows = _safe_int(qp.get("rows"), 24)
     workspace_id = (qp.get("workspace") or "").strip() or None
     appearance = (qp.get("appearance") or "").strip().lower() or None
+    claim_owner = (qp.get("claim") or "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+    }
 
     registry = get_registry()
     send_lock = asyncio.Lock()
@@ -2948,6 +3106,7 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
             workspace_id=pane_workspace,
             appearance=appearance,
             on_replay=on_replay,
+            claim_owner=claim_owner,
         )
     except SessionNotReady as exc:
         # "Not yet", not "not here": this pane connected while its workspace was
@@ -3046,6 +3205,14 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
                 # agent's screen to a window nobody is reading — and the viewer
                 # that IS being read has no way to notice or correct it.
                 registry.resize(
+                    term.key,
+                    _safe_int(msg.get("cols"), cols),
+                    _safe_int(msg.get("rows"), rows),
+                    pane_workspace,
+                    viewer=on_output,
+                )
+            elif kind == "claim":
+                registry.claim_viewer(
                     term.key,
                     _safe_int(msg.get("cols"), cols),
                     _safe_int(msg.get("rows"), rows),

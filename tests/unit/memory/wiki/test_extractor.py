@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -104,15 +105,15 @@ def _ok_facts_json(evidence_turn_id: str = "h1") -> str:
     return json.dumps(
         [
             {
-                "fact": "Lena moved to Hamburg.",
+                "fact": "ExampleFriend moved to Exampleville.",
                 "kind": "person",
-                "subjects": ["lena"],
+                "subjects": ["examplefriend"],
                 "evidence_turn_id": evidence_turn_id,
             },
             {
                 "fact": "User prefers dark mode.",
                 "kind": "preference",
-                "subjects": ["alex"],
+                "subjects": ["example-user"],
                 "evidence_turn_id": evidence_turn_id,
             },
         ]
@@ -127,6 +128,44 @@ def journal(tmp_path: Path) -> CandidateJournal:
 
 
 @pytest.mark.asyncio
+async def test_journal_claim_does_not_block_event_loop(
+    journal: CandidateJournal,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Locked SQLite audit work stays off the latency-critical event loop."""
+    entered = threading.Event()
+    release = threading.Event()
+
+    def locked_claim(*_args: Any, **_kwargs: Any) -> bool:
+        entered.set()
+        release.wait(timeout=1.0)
+        return False
+
+    monkeypatch.setattr(journal, "claim_capture", locked_claim)
+    extractor = ConversationFactExtractor(
+        config=_config(),
+        journal=journal,
+        registry=FakeRegistry(FakeBrain("[]")),
+    )
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    task = asyncio.create_task(
+        extractor.extract_and_journal(
+            "A sufficiently long synthetic test fact.",
+            "Noted.",
+            source_label="test:locked-claim",
+            turn_hash="locked-claim",
+        )
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 1.0)
+        assert loop.time() - started_at < 0.5
+    finally:
+        release.set()
+    assert await task == 0
+
+
+@pytest.mark.asyncio
 async def test_happy_path_appends_parsed_facts(journal: CandidateJournal) -> None:
     brain = FakeBrain(_ok_facts_json())
     registry = FakeRegistry(brain)
@@ -135,8 +174,8 @@ async def test_happy_path_appends_parsed_facts(journal: CandidateJournal) -> Non
     )
 
     n = await extractor.extract_and_journal(
-        "My friend Lena moved to Hamburg and I prefer dark mode.",
-        "Noted - Lena is in Hamburg now.",
+        "My friend ExampleFriend moved to Exampleville and I prefer dark mode.",
+        "Noted - ExampleFriend is in Exampleville now.",
         source_label="voice-fact:1",
         turn_hash="h1",
     )
@@ -144,14 +183,14 @@ async def test_happy_path_appends_parsed_facts(journal: CandidateJournal) -> Non
     assert n == 2
     rows = journal.pending()
     assert [r.fact for r in rows] == [
-        "Lena moved to Hamburg.",
+        "ExampleFriend moved to Exampleville.",
         "User prefers dark mode.",
     ]
     assert rows[0].kind == "person"
-    assert rows[0].subjects == ("lena",)
+    assert rows[0].subjects == ("examplefriend",)
     assert rows[0].evidence_turn_id == "h1"
-    assert "My friend Lena moved to Hamburg" in rows[0].evidence_excerpt
-    assert "Noted - Lena" not in rows[0].evidence_excerpt
+    assert "My friend ExampleFriend moved to Exampleville" in rows[0].evidence_excerpt
+    assert "Noted - ExampleFriend" not in rows[0].evidence_excerpt
     # The cheap router-tier model was requested, not the frontier chat model.
     assert registry.instantiate_calls
     name, kwargs = registry.instantiate_calls[0]
@@ -163,8 +202,8 @@ async def test_happy_path_appends_parsed_facts(journal: CandidateJournal) -> Non
     ("incomplete_kind", "incomplete_subjects"),
     [
         ("place", ["user"]),
-        ("place", ["example-city"]),
-        ("other", ["user", "example-city"]),
+        ("place", ["beispielstadt"]),
+        ("other", ["user", "beispielstadt"]),
     ],
 )
 @pytest.mark.asyncio
@@ -176,7 +215,7 @@ async def test_residence_requires_named_place_subject_and_falls_back(
     incomplete = json.dumps(
         [
             {
-                "fact": "The user lives in Example City.",
+                "fact": "The user lives in Beispielstadt.",
                 "kind": incomplete_kind,
                 "subjects": incomplete_subjects,
                 "evidence_turn_id": "residence-turn",
@@ -186,9 +225,9 @@ async def test_residence_requires_named_place_subject_and_falls_back(
     complete = json.dumps(
         [
             {
-                "fact": "The user lives in Example City.",
+                "fact": "The user lives in Beispielstadt.",
                 "kind": "place",
-                "subjects": ["user", "example-city"],
+                "subjects": ["user", "beispielstadt"],
                 "evidence_turn_id": "residence-turn",
             }
         ]
@@ -201,7 +240,7 @@ async def test_residence_requires_named_place_subject_and_falls_back(
     )
 
     count = await extractor.extract_and_journal(
-        "Ich wohne in Example City.",  # i18n-allow: synthetic residence fixture
+        "Ich wohne in Beispielstadt.",  # i18n-allow: synthetic residence fixture
         "Noted.",
         source_label="realtime:residence",
         turn_hash="residence-turn",
@@ -211,7 +250,7 @@ async def test_residence_requires_named_place_subject_and_falls_back(
     assert registry.tried == ["gemini", "openrouter"]
     row = journal.pending()[0]
     assert row.kind == "place"
-    assert row.subjects == ("user", "example-city")
+    assert row.subjects == ("user", "beispielstadt")
 
 
 @pytest.mark.asyncio
@@ -235,7 +274,7 @@ async def test_truncated_response_is_discarded(journal: CandidateJournal) -> Non
         config=_config(), journal=journal, registry=FakeRegistry(brain),
     )
     n = await extractor.extract_and_journal(
-        "My friend Lena moved to Hamburg today.",
+        "My friend ExampleFriend moved to Exampleville today.",
         "Noted.",
         source_label="voice-fact:3",
         turn_hash="h3",
@@ -251,7 +290,7 @@ async def test_malformed_json_yields_nothing(journal: CandidateJournal) -> None:
         config=_config(), journal=journal, registry=FakeRegistry(brain),
     )
     n = await extractor.extract_and_journal(
-        "My friend Lena moved to Hamburg today.",
+        "My friend ExampleFriend moved to Exampleville today.",
         "Noted.",
         source_label="voice-fact:4",
         turn_hash="h4",
@@ -361,7 +400,7 @@ async def test_code_fenced_json_is_tolerated(journal: CandidateJournal) -> None:
         config=_config(), journal=journal, registry=FakeRegistry(brain),
     )
     n = await extractor.extract_and_journal(
-        "My friend Lena moved to Hamburg and I prefer dark mode.",
+        "My friend ExampleFriend moved to Exampleville and I prefer dark mode.",
         "Noted.",
         source_label="voice-fact:5",
         turn_hash="h5",
@@ -558,7 +597,7 @@ async def test_asset_kind_and_context_are_preserved(journal: CandidateJournal) -
                 {
                     "fact": "The user owns the yacht Aurora.",
                     "kind": "asset",
-                    "subjects": ["alex", "aurora"],
+                    "subjects": ["example-user", "aurora"],
                     "evidence_turn_id": "turn-2",
                 }
             ]
@@ -634,7 +673,7 @@ async def test_secret_shaped_model_fact_never_reaches_sqlite(
                 {
                     "fact": f"The user's API key is {secret}.",
                     "kind": "other",
-                    "subjects": ["alex"],
+                    "subjects": ["example-user"],
                     "evidence_turn_id": "secret-guard",
                 }
             ]
@@ -665,7 +704,7 @@ async def test_session_sweep_rejects_non_user_evidence(journal: CandidateJournal
                 {
                     "fact": "The assistant guessed that the user owns an aircraft.",
                     "kind": "asset",
-                    "subjects": ["alex"],
+                    "subjects": ["example-user"],
                     "evidence_turn_id": "assistant-turn",
                 }
             ]
@@ -737,7 +776,7 @@ async def test_session_sweep_accepts_exact_user_evidence(journal: CandidateJourn
                 {
                     "fact": "The user's yacht Aurora is moored in Kiel.",
                     "kind": "asset",
-                    "subjects": ["alex", "aurora", "kiel"],
+                    "subjects": ["example-user", "aurora", "kiel"],
                     "evidence_turn_id": "turn-2",
                 }
             ]
@@ -771,7 +810,7 @@ async def test_long_prior_context_cannot_truncate_focus_evidence(
                 {
                     "fact": "The user's yacht Aurora is moored in Kiel.",
                     "kind": "asset",
-                    "subjects": ["alex", "aurora", "kiel"],
+                    "subjects": ["example-user", "aurora", "kiel"],
                     "evidence_turn_id": "turn-2",
                 }
             ]

@@ -1,6 +1,6 @@
 """Combo-string tolerance for HotkeyTool.
 
-Regression for the CU paste failure (2026-06-16, session 38134fab): the
+Regression for the CU paste failure (2026-06-16, session 10000109): the
 screenshot-only Computer-Use loop tried to paste Elon-Musk posts into the
 exampleserver Discord and the model emitted the shortcut as a SINGLE token
 ``"ctrl+v"`` instead of the documented list form ``["ctrl", "v"]``. The tool

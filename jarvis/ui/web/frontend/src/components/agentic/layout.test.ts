@@ -1,64 +1,69 @@
 import { describe, expect, it } from "vitest";
 import {
+  COMFORTABLE_PANE_WIDTH_PX,
   GRID_HORIZONTAL_PADDING_PX,
-  MAX_PANES_PER_BAND,
-  MIN_PANE_WIDTH_PX,
-  bandCapacityFor,
-  paneColumns,
   paneGrid,
-  paneLines,
-  widthForOneBand,
+  paneWidthAt,
+  panesAreComfortable,
   wizardPanes,
-  workspaceBandCapacityFor,
 } from "./layout";
 
 /*
- * The thresholds are expressed as "content width + the grid's own padding"
- * rather than as the literal pixel numbers they came to.
+ * The widths are expressed as "content width + the grid's own padding" rather
+ * than as the literal pixel numbers they come to.
  *
  * Those literals were what made this file break when the grid was tightened
  * from 12 px of padding a side to 4 — a purely visual change that has no
- * business moving a column threshold, and did not: only the OUTER width at
- * which it is crossed moved, by exactly the padding. Written this way the tests
- * still pin the real contract (both helpers answer for the same window) and
- * stop failing over the frame around it.
+ * business moving a threshold, and did not: only the OUTER width at which it is
+ * crossed moved, by exactly the padding.
  */
-const FOUR_COLUMNS_AT = 4 * MIN_PANE_WIDTH_PX;
-const SIX_COLUMNS_AT = 6 * MIN_PANE_WIDTH_PX;
+const FOUR_COMFORTABLE_AT = 4 * COMFORTABLE_PANE_WIDTH_PX;
 
-describe("workspaceBandCapacityFor", () => {
-  it("uses the grid content width on both sides of the four-column threshold", () => {
-    const outer = FOUR_COLUMNS_AT + GRID_HORIZONTAL_PADDING_PX;
-    expect(workspaceBandCapacityFor(outer - 1)).toBe(3);
-    expect(workspaceBandCapacityFor(outer)).toBe(4);
+describe("paneWidthAt", () => {
+  it("divides the window between the columns, whatever the count", () => {
+    // The rule this whole module now serves (maintainer, 2026-08-04): the
+    // workspace is always one screenful, so a pane is a SHARE of the window and
+    // never a fixed size the window has to grow to accommodate.
+    const outer = FOUR_COMFORTABLE_AT + GRID_HORIZONTAL_PADDING_PX;
+    expect(paneWidthAt(4, outer)).toBe(COMFORTABLE_PANE_WIDTH_PX);
+    expect(paneWidthAt(8, outer)).toBe(COMFORTABLE_PANE_WIDTH_PX / 2);
+    expect(paneWidthAt(40, outer)).toBe(COMFORTABLE_PANE_WIDTH_PX / 10);
   });
 
-  it("uses the grid content width on both sides of the six-column threshold", () => {
-    const outer = SIX_COLUMNS_AT + GRID_HORIZONTAL_PADDING_PX;
-    expect(workspaceBandCapacityFor(outer - 1)).toBe(5);
-    expect(workspaceBandCapacityFor(outer)).toBe(6);
+  it("answers for the grid's content width, not the element around it", () => {
+    // The wizard measures an unpadded element; the running grid pads itself.
+    // A helper that ignored that would quote a width the workspace never has.
+    expect(paneWidthAt(1, 1000)).toBe(1000 - GRID_HORIZONTAL_PADDING_PX);
+  });
+
+  it("has nothing to divide for an empty or unmeasured workspace", () => {
+    expect(paneWidthAt(0, 1440)).toBe(0);
+    expect(paneWidthAt(4, 0)).toBe(0);
+    expect(paneWidthAt(4, Number.NaN)).toBe(0);
   });
 });
 
-describe("the two width helpers say which width they take", () => {
-  it("separates the grid's own content width from the outer width", () => {
-    // The defect they exist to prevent: the running grid measures its CONTENT
-    // box (padding already excluded) while the wizard measures an unpadded
-    // element. Feeding both to one helper made the grid lay itself out a
-    // padding's width narrower than it is, so the preview and the workspace
-    // changed column count at different window widths and the preview looked
-    // like a liar.
-    expect(bandCapacityFor(FOUR_COLUMNS_AT)).toBe(4);
-    expect(
-      workspaceBandCapacityFor(FOUR_COLUMNS_AT + GRID_HORIZONTAL_PADDING_PX),
-    ).toBe(4);
-    // Same physical window, same answer — which is the whole point.
-    expect(bandCapacityFor(FOUR_COLUMNS_AT - 1)).toBe(3);
-    expect(
-      workspaceBandCapacityFor(
-        FOUR_COLUMNS_AT - 1 + GRID_HORIZONTAL_PADDING_PX,
-      ),
-    ).toBe(3);
+describe("panesAreComfortable", () => {
+  it("turns on either side of the readable width, measured against a real agent", () => {
+    // 2026-07-25, against Claude Code: below ~380 px it truncates every line and
+    // breaks single words across rows ("Clau/de/Max"). That is now ADVICE the
+    // wizard gives before anything opens — it no longer moves a single pixel.
+    const outer = FOUR_COMFORTABLE_AT + GRID_HORIZONTAL_PADDING_PX;
+    expect(panesAreComfortable(4, outer)).toBe(true);
+    expect(panesAreComfortable(5, outer)).toBe(false);
+  });
+
+  it("is about the pane, not the count — the same eight differ by display", () => {
+    const laptop = 1440;
+    const wall = 8 * COMFORTABLE_PANE_WIDTH_PX + GRID_HORIZONTAL_PADDING_PX;
+    expect(panesAreComfortable(8, laptop)).toBe(false);
+    expect(panesAreComfortable(8, wall)).toBe(true);
+  });
+
+  it("says nothing rather than warning while the container is unmeasured", () => {
+    // A first paint reports 0. Rendering that as "these panes will be cramped"
+    // means every user is shouted at once, for a reading that was never taken.
+    expect(panesAreComfortable(12, 0)).toBe(true);
   });
 });
 
@@ -80,99 +85,12 @@ describe("wizardPanes", () => {
     expect(wizardPanes(-4)).toEqual([]);
   });
 
-  it("lays out exactly like the workspace it stands for", () => {
-    // 8 terminals in a window wide enough for 4 columns: 4 across, 2 down —
-    // the arrangement reported as missing from the preview on 2026-07-26.
-    const grid = paneGrid(wizardPanes(8), 4);
-    expect(grid.columns).toBe(4);
-    expect(paneLines(8, 4)).toBe(2);
-    // The same 8 in a narrow window really are 2 across and 4 down. Both are
-    // correct; the preview has to say which one it is showing.
-    expect(paneGrid(wizardPanes(8), 2).columns).toBe(2);
-    expect(paneLines(8, 2)).toBe(4);
-  });
-});
-
-describe("widthForOneBand", () => {
-  it("names the width at which a count stops wrapping", () => {
-    // What the readout tells the user so a maximise cannot turn the preview
-    // into a broken promise: eight panes need 8 × 380 px plus the grid padding.
-    expect(widthForOneBand(8)).toBe(
-      8 * MIN_PANE_WIDTH_PX + GRID_HORIZONTAL_PADDING_PX,
-    );
-    // And it agrees with the helper the wizard measures through, rather than
-    // being a second opinion about the same threshold.
-    expect(workspaceBandCapacityFor(widthForOneBand(8) as number)).toBe(8);
-  });
-
-  it("has nothing to offer when there is no wrap to undo", () => {
-    expect(widthForOneBand(1)).toBeNull();
-  });
-
-  it("has nothing to offer past the readable cap, where no width is enough", () => {
-    expect(widthForOneBand(MAX_PANES_PER_BAND + 1)).toBeNull();
-  });
-});
-
-describe("paneColumns", () => {
-  it("keeps a small workspace on one line", () => {
-    // What the grid actually does today for every one of these: one band,
-    // columns side by side. The wizard preview has to say the same thing.
-    for (const n of [1, 2, 3, 4, 6, 8, 10]) {
-      expect(paneColumns(n)).toBe(n);
-    }
-  });
-
-  it("wraps beyond the readable width instead of shrinking panes further", () => {
-    // 12 columns on one line leaves each of them too narrow to read, so the
-    // overflow starts a second band: 10 above, 2 below.
-    expect(paneColumns(11)).toBe(10);
-    expect(paneColumns(12)).toBe(10);
-  });
-
-  it("fills the first band up rather than re-balancing the workspace", () => {
-    // Balanced bands (21 → 7 + 7 + 7) looked tidier in a still picture, but
-    // re-dealt every pane whenever one was added: the user's fourth split
-    // moved a terminal they were reading to another row (2026-07-31). Greedy
-    // filling keeps every existing column exactly where it is — only the
-    // newest can start a band.
-    expect(paneColumns(21)).toBe(10);
-    expect(paneColumns(20)).toBe(10);
-  });
-
-  it("never moves an existing column when one more is opened", () => {
-    // The user-facing contract behind greedy filling, pinned directly: for any
-    // count, adding a column changes no existing placement.
-    for (let count = 1; count < 24; count += 1) {
-      const before = paneGrid(wizardPanes(count)).placements;
-      const after = paneGrid(wizardPanes(count + 1)).placements;
-      expect(after.slice(0, count)).toEqual(before);
-    }
-  });
-
-  it("has no columns for an empty workspace", () => {
-    expect(paneColumns(0)).toBe(0);
-  });
-
-  it("exposes the cap it wraps at", () => {
-    expect(MAX_PANES_PER_BAND).toBe(10);
-  });
-});
-
-describe("paneLines", () => {
-  it("is one band while the workspace fits", () => {
-    expect(paneLines(1)).toBe(1);
-    expect(paneLines(10)).toBe(1);
-  });
-
-  it("grows with the wrap, so a wrapped workspace gets the height for it", () => {
-    expect(paneLines(11)).toBe(2);
-    expect(paneLines(12)).toBe(2);
-    expect(paneLines(21)).toBe(3);
-  });
-
-  it("is nothing for an empty workspace", () => {
-    expect(paneLines(0)).toBe(0);
+  it("lays out exactly like the workspace it stands for, at any window size", () => {
+    // 8 terminals are 8 columns — on a 4K display and on a laptop alike. The
+    // window decides how many are ON SCREEN, never how they are arranged.
+    const grid = paneGrid(wizardPanes(8));
+    expect(grid.columns).toBe(8);
+    expect(grid.rows).toBe(1);
   });
 });
 
@@ -188,6 +106,19 @@ describe("paneGrid", () => {
       { column: 2, row: 1, rowSpan: 1 },
       { column: 3, row: 1, rowSpan: 1 },
     ]);
+  });
+
+  it("keeps every column on one line however many there are", () => {
+    // The 2026-08-03 report, at the layout level: the twelfth column is the
+    // twelfth column, not the second one of a new row. Only the user's split
+    // buttons decide which panes share space.
+    const grid = paneGrid(Array.from({ length: 12 }, (_, i) => pane(i, 0)));
+    expect(grid.columns).toBe(12);
+    expect(grid.rows).toBe(1);
+    expect(grid.placements.map((p) => p.column)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+    ]);
+    expect(grid.placements.every((p) => p.row === 1)).toBe(true);
   });
 
   it("splits DOWN inside one column and leaves the others full height", () => {
@@ -224,14 +155,14 @@ describe("paneGrid", () => {
     ]);
   });
 
-  it("wraps a crowded workspace into a second band", () => {
-    const panes = Array.from({ length: 12 }, (_, i) => pane(i, 0));
-    const grid = paneGrid(panes);
-    expect(grid.columns).toBe(10);
-    expect(grid.rows).toBe(2);
-    // The eleventh column starts the second band, back at the left edge.
-    expect(grid.placements[10]).toEqual({ column: 1, row: 2, rowSpan: 1 });
-    expect(grid.placements[11]).toEqual({ column: 2, row: 2, rowSpan: 1 });
+  it("never moves an existing column when one more is opened", () => {
+    // The user-facing contract, pinned directly: for any count, adding a column
+    // changes no existing placement. It used to hold only below the wrap.
+    for (let count = 1; count < 40; count += 1) {
+      const before = paneGrid(wizardPanes(count)).placements;
+      const after = paneGrid(wizardPanes(count + 1)).placements;
+      expect(after.slice(0, count)).toEqual(before);
+    }
   });
 
   it("closes gaps the backend left in the column numbers", () => {

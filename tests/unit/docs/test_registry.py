@@ -232,6 +232,20 @@ async def test_ensure_loaded_deduplicates_concurrent_first_requests(
 
 
 @pytest.mark.asyncio
+async def test_process_local_index_loads_without_a_database_path(doc_root: Path) -> None:
+    reg = DocRegistry(
+        roots=[doc_root / "docs"],
+        index_db=None,
+    )
+    try:
+        await reg.ensure_loaded()
+        assert reg.is_loaded is True
+        assert len(reg.search_query("Jarvis-Agent")) == 1
+    finally:
+        reg.close()
+
+
+@pytest.mark.asyncio
 async def test_debounce_keeps_newer_reload_deadline(
     doc_root: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -85,11 +85,11 @@ def test_upsert_sets_address_dict(store: ContactStore) -> None:
         address={
             "street": "Main St 1",
             "postal_code": "10115",
-            "city": "Berlin",
+            "city": "Exampletown",
             "country": "DE",
         },
     )
-    assert c.address["city"] == "Berlin"
+    assert c.address["city"] == "Exampletown"
     assert store.get("bob").address["postal_code"] == "10115"
 
 
@@ -143,15 +143,15 @@ def test_put_creates_full_record(store: ContactStore) -> None:
         relationship="colleague",
         emails=["dana@work.com", "dana@home.com"],
         phones=["+49 30 1", "+49 30 2"],
-        address={"city": "Hamburg"},
-        note="Works in the Hamburg office.",
+        address={"city": "Exampleville"},
+        note="Works in the Exampleville office.",
     )
     assert c.slug == "dana_smith"
     assert c.aliases == ["Dan"]
     assert c.emails == ["dana@work.com", "dana@home.com"]
     assert c.phones == ["+49301", "+49302"]
-    assert c.address["city"] == "Hamburg"
-    assert "Hamburg office" in c.note_md
+    assert c.address["city"] == "Exampleville"
+    assert "Exampleville office" in c.note_md
 
 
 def test_put_with_explicit_slug_replaces_in_place(store: ContactStore) -> None:
@@ -189,12 +189,12 @@ def test_delete_returns_true_then_false(store: ContactStore) -> None:
 
 def test_render_for_prompt_lists_names_and_relationship(store: ContactStore) -> None:
     store.upsert(name="Christoph", relationship="friend")
-    store.upsert(name="Jordan", relationship="colleague")
+    store.upsert(name="ExampleContact", relationship="partner")
     block = store.render_for_prompt()
     assert "Christoph" in block
-    assert "Jordan" in block
+    assert "ExampleContact" in block
     assert "friend" in block
-    assert "colleague" in block
+    assert "partner" in block
     # Detail (emails/phones) is fetched on demand, not injected into the prompt.
     store.upsert(name="Christoph", email="secret@example.com")
     assert "secret@example.com" not in store.render_for_prompt()

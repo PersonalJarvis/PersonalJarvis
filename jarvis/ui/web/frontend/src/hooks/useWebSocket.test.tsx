@@ -11,6 +11,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useI18nStore } from "@/i18n";
+import {
+  setBrowserVoiceInputOwnership,
+  voiceInputLevelRef,
+} from "@/lib/voiceInputLevel";
 import { useEventStore } from "@/store/events";
 
 /** Minimal mock for WebSocket (mirrors __tests__/ws.test.ts). */
@@ -90,6 +94,7 @@ describe("useWebSocket VoiceBootStatus handling", () => {
     };
     useEventStore.setState({ voiceReady: false, toasts: [] });
     useI18nStore.getState().setUi("en", { push: false });
+    setBrowserVoiceInputOwnership(false);
     queryClient.clear();
   });
 
@@ -175,6 +180,22 @@ describe("useWebSocket VoiceBootStatus handling", () => {
     expect(toast.message).toContain("gmail/send_message");
     expect(toast.message).toContain("mission-42");
     expect(toast.message).not.toContain("private content");
+  });
+
+  it("routes native microphone levels outside React state and clears them after listening", async () => {
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver({ type: "audio.level", input: 0.72 });
+    expect(voiceInputLevelRef.current).toBe(0.72);
+
+    MockWebSocket.last!.deliver(
+      envelope("SystemStateChanged", {
+        new_state: "THINKING",
+        previous: "LISTENING",
+      }),
+    );
+    expect(voiceInputLevelRef.current).toBe(0);
   });
 
   it("shows a metadata-only receipt for one-shot screen capture", async () => {

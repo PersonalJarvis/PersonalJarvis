@@ -353,7 +353,12 @@ def vision_chain(cfg: Any, registry: Any) -> list[tuple[str, str | None]]:
         available=available,
         credential_ready=credential_ready_wiki_providers(available=available, config=cfg),
     )
-    return [(name, model) for name, model in chain if _can_see(registry, name)]
+    seeing: list[tuple[str, str | None]] = []
+    for name, model in chain:
+        supported, vision_model = _vision_model(registry, name, model)
+        if supported:
+            seeing.append((name, vision_model))
+    return seeing
 
 
 def _can_see(registry: Any, name: str) -> bool:
@@ -363,6 +368,32 @@ def _can_see(registry: Any, name: str) -> bool:
     except Exception:  # noqa: BLE001 — an unloadable provider simply cannot see
         return False
     return bool(getattr(provider_class, "supports_vision", False))
+
+
+def _vision_model(registry: Any, name: str, model: str | None) -> tuple[bool, str | None]:
+    """Return a seeing model, rescuing a known-blind gateway default.
+
+    Provider capability is the first gate. When the cached catalog additionally
+    knows that this exact model is text-only, use the provider's fastest seeing
+    sibling. Unknown modality stays fail-open because direct provider catalogs
+    commonly omit it; a known-blind model with no sibling is excluded.
+    """
+    if not _can_see(registry, name):
+        return False, None
+    if not model:
+        return True, model
+    try:
+        from jarvis.brain.model_catalog import (  # noqa: PLC0415 — lazy (AP-26)
+            model_capabilities,
+            pick_fast_vision_model,
+        )
+
+        if model_capabilities(name, model)["vision"] is False:
+            sibling = pick_fast_vision_model(name)
+            return sibling is not None, sibling
+    except Exception:  # noqa: BLE001 — missing catalog keeps class capability
+        log.debug("UltraWiki vision-model probe failed for %s", name, exc_info=True)
+    return True, model
 
 
 async def describe_image(
@@ -401,6 +432,7 @@ async def describe_image(
             )
         )
 
+    from jarvis.brain.streaming import aggregate  # noqa: PLC0415 — lazy (AP-26)
     from jarvis.core.protocols import (  # noqa: PLC0415 — lazy (AP-26)
         BrainMessage,
         BrainRequest,
@@ -437,8 +469,13 @@ async def describe_image(
         request=request,
         timeout_s=timeout_s,
         label="UltraWikiImageDescriber",
-        aggregate=_aggregate,
+        aggregate=aggregate,
         validate=_validate_description,
+        # Optional media enrichment has its own pause reason. It must neither
+        # paint/clear the normal Markdown Wiki's global health strip nor demote
+        # a provider for text work after a modality-specific image failure.
+        record_health=False,
+        failure_scope="ultrawiki-media",
     )
     if result is None:
         return EnrichResult(reason="no provider that can read images returned a usable description")
@@ -460,23 +497,7 @@ async def describe_image(
     )
 
 
-def _aggregate(chunks: Any) -> Any:
-    """Collapse a provider's stream into one object carrying ``.text``."""
-
-    @dataclass(slots=True)
-    class _Aggregated:
-        text: str
-
-    if isinstance(chunks, str):
-        return _Aggregated(text=chunks)
-    parts: list[str] = []
-    for chunk in chunks or ():
-        piece = getattr(chunk, "text", None)
-        parts.append(piece if isinstance(piece, str) else str(chunk))
-    return _Aggregated(text="".join(parts))
-
-
-def _validate_description(aggregated: Any) -> bool:
+def _validate_description(aggregated: Any) -> str | None:
     """Reject a non-answer so the chain moves on to the next provider.
 
     The ``NO_IMAGE_RECEIVED`` check is the load-bearing one: it is how a
@@ -485,8 +506,10 @@ def _validate_description(aggregated: Any) -> bool:
     """
     text = _clean(str(getattr(aggregated, "text", "") or ""))
     if not text or len(text) < 15:
-        return False
-    return CANNOT_SEE_MARKER not in text.upper()
+        return "empty or trivial image description"
+    if CANNOT_SEE_MARKER in text.upper():
+        return "provider reported that no image reached it"
+    return None
 
 
 def _clean(text: str) -> str:

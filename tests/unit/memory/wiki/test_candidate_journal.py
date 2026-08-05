@@ -28,11 +28,11 @@ def journal(tmp_path: Path) -> CandidateJournal:
 def _facts() -> list[CandidateFact]:
     return [
         CandidateFact(
-            fact="Lena moved to Hamburg.",
+            fact="ExampleFriend moved to Exampleville.",
             kind="person",
-            subjects=("lena",),
+            subjects=("examplefriend",),
             evidence_turn_id="turn-17",
-            evidence_excerpt="I know Lena moved to Hamburg.",
+            evidence_excerpt="I know ExampleFriend moved to Exampleville.",
         ),
         CandidateFact(fact="User prefers dark mode.", kind="preference", subjects=("alex",)),
     ]
@@ -43,13 +43,13 @@ def test_append_then_pending_roundtrip(journal: CandidateJournal) -> None:
     assert n == 2
     rows = journal.pending(limit=10)
     assert [r.fact for r in rows] == [
-        "Lena moved to Hamburg.",
+        "ExampleFriend moved to Exampleville.",
         "User prefers dark mode.",
     ]
     assert rows[0].status == "pending"
-    assert rows[0].subjects == ("lena",)
+    assert rows[0].subjects == ("examplefriend",)
     assert rows[0].evidence_turn_id == "turn-17"
-    assert rows[0].evidence_excerpt == "I know Lena moved to Hamburg."
+    assert rows[0].evidence_excerpt == "I know ExampleFriend moved to Exampleville."
     assert rows[0].session_id == ""
     assert rows[1].evidence_turn_id == ""
     assert rows[0].source_label == "voice-fact:123"
@@ -109,7 +109,7 @@ def test_candidate_evidence_survives_reopen(tmp_path: Path) -> None:
     try:
         assert second.pending()[0].evidence_turn_id == "turn-17"
         assert second.pending()[0].evidence_excerpt == (
-            "I know Lena moved to Hamburg."
+            "I know ExampleFriend moved to Exampleville."
         )
         tables = {
             row[0]
@@ -215,7 +215,7 @@ def test_standalone_journal_then_numbered_migrations_is_idempotent(
     try:
         row = reopened.pending()[0]
         assert row.evidence_turn_id == "turn-17"
-        assert row.evidence_excerpt == "I know Lena moved to Hamburg."
+        assert row.evidence_excerpt == "I know ExampleFriend moved to Exampleville."
     finally:
         reopened.close()
 
@@ -241,7 +241,7 @@ def test_development_column_excerpt_is_copied_without_migration_collision(
         cur = conn.execute(
             "INSERT INTO wiki_candidate_journal "
             "(created_ms, source_label, turn_hash, fact) VALUES (?, ?, ?, ?)",
-            (1, "legacy", "legacy-hash", "Lena moved to Hamburg."),
+            (1, "legacy", "legacy-hash", "ExampleFriend moved to Exampleville."),
         )
         conn.execute(
             "INSERT INTO wiki_candidate_evidence "
@@ -279,7 +279,7 @@ def test_mark_consolidated_removes_from_pending(journal: CandidateJournal) -> No
     rows = journal.pending()
     journal.mark(
         [rows[0].id], status="consolidated", decision="add",
-        target_path="entities/lena.md",
+        target_path="entities/examplefriend.md",
     )
     remaining = journal.pending()
     assert len(remaining) == 1

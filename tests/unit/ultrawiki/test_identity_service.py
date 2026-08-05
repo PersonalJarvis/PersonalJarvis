@@ -47,12 +47,12 @@ async def service(tmp_path):
 def contacts(tmp_path) -> ContactStore:
     store = ContactStore(base_dir=tmp_path / "contacts")
     store.put(
-        name="Viktoria Novak",
-        aliases=["Viki"],
-        emails=["viktoria@example.com"],
+        name="Testoria Novak",
+        aliases=["Test"],
+        emails=["testoria@example.com"],
         phones=["+49 151 2345 6789"],
     )
-    store.put(name="Viktor Novak", phones=["+49 151 9999 0000"])
+    store.put(name="Testor Novak", phones=["+49 151 9999 0000"])
     return store
 
 
@@ -63,8 +63,8 @@ async def test_seed_then_list_people(service, contacts):
 
     people = await service.list_people()
     assert {person["display_name"] for person in people} == {
-        "Viktoria Novak",
-        "Viktor Novak",
+        "Testoria Novak",
+        "Testor Novak",
     }
     profile = await service.person_profile(people[0]["id"])
     assert profile["id"] == people[0]["id"]

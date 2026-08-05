@@ -94,16 +94,16 @@ async def test_upsert_passes_optional_fields_through() -> None:
     store = _RecordingStore()
     await _tool(store).execute(
         {
-            "name": "Laura",
-            "email": "laura@example.com",
-            "address": "Hauptstr. 1, Berlin",
+            "name": "ExampleContact",
+            "email": "examplecontact@example.com",
+            "address": "Hauptstr. 1, Exampletown",
             "note": "colleague from work",
         },
         None,
     )
     call = store.upserts[0]
-    assert call["email"] == "laura@example.com"
-    assert call["address"] == {"street": "Hauptstr. 1, Berlin"}
+    assert call["email"] == "examplecontact@example.com"
+    assert call["address"] == {"street": "Hauptstr. 1, Exampletown"}
     assert call["note"] == "colleague from work"
 
 

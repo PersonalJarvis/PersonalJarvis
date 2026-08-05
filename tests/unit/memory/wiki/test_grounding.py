@@ -74,9 +74,9 @@ def test_question_clause_never_grounds_behavioral() -> None:
 def test_third_party_activity_is_not_a_user_claim() -> None:
     # A fact about another person never activates the user-attitude guard.
     assert _classify(
-        "Lena plays golf regularly.",
-        "My friend Lena plays golf every weekend.",
-        subjects=("lena", "golf"),
+        "ExampleFriend plays golf regularly.",
+        "My friend ExampleFriend plays golf every weekend.",
+        subjects=("examplefriend", "golf"),
     ) == "explicit"
 
 

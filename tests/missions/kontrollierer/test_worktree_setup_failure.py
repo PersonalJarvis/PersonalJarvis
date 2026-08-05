@@ -28,7 +28,7 @@ class _NoopBudget:
 
 class _PathCapWorktrees:
     # Signature mirrors WorktreeManager.create, including the needs_repo kwarg
-    # the orchestrator now forwards (lean-workspace feature, mission 019eb17d).
+    # the orchestrator now forwards (lean-workspace feature, mission 019f1027).
     def create(
         self, *, mission_slug: str, task_id: str, needs_repo: bool = True
     ):  # noqa: ANN201

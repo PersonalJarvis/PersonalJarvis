@@ -202,9 +202,9 @@ async def tmp_vault_curator(tmp_path: Path):
     success path. Yields ``(curator, vault_root)``."""
     vault_root = _build_vault(tmp_path)
     update = PageUpdate(
-        target_path=vault_root / "entities" / "joy.md",
+        target_path=vault_root / "entities" / "examplerelative.md",
         operation="create",
-        new_body=_entity_body("joy", "Joy's birthday is August 14th."),
+        new_body=_entity_body("examplerelative", "ExampleRelative's synthetic milestone is ExampleDate."),
         reason="explicit wiki command",
     )
     llm = _FakeCuratorLLM(updates=[update])
@@ -254,7 +254,7 @@ async def test_explicit_command_produces_a_real_file(tmp_vault_curator):
     curator, vault_root = tmp_vault_curator
     pages_before = {p.resolve() for p in vault_root.rglob("*.md")}
 
-    utterance = "Schreib ins Wiki, dass Joys Geburtstag am 14. August ist"  # i18n-allow
+    utterance = "Schreib ins Wiki, dass ExampleRelative am Beispieldatum einen synthetischen Meilenstein hat"  # i18n-allow
     m = match_wiki_intent(utterance)
     assert m is not None and m.content is not None
 
@@ -265,7 +265,7 @@ async def test_explicit_command_produces_a_real_file(tmp_vault_curator):
     pages_after = {p.resolve() for p in vault_root.rglob("*.md")}
     new_pages = pages_after - pages_before
     assert new_pages, "an explicit wiki command MUST produce a visible page"
-    assert any(p.name == "joy.md" for p in new_pages)
+    assert any(p.name == "examplerelative.md" for p in new_pages)
 
     # The write path genuinely ran through the curator LLM exactly once, and
     # the ingested content carried the fact from the utterance.

@@ -982,6 +982,17 @@ def set_ui_language(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "ui", "language", name)
 
 
+def set_ui_theme(theme: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the app's colour theme in ``[ui] theme``.
+
+    ``theme`` is one of ``dark`` | ``light`` | ``system`` (validated by the
+    caller). Read at boot by the native window so the frame is painted in the
+    matching colour before the web view loads, and by the frontend so the
+    choice survives a cleared browser store.
+    """
+    _patch_table(path, "ui", "theme", theme)
+
+
 def set_preferred_opener(opener: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the remembered "open with" choice in ``[ui] preferred_opener``.
 
@@ -1180,7 +1191,8 @@ def set_ultrawiki_slot(key: str, value: str, *, path: Path = DEFAULT_CONFIG_FILE
 def set_overlay_style(style: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the on-screen overlay style to ``[ui] orb_style`` in jarvis.toml.
 
-    ``style`` is one of ``"jarvis_bar"`` / ``"mascot"`` / ``"none"``. TOML-only
+    ``style`` is one of ``jarvis.ui.overlay_styles.OVERLAY_STYLES``
+    (``"jarvis_bar"`` / ``"mascot"`` / ``"voice_orb"`` / ``"none"``). TOML-only
     by design: ``ui.orb_style`` is NOT in the drift-guard's reference snapshot, so the
     drift-guard never reverts it (same rationale as :func:`set_autostart`). The
     Settings route applies the change live; this persists the boot default.
@@ -1361,6 +1373,20 @@ def _ensure_writable_config_path(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text("", encoding="utf-8")
+        # Say it. Creating this file is either a first run or a configuration
+        # that has gone missing, and the two are indistinguishable from here —
+        # but the CONSEQUENCE is the same either way and it is severe: every
+        # writer below is a read-modify-write, so from an empty file onward the
+        # config is silently rebuilt from nothing but the individual keys later
+        # writes happen to touch. Everything the user had configured — provider
+        # pins included — is simply absent, and without this line there was no
+        # trace anywhere that it had ever existed (AP-30).
+        log.warning(
+            "Created a NEW empty configuration file at %s. If this is not a "
+            "first run, the previous configuration is gone and in-app settings "
+            "will be rebuilt from defaults as they are touched.",
+            path,
+        )
     return path
 
 
@@ -2273,6 +2299,70 @@ def _strip_persona_name(path: Path) -> None:
         _atomic_write(path, out)
 
 
+class ConfigSectionLossError(RuntimeError):
+    """A config write would have removed whole top-level entries.
+
+    Every writer in this module is a read-modify-write that sets or deletes a
+    single key: none of them may make a top-level table disappear. When one
+    would, the outgoing document is not an edit of the file on disk — it was
+    built from a partial or empty parse — and completing the write destroys
+    settings nobody asked to change.
+    """
+
+
+def _top_level_names(raw: str) -> set[str] | None:
+    """Top-level table/key names in ``raw``, or ``None`` when unparsable.
+
+    ``None`` deliberately disables the loss guard rather than blocking a write:
+    a file that cannot be parsed is exactly the file an in-app repair must
+    still be able to overwrite.
+    """
+    text = raw[len(_BOM) :] if raw.startswith(_BOM) else raw
+    if not text.strip():
+        return set()
+    try:
+        return set(tomlkit.parse(text).keys())
+    except Exception:  # noqa: BLE001 — an unparsable file is not a veto
+        log.debug("Config loss guard could not parse a TOML document.", exc_info=True)
+        return None
+
+
+def _assert_no_top_level_loss(path: Path, content: str) -> None:
+    """Refuse a write that would drop whole top-level entries.
+
+    The maintainer's live ``jarvis.toml`` went from 53 KB (2026-07-17 backup,
+    ``[brain.realtime]`` included) to 183 bytes holding only the keys that boot
+    migrations and the wake/dictation writers happen to touch. No writer here
+    can produce that from a populated file — but an empty or half-read one
+    can, and nothing anywhere noticed. This guard turns that class of loss into
+    a refused write with a named cause instead of a silent deletion.
+
+    Legitimate removals stay legal: the worker-tier migration drops the NESTED
+    ``[brain.sub_jarvis]`` table and the persona heal drops the NESTED
+    ``[persona] name`` key, neither of which is a top-level entry.
+    """
+    try:
+        existing = path.read_text(encoding="utf-8")
+    except OSError:
+        # No readable predecessor means nothing can be lost.
+        return
+    before = _top_level_names(existing)
+    if not before:
+        return
+    after = _top_level_names(content)
+    if after is None:
+        return
+    lost = before - after
+    if not lost:
+        return
+    raise ConfigSectionLossError(
+        f"Refusing to write {path}: it would remove the top-level "
+        f"configuration entries {sorted(lost)}. A config writer only ever "
+        "sets or clears a single key, so this write was built from an "
+        "incomplete read of the file."
+    )
+
+
 def _atomic_write(path: Path, content: str) -> None:
     """Atomic tempfile + replace, read-only-aware.
 
@@ -2282,7 +2372,12 @@ def _atomic_write(path: Path, content: str) -> None:
     succeed; otherwise the call fails with ``[WinError 5] Zugriff
     verweigert``. We restore the flag in ``finally`` so the defense holds
     even if the write itself raises.
+
+    Before anything touches the file, :func:`_assert_no_top_level_loss` rejects
+    a document that would delete top-level entries — the failure mode that
+    silently took a provider pin (and everything else) off this machine.
     """
+    _assert_no_top_level_loss(path, content)
     tmp = _write_unique_temp(path, content)
 
     was_read_only = False

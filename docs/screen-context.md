@@ -224,6 +224,33 @@ window", "edge case") read as commands. Screen Context reuses that masking
 approach before matching, and adds its own: "see" in "I see" / "you see" /
 "let's see", "look" in "look into it" / "look for", "schauen wir mal", "a ver".
 
+### 3.1a Looking is not operating — the Computer-Use boundary (BINDING)
+
+Maintainer mandate 2026-08-02, after Computer-Use answered "what is on my
+screen?" by taking over the desktop. **A question about the screen is answered
+with one screenshot. Computer-Use runs only when an action is asked for.** The
+two paths are enforced apart in three places, and all three are load-bearing:
+
+1. **`intent.requests_screen_operation`** — a turn that asks for an on-screen
+   action ("click the button on my screen") is *not* a look request, so Screen
+   Context stands down and leaves the tools the user asked for in place.
+2. **`jarvis/brain/cu_gate.py`** — the mirror image. Its vocabulary is split
+   into ACTION verbs and SURFACE nouns, because a noun names *where*, not *what
+   to do*. A turn this module reads as a look request cannot start a desktop
+   mission even when it names a surface, and even inside the recent-run
+   follow-up window. Before the split, the bare noun "Bildschirm" was itself
+   sufficient authority — which is how a question moved the user's mouse.
+3. **`BrainManager.generate`** — a successful capture strips every tool from
+   the turn, so the two paths can never both run for one utterance.
+
+Two consequences worth stating, because both were regressions waiting to
+happen. A screenshot request ("mach mal einen Screenshot") is the *least*
+ambiguous look request there is: it must classify as `SCREEN`, and the German
+pattern that missed the most common spoken phrasing of it is exactly why the
+turn used to reach Computer-Use. And naming the harness ("mit Computer-Use ...")
+is the strongest desktop signal there is: it stands Screen Context down and
+passes the gate unconditionally.
+
 ### 3.2 Targeting
 
 The requirement is explicit and it differs from every existing capture path in
@@ -419,15 +446,23 @@ exclusion has the same blank/unblank correctness backstop as the other OSes.
 **Done when:** every capture is preceded by a visible indicator on all three
 OSes, or by a logged degradation naming why it could not be shown.
 
-### Wave 4 — settings surface ✅ *implemented*
+### Wave 4 — settings surface ✅ *implemented, simplified 2026-08-02*
 
-A Screen Context group in Settings exposes the master switch, structured
-end-to-end readiness (capture, permission, indicator, vision, accessibility,
-and OCR),
-denylist and redaction-pattern editors, default-rule and OCR toggles, retention
-promise, an immediate discard action, and a one-capture test that deletes its
-own handle without returning pixels. The REST surface also exposes TTL and
-text-budget settings. Multi-field changes use one atomic config replacement.
+**One switch, and nothing else** (maintainer mandate 2026-08-02). The Settings
+card shows the master switch plus one honest readiness line — "Ready on N
+monitor(s)", or the first real blocker while the feature is on. That is the
+whole card.
+
+Everything it used to expose — denylist editor, extra redaction patterns, the
+default-rule and OCR toggles, the retention field, the readiness grid, and the
+Save / Test / Discard buttons — is gone from the UI, not from the product. The
+privacy rules still run at their shipped defaults on every capture (default
+patterns on, monitor-wide denylist check, 120 s TTL, nothing on disk), and every
+key remains readable and writable through the REST surface and therefore through
+`jarvis api screen-context get-settings|put-settings`. A settings card that asks
+a non-technical user to write regular expressions before a feature works is a
+card they switch off instead of using; the CLI-first contract (CLAUDE.md §5) is
+what makes hiding it safe rather than lossy.
 
 ### Wave 5 — OCR supplement ✅ *implemented*
 

@@ -187,7 +187,7 @@ async def test_session_survives_idle_window_after_mission_readback(
     spoken out-of-band, the user must get a fresh idle window to respond — the
     session must NOT hang up on the stale idle window armed mid-mission.
 
-    Live failure 2026-06-18 08:52 (session b55afd02): a CU mission failed at
+    Live failure 2026-06-18 08:52 (session 10000116): a CU mission failed at
     08:52:02, Jarvis spoke 'Das am Bildschirm hat nicht geklappt …', and the
     idle window armed at the previous 08:51:48 boundary expired at 08:52:18 and
     hung up with ``idle_timeout`` ~10 s after the user heard the failure — no

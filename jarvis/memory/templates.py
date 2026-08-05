@@ -42,7 +42,7 @@ identity:
   pronouns: null
   languages: []                # e.g. [de, en]
   primary_language: de
-  timezone: Europe/Berlin
+  timezone: Etc/UTC
   work_hours: null             # "09:00-19:00" or open
   devices: []                  # "headset during the day", "speaker in the evening"
 

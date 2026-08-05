@@ -84,6 +84,11 @@ export function ApiKeysView() {
     mode: liveMode,
     realtimeAvailable,
     statusKnown,
+    connecting,
+    requiresWebRtcOffer,
+    transportOfferReady,
+    transportOfferDetail,
+    transportIssue,
     sessionActive,
     activeSessionMode,
     activeSessionProvider,
@@ -147,6 +152,11 @@ export function ApiKeysView() {
           mode={engineMode}
           realtimeAvailable={realtimeAvailable}
           statusKnown={statusKnown}
+          connecting={connecting}
+          requiresWebRtcOffer={requiresWebRtcOffer}
+          transportOfferReady={transportOfferReady}
+          transportOfferDetail={transportOfferDetail}
+          transportIssue={transportIssue}
           sessionActive={sessionActive}
           activeSessionMode={activeSessionMode}
           activeSessionProvider={activeSessionProvider}

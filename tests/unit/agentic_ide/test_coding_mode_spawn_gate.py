@@ -35,7 +35,7 @@ from jarvis.brain.spawn_gate import (
 )
 from tests.fakes.fake_pty_manager import FakePtyManager
 
-# The live utterance, in the spelling the transcript actually produced —
+# The synthetic utterance, in the spelling the transcript actually produced —
 # including "Elis" for the pane called Ellis, which is what made the phonetic
 # folding part of this path rather than an incidental detail.
 LIVE_TURN = (

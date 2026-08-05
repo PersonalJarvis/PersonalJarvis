@@ -419,6 +419,15 @@ _EVERYONE_TEMPLATES: tuple[re.Pattern[str], ...] = tuple(
         r"\b(?:prompt|brief|instruct|assign)\w*\b",
         r"\b(?:prompt|brief|instruct|assign)\w*\b[^.!?]{0,30}?"
         r"\b(?:each\s+(?:one|of\s+them)|all\s+of\s+them)\b",
+        # The collective pronoun is the direct object: "prompt all except T2".
+        # Requiring the briefing verb immediately beside it avoids reading
+        # ordinary work nouns ("fix all tests") as a workspace fan-out.
+        r"\b(?:alle|allen)\b(?:[\s,]+(?:terminals?|panes?))?[\s,]*"
+        r"\b(?:prompt|brief|anweis|beauftrag)\w*\b",  # i18n-allow: input vocab
+        r"\b(?:prompt|brief|instruct|assign)\w*\b[\s,]*"
+        r"\b(?:all|everyone|everybody)\b(?:\s+(?:terminals?|panes?))?",
+        r"\b(?:prompt|instruy|asigna|encarga)\w*\b[\s,]*(?:a\s+)?"
+        r"\b(?:todos|todas)\b(?:\s+(?:terminales|paneles))?",
         r"^(?:und\s+)?\b(?:alle|allen)\b[^.!?]{0,20}?"  # i18n-allow: input vocab
         r"\b(?:soll|sollen|m[uü]ssen|k[oö]nnen)\b",  # i18n-allow: input vocab
         r"^(?:and\s+)?\b(?:everyone|everybody|all\s+of\s+them)\b[^.!?]{0,20}?"
@@ -426,6 +435,73 @@ _EVERYONE_TEMPLATES: tuple[re.Pattern[str], ...] = tuple(
         r"\b(?:diles?|preg[uú]nta)\b[\s,]*\b(?:a\s+)?todos\b",
         r"^\b(?:todos|todas)\b[^.!?]{0,20}?\b(?:deben|deber[ií]an)\b",
     )
+)
+
+# A named pane can be mentioned precisely because it must NOT receive the
+# fleet instruction. These are selection operators, not task negations. The
+# difference matters: "prompt T12 not to delete files" still addresses T12,
+# while "prompt everyone except T12" addresses everyone else.
+_EXCLUSION_CUE_RE = re.compile(
+    r"\b(?:außer|ausser|ausgenommen|except(?:\s+for)?|excluding|apart\s+from|"
+    r"but\s+not|not|nicht|excepto|salvo|menos|sino)\b",
+    re.IGNORECASE,
+)
+
+_EXCLUSION_GAP_RE = re.compile(
+    r"^[\s,:;\-]*(?:(?:the|den|dem|die|das|los|las)\s+)?"
+    r"(?:(?:terminals?|terminales|panes?|tabs?)\s+)?$",
+    re.IGNORECASE,
+)
+
+_OTHER_PANES_RE = re.compile(
+    r"\b(?:alle\s+anderen|all\s+(?:the\s+)?others|everyone\s+else|"
+    r"todos\s+los\s+dem[aá]s|todas\s+las\s+dem[aá]s)\b",
+    re.IGNORECASE,
+)
+
+_COLLECTIVE_EXCEPTION_RE = re.compile(
+    r"\b(?:alle|allen)(?:\s+(?:terminals?|panes?))?[\s,]+"
+    r"(?:außer|ausser|ausgenommen)|"
+    r"\b(?:all|everyone|everybody)(?:\s+(?:terminals?|panes?))?[\s,]+"
+    r"(?:except(?:\s+for)?|excluding|apart\s+from|but\s+not)|"
+    r"\b(?:todos|todas)(?:\s+(?:los|las))?(?:\s+(?:terminales|paneles))?"
+    r"[\s,]+(?:excepto|salvo|menos)",
+    re.IGNORECASE,
+)
+
+_NO_WORK_AFTER_NAME_RE = re.compile(
+    r"^[^.!?;]{0,35}\b(?:"
+    r"nichts\s+(?:mehr\s+)?(?:machen|tun)|"
+    r"nicht\s+(?:mehr\s+)?(?:prompt\w*|weitermach\w*|weiterarbeit\w*)|"
+    r"do\s+nothing|nothing\s+to\s+do|"
+    r"do\s+not\s+(?:prompt|continue|keep\s+working)|"
+    r"not\s+(?:prompt|continue|keep\s+working)|"
+    r"nada\s+que\s+hacer|no\s+(?:los?\s+|las?\s+)?"
+    r"(?:instruy\w*|asign\w*|contin[uú]\w*)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_TRAILING_NEGATION_RE = re.compile(
+    r"^[\s,:\-]*(?:aber\s+)?(?:nicht|not|no)\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+_TASK_AFTER_EXCLUSION_RE = re.compile(
+    r"^[\s,:\-]*(?:"
+    r"(?:dass|damit)\s+(?:sie|ihr|diese)?\s*|"
+    r"that\s+(?:they|those)?\s*|to\s+|"
+    r"que\s+(?:ellos|ellas|estos|estas)?\s*"
+    r")(?P<task>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+_OTHER_PANES_TASK_RE = re.compile(
+    r"\b(?:alle\s+anderen|all\s+(?:the\s+)?others|everyone\s+else|"
+    r"todos\s+los\s+dem[aá]s|todas\s+las\s+dem[aá]s)\b[^.!?;,]{0,12}?"
+    r"\b(?:soll(?:en)?|m[uü]ss(?:en)?|should|must|deben|deber[ií]an)\b\s+"
+    r"(?P<task>[^.!?;,]+)",
+    re.IGNORECASE,
 )
 
 # One candidate call-sign word. Shared with ``clarify`` and the resolver
@@ -461,6 +537,32 @@ _BRIEFED_NAME_RE = re.compile(
     r"das|der|el|la|ese|este)\s+)?"  # i18n-allow: input vocab
     r"(?:(?:terminals?|terminales|panes?|tabs?)\s+)?"
     r"(?P<word>[^\W\d_]+\d*)",
+    re.IGNORECASE,
+)
+
+# A singular pane reference whose meaning comes from the UI rather than from a
+# spoken call-sign. This is intentionally narrower than a bare "terminal": it
+# requires a demonstrative/definite article or an on-screen word, and is only
+# consulted when chat view reports one visible pane. Matching vocabulary, not
+# prose, across every supported input locale.
+_VISIBLE_TERMINAL_RE = re.compile(
+    r"(?:"
+    r"\b(?:this|that|the|current|visible|"
+    r"dies(?:es|em|en)?|das|der|dem|den|aktuelle[nmrs]?|sichtbare[nmrs]?|"
+    r"el|este|ese|actual|visible)\s+(?:terminal|pane|tab)\b"
+    r"|"
+    r"\b(?:terminal|pane|tab)\b[^.!?]{0,20}?"
+    r"\b(?:here|on\s+screen|hier|im\s+bild|aqu[ií]|en\s+pantalla)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+_VISIBLE_REPORT_RE = re.compile(
+    r"\b(?:"
+    r"what|how|status|progress|doing|done|stuck|"
+    r"was|wie|status|fortschritt|macht|tut|l[aä]uft|los|fertig|h[aä]ngt|"
+    r"qu[eé]|c[oó]mo|estado|progreso|haciendo|hecho|atascado"
+    r")\b",
     re.IGNORECASE,
 )
 
@@ -583,6 +685,73 @@ def _coordinated_group(
     return group
 
 
+def _excluded_by_cue(
+    text: str, mentions: list[tuple[int, int, str]]
+) -> set[str]:
+    """Names immediately following an explicit set-subtraction cue."""
+    anchors: set[str] = set()
+    for cue in _EXCLUSION_CUE_RE.finditer(text):
+        for start, _, name in mentions:
+            if start < cue.end():
+                continue
+            if _EXCLUSION_GAP_RE.fullmatch(text[cue.end():start]):
+                anchors.add(name)
+            break
+    return _coordinated_group(mentions, text, anchors)
+
+
+def _coordination_groups(
+    mentions: list[tuple[int, int, str]], text: str
+) -> list[list[tuple[int, int, str]]]:
+    """Partition mentioned names into adjacent spoken enumerations."""
+    if not mentions:
+        return []
+    groups = [[mentions[0]]]
+    for previous, current in zip(mentions, mentions[1:], strict=False):
+        if _COORDINATION_RE.match(text[previous[1]:current[0]]):
+            groups[-1].append(current)
+        else:
+            groups.append([current])
+    return groups
+
+
+def _excluded_by_no_work_clause(
+    text: str, mentions: list[tuple[int, int, str]]
+) -> set[str]:
+    """Names in a collective sentence whose clause says Jarvis should skip them."""
+    excluded: set[str] = set()
+    for group in _coordination_groups(mentions, text):
+        suffix = text[group[-1][1]:]
+        sentence = re.split(r"[.!?;]", suffix, maxsplit=1)[0]
+        if _NO_WORK_AFTER_NAME_RE.search(sentence) or _TRAILING_NEGATION_RE.fullmatch(
+            suffix.strip()
+        ):
+            excluded.update(name for _, _, name in group)
+    return excluded
+
+
+def _selection_instruction(
+    text: str,
+    mentions: list[tuple[int, int, str]],
+    excluded: set[str],
+) -> str:
+    """Best-effort task text after a target selector and its exception list."""
+    excluded_mentions = [item for item in mentions if item[2] in excluded]
+    if excluded_mentions:
+        suffix = text[max(end for _, end, _ in excluded_mentions):].strip()
+        match = _TASK_AFTER_EXCLUSION_RE.match(suffix)
+        if match:
+            task = " ".join(match.group("task").split())
+            if len(task) >= _MIN_INSTRUCTION_CHARS:
+                return task
+    if match := _OTHER_PANES_TASK_RE.search(text):
+        task = " ".join(match.group("task").split())
+        if len(task) >= _MIN_INSTRUCTION_CHARS:
+            return task
+    mentioned_names = [name for _, _, name in mentions]
+    return _useful_instruction(text, *mentioned_names)
+
+
 def detect_all(
     user_text: str, *, names: list[str] | None = None
 ) -> list[TerminalIntent]:
@@ -651,29 +820,42 @@ def detect_all(
             if pattern.search(working)
         }
     mentions = _mentions(working, candidates)
+    explicit_exclusions = _excluded_by_cue(working, mentions)
+    no_work_exclusions = _excluded_by_no_work_clause(working, mentions)
+    collective = any(
+        pattern.search(working) for pattern in _EVERYONE_TEMPLATES
+    ) or bool(
+        _COLLECTIVE_EXCEPTION_RE.search(working) and explicit_exclusions
+    ) or bool(_OTHER_PANES_RE.search(working) and no_work_exclusions)
+    exclusions = explicit_exclusions | (no_work_exclusions if collective else set())
 
     # The collective address reaches EVERY open pane, so it is the costliest
     # thing a misheard word can trigger — a question about a public figure that
     # speech recognition turned into "sag allen …" would brief the whole
     # workspace with it. Checked here rather than inside the templates because
     # it is a property of the sentence, not of any one addressing shape.
-    if any(pattern.search(working) for pattern in _EVERYONE_TEMPLATES) and not (
-        _is_outside_world_talk(working)
-    ):
+    if collective and not _is_outside_world_talk(working):
         kind = (
             KIND_REPORT
             if report_anchors and not (prompt_anchors or weak_prompt_anchors)
             else KIND_PROMPT
         )
+        selected = [name for name in candidates if name not in exclusions]
+        if not selected:
+            return []
+        shared = (
+            ""
+            if kind == KIND_REPORT
+            else _selection_instruction(working, mentions, exclusions)
+        )
         return [
             TerminalIntent(
                 terminal=name,
                 kind=kind,
-                instruction="" if kind == KIND_REPORT
-                else _useful_instruction(working, name),
+                instruction=shared,
                 utterance=text,
             )
-            for name in candidates
+            for name in selected
         ]
 
     if report_anchors:
@@ -726,8 +908,8 @@ def detect_all(
         # it the branch a merely SIMILAR word can win, and the names are short
         # enough for ordinary speech to score close: measured against the
         # shipping pool "unten" reaches "Hunter" and "dann" reaches "Dana"; the
-        # live 2026-07-26 session had "keine" reaching "Kai" and briefing a  # i18n-allow: quoted transcript tokens
-        # second agent nobody had named. So here — and only here — the name has
+        # "keine" once reached "Kai" and briefed an unnamed agent.  # i18n-allow: transcript tokens
+        # So here — and only here — the name has
         # to be exact (or fold to the same sound, which is what carries a
         # garbled transcript). An addressing shape, being independent evidence,
         # still admits a fuzzy call-sign in the branches above.
@@ -740,13 +922,18 @@ def detect_all(
     else:
         return []
 
-    addressed = _coordinated_group(mentions, working, anchors)
+    anchors -= explicit_exclusions
+    addressed = _coordinated_group(mentions, working, anchors) - explicit_exclusions
     ordered = [name for _, _, name in mentions if name in addressed]
     # An anchor matched by a template but never located as a word (a garbled
     # transcript the templates still caught) keeps its place at the end.
     ordered += [name for name in anchors if name not in ordered]
 
-    shared = "" if kind == KIND_REPORT else _useful_instruction(working, *ordered)
+    shared = "" if kind == KIND_REPORT else (
+        _selection_instruction(working, mentions, explicit_exclusions)
+        if explicit_exclusions
+        else _useful_instruction(working, *ordered)
+    )
     return [
         TerminalIntent(
             terminal=name, kind=kind, instruction=shared, utterance=text
@@ -769,6 +956,56 @@ def detect(user_text: str, *, names: list[str] | None = None) -> TerminalIntent 
     """
     found = detect_all(user_text, names=names)
     return found[0] if found else None
+
+
+def detect_visible(
+    user_text: str,
+    *,
+    terminal: str | None = None,
+    names: list[str] | None = None,
+) -> TerminalIntent | None:
+    """Resolve "this terminal" to the one pane visibly filling chat view.
+
+    Explicit call-signs always win. With no supplied ``terminal`` the active
+    session is consulted, but only its ephemeral chat-stage context; grid view
+    deliberately has no implicit target.
+    """
+    text = (user_text or "").strip()
+    if len(text) < 3 or _VISIBLE_TERMINAL_RE.search(text) is None:
+        return None
+    candidates = _running_names() if names is None else list(names)
+    if not candidates:
+        return None
+    # "Prompt T1, not this terminal" and every ordinary explicit address keep
+    # the established resolver's answer, even while another pane is on stage.
+    if detect_all(text, names=candidates):
+        return None
+    selected = terminal
+    if selected is None:
+        try:
+            from .session import get_registry
+
+            current = get_registry().session
+            pane = current.contextual_terminal() if current is not None else None
+            selected = pane.name if pane is not None else None
+        except Exception:  # noqa: BLE001 - optional UI context, never fatal
+            return None
+    if not selected or selected not in candidates:
+        return None
+    if _BRIEFING_VERB_RE.search(text):
+        kind = KIND_PROMPT
+    elif _VISIBLE_REPORT_RE.search(text):
+        kind = KIND_REPORT
+    elif _looks_like_instruction(text):
+        kind = KIND_PROMPT
+    else:
+        return None
+    return TerminalIntent(
+        terminal=selected,
+        kind=kind,
+        instruction=text if kind == KIND_PROMPT else "",
+        utterance=text,
+    )
 
 
 # Below this, stripping has eaten the task rather than the addressing — "schick
@@ -833,7 +1070,8 @@ def _looks_like_instruction(text: str) -> bool:
 # "Open N more terminals"                                                     #
 # --------------------------------------------------------------------------- #
 # A second, narrower request shape: the user asking for MORE PANES rather than
-# addressing an existing one ("spawne fünf neue Claude Code Terminals").  # i18n-allow: quoted spoken input
+# addressing an existing one ("spawne fünf neue Claude Code  # i18n-allow: quoted spoken input
+# Terminals").
 #
 # Why it needs its own detector instead of a router tool: the sentence opens
 # with the very word the force-spawn heuristic reads as "dispatch a background
@@ -842,9 +1080,10 @@ def _looks_like_instruction(text: str) -> bool:
 # deterministic too, and it deliberately claims the turn BEFORE the
 # vehicle-naming stand-down (see ``owns_turn``).
 #
-# The safety margin is one mandatory word: a TERMINAL NOUN. "Spawne fünf  # i18n-allow: quoted spoken input
-# Terminals" is a workspace request; "spawne fünf Agenten" stays a background  # i18n-allow: quoted spoken input
-# mission. A false positive here silently withholds a mission the user wanted,
+# The safety margin is one mandatory word: a TERMINAL NOUN.
+# "Spawne fünf Terminals" is a workspace request;  # i18n-allow: quoted spoken input
+# "spawne fünf Agenten" stays a background mission.  # i18n-allow: quoted spoken input
+# A false positive here silently withholds a mission the user wanted,
 # which is invisible; a false negative just costs one clearer sentence.
 
 # Nouns that mean "a pane of the coding workspace". "Fenster"/"ventana"
@@ -854,6 +1093,33 @@ _PANE_NOUN_RE = re.compile(
     r"\b(?:terminals?|terminales|panes?|tabs?)\b",
     re.IGNORECASE,
 )
+
+# ``tab`` is shared vocabulary: inside the coding workspace it can mean a pane,
+# but beside an explicit browser surface it means a browser tab. The workspace
+# must never win that collision merely because it happens to be open. This is a
+# context veto rather than deleting ``tab`` from the pane vocabulary, so the
+# established shorthand "open three more tabs" keeps working.
+_BROWSER_TAB_CONTEXT_RE = re.compile(
+    r"\b(?:browser|chrome|firefox|safari|microsoft\s+edge|web\s*site|webpage|"
+    r"incognito|private|guest|"
+    r"webseite|internetseite|inkognito|privat|gast|"  # i18n-allow: input vocab
+    r"navegador|sitio\s+web|p[aá]gina\s+web|"  # i18n-allow: input vocab
+    r"inc[oó]gnit\w*|privad\w*)\b",  # i18n-allow: input vocab
+    re.IGNORECASE,
+)
+
+
+def _pane_nouns(text: str) -> list[re.Match[str]]:
+    """Return coding-pane nouns, excluding tabs owned by a named browser."""
+    browser_owns_tabs = _BROWSER_TAB_CONTEXT_RE.search(text) is not None
+    return [
+        match
+        for match in _PANE_NOUN_RE.finditer(text)
+        if not (
+            browser_owns_tabs
+            and match.group(0).casefold() in {"tab", "tabs"}
+        )
+    ]
 
 # Verbs that ask for something to be opened, plus the additive markers that
 # carry the same request without a verb ("noch drei Terminals").
@@ -871,18 +1137,34 @@ _OPEN_VERB_RE = re.compile(
     re.IGNORECASE,
 )
 _ADDITIVE_RE = re.compile(
-    r"\b(?:noch|weitere\w*|zus[aä]tzlich\w*|mehr|another|more|extra|"  # i18n-allow: German input vocabulary
+    r"\b(?:noch|weitere\w*|zus[aä]tzlich\w*|mehr|another|"  # i18n-allow: input vocab
+    r"more|"
+    r"extra|"
     r"otr[oa]s?|m[aá]s)\b",
     re.IGNORECASE,
 )
 
-# An utterance that OPENS with a question word is asking about terminals, not
-# asking for them ("wie viele Terminals kann ich öffnen?"). A polite request  # i18n-allow: quoted spoken input
-# that merely ends in a question mark ("kannst du 5 Terminals öffnen?") is NOT  # i18n-allow: quoted spoken input
-# excluded — that is a real request, and the filler prefix above strips its
-# politeness for the composer anyway.
+# An utterance that OPENS with an information-question shape is asking about
+# terminals, not asking for them.
+# This includes prepositional questions ("with which shortcut …") and
+# first-person modals ("can I …"); neither is an order to the assistant. A
+# polite request that merely ends in a question mark is not excluded: it is a
+# real request, and the filler prefix above strips its politeness for the
+# composer anyway.
 _QUESTION_OPENER_RE = re.compile(
-    r"^(?:"
+    r"^\s*[¿]?(?:"
+    # A preposition can legitimately precede the interrogative. Without this,
+    # "with which shortcut can I open a browser tab" opened an IDE pane.
+    r"(?:mit|in|auf|an|von|zu|unter|[uü]ber|f[üu]r|durch)"  # i18n-allow: input vocab
+    r"\s+welche\w*|"  # i18n-allow: input vocab
+    r"(?:with|in|on|at|from|to|under|for|by|through)\s+which|"
+    r"(?:con|en|de|a|para|por)\s+(?:qu[eé]|cu[aá]les?)|"  # i18n-allow: input vocab
+    # First-person and impersonal modals ask about possibility or advice. Keep
+    # second-person forms out: "can you open …" remains a polite command.
+    r"(?:kann|k[oö]nnte|soll(?:te)?|muss|darf|d[üu]rfte)"  # i18n-allow: input vocab
+    r"\s+(?:ich|man)|"  # i18n-allow: input vocab
+    r"(?:can|could|should|must|may|would|do)\s+i|"
+    r"(?:puedo|podr[ií]a|debo|se\s+puede)|"  # i18n-allow: input vocab
     r"wie|was|wieso|warum|wo|wann|welche\w*|wieviel\w*|"
     r"how|what|why|where|when|which|"
     r"c[oó]mo|qu[eé]|cu[aá]nt\w*|por\s+qu[eé]|d[oó]nde|cu[aá]ndo"
@@ -893,9 +1175,12 @@ _QUESTION_OPENER_RE = re.compile(
 # Number words per locale. Capped at the workspace maximum: past it the count is
 # clamped anyway, so spelling out "twenty" buys nothing.
 _NUMBER_WORDS: dict[str, int] = {
-    # German — "ein/eine/einen" doubles as the article, which is exactly right  # i18n-allow: names the German number words below
+    # German number words double as articles here.  # i18n-allow: context for matching data
     # here ("mach noch ein Terminal auf" = one).  # i18n-allow: quoted spoken input
-    "ein": 1, "eine": 1, "einen": 1, "eins": 1,  # i18n-allow: German number words (input vocabulary)
+    "ein": 1,  # i18n-allow: German number word input vocabulary
+    "eine": 1,  # i18n-allow: German number word input vocabulary
+    "einen": 1,  # i18n-allow: German number word input vocabulary
+    "eins": 1,  # i18n-allow: German number word input vocabulary
     # Both ASCII spellings of every umlaut word: a transcript may drop the
     # umlaut ("funf") or transliterate it ("fuenf"), and only the first was
     # covered — so "starte fünf Agenten" fell back to a count of one whenever
@@ -1224,7 +1509,8 @@ def _spoken_count(text: str) -> int:
 #: drift into different clauses of the sentence.
 _COUNT_AGENT_RE = re.compile(
     r"\b(?P<count>\d{1,3}|[a-zäöüñ]+)\s+"  # i18n-allow: input vocab
-    r"(?:(?:neue|weitere|zus[aä]tzliche|more|new|extra|additional|de|del|"  # i18n-allow: input vocab
+    r"(?:(?:neue|weitere|zus[aä]tzliche|more|new|extra|"  # i18n-allow: input vocab
+    r"additional|de|del|"
     r"otros|otras|m[aá]s|terminals?|terminales|panes?|tabs?)\s+){0,2}"
     rf"(?P<agent>{_AGENT_ALTERNATION})\b",
     re.IGNORECASE,
@@ -1349,7 +1635,7 @@ def _spoken_groups(text: str) -> tuple[SpawnGroup, ...]:
     # A count that no CLI name claimed, sitting in front of the pane noun, is a
     # group of its own: "two terminals and one Codex" is three panes, and the
     # two that were not given a name inherit one.
-    for match in _PANE_NOUN_RE.finditer(text):
+    for match in _pane_nouns(text):
         index = next(
             (
                 i
@@ -1507,10 +1793,16 @@ _CLI_NEAR_MISS_FLOOR = 0.55
 #: every one of them would be held up as "did you mean Claude Code?".
 _CLI_POSITION_NOISE = frozenset(
     {
-        "neue", "neuen", "weitere", "weiteren", "zusätzliche", "zusaetzliche",  # i18n-allow: input vocab
+        "neue",  # i18n-allow: input vocab
+        "neuen",  # i18n-allow: input vocab
+        "weitere",  # i18n-allow: input vocab
+        "weiteren",  # i18n-allow: input vocab
+        "zusätzliche",  # i18n-allow: input vocab
+        "zusaetzliche",  # i18n-allow: input vocab
         "new", "more", "extra", "additional", "other", "another",
         "otros", "otras", "más", "mas", "nuevos", "nuevas",  # i18n-allow: input vocab
-        "de", "del", "von", "vom", "of", "the", "a", "an", "und", "and", "y",  # i18n-allow: input vocab
+        "de", "del", "von", "vom", "of", "the", "a", "an",  # i18n-allow: input vocab
+        "und", "and", "y",  # i18n-allow: input vocab
         "bitte", "please", "por", "favor", "mir", "me", "uns", "us",  # i18n-allow: input vocab
     }
 )
@@ -1563,7 +1855,7 @@ def _uncertain_clis(text: str) -> tuple[UncertainCli, ...]:
     acting path owns it.
     """
     counts = _count_tokens(text)
-    pane_nouns = [(m.start(), m.end()) for m in _PANE_NOUN_RE.finditer(text)]
+    pane_nouns = [(m.start(), m.end()) for m in _pane_nouns(text)]
     known = [
         (m.start(), m.end())
         for m in _AGENT_RE.finditer(text)
@@ -1654,7 +1946,7 @@ def _spawn_span(text: str) -> _SpawnSpan | None:
     """The bounded clause that genuinely asks for panes to be opened."""
     for clause_match in _CLAUSE_RE.finditer(text):
         clause = clause_match.group(0)
-        panes = list(_PANE_NOUN_RE.finditer(clause)) + _counted_agent_mentions(clause)
+        panes = _pane_nouns(clause) + _counted_agent_mentions(clause)
         actors = _open_verbs(clause) + list(_ADDITIVE_RE.finditer(clause))
         if not panes or not actors:
             continue
@@ -1905,7 +2197,8 @@ _CLOSE_PARTICLE_RE = re.compile(
     re.IGNORECASE,
 )
 _ALL_PANES_RE = re.compile(
-    r"\b(?:alle[nr]?|s[aä]mtliche[nr]?|jede[nr]?|all|every|each|todos?|todas?)\b",  # i18n-allow: input vocab
+    r"\b(?:alle[nr]?|s[aä]mtliche[nr]?|jede[nr]?|all|every|"  # i18n-allow: input vocab
+    r"each|todos?|todas?)\b",
     re.IGNORECASE,
 )
 _CLOSE_STATE_QUESTION_RE = re.compile(
@@ -1963,7 +2256,7 @@ def _closes_the_fleet(clause: str) -> bool:
     that is right there; a false one kills every coding agent in the workspace
     with no confirmation and no undo — so every ambiguous shape stands down.
     """
-    for pane in _PANE_NOUN_RE.finditer(clause):
+    for pane in _pane_nouns(clause):
         if _CLOSE_BRIEFING_RE.search(clause, 0, pane.start()) is not None:
             continue
         # The German separable verb wraps AROUND the panes it closes ("mach
@@ -2327,7 +2620,12 @@ def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
         return True
     if spawn_vehicle_outranks_workspace(text, names=names):
         return False
-    return detect(text, names=names) is not None
+    if detect(text, names=names) is not None:
+        return True
+    # Only the process-wide form can honestly consult the active UI surface.
+    # Injected candidate lists are used by pure detector tests and must not
+    # acquire hidden global state.
+    return names is None and detect_visible(text) is not None
 
 
 __all__ = [
@@ -2339,6 +2637,7 @@ __all__ = [
     "TerminalIntent",
     "detect",
     "detect_all",
+    "detect_visible",
     "detect_close_fleet",
     "detect_spawn",
     "expects_several",

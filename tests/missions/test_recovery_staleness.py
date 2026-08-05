@@ -1,12 +1,12 @@
 """Activity-aware + terminal-reconcile crash recovery.
 
 Root cause of the "Mission failed although it worked, ~1h later, randomly"
-report (live forensic 2026-05-31, missions 019e6fea / 019e7095): a SECOND
+report (live forensic 2026-05-31, missions 019f1018 / 019f1019): a SECOND
 Jarvis instance (e.g. a `--headless` launch that never sets
 JARVIS_PRIMARY_INSTANCE, so server.py defaults it to primary) runs
 `startup_recover` against the shared `missions.db` and sweeps the FIRST
 (live) instance's ACTIVELY RUNNING missions to FAILED('crash_recovery').
-Mission 019e6fea was marked crash_recovery 39 s after its iter-1 WorkerSpawned,
+Mission 019f1018 was marked crash_recovery 39 s after its iter-1 WorkerSpawned,
 then ran on to MissionApproved 11 min later — the header stayed poisoned at
 FAILED.
 
@@ -56,7 +56,7 @@ async def _running_mission(m: MissionManager, prompt: str = "task") -> str:
 
 async def test_recovery_skips_recently_active_mission(open_store: MissionManager) -> None:
     """A mission with a fresh last event is being run by a LIVE instance — it
-    must NOT be swept to crash_recovery (the smoking-gun 019e6fea defect)."""
+    must NOT be swept to crash_recovery (the smoking-gun 019f1018 defect)."""
     mid = await _running_mission(open_store, "live-and-running")
 
     recovered = await startup_recover(open_store.store)  # default 30-min threshold

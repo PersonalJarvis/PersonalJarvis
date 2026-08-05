@@ -152,7 +152,7 @@ async def create_worker_subprocess(
     the host process (pythonw.exe) is itself inside a job that forbids breakaway,
     Windows denies ``CreateProcess`` with ``PermissionError`` (WinError 5) — and
     every worker spawn dies instantly, killing the mission as ``task_error``
-    (live mission 019ec602, 2026-06-14, after the native ``claude.exe`` install
+    (live mission 019f102d, 2026-06-14, after the native ``claude.exe`` install
     replaced the old ``node cli.js`` path).
 
     Breakaway is an OPTIMIZATION, not a requirement: without it the worker still

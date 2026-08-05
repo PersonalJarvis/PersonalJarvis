@@ -193,7 +193,7 @@ def test_short_or_fresh_text_never_arms_or_matches():
     sess._arm_stale_readback_guard(DELIVERED_REPLY)
     assert (
         sess._match_stale_readback(
-            "Here is a completely fresh answer about tomorrow's weather in Berlin."
+            "Here is a completely fresh answer about tomorrow's weather in Exampletown."
         )
         is None
     )

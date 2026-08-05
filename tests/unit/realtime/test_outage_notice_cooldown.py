@@ -107,7 +107,7 @@ async def _delegate_turn(sess, turn_id):
     sess._turn_id = turn_id
     state = _DelegateTurnState(
         deterministic=True,
-        user_text="wie wird das wetter morgen in berlin",  # i18n-allow: voice fixture
+        user_text="wie wird das wetter morgen in exampletown",  # i18n-allow: voice fixture
         provider_boundary_seen=True,
     )
     state.input_boundary_ready.set()

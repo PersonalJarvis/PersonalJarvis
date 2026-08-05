@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 # RESOURCE_EXHAUSTED) or auth-dead ("invalid x-api-key", 401). Either way,
 # retrying the same family is a guaranteed repeat; the per-family cooldown
 # tells the factory's family walk to cross to the next key (missions
-# 019f3d01 + 019f3d0f, 2026-07-07 / BUG-042).
+# 019f104f + 019f1050, 2026-07-07 / BUG-042).
 _FAMILY_UNUSABLE_MARKERS: tuple[str, ...] = (
     # quota / rate / billing
     "429",

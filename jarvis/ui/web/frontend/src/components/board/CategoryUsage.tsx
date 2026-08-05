@@ -50,7 +50,7 @@ export function CategoryUsage({ data }: { data: BoardCategories }) {
             <div
               className={cn(
                 "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
-                "bg-white/[0.04] ring-1 ring-inset ring-white/[0.05]",
+                "bg-sheen/[0.04] ring-1 ring-inset ring-sheen/[0.05]",
               )}
             >
               <Icon className={cn("h-4 w-4", meta.accent)} />
@@ -69,7 +69,7 @@ export function CategoryUsage({ data }: { data: BoardCategories }) {
                   </span>
                 </span>
               </div>
-              <div className="relative h-1.5 overflow-hidden rounded-full bg-white/[0.05]">
+              <div className="relative h-1.5 overflow-hidden rounded-full bg-sheen/[0.05]">
                 <div
                   className={cn(
                     "absolute inset-y-0 left-0 rounded-full transition-all duration-700",

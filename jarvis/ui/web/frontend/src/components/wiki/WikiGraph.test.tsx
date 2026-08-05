@@ -85,13 +85,13 @@ describe("WikiGraph", () => {
           JSON.stringify({
             ok: true,
             nodes: [
-              { id: "sam", kind: "entity", title: "Sam" },
-              { id: "alex", kind: "entity", title: "Alex" },
+              { id: "example-parent", kind: "entity", title: "Example Parent" },
+              { id: "example-user", kind: "entity", title: "Example User" },
               { id: "pixel-art-editor", kind: "project", title: "Pixel Art Editor" },
             ],
             edges: [
-              { source: "alex", target: "sam", context: "Mentor" },
-              { source: "alex", target: "pixel-art-editor", context: "Working on" },
+              { source: "example-user", target: "example-parent", context: "Related to" },
+              { source: "example-user", target: "pixel-art-editor", context: "Working on" },
             ],
             broken: [],
           }),
@@ -111,12 +111,12 @@ describe("WikiGraph", () => {
     const ids = screen
       .getAllByTestId("wiki-graph-node")
       .map((el) => el.getAttribute("data-node-id"));
-    expect(ids).toEqual(["sam", "alex", "pixel-art-editor"]);
+    expect(ids).toEqual(["example-parent", "example-user", "pixel-art-editor"]);
     const edges = screen.getAllByTestId("wiki-graph-edge");
     expect(edges).toHaveLength(2);
-    expect(edges[0].textContent).toContain("Alex → Sam · Mentor");
+    expect(edges[0].textContent).toContain("Example User → Example Parent · Related to");
     expect(edges[1].textContent).toContain(
-      "Alex → Pixel Art Editor · Working on",
+      "Example User → Pixel Art Editor · Working on",
     );
   });
 
@@ -128,14 +128,14 @@ describe("WikiGraph", () => {
           JSON.stringify({
             ok: true,
             nodes: [
-              { id: "sam", kind: "entity", title: "Sam" },
-              { id: "alex", kind: "entity", title: "Alex" },
+              { id: "example-parent", kind: "entity", title: "Example Parent" },
+              { id: "example-user", kind: "entity", title: "Example User" },
             ],
             edges: [
               {
-                source: "alex",
-                target: "sam",
-                context: "Mentor <trusted>",
+                source: "example-user",
+                target: "example-parent",
+                context: "Related <trusted>",
               },
             ],
             broken: [],
@@ -164,9 +164,9 @@ describe("WikiGraph", () => {
 
     expect(props.linkDirectionalArrowLength).toBe(4);
     expect(props.linkDirectionalArrowRelPos).toBe(0.82);
-    expect(nodeLabel(graphData.nodes[0])).toContain("Sam (entity) · 1 backlink");
+    expect(nodeLabel(graphData.nodes[0])).toContain("Example Parent (entity) · 1 backlink");
     expect(linkLabel(graphData.links[0])).toContain(
-      "Alex → Sam · Mentor &lt;trusted&gt;",
+      "Example User → Example Parent · Related &lt;trusted&gt;",
     );
   });
 
@@ -177,7 +177,7 @@ describe("WikiGraph", () => {
         new Response(
           JSON.stringify({
             ok: true,
-            nodes: [{ id: "sam", kind: "entity", title: "Sam" }],
+            nodes: [{ id: "example-parent", kind: "entity", title: "Example Parent" }],
             edges: [],
             broken: [],
           }),
@@ -195,8 +195,8 @@ describe("WikiGraph", () => {
     await waitFor(() => {
       expect(screen.getByTestId("wiki-graph-node")).toBeDefined();
     });
-    fireEvent.click(screen.getByRole("button", { name: /Sam/i }));
-    expect(onNodeClick).toHaveBeenCalledWith("sam");
+    fireEvent.click(screen.getByRole("button", { name: /Example Parent/i }));
+    expect(onNodeClick).toHaveBeenCalledWith("example-parent");
   });
 
   it("renders highlighted node with 1.5x radius", async () => {
@@ -207,11 +207,11 @@ describe("WikiGraph", () => {
           JSON.stringify({
             ok: true,
             nodes: [
-              { id: "sam", kind: "entity", title: "Sam" },
-              { id: "alex", kind: "entity", title: "Alex" },
+              { id: "example-parent", kind: "entity", title: "Example Parent" },
+              { id: "example-user", kind: "entity", title: "Example User" },
             ],
-            // alex → sam gives sam 1 backlink (radius = 10), zero for alex (radius = 8)
-            edges: [{ source: "alex", target: "sam", context: "Mentor" }],
+            // The parent fixture gets one backlink; the user fixture gets zero.
+            edges: [{ source: "example-user", target: "example-parent", context: "Related" }],
             broken: [],
           }),
           { status: 200, headers: { "content-type": "application/json" } },
@@ -221,24 +221,23 @@ describe("WikiGraph", () => {
     const client = makeClient();
     render(
       <Wrapper client={client}>
-        <WikiGraph onNodeClick={() => {}} highlightSlug="sam" />
+        <WikiGraph onNodeClick={() => {}} highlightSlug="example-parent" />
       </Wrapper>,
     );
     await waitFor(() => {
       expect(screen.getAllByTestId("wiki-graph-node")).toHaveLength(2);
     });
-    const samNode = screen
+    const parentNode = screen
       .getAllByTestId("wiki-graph-node")
-      .find((el) => el.getAttribute("data-node-id") === "sam");
-    const alexNode = screen
+      .find((el) => el.getAttribute("data-node-id") === "example-parent");
+    const userNode = screen
       .getAllByTestId("wiki-graph-node")
-      .find((el) => el.getAttribute("data-node-id") === "alex");
-    expect(samNode?.getAttribute("data-node-active")).toBe("true");
-    expect(alexNode?.getAttribute("data-node-active")).toBe("false");
-    const samRadius = Number(samNode?.getAttribute("data-node-radius"));
-    const alexRadius = Number(alexNode?.getAttribute("data-node-radius"));
-    // sam: base 10 * 1.5 = 15. alex: base 8.
-    expect(samRadius).toBe(15);
-    expect(alexRadius).toBe(8);
+      .find((el) => el.getAttribute("data-node-id") === "example-user");
+    expect(parentNode?.getAttribute("data-node-active")).toBe("true");
+    expect(userNode?.getAttribute("data-node-active")).toBe("false");
+    const parentRadius = Number(parentNode?.getAttribute("data-node-radius"));
+    const userRadius = Number(userNode?.getAttribute("data-node-radius"));
+    expect(parentRadius).toBe(15);
+    expect(userRadius).toBe(8);
   });
 });

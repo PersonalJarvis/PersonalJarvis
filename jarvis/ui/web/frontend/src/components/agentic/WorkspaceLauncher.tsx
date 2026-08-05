@@ -1,13 +1,20 @@
 /**
  * The staged workspace launcher.
  *
- * Folder, layout, terminal assignments and review are separate decisions. The
- * values live in AgenticIdeView rather than in the active step, so moving back
- * never throws work away. Visually this is one continuous work surface: steps
- * are separated by typography and rules, not by stacking cards inside cards.
+ * Folder, layout, terminal assignments, the reading view and review are
+ * separate decisions. The values live in AgenticIdeView rather than in the
+ * active step, so moving back never throws work away. Visually this is one
+ * continuous work surface: steps are separated by typography and rules, not by
+ * stacking cards inside cards.
  */
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  LayoutGrid,
+  Loader2,
+  MessagesSquare,
+} from "lucide-react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { FolderPicker } from "./FolderPicker";
@@ -15,6 +22,7 @@ import { ResumeCard } from "./ResumeCard";
 import { AgentAllocation, type PlannedTerminal } from "./AgentAllocation";
 import { Button, Notice, SectionLabel } from "./controls";
 import { CountStepper, CountTrack, WorkspaceShape } from "./WorkspaceShape";
+import type { WorkspaceView } from "./AgenticGrid";
 import type { AgentAccount } from "@/lib/agentAccountsApi";
 import type {
   AgentStatus,
@@ -61,10 +69,14 @@ export interface WorkspaceLauncherProps {
   onResume: () => void;
   onDismissOffer: () => void;
 
+  /** How the workspace opens: the full terminal grid, or the chat view. */
+  view: WorkspaceView;
+  onView: (next: WorkspaceView) => void;
+
   onStart: () => void;
 }
 
-type LauncherStep = 0 | 1 | 2 | 3;
+type LauncherStep = 0 | 1 | 2 | 3 | 4;
 
 const STEPS = [
   {
@@ -81,6 +93,11 @@ const STEPS = [
     label: "Agents",
     title: "Choose the coding agents",
     hint: "Distribute all terminal slots at once instead of editing every pane.",
+  },
+  {
+    label: "View",
+    title: "Choose how to read the workspace",
+    hint: "The same agents either way — the toolbar switches between the two at any time.",
   },
   {
     label: "Review",
@@ -110,6 +127,8 @@ export function WorkspaceLauncher({
   offer,
   onResume,
   onDismissOffer,
+  view,
+  onView,
   onStart,
 }: WorkspaceLauncherProps) {
   const t = useT();
@@ -123,7 +142,8 @@ export function WorkspaceLauncher({
     (step === 0 && Boolean(folder)) ||
     (step === 1 && count > 0) ||
     (step === 2 && planReady) ||
-    step === 3;
+    // The view step always carries a preselected answer, and review is last.
+    step >= 3;
 
   const canVisit = (target: LauncherStep) => {
     if (target <= step) return true;
@@ -134,7 +154,7 @@ export function WorkspaceLauncher({
 
   /* The launch chord is intentionally limited to the review step. */
   useEffect(() => {
-    if (step !== 3 || !ready || busy) return;
+    if (step !== 4 || !ready || busy) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
       event.preventDefault();
@@ -236,6 +256,7 @@ export function WorkspaceLauncher({
               folder={folder}
               count={count}
               planned={planned}
+              view={view}
               canVisit={canVisit}
               onStep={setStep}
             />
@@ -291,11 +312,14 @@ export function WorkspaceLauncher({
                 />
               )}
 
-              {step === 3 && folder && (
+              {step === 3 && <ViewChoice view={view} onView={onView} />}
+
+              {step === 4 && folder && (
                 <WorkspaceReview
                   folder={folder}
                   planned={planned}
                   agents={agents}
+                  view={view}
                 />
               )}
 
@@ -312,7 +336,7 @@ export function WorkspaceLauncher({
                   <span />
                 )}
 
-                {step < 3 ? (
+                {step < 4 ? (
                   <Button
                     variant="primary"
                     disabled={!canLeaveCurrent}
@@ -323,7 +347,9 @@ export function WorkspaceLauncher({
                       ? "Continue to layout"
                       : step === 1
                         ? "Continue to agents"
-                        : "Review workspace"}
+                        : step === 2
+                          ? "Choose the view"
+                          : "Review workspace"}
                     <ArrowRight className="h-3.5 w-3.5" />
                   </Button>
                 ) : (
@@ -356,6 +382,7 @@ function StepNavigation({
   folder,
   count,
   planned,
+  view,
   canVisit,
   onStep,
 }: {
@@ -363,6 +390,7 @@ function StepNavigation({
   folder: string | null;
   count: number;
   planned: PlannedTerminal[];
+  view: WorkspaceView;
   canVisit: (target: LauncherStep) => boolean;
   onStep: (step: LauncherStep) => void;
 }) {
@@ -375,14 +403,15 @@ function StepNavigation({
       t("workspace_launcher.agents.nav_summary")
         .replace("{0}", String(assigned))
         .replace("{1}", String(planned.length)),
+      VIEW_NAMES[view],
       "Check and open",
     ],
-    [assigned, count, folder, planned.length, t],
+    [assigned, count, folder, planned.length, t, view],
   );
 
   return (
     <nav aria-label="Workspace setup" className="min-w-0">
-      <ol className="grid grid-cols-4 border-b border-border/70 lg:flex lg:flex-col lg:border-b-0 lg:border-r lg:pr-6">
+      <ol className="grid grid-cols-5 border-b border-border/70 lg:flex lg:flex-col lg:border-b-0 lg:border-r lg:pr-6">
         {STEPS.map((item, index) => {
           const target = index as LauncherStep;
           const selected = target === step;
@@ -425,14 +454,160 @@ function StepNavigation({
   );
 }
 
+/** The user-facing names of the two reading modes, shared by every step. */
+const VIEW_NAMES: Record<WorkspaceView, string> = {
+  grid: "Terminal grid",
+  chat: "Chat view",
+};
+
+/**
+ * The last decision before review: how the workspace is read.
+ *
+ * Two ways of looking at the SAME panes (see WorkspaceView in AgenticGrid) —
+ * the grid shows every terminal at once, chat puts one agent on a stage like a
+ * conversation. A choice of presentation, not of substance, which is why the
+ * step needs no gate: both answers are always valid and one is preselected.
+ */
+function ViewChoice({
+  view,
+  onView,
+}: {
+  view: WorkspaceView;
+  onView: (next: WorkspaceView) => void;
+}) {
+  return (
+    <div>
+      <SectionLabel>Reading mode</SectionLabel>
+      <div
+        role="radiogroup"
+        aria-label="How the workspace opens"
+        className="mt-4 grid gap-4 sm:grid-cols-2"
+      >
+        <ViewOption
+          selected={view === "grid"}
+          onSelect={() => onView("grid")}
+          testId="view-choice-grid"
+          icon={<LayoutGrid className="h-4 w-4 shrink-0" />}
+          title={VIEW_NAMES.grid}
+          description="Every pane on screen at once, side by side — the full wall of terminals."
+          preview={<GridPreview />}
+        />
+        <ViewOption
+          selected={view === "chat"}
+          onSelect={() => onView("chat")}
+          testId="view-choice-chat"
+          icon={<MessagesSquare className="h-4 w-4 shrink-0" />}
+          title={VIEW_NAMES.chat}
+          description="One agent at a time on a calm stage, the rest on a rail — read like a conversation."
+          preview={<ChatPreview />}
+        />
+      </div>
+      <p className="mt-5 max-w-2xl text-xs leading-relaxed text-muted-foreground">
+        Only how the workspace is read changes — the agents, panes and
+        conversations are the same either way, and the workspace toolbar
+        switches between the two whenever you like.
+      </p>
+    </div>
+  );
+}
+
+function ViewOption({
+  selected,
+  onSelect,
+  testId,
+  icon,
+  title,
+  description,
+  preview,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  testId: string;
+  icon: ReactNode;
+  title: string;
+  description: string;
+  preview: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      data-testid={testId}
+      onClick={onSelect}
+      className={cn(
+        "group min-w-0 border px-5 py-5 text-left transition-colors",
+        selected
+          ? "border-primary/70 bg-primary/[0.04]"
+          : "border-border/70 hover:border-border",
+      )}
+    >
+      {preview}
+      <span
+        className={cn(
+          "mt-4 flex items-center gap-2 text-sm font-medium",
+          selected ? "text-foreground" : "text-muted-foreground",
+        )}
+      >
+        {icon}
+        {title}
+        {selected && (
+          <span className="ml-auto text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+            Selected
+          </span>
+        )}
+      </span>
+      <span className="mt-1.5 block text-xs leading-relaxed text-muted-foreground">
+        {description}
+      </span>
+    </button>
+  );
+}
+
+/* Miniatures of the two modes, drawn with rules like the rest of the wizard. */
+
+function GridPreview() {
+  return (
+    <span aria-hidden className="grid grid-cols-2 gap-1.5">
+      {[0, 1, 2, 3].map((i) => (
+        <span
+          key={i}
+          className="block h-9 border border-border/70 bg-muted/30"
+        />
+      ))}
+    </span>
+  );
+}
+
+function ChatPreview() {
+  return (
+    <span aria-hidden className="flex gap-1.5">
+      <span className="flex w-1/4 flex-col gap-1.5">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className={cn(
+              "block flex-1 border border-border/70",
+              i === 0 ? "bg-muted/60" : "bg-muted/20",
+            )}
+          />
+        ))}
+      </span>
+      <span className="block h-[4.875rem] flex-1 border border-border/70 bg-muted/30" />
+    </span>
+  );
+}
+
 function WorkspaceReview({
   folder,
   planned,
   agents,
+  view,
 }: {
   folder: string;
   planned: PlannedTerminal[];
   agents: AgentStatus[];
+  view: WorkspaceView;
 }) {
   const displayName = (agentId: string) =>
     agents.find((agent) => agent.name === agentId)?.display_name ?? agentId;
@@ -453,6 +628,12 @@ function WorkspaceReview({
             <dt className="text-muted-foreground">Terminal panes</dt>
             <dd className="font-mono tabular-nums text-foreground">
               {planned.length}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between gap-5 border-b border-border/50 py-3 text-sm">
+            <dt className="text-muted-foreground">Opens as</dt>
+            <dd className="text-foreground" data-testid="review-view-mode">
+              {VIEW_NAMES[view]}
             </dd>
           </div>
           <div className="flex items-center justify-between gap-5 py-3 text-sm">

@@ -138,17 +138,17 @@ def test_prefix_phrase_requires_the_prefix() -> None:
     assert m.search("the weather is nice") is None   # unrelated rejected
 
 
-def test_hey_nico_fires_only_on_the_full_phrase() -> None:
+def test_hey_nova_fires_only_on_the_full_phrase() -> None:
     # The user's real-world case. Full phrase + STT spelling drift must wake;
     # the bare name in ordinary/dictated speech must NOT (that was the
     # "Jarvis spawns although I did not call it" bug, live-logged 2026-07-02).
-    m = compile_wake_matcher("Hey Nico")
-    assert m.search("hey nico") is not None        # full phrase
-    assert m.search("hey niko") is not None         # STT drift (one char)
-    assert m.search("hallo nico alles gut") is not None  # localised greeting
-    assert m.search("nico") is None                 # bare name: silent
-    assert m.search("ja nico komm") is None         # name mid-utterance: silent
-    assert m.search("nico mein barsch") is None     # the live false fire: silent
+    m = compile_wake_matcher("Hey Nova")
+    assert m.search("hey nova") is not None        # full phrase
+    assert m.search("hey nova") is not None         # STT drift (one char)
+    assert m.search("hallo nova alles gut") is not None  # localised greeting
+    assert m.search("nova") is None                 # bare name: silent
+    assert m.search("ja nova komm") is None         # name mid-utterance: silent
+    assert m.search("nova mein barsch") is None     # the live false fire: silent
     assert m.search("wie spät ist es") is None      # unrelated -> no wake  # i18n-allow
 
 
@@ -167,12 +167,12 @@ def test_fuzzy_ratio_is_configurable() -> None:
 
 def test_short_custom_name_tolerates_one_char_pronunciation_drift() -> None:
     # Mission 2026-06-29: short proper-noun wake words ("Neko") are penalised
-    # hardest by SequenceMatcher — a single STT mishearing ("Neko" -> "Niko")
+    # hardest by SequenceMatcher — a single STT mishearing ("Neko" -> "Nova")
     # drops a 4-char word to ratio 0.75, just under the 0.8 default, so the word
     # "never works". The matcher must allow ~one character of drift for short
     # cores so a normal pronunciation variance still wakes.
     m = compile_wake_matcher("Neko")
-    assert m.search("niko") is not None
+    assert m.search("nova") is not None
     assert m.search("neeko") is not None
     assert m.search("hey neko") is not None
 

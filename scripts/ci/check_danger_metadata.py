@@ -30,7 +30,6 @@ _WEB = _REPO / "jarvis" / "ui" / "web"
 # Copy of jarvis.cli_ctl.safety._DANGEROUS_MARKERS — parity-tested, see above.
 DANGEROUS_MARKERS: tuple[str, ...] = (
     "/restart",
-    "/call",
     "/outbound",
     "/dispatch",
     "/rerun",

@@ -9,17 +9,11 @@
  * take the identical path through the app, and the two can never behave
  * differently.
  */
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
-  ArrowUp,
+  AlignHorizontalDistributeCenter,
+  AudioLines,
   Brain,
   Check,
   ChevronUp,
@@ -47,27 +41,15 @@ import { useThemeValue } from "@/hooks/useTheme";
 import { useDocumentVisible } from "@/hooks/useDocumentVisible";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { PaneResizer } from "@/components/layout/PaneResizer";
-import { useEventStore } from "@/store/events";
-import {
-  AgenticTerminal,
-  type PaneStatus,
-  type SplitDirection,
-} from "./AgenticTerminal";
+import { useEventStore, type VoiceState } from "@/store/events";
+import { AgenticTerminal, type PaneStatus, type SplitDirection } from "./AgenticTerminal";
 import { AgentMark } from "./AgentMark";
 import { PaneActivityPill } from "./PaneActivityPill";
-import {
-  AgentPickerMenu,
-  automaticAgentChoice,
-  offersAgentChoice,
-  type SplitAgentChoice,
-} from "./AgentPicker";
+import { AgentPickerMenu, offersAgentChoice, type SplitAgentChoice } from "./AgentPicker";
 import type { TerminalAppearance } from "./terminalThemes";
 import {
-  bandCapacityFor,
-  GRID_HORIZONTAL_PADDING_PX,
-  MIN_PANE_HEIGHT_PX,
-} from "./layout";
-import {
+  evenWeights,
+  isEvenLayout,
   paneArrangement,
   paneLayout,
   panesFromArrangement,
@@ -78,16 +60,15 @@ import {
   type PaneSeam,
   type PaneWeights,
 } from "./paneLayout";
-import {
-  loadStoredArrangement,
-  saveStoredArrangement,
-  usePaneWeights,
-} from "./usePaneWeights";
+import { loadStoredArrangement, saveStoredArrangement, usePaneWeights } from "./usePaneWeights";
 import { ContinueInterrupted } from "./ContinueInterrupted";
 import { PaneNotifications } from "./PaneNotifications";
+import { isVoiceActive } from "./VoiceBubble";
 import { PromptPreview } from "./PromptPreview";
+import { PromptEditor } from "./PromptEditor";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { usePaneFileDrag } from "./paneFileDrag";
+import { initialChatOrder, orderChatTerminals, reconcileChatOrder, sameRecaps } from "./chatState";
 import {
   extractPaneDrop,
   extractPasteFiles,
@@ -109,6 +90,7 @@ import {
   refreshTerminalRecap,
   renameTerminal,
   saveTerminalFontSize,
+  syncAgenticIdeSurface,
   setTerminalRecap,
   promptTerminal,
   type ComposedPreview,
@@ -150,6 +132,8 @@ interface AgenticGridProps {
    * on its own has always been.
    */
   onScreen?: boolean;
+  /** Keep the voice orb aimed at the same pane as the written prompt bar. */
+  onPromptTargetChange?: (name: string) => void;
   /**
    * The row of open workspaces, rendered INSIDE this workspace's toolbar.
    *
@@ -197,6 +181,19 @@ interface AgenticGridProps {
    * is an ordinary maximized pane the user can restore themselves.
    */
   jumpTo?: { pane: string; nonce: number } | null;
+  /**
+   * Is the floating voice bubble on screen, and the toggle that summons it.
+   *
+   * The bubble itself is NOT rendered here: the conversation belongs to the
+   * app, not to a workspace, and this grid is keyed by workspace — mounting
+   * the bubble inside it would reset the orb mid-sentence on every tab
+   * switch. The view above owns the bubble; the toolbar only carries the
+   * button, because the toolbar is where every other control of this screen
+   * lives. Left out (tests, embeddings), the toolbar simply has no voice
+   * button.
+   */
+  voiceOpen?: boolean;
+  onToggleVoice?: () => void;
 }
 
 const FONT_MIN = 10;
@@ -212,8 +209,15 @@ const FONT_MAX = 20;
  * workspace: controls recede to quiet glyphs, colour is reserved for state
  * that is ON, and the terminals are the only thing on screen with weight.
  */
+/*
+ * `rounded-control` (6 px), not the theme's `md` (10 px). At 28 px square a
+ * 10 px radius is a third of the edge, which reads as a lozenge rather than a
+ * button and put a row of soft blobs across the top of a view whose subject is
+ * a wall of right-angled terminals. Six is the section's control radius — see
+ * ./controls.tsx for the closed set and why the theme's own steps did not fit.
+ */
 const TOOLBAR_BTN =
-  "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground " +
+  "flex h-7 w-7 shrink-0 items-center justify-center rounded-control text-muted-foreground " +
   "transition-colors hover:bg-secondary hover:text-foreground " +
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 " +
   "disabled:cursor-not-allowed disabled:opacity-40";
@@ -273,8 +277,6 @@ const COMPOSER_DEFAULT_PX = 176;
 const COMPOSER_COLLAPSED_PX = 28;
 /** Below this dragged height the bar snaps shut rather than half-showing. */
 const COMPOSER_COLLAPSE_AT_PX = 96;
-/** Below this it is too short for the "you can also say this out loud" note. */
-const COMPOSER_HINT_AT_PX = 190;
 /**
  * Room the toolbar and a still-usable grid keep for themselves.
  *
@@ -406,7 +408,7 @@ function writePosition(node: HTMLElement, style: React.CSSProperties): void {
  * The text size is the exception and is kept by the BACKEND as well (see
  * `fetchTerminalUiPreferences`). The desktop window is an embedded WebView that
  * starts every run with empty browser storage, so a size kept only here is
- * forgotten on each restart â€” which reads as the control having stopped
+ * forgotten on each restart — which reads as the control having stopped
  * working. Its localStorage entry stays as the first-paint cache so the panes
  * open at the remembered size instead of visibly resizing a moment later.
  */
@@ -423,14 +425,42 @@ const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
  * pure restyle of the same mounted elements, because unmounting a pane kills
  * the coding agent behind it (see the grid container's comment below).
  */
-type WorkspaceView = "grid" | "chat";
+export type WorkspaceView = "grid" | "chat";
 
 const VIEW_KEY = "jarvis.agenticIde.workspaceView";
+const CHAT_ORDER_KEY_PREFIX = "jarvis.agenticIde.chatOrder.v1";
 
-function storedViewMode(): WorkspaceView | null {
-  return readStored(VIEW_KEY, (raw) =>
-    raw === "grid" || raw === "chat" ? raw : null,
-  );
+export function storedViewMode(): WorkspaceView | null {
+  return readStored(VIEW_KEY, (raw) => (raw === "grid" || raw === "chat" ? raw : null));
+}
+
+/**
+ * Record which way the workspace should be read, ahead of the grid mounting.
+ *
+ * Exported for the workspace wizard: its last step asks grid-or-chat before
+ * anything opens, and the grid then simply reads the answer on mount — the
+ * same stored preference the toolbar toggle below keeps, so the wizard's
+ * choice and a later toggle can never disagree about where the answer lives.
+ */
+export function rememberViewMode(next: WorkspaceView): void {
+  writeStored(VIEW_KEY, next);
+}
+
+function storedChatOrder(workspaceId: string): readonly string[] | null {
+  return readStored(`${CHAT_ORDER_KEY_PREFIX}.${workspaceId}`, (raw) => {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed) && parsed.every((item) => typeof item === "string")
+        ? parsed
+        : null;
+    } catch {
+      return null;
+    }
+  });
+}
+
+function rememberChatOrder(workspaceId: string, identities: readonly string[]): void {
+  writeStored(`${CHAT_ORDER_KEY_PREFIX}.${workspaceId}`, JSON.stringify(identities));
 }
 
 function readStored<T>(key: string, parse: (raw: string) => T | null): T | null {
@@ -485,9 +515,7 @@ function rekey<T>(map: Record<string, T>, from: string, to: string): Record<stri
 }
 
 function storedAppearance(): TerminalAppearance | null {
-  return readStored(APPEARANCE_KEY, (raw) =>
-    raw === "light" || raw === "dark" ? raw : null,
-  );
+  return readStored(APPEARANCE_KEY, (raw) => (raw === "light" || raw === "dark" ? raw : null));
 }
 
 function storedFontSize(): number | null {
@@ -513,6 +541,9 @@ export function AgenticGrid({
   onJumpToWorkspace,
   jumpTo = null,
   onScreen = true,
+  onPromptTargetChange,
+  voiceOpen = false,
+  onToggleVoice,
 }: AgenticGridProps) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -539,7 +570,7 @@ export function AgenticGrid({
     writeStored(FONT_KEY, String(next));
     // The backend is what makes the choice survive a restart; the line above is
     // only this window's cache. A failed write is reported rather than
-    // swallowed â€” the panes still resize, they just would not remember it.
+    // swallowed — the panes still resize, they just would not remember it.
     void saveTerminalFontSize(next).catch((err) => {
       console.warn("Agentic IDE: terminal text size not remembered:", err);
     });
@@ -560,7 +591,7 @@ export function AgenticGrid({
         }
         // Nothing stored yet, but this window still holds a size chosen before
         // the backend kept them. Hand that choice over instead of letting the
-        // default silently replace it â€” otherwise upgrading resets it once.
+        // default silently replace it — otherwise upgrading resets it once.
         const local = storedFontSize();
         if (local === null) return;
         void saveTerminalFontSize(local).catch((err) => {
@@ -576,16 +607,33 @@ export function AgenticGrid({
       alive = false;
     };
   }, []);
-  const [target, setTarget] = useState(
-    session.terminals.find(takesPrompts)?.name ?? "",
+  const [target, setTarget] = useState(session.terminals.find(takesPrompts)?.name ?? "");
+  useEffect(() => {
+    onPromptTargetChange?.(target);
+  }, [onPromptTargetChange, target]);
+  const [statuses, setStatuses] = useState<Record<string, { status: PaneStatus; detail?: string }>>(
+    {},
   );
-  const [statuses, setStatuses] = useState<Record<string, { status: PaneStatus; detail?: string }>>({});
   // What each pane is doing, by call-sign, as the header shows it. Kept beside
   // the session rather than inside it because it changes on a completely
   // different clock: the layout changes when a pane is opened or closed, a
   // recap whenever an agent prints a line.
-  const [recaps, setRecaps] = useState<Record<string, TerminalRecap>>({});
-  const [prompt, setPrompt] = useState("");
+  const [recapCache, setRecapCache] = useState<{
+    workspaceId: string;
+    rows: Record<string, TerminalRecap>;
+  }>(() => ({ workspaceId: session.id, rows: {} }));
+  // Never show T1's status from the workspace that was on screen one render
+  // ago. Call-signs repeat between workspaces, so a cache without its owner can
+  // claim a fresh pane is working, done, or describing somebody else's task.
+  const recaps: Record<string, TerminalRecap> =
+    recapCache.workspaceId === session.id ? recapCache.rows : {};
+  // The editor owns ordinary keystrokes so typing does not re-render every
+  // xterm pane in this very large component. This seed changes only when the
+  // parent intentionally replaces the draft (successful send or preview undo).
+  const [promptSeed, setPromptSeed] = useState({ value: "", revision: 0 });
+  const replacePrompt = useCallback((value: string) => {
+    setPromptSeed((current) => ({ value, revision: current.revision + 1 }));
+  }, []);
   const [sending, setSending] = useState(false);
   // The composed prompt waiting for the user's approval, and the wording they
   // originally typed. Both are kept so "Send verbatim" and Escape can hand the
@@ -619,12 +667,10 @@ export function AgenticGrid({
    * which way someone reads their agents is a display preference of this
    * screen, not workspace state worth a round-trip.
    */
-  const [viewMode, setViewModeState] = useState<WorkspaceView>(
-    () => storedViewMode() ?? "grid",
-  );
+  const [viewMode, setViewModeState] = useState<WorkspaceView>(() => storedViewMode() ?? "grid");
   const setViewMode = useCallback((next: WorkspaceView) => {
     setViewModeState(next);
-    writeStored(VIEW_KEY, next);
+    rememberViewMode(next);
     // Chat shows exactly one pane already; a leftover maximize from the grid
     // would silently pin the stage to a pane the rail no longer highlights.
     if (next === "chat") setMaximized(null);
@@ -643,14 +689,18 @@ export function AgenticGrid({
    * effects, so a pane closed by another client simply falls back.
    */
   const [chatPane, setChatPane] = useState<string | null>(null);
+  const [chatOrder, setChatOrder] = useState<{
+    workspaceId: string;
+    keys: readonly string[];
+  }>(() => ({
+    workspaceId: session.id,
+    keys: storedChatOrder(session.id) ?? initialChatOrder(session.terminals),
+  }));
+  const chatRailRef = useRef<HTMLDivElement | null>(null);
   const [pendingClose, setPendingClose] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedTerminals, setSelectedTerminals] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [pendingSelectionClose, setPendingSelectionClose] = useState<
-    string[] | null
-  >(null);
+  const [selectedTerminals, setSelectedTerminals] = useState<Set<string>>(() => new Set());
+  const [pendingSelectionClose, setPendingSelectionClose] = useState<string[] | null>(null);
   const selectionToggleRef = useRef<HTMLButtonElement | null>(null);
   const [workspaceCloseRequested, setWorkspaceCloseRequested] = useState(false);
   const [working, setWorking] = useState(false);
@@ -701,15 +751,31 @@ export function AgenticGrid({
   useEffect(() => {
     if (!pollRecaps) return;
     let cancelled = false;
+    let pulling = false;
+    let warned = false;
     const pull = async () => {
+      // A slow read must not stack another walk of every terminal on top of
+      // itself. One result is enough; the next interval catches up.
+      if (pulling) return;
+      pulling = true;
       try {
         const answer = await fetchTerminalRecaps(session.id);
         if (cancelled) return;
-        setRecaps(
-          Object.fromEntries(answer.terminals.map((term) => [term.name, term])),
-        );
-      } catch {
-        /* keep the last recaps — a stale sentence beats an empty header */
+        const next = Object.fromEntries(answer.terminals.map((term) => [term.name, term]));
+        setRecapCache((current) => {
+          const currentRows = current.workspaceId === session.id ? current.rows : {};
+          return sameRecaps(currentRows, next) ? current : { workspaceId: session.id, rows: next };
+        });
+        warned = false;
+      } catch (error) {
+        // Keep the last recap, but do not turn a dead status feed into a silent
+        // failure. Log once until a successful read resets the warning.
+        if (!warned) {
+          console.warn("Agentic IDE: could not refresh terminal status:", error);
+          warned = true;
+        }
+      } finally {
+        pulling = false;
       }
     };
     void pull();
@@ -746,9 +812,18 @@ export function AgenticGrid({
    * every five seconds, and a header that keeps the old sentence for four of
    * them after you pressed Save reads as a save that did not work.
    */
-  const applyRecap = useCallback((row: TerminalRecap) => {
-    setRecaps((current) => ({ ...current, [row.name]: row }));
-  }, []);
+  const applyRecap = useCallback(
+    (row: TerminalRecap) => {
+      setRecapCache((current) => ({
+        workspaceId: session.id,
+        rows: {
+          ...(current.workspaceId === session.id ? current.rows : {}),
+          [row.name]: row,
+        },
+      }));
+    },
+    [session.id],
+  );
 
   const recapActionsFor = useCallback(
     (name: string) => ({
@@ -778,48 +853,30 @@ export function AgenticGrid({
 
   // Where each pane sits in the one grid below — coordinates, not nested
   // lists, so a layout change never re-parents a pane (see ./layout).
-  // How many panes may share one band is a question about WIDTH, not a constant:
-  // eight side by side leave ~18 characters each and the agent's output becomes
-  // unreadable. So the grid measures itself and wraps once panes would starve.
   /*
-   * CONTENT width — the box the grid tracks actually occupy, padding excluded.
+   * The grid is the window, and the workspace is exactly the grid.
    *
-   * Which of the two widths this holds matters, and getting it wrong was a real
-   * defect. `contentRect.width` already excludes this element's 12 px of padding
-   * a side, but the value was then passed to `workspaceBandCapacityFor`, which
-   * subtracts that same padding AGAIN — so the grid laid itself out 24 px
-   * narrower than it is. The wizard preview measures an UNPADDED element, where
-   * that helper is right, so the two flipped to a new column count at different
-   * window widths and the preview appeared to lie. The seed value made it worse:
-   * it came from `clientWidth`, which INCLUDES padding, so the grid could
-   * silently re-column itself on the first resize after opening.
+   * Its SIZE is nobody's business here any more: the canvas below fills this
+   * element on both axes, so every pane's percentage resolves against the
+   * visible area and a workspace of twenty panes is twenty smaller panes rather
+   * than a wall you scroll along. The one thing that still needs pixels —
+   * turning a seam drag into weights — reads the canvas at the moment of the
+   * gesture.
    *
-   * Now each side states which width it holds: this one is already content, so
-   * it calls `bandCapacityFor` directly; the wizard, holding an outer width,
-   * subtracts the padding the grid will have via `workspaceBandCapacityFor`.
+   * What survives is the one BOOLEAN the panes need: has this element been laid
+   * out at all? A terminal opened during the first, sizeless pass attaches its
+   * PTY at one size and is moved to another while its replay is still being
+   * parsed (see `geometryReady` in ./AgenticTerminal), which is a real garbled
+   * pane rather than a cosmetic flicker.
    */
   const gridRef = useRef<HTMLDivElement | null>(null);
-  const [gridWidth, setGridWidth] = useState(0);
-  // How tall the workspace's visible area is. Panes are sized as FRACTIONS of
-  // it now rather than by grid tracks, so unlike the width this is not only a
-  // wrapping question — it is the number a percentage height resolves against,
-  // and the floor under it (below) is what makes the workspace scroll instead
-  // of squeezing every pane to three unreadable rows.
-  const [gridHeight, setGridHeight] = useState(0);
+  const [gridMeasured, setGridMeasured] = useState(false);
   useEffect(() => {
     const node = gridRef.current;
     if (!node) return;
-    const fallback = () =>
-      Math.max(0, node.clientWidth - GRID_HORIZONTAL_PADDING_PX);
-    setGridWidth(fallback());
-    setGridHeight(node.clientHeight);
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? fallback();
-      // Round to a step so a one-pixel drift cannot churn the layout (and with
-      // it every pane's resize) on window animations.
-      setGridWidth(Math.round(width / 16) * 16);
-      setGridHeight(Math.round(entries[0]?.contentRect.height ?? node.clientHeight));
-    });
+    const measured = () => node.clientWidth > 0 && node.clientHeight > 0;
+    setGridMeasured(measured());
+    const observer = new ResizeObserver(() => setGridMeasured(measured()));
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
@@ -867,9 +924,7 @@ export function AgenticGrid({
   // maximised window gets the tall prompt bar back.
   const requestedComposer = Math.min(composer.size, composerMax);
   const composerCollapsed = requestedComposer < COMPOSER_COLLAPSE_AT_PX;
-  const composerHeight = composerCollapsed
-    ? COMPOSER_COLLAPSED_PX
-    : requestedComposer;
+  const composerHeight = composerCollapsed ? COMPOSER_COLLAPSED_PX : requestedComposer;
 
   /*
    * Double-clicking the seam TOGGLES rather than resets.
@@ -884,14 +939,6 @@ export function AgenticGrid({
   const toggleComposer = useCallback(() => {
     resizeComposer(composerCollapsed ? COMPOSER_DEFAULT_PX : COMPOSER_COLLAPSED_PX);
   }, [composerCollapsed, resizeComposer]);
-
-  // How many columns share a row depends on WIDTH alone — the readability
-  // floor under each pane. It once also shrank with the window's aspect ratio
-  // ("four tall panes waste their lower half, wrap them 2 x 2"), which second-
-  // guessed the split buttons: the fourth split re-dealt the workspace and a
-  // pane the user was reading jumped to another row. Rows are the user's
-  // choice; the layout only wraps when panes would become unreadable.
-  const perBand = bandCapacityFor(gridWidth);
 
   /*
    * The sizes the panes are drawn at, and the seams between them.
@@ -943,7 +990,7 @@ export function AgenticGrid({
    */
   const paintDraggedLayout = useCallback(
     (next: PaneWeights) => {
-      const live = paneLayout(session.terminals, perBand, next);
+      const live = paneLayout(session.terminals, next);
       session.terminals.forEach((term, index) => {
         const node = paneNodes.current.get(term.name);
         const box = live.boxes[index];
@@ -956,23 +1003,54 @@ export function AgenticGrid({
         if (node) writePosition(node, seamStyle(seam));
       }
     },
-    [session.terminals, perBand],
+    [session.terminals],
   );
 
   const sizes = usePaneWeights(
     session.id,
+    // Measured at the moment of the drag rather than kept in state: the canvas
+    // IS the visible workspace now, so its live size is the only truth a
+    // pixels-to-weights conversion needs. A canvas that is not there yet
+    // reports 0, which `dragSeam` treats as "no room, change nothing".
     useCallback(
       () => ({
-        width: canvasRef.current?.clientWidth ?? gridWidth,
-        height: canvasRef.current?.clientHeight ?? gridHeight,
+        width: canvasRef.current?.clientWidth ?? 0,
+        height: canvasRef.current?.clientHeight ?? 0,
       }),
-      [gridWidth, gridHeight],
+      [],
     ),
     paintDraggedLayout,
   );
   const layout = useMemo(
-    () => paneLayout(session.terminals, perBand, sizes.weights),
-    [session.terminals, perBand, sizes.weights],
+    () => paneLayout(session.terminals, sizes.weights),
+    [session.terminals, sizes.weights],
+  );
+
+  /*
+   * "Even them out" — every terminal back to the same share of the window.
+   *
+   * A workspace drifts out of shape one drag at a time: a pane is widened to
+   * read a diff, another is squeezed to make room, and an hour later the wall
+   * is five different widths for no reason anyone remembers. Straightening it
+   * by hand means dragging every seam back and never quite landing on even.
+   *
+   * It resets the WEIGHTS and nothing else, which is the whole point: the
+   * arrangement — which column each terminal is in, which slot down that
+   * column — lives in `session.terminals` and only the backend may change it.
+   * So no pane is re-ordered, moved to another column or stacked under
+   * another one; the boundaries simply even out where they already are. The
+   * same act therefore covers every arrangement there is: columns side by
+   * side share the width equally, and panes stacked in one column share that
+   * column's height equally.
+   */
+  const evenPanes = useCallback(() => {
+    sizes.setWeights(evenWeights());
+  }, [sizes.setWeights]);
+
+  /** Would evening out change anything? Answers for the button's own state. */
+  const alreadyEven = useMemo(
+    () => isEvenLayout(session.terminals, sizes.weights),
+    [session.terminals, sizes.weights],
   );
 
   /*
@@ -1079,21 +1157,35 @@ export function AgenticGrid({
    */
   const layoutBusy = sizes.dragging !== null || composer.isResizing;
 
-  /*
-   * How tall the workspace is drawn, which is not always how tall it looks.
-   *
-   * Panes take a percentage of this, so it is also the floor that keeps them
-   * readable: once the bands' tallest stacks cannot fit at `MIN_PANE_HEIGHT_PX`
-   * each, the canvas grows past the window and the workspace scrolls rather
-   * than shrinking every pane further. A maximized pane is exactly the window,
-   * so it can never end up taller than the area it is being read in.
-   */
-  const canvasHeight =
-    maximized !== null
-      ? gridHeight
-      : Math.max(gridHeight, layout.minHeightUnits * MIN_PANE_HEIGHT_PX);
-
   const atLimit = session.terminals.length >= maxTerminals;
+
+  /*
+   * Chat is a conversation history, so its rail follows ARRIVAL order. The
+   * backend's terminal array follows grid coordinates and is deliberately
+   * re-sorted after every split or drag; rendering that array directly made a
+   * newly spawned Codex session appear in the middle of an existing chat.
+   */
+  const stableChatKeys = useMemo(
+    () =>
+      reconcileChatOrder(
+        chatOrder.workspaceId === session.id
+          ? chatOrder.keys
+          : (storedChatOrder(session.id) ?? initialChatOrder(session.terminals)),
+        session.terminals,
+      ),
+    [chatOrder, session.id, session.terminals],
+  );
+  const chatTerminals = useMemo(
+    () => orderChatTerminals(session.terminals, stableChatKeys),
+    [session.terminals, stableChatKeys],
+  );
+  useEffect(() => {
+    rememberChatOrder(session.id, stableChatKeys);
+    if (chatOrder.workspaceId === session.id && chatOrder.keys === stableChatKeys) {
+      return;
+    }
+    setChatOrder({ workspaceId: session.id, keys: stableChatKeys });
+  }, [chatOrder, session.id, stableChatKeys]);
 
   /** The pane on the chat stage: the chosen one while it lives, else a fallback. */
   const chatSelected = useMemo(() => {
@@ -1103,23 +1195,36 @@ export function AgenticGrid({
     return names[0] ?? null;
   }, [chatPane, target, session.terminals]);
 
-  /** Rail click: show the pane, and aim the composer at it when it can listen. */
-  const selectChatPane = useCallback(
-    (name: string, promptable: boolean) => {
-      setChatPane(name);
-      if (promptable) setTarget(name);
-    },
-    [],
-  );
+  // The browser is the only layer that knows which pane fills the one-pane
+  // chat stage. Hand that fact to the backend so voice and chat can resolve
+  // "this terminal" from what the user actually sees. Grid view clears the
+  // context rather than guessing among several visible panes.
+  useEffect(() => {
+    void syncAgenticIdeSurface({
+      workspaceId: session.id,
+      chatView,
+      onScreen,
+      terminal: chatView && onScreen ? chatSelected : null,
+      promptTarget: onScreen ? target || null : null,
+    }).catch((error) => {
+      console.warn("Agentic IDE: could not sync the visible terminal:", error);
+    });
+  }, [chatSelected, chatView, onScreen, session.id, target]);
 
-  const split = async (
-    anchor: string | null,
-    direction: SplitDirection,
-    agent?: string,
-  ) => {
+  /** Rail click: show the pane, and aim the composer at it when it can listen. */
+  const selectChatPane = useCallback((name: string, promptable: boolean) => {
+    setChatPane(name);
+    if (promptable) setTarget(name);
+  }, []);
+
+  const split = async (anchor: string | null, direction: SplitDirection, agent?: string) => {
     setWorking(true);
     try {
-      const next = await addTerminal({ anchor: anchor ?? undefined, direction, agent });
+      const next = await addTerminal({
+        anchor: anchor ?? undefined,
+        direction,
+        agent,
+      });
       onSessionChanged?.(next);
       // A fresh pane should receive the next prompt — that is why it was opened.
       const known = new Set(session.terminals.map((t) => t.name));
@@ -1141,7 +1246,6 @@ export function AgenticGrid({
               next.terminals,
               anchor,
               added.name,
-              perBand,
             )
           : remapColumnWeights(current, session.terminals, next.terminals),
       );
@@ -1169,16 +1273,8 @@ export function AgenticGrid({
    * so the click opens it straight away rather than showing a one-entry menu.
    */
   const openTerminal = (surface: "rail" | "empty") => {
-    if (agents === undefined) {
-      pushToast(
-        "warning",
-        "Terminal choices are still loading. Try again in a moment.",
-      );
-      return;
-    }
-    if (offersChoice)
-      setPicking((current) => (current === surface ? null : surface));
-    else void split(null, "right", automaticAgentChoice(agents));
+    if (offersChoice) setPicking((current) => (current === surface ? null : surface));
+    else void split(null, "right");
   };
 
   /*
@@ -1277,28 +1373,38 @@ export function AgenticGrid({
     // opened by voice would otherwise exist only as a rail entry behind the
     // one being read, which is the 2026-07-28 "terminals just don't load"
     // report in new clothes.
-    if (chatView) setChatPane(fresh[fresh.length - 1]);
-    // The LAST one: panes are appended, so the newest is the one whose arrival
-    // could have pushed the grid past its viewport. Probed rather than assumed —
-    // `scrollIntoView` is absent in jsdom and in some embedded WebViews, and the
-    // ring below is the half of this that matters most anyway.
-    const newest = paneNodes.current.get(fresh[fresh.length - 1]);
-    if (typeof newest?.scrollIntoView === "function") {
-      newest.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    let frame: number | undefined;
+    if (chatView) {
+      setChatPane(fresh[fresh.length - 1]);
+      // Chat rows are arrival-ordered, so the new session belongs at the rail's
+      // tail. Scrolling the hidden grid cell used to move the whole workspace
+      // and then snap the terminal again after its delayed fit.
+      frame = requestAnimationFrame(() => {
+        const rail = chatRailRef.current;
+        if (rail) rail.scrollTop = rail.scrollHeight;
+      });
     }
+    // In the grid there is nothing to scroll to: the workspace is one screenful
+    // by rule, so a pane that just opened is already in view and the ring below
+    // is the whole announcement. This used to call `scrollIntoView` on the
+    // newest pane, which was the honest answer while a workspace could be wider
+    // or taller than its window.
     const timer = window.setTimeout(() => setJustOpened(new Set()), 2600);
-    return () => window.clearTimeout(timer);
+    return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
   }, [session.terminals]);
 
   /*
    * "Jump to pane" — from the header bell, or from the view after a tab switch.
    *
-   * Three things, in this order: the pane is maximized, it is scrolled to, and
-   * it wears the same arrival ring a freshly opened pane does. Maximizing is
-   * what the user asked for — a notification about a pane is a request to READ
-   * that pane, and reading a postcard-sized terminal in a grid of twelve is the
-   * problem, not the answer. The ring covers the case where the pane was
-   * already the maximized one and nothing visibly moved.
+   * Two things: the pane is maximized, and it wears the same arrival ring a
+   * freshly opened pane does. Maximizing is what the user asked for — a
+   * notification about a pane is a request to READ that pane, and reading a
+   * postcard-sized terminal in a grid of twelve is the problem, not the answer.
+   * The ring covers the case where the pane was already the maximized one and
+   * nothing visibly moved.
    *
    * Silently ignored for a pane that is no longer here: an entry outlives the
    * terminal it came from by up to one poll, and a stray maximize of "whatever
@@ -1326,12 +1432,6 @@ export function AgenticGrid({
     if (chatView) setChatPane(wanted);
     else setMaximized(wanted);
     setJustOpened(new Set([wanted]));
-    const node = paneNodes.current.get(wanted);
-    // Probed rather than assumed — `scrollIntoView` is absent in jsdom and in
-    // some embedded WebViews, and a maximized pane fills the grid anyway.
-    if (typeof node?.scrollIntoView === "function") {
-      node.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    }
     const timer = window.setTimeout(() => setJustOpened(new Set()), 2600);
     return () => window.clearTimeout(timer);
     // `session.terminals` deliberately absent: this fires on a JUMP, not every
@@ -1369,10 +1469,13 @@ export function AgenticGrid({
         // The name the backend really settled on, read back off the pane's key
         // rather than assumed from the input — the key is what survives a
         // rename, which is exactly why it is the thing to look the pane up by.
-        const to =
-          next.terminals.find((term) => term.key === pane.key)?.name ?? cleaned;
+        const to = next.terminals.find((term) => term.key === pane.key)?.name ?? cleaned;
         setStatuses((current) => rekey(current, from, to));
-        setRecaps((current) => rekey(current, from, to));
+        setRecapCache((current) =>
+          current.workspaceId === session.id
+            ? { ...current, rows: rekey(current.rows, from, to) }
+            : current,
+        );
         setRestartTokens((current) => rekey(current, from, to));
         // The pane's dragged height is keyed by call-sign too, and the basis
         // map is what stops the remap effect from reading a rename as "one
@@ -1449,9 +1552,7 @@ export function AgenticGrid({
       if (maximized === name) setMaximized(null);
       // The surviving columns keep the widths they were dragged to; the closed
       // pane's own height weight goes with it.
-      sizes.setWeights((current) =>
-        remapColumnWeights(current, session.terminals, next.terminals),
-      );
+      sizes.setWeights((current) => remapColumnWeights(current, session.terminals, next.terminals));
       rebaseWeights(next.terminals);
       onSessionChanged?.(next);
       if (target === name) setTarget(next.terminals.find(takesPrompts)?.name ?? "");
@@ -1569,7 +1670,7 @@ export function AgenticGrid({
       const result = await promptTerminal(target, text, { attachments: carry });
       setPreview(null);
       setPreviewSource("");
-      setPrompt("");
+      replacePrompt("");
       setAttachments([]);
       // The text is typed either way — but if the agent did not accept it, say
       // so instead of leaving the user to wonder why nothing happened.
@@ -1597,8 +1698,8 @@ export function AgenticGrid({
    * back out. If composition fails outright the original goes straight through
    * rather than blocking on a nicety.
    */
-  const send = async () => {
-    const text = prompt.trim();
+  const send = async (draft: string) => {
+    const text = draft.trim();
     if (!text || !target) return;
     setSending(true);
     try {
@@ -1645,9 +1746,7 @@ export function AgenticGrid({
         {workspaceBar ?? (
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <FolderGit2 className="h-4 w-4 shrink-0 text-primary" />
-            <span className="truncate font-display text-sm font-semibold">
-              {project.name}
-            </span>
+            <span className="truncate font-display text-sm font-semibold">{project.name}</span>
           </div>
         )}
 
@@ -1711,13 +1810,42 @@ export function AgenticGrid({
           )}
         </button>
 
-        {/* Terminal appearance and text size, one quiet button away. They are
-            set-and-forget preferences, not moment-to-moment controls — kept
-            permanently on the bar they cost seven bordered buttons of noise
-            for something touched once a week. */}
+        {/* Even out the sizes. Beside the grid/chat toggle because both are
+            about the SHAPE of the workspace rather than what is in it, and
+            before the appearance controls because it changes the panes
+            themselves, not how their text is drawn.
+
+            Off in chat view and while a pane is maximized: both hide the
+            boundaries this evens out, so the click would be a change nobody
+            can see — and a control whose effect is invisible reads as a dead
+            one. The tooltip says which of the reasons applies. */}
+        <button
+          type="button"
+          data-testid="agentic-even-panes"
+          onClick={evenPanes}
+          disabled={chatView || maximized !== null || alreadyEven}
+          title={
+            chatView || maximized !== null
+              ? t("agentic_grid.even.grid_only")
+              : alreadyEven
+                ? t("agentic_grid.even.already")
+                : t("agentic_grid.even.hint")
+          }
+          aria-label={t("agentic_grid.even.label")}
+          className={TOOLBAR_BTN}
+        >
+          <AlignHorizontalDistributeCenter className="h-4 w-4 shrink-0" />
+        </button>
+
+        {/* Appearance stays behind one quiet menu; text size is deliberately
+            exposed beside it. Somebody opening this workspace because the
+            terminal is too small must be able to find the remedy without
+            already knowing which anonymous glyph hides it. */}
         <ViewMenu
           appearance={appearance}
           onAppearance={setAppearance}
+        />
+        <TerminalFontSizeControl
           fontSize={fontSize}
           onFontSize={setFontSize}
         />
@@ -1743,6 +1871,13 @@ export function AgenticGrid({
           busy={busy || working}
         />
 
+        {/* Summon or dismiss the floating voice bubble. The glyph pulses gold
+            while a conversation runs so a closed bubble still has a visible
+            heartbeat somewhere on screen. */}
+        {onToggleVoice && (
+          <WorkspaceVoiceButton open={voiceOpen} onToggle={onToggleVoice} />
+        )}
+
         <button
           ref={selectionToggleRef}
           type="button"
@@ -1751,9 +1886,7 @@ export function AgenticGrid({
           onClick={selectionMode ? leaveSelectionMode : enterSelectionMode}
           title={t("agentic_grid.selection.hint")}
           aria-label={
-            selectionMode
-              ? t("agentic_grid.selection.finish")
-              : t("agentic_grid.selection.start")
+            selectionMode ? t("agentic_grid.selection.finish") : t("agentic_grid.selection.start")
           }
           className={cn(TOOLBAR_BTN, selectionMode && TOOLBAR_BTN_ON)}
         >
@@ -1779,9 +1912,7 @@ export function AgenticGrid({
               type="button"
               className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               onClick={() =>
-                setSelectedTerminals(
-                  new Set(session.terminals.map((terminal) => terminal.name)),
-                )
+                setSelectedTerminals(new Set(session.terminals.map((terminal) => terminal.name)))
               }
               disabled={session.terminals.length === 0}
             >
@@ -1881,13 +2012,21 @@ export function AgenticGrid({
         <aside
           data-testid="agentic-chat-rail"
           className={cn(
-            "w-64 shrink-0 flex-col border-r border-border",
+            /*
+             * 224 px, and the header is the same 44 px rule-under-a-label as
+             * the voice column opposite it. Chat view puts THREE vertical
+             * bands in front of the one pane being read — the app's own
+             * navigation, this list, and the voice column — so the two this
+             * view owns at least agree with each other about how a column
+             * begins.
+             */
+            "w-56 shrink-0 flex-col border-r border-border",
             chatView ? "flex" : "hidden",
           )}
         >
           {/* `relative` so the CLI picker hangs under the plus button. */}
-          <div className="relative flex items-center justify-between px-3 py-2">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <div className="relative flex h-11 shrink-0 items-center justify-between border-b border-border/60 px-3">
+            <span className="truncate text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
               Agents
             </span>
             <button
@@ -1896,10 +2035,6 @@ export function AgenticGrid({
               className={TOOLBAR_BTN}
               disabled={atLimit || busy || working}
               aria-expanded={offersChoice ? picking === "rail" : undefined}
-              aria-haspopup={offersChoice ? "dialog" : undefined}
-              aria-controls={
-                offersChoice ? "chat-rail-agent-menu-dialog" : undefined
-              }
               onClick={() => openTerminal("rail")}
               title="Open another terminal"
               aria-label="Open another terminal"
@@ -1922,8 +2057,11 @@ export function AgenticGrid({
               />
             )}
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-2 pb-2">
-            {session.terminals.map((term) => {
+          <div
+            ref={chatRailRef}
+            className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-2 pb-2"
+          >
+            {chatTerminals.map((term) => {
               const state = statuses[term.name];
               const headline = recaps[term.name]?.recap ?? term.recap;
               const title =
@@ -1952,13 +2090,21 @@ export function AgenticGrid({
                         ? toggleTerminalSelection(term.name)
                         : selectChatPane(term.name, takesPrompts(term))
                     }
+                    /*
+                     * A selected row is marked by a rule down its left edge and
+                     * a raised background — not by a yellow border wrapped
+                     * around a yellow fill. Eleven rows of tinted boxes is what
+                     * turns a list into a heat map, and it left the accent with
+                     * nothing distinct to say when a row actually wanted
+                     * attention.
+                     */
                     className={cn(
-                      "w-full rounded-lg border px-2.5 py-2 text-left transition-colors",
+                      "w-full rounded-control border-l-2 px-2.5 py-2 text-left transition-colors",
                       selectionMode && marked
-                        ? "border-primary bg-primary/10"
+                        ? "border-primary bg-secondary"
                         : active && !selectionMode
-                          ? "border-primary/50 bg-primary/10"
-                          : "border-transparent hover:bg-secondary",
+                          ? "border-primary bg-secondary"
+                          : "border-transparent hover:bg-secondary/60",
                     )}
                   >
                     {/* The right padding is permanent, not applied on hover:
@@ -2039,42 +2185,36 @@ export function AgenticGrid({
         ref={gridRef}
         data-testid="agentic-grid"
         className={cn(
-          "relative min-h-0 min-w-0 flex-1",
-          // Scrolls only once the panes would be squeezed below a readable
-          // height. With a workspace that fits, this is `overflow-hidden`
-          // behaviour and nothing moves. The chat stage never scrolls — its
-          // one pane fills it, and the terminal scrolls inside itself.
-          chatView || maximized !== null
-            ? "overflow-hidden"
-            : "overflow-y-auto scrollbar-jarvis",
-          // A drag across the grid would otherwise sweep a text selection over
-          // every header and label it crosses.
-          arrange.held !== null && "select-none",
+          // NEVER scrolls, on either axis. The workspace is one screenful by
+            // rule (maintainer, 2026-08-04): opening a pane makes every pane a
+            // little smaller, and finding the seventh terminal is never a
+            // matter of scrolling sideways to it. `overflow-hidden` is the
+            // whole enforcement — the canvas below is sized to this element, so
+            // there is nothing to scroll to in the first place, and this only
+            // guarantees that a rounding error or a pane's own overflow cannot
+            // quietly hand the grid a scrollbar back.
+            "relative min-h-0 min-w-0 flex-1 overflow-hidden",
+            // A drag across the grid would otherwise sweep a text selection over
+            // every header and label it crosses.
+            arrange.held !== null && "select-none",
         )}
         // Inline rather than a utility class so ONE number drives both the
         // rendered outer margin and the width the column count is computed from.
         style={{ padding: chatView ? 12 : GRID_GAP_PX }}
       >
       {/*
-        The surface the fractions resolve against.
+        The surface the fractions resolve against — always exactly the window.
 
-        Separate from the scroller because the two have different heights on
-        purpose: the scroller is the window, this is the workspace, and a
-        workspace whose panes would fall below `MIN_PANE_HEIGHT_PX` grows past
-        the window and scrolls rather than shrinking them further.
+        It kept its own size until 2026-08-04, growing past the grid so the
+        panes could stay above a minimum and the workspace scrolled to reach
+        them. That is the behaviour this element now exists to prevent: a pane
+        is a share of what is on screen, so the twelfth terminal makes the other
+        eleven smaller and stays in the same view as them.
       */}
       <div
         ref={canvasRef}
         data-testid="agentic-grid-canvas"
-        className={cn(
-          "relative w-full",
-          // The chat stage fills everything between the rail and the voice
-          // column. It started as a centred, capped column; the maintainer
-          // wants the terminal at full size (2026-07-31), and the calm framing
-          // comes from the rail and the card border, not from margins.
-          chatView && "h-full",
-        )}
-        style={{ height: chatView ? undefined : canvasHeight || undefined }}
+        className="relative h-full w-full"
       >
         {session.terminals.map((term, index) => {
           const box = layout.boxes[index];
@@ -2098,27 +2238,23 @@ export function AgenticGrid({
                 chatView
                   ? onStage
                     ? "rounded-xl border border-border shadow-lg"
-                    : "hidden"
-                  : maximized !== null && !isMaximized && "hidden",
-              )}
-              style={
-                chatView || isMaximized ? MAXIMIZED_BOX : paneBoxStyle(box)
-              }
-            >
-              <AgenticTerminal
-                name={term.name}
+                        : "hidden"
+                      : maximized !== null && !isMaximized && "hidden",
+                  )}
+                  style={chatView || isMaximized ? MAXIMIZED_BOX : paneBoxStyle(box)}
+                >
+                  <AgenticTerminal
+                    name={term.name}
                 workspaceId={session.id}
                 displayName={term.display_name}
                 // The polled recap when one has arrived, the one the workspace
-                // state carried until then — so a pane opens with a sentence in
-                // its header rather than with a blank that fills in later.
-                recap={recaps[term.name]?.recap ?? term.recap}
-                recapDetail={
-                  recaps[term.name]?.recap_detail ?? term.recap_detail
-                }
-                // Who wrote it and why — only the polled read knows, so a pane
-                // still on its opening recap gets an empty meta and a card that
-                // simply says less rather than one that guesses.
+                    // state carried until then — so a pane opens with a sentence in
+                    // its header rather than with a blank that fills in later.
+                    recap={recaps[term.name]?.recap ?? term.recap}
+                    recapDetail={recaps[term.name]?.recap_detail ?? term.recap_detail}
+                    // Who wrote it and why — only the polled read knows, so a pane
+                    // still on its opening recap gets an empty meta and a card that
+                    // simply says less rather than one that guesses.
                 recapMeta={{
                   source: recaps[term.name]?.source,
                   reason: recaps[term.name]?.reason,
@@ -2129,21 +2265,20 @@ export function AgenticGrid({
                 recapActions={recapActionsFor(term.name)}
                 // Only the panes that are NOT on the default login carry a
                 // badge. Labelling every pane "Default Claude Code login" would
-                // be noise for the many; labelling the odd one out is the whole
-                // signal for the few running two seats at once.
-                accountLabel={
-                  term.account && !term.account.endsWith(":default")
-                    ? term.account_label
-                    : null
-                }
-                promptCount={term.prompts_sent}
-                appearance={appearance}
-                fontSize={fontSize}
-                geometryReady={gridWidth > 0 && gridHeight > 0}
-                focused={target === term.name}
-                maximized={isMaximized}
-                layoutBusy={layoutBusy}
-                splitDisabled={atLimit || busy || working}
+                    // be noise for the many; labelling the odd one out is the whole
+                    // signal for the few running two seats at once.
+                    accountLabel={
+                      term.account && !term.account.endsWith(":default") ? term.account_label : null
+                    }
+                    promptCount={term.prompts_sent}
+                    appearance={appearance}
+                    fontSize={fontSize}
+                    geometryReady={gridMeasured}
+                    focused={target === term.name}
+                    active={!chatView || onStage}
+                    maximized={isMaximized}
+                    layoutBusy={layoutBusy}
+                    splitDisabled={atLimit || busy || working}
                 agents={agents}
                 onFocus={() => {
                   if (takesPrompts(term)) setTarget(term.name);
@@ -2154,51 +2289,45 @@ export function AgenticGrid({
                   // "maximize" honestly means "give me the full-width grid
                   // version of this pane".
                   if (chatView) {
-                    setViewMode("grid");
-                    setMaximized(term.name);
-                  } else {
-                    setMaximized((current) =>
-                      current === term.name ? null : term.name,
-                    );
-                  }
-                }}
-                onSplit={(direction, agent) => void split(term.name, direction, agent)}
+                        setViewMode("grid");
+                        setMaximized(term.name);
+                      } else {
+                        setMaximized((current) => (current === term.name ? null : term.name));
+                      }
+                    }}
+                    onSplit={(direction, agent) => void split(term.name, direction, agent)}
                 onRename={(next) => renamePane(term, next)}
                 onClose={() => setPendingClose(term.name)}
                 onAttachError={(message) => pushToast("error", message)}
                 // Picked up by its header, put down on another pane. Undefined
                 // rather than a disabled flag when rearranging is off, so the
-                // header goes back to being a plain header — no grab cursor
-                // promising a gesture that would do nothing.
-                onArrangeStart={
-                  canArrange
-                    ? (event) => arrange.start(term.name, event)
-                    : undefined
-                }
-                arranging={arrange.held === term.name}
-                restartToken={restartTokens[term.name] ?? 0}
+                    // header goes back to being a plain header — no grab cursor
+                    // promising a gesture that would do nothing.
+                    onArrangeStart={
+                      canArrange ? (event) => arrange.start(term.name, event) : undefined
+                    }
+                    arranging={arrange.held === term.name}
+                    restartToken={restartTokens[term.name] ?? 0}
                 onRestart={() => restartPane(term.name)}
               />
               {/* Where a drop on THIS pane would put the pane in hand. Every
                   other pane is outlined the moment a drag starts, so the grid
                   says "these are the places" before the cursor gets there, and
                   the one under the cursor fills in the half it would take. */}
-              {arrange.held !== null && arrange.held !== term.name && (
-                <div
-                  data-testid={`pane-dropzone-${term.name}`}
-                  data-zone={
-                    arrange.hover?.target === term.name ? arrange.hover.zone : ""
-                  }
-                  className="pointer-events-none absolute inset-0 z-30 rounded-lg border-2 border-dashed border-primary/30"
-                >
-                  {arrange.hover?.target === term.name && (
-                    <>
-                      <div
-                        className={cn(
-                          "absolute rounded-md bg-primary/25 ring-2 ring-primary transition-all",
-                          ZONE_BOX[arrange.hover.zone],
-                        )}
-                      />
+                  {arrange.held !== null && arrange.held !== term.name && (
+                    <div
+                      data-testid={`pane-dropzone-${term.name}`}
+                      data-zone={arrange.hover?.target === term.name ? arrange.hover.zone : ""}
+                      className="pointer-events-none absolute inset-0 z-30 rounded-lg border-2 border-dashed border-primary/30"
+                    >
+                      {arrange.hover?.target === term.name && (
+                        <>
+                          <div
+                            className={cn(
+                              "absolute rounded-md bg-primary/25 ring-2 ring-primary",
+                              ZONE_BOX[arrange.hover.zone],
+                            )}
+                          />
                       <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground shadow-lg">
                         {t(`agentic_grid.arrange.${arrange.hover.zone}`).replace(
                           "{0}",
@@ -2213,20 +2342,14 @@ export function AgenticGrid({
                 <button
                   type="button"
                   data-testid={`select-terminal-${term.name}`}
-                  aria-pressed={selectedTerminals.has(term.name)}
-                  aria-label={
-                    selectedTerminals.has(term.name)
-                      ? t("agentic_grid.selection.deselect_terminal").replace(
-                          "{0}",
-                          term.name,
-                        )
-                      : t("agentic_grid.selection.select_terminal").replace(
-                          "{0}",
-                          term.name,
-                        )
-                  }
-                  onClick={() => toggleTerminalSelection(term.name)}
-                  // Selection mode owns the right mouse button and does nothing
+                      aria-pressed={selectedTerminals.has(term.name)}
+                      aria-label={
+                        selectedTerminals.has(term.name)
+                          ? t("agentic_grid.selection.deselect_terminal").replace("{0}", term.name)
+                          : t("agentic_grid.selection.select_terminal").replace("{0}", term.name)
+                      }
+                      onClick={() => toggleTerminalSelection(term.name)}
+                      // Selection mode owns the right mouse button and does nothing
                   // with it. Marking a pane on right-click was too easy to
                   // trigger by accident, and letting the event through would
                   // open the app-wide Cut/Copy/Paste menu over an overlay that
@@ -2308,10 +2431,6 @@ export function AgenticGrid({
                 className="btn-primary"
                 disabled={busy || working}
                 aria-expanded={offersChoice ? picking === "empty" : undefined}
-                aria-haspopup={offersChoice ? "dialog" : undefined}
-                aria-controls={
-                  offersChoice ? "empty-workspace-agent-menu-dialog" : undefined
-                }
                 onClick={() => openTerminal("empty")}
               >
                 <Plus className="h-4 w-4" />
@@ -2386,31 +2505,35 @@ export function AgenticGrid({
         }
       />
 
-      {composerCollapsed ? (
+      {composerCollapsed && (
         <div
           data-testid="agentic-composer-collapsed"
           style={{ height: COMPOSER_COLLAPSED_PX }}
           className="flex shrink-0 items-center justify-between gap-2 px-3"
         >
-          <span className="truncate text-[11px] text-muted-foreground">
-            {target || "No terminal"} hears whatever you say out loud.
+          <span className="truncate text-[11px] text-muted-foreground/70">
+            {target
+              ? `Say it out loud and ${target} gets it.`
+              : "Say it out loud and the agents get it."}
           </span>
           <button
             type="button"
             data-testid="agentic-composer-reopen"
             onClick={() => composer.resize(COMPOSER_DEFAULT_PX)}
-            className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="flex shrink-0 items-center gap-1.5 rounded-control px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
             <ChevronUp className="h-3.5 w-3.5" />
             Write instead
           </button>
         </div>
-      ) : (
-        <div
-          data-testid="agentic-composer"
-          style={{ height: composerHeight }}
-          {...dragHandlers}
-          onPaste={(event) => {
+      )}
+      <div
+        data-testid={composerCollapsed ? undefined : "agentic-composer"}
+        aria-hidden={composerCollapsed || undefined}
+        hidden={composerCollapsed}
+        style={{ height: composerHeight }}
+        {...dragHandlers}
+        onPaste={(event) => {
             // Clipboard IMAGES only. Pasted text belongs to the textarea, and
             // intercepting it would break ordinary paste into the prompt.
             const images = extractPasteFiles(event.clipboardData).map((f) =>
@@ -2421,42 +2544,77 @@ export function AgenticGrid({
             void attach({ paths: [], files: images });
           }}
           className={cn(
-            "relative flex shrink-0 flex-col overflow-hidden px-3 py-2 transition-colors",
-            dragging && "bg-primary/5 ring-1 ring-inset ring-primary/50",
+            /*
+             * The height the seam dragged belongs to THIS element; the padding
+             * that insets the writing surface from the window edge belongs to
+             * it too, so that the surface inside can be `h-full` and the bar
+             * still occupies exactly the pixels the seam promised. Putting the
+             * inset on the surface as a margin instead would have made the bar
+             * 16 px taller than its own stated height — silently, and at the
+             * expense of the panes above it.
+             */
+            "relative shrink-0 flex-col p-2",
+            composerCollapsed ? "hidden" : "flex",
           )}
         >
+          <div
+            className={cn(
+              /*
+               * ONE surface, and the reason it is one is the reason this bar
+               * used to look assembled: a target row, a bordered textarea and a
+               * pill button, each with its own edge and its own radius, stacked
+               * in a padded strip. Four frames, none of which was the edge of
+               * the thing. The border, the radius and the focus treatment now
+               * belong to this element alone; everything inside it is bare.
+               */
+              "relative flex h-full min-h-0 flex-col overflow-hidden rounded-surface border transition-colors",
+              "border-border/70 bg-card/40 focus-within:border-primary/40",
+              dragging && "border-primary/60 bg-primary/5",
+            )}
+          >
           {dragging && (
             <div
               data-testid="agentic-composer-dropzone"
-              className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-primary/60 bg-background/80 text-xs font-medium text-primary"
+              className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-surface bg-background/85 text-xs font-medium text-primary"
             >
               Drop a screenshot or document — {target || "the agent"} gets what is in it
             </div>
           )}
-          <div className="mb-1.5 flex max-h-16 shrink-0 flex-wrap items-center gap-1 overflow-y-auto scrollbar-jarvis">
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Send to
-            </span>
-            {/* Agent panes only. A plain terminal is a shell prompt — it is
-                typed into by hand, so listing it here would offer a target that
-                refuses every instruction sent to it. */}
+          {/*
+            Which agent hears this — a row of tabs across the head of the
+            surface rather than a "Send to" label followed by loose chips.
+            The label was answering a question the chips already answer, and
+            spending a line of the bar to do it; a selected tab is marked by a
+            rule under it, which is the one place in this view where yellow
+            still means "this is the choice you made" without shouting it.
+
+            Agent panes only. A plain terminal is a shell prompt — it is typed
+            into by hand, so listing it here would offer a target that refuses
+            every instruction sent to it.
+          */}
+          {/* One line that scrolls sideways, never two that wrap: a bar whose
+              head silently grows a second row takes that row off the panes
+              above it, and it did so at exactly the moment a workspace got
+              busy enough to need them. */}
+          <div className="flex shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-border/60 px-1.5 scrollbar-jarvis">
             {session.terminals.filter(takesPrompts).map((term) => {
               const state = statuses[term.name];
+              const picked = target === term.name;
               return (
                 <button
                   key={term.key}
                   type="button"
                   data-testid={`prompt-target-${term.name}`}
-                  onClick={() => setTarget(term.name)}
-                  aria-pressed={target === term.name}
+                  onClick={() => (chatView ? selectChatPane(term.name, true) : setTarget(term.name))}
+                  aria-pressed={picked}
                   className={cn(
-                    "flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-xs transition-colors",
-                    target === term.name
-                      ? "border-primary/60 bg-primary/10 text-primary"
-                      : "border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
+                    "flex shrink-0 items-center gap-1.5 border-b-2 px-2.5 py-1.5 text-xs transition-colors",
+                    picked
+                      ? "border-primary font-medium text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground",
                   )}
                 >
-                  <span className="font-medium">{term.name}</span>
+                  <span>{term.name}</span>
                   <PaneActivityPill
                     status={state?.status ?? "connecting"}
                     detail={state?.detail}
@@ -2467,14 +2625,16 @@ export function AgenticGrid({
             })}
           </div>
           {(attachments.length > 0 || analyzing > 0) && (
-            <AttachmentStrip
-              attachments={attachments}
-              analyzing={analyzing}
-              onRemove={dropAttachment}
-            />
+            <div className="shrink-0 px-2 pt-2">
+              <AttachmentStrip
+                attachments={attachments}
+                analyzing={analyzing}
+                onRemove={dropAttachment}
+              />
+            </div>
           )}
           {preview && (
-            <div className="mb-2 shrink-0 overflow-y-auto scrollbar-jarvis">
+            <div className="mb-2 shrink-0 overflow-y-auto px-2 pt-2 scrollbar-jarvis">
               <PromptPreview
                 terminal={target}
                 composed={preview.composed}
@@ -2486,13 +2646,13 @@ export function AgenticGrid({
                 onSend={() => void deliver(preview.composed)}
                 onSendVerbatim={() => void deliver(previewSource, attachments)}
                 onCancel={() => {
-                  // Give the user their own words back rather than dropping
-                  // them. The attachments stay too — backing out of a rewrite
-                  // is not a reason to lose the file they dropped.
-                  setPrompt(previewSource);
-                  setPreview(null);
-                  setPreviewSource("");
-                }}
+                // Give the user their own words back rather than dropping
+                // them. The attachments stay too — backing out of a rewrite
+                // is not a reason to lose the file they dropped.
+                replacePrompt(previewSource);
+                setPreview(null);
+                setPreviewSource("");
+              }}
               />
             </div>
           )}
@@ -2502,42 +2662,22 @@ export function AgenticGrid({
             two-line box with empty space under it. Its own resize grip is gone —
             two ways to change one height fight each other.
           */}
-          <div className="flex min-h-0 flex-1 items-end gap-2">
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void send();
-                }
-              }}
-              placeholder={
-                target
-                  ? `Type an instruction for ${target} — Enter sends, Shift+Enter adds a line`
-                  : "Pick a terminal first"
-              }
-              className="h-full min-h-[44px] flex-1 resize-none rounded-lg border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:border-primary/50"
-            />
-            <button
-              type="button"
-              className="btn-primary h-[52px] shrink-0"
-              disabled={sending || !prompt.trim() || !target}
-              onClick={() => void send()}
-            >
-              <ArrowUp className="h-4 w-4" />
-              {sending ? "Preparing…" : "Send"}
-            </button>
-          </div>
-          {composerHeight >= COMPOSER_HINT_AT_PX && (
-            <p className="mt-2 shrink-0 text-[11px] text-muted-foreground">
-              Anything you can type here, you can also say out loud — for example
-              “what is {session.terminals[0]?.name ?? "Mika"} doing?” or “tell{" "}
-              {session.terminals[0]?.name ?? "Mika"} to run the tests”.
-            </p>
-          )}
+        {/*
+          No standing "you can also say this out loud" note under the input.
+          It was a tip printed permanently into the writing surface, and a tip
+          that cannot be dismissed is read once and then occupies the bar
+          forever — the collapsed strip already says the same thing in the one
+          state where it is news (see `agentic-composer-collapsed`).
+        */}
+        <PromptEditor
+          target={target}
+          sending={sending}
+          seed={promptSeed}
+          onSend={send}
+          onAttach={(files) => void attach({ paths: [], files })}
+        />
         </div>
-      )}
+      </div>
 
       {/* The pane in hand, following the cursor.
           A label rather than a copy of the terminal: an xterm canvas cannot be
@@ -2577,33 +2717,28 @@ export function AgenticGrid({
 }
 
 /**
- * Terminal appearance and text size, behind one quiet toolbar button.
+ * Terminal appearance, behind one quiet toolbar button.
  *
- * Both are remembered per browser profile and touched about once a week, so
- * they earn a menu rather than seven permanent buttons on the bar. The controls
- * inside keep the exact labels the standalone buttons had — a screen reader and
- * a muscle memory both find the same names one click deeper.
+ * Theme is a set-and-forget preference, unlike text size: the latter is an
+ * accessibility control and remains visible beside this menu.
  */
 function ViewMenu({
   appearance,
   onAppearance,
-  fontSize,
-  onFontSize,
 }: {
   appearance: TerminalAppearance;
   onAppearance: (next: TerminalAppearance) => void;
-  fontSize: number;
-  onFontSize: (next: number) => void;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   return (
     <div className="relative shrink-0">
       <button
         type="button"
-        aria-label="Terminal appearance and text size"
+        aria-label={t("agentic_grid.display.appearance")}
         aria-expanded={open}
         data-testid="agentic-view-menu"
-        title="Terminal appearance and text size"
+        title={t("agentic_grid.display.appearance")}
         onClick={() => setOpen((value) => !value)}
         className={cn(TOOLBAR_BTN, open && "bg-secondary text-foreground")}
       >
@@ -2618,11 +2753,13 @@ function ViewMenu({
             className="absolute right-0 top-full z-50 mt-1 w-60 rounded-xl border border-border bg-card p-3 shadow-xl"
           >
             <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-muted-foreground">Terminals</span>
+              <span className="text-xs text-muted-foreground">
+                {t("agentic_grid.display.appearance")}
+              </span>
               <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
                 <button
                   type="button"
-                  aria-label="Light terminals"
+                  aria-label={t("agentic_grid.display.light")}
                   aria-pressed={appearance === "light"}
                   onClick={() => onAppearance("light")}
                   className={cn(
@@ -2636,7 +2773,7 @@ function ViewMenu({
                 </button>
                 <button
                   type="button"
-                  aria-label="Dark terminals"
+                  aria-label={t("agentic_grid.display.dark")}
                   aria-pressed={appearance === "dark"}
                   onClick={() => onAppearance("dark")}
                   className={cn(
@@ -2650,36 +2787,103 @@ function ViewMenu({
                 </button>
               </div>
             </div>
-            <div className="mt-2 flex items-center justify-between gap-3">
-              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Type className="h-3.5 w-3.5" />
-                Text size
-              </span>
-              <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
-                <button
-                  type="button"
-                  aria-label="Smaller text"
-                  onClick={() => onFontSize(Math.max(FONT_MIN, fontSize - 1))}
-                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-                >
-                  <Minus className="h-3.5 w-3.5" />
-                </button>
-                <span className="w-8 text-center font-mono text-[11px] text-foreground">
-                  {fontSize}
-                </span>
-                <button
-                  type="button"
-                  aria-label="Larger text"
-                  onClick={() => onFontSize(Math.min(FONT_MAX, fontSize + 1))}
-                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/** Always-visible terminal text sizing for the active workspace. */
+/**
+ * The toolbar's voice button — summons the floating voice bubble.
+ *
+ * Its own component so only IT re-renders on voice-state changes: it
+ * subscribes to `voiceState` for the gold pulse, and re-rendering the whole
+ * grid a few times per spoken turn to animate one glyph would be the tail
+ * wagging a very large dog.
+ */
+function WorkspaceVoiceButton({
+  open,
+  onToggle,
+}: {
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const t = useT();
+  const voiceState = (useEventStore((s) => s.voiceState) ?? "idle") as VoiceState;
+  const assistantName =
+    (useEventStore((s) => s.assistantName) ?? "").trim() ||
+    t("agentic_grid.voice_bubble.assistant_fallback");
+  const active = isVoiceActive(voiceState);
+  return (
+    <button
+      type="button"
+      data-testid="agentic-voice-toggle"
+      aria-pressed={open}
+      onClick={onToggle}
+      title={
+        open
+          ? t("agentic_grid.voice_bubble.button_close")
+          : t("agentic_grid.voice_bubble.button_open").replace("{0}", assistantName)
+      }
+      className={cn(TOOLBAR_BTN, open && TOOLBAR_BTN_ON)}
+    >
+      <AudioLines
+        className={cn(
+          "h-4 w-4 shrink-0",
+          active && "animate-pulse text-primary motion-reduce:animate-none",
+        )}
+      />
+    </button>
+  );
+}
+
+function TerminalFontSizeControl({
+  fontSize,
+  onFontSize,
+}: {
+  fontSize: number;
+  onFontSize: (next: number) => void;
+}) {
+  const t = useT();
+  const smaller = fontSize <= FONT_MIN;
+  const larger = fontSize >= FONT_MAX;
+
+  return (
+    <div
+      role="group"
+      aria-label={t("agentic_grid.display.text_size")}
+      data-testid="agentic-font-size-control"
+      title={t("agentic_grid.display.text_size")}
+      className="flex h-7 shrink-0 items-center rounded-md border border-border/70 bg-background/30"
+    >
+      <Type aria-hidden="true" className="mx-1 h-3.5 w-3.5 text-muted-foreground" />
+      <button
+        type="button"
+        aria-label={t("agentic_grid.display.smaller")}
+        disabled={smaller}
+        onClick={() => onFontSize(Math.max(FONT_MIN, fontSize - 1))}
+        className="flex h-7 w-6 items-center justify-center text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-35"
+      >
+        <Minus className="h-3.5 w-3.5" />
+      </button>
+      <span
+        aria-live="polite"
+        data-testid="agentic-font-size-value"
+        className="w-7 text-center font-mono text-[11px] tabular-nums text-foreground"
+      >
+        {fontSize}
+      </span>
+      <button
+        type="button"
+        aria-label={t("agentic_grid.display.larger")}
+        disabled={larger}
+        onClick={() => onFontSize(Math.min(FONT_MAX, fontSize + 1))}
+        className="flex h-7 w-6 items-center justify-center rounded-r-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-35"
+      >
+        <Plus className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }
@@ -2875,17 +3079,12 @@ function ConfirmWorkspaceClose({
           Close this workspace?
         </Dialog.Title>
         <Dialog.Description className="mt-2 text-sm text-muted-foreground">
-          This stops all {terminalCount} {agentLabel} and closes every terminal
-          session. Anything already written to disk stays.
+          This stops all {terminalCount} {agentLabel} and closes every terminal session. Anything
+          already written to disk stays.
         </Dialog.Description>
         <div className="mt-5 flex items-center justify-end gap-2">
           <Dialog.Close asChild>
-            <button
-              type="button"
-              className="btn-ghost"
-              autoFocus
-              disabled={busy}
-            >
+            <button type="button" className="btn-ghost" autoFocus disabled={busy}>
               Keep workspace open
             </button>
           </Dialog.Close>
@@ -2936,17 +3135,11 @@ function ConfirmClose({
       <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-xl">
         <h3 className="font-display text-base font-semibold">Close {name}?</h3>
         <p className="mt-2 text-sm text-muted-foreground">
-          The coding agent running in this terminal is stopped and its session is
-          gone. Anything it already wrote to disk stays.
+          The coding agent running in this terminal is stopped and its session is gone. Anything it
+          already wrote to disk stays.
         </p>
         <div className="mt-5 flex items-center justify-end gap-2">
-          <button
-            type="button"
-            className="btn-ghost"
-            autoFocus
-            disabled={busy}
-            onClick={onCancel}
-          >
+          <button type="button" className="btn-ghost" autoFocus disabled={busy} onClick={onCancel}>
             Keep it open
           </button>
           <button

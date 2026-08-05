@@ -52,9 +52,9 @@ def test_latency_span_summary_drops_the_redundant_session_id_detail():
     # every span buries the phase name. The full payload stays in the raw view.
     s = analyzer.summarize_event(
         _ev("LatencySpan", phase="realtime_turn_complete", duration_ms=8127.6,
-            detail="session_id=e97522ea-2c2e-4ae8-8b41-3441f257c96e")
+            detail="session_id=20000004-0000-4000-8000-000000000004")
     )
-    assert "e97522ea" not in s
+    assert "20000004" not in s
     assert "8.13s" in s
 
 

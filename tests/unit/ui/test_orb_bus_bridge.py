@@ -945,7 +945,7 @@ async def test_orb_shows_again_after_genuine_wake_following_hangup() -> None:
 
 
 async def test_session_start_shows_listening_when_listening_state_is_deduped() -> None:
-    """Live forensic (2026-06-21, session 1a3df62a): the bar only "woke up" at
+    """Live forensic (2026-06-21, session 10000011): the bar only "woke up" at
     THINKING, never while the user spoke into it.
 
     Root cause: the supervisor's high-level state was already ``LISTENING`` when

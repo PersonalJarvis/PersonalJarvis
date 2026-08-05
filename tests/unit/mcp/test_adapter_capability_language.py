@@ -25,8 +25,8 @@ from __future__ import annotations
 from jarvis.core.capabilities import Capability, CapabilityRegistry
 from jarvis.mcp.adapter import _objects_from_tool_name, _verbs_from_description
 
-# The exact final transcript of the live turn (trace c82aa1a6, 09:05:24).
-_LIVE_GERMAN_TRANSCRIPT = (
+# Synthetic transcript fixture matching the regression shape.
+_SYNTHETIC_GERMAN_TRANSCRIPT = (
     "Kannst du mir bitte mal gucken, "  # i18n-allow: live transcript under test
     "alle all meine Notebooks auflisten?"  # i18n-allow: live transcript under test
 )
@@ -50,7 +50,7 @@ def _notebook_list_cap() -> Capability:
 
 def _gcloud_cli_cap() -> Capability:
     """Unrelated CLI capability with the generic verbs that made
-    ``has_action_intent`` fire on the live turn (seed catalog entry)."""
+    ``has_action_intent`` fire on the synthetic turn (seed catalog entry)."""
     return Capability(
         id="cli.gcloud",
         source="cli",
@@ -95,15 +95,15 @@ class TestGermanUtteranceResolvesToMcpCapability:
 
     def test_live_transcript_resolves_to_mcp(self) -> None:
         reg = self._registry()
-        cap = reg.resolve_intent(_LIVE_GERMAN_TRANSCRIPT)
+        cap = reg.resolve_intent(_SYNTHETIC_GERMAN_TRANSCRIPT)
         assert cap is not None
         assert cap.id == "mcp.notebooklm-mcp/notebook_list"
 
     def test_generic_subagent_predicate_no_longer_fires(self) -> None:
         """``has_action_intent AND resolve is None`` was the spawn trigger."""
         reg = self._registry()
-        assert reg.has_action_intent(_LIVE_GERMAN_TRANSCRIPT)
-        assert reg.resolve_intent(_LIVE_GERMAN_TRANSCRIPT) is not None
+        assert reg.has_action_intent(_SYNTHETIC_GERMAN_TRANSCRIPT)
+        assert reg.resolve_intent(_SYNTHETIC_GERMAN_TRANSCRIPT) is not None
 
     def test_plain_german_list_phrasing_resolves(self) -> None:
         cap = self._registry().resolve_intent(

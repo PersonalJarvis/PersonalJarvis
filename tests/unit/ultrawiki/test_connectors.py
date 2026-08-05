@@ -100,7 +100,7 @@ class TestObsidianVault:
         assert [item.external_id for item in items] == ["daily/idea.md", "note.md"]
         note = next(item for item in items if item.external_id == "note.md")
         assert note.title == "Meeting Notes"
-        assert "Viktoria" in note.body
+        assert "Example Contact" in note.body
         assert note.permalink == (root / "note.md").resolve().as_uri()
         for item in items:
             assert _ISO_UTC_RE.fullmatch(item.timestamp_utc)

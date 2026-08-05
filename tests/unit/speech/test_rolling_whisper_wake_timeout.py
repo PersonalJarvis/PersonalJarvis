@@ -1,7 +1,7 @@
 """RollingWhisperWake must self-heal from a hung local-Whisper transcription.
 
 Live forensic (2026-06-29, data/jarvis_desktop.log): a user with a custom wake
-word ("Hey Nico" -> engine=stt_match -> RollingWhisperWake) said the wake word
+word ("Hey Nova" -> engine=stt_match -> RollingWhisperWake) said the wake word
 for minutes with no reaction. The log showed the chunk-consumer heartbeat ALIVE
 (audio flowing, max-rms up to 0.27 while speaking) but the poll loop emitted ZERO
 ``rolling-whisper:`` transcripts for 12 minutes after a single mid-session line —
@@ -56,10 +56,10 @@ class _HangFirstThenMatchSTT:
 async def test_hung_transcription_does_not_freeze_wake_forever() -> None:
     import re
 
-    stt = _HangFirstThenMatchSTT("hey nico")
+    stt = _HangFirstThenMatchSTT("hey nova")
     wake = RollingWhisperWake(
         stt,
-        pattern=re.compile(r"hey\W+nico", re.IGNORECASE),
+        pattern=re.compile(r"hey\W+nova", re.IGNORECASE),
         poll_interval_s=0.01,
         cooldown_s=0.0,
         save_debug_wavs=False,
@@ -97,7 +97,7 @@ async def test_hung_transcription_does_not_freeze_wake_forever() -> None:
         # the timeout, the first call is abandoned, the loop re-polls, the second
         # call matches, and the keyword is yielded.
         kw = await asyncio.wait_for(_first_keyword(), timeout=3.0)
-        assert kw.lower() == "hey nico"
+        assert kw.lower() == "hey nova"
         assert stt.calls >= 2, (
             f"poll loop never retried after the hung first call (calls={stt.calls})"
         )

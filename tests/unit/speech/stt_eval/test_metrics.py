@@ -1,9 +1,40 @@
 """Multilingual STT evaluation metrics."""
 
+import importlib
+import sys
+
+import pytest
+
+from jarvis.speech.stt_eval import metrics as metrics_module
 from jarvis.speech.stt_eval.metrics import (
     repeatability_error_rate,
     switch_error_rate,
+    word_error_rate,
 )
+
+
+def test_word_error_rate_is_self_contained_and_normalized() -> None:
+    assert word_error_rate("Hello, world!", "hello world") == 0.0
+    assert word_error_rate("one two three", "one four three") == 1 / 3
+    assert word_error_rate("one two three", "one three") == 1 / 3
+    assert word_error_rate("one three", "one two three") == 1 / 2
+    assert word_error_rate("", "") == 0.0
+    assert word_error_rate("", "unexpected") == 1.0
+    assert word_error_rate("one", "one two three") == 2.0
+
+
+def test_word_error_rate_preserves_legacy_contraction_tokenization() -> None:
+    assert word_error_rate("can't stop", "can t stop") == 1.0
+
+
+def test_metrics_import_without_private_tts_eval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "jarvis.speech.tts_eval.metrics", None)
+
+    reloaded = importlib.reload(metrics_module)
+
+    assert reloaded.word_error_rate("same", "same") == 0.0
 
 
 def test_switch_anchors_cover_multiple_language_families_and_names() -> None:

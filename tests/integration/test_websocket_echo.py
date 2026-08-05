@@ -13,6 +13,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from jarvis.audio import mic_level
 from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
 from jarvis.core.events import ErrorOccurred, SystemStarted
@@ -61,7 +62,7 @@ def test_bus_event_forwarded_as_envelope(web_server: WebServer) -> None:
             assert "timestamp_ns" in frame
             assert "payload" in frame
             assert frame["payload"]["version"]
-            assert elapsed_ms < 500, f"Latenz {elapsed_ms:.1f}ms ≥ 500ms"
+            assert elapsed_ms < 500, f"Latency {elapsed_ms:.1f}ms >= 500ms"
 
 
 def test_direct_bus_publish_reaches_client(web_server: WebServer) -> None:
@@ -103,7 +104,24 @@ def test_ping_command_returns_pong(web_server: WebServer) -> None:
             ws.send_json({"type": "command", "action": "ping", "payload": {"n": 42}})
             frame = ws.receive_json()
             assert frame["type"] == "pong"
-            assert frame["payload"] == {"n": 42}
+        assert frame["payload"] == {"n": 42}
+
+
+def test_native_microphone_level_reaches_web_client(web_server: WebServer) -> None:
+    had_subscribers = mic_level.has_subscribers()
+    with TestClient(web_server.app) as client:
+        with client.websocket_connect("/ws") as ws:
+            _receive_welcome(ws)
+            assert mic_level.has_subscribers()
+
+            mic_level.feed(0.1)
+            frame = ws.receive_json()
+
+            assert frame["type"] == "audio.level"
+            assert 0.0 < frame["input"] <= 1.0
+
+    if not had_subscribers:
+        assert not mic_level.has_subscribers()
 
 
 def test_invalid_frame_publishes_error_event(web_server: WebServer) -> None:

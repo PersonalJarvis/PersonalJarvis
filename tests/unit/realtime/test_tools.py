@@ -293,7 +293,7 @@ async def test_conversational_turn_blocks_realtime_spawn():
     executor, with the redirect message fed back to the model."""
     bridge, executor = _spawn_bridge()
     await bridge.handle_user_transcript(
-        "Ah, ich will gucken, wo ich als nächstes hinziehe."  # i18n-allow: live utterance
+        "Ich überlege, welchen Ansatz ich für das Beispielprojekt wähle."  # i18n-allow: synthetic utterance
     )
 
     name, result = await bridge.execute(wire_name="spawn_worker", arguments={})

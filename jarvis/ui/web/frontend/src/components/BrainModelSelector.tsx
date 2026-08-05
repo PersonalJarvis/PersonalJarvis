@@ -200,6 +200,11 @@ export function BrainModelSelector({
   const [saving, setSaving] = useState(false);
   const [pinned, setPinned] = useState<string>(currentModel ?? "");
   const [probe, setProbe] = useState<BrainModelProbe | null>(null);
+  // A save runs a real 1-token call against the chosen model, and the FIRST
+  // call to a local model loads gigabytes of weights into memory — measured at
+  // over a minute for a 30B model. A silent spinner for that long reads as a
+  // hang, so after a few seconds the wait explains itself.
+  const [slowProbe, setSlowProbe] = useState(false);
 
   async function load(refresh = false) {
     setLoading(true);
@@ -320,6 +325,8 @@ export function BrainModelSelector({
   async function save(value: string) {
     const model = value.trim();
     setSaving(true);
+    setSlowProbe(false);
+    const slowTimer = window.setTimeout(() => setSlowProbe(true), 6000);
     setProbe(null);
     setOpen(false);
     setQuery("");
@@ -370,6 +377,8 @@ export function BrainModelSelector({
       }
       pushToast("error", (e as Error).message);
     } finally {
+      window.clearTimeout(slowTimer);
+      setSlowProbe(false);
       setSaving(false);
     }
   }
@@ -623,6 +632,14 @@ export function BrainModelSelector({
           <span className="text-[11px] text-muted-foreground">{sourceNote}</span>
         )}
         {probe && <ProbeChip probe={probe} />}
+        {slowProbe && (
+          <span
+            data-testid="brain-model-probe-slow"
+            className="text-[11px] text-muted-foreground"
+          >
+            {t("apikeys_model.probe_slow_note")}
+          </span>
+        )}
       </div>
     </div>
   );

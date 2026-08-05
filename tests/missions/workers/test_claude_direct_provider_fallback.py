@@ -1,7 +1,7 @@
 """Regression for the 2026-06-08 sub-mission instant-fail bug.
 
-Forensic ground truth (`data/missions.db`, missions ``019ea82e-3fac`` /
-``019ea82e-8cc5`` / ``019ea830-072f``): every mission died in ~3 s with
+Forensic ground truth (`data/missions.db`, missions ``019f1020-3fac`` /
+``019f1020-8cc5`` / ``019f1021-072f``): every mission died in ~3 s with
 ``WorkerKilled reason=user`` and ``MissionFailed reason=task_error``. The
 verbatim worker error in ``data/jarvis_desktop.log`` was::
 
@@ -231,7 +231,7 @@ def test_default_model_is_reachable_opus_never_fable(monkeypatch) -> None:
     """Maintainer decision 2026-06-14 (supersedes the 2026-06-10 fable mandate):
     ``claude-fable-5`` is approved-access-only and the Claude Max subscription
     cannot reach it via the CLI ("Claude Fable 5 is currently unavailable",
-    live mission 019ec615) — so the last-resort default must be a model the
+    live mission 019f102e) — so the last-resort default must be a model the
     subscription CAN reach (``claude-opus-4-8``), never the unreachable fable.
 
     The module constant is the last line of defense when neither

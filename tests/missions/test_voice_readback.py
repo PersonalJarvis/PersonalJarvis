@@ -161,7 +161,7 @@ def test_git_setup_reasons_carry_spanish() -> None:
 
 
 def test_render_failed_maps_attempts_timed_out_to_honest_timeout_phrase() -> None:
-    """Live deep-dive 2026-06-07 (mission 019ea1da): a Computer-Use mission
+    """Live deep-dive 2026-06-07 (mission 019f101f): a Computer-Use mission
     whose final iteration hit the 630s wall-clock cap was failed with the
     generic ``task_error`` reason, so the user heard a "worker aborted" phrase
     for a timeout. A worker that ran out of time on every attempt must speak an

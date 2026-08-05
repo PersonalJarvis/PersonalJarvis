@@ -67,7 +67,7 @@ async def test_ack_prompt_is_base_persona_when_no_preferences() -> None:
         breaker=CircuitBreaker(threshold=3, cooldown_s=60),
         preferences_provider=lambda: "",
     )
-    await gen.run("such Flüge nach Berlin", language="de")  # i18n-allow
+    await gen.run("such Flüge nach Exampletown", language="de")  # i18n-allow
     assert provider.persona_prompts[0] == get_persona_prompt("de")
 
 
@@ -83,7 +83,7 @@ async def test_ack_prompt_unaffected_when_provider_raises() -> None:
         breaker=CircuitBreaker(threshold=3, cooldown_s=60),
         preferences_provider=_boom,
     )
-    await gen.run("such Flüge nach Berlin", language="de")  # i18n-allow
+    await gen.run("such Flüge nach Exampletown", language="de")  # i18n-allow
     assert provider.persona_prompts[0] == get_persona_prompt("de")
 
 

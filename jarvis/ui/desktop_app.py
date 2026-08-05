@@ -17,6 +17,7 @@ import asyncio
 import inspect
 import json
 import os
+import queue
 import secrets
 import sys
 import threading
@@ -63,6 +64,22 @@ META_FILE_PATH = DATA_DIR / ".jarvis-running"
 #: so we detect a running process immediately and focus it instead of
 #: waiting silently.
 _LOCK_ACQUIRE_TIMEOUT = 0.0
+#: Delay before the selected realtime transport is pre-opened in the
+#: background. Long enough to stay out of the brain/MCP build's CPU and disk
+#: window, far shorter than a user reaching for the wake word.
+_REALTIME_WARM_DELAY_S = 5.0
+
+#: How long the warm waits for voice to report itself usable before warming
+#: anyway. Voice never becoming usable is normal on a host with no microphone,
+#: and the browser/bridge surfaces can still place a call there — so the gate
+#: bounds the wait instead of cancelling the warm.
+_REALTIME_WARM_VOICE_GATE_S = 45.0
+
+#: Floor between two warm attempts. The warm is re-armed after every call so a
+#: transport that died mid-session is reopened before the next wake word; this
+#: keeps a burst of short calls (or a rapid hangup loop) from re-verifying the
+#: account once per call.
+_REALTIME_WARM_MIN_INTERVAL_S = 20.0
 
 
 def _local_voice_permission_granted(
@@ -142,6 +159,188 @@ class SingleInstanceError(RuntimeError):
 
 
 _DESKTOP_LOG_SINK_INSTALLED = False
+#: Rotate the desktop log at this size, keeping ``_LOG_RETENTION`` older files.
+_LOG_ROTATION_BYTES = 10 * 1024 * 1024
+_LOG_RETENTION = 3
+#: Bound on records waiting to reach disk. Deep enough to absorb a multi-second
+#: disk stall at the observed rate (a few hundred records per minute), shallow
+#: enough that a permanently wedged disk cannot grow the process without limit.
+_LOG_QUEUE_MAX = 20_000
+#: Records fused into one write+flush pair. Chatty subsystems (the wake
+#: heartbeat, Telegram polling) otherwise pay two syscalls per line.
+_LOG_BATCH_MAX = 256
+#: Sentinel telling the writer thread to drain and exit.
+_LOG_STOP = object()
+
+
+class _AsyncLogWriter:
+    """Write loguru records to the log file from a dedicated thread.
+
+    Why this exists instead of loguru's own file sink: a file sink runs
+    INLINE on whichever thread emitted the record, and the backend asyncio
+    loop emits constantly. One slow ``write()`` therefore blocks every
+    WebSocket, HTTP route and brain turn behind it. Observed live on
+    2026-08-03 under heavy machine load: a 24.4 s event-loop stall whose
+    stack ended in ``loguru/_file_sink.py:write``, immediately followed by
+    ``listening socket ... is dead`` and an unhandled proactor error — the
+    window lost its backend and never came back.
+
+    loguru's ``enqueue=True`` would decouple the same way, but it builds a
+    multiprocessing pipe that can fail with WinError 5 in restricted
+    desktop/sandbox contexts before the window exists. A plain threading
+    queue buys the decoupling without a pipe; rotation and retention, which
+    the file sink would otherwise provide, are carried here instead.
+
+    On overflow records are dropped rather than growing the queue without
+    bound, and the dropped count is reported into the log as soon as the disk
+    keeps up again — dropping silently would make the log lie about its own
+    completeness (AP-30).
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        rotation_bytes: int = _LOG_ROTATION_BYTES,
+        retention: int = _LOG_RETENTION,
+        max_queue: int = _LOG_QUEUE_MAX,
+    ) -> None:
+        self._path = Path(path)
+        self._rotation_bytes = rotation_bytes
+        self._retention = retention
+        self._queue: queue.Queue[Any] = queue.Queue(maxsize=max_queue)
+        self._drop_lock = threading.Lock()
+        self._dropped = 0
+        self._handle: Any = None
+        self._written = 0
+        self._thread = threading.Thread(
+            target=self._run,
+            name="jarvis-log-writer",
+            daemon=True,
+        )
+        self._thread.start()
+
+    # -- loguru sink -------------------------------------------------------
+    def __call__(self, message: Any) -> None:
+        """Hand one formatted record to the writer thread. Never blocks."""
+        try:
+            self._queue.put_nowait(str(message))
+        except queue.Full:
+            # Silence is the point: a log sink that blocks or raises would stall
+            # whichever thread emitted the record. The drop is not lost — the
+            # count surfaces as a WARNING line in the next emitted batch.
+            with self._drop_lock:
+                self._dropped += 1
+
+    def stop(self, timeout: float = 5.0) -> None:
+        """Drain and close. Used by tests; the daemon thread needs no stop."""
+        with suppress(queue.Full):
+            self._queue.put_nowait(_LOG_STOP)
+        self._thread.join(timeout=timeout)
+
+    # -- writer thread -----------------------------------------------------
+    def _run(self) -> None:
+        while True:
+            first = self._queue.get()
+            if first is _LOG_STOP:
+                break
+            batch = [first]
+            stopping = False
+            while len(batch) < _LOG_BATCH_MAX:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    # Not a failure: an empty queue simply ends this batch and
+                    # the outer loop blocks on the next record.
+                    break
+                if item is _LOG_STOP:
+                    stopping = True
+                    break
+                batch.append(item)
+            self._emit(batch)
+            if stopping:
+                break
+        self._close()
+
+    def _emit(self, batch: list[str]) -> None:
+        with self._drop_lock:
+            dropped, self._dropped = self._dropped, 0
+        if dropped:
+            batch.insert(
+                0,
+                f"{time.strftime('%Y-%m-%d %H:%M:%S')} | WARNING  | "
+                f"{__name__}:_AsyncLogWriter:0 | log writer dropped "
+                f"{dropped} record(s) while the disk was not keeping up.\n",
+            )
+        try:
+            handle = self._ensure_handle()
+            handle.write("".join(batch))
+            handle.flush()
+            self._written = handle.tell()
+        except (OSError, ValueError) as exc:
+            # Cannot log this — we ARE the log. stderr is None under
+            # pythonw.exe, so on the windowed build the only remaining signal
+            # is the drop counter above, reported once writing recovers.
+            self._handle = None
+            stream = getattr(sys, "__stderr__", None)
+            if stream is not None:
+                with suppress(Exception):
+                    stream.write(f"jarvis log writer failed: {exc!r}\n")
+            return
+        if self._written >= self._rotation_bytes:
+            self._rotate()
+
+    def _ensure_handle(self) -> Any:
+        if self._handle is None:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            # newline="" keeps loguru's "\n" from becoming "\r\n" on Windows,
+            # matching what the previous file sink wrote.
+            self._handle = self._path.open("a", encoding="utf-8", errors="replace", newline="")
+            self._written = self._handle.tell()
+        return self._handle
+
+    def _close(self) -> None:
+        handle, self._handle = self._handle, None
+        if handle is not None:
+            with suppress(Exception):
+                handle.close()
+
+    def _rotate(self) -> None:
+        self._close()
+        # Microsecond suffix mirrors the naming the loguru file sink used, so
+        # older rotated logs and new ones sort together — and two rotations in
+        # the same second cannot collide on a name.
+        now = time.time()
+        stamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(now))
+        target = self._path.with_name(
+            f"{self._path.stem}.{stamp}_{int(now % 1 * 1_000_000):06d}{self._path.suffix}"
+        )
+        try:
+            self._path.rename(target)
+        except OSError:
+            # Another process holds the file open (Windows) or the rename
+            # raced. Keep appending to the current file — an oversized log is
+            # strictly better than losing records.
+            self._written = 0
+            return
+        self._prune()
+
+    def _prune(self) -> None:
+        pattern = f"{self._path.stem}.*{self._path.suffix}"
+        try:
+            rotated = sorted(
+                self._path.parent.glob(pattern),
+                key=lambda item: item.stat().st_mtime,
+                reverse=True,
+            )
+        except OSError:
+            # Listing the log directory failed (removed, or locked mid-scan on
+            # Windows). Pruning is housekeeping — skipping one round keeps a
+            # few extra rotated files, which beats raising inside the writer.
+            return
+        for stale in rotated[self._retention :]:
+            with suppress(OSError):
+                stale.unlink()
 
 
 def _install_desktop_log_sink(log_path: Path) -> None:
@@ -154,7 +353,9 @@ def _install_desktop_log_sink(log_path: Path) -> None:
 
     This sink writes every ``INFO+`` event to a rotating log file, and
     stdlib ``logging`` is redirected via ``InterceptHandler`` so that
-    ``uvicorn`` / ``httpx`` / ``faster_whisper`` get captured too.
+    ``uvicorn`` / ``httpx`` / ``faster_whisper`` get captured too. Writing
+    happens on :class:`_AsyncLogWriter`'s thread so that a slow disk can
+    never stall the caller — see that class for the incident this prevents.
 
     Idempotent — calling it more than once is a no-op (important in case
     DesktopApp gets instantiated multiple times in tests).
@@ -167,16 +368,11 @@ def _install_desktop_log_sink(log_path: Path) -> None:
     from loguru import logger
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    # Rotate at 10 MB, max 3 files — keeps logs from eating the disk.
     logger.add(
-        str(log_path),
+        _AsyncLogWriter(log_path),
         level="INFO",
-        rotation="10 MB",
-        retention=3,
-        encoding="utf-8",
-        # Keep this disabled on Windows. loguru's enqueue=True creates a
-        # multiprocessing pipe which can fail with WinError 5 in restricted
-        # desktop/sandbox contexts before the window is created.
+        # The writer thread IS the queue. loguru's own enqueue= would add a
+        # multiprocessing pipe on top (WinError 5 in restricted contexts).
         enqueue=False,
         backtrace=True,
         diagnose=False,  # don't dump locals (secrets!)
@@ -1636,18 +1832,18 @@ class DesktopApp:
 
         server.bus.subscribe(MessageSent, _on_user_message)
 
-        # Drag-drop onto the floating overlay (bar/mascot) → a proactive brain
-        # turn, reusing the SAME intake as the web dock (jarvis/brain/
-        # drop_context.ingest_drop). The overlay (Tk thread) calls dispatch_drop;
-        # we marshal here onto the long-running backend loop and run the intake.
-        # A no-op until tkdnd is present (NullDropTarget); brain may be None
-        # (build error) → ingest_drop degrades to a text-only turn.
+        # Drag-drop onto the floating overlay (bar/mascot) reuses the SAME
+        # intake as the web dock. In the Agentic IDE it stages files for the
+        # selected pane; elsewhere it retains them as silent brain context. The
+        # overlay thread calls dispatch_drop, so the actual intake is marshalled
+        # onto the long-running backend loop here.
         try:
-            from jarvis.brain.drop_context import ingest_drop, items_from_paths
+            from jarvis.brain.drop_context import items_from_paths
             from jarvis.overlay.drop_bridge import (
                 report_drop_result,
                 set_drop_handler,
             )
+            from jarvis.ui.drop_intake import capture_presence_drop
 
             def _on_overlay_drop(paths: list[str], text: str) -> None:
                 items = items_from_paths(paths) if paths else []
@@ -1664,15 +1860,13 @@ class DesktopApp:
                     accepted = False
                     try:
                         current_brain = await _await_brain_ready()
-                        accepted = bool(
-                            await ingest_drop(
-                                bus=server.bus,
-                                brain=current_brain,
-                                thread_id="default",
-                                items=items,
-                                dragged_text=dragged,
-                            )
+                        result = await capture_presence_drop(
+                            brain=current_brain,
+                            thread_id="default",
+                            items=items,
+                            dragged_text=dragged,
                         )
+                        accepted = result.captured
                     finally:
                         # The overlay gets an honest answer either way: a
                         # confirmation tick that appears when the content never
@@ -1940,6 +2134,25 @@ class DesktopApp:
                 name="speech-and-orb",
             )
             speech_task.add_done_callback(_log_speech_and_orb_done)
+
+            # === 1b) Realtime transport pre-warm, beside the wake listener ===
+            # Deliberately NOT inside ``_heavy_backend_bg``: that task waits on
+            # the wake-model gate AND the whole ``server.start()`` chain before
+            # it schedules anything, so the warm could not begin until roughly
+            # 30-40 s after launch — while the wake word is armed within ~1 s.
+            # A user who spoke in that window paid the provider's full cold
+            # start (documented 15-25 s for the ChatGPT-subscription transport)
+            # inside their own call, with the bar already claiming to listen.
+            #
+            # AP-26 is preserved by construction: the worker below does nothing
+            # until VoiceBootStatus reports ``voice_usable``, i.e. AFTER the
+            # mark ``check_boot_budget.py`` measures, and nothing on the boot
+            # path ever awaits it — so neither VOICE_USABLE nor APP_INTERACTIVE
+            # can move because of it.
+            loop.create_task(
+                self._run_realtime_transport_warm(server.bus),
+                name="realtime-transport-warm",
+            )
 
             # === 2) Everything else, BEHIND the live wake listener ==========
             # The heavy backend keeps its original internal order (server.start()
@@ -2262,16 +2475,18 @@ class DesktopApp:
 
                     surface = SubprocessMascotOverlay(
                         mascot_path=self.cfg.ui.orb_mascot_path or None,
+                        style=style,
                     )
                     surface.start_in_thread()
                     logger.info(
-                        "Mascot orb hosted out-of-process on macOS "
-                        "(jarvis.ui.jarvisbar.host)."
+                        "Orb window hosted out-of-process on macOS "
+                        "(jarvis.ui.jarvisbar.host, style={}).",
+                        style,
                     )
                     return surface
                 except Exception:  # noqa: BLE001 — cosmetic; never block boot
                     logger.opt(exception=True).warning(
-                        "macOS mascot host failed to start — falling back "
+                        "macOS orb host failed to start — falling back "
                         "to the no-op surface."
                     )
             from jarvis.ui.jarvisbar import NullOverlay
@@ -2295,7 +2510,7 @@ class DesktopApp:
                     self.cfg.ui, "bar_follow_cursor_monitor", True
                 ),
             )
-        else:  # "mascot" (and any legacy style value)
+        else:  # an orb style ("mascot" / "voice_orb"), or any legacy value
             from ui.orb.overlay import OrbOverlay
 
             surface = OrbOverlay(
@@ -2429,8 +2644,10 @@ class DesktopApp:
         """
         from loguru import logger
 
+        from jarvis.ui.overlay_styles import ORB_STYLES, OVERLAY_STYLES
+
         style = (style or "jarvis_bar").strip()
-        if style not in ("jarvis_bar", "mascot", "none"):
+        if style not in OVERLAY_STYLES:
             return {"ok": False, "applied_live": False, "style": style}
         bridge = getattr(self, "_bridge", None)
         if bridge is None:
@@ -2441,6 +2658,23 @@ class DesktopApp:
             if cache is None:
                 cache = self._surfaces = {}
             old = getattr(self, "_orb", None)
+
+            # Mascot <-> voice orb is a RENDERER swap inside one window, not a
+            # new surface: the orb window stays, only what it paints changes. So
+            # this transition applies live even though every other first-time
+            # transition needs a restart (a second tk.Tk() root would abort the
+            # process — BUG-031).
+            if style in ORB_STYLES and old is not None and hasattr(old, "set_style"):
+                old.set_style(style)
+                for key in [k for k, v in cache.items() if v is old]:
+                    cache.pop(key, None)
+                cache[style] = old
+                try:
+                    self.cfg.ui.orb_style = style  # best-effort in-memory
+                except Exception:  # noqa: BLE001
+                    logger.debug("in-memory orb_style update skipped", exc_info=True)
+                logger.info("Orb window re-styled live to {}.", style)
+                return {"ok": True, "applied_live": True, "style": style}
 
             if style == "none":
                 new = cache.get("none")
@@ -2642,6 +2876,106 @@ class DesktopApp:
         logger.info("Quit scheduled (Terms declined; hard-exit fallback armed).")
         return True
 
+    async def _run_realtime_transport_warm(self, bus: Any) -> None:
+        """Keep the selected realtime transport pre-opened, for the whole session.
+
+        A realtime provider backed by an external application login has a real
+        cold start: it spawns its app-server, verifies the live account, and
+        audits its profile before it can accept a single audio frame. Paid
+        inside a call that cost is the difference between "it answers" and
+        "it went quiet for twenty seconds", so it is paid out here instead.
+
+        This is a WORKER, not a one-shot, because a warmed transport does not
+        stay warm: the shared client is torn down on any transport error, and
+        the previous single boot-time warm never noticed. Every completed call
+        re-arms it, so a transport that died mid-session is reopened before the
+        next wake word rather than during it.
+
+        Never fatal and never silent: a failed warm only means the next call
+        pays what it pays today, and it says so (AP-30). Cross-platform by
+        construction — the work is a bus subscription plus whatever the
+        provider's own capability probe does, and a host with no eligible
+        provider simply warms nothing.
+        """
+        from loguru import logger as _warm_log
+
+        # Bound once so every failure below reports through a plainly named
+        # call: a logger reached through a chained ``.opt(...)`` is invisible
+        # to the silent-handler gate, which is exactly the check that keeps
+        # an advisory warm path from failing without a trace (AP-30).
+        _warm_log_exc = _warm_log.opt(exception=True)
+
+        from jarvis.core.events import VoiceBootStatus, VoiceSessionEnded
+
+        warm_requested = asyncio.Event()
+        voice_usable = asyncio.Event()
+        last_completed = 0.0
+
+        async def _on_voice_boot_status(evt: Any) -> None:
+            if getattr(evt, "voice_usable", False):
+                voice_usable.set()
+
+        async def _on_voice_session_ended(evt: Any) -> None:
+            # Re-arm on the way out of every call, whatever ended it: a
+            # provider failure is exactly the case where the transport is most
+            # likely to need reopening, and it is also the case that used to
+            # leave the next call cold with nothing to fix it.
+            del evt
+            warm_requested.set()
+
+        try:
+            bus.subscribe(VoiceBootStatus, _on_voice_boot_status)
+            bus.subscribe(VoiceSessionEnded, _on_voice_session_ended)
+        except Exception:  # noqa: BLE001 — a headless/bare bus keeps the warm
+            _warm_log_exc.warning(
+                "Realtime transport warm could not subscribe to the voice "
+                "lifecycle; it will warm once and not re-arm after calls."
+            )
+
+        try:
+            await asyncio.wait_for(
+                voice_usable.wait(), timeout=_REALTIME_WARM_VOICE_GATE_S
+            )
+        except TimeoutError:
+            # No microphone, a failed warm-up, or a headless host: the browser
+            # and bridge surfaces can still start a call, so warm anyway.
+            _warm_log.info(
+                "Realtime transport warm: voice never reported usable within "
+                "{:.0f}s; warming the transport anyway.",
+                _REALTIME_WARM_VOICE_GATE_S,
+            )
+        # Keeps the process spawn and the account round trip out of the
+        # brain/MCP build's CPU and disk window.
+        await asyncio.sleep(_REALTIME_WARM_DELAY_S)
+        warm_requested.set()
+
+        while True:
+            await warm_requested.wait()
+            # ``time.monotonic`` rather than the loop clock: this worker must
+            # not care which loop implementation it is running on.
+            elapsed = time.monotonic() - last_completed
+            if last_completed and elapsed < _REALTIME_WARM_MIN_INTERVAL_S:
+                await asyncio.sleep(_REALTIME_WARM_MIN_INTERVAL_S - elapsed)
+            warm_requested.clear()
+            try:
+                from jarvis.core.config import load_config
+                from jarvis.realtime.factory import (
+                    realtime_warm_selected_transports,
+                )
+
+                # ``load_config`` parses TOML off disk; keep it off the loop
+                # that also serves every WebSocket frame, route and pane.
+                cfg = await asyncio.to_thread(load_config)
+                await realtime_warm_selected_transports(cfg)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — warming is advisory, never fatal
+                _warm_log_exc.warning(
+                    "Realtime transport warm failed; the next call pays the "
+                    "provider's cold start."
+                )
+            last_completed = time.monotonic()
+
     async def _start_speech_and_orb(
         self,
         loop: asyncio.AbstractEventLoop,
@@ -2697,7 +3031,8 @@ class DesktopApp:
         # On-screen overlay in its own Tk daemon thread — the bus bridge reacts
         # to SystemStateChanged and drives whichever surface is selected.
         # Style is chosen by [ui].orb_style: "jarvis_bar" (slim default),
-        # "mascot" (ghost orb), or "none". Both real surfaces share OrbBusBridge.
+        # "mascot" / "voice_orb" (the two looks of the floating orb window), or
+        # "none". Every real surface shares OrbBusBridge.
         try:
             from loguru import logger
 
@@ -3655,6 +3990,13 @@ class DesktopApp:
             sys.stderr.write("Backend did not start within 45s — aborting.\n")
             return self.shutdown() or 2
 
+        # The frame is painted before the web view has loaded a single byte, so
+        # it must already know the user's theme — otherwise a light app spends
+        # its entire boot inside a black window.
+        from jarvis.ui.theme import configured_theme, window_background
+
+        window_bg = window_background(configured_theme(getattr(self, "cfg", None)))
+
         try:
             self._window = webview.create_window(
                 WINDOW_TITLE,
@@ -3664,7 +4006,7 @@ class DesktopApp:
                 min_size=(900, 600),
                 resizable=True,
                 confirm_close=False,
-                background_color="#0a0e14",
+                background_color=window_bg,
             )
         except webview.WebViewException as exc:
             # No native desktop-window backend is available. This is the Linux

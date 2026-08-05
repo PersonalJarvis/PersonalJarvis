@@ -78,6 +78,26 @@ def test_replace_all_atomic(search: DocSearch) -> None:
     assert len(search.query("Beta")) == 1
 
 
+def test_in_memory_replace_all_isolated_from_a_shared_disk_index(
+    tmp_path: Path,
+) -> None:
+    """Production indexing must not contend with another process or worktree."""
+    shared = DocSearch(tmp_path / "shared.sqlite")
+    process_local = DocSearch(None)
+    try:
+        shared.upsert(_doc("other", "Other", "Held by another process"))
+        process_local.replace_all(
+            [_doc("local", "Local", "Available in this desktop process")]
+        )
+
+        assert len(process_local.query("Available")) == 1
+        assert process_local.query("Held") == []
+        assert len(shared.query("Held")) == 1
+    finally:
+        process_local.close()
+        shared.close()
+
+
 def test_replace_all_removes_retired_content_from_raw_database_files(
     tmp_path: Path,
 ) -> None:

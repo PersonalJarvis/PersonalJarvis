@@ -223,12 +223,12 @@ def _custom_pipeline(stt: object | None) -> SpeechPipeline:
         require_hey_prefix=True,
         utterance_stt=stt,
         wake_plan=SimpleNamespace(engine="custom_onnx", verify_prefix=True),
-        wake_matcher=compile_wake_matcher("Hey Nico"),
+        wake_matcher=compile_wake_matcher("Hey Nova"),
     )
 
 
 async def test_gate_custom_model_accepts_matching_phrase() -> None:
-    stt = _FakeSTT("hey nico wie spät ist es")  # i18n-allow
+    stt = _FakeSTT("hey nova wie spät ist es")  # i18n-allow
     pipe = _custom_pipeline(stt)
 
     assert await pipe._verify_oww_hit(LOUD_PCM_2S_16K) is True
@@ -236,9 +236,9 @@ async def test_gate_custom_model_accepts_matching_phrase() -> None:
 
 
 async def test_gate_custom_model_accepts_sound_folded_spelling() -> None:
-    """ASR spelling drift ("Niko" for "Nico") must still confirm the wake —
+    """ASR spelling drift ("Nova" for "Nova") must still confirm the wake —
     the matcher sound-folds, so verify-on-custom cannot re-break recall."""
-    stt = _FakeSTT("Hey Niko")
+    stt = _FakeSTT("Hey Nova")
     pipe = _custom_pipeline(stt)
 
     assert await pipe._verify_oww_hit(LOUD_PCM_2S_16K) is True
@@ -260,7 +260,7 @@ async def test_gate_custom_model_suppresses_silence_before_stt() -> None:
     resulting request flood drove the STT into 429/timeouts (which then opened
     the degrade-open hole). Near-silent audio is suppressed WITHOUT any STT
     call — same rms convention/threshold as RollingWhisperWake's silence gate."""
-    stt = _FakeSTT("Hey Nico")  # would match if called — must NOT be called
+    stt = _FakeSTT("Hey Nova")  # would match if called — must NOT be called
     pipe = _custom_pipeline(stt)
 
     assert await pipe._verify_oww_hit(PCM_2S_16K) is False

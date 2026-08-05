@@ -24,7 +24,7 @@ def _write_skill(tmp_path: Path, body: str, name: str = "demo") -> Path:
         f"name: {name}\n"
         "description: Demo skill.\n"
         "config:\n"
-        "  city: Berlin\n"
+        "  city: Exampletown\n"
         "---\n"
         f"{body}\n",
         encoding="utf-8",
@@ -45,7 +45,7 @@ def test_render_instructions_returns_rendered_body(tmp_path):
     skill = parse_skill(md)
     runner = SkillRunner(registry=None, tool_registry={})
     text = runner.render_instructions(skill, args={})
-    assert "Hello Berlin" in text
+    assert "Hello Exampletown" in text
     assert "TOOL:" in text  # body verbatim, never executed here
 
 

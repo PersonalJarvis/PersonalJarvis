@@ -39,7 +39,7 @@ class _BiasedSTT:
     def __init__(self, biased_text: str, unbiased_text: str) -> None:
         self._biased = biased_text
         self._unbiased = unbiased_text
-        self.bias_prompt = "Hey Nico"
+        self.bias_prompt = "Hey Nova"
         self.unbiased_calls = 0
 
     async def transcribe_pcm(
@@ -75,7 +75,7 @@ class _LegacySTT:
 async def _first_yield(stt, wait_s: float = 4.0) -> str | None:
     wake = RollingWhisperWake(
         stt,
-        pattern=compile_wake_matcher("Hey Nico"),
+        pattern=compile_wake_matcher("Hey Nova"),
         poll_interval_s=0.05,
         cooldown_s=0.0,
         min_rms=0.0,
@@ -125,37 +125,37 @@ async def _first_yield(stt, wait_s: float = 4.0) -> str | None:
 async def test_prompt_echo_is_suppressed() -> None:
     """Biased pass says exactly the phrase, unprimed ear hears NOTHING — the
     ghost-activation signature. Must stay silent."""
-    stt = _BiasedSTT(biased_text="Hey Nico", unbiased_text="")
+    stt = _BiasedSTT(biased_text="Hey Nova", unbiased_text="")
     assert await _first_yield(stt, wait_s=1.5) is None
     assert stt.unbiased_calls >= 1, "echo confirm never ran"
 
 
 async def test_echo_boilerplate_is_suppressed() -> None:
     """Unprimed ear hears only known hallucination boilerplate — still echo."""
-    stt = _BiasedSTT(biased_text="Hey Nico!", unbiased_text="Vielen Dank.")
+    stt = _BiasedSTT(biased_text="Hey Nova!", unbiased_text="Vielen Dank.")
     assert await _first_yield(stt, wait_s=1.5) is None
 
 
 async def test_genuine_exact_phrase_fires() -> None:
     """Unprimed ear hears real speech (even a mis-hearing) — genuine wake."""
-    stt = _BiasedSTT(biased_text="Hey Nico", unbiased_text="Hey Niko.")
+    stt = _BiasedSTT(biased_text="Hey Nova", unbiased_text="Hey Nova.")
     assert await _first_yield(stt) is not None
 
 
 async def test_genuine_misheard_speech_fires() -> None:
     """The unprimed base model often garbles the name ('Space'/'Ego' forensic)
     — ANY real speech counts as confirmation, not just the phrase."""
-    stt = _BiasedSTT(biased_text="Hey Nico", unbiased_text="Ist er nieko da")
+    stt = _BiasedSTT(biased_text="Hey Nova", unbiased_text="Ist er nieko da")
     assert await _first_yield(stt) is not None
 
 
 async def test_phrase_with_context_skips_the_confirm() -> None:
     """Real surrounding speech is not an echo — no second pass, no latency."""
-    stt = _BiasedSTT(biased_text="Hey Nico wie spät ist es", unbiased_text="")
+    stt = _BiasedSTT(biased_text="Hey Nova wie spät ist es", unbiased_text="")
     assert await _first_yield(stt) is not None
     assert stt.unbiased_calls == 0, "confirm ran although context ruled out echo"
 
 
 async def test_legacy_provider_without_bias_surface_fires() -> None:
-    stt = _LegacySTT("Hey Nico")
+    stt = _LegacySTT("Hey Nova")
     assert await _first_yield(stt) is not None

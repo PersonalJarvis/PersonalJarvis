@@ -1,6 +1,6 @@
 """Graceful CREATE_BREAKAWAY_FROM_JOB degradation on worker spawn.
 
-Live mission 019ec602 (2026-06-14): every worker spawn died instantly with
+Live mission 019f102d (2026-06-14): every worker spawn died instantly with
 ``PermissionError: [WinError 5] Zugriff verweigert`` at
 ``_winapi.CreateProcess``. Root cause: the worker spawns with
 ``CREATE_BREAKAWAY_FROM_JOB`` so the per-mission Job Object can own the tree,

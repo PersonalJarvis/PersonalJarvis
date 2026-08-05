@@ -1,6 +1,6 @@
 """Regression for the 2026-07-06 'all subagent missions fail on claude' incident.
 
-Forensic ground truth (`data/missions.db` missions 019f36e5 + 019f38b1 +
+Forensic ground truth (`data/missions.db` missions 019f104c + 019f104d +
 jarvis_desktop.log): the Claude Max OAuth access token in
 ``~/.claude/.credentials.json`` expired at 02:53 and nothing refreshes it
 anymore, but `claude status` still reported connected=True (presence-only
@@ -35,7 +35,7 @@ from jarvis.missions.workers.claude_direct_worker import (
 from jarvis.missions.workers.provider_chain import _FallbackStep
 from jarvis.missions.workers.stream_consumer import ClaudeResult
 
-# The verbatim live failure text from missions 019f36e5 / 019f38b1.
+# The verbatim live failure text from missions 019f104c / 019f104d.
 _LIVE_401 = "Failed to authenticate. API Error: 401 Invalid authentication credentials"
 
 

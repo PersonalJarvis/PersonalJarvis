@@ -28,13 +28,13 @@ def test_no_tasks_dir_returns_empty(tmp_path: Path) -> None:
 
 def test_tasks_dir_without_artifacts_returns_empty(tmp_path: Path) -> None:
     """Tasks exist but produced no files (Edit-only on tracked files) → empty."""
-    (tmp_path / "tasks" / "019e63c5-5855").mkdir(parents=True)
+    (tmp_path / "tasks" / "019f1014-5855").mkdir(parents=True)
     assert build_deliverable_summary(tmp_path) == ""
 
 
 def test_single_file_is_named(tmp_path: Path) -> None:
     """One archived file → 'Fertig. Datei X ist gespeichert.'"""  # i18n-allow: quotes the German TTS readback
-    files = tmp_path / "tasks" / "019e63c5-5855" / "artifacts" / "files"
+    files = tmp_path / "tasks" / "019f1014-5855" / "artifacts" / "files"
     files.mkdir(parents=True)
     (files / "landing.html").write_text("<html/>", encoding="utf-8")
     s = build_deliverable_summary(tmp_path)
@@ -45,7 +45,7 @@ def test_single_file_is_named(tmp_path: Path) -> None:
 
 def test_two_files_are_named(tmp_path: Path) -> None:
     """Two or three files → list them inline so the user can act on either."""
-    files = tmp_path / "tasks" / "019e63c5-1234" / "artifacts" / "files"
+    files = tmp_path / "tasks" / "019f1014-1234" / "artifacts" / "files"
     files.mkdir(parents=True)
     (files / "landing.html").write_text("<html/>", encoding="utf-8")
     (files / "notes.md").write_text("notes", encoding="utf-8")
@@ -120,7 +120,7 @@ def test_missing_mission_dir_returns_empty(tmp_path: Path) -> None:
 
 def test_single_file_summary_in_english(tmp_path: Path) -> None:
     """language='en' → an English sentence naming the file, no German words."""
-    files = tmp_path / "tasks" / "019e63c5-5855" / "artifacts" / "files"
+    files = tmp_path / "tasks" / "019f1014-5855" / "artifacts" / "files"
     files.mkdir(parents=True)
     (files / "landing.html").write_text("<html/>", encoding="utf-8")
     s = build_deliverable_summary(tmp_path, language="en")
@@ -133,7 +133,7 @@ def test_single_file_summary_in_english(tmp_path: Path) -> None:
 
 def test_two_files_summary_in_english(tmp_path: Path) -> None:
     """language='en' → 'N files' inline list, not the German '2 Dateien'."""
-    files = tmp_path / "tasks" / "019e63c5-1234" / "artifacts" / "files"
+    files = tmp_path / "tasks" / "019f1014-1234" / "artifacts" / "files"
     files.mkdir(parents=True)
     (files / "landing.html").write_text("<html/>", encoding="utf-8")
     (files / "notes.md").write_text("notes", encoding="utf-8")
@@ -145,7 +145,7 @@ def test_two_files_summary_in_english(tmp_path: Path) -> None:
 
 def test_deliverable_summary_defaults_to_german(tmp_path: Path) -> None:
     """No language arg keeps the historical German output (back-compat)."""
-    files = tmp_path / "tasks" / "019e63c5-5855" / "artifacts" / "files"
+    files = tmp_path / "tasks" / "019f1014-5855" / "artifacts" / "files"
     files.mkdir(parents=True)
     (files / "landing.html").write_text("<html/>", encoding="utf-8")
     assert "Datei" in build_deliverable_summary(tmp_path)

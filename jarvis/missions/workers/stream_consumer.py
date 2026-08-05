@@ -133,7 +133,7 @@ class ClaudeResult(_ClaudeBase):
     # first-output TIMEOUT (not a crash/auth error). A structured signal so the
     # orchestrator can recognise a timeout WITHOUT string-matching the result
     # text — the codex/gemini timeout result strings used to omit "timeout",
-    # so a real deliverable was discarded as task_error (mission 019eacb8).
+    # so a real deliverable was discarded as task_error (mission 019f1024).
     # Defaulted False → backward-compatible with old stream-json result lines.
     timed_out: bool = False
 

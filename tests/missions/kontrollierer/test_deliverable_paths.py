@@ -6,7 +6,7 @@ tool-scratch in a mission's ``artifacts/files/`` subtree. The archive filter
 and the user-folder mirror (deliverable) all consume it — so this is the
 anti-drift guard for "what is an output".
 
-Live forensic 2026-06-21 (mission_019eeb34-bb67): a browser/QA worker launched
+Live forensic 2026-06-21 (mission_019f1043-0001): a browser/QA worker launched
 four headless Chrome instances with profiles under ``qa-artifacts/chrome-profile-*``
 and the archive's ``--ignored`` enumeration union re-imported all 199 cache /
 journal blobs (68 of them 0-byte) into ``artifacts/files/`` alongside the 2 real
@@ -24,7 +24,7 @@ from jarvis.missions.kontrollierer.deliverable_paths import (
 )
 
 
-# Real junk paths copied verbatim from mission_019eeb34-bb67's archive — every
+# Real junk paths copied verbatim from mission_019f1043-0001's archive — every
 # one of these must be recognised as scratch (NOT a deliverable).
 _REAL_JUNK = [
     "qa-artifacts/chrome-profile-dd6355b81ddb49db87fc5045a7012b19/GrShaderCache/data_2",
@@ -117,7 +117,7 @@ def test_empty_and_root_paths() -> None:
 
 
 # --- find_generator_scripts: the 2026-06-22 generator-script leak --------------
-# Live forensic (mission_019ef099): the user asked by voice for "one HTML file"
+# Live forensic (mission_019f1047): the user asked by voice for "one HTML file"
 # and got THREE deliverables — melbourne_guide.html PLUS its Python generator
 # generate_guide.py (which embeds the whole HTML as a string literal and writes
 # the sibling .html) PLUS a hero image. The user opened the .py and "only saw

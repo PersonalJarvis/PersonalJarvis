@@ -85,7 +85,7 @@ _HARDCAP_GRACE_S: float = 30.0
 # for the worker subprocess ONLY. The user's interactive config may pin a very
 # high tier ("xhigh"), but a sub-agent mission re-runs the worker across up to
 # MAX_CRITIC_LOOPS iterations, so a 7-minute xhigh reasoning pass per run makes a
-# mission drag for 10-15 min (live mission 019ec742, 2026-06-14: 452s + 399s
+# mission drag for 10-15 min (live mission 019f1034, 2026-06-14: 452s + 399s
 # worker runs -> 899s critic_loop_exhausted). "medium" keeps strong code/analysis
 # quality at a fraction of the latency. Passed as `-c model_reasoning_effort=...`,
 # which a CLI override wins over config.toml.
@@ -200,7 +200,7 @@ def _build_codex_env(env: dict[str, str], *, oauth_available: bool) -> dict[str,
 # legacy default (`kontrollierer/decomposer.py:57` -> `model: str = "sonnet"`).
 # Codex with a ChatGPT account rejects these with HTTP 400 -- "The
 # 'sonnet' model is not supported when using Codex with a ChatGPT
-# account." Live repro 2026-05-18 mission_019e3c52-0acd. The
+# account." Live repro 2026-05-18 mission_019f100d-0001. The
 # normalisation converts them to empty string so codex falls back to
 # the user's CLI default (configured under ~/.codex/config.toml or
 # whatever the ChatGPT subscription exposes today).
@@ -269,14 +269,14 @@ def _build_codex_direct_cmd(
         f"approval_policy={approval_policy}",
         # Cap reasoning effort for SPEED, overriding the user's interactive
         # config (often "xhigh" -> ~7 min/run). A CLI `-c` override wins over
-        # config.toml. See _MISSION_REASONING_EFFORT (live mission 019ec742).
+        # config.toml. See _MISSION_REASONING_EFFORT (live mission 019f1034).
         "-c",
         f"model_reasoning_effort={_MISSION_REASONING_EFFORT}",
         # Enable web search so research / current-events missions can produce
         # SOURCED work instead of fabricating it. Without it the worker has no
         # live data, invents current events (GPT-5.5, a 2026 AI Agent Index),
         # and the critic correctly rejects the hallucinations 3x ->
-        # critic_loop_exhausted (live mission 019ecb56, 2026-06-15: "research
+        # critic_loop_exhausted (live mission 019f1037, 2026-06-15: "research
         # the AI news of the last years" failed at 1042s). codex's web_search is
         # a server-routed, read-only tool — a live probe confirmed it returns
         # current data inside the workspace-write sandbox WITHOUT opening raw
@@ -287,7 +287,7 @@ def _build_codex_direct_cmd(
         # D9 recursion guard at the codex level. A mission worker IS the
         # sub-agent — it must NEVER use codex's native multi-agent collaboration
         # tools (spawn_agent / wait) to spawn a NESTED codex agent and block on
-        # it. Live mission 019ec708 (2026-06-14): a prompt phrased "spawn a
+        # it. Live mission 019f1033 (2026-06-14): a prompt phrased "spawn a
         # sub-agent which will plan a trip" made the worker call
         # spawn_agent("Hooke") then `wait`, freezing the mission for the full
         # worker timeout. Jarvis's tool-layer guard (AP-5 / AP-14: no spawn tool
@@ -384,7 +384,7 @@ _CODEX_USAGE_LIMIT_MARKERS: tuple[str, ...] = (
     "usage limit",
     "hit your usage limit",
     # Claude Max five-hour-window phrasing — the marker list is shared with
-    # ClaudeDirectWorker's mirror fallback (live mission 019eb2fd,
+    # ClaudeDirectWorker's mirror fallback (live mission 019f102c,
     # 2026-06-10: "You've hit your session limit · resets 11:10pm").
     "session limit",
     "purchase more credits",
@@ -408,7 +408,7 @@ def _coerce_codex_error_text(obj: dict[str, Any]) -> str:
     Please log in again."}}``. Feeding that dict straight into
     ``ClaudeResult(result=...)`` (a ``str`` field) raised a Pydantic
     ``ValidationError`` and CRASHED the worker mid-spawn → opaque ``task_error``
-    (forensic 2026-06-08, mission 019ea8db). Always return a plain string so the
+    (forensic 2026-06-08, mission 019f1023). Always return a plain string so the
     real cause (expired ChatGPT login) survives instead of a crash.
     """
     for key in ("message", "error"):
@@ -609,7 +609,7 @@ class CodexDirectWorker:
 
         # The helper sources the Windows creation flags itself and degrades
         # CREATE_BREAKAWAY_FROM_JOB gracefully when the host process is in a job
-        # that forbids breakaway (WinError 5, live mission 019ec602 2026-06-14).
+        # that forbids breakaway (WinError 5, live mission 019f102d 2026-06-14).
         t0 = time.perf_counter()
         try:
             proc = await create_worker_subprocess(
@@ -656,7 +656,7 @@ class CodexDirectWorker:
             )
 
         # Live line-by-line streaming (2026-06-10 root-cause fix, missions
-        # 019eb27f/019eb288): the previous first_chunk-read + communicate()
+        # 019f102a/019f102b): the previous first_chunk-read + communicate()
         # collected ALL stdout until process exit, so during the worker's whole
         # runtime there was NO stream.jsonl on disk, NO translated events
         # upstream, and NO visible progress. A gpt-5.5 xhigh worker
@@ -675,7 +675,7 @@ class CodexDirectWorker:
         # applies — there is deliberately NO idle-gap limit between lines, a
         # long silent reasoning phase is legitimate (BUG-032 class).
         # ``timed_out`` stays the STRUCTURED signal the orchestrator reads, and
-        # partial output is never discarded (live bug, mission 019eacb8).
+        # partial output is never discarded (live bug, mission 019f1024).
         #
         # Translated codex frames (same mapping as before):
         #   thread.started   -> capture thread_id (resume anchor)
@@ -904,7 +904,7 @@ class CodexDirectWorker:
                 mark_codex_needs_reauth()
             else:
                 # Proactive complement to this reactive fallback (2026-07-07,
-                # mission_019f3cd8-1dd4): remember the cap so the worker
+                # mission_019f104e-0001): remember the cap so the worker
                 # factory skips codex until the cooldown self-expires, instead
                 # of burning ~28 s per mission re-proving it. A codex success
                 # clears it immediately.

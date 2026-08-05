@@ -163,11 +163,11 @@ async def _first_yield(stt: _ScriptedSTT, phrase: str, wait_s: float) -> str | N
 async def test_split_window_prefix_joins_across_snapshots() -> None:
     """Window 1 heard only "hey", window 2 only the name — the fresh previous
     tail joins, so the split genuine wake still fires first try."""
-    stt = _ScriptedSTT(["hey", "nico ich bin da"])
-    assert await _first_yield(stt, "Hey Nico", wait_s=5.0) is not None
+    stt = _ScriptedSTT(["hey", "nova ich bin da"])
+    assert await _first_yield(stt, "Hey Nova", wait_s=5.0) is not None
 
 
 async def test_bare_core_with_no_recent_prefix_stays_silent() -> None:
     """The name inside ordinary speech, no prefix anywhere near — silent."""
-    stt = _ScriptedSTT(["und dann", "nico ich bin da"])
-    assert await _first_yield(stt, "Hey Nico", wait_s=1.5) is None
+    stt = _ScriptedSTT(["und dann", "nova ich bin da"])
+    assert await _first_yield(stt, "Hey Nova", wait_s=1.5) is None

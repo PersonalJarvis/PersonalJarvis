@@ -9,6 +9,7 @@
  * values.
  */
 import { describe, expect, it } from "vitest";
+import { CODEX_STATUS_KEY_BY_REASON } from "@/components/providers/ProviderTierSection";
 import en from "./locales/en.json";
 import de from "./locales/de.json";
 import es from "./locales/es.json";
@@ -127,11 +128,10 @@ describe("subscription Realtime voice copy", () => {
     "settings_view.realtime_voice.title",
     "settings_view.realtime_voice.description",
     "settings_view.realtime_voice.unavailable",
-    "apikeys_codex.status_ready",
-    "apikeys_codex.status_login_required",
-    "apikeys_codex.status_not_installed",
-    "apikeys_codex.status_lifecycle_unavailable",
-    "apikeys_codex.status_setup_invalid",
+    // Derived from the card's exhaustive reason-code mapping so a ninth code
+    // cannot ship with an i18n key no locale knows.
+    ...Object.values(CODEX_STATUS_KEY_BY_REASON),
+    "apikeys_codex.setup_detail_label",
     "apikeys_codex.install_command_copied",
     "apikeys_codex.connected_chatgpt",
     "apikeys_codex.disconnect",

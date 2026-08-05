@@ -5,7 +5,7 @@ average and never run much past 20 — while keeping output quality (the
 critic loop, preserve-partial-work and grading stay fully active). The
 pre-budget reality: per-iteration worker cap 1200 s and mission deadline
 4200 s allowed 3 x 20-minute iterations, so complex missions ran 38-49
-minutes and users gave up (live missions 019eb27f / 019eb288).
+minutes and users gave up (live missions 019f102a / 019f102b).
 
 Shape pinned here:
 - iteration 0 (the main build) gets the large budget (12 min);
@@ -104,8 +104,8 @@ async def test_no_new_iteration_when_time_budget_exhausted(
 
 
 def test_worker_error_transient_matcher_knows_subscription_limits() -> None:
-    """Live incident 019eb2fd (2026-06-10 21:23): the worker died with
-    "You've hit your session limit · resets 11:10pm (Europe/Berlin)" AFTER
+    """Live incident 019f102c (2026-06-10 21:23): the worker died with
+    "You've hit your session limit · resets 11:10pm (Etc/UTC)" AFTER
     writing the complete deliverable. The transient matcher only knew
     rate-limit/429/overloaded phrasings, so the mission discarded finished
     work as task_error instead of grading it. Subscription-window limits
@@ -113,7 +113,7 @@ def test_worker_error_transient_matcher_knows_subscription_limits() -> None:
     are transient by nature — the window resets.
     """
     transient = orch_mod._worker_error_is_transient
-    assert transient("You've hit your session limit · resets 11:10pm (Europe/Berlin)")
+    assert transient("You've hit your session limit · resets 11:10pm (Etc/UTC)")
     assert transient("You've hit your usage limit. Upgrade to Pro or try again at 7:40 PM.")
     assert transient("overageStatus: rejected, out_of_credits")
     assert transient("429 Too Many Requests")

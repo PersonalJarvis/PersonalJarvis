@@ -140,7 +140,7 @@ def sound_fold(token: str) -> str:
     """Collapse sound-equivalent spelling variants onto one canonical form.
 
     A small local Whisper mis-spells a proper-noun wake word in sound-equivalent
-    ways ("Nico" -> "Niko"/"Nicko"/"Nikko", "Sophie" -> "Sofie"). Folding the
+    ways ("Nova" -> "Nova"/"Nicko"/"Nikko", "Sophie" -> "Sofie"). Folding the
     common variances a wake word actually sees — ``c``/``k``, ``ck``, ``ph``/``f``,
     ``y``/``i``, and doubled letters — makes those forms compare EQUAL so the
     match no longer needs a perfect spelling. It only canonicalises spelling; it
@@ -156,7 +156,7 @@ def sound_fold(token: str) -> str:
     t = t.replace("c", "k").replace("y", "i")
     out: list[str] = []
     for ch in t:
-        if out and out[-1] == ch:  # collapse doubles: Nikko -> niko, Emma -> ema
+        if out and out[-1] == ch:  # collapse doubles: Nikko -> nova, Emma -> ema
             continue
         out.append(ch)
     return "".join(out)

@@ -330,7 +330,7 @@ async def test_no_first_frame_ceiling_deferred_while_brain_tool_loop_works() -> 
     beheaded before the first frame.
 
     Live bug 2026-06-14 (data/jarvis_desktop.log 14:21 + 14:24, "what's the
-    weather in Melbourne"): the router brain ran a multi-round tool-use loop
+    weather in Exampleville"): the router brain ran a multi-round tool-use loop
     (geocoding + DuckDuckGo + open-meteo, ~20 s of genuine work). No
     computer_use step fired, so ``_long_tool_last_activity`` stayed 0 — but the
     brain pinged ``_mark_brain_progress`` on every tool-use-loop round

@@ -46,6 +46,13 @@ class WSWelcome(BaseModel):
     version: str
 
 
+class WSAudioLevel(BaseModel):
+    """Ephemeral normalized microphone level for lightweight UI animation."""
+
+    type: Literal["audio.level"] = "audio.level"
+    input: float = Field(ge=0.0, le=1.0)
+
+
 # ----------------------------------------------------------------------
 # Incoming (Client → Server)
 # ----------------------------------------------------------------------

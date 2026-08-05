@@ -118,7 +118,7 @@ def _acquire_primary_lock_for_headless(
     ``None`` when another instance already holds it.
 
     Why this exists (the 94-occurrence ``crash_recovery`` false-negative,
-    live forensic 2026-05-31, missions 019e6fea / 019e7095): headless NEVER
+    live forensic 2026-05-31, missions 019f1018 / 019f1019): headless NEVER
     set ``JARVIS_PRIMARY_INSTANCE``, so ``server.py:_init_mission_stack``
     defaulted it to ``"1"`` (primary) and a parallel headless boot ran
     ``startup_recover`` against the shared ``missions.db`` — sweeping the

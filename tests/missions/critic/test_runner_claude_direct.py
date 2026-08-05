@@ -38,7 +38,7 @@ from jarvis.missions.critic.verdict import (
 @pytest.fixture(autouse=True)
 def _claude_cli_viable_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """The claude-direct critic is auth-gated since 2026-07-07 (mission
-    019f3d18: a dead Claude CLI failed the critic twice → critic_unavailable
+    019f1051: a dead Claude CLI failed the critic twice → critic_unavailable
     killed a mission whose worker HAD delivered). These legacy tests pin the
     claude-direct path, so pin viability True; the gate itself is covered by
     the dedicated tests below."""
@@ -456,7 +456,7 @@ async def test_claude_direct_recovers_verdict_from_agent_narration(
     ("Issuing the JSON verdict: {...}"). The parse path must recover the
     verdict object from the surrounding prose -- a single sentence ahead of
     the ``{`` previously failed every such mission with CriticSchemaInvalid
-    and showed "error" in the Outputs view (live repro mission_019e5966,
+    and showed "error" in the Outputs view (live repro mission_019f1010,
     2026-05-24)."""
     narrated = (
         "Direct verification complete. I ran a `Read` of "
@@ -507,7 +507,7 @@ async def test_claude_direct_skips_legacy_state_file_materialisation(
 
 
 # ---------------------------------------------------------------------------
-# Over-long TTS summary regression (mission 019e7f6d, 2026-05-31 21:08/21:09).
+# Over-long TTS summary regression (mission 019f101e, 2026-05-31 21:08/21:09).
 #
 # The critic returned a fully valid `approve` verdict over a rich 597-line
 # HTML deliverable, but `summary` (322 chars) and `summary_de` (322 chars)
@@ -609,7 +609,7 @@ def _parse_like_claude_direct(raw: str) -> CriticVerdict | None:
 async def test_claude_direct_accepts_verdict_with_over_long_summary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """End-to-end reproduction of mission 019e7f6d: a real approve verdict
+    """End-to-end reproduction of mission 019f101e: a real approve verdict
     whose summary fields exceed the TTS cap must be ACCEPTED (truncated), not
     rejected into critic_unavailable."""
     over_long = json.dumps(
@@ -685,7 +685,7 @@ async def test_claude_direct_recovers_over_long_summary_from_narration(
 async def test_critic_unavailable_model_retries_without_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """Live mission 019ec61b (2026-06-14): the critic model FRONTIER_MODEL=
+    """Live mission 019f102f (2026-06-14): the critic model FRONTIER_MODEL=
     claude-fable-5 is approved-access-only; the CLI rejects it. The critic
     must retry without --model (CLI default) rather than fail the mission.
 
@@ -724,7 +724,7 @@ async def test_critic_unavailable_model_retries_without_model(
 async def test_pure_question_no_files_is_approved_not_revised(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """Live mission 019ec638 (2026-06-14): "which city would you recommend for
+    """Live mission 019f1030 (2026-06-14): "which city would you recommend for
     a trip to Australia?" produced a correct text answer but no file, so the
     empty-diff veto rejected it 3x -> critic_loop_exhausted -> FAILED. A pure
     question's deliverable IS the answer: the pre-gate must approve it
@@ -735,7 +735,7 @@ async def test_pure_question_no_files_is_approved_not_revised(
 
     worker_log = json.dumps({
         "type": "result",
-        "result": "I'd recommend Sydney as your first stop, then Melbourne.",
+        "result": "I'd recommend Sydney as your first stop, then Exampleville.",
         "subtype": "success",
     })
 
@@ -793,7 +793,7 @@ async def test_format_clarification_is_revised_not_approved_as_the_answer(
 async def test_advisory_trip_planning_no_files_is_approved(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """Live missions 019ec66c/019ec674/019ec708 (2026-06-14): "plan/book a trip"
+    """Live missions 019f1031/019f1032/019f1033 (2026-06-14): "plan/book a trip"
     failed critic_loop_exhausted — an advisory task whose deliverable is a text
     plan, not a file. The pre-gate must approve it deterministically (the plan IS
     the deliverable), exactly like a question."""
@@ -861,7 +861,7 @@ async def test_do_task_with_no_files_still_revised(
 async def test_advisory_codex_agent_message_no_files_is_approved(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """Multi-provider (2026-06-15, live mission 019ec761): the SAME advisory
+    """Multi-provider (2026-06-15, live mission 019f1035): the SAME advisory
     approve must hold when the worker is CODEX, whose answer is an
     ``item.completed`` ``agent_message`` frame (not claude's ``result``). Before
     the multi-format evidence fix this codex answer was invisible -> 3x
@@ -875,7 +875,7 @@ async def test_advisory_codex_agent_message_no_files_is_approved(
         "item": {
             "type": "agent_message",
             "text": (
-                "For a first trip to Australia I recommend Melbourne: walkable, "
+                "For a first trip to Australia I recommend Exampleville: walkable, "
                 "world-class coffee, and close to the Great Ocean Road."
             ),
         },
@@ -899,7 +899,7 @@ async def test_advisory_codex_agent_message_no_files_is_approved(
 async def test_advisory_codex_tool_evidence_no_files_is_approved(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """Regression 019ecc48: an informational Codex worker used tools and
+    """Regression 019f103a: an informational Codex worker used tools and
     answered in prose, but the empty diff was deferred to the LLM critic
     because tool evidence existed, causing critic_loop_exhausted."""
     def _boom(*_a: Any, **_k: Any):
@@ -913,7 +913,7 @@ async def test_advisory_codex_tool_evidence_no_files_is_approved(
                 "type": "command_execution",
                 "command": "web_search Australia first visit city",
                 "aggregated_output": (
-                    "Sydney, Melbourne and Brisbane are common first-trip options."
+                    "Sydney, Exampleville and Brisbane are common first-trip options."
                 ),
                 "exit_code": "0",
             },
@@ -1008,7 +1008,7 @@ async def test_do_task_codex_agent_message_claim_still_revised(
     assert verdict.verdict == "revise"
 
 
-# --- 2026-07-07 (mission 019f3d18): dead Claude CLI must not kill the critic ---
+# --- 2026-07-07 (mission 019f1051): dead Claude CLI must not kill the critic ---
 
 
 @pytest.mark.asyncio

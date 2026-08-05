@@ -1,20 +1,20 @@
 """PersonStore — collection of `people/<slug>.md` files.
 
-**The firewall against subject confusion:** every other person (colleagues,
-friends, family) has their own Markdown file. The Curator decides
+**The firewall against subject confusion:** every other person (partner,
+colleagues, family) has their own Markdown file. The Curator decides
 **before** writing whether a fact belongs to the user or to a person —
 and it ends up in exactly one file.
 
-Synthetic example scenario:
-    User says: "My colleague Jordan works at Example Studio."
-    → Extractor recognises: subject=person:Jordan, field=profession=Example Studio,
-      relationship_to_user=colleague
-    → Validator checks: "Jordan" is not User.name
-    → Merger: `people/jordan.md` is created (if not yet present) or
+Example scenario from a user request:
+    User says: "My partner ExampleContact works at X."
+    → Extractor recognises: subject=person:ExampleContact, field=profession=X,
+      relationship_to_user=partner
+    → Validator checks: "ExampleContact" is not User.name
+    → Merger: `people/examplecontact.md` is created (if not yet present) or
       updated. USER.md remains unchanged.
 
-The user can open `people/jordan.md` at any time and see what Jarvis knows
-about Jordan. The separation is visible, not hidden.
+The user can open `people/examplecontact.md` at any time and see what Jarvis knows
+about ExampleContact. The separation is visible, not hidden.
 """
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ class Person:
 class PersonStore:
     """Manages `data/workspace/people/`.
 
-    Lookup is slug-based (`person_slug("Laura Müller") == "laura_mueller"`)  # i18n-allow: example name demonstrating umlaut-safe slug conversion
+    Lookup is slug-based (`person_slug("ExampleContact Müller") == "examplecontact_mueller"`)  # i18n-allow: example name demonstrating umlaut-safe slug conversion
     so that umlauts and special characters do not cause filename issues.
     """
 
@@ -120,7 +120,7 @@ class PersonStore:
     def find_by_alias(self, query: str) -> Person | None:
         """Searches for a person by name or alias.
 
-        Important on second contact: the user says "Laura" once, then "Lola" as
+        Important on second contact: the user says "ExampleContact" once, then "Lola" as
         a nickname — we match on both.
         """
         slug = person_slug(query)
@@ -144,8 +144,8 @@ class PersonStore:
         """Compact prompt block with names and relationships of known people.
 
         We do NOT inject the full person files into every prompt (too large);
-        instead we include only a list so Jarvis knows that 'Jordan' exists and
-        that they are a colleague. Details are read on demand via a tool call
+        instead we include only a list so Jarvis knows that 'ExampleContact' exists and
+        that she is a partner. Details are read on demand via a tool call
         (see the `remember` tool).
         """
         people = self.list_all()

@@ -36,15 +36,15 @@ def test_genitive_detail_alone_fires():
 
 
 def test_save_verb_plus_contact_noun_fires():
-    assert detect_contact_write_intent("Speichere Laura als Kontakt.") is True
+    assert detect_contact_write_intent("Speichere ExampleContact als Kontakt.") is True
     assert detect_contact_write_intent("Leg Tom als Kontakt an.") is True
     assert detect_contact_write_intent("Füge Anna zu meinen Kontakten hinzu.") is True  # i18n-allow
 
 
 def test_english_and_spanish_fire():
     assert detect_contact_write_intent("Save Tom as a contact.") is True
-    assert detect_contact_write_intent("Remember, Laura's number is 0151 22334.") is True
-    assert detect_contact_write_intent("Guarda a Laura como contacto.") is True
+    assert detect_contact_write_intent("Remember, ExampleContact's number is 0151 22334.") is True
+    assert detect_contact_write_intent("Guarda a ExampleContact como contacto.") is True
 
 
 # --- negative: must NOT fire (anti-false-correction is a hard user mandate) ---
@@ -66,8 +66,8 @@ def test_send_or_call_actions_do_not_fire():
 def test_bare_detail_statement_does_not_fire():
     # A non-possessive "the number is wrong" must not be mistaken for a save.
     assert detect_contact_write_intent("Die Nummer ist falsch.") is False  # i18n-allow
-    assert detect_contact_write_intent("Jordan leitet das Gartenprojekt.") is False
-    assert detect_contact_write_intent("Die Adresse von Berlin ist zentral.") is False  # i18n-allow
+    assert detect_contact_write_intent("Sam ist 1976 geboren.") is False
+    assert detect_contact_write_intent("Die Adresse von Exampletown ist zentral.") is False  # i18n-allow
 
 
 def test_empty_input_is_safe():
@@ -93,7 +93,7 @@ def test_directive_forces_the_real_tool_and_clarifies_bad_fields():
 
 def test_memory_save_intent_fires_on_explicit_remember():
     assert detect_memory_save_intent("Merk dir, dass Sam gerne Fußball schaut.") is True  # i18n-allow
-    assert detect_memory_save_intent("Notier dir, dass Joy am 14. August Geburtstag hat.") is True
+    assert detect_memory_save_intent("Remember the synthetic ExampleRelative milestone.") is True
     assert detect_memory_save_intent("Remember that Tom prefers tea over coffee.") is True
     assert (
         detect_memory_save_intent("Behalte im Hinterkopf, dass ich allergisch gegen Nüsse bin.")  # i18n-allow

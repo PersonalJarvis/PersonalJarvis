@@ -53,12 +53,12 @@ async def test_create_event_builds_payload():
     )
     out = await tool.create_event(
         summary="Lunch", start="2026-06-28T12:00:00", end="2026-06-28T13:00:00",
-        time_zone="Europe/Berlin",
+        time_zone="Etc/UTC",
     )
     assert out["data"]["id"] == "new1"
     assert captured["action"] == "create_event"
     assert captured["args"]["summary"] == "Lunch"
-    assert captured["args"]["time_zone"] == "Europe/Berlin"
+    assert captured["args"]["time_zone"] == "Etc/UTC"
 
 
 @pytest.mark.asyncio

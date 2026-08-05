@@ -127,7 +127,7 @@ def test_fires_on_trailing_unambiguous_preposition_de(text: str) -> None:
         # at a comma. VAD cut the turn; without trailing-comma detection BOTH
         # halves trigger a separate spawn_worker call → one task becomes
         # multiple sub-agents (see SUBAGENT_OUTPUTS_DEEP_DIVE + Screenshot
-        # mission_019e63c6-4133 + 019e63c6-b3cf).
+        # mission_019f1015-0001 + 019f1015-0002).
         "Kannst du bitte mir einen Subagent spawnen, welcher meine HTML-Datei baut, in der ganz klar beschrieben wird,",
         # Canonical list-mid-pause
         "Bring mir Brot, Käse, Milch,",
@@ -263,7 +263,7 @@ def test_precision_too_short_does_not_fire(text: str) -> None:
     [
         # German tag/closing questions: a trailing conjunction CLOSED by "?" is a
         # COMPLETE question, not an open continuation. Live wedge 2026-06-19
-        # (session <SESSION_ID>): "…morgen ist ja Montag, oder?" was classified as a
+        # (session 10000118): "…morgen ist ja Montag, oder?" was classified as a
         # trailing conjunction, held by the ContinuationBuffer, never dispatched,
         # and discarded 30 s later at idle-timeout → "Jarvis hört für immer zu".
         # The trailing "?" is the disambiguator the tokenizer would otherwise

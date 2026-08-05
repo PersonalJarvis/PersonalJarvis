@@ -28,7 +28,7 @@ def make_audio_ducker(cfg: Any | None = None) -> AudioDucker:
     if sys.platform == "win32" and _pycaw_available():
         from jarvis.audio.ducking.windows import WindowsPycawDucker
 
-        return WindowsPycawDucker()
+        return WindowsPycawDucker.from_config(cfg)
     if sys.platform == "darwin" and _osascript_available():
         from jarvis.audio.ducking.macos import MacOSScriptDucker
 

@@ -1,6 +1,6 @@
 """Regression: a model round that dies AFTER tools ran must speak, not stay silent.
 
-Live incident 2026-07-05 (session <SESSION_ID>, 19:49:12): the turn executed 10+
+Live incident 2026-07-05 (session 10000110, 19:49:12): the turn executed 10+
 tools, then the final model round returned ``finish_reason="error"`` (OpenRouter
 mid-stream error on a ~224k-token prompt) with empty text. The empty-response
 guard is (correctly) skipped when tool calls exist, so the turn counted as a

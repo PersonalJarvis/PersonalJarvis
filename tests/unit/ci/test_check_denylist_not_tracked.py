@@ -26,11 +26,10 @@ DENYLIST = """\
 # --- Internal scratch scripts (underscore-prefixed convention) --------------
 scripts/_*.py
 
-# Sensitive local vault captures. Public documentation uses synthetic fixtures.
+# Captures of the maintainer's LIVE vault: relocation planning, finances,
+# named third parties.
 video/qa-wiki/**
 assets/screenshots/view-wiki.png
-assets/screenshots/app-home.png
-qa/ref/**
 """
 
 
@@ -54,15 +53,13 @@ class TestMatching:
 
     def test_exact_path_entry(self, engine):
         assert gate._violations(["assets/screenshots/view-wiki.png"], engine, DENYLIST)
-        assert gate._violations(["assets/screenshots/app-home.png"], engine, DENYLIST)
-        assert gate._violations(["qa/ref/r01.jpg"], engine, DENYLIST)
 
     def test_ordinary_paths_are_clean(self, engine):
         clean = [
             "scripts/preflight.ps1",
             "scripts/ci/check_denylist_not_tracked.py",  # no leading underscore
             "video/src/intro/scenes/Integrations.tsx",  # video/, but not qa-wiki
-            "assets/brand/banner.png",
+            "assets/screenshots/app-home.png",
             "jarvis/core/bus.py",
         ]
         assert gate._violations(clean, engine, DENYLIST) == []
@@ -81,8 +78,7 @@ class TestRationale:
 
     def test_joins_a_multi_line_comment_block(self):
         why = gate._rationale_for("video/qa-wiki/**", DENYLIST)
-        assert "Sensitive local vault captures" in why
-        assert "synthetic fixtures" in why
+        assert "LIVE vault" in why and "named third parties" in why
 
     def test_entry_without_a_preceding_comment(self):
         assert gate._rationale_for("assets/screenshots/view-wiki.png", DENYLIST) == ""

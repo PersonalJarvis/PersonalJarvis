@@ -64,10 +64,10 @@ async def test_very_quiet_wake_below_legacy_peak_gate_reaches_whisper() -> None:
     # peak ~0.009 — below the prior 0.012 gate that dropped it on a quiet mic,
     # but above the ~0.0046 idle-hiss level that stays gated. Uses the DEFAULT
     # gates (no min_peak override) — that is the point.
-    stt = _PhraseSTT("hey nico")
+    stt = _PhraseSTT("hey nova")
     wake = RollingWhisperWake(
         stt,
-        pattern=re.compile(r"nico", re.IGNORECASE),
+        pattern=re.compile(r"nova", re.IGNORECASE),
         poll_interval_s=0.01,
         cooldown_s=0.0,
         save_debug_wavs=False,
@@ -77,7 +77,7 @@ async def test_very_quiet_wake_below_legacy_peak_gate_reaches_whisper() -> None:
     feeder = asyncio.create_task(_feed_until(src, stop, _const_chunk(295)))  # peak ~0.009
     try:
         kw = await asyncio.wait_for(_first_keyword(wake, src), timeout=3.0)
-        assert kw == "nico"
+        assert kw == "nova"
         assert stt.calls >= 1, "quiet wake never reached Whisper — peak gate too high"
     finally:
         stop.set()
@@ -143,7 +143,7 @@ async def test_arbitrary_custom_wakes_are_word_agnostic(
     ("phrase", "transcript"),
     [
         ("Hey Alex", "hey alex"),
-        ("Hey Nico", "hey nico"),
+        ("Hey Nova", "hey nova"),
         ("Computer", "computer"),
     ],
 )

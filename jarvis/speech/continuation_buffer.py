@@ -22,7 +22,7 @@ Design contract:
   :meth:`flush_pending` on expiry and DISPATCHES the held fragment to the brain
   — so a held fragment whose continuation never comes is answered, not silently
   dropped at the session idle-timeout (live "Jarvis hört für immer zu" wedge
-  2026-06-19, session <SESSION_ID>).
+  2026-06-19, session 10000118).
 * **Fail-open** (AD-OE6 zero-silent-drop): any exception from the classifier
   is caught and the utterance is dispatched as-is. The buffer never silently
   swallows the user.
@@ -116,7 +116,7 @@ class ContinuationBuffer:
         hatch for a fragment that was held as "incomplete" but never got a
         continuation: rather than letting it rot until the session idle-timeout
         silently discards it (live "Jarvis hört für immer zu" wedge 2026-06-19,
-        session <SESSION_ID> — "…morgen ist ja Montag, oder?" was held as a trailing
+        session 10000118 — "…morgen ist ja Montag, oder?" was held as a trailing
         conjunction and dropped 30 s later, never answered), the pipeline drains
         it to the brain after the grace window so the user always gets an answer
         attempt. Returns ``None`` when nothing is buffered.
@@ -136,7 +136,7 @@ class ContinuationBuffer:
         is actively forming the continuation, that clock must not keep running
         against them — a slow-to-finalize continuation would otherwise miss the
         window even though it BEGAN well inside it (live bug 2026-06-18, session
-        <SESSION_ID>: "Kannst du bitte..." was held, the user resumed ~1 s later but
+        10000107: "Kannst du bitte..." was held, the user resumed ~1 s later but
         the continuation only FINALIZED 0.6 s past the 8 s deadline → the held
         fragment was dropped and the turn split into an empty Turn 0). The
         sibling :meth:`ContinuationWindow.note_speech_resumed` already does this

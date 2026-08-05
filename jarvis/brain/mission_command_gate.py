@@ -54,7 +54,7 @@ _STATUS_PATTERN_DE = re.compile(
         \bl(?:ä|ae)uft\s+(?:das|die\s+mission|der|er|es)\s+(?:noch|gerade|weiter)\b  # i18n-allow
         |
         # bare 'wie weit' at sentence start or before '?'/end — asks about progress.
-        # NOT 'wie weit ist Berlin' etc. (qualifier-free only matches when
+        # NOT 'wie weit ist Exampletown' etc. (qualifier-free only matches when
         # the question character is recognisable via '?'/end).
         ^\s*(?:jarvis[,\s]+)?wie\s+weit\s*\??\s*$
         |
@@ -215,7 +215,7 @@ def match_mission_command(text: str) -> MissionCommandMatch | None:
       - "Cancel the mission"           -> cancel / en
 
     Examples (no match):
-      - "Wie weit ist Berlin von hier?"  (no mission context)  # i18n-allow
+      - "Wie weit ist Exampletown von hier?"  (no mission context)  # i18n-allow
       - "Status der Wirtschaft"          (status without mission/claw)
       - "Lass das stoppen, das Lied"     (no mission context)
       - ""

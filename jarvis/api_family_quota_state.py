@@ -2,12 +2,12 @@
 
 Why this exists: the mission worker's API-key family walk
 (``claude-api → gemini → openrouter → openai``) picked the FIRST family with a
-stored key — with no memory of that family failing. Mission 019f3d0f
+stored key — with no memory of that family failing. Mission 019f1050
 (2026-07-07, the verify run of the BUG-042 fixes): gemini's prepaid credits
 were DEPLETED (429 RESOURCE_EXHAUSTED), yet every retry re-picked gemini; the
 healthy openrouter key one slot further in the SAME loop was never reached
 (AP-22). Same shape as the stale claude-api bearer that 401'd every retry in
-mission 019f3d01.
+mission 019f104f.
 
 This is the generic API-family mirror of ``claude_quota_state`` /
 ``codex_quota_state``, keyed by provider slug. When an ``ApiAgentWorker`` run

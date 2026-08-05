@@ -131,39 +131,30 @@ async def test_a_finished_conversation_is_not_called_interrupted(
     assert interrupted.scan(registry) == []
 
 
-async def test_a_resumed_pane_already_working_is_not_offered_continue(
+async def test_delayed_output_does_not_hide_a_resumed_pane_from_continue(
     registry: Registry, tmp_path: Path, existing_conversation: Any
 ) -> None:
-    """Active work needs no nudge.
-
-    "Working" is a moving screen, not a phrase — `activity` deliberately stopped
-    reading what the CLI prints, so this drives the property it does read. Faking
-    it with a status line here would test a rule the product no longer has, and
-    would keep passing after that rule broke.
-
-    The pane has stood still once already (`idle_seen`), which is what makes the
-    movement work rather than a CLI painting itself — see the test below.
-    """
+    """A settled restore still needs Continue until this process gets a task."""
     _session, term = await _restarted_pane(registry, tmp_path, existing_conversation)
     term.idle_seen = True
     term.last_output_at = time.time()
 
-    assert interrupted.scan(registry) == []
+    found = interrupted.scan(registry)
+
+    assert [pane.name for pane in found] == [term.name]
+    assert term.reading().activity == "waiting"
+    assert term.continuation_pending is True
 
 
-async def test_a_resumed_pane_still_painting_itself_is_still_offered(
+async def test_resumed_startup_output_without_a_submission_is_still_offered(
     registry: Registry, tmp_path: Path, existing_conversation: Any
 ) -> None:
-    """The regression this whole flag exists for.
+    """Startup repainting has no current-process submission, so it is not work.
 
     A restored CLI redraws its banner and its old transcript for several seconds
-    before it settles at a prompt, and that movement is indistinguishable from
-    work to a detector that only reads movement. Treating it as work filtered
-    every restored pane out of this list in exactly the seconds somebody presses
-    the button — reported as "the Continue feature does not work".
-
-    A pane that has never been seen standing still since its process started is
-    therefore still offered, however busy its screen looks.
+    before it settles at a prompt. Treating that movement as work filtered every
+    restored pane out of this list in exactly the seconds somebody pressed the
+    button. The absent generation-stamped submission keeps the offer intact.
     """
     _session, term = await _restarted_pane(registry, tmp_path, existing_conversation)
     assert term.idle_seen is False, "a freshly spawned process has settled nothing"

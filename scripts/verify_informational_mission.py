@@ -4,7 +4,7 @@ Dispatches a REAL informational mission ("which city for a first trip to
 Australia?") through the real worker -> critic pipeline against an ISOLATED DB,
 using the LIVE ``[brain.sub_jarvis]`` provider. Before the fix, an informational
 codex/gemini answer was invisible to the empty-diff gate -> 3x deterministic
-revise -> ``critic_loop_exhausted`` (live mission 019ec761). This asserts the
+revise -> ``critic_loop_exhausted`` (live mission 019f1035). This asserts the
 mission reaches APPROVED and reports which backend actually ran (parsed from the
 worker ``stream.jsonl``), so the proof is honest about codex-vs-fallback.
 

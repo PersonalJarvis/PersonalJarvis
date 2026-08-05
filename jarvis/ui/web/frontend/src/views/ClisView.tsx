@@ -704,7 +704,7 @@ function ApiKeyDialog({
   const [error, setError] = useState<string | null>(null);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60 backdrop-blur-sm">
       <div className="flex w-full max-w-md flex-col rounded-xl border border-border bg-card shadow-lg">
         <div className="flex items-start justify-between gap-4 border-b border-border p-5">
           <div className="min-w-0 flex-1">
@@ -806,7 +806,7 @@ function InstallDialog({
   const selectedMethod = detail.install_methods.find((m) => m.manager === selected);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60 backdrop-blur-sm">
       <div className="flex w-full max-w-lg flex-col rounded-xl border border-border bg-card shadow-lg">
         <div className="flex items-start justify-between gap-4 border-b border-border p-5">
           <div className="min-w-0 flex-1">
@@ -984,7 +984,7 @@ function CustomCliWizard({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60 backdrop-blur-sm">
       <div className="flex w-full max-w-2xl flex-col rounded-xl border border-border bg-card shadow-lg">
         <div className="flex items-start justify-between gap-4 border-b border-border p-5">
           <div className="min-w-0 flex-1">
@@ -1197,7 +1197,7 @@ function UsageDrawer({ name, onClose }: { name: string; onClose: () => void }) {
   const pushToast = useEventStore((s) => s.pushToast);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-scrim/60 backdrop-blur-sm">
       <div className="flex w-[520px] flex-col border-l border-border bg-card shadow-2xl">
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <div className="min-w-0 flex-1">

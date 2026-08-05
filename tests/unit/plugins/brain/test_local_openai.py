@@ -170,14 +170,39 @@ async def test_unreachable_server_gives_honest_error(monkeypatch, fake_models) -
     assert "http://localhost:8000" in msg
 
 
+# ── Vision: blind unless the server itself says otherwise ────────────────
+def test_vision_stays_blind_when_the_server_declares_nothing(monkeypatch) -> None:
+    """The common case: an OpenAI-compatible server publishes no modality
+    fields, so the honest answer is "cannot see" — a confident description of a
+    picture nobody looked at is the failure worth being conservative about."""
+    import jarvis.brain.model_catalog as mc
+
+    monkeypatch.setattr(
+        mc, "model_capabilities", lambda provider, model: {"vision": None, "tools": None}
+    )
+    assert LocalOpenAIBrain(model="Qwen/Qwen3.5-9B").supports_vision is False
+
+
+def test_vision_believes_a_server_that_declares_image_input(monkeypatch) -> None:
+    """Some servers DO publish ``architecture.input_modalities``; a user who
+    runs a multimodal model there should not have to move to another card."""
+    import jarvis.brain.model_catalog as mc
+
+    monkeypatch.setattr(
+        mc, "model_capabilities", lambda provider, model: {"vision": True, "tools": True}
+    )
+    assert LocalOpenAIBrain(model="Qwen/Qwen3-VL-8B").supports_vision is True
+
+
 # ── Protocol surface ─────────────────────────────────────────────────────
 def test_capability_flags_and_cost() -> None:
     brain = LocalOpenAIBrain(model="x")
     assert brain.supports_tools is True
     assert brain.can_call_tools() is True
-    # Deliberately False: whether an arbitrary local server accepts image
-    # content is unknowable — the shared streamer then DROPS images with a
-    # warning instead of letting a text-only server reject the whole turn.
+    # Deliberately False without evidence: whether an arbitrary local server
+    # accepts image content is unknowable — the shared streamer then DROPS
+    # images with a warning instead of letting a text-only server reject the
+    # whole turn.
     assert brain.supports_vision is False
     req_like = type("R", (), {"messages": (), "max_tokens": 100})()
     assert brain.estimate_cost(req_like) == 0.0

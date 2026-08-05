@@ -134,7 +134,7 @@ def test_usage_capped_codex_crosses_to_api_key(
 def test_stale_oauth_bearer_does_not_count_as_claude_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """2026-07-07, mission 019f3d01 (the verify run of the codex-cooldown fix):
+    """2026-07-07, mission 019f104f (the verify run of the codex-cooldown fix):
     the stored anthropic credential was a STALE `sk-ant-oat` OAuth bearer — the
     env builder deliberately drops that shape (guaranteed 401) and
     _claude_cli_auth_viable refuses it, but the family walk counted its mere
@@ -199,7 +199,7 @@ def test_claude_binary_with_dead_auth_crosses_to_api_key(
 def test_quota_depleted_family_is_skipped_in_the_walk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mission 019f3d0f (2026-07-07): gemini's prepaid credits were depleted
+    """Mission 019f1050 (2026-07-07): gemini's prepaid credits were depleted
     (429) and every retry re-picked gemini — openrouter, one slot further in
     the SAME loop, was never reached. A family in quota cooldown must be
     walked past."""

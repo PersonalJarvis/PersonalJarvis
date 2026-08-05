@@ -54,7 +54,7 @@ _SLUG_RE = re.compile(r"[^a-z0-9]+")
 # ``git diff --cached HEAD`` is empty and ``git ls-files --others`` no longer
 # lists the file (it is now tracked), so the committed deliverable would
 # otherwise be invisible to archiving and silently lost when the worktree is
-# pruned. Live forensic 2026-07-03, mission 019f26d0-bb07: a worker built a
+# pruned. Live forensic 2026-07-03, mission 019f104b-0001: a worker built a
 # complete ``schokolade-99.html``, then (as coding agents habitually do)
 # ``git add`` + ``git commit``-ed it; the file fell out of the untracked-only
 # capture and the user received only a materialised ``.md`` summary — the HTML
@@ -114,7 +114,7 @@ _RUN_DIR_RE = re.compile(r"^\d{8}T\d{6}__.+__[0-9a-f]{8}$")
 # tens of thousands of files here. Walking them blows the 10 s cap on the
 # per-iteration ``git add -A`` in ``Kontrollierer._capture_diff`` -> empty diff
 # -> "no usable output" -> the worker's REAL build is discarded and rmtree'd
-# (live mission 019ee416, 2026-06-20: a complete Remotion promo video lost this
+# (live mission 019f103f, 2026-06-20: a complete Remotion promo video lost this
 # way). Excluding them via the lean repo's ``.git/info/exclude`` makes git skip
 # the whole subtree (it never descends an ignored top-level dir) AND keeps the
 # patterns out of the captured diff. Build-OUTPUT dirs (dist/, build/, out/)
@@ -245,7 +245,7 @@ class WorktreeManager:
                 files from the host repo. The lean path is for external-artefact
                 tasks ("create an HTML file with today's news") that would
                 otherwise burn minutes + millions of tokens exploring the
-                codebase before a trivial write (live mission 019eb17d).
+                codebase before a trivial write (live mission 019f1027).
 
         Output:
             Path to `<run_dir>/tasks/<NN>__<task-slug>/workspace/`.
@@ -426,7 +426,7 @@ class WorktreeManager:
         Local to this throwaway lean repo (never touches the host repo). The
         patterns make git skip whole dependency subtrees during ``git add -A``,
         the live cause of the 10 s diff-capture timeout that discarded a
-        finished Remotion build (mission 019ee416).
+        finished Remotion build (mission 019f103f).
 
         Best-effort: a write failure (e.g. a full-mode workspace whose ``.git``
         is a file) is logged and swallowed — the mission still runs, it just

@@ -51,8 +51,8 @@ from jarvis.memory.wiki.extractor import ConversationFactExtractor
 from jarvis.memory.wiki.journal import CandidateJournal
 from jarvis.memory.wiki.voice_bridge import VoiceFactBridge
 
-FACT_SENTENCE = "Remember that my friend Lena moved to Hamburg last month."
-SHORT_FACT = "Lena lives in Hamburg."  # >= 12 ack chars, < 30 aggressive chars
+FACT_SENTENCE = "Remember that my friend ExampleFriend moved to Exampleville last month."
+SHORT_FACT = "ExampleFriend lives in Exampleville."  # >= 12 ack chars, < 30 aggressive chars
 
 
 class FakeBrain:
@@ -75,9 +75,9 @@ class FakeBrain:
             content=json.dumps(
                 [
                     {
-                        "fact": "Lena moved to Hamburg.",
+                        "fact": "ExampleFriend moved to Exampleville.",
                         "kind": "person",
-                        "subjects": ["lena"],
+                        "subjects": ["examplefriend"],
                         "evidence_turn_id": evidence,
                     }
                 ]
@@ -208,7 +208,7 @@ async def test_realtime_turn_feeds_journal_via_aggressive_path(tmp_path: Path) -
         bridge.stop()
 
     rows = journal.pending()
-    assert rows and rows[0].fact == "Lena moved to Hamburg."
+    assert rows and rows[0].fact == "ExampleFriend moved to Exampleville."
     assert rows[0].source_label.startswith("realtime-aggressive:")
     assert curator.ingested == [], "extractor mode must not call curator.ingest directly"
 

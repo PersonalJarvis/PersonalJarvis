@@ -774,7 +774,7 @@ function BulkDeleteConfirmDialog({
   const t = useT();
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60"
       role="dialog"
       aria-label={t("skills_view.bulk_delete_title")}
     >
@@ -829,7 +829,7 @@ function DeleteConfirmDialog({
   const t = useT();
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60"
       role="dialog"
       aria-label={t("skills_view.delete_title")}
     >
@@ -1110,7 +1110,7 @@ function AdminPassDialog({
 }) {
   const t = useT();
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/60">
       <div className="w-[400px] rounded-lg border border-border bg-card p-6 shadow-xl">
         <h3 className="flex items-center gap-2 text-base font-semibold">
           <Lock className="h-4 w-4" />

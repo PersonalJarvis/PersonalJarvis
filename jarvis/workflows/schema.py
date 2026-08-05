@@ -51,7 +51,7 @@ class CronTrigger(BaseModel):
     expression: str = Field(min_length=9, max_length=128,
                              description="Cron expression with 5 fields.")
     timezone: str = Field(default="local",
-                          description="'local' or an IANA zone (e.g. 'Europe/Berlin').")
+                          description="'local' or an IANA zone (e.g. 'Etc/UTC').")
 
 
 WorkflowTrigger = Annotated[

@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "1.2.1"
+version = "1.2.2"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
@@ -72,6 +72,17 @@ dependencies = [
     "loguru>=0.7",
     "keyring>=25.5",
     "sounddevice>=0.5",  # PortAudio binding; needs system libportaudio2 on Linux
+    # ChatGPT-Live (Codex subscription voice) carries audio ONLY on a WebRTC
+    # media track — its protocol has no audio event at all. Jarvis owns that
+    # peer in-process so the existing pipeline (wake word, echo guard,
+    # barge-in, Orb) keeps working. Upstream has no compiler-free Windows ARM64
+    # dependency chain, so that cell uses the existing honest unavailable state
+    # while every other voice path remains available.
+    "aiortc>=1.13; sys_platform != 'win32' or platform_machine != 'ARM64'",
+    # aiortc's broad PyAV range otherwise resolves a release without Apple-
+    # Silicon wheels. 15.1 is inside its supported range and carries the full
+    # CPython 3.11-3.14 macOS ARM64 wheel matrix.
+    "av==15.1.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # NumPy 2.1 is the conservative runtime branch everywhere it ships. Its
     # Windows ARM64 wheel gap is permanent, though, so that architecture uses
     # the first compatible branch with official CPython 3.11+ ARM64 wheels.
@@ -422,9 +433,15 @@ local-voice = [
     # energy VAD plus cloud/browser speech remain available on those cells.
     "webrtcvad-wheels>=2.0; python_version < '3.14' and (sys_platform != 'win32' or platform_machine != 'ARM64')",
     "faster-whisper>=1.0; (sys_platform != 'win32' or platform_machine != 'ARM64') and (sys_platform != 'darwin' or python_version < '3.14')",
-    # PyAV 16+ raised its Apple-Silicon deployment floor to macOS 14. Version
-    # 15.1 retains wheels for the supported macOS 13 floor and Python 3.11-3.13.
-    "av==15.1.0; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version < '3.14'",
+    # PyAV 16+ raised its Apple-Silicon deployment floor to macOS 14
+    # (macosx_14_0_arm64 wheels). 15.1 is the last line that keeps the supported
+    # macOS 13 floor, and it publishes that wheel for the whole CPython 3.11-3.14
+    # matrix — verified against the PyPI file list for av 15.1.0, which carries
+    # cp311/cp312/cp313/cp314 macosx_13_0_arm64. An earlier comment here claimed
+    # 3.11-3.13 and is what made this pin look like a 3.14 install break; it is
+    # not one. Base pins the identical requirement unconditionally for that cell,
+    # so this line only restates it for an extras-only resolve.
+    "av==15.1.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # ONNX-Runtime speech stack (Apache-2.0, torch-free) powering the on-device
     # Nemotron recogniser and the Piper voices. The >=1.13.3 floor is
     # LOAD-BEARING, not hygiene: multilingual Nemotron needs the prompt_index
@@ -443,7 +460,9 @@ local-voice = [
 # pulls ctranslate2, which the lockfile guard bans from base).
 tts-eval = [
     "faster-whisper>=1.0; (sys_platform != 'win32' or platform_machine != 'ARM64') and (sys_platform != 'darwin' or python_version < '3.14')",
-    "av==15.1.0; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version < '3.14'",
+    # Same Apple-Silicon macOS 13 floor as [local-voice]; see the note there for
+    # why this carries no python_version guard.
+    "av==15.1.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 [project.scripts]
@@ -713,8 +732,8 @@ contact-upsert = "jarvis.plugins.tool.contact_upsert:ContactUpsertTool"
 call-contact = "jarvis.plugins.tool.call_contact:CallContactTool"
 
 [tool.setuptools.packages.find]
-where = [".", "src"]
-include = ["jarvis*", "skills*"]
+where = ["."]
+include = ["jarvis*"]
 
 [tool.setuptools.package-data]
 jarvis = [

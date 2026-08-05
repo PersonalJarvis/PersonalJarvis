@@ -83,7 +83,7 @@ def _build_agy_worker_argv(
     ``.gemini/antigravity-cli/brain/<session>/`` (or ``scratch/<project>/``) dir —
     the worktree then stays empty, the Critic sees an empty diff, and EVERY
     antigravity mission fails ``critic_loop_exhausted`` even though agy did the
-    work (live forensic 2026-06-27: mission_019f07cb wrote
+    work (live forensic 2026-06-27: mission_019f1048 wrote
     ``…/brain/<session>/datenmenge_150_petabyte.md`` and was failed for an empty
     diff; agy itself reported "kein aktives Workspace-Verzeichnis geöffnet"  # i18n-allow (quotes agy's own literal CLI message)
     — English: "no active workspace directory open").

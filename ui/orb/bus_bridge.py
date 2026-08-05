@@ -615,7 +615,7 @@ class OrbBusBridge:
         NO ``SystemStateChanged`` is published. The bridge then saw nothing until
         ``THINKING`` and the bar only "woke up" once Jarvis started thinking —
         never while the user was speaking into it (live forensic 2026-06-21,
-        session 1a3df62a: ``_on_session_started`` → the next bridge state was
+        session 10000011: ``_on_session_started`` → the next bridge state was
         ``IDLE → THINKING`` with no LISTENING in between).
 
         ``VoiceSessionStarted`` is the authoritative "the user is being listened

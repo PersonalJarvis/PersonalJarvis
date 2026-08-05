@@ -41,7 +41,7 @@ from jarvis.memory.wiki.extractor import ConversationFactExtractor
 from jarvis.memory.wiki.journal import CandidateJournal
 from jarvis.memory.wiki.voice_bridge import VoiceFactBridge
 
-FACT_SENTENCE = "Remember that my friend Lena moved to Hamburg last month."
+FACT_SENTENCE = "Remember that my friend ExampleFriend moved to Exampleville last month."
 
 
 class FakeBrain:
@@ -68,9 +68,9 @@ class FakeBrain:
             content=json.dumps(
                 [
                     {
-                        "fact": "Lena moved to Hamburg.",
+                        "fact": "ExampleFriend moved to Exampleville.",
                         "kind": "person",
-                        "subjects": ["lena"],
+                        "subjects": ["examplefriend"],
                         "evidence_turn_id": evidence_turn_id,
                     }
                 ]
@@ -134,10 +134,15 @@ def _stack(tmp_path: Path, *, brain_sleep_s: float = 0.0):
     return bus, journal, curator, bridge, brain
 
 
-async def _drain(journal: CandidateJournal, *, timeout_s: float = 2.0) -> None:
+async def _drain(
+    journal: CandidateJournal,
+    *,
+    timeout_s: float = 2.0,
+    min_count: int = 1,
+) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        if journal.backlog_count() > 0:
+        if journal.backlog_count() >= min_count:
             return
         await asyncio.sleep(0.02)
 
@@ -155,7 +160,7 @@ async def test_voice_turn_feeds_journal_not_direct_ingest(tmp_path: Path) -> Non
         bridge.stop()
 
     rows = journal.pending()
-    assert rows and rows[0].fact == "Lena moved to Hamburg."
+    assert rows and rows[0].fact == "ExampleFriend moved to Exampleville."
     assert rows[0].source_label.startswith("voice-fact:")
     assert curator.ingested == [], "extractor mode must not call curator.ingest directly"
 
@@ -171,7 +176,7 @@ async def test_chat_turn_feeds_same_journal(tmp_path: Path) -> None:
         bridge.stop()
 
     rows = journal.pending()
-    assert rows and rows[0].fact == "Lena moved to Hamburg."
+    assert rows and rows[0].fact == "ExampleFriend moved to Exampleville."
     assert rows[0].source_label.startswith("chat-fact:")
     assert curator.ingested == []
 
@@ -209,6 +214,7 @@ async def test_same_text_in_a_later_turn_is_reviewed_again(tmp_path: Path) -> No
             )
             await bus.publish(ResponseGenerated(text="Noted.", language="en"))
             await asyncio.wait_for(brain.completed.wait(), timeout=2.0)
+            await _drain(journal, min_count=index + 1)
             assert brain.call_count == index + 1
     finally:
         bridge.stop()

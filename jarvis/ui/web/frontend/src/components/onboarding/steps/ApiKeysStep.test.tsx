@@ -12,8 +12,11 @@ afterEach(() => {
 
 type ProbeShape = { source: string; models: { id: string }[] } | null;
 
-/** Stub fetch for the local-path probe (+ the brain switch). `null` = network error. */
-function stubFetch(probe: ProbeShape) {
+/**
+ * Stub fetch for the local-path probe (+ the brain switch and the engine pin).
+ * `null` = network error.
+ */
+function stubFetch(probe: ProbeShape, { voiceModeOk = true } = {}) {
   const calls: { url: string; init?: RequestInit }[] = [];
   vi.stubGlobal(
     "fetch",
@@ -24,6 +27,15 @@ function stubFetch(probe: ProbeShape) {
         return { ok: true, json: async () => probe } as Response;
       }
       if (url === "/api/brain/switch") {
+        return { ok: true, json: async () => ({ ok: true }) } as Response;
+      }
+      if (url === "/api/settings/voice-mode") {
+        if (!voiceModeOk) {
+          return {
+            ok: false,
+            text: async () => "engine pin refused",
+          } as Response;
+        }
         return { ok: true, json: async () => ({ ok: true }) } as Response;
       }
       throw new Error(`unexpected fetch: ${url}`);
@@ -107,6 +119,40 @@ it("probes through the backend and offers one-click local activation", async () 
   // The probe went through the backend catalog route — never a
   // browser-direct localhost:11434 call.
   expect(calls[0].url).toBe("/api/providers/ollama/models");
+});
+
+it("pins the pipeline engine so the local brain is actually used", async () => {
+  const calls = stubFetch({ source: "live", models: [{ id: "qwen3.5:9b" }] });
+  renderStep();
+
+  await screen.findByText("onboarding.api_keys.local_detected");
+  fireEvent.click(
+    screen.getByRole("button", { name: "onboarding.api_keys.local_use_button" }),
+  );
+  await screen.findByText("onboarding.api_keys.local_active");
+
+  // Realtime replaces STT+Brain+TTS and never reads `[brain].primary`, so
+  // activating the local brain without pinning Pipeline changes nothing the
+  // user can hear — and `[voice].mode` defaults to realtime.
+  const modeCall = calls.find((c) => c.url === "/api/settings/voice-mode");
+  expect(modeCall?.init?.method).toBe("PUT");
+  expect(JSON.parse(String(modeCall?.init?.body))).toMatchObject({
+    mode: "pipeline",
+    persist: true,
+  });
+});
+
+it("reports a refused engine pin instead of claiming the local path is live", async () => {
+  stubFetch({ source: "live", models: [{ id: "qwen3.5:9b" }] }, { voiceModeOk: false });
+  renderStep();
+
+  await screen.findByText("onboarding.api_keys.local_detected");
+  fireEvent.click(
+    screen.getByRole("button", { name: "onboarding.api_keys.local_use_button" }),
+  );
+
+  await screen.findByText("engine pin refused");
+  expect(screen.queryByText("onboarding.api_keys.local_active")).toBeNull();
 });
 
 it("tells a running-but-empty Ollama to pull a model first", async () => {

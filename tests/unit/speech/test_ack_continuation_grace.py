@@ -1,6 +1,6 @@
 """The Pre-Thinking-Ack must never speak over a user who is still talking.
 
-Live incident (2026-06-17 12:42, session 2260c291): the user spoke ONE long
+Live incident (2026-06-17 12:42, session 10000105): the user spoke ONE long
 sentence with a natural breath-pause after a grammatically complete question
 ("Kannst du … das Google Cloud-System einstellen? … das die Cloud-CLI nutzt
 und mir sagt …"). The VAD endpointed at the pause, the brain entered

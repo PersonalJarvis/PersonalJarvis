@@ -2,6 +2,7 @@ import { Radio } from "lucide-react";
 
 import { Switch } from "@/components/ui/switch";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
+import { realtimeTransportIssueKey } from "@/lib/realtimeTransportIssue";
 import { useT } from "@/i18n";
 
 /**
@@ -18,6 +19,11 @@ export function RealtimeVoiceGroup() {
   const {
     mode,
     realtimeAvailable,
+    connecting,
+    requiresWebRtcOffer,
+    transportOfferReady,
+    transportOfferDetail,
+    transportIssue,
     sessionActive,
     activeSessionMode,
     activeSessionProvider,
@@ -31,15 +37,31 @@ export function RealtimeVoiceGroup() {
   const runtimeDetail = [activeSessionProvider, activeSessionModel]
     .filter(Boolean)
     .join(" · ");
-  const runtimeText = transitioning
-    ? t("apikeys_view.runtime_switching")
-    : sessionActive && activeSessionMode === "realtime"
-      ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ? ` · ${runtimeDetail}` : ""}`
-      : sessionActive && activeSessionMode === "pipeline" && on
-        ? t("apikeys_view.runtime_fallback_pipeline")
-        : sessionActive
-          ? t("apikeys_view.runtime_pipeline")
-          : t("apikeys_view.runtime_idle");
+  // "Connecting" comes FIRST. A subscription transport spends 15-45 s spawning
+  // its app-server, verifying the account and negotiating WebRTC; reporting
+  // that window as "no voice session is active" is what made a working call
+  // look frozen.
+  const runtimeText = connecting
+    ? t("apikeys_view.runtime_connecting")
+    : transitioning
+      ? t("apikeys_view.runtime_switching")
+      : sessionActive && activeSessionMode === "realtime"
+        ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ? ` · ${runtimeDetail}` : ""}`
+        : sessionActive && activeSessionMode === "pipeline" && on
+          ? t("apikeys_view.runtime_fallback_pipeline")
+          : sessionActive
+            ? t("apikeys_view.runtime_pipeline")
+            : t("apikeys_view.runtime_idle");
+  // The one honest explanation for a call that never starts on an
+  // offer-requiring transport. Rendered verbatim: the backend one-liner names
+  // the actual blocker, and paraphrasing it here would drop the diagnosis.
+  const offerBlocked =
+    on && requiresWebRtcOffer && transportOfferReady === false;
+  const offerDetail = !offerBlocked
+    ? ""
+    : transportIssue
+      ? t(realtimeTransportIssueKey(transportIssue))
+      : transportOfferDetail;
   return (
     <div className="mt-2 rounded-lg border border-border bg-card/60 p-4">
       <div className="flex items-start gap-3">
@@ -61,6 +83,15 @@ export function RealtimeVoiceGroup() {
           <p className="mt-1.5 text-[11px] text-muted-foreground" aria-live="polite">
             {runtimeText}
           </p>
+          {offerDetail && (
+            <p
+              data-testid="realtime-transport-offer-detail"
+              className="mt-1 text-[11px] leading-snug text-amber-600 dark:text-amber-400"
+              aria-live="polite"
+            >
+              {offerDetail}
+            </p>
+          )}
         </div>
       </div>
     </div>

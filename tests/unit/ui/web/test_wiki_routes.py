@@ -82,25 +82,25 @@ def _write_page(
 
 @pytest.fixture
 def populated_vault(tmp_path: Path) -> Path:
-    """Three-page vault: alex -> sam, alex -> pixel-art-editor."""
+    """Three-page vault with two synthetic entities and one project."""
     vault = tmp_path / "vault"
     _write_page(
         vault,
         "entities",
-        "sam",
+        "example-parent",
         page_type="entity",
         body=(
-            "# Sam\n\n## Summary\nSam mentors community projects.\n\n"
-            "## Facts\n- Joined the garden project in 2024.\n"
+            "# Example Parent\n\n## Summary\nSynthetic fixture entity.\n\n"
+            "## Facts\n- Fixture marker alpha.\n"
         ),
     )
     _write_page(
         vault,
         "entities",
-        "alex",
+        "example-user",
         page_type="entity",
         body=(
-            "# Alex\n\n## Summary\nMentor is [[sam]].\n\n"
+            "# Example User\n\n## Summary\nRelated to [[example-parent]].\n\n"
             "## Facts\n- Working on [[pixel-art-editor]].\n"
             "- Favorite food is Pizza (source: voice-fact:demo).\n"
         ),
@@ -220,12 +220,12 @@ def test_tree_with_three_pages_lists_files_and_counts(populated_vault: Path) -> 
     assert folders_by_name["concepts"]["count"] == 0
     assert folders_by_name["sessions"]["count"] == 0
     slugs = {f["slug"] for f in folders_by_name["entities"]["files"]}
-    assert slugs == {"sam", "alex"}
+    assert slugs == {"example-parent", "example-user"}
     sample_file = folders_by_name["entities"]["files"][0]
     assert "mtime" in sample_file and isinstance(sample_file["mtime"], float)
     assert "size" in sample_file and sample_file["size"] > 0
     assert body["stats"]["total_pages"] == 3
-    # alex has 2 outbound wikilinks (sam, pixel-art-editor)
+    # The example user has two outbound wikilinks.
     assert body["stats"]["total_links"] >= 2
 
 
@@ -290,18 +290,18 @@ def test_tree_projects_all_visible_starter_vault_pages(
 def test_page_happy_path_returns_frontmatter_body_wikilinks(populated_vault: Path) -> None:
     app = _make_app(populated_vault)
     with TestClient(app) as client:
-        r = client.get("/api/wiki/page/alex")
+        r = client.get("/api/wiki/page/example-user")
     body = r.json()
     assert body["ok"] is True
-    assert body["slug"] == "alex"
+    assert body["slug"] == "example-user"
     assert body["kind"] == "entity"
     assert body["frontmatter_valid"] is True
     assert body["frontmatter"]["type"] == "entity"
-    assert "Mentor is [[sam]]" in body["body_md"]
-    assert set(body["wikilinks"]) == {"sam", "pixel-art-editor"}
+    assert "Related to [[example-parent]]" in body["body_md"]
+    assert set(body["wikilinks"]) == {"example-parent", "pixel-art-editor"}
     assert body["stats"]["bytes"] > 0
     assert body["stats"]["words"] > 0
-    assert body["path"].endswith("entities/alex.md")
+    assert body["path"].endswith("entities/example-user.md")
 
 
 def test_page_unknown_slug_returns_not_found_envelope(populated_vault: Path) -> None:
@@ -361,10 +361,10 @@ def test_graph_with_linked_pages_produces_nodes_and_edges(populated_vault: Path)
     body = r.json()
     assert body["ok"] is True
     node_ids = {n["id"] for n in body["nodes"]}
-    assert node_ids == {"sam", "alex", "pixel-art-editor"}
+    assert node_ids == {"example-parent", "example-user", "pixel-art-editor"}
     edge_pairs = {(e["source"], e["target"]) for e in body["edges"]}
-    assert ("alex", "sam") in edge_pairs
-    assert ("alex", "pixel-art-editor") in edge_pairs
+    assert ("example-user", "example-parent") in edge_pairs
+    assert ("example-user", "pixel-art-editor") in edge_pairs
     assert body["broken"] == []
     # Edge contexts include the wikilink in question.
     for edge in body["edges"]:
@@ -473,17 +473,17 @@ def test_template_placeholder_titles_fall_back_to_filename(tmp_path: Path) -> No
 # ----------------------------------------------------------------------
 
 
-def test_backlinks_for_sam_includes_alex_with_snippet(populated_vault: Path) -> None:
+def test_backlinks_for_example_parent_include_user_snippet(populated_vault: Path) -> None:
     app = _make_app(populated_vault)
     with TestClient(app) as client:
-        r = client.get("/api/wiki/backlinks/sam")
+        r = client.get("/api/wiki/backlinks/example-parent")
     body = r.json()
     assert body["ok"] is True
-    assert body["slug"] == "sam"
+    assert body["slug"] == "example-parent"
     backlinks_by_slug = {b["slug"]: b for b in body["backlinks"]}
-    assert "alex" in backlinks_by_slug
-    snippet = backlinks_by_slug["alex"]["snippet"]
-    assert "sam" in snippet.lower()
+    assert "example-user" in backlinks_by_slug
+    snippet = backlinks_by_slug["example-user"]["snippet"]
+    assert "example-parent" in snippet.lower()
 
 
 def test_backlinks_for_unreferenced_slug_returns_empty_list(populated_vault: Path) -> None:
@@ -529,7 +529,7 @@ def test_search_happy_path_returns_scored_hits(
     assert body["query"] == "pizza"
     assert len(body["hits"]) >= 1
     top_hit = body["hits"][0]
-    assert top_hit["slug"] == "alex"
+    assert top_hit["slug"] == "example-user"
     assert 0.0 <= top_hit["score"] <= 1.0
     assert top_hit["path"].endswith(".md")
     assert "pizza" in top_hit["snippet"].lower()
@@ -551,12 +551,12 @@ def test_search_with_fts5_syntax_chars_is_sanitised(populated_vault: Path) -> No
     with TestClient(app) as client:
         r = client.get(
             "/api/wiki/search",
-            params={"q": 'pizza" AND (alex*)'},
+            params={"q": 'pizza" AND (example-user*)'},
         )
     body = r.json()
     assert r.status_code == 200
     assert body["ok"] is True
-    assert body["query"] == "pizza AND alex"
+    assert body["query"] == "pizza AND example-user"
 
 
 def test_search_k_parameter_caps_results(populated_vault: Path) -> None:
@@ -592,7 +592,7 @@ def test_ingest_writes_through_shared_curator_service(
         response = client.post(
             "/api/wiki/ingest",
             json={
-                "text": "The user will travel to San Francisco tomorrow.",
+                "text": "The fictional user will travel to Example City tomorrow.",
                 "source": "test:explicit",
             },
         )
@@ -608,7 +608,7 @@ def test_ingest_writes_through_shared_curator_service(
         "pages_touched": ["traveler.md"],
     }
     assert curator.calls == [
-        ("The user will travel to San Francisco tomorrow.", "test:explicit")
+        ("The fictional user will travel to Example City tomorrow.", "test:explicit")
     ]
 
 
@@ -1011,7 +1011,7 @@ def test_reindex_replaces_stale_rows_with_active_vault(
     finally:
         conn.close()
     assert "entities/stale.md" not in paths
-    assert "entities/alex.md" in paths
+    assert "entities/example-user.md" in paths
 
 
 # ----------------------------------------------------------------------
@@ -1107,9 +1107,9 @@ def test_health_restores_last_write_and_backlog_from_journal(tmp_path: Path) -> 
     _write_page(
         vault,
         "entities",
-        "alex",
+        "example-user",
         page_type="entity",
-        body="# Alex\n",
+        body="# Example User\n",
     )
     app = _make_app(vault)
     db_path = app.state.config.memory.data_dir / "jarvis.db"
@@ -1123,7 +1123,7 @@ def test_health_restores_last_write_and_backlog_from_journal(tmp_path: Path) -> 
         [1],
         status="consolidated",
         decision="add",
-        target_path="entities/alex.md",
+        target_path="entities/example-user.md",
     )
     assert journal.append(
         [CandidateFact(fact="A pending fact")],
@@ -1150,7 +1150,7 @@ def test_health_restores_last_write_and_backlog_from_journal(tmp_path: Path) -> 
 
     health = body["health"]
     assert health["journal_backlog"] == 1
-    assert health["last_write"]["pages"] == ["entities/alex.md"]
+    assert health["last_write"]["pages"] == ["entities/example-user.md"]
     assert health["vault_pages"] == 1
     assert health["missing_pages"] == 1
     assert health["orphaned_pages"] == 0

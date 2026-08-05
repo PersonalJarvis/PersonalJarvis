@@ -34,15 +34,20 @@ What the composed prompt contains, and why each part earns its place:
 Two-layer construction, because the product must work for a downloader with no
 API key at all (§3):
 
-1. **Composed** — one bounded call to ``resolve_quality_brain``. Deliberately
-   NOT the full frontier chain: that chain ends in small, fast models so a core
-   path never dies, and a prompt written by one of those looks fine while being
-   materially worse. Here the output IS the product, so a chain that cannot
-   reach a capable model returns nothing and we fall to layer 2 openly.
+1. **Composed** — a bounded call to the writer ``jarvis.agentic_ide.writer``
+   chose. Deliberately NOT the full frontier chain: that chain ends in small,
+   fast models so a core path never dies, and a prompt written by one of those
+   looks fine while being materially worse. Here the output IS the product, so
+   nothing below the quality tier writes a brief.
+   A writer that accepts the job and dies inside it (a depleted key answering
+   429, a CLI printing its own flag error, a hang) hands the brief to the next
+   rung instead of ending the composition — one dead credential must not cost
+   the feature while another provider is signed in and idle (AP-22). Every
+   attempt shares one budget, and the user is told which writer took over.
 2. **Deterministic fallback** — the same markdown skeleton filled by regex,
-   used when no provider qualifies, the call fails, times out, or comes back
-   empty. It is *always* better than the raw transcript, so the feature never
-   depends on a model being available.
+   used when no provider qualifies, or when every writer in the chain fails,
+   times out, or comes back empty. It is *always* better than the raw
+   transcript, so the feature never depends on a model being available.
 
 The composer is honest about which layer produced the result (``composed_by``),
 because the readback the user hears should not claim more than happened.
@@ -120,6 +125,11 @@ COMPOSE_TIMEOUT_S = 90.0
 # surface; few enough that the agent's context is not flooded with guesses.
 MAX_FILE_REFERENCES = 5
 
+# The least time a second writer needs to be worth starting. A subscription CLI
+# pays a 10-12 s cold process start before it thinks at all, so handing one a
+# shorter window buys the deterministic prompt AND the wait.
+_MIN_ATTEMPT_S = 20.0
+
 # Speech artefacts the deterministic layer removes. Matching *input vocabulary*
 # in the supported locales — these are the words people actually say while
 # thinking, not prose.
@@ -193,6 +203,7 @@ class ComposedPrompt:
 STAGE_START = "start"
 STAGE_THINKING = "thinking"
 STAGE_DRAFTING = "drafting"
+STAGE_RETRY = "retry"
 STAGE_READY = "ready"
 STAGE_FALLBACK = "fallback"
 STAGE_SENT = "sent"
@@ -374,6 +385,42 @@ def _writer_label(brain: object) -> str:
     return name[:40]
 
 
+def _retry_message(terminal_name: str, *, reason: str, writer: str) -> str:
+    """Said when one writer died and another is taking the brief over.
+
+    Names both halves on purpose. A composition that silently takes twice as
+    long looks wedged, and "which model wrote this brief" is a question the
+    user is entitled to answer without reading a log file.
+    """
+    taking_over = f"{writer} is taking over" if writer else "another writer is taking over"
+    return f"{terminal_name}'s writer dropped out ({reason}) - {taking_over}."
+
+
+def _brief_defect(composed: str) -> str:
+    """Why ``composed`` is unusable as a brief, or ``""`` when it is fine.
+
+    Three separate ways an answer arrives without a brief in it, all of which
+    used to end the composition and now cost the WRITER rather than the user:
+
+    * Nothing at all came back.
+    * It is not a brief. A subscription CLI writes its own errors to stdout, so
+      "the process answered" is not "a brief came back" — live 2026-07-26 one
+      returned a one-line flag-validation error that shipped as the prompt.
+    * It stops mid-sentence. Half a brief READS as a whole one, which is what
+      makes it dangerous: the agent starts on an instruction whose second half
+      was never written.
+    """
+    from . import prompt_blueprint as blueprint
+
+    if not composed:
+        return "composer returned nothing usable"
+    if not blueprint.looks_like_brief(composed):
+        return "composer output was not a brief"
+    if blueprint.looks_truncated(composed):
+        return "composer output was cut off"
+    return ""
+
+
 def announce_delivery(
     terminal_name: str,
     *,
@@ -459,8 +506,8 @@ def _extract_referenced(text: str) -> list[str]:
     return seen
 
 
-def _resolve_writer():  # noqa: ANN202 - Brain | None, avoid an import cycle
-    """The model that writes prompts, or None when nothing qualifies.
+def _resolve_writer():  # noqa: ANN202 - (Brain | None, str), avoid an import cycle
+    """The model that writes prompts and where it came from, or ``(None, "")``.
 
     Delegates to ``writer.resolve_writer`` so this decision lives in ONE place:
     the work splitter makes the same choice, and a user who moved briefs onto a
@@ -474,8 +521,14 @@ def _resolve_writer():  # noqa: ANN202 - Brain | None, avoid an import cycle
     """
     from .writer import resolve_writer
 
-    brain, _source = resolve_writer(cli_timeout_s=COMPOSE_TIMEOUT_S)
-    return brain
+    return resolve_writer(cli_timeout_s=COMPOSE_TIMEOUT_S)
+
+
+def _rescue_writer(tried: Sequence[str]):  # noqa: ANN202 - (Brain | None, str)
+    """The next writer to try after one accepted the job and failed inside it."""
+    from .writer import resolve_rescue_writer
+
+    return resolve_rescue_writer(cli_timeout_s=COMPOSE_TIMEOUT_S, exclude=tuple(tried))
 
 
 # How much of the repository's agent instructions to carry. Enough for the
@@ -633,8 +686,8 @@ def _strip_wrapper(text: str) -> str:
     return stripped
 
 
-async def _resolved_writer(task: asyncio.Task) -> object | None:
-    """The writer the background probe found, or None. Never raises.
+async def _resolved_writer(task: asyncio.Task) -> tuple[object | None, str]:
+    """The writer the background probe found, or ``(None, "")``. Never raises.
 
     The probe loads the config and asks every subscription candidate whether it
     is signed in; a broken one there must cost the deterministic prompt, not
@@ -644,7 +697,7 @@ async def _resolved_writer(task: asyncio.Task) -> object | None:
         return await task
     except Exception:  # noqa: BLE001 - resolution never breaks a composition
         logger.info("Agentic IDE writer resolution failed", exc_info=True)
-        return None
+        return None, ""
 
 
 def _discard(task: asyncio.Task) -> None:
@@ -762,65 +815,90 @@ async def compose(
     # subscription CLI the probe is the longer of the two.
     context_task = asyncio.create_task(_read_context(session, candidates))
 
-    writer = brain if writer_task is None else await _resolved_writer(writer_task)
+    writer, writer_source = (
+        (brain, "") if writer_task is None else await _resolved_writer(writer_task)
+    )
     if writer is None:
-        # Deliberately NOT falling through to whatever model is left: see the
-        # module docstring. Plain and honest beats polished and quietly worse.
+        # An unhonourable PIN still degrades here rather than quietly landing on
+        # a provider the user did not choose: plain and honest beats polished
+        # and quietly worse. Surviving a chosen writer is a different question,
+        # answered by the loop below.
         _discard(context_task)
         return degrade("no quality-tier provider reachable")
 
-    try:
-        composed = await asyncio.wait_for(
-            _compose_once(
-                brain=writer,
-                session=session,
-                said=said,
-                base_instruction=base_instruction,
-                terminal_name=terminal_name,
-                agent_display=agent_display,
-                candidates=candidates,
-                kind=kind,
-                context=context_task,
-                notify=notify,
-                attachments=attached,
-                conversation=spoken_before,
-            ),
-            timeout=COMPOSE_TIMEOUT_S,
-        )
-        composed = _strip_wrapper(composed)
-    except TimeoutError:
-        _discard(context_task)
-        return degrade(f"composer timed out after {COMPOSE_TIMEOUT_S:g}s")
-    except Exception as exc:  # noqa: BLE001 - any provider failure degrades
-        logger.info("Agentic IDE prompt composer fell back: {}", exc)
-        _discard(context_task)
-        return degrade(f"composer unavailable ({type(exc).__name__})")
+    # A writer that accepts the job and then dies inside it — a depleted key
+    # answering 429, a CLI printing its own flag error to stdout, a provider
+    # hanging — used to end the composition on the raw spoken sentence while a
+    # second, signed-in provider sat idle. Measured on the dev box 2026-08-02:
+    # every composition for days. That is the single-provider brick of AP-22,
+    # so a failed attempt crosses to the next rung.
+    #
+    # All attempts share ONE budget. The user is waiting through the whole
+    # sequence, and three full timeouts in a row is not a rescue — it is the
+    # same fallback three times slower.
+    deadline = started + COMPOSE_TIMEOUT_S
+    tried: list[str] = [writer_source] if writer_source else []
+    composed = ""
+    reason = ""
 
-    if not composed:
-        return degrade("composer returned nothing usable")
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining < _MIN_ATTEMPT_S:
+            _discard(context_task)
+            return degrade(reason or f"composer timed out after {COMPOSE_TIMEOUT_S:g}s")
 
-    if not blueprint.looks_like_brief(composed):
-        # A subscription CLI writes its own errors to stdout, so "the process
-        # answered" is not the same as "a brief came back". Live 2026-07-26: one
-        # returned a one-line flag-validation error that shipped as the composed
-        # prompt. Anything without a single heading is debris, not a task.
-        logger.info(
-            "Agentic IDE prompt composer returned something that is not a brief "
-            "({} chars) — falling back",
-            len(composed),
-        )
-        return degrade("composer output was not a brief")
+        try:
+            composed = _strip_wrapper(
+                await asyncio.wait_for(
+                    _compose_once(
+                        brain=writer,
+                        session=session,
+                        said=said,
+                        base_instruction=base_instruction,
+                        terminal_name=terminal_name,
+                        agent_display=agent_display,
+                        candidates=candidates,
+                        kind=kind,
+                        context=context_task,
+                        notify=notify,
+                        attachments=attached,
+                        conversation=spoken_before,
+                    ),
+                    timeout=remaining,
+                )
+            )
+        except TimeoutError:
+            composed, reason = "", f"composer timed out after {COMPOSE_TIMEOUT_S:g}s"
+        except Exception as exc:  # noqa: BLE001 - any provider failure crosses over
+            logger.info("Agentic IDE prompt composer failed on {}: {}", writer_source, exc)
+            composed, reason = "", f"composer unavailable ({type(exc).__name__})"
+        else:
+            reason = _brief_defect(composed)
+            if not reason:
+                break
+            logger.info(
+                "Agentic IDE prompt composer: {} from {} ({} chars)",
+                reason,
+                writer_source or "the pinned writer",
+                len(composed),
+            )
 
-    if blueprint.looks_truncated(composed):
-        # Half a brief reads as a whole one, which is exactly what makes it
-        # dangerous: the agent starts on an instruction whose second half was
-        # never written. The plain deterministic prompt is worse but complete.
-        logger.info(
-            "Agentic IDE prompt composer produced a truncated brief ({} chars) "
-            "— falling back",
-            len(composed),
+        if writer_task is None:
+            # The caller pinned this model explicitly. Substituting another one
+            # is not ours to decide.
+            _discard(context_task)
+            return degrade(reason)
+
+        nxt, nxt_source = await asyncio.to_thread(_rescue_writer, tried)
+        if nxt is None:
+            _discard(context_task)
+            return degrade(reason)
+        writer, writer_source = nxt, nxt_source
+        tried.append(nxt_source)
+        notify(
+            STAGE_RETRY,
+            _retry_message(terminal_name, reason=reason, writer=_writer_label(nxt)),
         )
-        return degrade("composer output was cut off")
 
     # Keep only the references that survive an existence check — the model may
     # echo a candidate that was renamed, or invent one outright. A dead @path
@@ -858,6 +936,7 @@ __all__ = [
     "STAGE_DRAFTING",
     "STAGE_FALLBACK",
     "STAGE_READY",
+    "STAGE_RETRY",
     "STAGE_SENT",
     "STAGE_START",
     "STAGE_THINKING",

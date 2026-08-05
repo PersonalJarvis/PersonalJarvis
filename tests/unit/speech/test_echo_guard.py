@@ -104,7 +104,7 @@ def test_forced_touch_resets_the_horizon() -> None:
 
 
 def test_single_word_echo_of_active_playback_is_flagged() -> None:
-    # Session c77b7a88 turn 4: the mic heard the assistant's own
+    # Session 10000004 turn 4: the mic heard the assistant's own
     # "Thanksgiving" while the answer about Thanksgiving was still playing.
     guard = SelfEchoGuard()
     guard.register(
@@ -116,7 +116,7 @@ def test_single_word_echo_of_active_playback_is_flagged() -> None:
 
 
 def test_truncated_two_word_echo_matches_final_prefix() -> None:
-    # Session c77b7a88 turn 5: the capture window cut the echo mid-word —
+    # Session 10000004 turn 5: the capture window cut the echo mid-word —
     # "Voraus, wo" ← "voraus, wofür sie dankbar sind".  # i18n-allow: forensic quote
     guard = SelfEchoGuard()
     guard.register(

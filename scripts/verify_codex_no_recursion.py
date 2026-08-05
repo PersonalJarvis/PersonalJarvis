@@ -1,7 +1,7 @@
 """Ad-hoc verification: the real CodexDirectWorker plans a trip WITHOUT
 spawning a nested agent (multi_agent disabled) and produces actual output.
 
-Proves the 2026-06-14 fix for the hung mission 019ec708 ("plan a trip from
+Proves the 2026-06-14 fix for the hung mission 019f1033 ("plan a trip from
 London to Taiwan" → codex called spawn_agent('Hooke') + wait → frozen 7+ min).
 Runs a REAL `codex exec` subprocess (~1 min, small ChatGPT-subscription cost).
 Exit 0 = produced output + no spawn_agent; exit 1 = recursion/no output.
@@ -90,7 +90,7 @@ async def main() -> int:
         secs = (final.duration_ms or 0) / 1000
         print(f"[OK] produced output ({len(answer)} chars, {events} events)")
         print(f"[TIME] worker wall-clock: {secs:.0f}s "
-              f"(xhigh baseline on live mission 019ec742 was ~450s/run)")
+              f"(xhigh baseline on live mission 019f1034 was ~450s/run)")
         if "model_reasoning_effort=medium" in " ".join(cmd):
             print("[OK] reasoning effort capped to medium")
         print("--- first 400 chars of the plan ---")

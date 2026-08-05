@@ -1,6 +1,6 @@
 """Process-local per-API-family quota/auth cooldown.
 
-Live pattern (mission 019f3d0f, 2026-07-07 — the verify run of the BUG-042
+Live pattern (mission 019f1050, 2026-07-07 — the verify run of the BUG-042
 fixes): with both subscription workers down, the API-key family walk picked
 gemini, whose prepaid credits were DEPLETED (429 RESOURCE_EXHAUSTED). Nothing
 remembered that, so every retry re-picked gemini — the healthy openrouter key

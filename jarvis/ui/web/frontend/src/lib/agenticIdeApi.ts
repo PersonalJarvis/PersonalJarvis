@@ -37,7 +37,7 @@ export interface FoldersResponse {
   parent: string | null;
   entries: FolderItem[];
   error?: string | null;
-  /** Human-facing name of this machine ("Studio MacBook"). */
+  /** Human-facing name of this machine ("Alex's MacBook"). */
   device_name?: string | null;
 }
 
@@ -86,6 +86,8 @@ export interface ProjectProfile {
 
 export interface TerminalState {
   key: string;
+  /** Stable for one pane lifetime, even when its reusable call-sign is recycled. */
+  history_id?: string;
   name: string;
   agent: string;
   display_name: string;
@@ -137,7 +139,7 @@ export interface TerminalState {
    * and a recap goes stale in seconds. `fetchTerminalRecaps` keeps it current.
    */
   recap?: string;
-  /** The one-or-two-sentence version, shown when the header line is hovered. */
+  /** The one-or-two-sentence version, shown when the header line is opened. */
   recap_detail?: string;
   /** Is its agent still on the job? The OPENING value, like `recap` above. */
   activity?: PaneActivity;
@@ -1111,6 +1113,35 @@ export async function setFocusMode(enabled: boolean): Promise<boolean> {
 }
 
 /**
+ * Tell the backend which pane is visible and which one owns the next prompt.
+ *
+ * Ephemeral by design: this is grounding for "this terminal", not a display
+ * preference. Grid view has no single visible terminal, but its selected prompt
+ * chip remains an explicit target for the prompt bar, voice orb, and file drops.
+ */
+export async function syncAgenticIdeSurface(payload: {
+  workspaceId: string;
+  chatView: boolean;
+  onScreen: boolean;
+  terminal: string | null;
+  promptTarget: string | null;
+}): Promise<void> {
+  const res = await fetch("/api/agentic-ide/surface-context", {
+    method: "PUT",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      workspace_id: payload.workspaceId,
+      chat_view: payload.chatView,
+      on_screen: payload.onScreen,
+      terminal: payload.terminal,
+      prompt_target: payload.promptTarget,
+    }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+}
+
+/**
  * The workspace display preferences the backend remembers for this machine.
  *
  * `stored` is false until a size has actually been chosen — the difference
@@ -1184,6 +1215,29 @@ export interface AttachResult {
   delivered?: boolean;
   /** Present only when `analyze` was asked for. */
   analysis?: DropAttachment[];
+  /** Analysed files queued for this pane's next spoken prompt. */
+  staged_for_voice?: number;
+  /** Stable identity used to verify or cancel the pending orb drop. */
+  voice_batch_id?: string | null;
+}
+
+export interface VoiceAttachmentBatch {
+  batch_id: string;
+  files: string[];
+  reserved: boolean;
+}
+
+export interface OwnedVoiceAttachmentBatch extends VoiceAttachmentBatch {
+  terminal: string;
+}
+
+export interface VoiceAttachmentsResponse {
+  terminal: string;
+  batches: VoiceAttachmentBatch[];
+}
+
+export interface AllVoiceAttachmentsResponse {
+  batches: OwnedVoiceAttachmentBatch[];
 }
 
 /**
@@ -1210,6 +1264,8 @@ export async function attachToTerminal(
     analyze?: boolean;
     /** Default true. False stores and analyses without typing into the pane. */
     deliver?: boolean;
+    /** Queue the analysis for this pane's next spoken prompt. */
+    stageForVoice?: boolean;
   },
 ): Promise<AttachResult> {
   const form = new FormData();
@@ -1219,6 +1275,7 @@ export async function attachToTerminal(
   if (payload.submit) form.append("submit", "true");
   if (payload.analyze) form.append("analyze", "true");
   if (payload.deliver === false) form.append("deliver", "false");
+  if (payload.stageForVoice) form.append("stage_for_voice", "true");
 
   const res = await fetch(
     `/api/agentic-ide/terminals/${encodeURIComponent(name)}/attach`,
@@ -1226,6 +1283,34 @@ export async function attachToTerminal(
   );
   if (!res.ok) throw new Error(await detail(res));
   return (await res.json()) as AttachResult;
+}
+
+/** Read authoritative orb drops still waiting for one pane. */
+export function fetchVoiceAttachments(
+  name: string,
+): Promise<VoiceAttachmentsResponse> {
+  return getJson<VoiceAttachmentsResponse>(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/voice-attachments`,
+  );
+}
+
+/** Hydrate every pending orb receipt after navigation or a panel remount. */
+export function fetchAllVoiceAttachments(): Promise<AllVoiceAttachmentsResponse> {
+  return getJson<AllVoiceAttachmentsResponse>(
+    "/api/agentic-ide/voice-attachments",
+  );
+}
+
+/** Cancel one pending orb drop; the copied workspace file is left intact. */
+export async function removeVoiceAttachment(
+  name: string,
+  batchId: string,
+): Promise<void> {
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/voice-attachments/${encodeURIComponent(batchId)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) throw new Error(await detail(res));
 }
 
 export interface PromptResult {

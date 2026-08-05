@@ -5,7 +5,7 @@ INLINE via the router's search_web tool.
 A research request whose deliverable is an ANSWER (a comparison / overview /
 recommendation / summary) stays INLINE — the Worker->Critic mission pipeline
 grades BUILT ARTIFACTS via git diff and is hostile to an answer-only research
-turn (empty-diff veto -> critic_loop_exhausted, live mission 019ecb56). Only a
+turn (empty-diff veto -> critic_loop_exhausted, live mission 019f1037). Only a
 request that builds a FILE / report / document offloads to a mission.
 
 These tests pin ``BrainManager._research_wants_artifact`` directly. The method is

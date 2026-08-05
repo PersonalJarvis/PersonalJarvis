@@ -14,7 +14,10 @@ function response(available: boolean): Response {
       requires_webrtc_offer: true,
       active_provider: available ? "codex-subscription-realtime" : null,
       active_provider_label: available ? "ChatGPT subscription (Codex)" : null,
-      active_model: available ? "gpt-realtime-1.5" : null,
+      active_model: available ? "auto" : null,
+      active_model_label: available
+        ? "ChatGPT-Live (model chosen by OpenAI)"
+        : null,
       session_active: false,
       active_session_mode: null,
       active_session_provider: "",
@@ -54,5 +57,8 @@ describe("useVoiceMode realtime discovery", () => {
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ cache: "no-store" });
+    expect(result.current.activeModel).toBe(
+      "ChatGPT-Live (model chosen by OpenAI)",
+    );
   });
 });

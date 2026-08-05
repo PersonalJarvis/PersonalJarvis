@@ -57,3 +57,40 @@ def test_create_script_omits_icon_line_without_icon() -> None:
     """Back-compat: no icon given → no IconLocation line (never an empty ',0')."""
     script = build_create_script(Path(r"C:\startup\Personal Jarvis.lnk"), _spec())
     assert "IconLocation" not in script
+
+
+# --------------------------------------------------------------------------- #
+# Apostrophes in paths (a login like O'Brien, a folder like "Alex's Jarvis")  #
+# --------------------------------------------------------------------------- #
+
+_APOSTROPHE_SPEC = LaunchSpec(
+    program=r"C:\Users\O'Brien\.venv\Scripts\pythonw.exe",
+    args=("-m", "jarvis.ui.web.launcher"),
+    working_dir=r"C:\Users\O'Brien\Alex's Jarvis",
+)
+
+
+def _quotes_balanced(script: str) -> bool:
+    """Every line closes each single-quoted literal it opens."""
+    return all(line.count("'") % 2 == 0 for line in script.splitlines())
+
+
+def test_create_script_escapes_apostrophes_in_paths() -> None:
+    # An unescaped apostrophe terminates the single-quoted PowerShell literal
+    # early, so the whole script fails to parse and autostart silently never
+    # installs for that user.
+    script = build_create_script(
+        Path(r"C:\Users\O'Brien\Startup\Personal Jarvis.lnk"),
+        _APOSTROPHE_SPEC,
+        icon=r"C:\Users\O'Brien\jarvis.ico",
+    )
+    assert r"$sc.TargetPath = 'C:\Users\O''Brien\.venv\Scripts\pythonw.exe'" in script
+    assert r"Alex''s Jarvis" in script
+    assert r"$sc.IconLocation = 'C:\Users\O''Brien\jarvis.ico,0'" in script
+    assert _quotes_balanced(script)
+
+
+def test_read_script_escapes_apostrophes_in_the_link_path() -> None:
+    script = build_read_script(Path(r"C:\Users\O'Brien\Startup\Personal Jarvis.lnk"))
+    assert r"O''Brien" in script
+    assert _quotes_balanced(script)

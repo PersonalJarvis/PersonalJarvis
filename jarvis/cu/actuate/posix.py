@@ -34,6 +34,35 @@ _NO_BACKEND_MSG = (
 )
 
 
+# The numpad, which pynput's ``Key`` enum does not model at all — it has no
+# member for a keypad digit or operator on any platform. They are addressed by
+# raw virtual key instead, which pynput passes straight to the OS
+# (``CGEventCreateKeyboardEvent`` on macOS, an XTest keysym on X11).
+#
+# Why this exists: ``base._NAMED_KEYS`` — the ONE vocabulary the tool boundary
+# validates against — accepts ``numpad0``-``numpad9`` plus the five operators,
+# and the Windows backend maps every one of them (``windows.py`` VK 0x60-0x6F).
+# Without this table the identical Computer-Use action that works on Windows
+# died on macOS and Linux with ``ValueError: Unknown key: 'numpad5'``.
+#
+# macOS: Carbon ``kVK_ANSI_Keypad*`` codes. Linux/X11: the ``XK_KP_*`` keysyms.
+_MACOS_NUMPAD_VK: dict[str, int] = {
+    "numpad0": 0x52, "numpad1": 0x53, "numpad2": 0x54, "numpad3": 0x55,
+    "numpad4": 0x56, "numpad5": 0x57, "numpad6": 0x58, "numpad7": 0x59,
+    "numpad8": 0x5B, "numpad9": 0x5C,
+    "multiply": 0x43, "add": 0x45, "subtract": 0x4E,
+    "decimal": 0x41, "divide": 0x4B,
+}
+
+_X11_NUMPAD_KEYSYM: dict[str, int] = {
+    "numpad0": 0xFFB0, "numpad1": 0xFFB1, "numpad2": 0xFFB2, "numpad3": 0xFFB3,
+    "numpad4": 0xFFB4, "numpad5": 0xFFB5, "numpad6": 0xFFB6, "numpad7": 0xFFB7,
+    "numpad8": 0xFFB8, "numpad9": 0xFFB9,
+    "multiply": 0xFFAA, "add": 0xFFAB, "subtract": 0xFFAD,
+    "decimal": 0xFFAE, "divide": 0xFFAF,
+}
+
+
 def _pynput_key_table(keyboard: Any) -> dict[str, Any]:
     """Map the CU key vocabulary onto pynput ``Key`` members.
 
@@ -68,6 +97,19 @@ def _pynput_key_table(keyboard: Any) -> dict[str, Any]:
         target = getattr(key, member, None)
         if target is not None:
             table[alias] = target
+
+    # The numpad, by raw virtual key (see the tables above). Guarded on
+    # ``from_vk`` rather than assumed: an old pynput without it must drop the
+    # numpad from the table and produce the clean "Unknown key" error, never an
+    # AttributeError from inside an actuation.
+    from_vk = getattr(getattr(keyboard, "KeyCode", None), "from_vk", None)
+    if callable(from_vk):
+        numpad = _MACOS_NUMPAD_VK if sys.platform == "darwin" else _X11_NUMPAD_KEYSYM
+        for alias, vk in numpad.items():
+            try:
+                table[alias] = from_vk(vk)
+            except Exception:  # noqa: BLE001 — one unsupported key, not the table
+                logger.debug("pynput cannot address %s by vk", alias, exc_info=True)
     return table
 
 
@@ -300,6 +342,11 @@ class PosixActuator(Actuator):
                     mapped.append("command" if sys.platform == "darwin" else "winleft")
                 elif normalized == "option":
                     mapped.append("alt")
+                elif normalized in _MACOS_NUMPAD_VK and normalized.startswith("numpad"):
+                    # pyautogui spells the keypad digits "num0".."num9"; its
+                    # operator names (add/subtract/multiply/divide/decimal)
+                    # already match ours.
+                    mapped.append("num" + normalized[6:])
                 else:
                     mapped.append(normalized)
             self._pyautogui.hotkey(*mapped)

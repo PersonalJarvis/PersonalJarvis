@@ -1,6 +1,6 @@
 """Delegated-voice speed contract in the dispatcher system prompt.
 
-Live forensic 2026-07-17 (turn af736681): a delegated voice turn burned five
+Live forensic 2026-07-17 (turn 20000012): a delegated voice turn burned five
 sequential tool-loop rounds — three near-identical wiki-recall calls, then
 wiki-list, then wiki-page-read — into the 20 s deadline. Round count is the
 dominant latency on the delegated path, so delegated turns get an explicit

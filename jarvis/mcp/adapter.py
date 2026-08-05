@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 # for "alle meine Notebooks auflisten", the registry reported "action intent,
 # no capability", and the deterministic force-spawn dispatched a heavy mission
 # for a plain read-only MCP lookup — before the LLM router ever saw the turn
-# (live realtime voice bug 2026-07-14, trace c82aa1a6). Expanding at
+# (live realtime voice bug 2026-07-14, trace 20000011). Expanding at
 # registration time keeps ``resolve_intent`` language-equal (de/en/es) per the
 # runtime-output-language contract: no supported language may route worse than
 # English.

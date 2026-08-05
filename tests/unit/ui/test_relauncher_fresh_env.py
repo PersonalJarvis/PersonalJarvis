@@ -2,8 +2,8 @@
 
 Live case (2026-07-17): every restarted app inherited the ``JARVIS__TTS__*``
 values captured when the FIRST tray process started. A voice fix that updated
-all three pinned config layers (jarvis.toml + config-soll.json + the user's  # i18n-allow: config-soll.json is a filename
-persisted environment) kept being overridden by the stale inherited copy on
+all pinned layers, including config-soll.json, kept being overridden  # i18n-allow: filename
+by the stale inherited copy on
 every ``restart-app`` — the replaced TTS voice resurrected after each restart.
 
 ``fresh_user_env`` re-reads the persisted ``JARVIS__*`` overrides (Windows:
@@ -45,6 +45,17 @@ def test_fresh_env_is_a_no_op_without_a_persisted_source():
     base = {"JARVIS__TTS__VOICE_DE": "Kore", "PATH": "/bin"}
     env = relauncher.fresh_user_env(base, _read_persisted=lambda: None)
     assert env == base  # POSIX / unreadable registry → inherited env unchanged
+
+
+def test_fresh_env_drops_the_one_process_branding_loop_guard():
+    base = {
+        "PATH": r"C:\bin",
+        "jarvis_branded_launch": "1",
+    }
+
+    env = relauncher.fresh_user_env(base, _read_persisted=lambda: None)
+
+    assert env == {"PATH": r"C:\bin"}
 
 
 def test_fresh_env_key_matching_is_case_insensitive():

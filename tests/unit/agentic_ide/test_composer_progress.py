@@ -40,7 +40,7 @@ class _StreamingBrain:
 
 @pytest.fixture(autouse=True)
 def _writer_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(prompt_composer, "_resolve_writer", lambda: _Writer())
+    monkeypatch.setattr(prompt_composer, "_resolve_writer", lambda: (_Writer(), "test"))
 
 
 def _session(tmp_path) -> object:  # noqa: ANN001 - pytest tmp_path
@@ -195,7 +195,7 @@ async def test_degrading_is_announced_rather_than_hidden(
     """A plain brief is a fine outcome; a plain brief passed off as a written
     one is not — the readback afterwards would claim more than happened."""
     seen: list[prompt_composer.ComposeNotice] = []
-    monkeypatch.setattr(prompt_composer, "_resolve_writer", lambda: None)
+    monkeypatch.setattr(prompt_composer, "_resolve_writer", lambda: (None, ""))
 
     result = await prompt_composer.compose(
         "review the wake word detection",

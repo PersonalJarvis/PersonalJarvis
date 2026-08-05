@@ -267,7 +267,7 @@ async def test_start_skips_recovery_when_recover_false(
     """Fix #2 (2026-05-29): a secondary/dev instance (--no-lock) must NOT run
     the crash_recovery sweep, else its boot marks the PRIMARY instance's
     in-flight missions as FAILED('crash_recovery') — killing live work
-    (mission 019e7095 / 019e6fea died exactly this way). With recover=False
+    (mission 019f1019 / 019f1018 died exactly this way). With recover=False
     the sweep is skipped and the running mission is left untouched."""
     m1 = MissionManager(tmp_missions_db)
     await m1.start()

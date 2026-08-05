@@ -159,13 +159,15 @@ Desktop.ini
 !.claude/agents/
 !.claude/commands/
 !.claude/skills/
-# ...except the security-github skill: a LOCAL-ONLY maintainer tool. It orchestrates
-# the depersonalized public-release push and must never itself be versioned or
-# pushed to any GitHub repo. Its deterministic engine lives (versioned) under
-# scripts/ci/privacy_gate/, so CI and the pre-push hook keep working without it.
+# ...except the security-github skill: RETIRED 2026-08-05. It orchestrated the
+# depersonalized public-release push — a staging build, a parallel clone, a
+# frontend build, and a sub-agent that read every tracked file hunting for
+# personal data, on every push. A push is `git push` now (CLAUDE.md §2). The
+# ignore rules stay as a tombstone so a stray local copy can never be
+# versioned; do not re-add the skill without the maintainer's say-so.
 .claude/skills/security-github/
 # .agents/ is the tool-neutral twin of .claude/ (synced by
-# scripts/ci/sync_agents_dir.py) — same include/exclude shape, so the private
+# scripts/ci/sync_agents_dir.py) — same include/exclude shape, so the retired
 # security-github skill can never leak in via the mirror either.
 .agents/*
 !.agents/README.md
@@ -257,7 +259,16 @@ jarvis/ui/web/dist._predockpolish/
 # the video/ folder is a tracked Remotion source project, so only its rendered
 # output is ignored here — not the whole folder.
 .tmp_video_analysis/
-video/public/
+video/public/*
+# The tracked Voice composition depends on these reproducible source assets.
+!video/public/vo-voice/
+video/public/vo-voice/*
+!video/public/vo-voice/*.mp3
+!video/public/shot-voice-ptt-crop.png
+!video/public/shot-voice-handsfree-crop.png
+!video/public/shot-voice-polish-crop.png
+!video/public/shot-voice-translate-crop.png
+!video/public/shot-voice-stats-crop.png
 video/out/
 
 # Vertical social promo reel — a self-contained Remotion project kept entirely
@@ -320,10 +331,11 @@ video/*.png
 /outputs/
 /test_output.txt
 
-# --- Privacy: sensitive local vault captures ---------------------------------
-# These screenshots and frames may contain private local content. They remain
-# untracked so they cannot be added accidentally. Regenerate documentation
-# captures only from a staged vault containing synthetic data.
+# --- Privacy: captures of the maintainer's LIVE personal vault ---------------
+# These screenshots/frames show real vault pages (relocation planning, finances,
+# health notes, and named third parties). The distribution denylist has always
+# withheld them; they are untracked here so they cannot be re-added by accident.
+# Regenerate any needed capture against a STAGED demo vault, never the live one.
 /assets/screenshots/view-wiki.png
 /video/qa-wiki/
 

@@ -217,8 +217,39 @@ async def test_a_moving_screen_is_a_working_pane(
 ) -> None:
     """And every CLI while its screen moves, whatever it happens to be drawing."""
     _session, term = await _pane(registry, tmp_path, agent=agent, name="Px")
+    term.last_submit_at = 999.0
+    term.submit_generation = term.process_generation
     _draw(term, screen)
 
+    assert read_activity(term, now=1000.5, still_since=1000.0) == "working"
+
+
+async def test_background_output_without_an_instruction_never_reads_as_working(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """An idle MCP warning may repaint, but nobody asked the agent to work."""
+    _session, term = await _pane(registry, tmp_path)
+    term.transcript.feed("\r\n1 MCP server needs authentication\r\n")
+    term.last_output_at = 1000.4
+
+    assert term.last_submit_at is None
+    assert read_activity(term, now=1000.5, still_since=1000.0) == "waiting"
+
+
+async def test_a_previous_process_submission_cannot_arm_replacement_output(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """Only a submission to the live process can turn movement into work."""
+    _session, term = await _pane(registry, tmp_path)
+    term.last_submit_at = 999.0
+    term.submit_generation = term.process_generation
+    term.process_generation += 1
+    term.last_output_at = 1000.4
+
+    assert read_activity(term, now=1000.5, still_since=1000.0) == "waiting"
+
+    term.last_submit_at = 1000.45
+    term.submit_generation = term.process_generation
     assert read_activity(term, now=1000.5, still_since=1000.0) == "working"
 
 
@@ -242,6 +273,8 @@ async def test_a_pane_whose_screen_keeps_changing_is_working(
     """Through the watcher, which is what actually tracks the movement."""
     watcher = notifications.watcher()
     _session, term = await _pane(registry, tmp_path)
+    term.last_submit_at = 99.0
+    term.submit_generation = term.process_generation
 
     _draw(term, REAL_WORKING)
     watcher.poll(registry, now=100.0)
@@ -293,6 +326,8 @@ async def test_movement_after_the_typing_stopped_is_work(
     _session, term = await _pane(registry, tmp_path)
     _draw(term, IDLE_SCREEN)
     term.last_input_at = 1000.0
+    term.last_submit_at = 1005.0
+    term.submit_generation = term.process_generation
 
     assert read_activity(term, now=1010.2, still_since=1010.0) == "working"
 
@@ -304,6 +339,7 @@ async def test_a_real_pane_finishing_files_one_entry(registry: Registry, tmp_pat
 
     _draw(term, REAL_WORKING)
     term.last_submit_at = 999.0
+    term.submit_generation = term.process_generation
     term.last_output_at = 1000.0
     assert watcher.poll(registry, now=1000.5) == []
 
@@ -476,15 +512,10 @@ async def test_a_new_process_for_the_same_pane_discards_the_old_screen_observati
     assert term.resume_continuation_needed is False
 
 
-async def test_movement_after_the_pane_settled_does_retract_the_offer(
+async def test_a_new_submission_after_settle_retracts_the_offer(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """The other edge, and why the flag is "settled once" rather than a timer.
-
-    Once a pane has stood at its prompt, anything that moves it again is work
-    somebody asked for — so continuing it would put a second instruction behind
-    the one already running.
-    """
+    """A generation-stamped task, not prior stillness, proves resumed work."""
     watcher = notifications.watcher()
     _session, term = await _pane(registry, tmp_path)
     term.continuation_pending = True
@@ -623,13 +654,11 @@ async def test_a_question_is_reported_even_though_it_never_worked(
     _draw(term, IDLE_SCREEN)
     watcher.poll(registry, now=100.0)
 
-    # The question APPEARING is itself a screen change, so it settles like any
-    # other before it is believed.
+    # The question APPEARING is not work, so its own settle window starts now.
     term.transcript.clear()
     _draw(term, QUESTION_SCREEN)
     watcher.poll(registry, now=101.0)
-    assert watcher.poll(registry, now=101.0 + STILL_S + 1) == []
-    filed = watcher.poll(registry, now=101.0 + STILL_S + notifications.SETTLE_S + 2)
+    filed = watcher.poll(registry, now=101.0 + STILL_S + 1)
 
     assert [entry.kind for entry in filed] == ["needs_input"]
 

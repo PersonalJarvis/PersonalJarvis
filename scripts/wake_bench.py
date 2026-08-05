@@ -8,9 +8,9 @@ SAME production code the app runs (``build_wake_whisper`` construction,
 transcript heard at capture time).
 
 Fixture classes (word-boundary token match on the filename transcript):
-- ``pos_full``   — windows containing prefix + core ("Hey Nico ...")   -> must fire
+- ``pos_full``   — windows containing prefix + core ("Hey Nova ...")   -> must fire
 - ``neg_bare``   — core word WITHOUT prefix ("Das war wahrscheinlich
-                   Nico") — the RC5(a) false-activation class          -> must stay silent
+                   Nova") — the RC5(a) false-activation class          -> must stay silent
 - ``neg_ambient``— speech without the core word (rms >= 0.01)          -> must stay silent
 - ``neg_quiet``  — low-level noise/breath (0.003 <= rms < 0.01)        -> must stay silent
 - ``neg_silence``— synthesized near-silence windows                    -> must stay silent
@@ -474,9 +474,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("window", "stream", "stress"),
                         default="window")
-    parser.add_argument("--phrase", default="Hey Nico",
+    parser.add_argument("--phrase", default="Hey Nova",
                         help="wake phrase matching the fixture set")
-    parser.add_argument("--core-variants", default=r"ni[ckh]?[ck]o|nikko|nicko|niko",
+    parser.add_argument("--core-variants", default=r"ni[ckh]?[ck]o|nikko|nicko|nova",
                         help="comma-separated regexes for the core word in filenames")
     parser.add_argument("--model", default="base")
     parser.add_argument("--device", default="cpu", choices=("cpu", "cuda"),

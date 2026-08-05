@@ -87,10 +87,24 @@ The ONE project repo is the public flagship
 Lowercase `personal-jarvis` (remote `origin`) is a silent local backup, never
 the deliverable. The former depersonalization/snapshot gate is RETIRED
 (maintainer directive 2026-07-17): ONE shared git history, every machine
-pushes and pulls it normally. What remains, fail-closed:
+pushes and pulls it normally.
+
+**A push is `git push`.** This repo is an ordinary open-source project and
+ships like one. Forbidden as part of pushing (maintainer directive
+2026-08-05, after a measured ~440k tokens per push): building a parallel
+"clean" staging tree, cloning the target repo to reconcile into, running
+`npm ci`/a frontend build, and above all dispatching a sub-agent to read
+every file in the tree looking for personal data. That audit re-read 5,481
+already-published files on every push; a regex scan, `.gitignore`, and
+GitHub's own push protection already cover it. If you find yourself
+preparing a snapshot instead of pushing a commit, stop — that is the
+retired gate growing back.
+
+What remains, fail-closed:
 
 1. **`.gitignore` first** — `data/`, `.env`, `jarvis.toml`, the Vault, and
-   key material are never tracked.
+   key material are never tracked. This is the load-bearing layer: nothing
+   personal is in the tree, so nothing personal can be pushed.
 2. **Never commit credentials** — API keys, tokens, private keys (incl.
    `*.key.enc`, AP-29), passphrases. `check_no_private_keys.py` + the secret
    sweep stay wired in pre-commit and pre-push.
@@ -98,6 +112,14 @@ pushes and pulls it normally. What remains, fail-closed:
    real finding: stop and fix — never bypass or allowlist around it.
 4. **Trademark/brand review is a human release checkpoint** — flag concerns
    to the maintainer instead of shipping them.
+
+**Gate placement is a rule, not a preference.** A check that reads the whole
+tree belongs in CI (`.github/workflows/ci.yml`), never in `pre-push`. Only a
+check that (a) judges the pushed change alone and (b) guards something
+unrecoverable — a leaked credential — may block a push. Everything else
+reports on GitHub's runners, where a red result costs a notification rather
+than a debugging session. Adding a gate to `.githooks/pre-push` requires the
+maintainer's explicit say-so; adding one to CI does not.
 
 **Two volumes:** *Update (DEFAULT)* — "push", "sichere den Stand" → normal
 push, no bump/tag/release. *Release (explicit only)* — "Mach ein Release",
@@ -356,10 +378,17 @@ Nothing initializes before `APP_INTERACTIVE` / `VOICE_USABLE`: no sync load
 in `_run_backend`, the `WebServer` ctor, or `_start_speech_and_orb`; no
 module-level heavy import. New subsystems hook into `_heavy_backend_bg`, a
 deferred registry scan, or a post-ready task; heavy imports stay lazy; routes
-answer 503/None while warming. Enforced by the pre-push BOOT BUDGET gate
+answer 503/None while warming. Measured by the BOOT BUDGET harness
 (`scripts/ci/check_boot_budget.py`: window ≤ 8 s, voice-usable +
-app-interactive ≤ 20 s). The executable contract is
-`scripts/ci/check_boot_budget.py`.
+app-interactive ≤ 20 s). It is an **on-demand local command**, not a push
+gate (2026-08-05): it boots the whole application, so as a pre-push hook it
+cost a full cold boot per push and counted the inevitable failed boot of a
+dependency-less fresh worktree as a budget violation. It has no CI home
+either — a GitHub runner has no audio device, so the harness cannot measure
+`VOICE_USABLE` there and would either self-skip or false-fail. Run it by
+hand after touching the startup path:
+`python scripts/ci/check_boot_budget.py`. Doctrine:
+`docs/diagnostics/BOOT-TTU-NOTES.md`.
 
 ### AP-27 — Never gate a wake word on transcript CONTENT
 
@@ -397,7 +426,8 @@ backup in the maintainer's password manager; the repo holds ONLY public keys
 "encrypted at rest" scheme leaked its passphrase into 14 permanent public
 snapshots.) Rotation = new keypair → `gh secret set` → swap public keys +
 verifier blocks + fingerprints. Enforced by
-`scripts/ci/check_no_private_keys.py` (pre-commit + pre-push).
+`scripts/ci/check_no_private_keys.py` (pre-commit + pre-push). Doctrine:
+`docs/supply-chain/wave2-key-ceremony.md`.
 
 ---
 
@@ -455,9 +485,9 @@ Detail in [`docs/BUGS.md`](docs/BUGS.md):
   non-zero exit → fix first (BUG-006/014).
 - **Memory:** check `MEMORY.md` (`~/.claude/projects/.../memory/`) before
   larger decisions.
-- **Plan vs. code:** when the user supplies a task plan, it wins on conflict;
-  deviations are documented back in that plan without publishing private
-  filesystem locations or plan contents.
+- **Plan vs. code:** on conflict, the plan wins
+  (`~/.claude/plans/also-er-muss-auch-lexical-pond.md`); deviations get <!-- i18n-allow -->
+  documented back in the plan.
 
 ### Git workflow
 
@@ -473,6 +503,11 @@ every contributor and agent follows it.)*
   (still honoring §2).
 - **Never commit secrets / `.env` / keys / tokens.** If any appear
   untracked: stop, flag, don't commit.
+- **Pushing is one command.** `git push <remote> <branch>` — nothing is built,
+  copied, cloned, or audited on the way (§2). The hooks take about a second
+  and a half; if a push turns into a work session, something regrew that
+  belongs in CI. When a hook does block, it found a credential: fix the
+  finding, never reach for `--no-verify` as the first move.
 
 ---
 

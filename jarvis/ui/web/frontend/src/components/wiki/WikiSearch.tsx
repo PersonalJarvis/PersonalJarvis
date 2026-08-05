@@ -245,7 +245,7 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
       shouldFilter={false}
       data-testid="wiki-search-dialog"
       contentClassName="fixed left-1/2 top-[20vh] z-50 w-[min(640px,90vw)] -translate-x-1/2 rounded-xl border border-border bg-background shadow-2xl"
-      overlayClassName="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
+      overlayClassName="fixed inset-0 z-40 bg-scrim/40 backdrop-blur-sm"
     >
       {/* Screen-reader-only title and description — required by Radix Dialog's
           a11y contract; visually hidden so the palette UI stays clean. */}

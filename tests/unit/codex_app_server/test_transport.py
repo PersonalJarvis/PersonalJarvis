@@ -12,6 +12,7 @@ import os
 import shutil
 import sys
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,11 +25,17 @@ from jarvis.codex_app_server import (
     CodexAppServerCapability,
     CodexAppServerClient,
     CodexAppServerDisconnected,
+    CodexAppServerError,
     CodexAppServerRPCError,
     CodexAppServerTimeout,
     CodexNotificationOverflow,
     CodexSubscriptionUnavailable,
 )
+
+
+# Captured before the autouse fixture stubs it out, so the dedicated test can
+# exercise the real pre-spawn verification.
+_REAL_VERIFY_SPAWN_BINARY = transport._verify_spawn_binary
 
 
 class FakeProcessTree:
@@ -69,8 +76,20 @@ def isolated_profile_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(transport, "_subscription_login_process", None)
     monkeypatch.setattr(transport, "_subscription_profile_mutating", False)
     monkeypatch.setattr(transport, "_subscription_active_transports", set())
+    monkeypatch.setattr(transport, "_subscription_transport_owner", None)
     monkeypatch.setattr(transport, "_subscription_transport_process_lock", None)
     monkeypatch.setattr(transport, "_subscription_mutation_process_lock", None)
+    monkeypatch.setattr(transport, "_subscription_snapshot_cache", None)
+    monkeypatch.setattr(transport, "_subscription_snapshot_cache_key", "")
+    monkeypatch.setattr(transport, "_subscription_snapshot_cache_at", 0.0)
+    monkeypatch.setattr(transport, "_subscription_status_probe_active", False)
+    monkeypatch.setattr(transport, "_sha256_cache", {})
+    monkeypatch.setattr(transport, "_subscription_snapshot_cache_is_failure", False)
+    monkeypatch.setattr(transport, "_subscription_transport_epoch", 0)
+    monkeypatch.setattr(transport, "_subscription_activation_block", None)
+    # The pre-spawn re-hash needs a real approved file; the suite's fake
+    # binaries have none. The dedicated test exercises the real check.
+    monkeypatch.setattr(transport, "_verify_spawn_binary", lambda _path: None)
 
 
 class FakeStdin:
@@ -351,7 +370,12 @@ async def test_lazy_start_handshake_scrubs_api_billing_environment_and_reaps_tre
     assert child_env["RUST_LOG"] == "warn"
     assert child_env["RUST_BACKTRACE"] == "0"
     assert child_env["CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED"] == "1"
-    assert kwargs["creationflags"] & transport.NO_WINDOW_CREATIONFLAGS
+    # Windows-only by construction: NO_WINDOW_CREATIONFLAGS is 0 elsewhere, so
+    # asserting the bit off Windows only ever asserted 0 and failed there.
+    if sys.platform == "win32":
+        assert kwargs["creationflags"] & transport.NO_WINDOW_CREATIONFLAGS
+    else:
+        assert kwargs["creationflags"] == 0
 
     process = harness.processes[0]
     assert process.stdin.messages[0]["method"] == "initialize"
@@ -398,6 +422,10 @@ async def test_posix_child_runs_behind_parent_lifeline_and_inherits_profile_lock
     assert kwargs["start_new_session"] is True
     assert kwargs["pass_fds"][0] == 91
     assert len(kwargs["pass_fds"]) == 2
+    # The supervisor spawns the real child with close_fds, so the profile lock
+    # only reaches app-server when it is re-declared in the lifeline argv.
+    assert argv[4:6] == ("--keep-fd", "91")
+    assert argv[separator - 1] == "91"
     assert client._lifeline_write_fd is not None
     await client.close()
     assert client._lifeline_write_fd is None
@@ -411,8 +439,38 @@ async def test_posix_lifeline_setup_failure_closes_both_pipe_descriptors(
     harness = SpawnHarness(monkeypatch)
     closed: list[int] = []
     monkeypatch.setattr(transport.os, "pipe", lambda: (80, 81))
-    monkeypatch.setattr(transport.os, "set_inheritable", lambda *_args: None)
     monkeypatch.setattr(transport.os, "close", closed.append)
+
+    def refuse_inheritable(*_args: object) -> None:
+        raise OSError("inheritable flag refused")
+
+    monkeypatch.setattr(transport.os, "set_inheritable", refuse_inheritable)
+    client = CodexAppServerClient()
+
+    with pytest.raises(OSError, match="inheritable flag refused"):
+        await client.ensure_started()
+
+    assert closed == [80, 81]
+    assert harness.calls == []
+    assert harness.all_trees[0].closed is True
+
+
+@pytest.mark.asyncio
+async def test_posix_profile_lock_failure_creates_no_pipe_at_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The lock is resolved BEFORE the pipe, because its descriptors have to
+    reach the lifeline argv — so a lock failure has nothing to leak."""
+    monkeypatch.setattr(transport.sys, "platform", "linux")
+    harness = SpawnHarness(monkeypatch)
+    pipes = 0
+
+    def count_pipe() -> tuple[int, int]:
+        nonlocal pipes
+        pipes += 1
+        return (80, 81)
+
+    monkeypatch.setattr(transport.os, "pipe", count_pipe)
 
     def unavailable_lock(_client: CodexAppServerClient) -> tuple[int, ...]:
         raise CodexSubscriptionUnavailable("profile lock unavailable")
@@ -423,7 +481,7 @@ async def test_posix_lifeline_setup_failure_closes_both_pipe_descriptors(
     with pytest.raises(CodexSubscriptionUnavailable, match="profile lock unavailable"):
         await client.ensure_started()
 
-    assert closed == [80, 81]
+    assert pipes == 0
     assert harness.calls == []
     assert harness.all_trees[0].closed is True
 
@@ -670,16 +728,88 @@ async def test_realtime_start_subscribes_before_request_and_returns_answer_sdp(
     assert thread_params["dynamicTools"] is None
     assert thread_params["ephemeral"] is True
     assert Path(thread_params["cwd"]).name.startswith("jarvis-codex-voice-")
+    start_params = next(
+        item["params"]
+        for item in messages
+        if item.get("method") == "thread/realtime/start"
+    )
+    # The upstream v3 SDP parser rejects an offer whose last line has no
+    # terminator ("unmarshal SDP: EOF") — and Jarvis's ingress validation
+    # strips offers, so the transport boundary must restore the newline.
+    assert start_params["transport"]["sdp"] == "offer-sdp\r\n"
 
     realtime_params = next(
         item["params"] for item in messages if item.get("method") == "thread/realtime/start"
     )
-    assert realtime_params["transport"] == {"type": "webrtc", "sdp": "offer-sdp"}
+    assert realtime_params["transport"] == {"type": "webrtc", "sdp": "offer-sdp\r\n"}
     assert realtime_params["model"] == "explicit-realtime-model"
     assert realtime_params["includeStartupContext"] is False
     assert realtime_params["clientManagedHandoffs"] is True
 
     full_stream.close()
+    await client.close()
+
+
+def _voice_thread_responder(process: FakeProcess, message: dict[str, Any]) -> None:
+    if _respond_handshake(process, message):
+        return
+    request_id = message.get("id")
+    if not isinstance(request_id, int):
+        return
+    if message.get("method") == "thread/start":
+        _respond(process, request_id, {"thread": {"id": "voice-thread"}})
+
+
+@pytest.mark.asyncio
+async def test_thread_start_sends_caller_instructions_on_the_wire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The provider's voice persona must reach the JSON-RPC frame verbatim.
+
+    An earlier revision deleted both caller instruction arguments and always
+    sent the hardcoded "dumb pipe" transport text, so the live model never
+    learned its persona, the one-speaker rule, or that handoffs exist — while
+    the adapter-level test kept passing against a fake client that never sees
+    the wire.
+    """
+    harness = SpawnHarness(monkeypatch, [_voice_thread_responder])
+    client = CodexAppServerClient()
+    await client.thread_start(
+        base_instructions="You are the live voice. Request a handoff for actions.",
+        developer_instructions="Execution boundary: actions go to the client.",
+    )
+    params = next(
+        item["params"]
+        for item in harness.processes[0].stdin.messages
+        if item.get("method") == "thread/start"
+    )
+    assert (
+        params["baseInstructions"]
+        == "You are the live voice. Request a handoff for actions."
+    )
+    assert (
+        params["developerInstructions"]
+        == "Execution boundary: actions go to the client."
+    )
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_thread_start_without_instructions_keeps_the_transport_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(monkeypatch, [_voice_thread_responder])
+    client = CodexAppServerClient()
+    await client.thread_start(base_instructions="   ", developer_instructions=None)
+    params = next(
+        item["params"]
+        for item in harness.processes[0].stdin.messages
+        if item.get("method") == "thread/start"
+    )
+    assert params["baseInstructions"] == transport._TRANSPORT_BASE_INSTRUCTIONS
+    assert (
+        params["developerInstructions"] == transport._TRANSPORT_DEVELOPER_INSTRUCTIONS
+    )
     await client.close()
 
 
@@ -1009,12 +1139,10 @@ def test_public_auth_snapshot_uses_live_state_without_cli_probe(
     client._ready = True
     client._trusted_binary_path = "trusted-codex-test"
     owner_loop = asyncio.new_event_loop()
-    monkeypatch.setattr(
-        transport,
-        "_shared_clients",
-        {("codex-test", owner_loop): client},
-    )
+    client._owner_loop = owner_loop
+    monkeypatch.setattr(transport, "_shared_clients", {"codex-test": client})
     monkeypatch.setattr(transport, "_subscription_active_transports", {id(client)})
+    monkeypatch.setattr(transport, "_subscription_transport_owner", client)
     monkeypatch.setattr(
         transport,
         "_read_codex_capability",
@@ -1033,11 +1161,18 @@ def test_public_auth_snapshot_uses_live_state_without_cli_probe(
 def test_public_auth_snapshot_holds_profile_owner_for_entire_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A concurrent status call waits for the running probe and shares its result.
+
+    The old contract returned ``setup_invalid`` to every losing caller, so a
+    burst of UI refreshes rendered "profile needs attention" on a perfectly
+    connected install (the reproduced desktop bug).
+    """
     started = threading.Event()
     release = threading.Event()
     process_lock = FakeProfileProcessLock()
     reads: list[str | None] = []
     results: list[CodexAppServerCapability] = []
+    concurrent_results: list[CodexAppServerCapability] = []
 
     monkeypatch.setattr(
         transport,
@@ -1051,7 +1186,7 @@ def test_public_auth_snapshot_holds_profile_owner_for_entire_probe(
         assert transport._subscription_mutation_process_lock is process_lock
         assert process_lock.closed is False
         started.set()
-        assert release.wait(timeout=2.0)
+        assert release.wait(timeout=10.0)
         return CodexAppServerCapability(
             available=True,
             chatgpt_authenticated=True,
@@ -1070,19 +1205,497 @@ def test_public_auth_snapshot_holds_profile_owner_for_entire_probe(
     worker.start()
     assert started.wait(timeout=1.0)
 
-    concurrent = transport.codex_subscription_auth_snapshot("codex-test")
-
-    assert concurrent.reason_code == "setup_invalid"
+    concurrent_worker = threading.Thread(
+        target=lambda: concurrent_results.append(
+            transport.codex_subscription_auth_snapshot("codex-test")
+        )
+    )
+    concurrent_worker.start()
+    # The concurrent caller must block on the running probe, not read the
+    # profile itself and not answer with a fake broken-setup status.
+    concurrent_worker.join(timeout=0.3)
+    assert concurrent_worker.is_alive() is True
     assert reads == ["codex-test"]
     assert process_lock.closed is False
+
     release.set()
     worker.join(timeout=2.0)
+    concurrent_worker.join(timeout=2.0)
 
     assert worker.is_alive() is False
+    assert concurrent_worker.is_alive() is False
     assert results[0].reason_code == "ready"
+    # Exactly one CLI probe served both callers.
+    assert reads == ["codex-test"]
+    assert concurrent_results[0].reason_code == "ready"
+    assert concurrent_results[0].chatgpt_authenticated is True
     assert process_lock.closed is True
     assert transport._subscription_profile_mutating is False
     assert transport._subscription_mutation_process_lock is None
+
+
+def test_auth_snapshot_burst_coalesces_to_single_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Six parallel status calls (the UI mount burst) cost one CLI probe."""
+    reads: list[str | None] = []
+    ready = CodexAppServerCapability(
+        available=True,
+        chatgpt_authenticated=True,
+        binary_path="codex-test",
+        version="codex-cli 0.146.0",
+        reason="ready",
+        reason_code="ready",
+    )
+
+    def probe(binary: str | None) -> CodexAppServerCapability:
+        reads.append(binary)
+        time.sleep(0.05)
+        return ready
+
+    monkeypatch.setattr(transport, "_read_codex_capability", probe)
+    results: list[CodexAppServerCapability] = []
+    results_lock = threading.Lock()
+
+    def call() -> None:
+        snapshot = transport.codex_subscription_auth_snapshot("codex-test")
+        with results_lock:
+            results.append(snapshot)
+
+    workers = [threading.Thread(target=call) for _ in range(6)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=3.0)
+
+    assert all(not worker.is_alive() for worker in workers)
+    assert len(reads) == 1
+    assert len(results) == 6
+    assert all(snapshot.reason_code == "ready" for snapshot in results)
+
+
+def test_auth_snapshot_cache_expires_and_reprobes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads: list[str | None] = []
+    ready = CodexAppServerCapability(
+        available=True,
+        chatgpt_authenticated=True,
+        binary_path="codex-test",
+        version="codex-cli 0.146.0",
+        reason="ready",
+        reason_code="ready",
+    )
+
+    def probe(binary: str | None) -> CodexAppServerCapability:
+        reads.append(binary)
+        return ready
+
+    monkeypatch.setattr(transport, "_read_codex_capability", probe)
+
+    first = transport.codex_subscription_auth_snapshot("codex-test")
+    second = transport.codex_subscription_auth_snapshot("codex-test")
+    assert first.reason_code == "ready"
+    assert second.reason_code == "ready"
+    # Within the TTL the second call is served from the cache.
+    assert len(reads) == 1
+
+    with transport._subscription_login_lock:
+        transport._subscription_snapshot_cache_at = (
+            time.monotonic() - transport._SUBSCRIPTION_SNAPSHOT_CACHE_TTL_S - 1.0
+        )
+    third = transport.codex_subscription_auth_snapshot("codex-test")
+    assert third.reason_code == "ready"
+    assert len(reads) == 2
+
+
+def test_logout_invalidates_auth_snapshot_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads: list[str | None] = []
+    ready = CodexAppServerCapability(
+        available=True,
+        chatgpt_authenticated=True,
+        binary_path="codex-test",
+        version="codex-cli 0.146.0",
+        reason="ready",
+        reason_code="ready",
+    )
+
+    def probe(binary: str | None) -> CodexAppServerCapability:
+        reads.append(binary)
+        return ready
+
+    monkeypatch.setattr(transport, "_read_codex_capability", probe)
+    monkeypatch.setattr(
+        transport,
+        "_delete_codex_subscription_auth_locked",
+        lambda: (True, None),
+    )
+
+    assert transport.codex_subscription_auth_snapshot("codex-test").reason_code == "ready"
+    assert len(reads) == 1
+
+    assert transport.logout_codex_subscription() == (True, None)
+
+    # Logout changed the profile, so the cached "ready" must not survive it.
+    assert transport.codex_subscription_auth_snapshot("codex-test").reason_code == "ready"
+    assert len(reads) == 2
+
+
+def test_auth_snapshot_contended_process_lock_serves_last_known_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A foreign process briefly owning the profile is not a broken setup."""
+    ready = CodexAppServerCapability(
+        available=True,
+        chatgpt_authenticated=True,
+        binary_path="codex-test",
+        version="codex-cli 0.146.0",
+        reason="ready",
+        reason_code="ready",
+    )
+    monkeypatch.setattr(transport, "_read_codex_capability", lambda _binary: ready)
+    assert transport.codex_subscription_auth_snapshot("codex-test").reason_code == "ready"
+
+    def contended() -> FakeProfileProcessLock:
+        raise CodexSubscriptionUnavailable("owned elsewhere")
+
+    monkeypatch.setattr(transport, "_acquire_subscription_process_lock", contended)
+    with transport._subscription_login_lock:
+        transport._subscription_snapshot_cache_at = (
+            time.monotonic() - transport._SUBSCRIPTION_SNAPSHOT_CACHE_TTL_S - 1.0
+        )
+
+    stale = transport.codex_subscription_auth_snapshot("codex-test")
+    assert stale.reason_code == "ready"
+
+    with transport._subscription_login_lock:
+        transport._invalidate_subscription_snapshot_locked()
+    cold = transport.codex_subscription_auth_snapshot("codex-test")
+    assert cold.reason_code == "busy"
+    assert cold.available is False
+
+
+def _ready_capability(binary_path: str = "codex-test") -> CodexAppServerCapability:
+    return CodexAppServerCapability(
+        available=True,
+        chatgpt_authenticated=True,
+        binary_path=binary_path,
+        version="codex-cli 0.146.0",
+        reason="ready",
+        reason_code="ready",
+    )
+
+
+def test_auth_snapshot_stale_cache_has_an_age_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A foreign lock serves the last known status only up to a bounded age."""
+    monkeypatch.setattr(
+        transport, "_read_codex_capability", lambda _binary: _ready_capability()
+    )
+    assert transport.codex_subscription_auth_snapshot("codex-test").reason_code == "ready"
+
+    def contended() -> FakeProfileProcessLock:
+        raise CodexSubscriptionUnavailable("owned elsewhere")
+
+    monkeypatch.setattr(transport, "_acquire_subscription_process_lock", contended)
+    with transport._subscription_login_lock:
+        transport._subscription_snapshot_cache_at = (
+            time.monotonic() - transport._SUBSCRIPTION_SNAPSHOT_STALE_MAX_S - 1.0
+        )
+
+    beyond = transport.codex_subscription_auth_snapshot("codex-test")
+    assert beyond.reason_code == "busy"
+
+
+def test_auth_snapshot_cache_is_keyed_by_binary_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Correcting a configured binary path must not serve the old binary's result."""
+    reads: list[str | None] = []
+
+    def probe(binary: str | None) -> CodexAppServerCapability:
+        reads.append(binary)
+        return _ready_capability(binary_path=str(binary))
+
+    monkeypatch.setattr(transport, "_read_codex_capability", probe)
+
+    transport.codex_subscription_auth_snapshot("codex-a")
+    transport.codex_subscription_auth_snapshot("codex-a")
+    assert reads == ["codex-a"]
+
+    transport.codex_subscription_auth_snapshot("codex-b")
+    assert reads == ["codex-a", "codex-b"]
+
+
+def test_auth_snapshot_probe_failure_is_cached_for_waiters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A raising probe must not make coalesced waiters re-run the broken CLI."""
+    reads: list[str | None] = []
+
+    def probe(binary: str | None) -> CodexAppServerCapability:
+        reads.append(binary)
+        raise OSError("cli exploded")
+
+    monkeypatch.setattr(transport, "_read_codex_capability", probe)
+
+    with pytest.raises(OSError):
+        transport.codex_subscription_auth_snapshot("codex-test")
+
+    second = transport.codex_subscription_auth_snapshot("codex-test")
+    # A RAISED probe is transiently unknown — never a proven-broken setup.
+    assert second.reason_code == "busy"
+    assert "OSError" in second.reason
+    assert reads == ["codex-test"]
+
+
+def test_logout_waits_for_a_running_status_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A background status refresh must delay logout, not fail it."""
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_probe(_binary: str | None) -> CodexAppServerCapability:
+        started.set()
+        assert release.wait(timeout=10.0)
+        return _ready_capability()
+
+    monkeypatch.setattr(transport, "_read_codex_capability", slow_probe)
+    monkeypatch.setattr(
+        transport,
+        "_delete_codex_subscription_auth_locked",
+        lambda: (True, None),
+    )
+
+    prober = threading.Thread(
+        target=lambda: transport.codex_subscription_auth_snapshot("codex-test")
+    )
+    prober.start()
+    assert started.wait(timeout=1.0)
+
+    results: list[tuple[bool, str | None]] = []
+    logout_worker = threading.Thread(
+        target=lambda: results.append(transport.logout_codex_subscription())
+    )
+    logout_worker.start()
+    logout_worker.join(timeout=0.3)
+    # Still waiting on the probe — the old behavior raised immediately with
+    # "login is in progress", blaming a login that did not exist.
+    assert logout_worker.is_alive() is True
+
+    release.set()
+    prober.join(timeout=2.0)
+    logout_worker.join(timeout=2.0)
+    assert logout_worker.is_alive() is False
+    assert results == [(True, None)]
+
+
+def test_user_actions_report_a_probe_timeout_honestly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(transport, "_SUBSCRIPTION_PROBE_WAIT_S", 0.05)
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_probe(_binary: str | None) -> CodexAppServerCapability:
+        started.set()
+        assert release.wait(timeout=10.0)
+        return _ready_capability()
+
+    monkeypatch.setattr(transport, "_read_codex_capability", slow_probe)
+    prober = threading.Thread(
+        target=lambda: transport.codex_subscription_auth_snapshot("codex-test")
+    )
+    prober.start()
+    assert started.wait(timeout=1.0)
+
+    with pytest.raises(
+        CodexSubscriptionUnavailable, match="status check is still running"
+    ):
+        transport.logout_codex_subscription()
+
+    release.set()
+    prober.join(timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_disconnect_invalidates_snapshot_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads: list[str | None] = []
+
+    def probe(binary: str | None) -> CodexAppServerCapability:
+        reads.append(binary)
+        return _ready_capability()
+
+    async def no_servers() -> None:
+        return None
+
+    monkeypatch.setattr(transport, "_read_codex_capability", probe)
+    monkeypatch.setattr(transport, "close_shared_codex_app_servers", no_servers)
+    monkeypatch.setattr(
+        transport,
+        "_delete_codex_subscription_auth_locked",
+        lambda: (True, None),
+    )
+
+    assert transport.codex_subscription_auth_snapshot("codex-test").reason_code == "ready"
+
+    ok, error = await transport.disconnect_and_logout_codex_subscription()
+    assert (ok, error) == (True, None)
+
+    # Disconnect changed the profile; the cached "ready" must not survive it.
+    assert transport.codex_subscription_auth_snapshot("codex-test").reason_code == "ready"
+    assert reads == ["codex-test", "codex-test"]
+
+
+@pytest.mark.asyncio
+async def test_capability_status_feeds_the_snapshot_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The transport-start probe publishes its result for concurrent callers."""
+    reads: list[str | None] = []
+
+    def probe(binary: str | None) -> CodexAppServerCapability:
+        reads.append(binary)
+        return _ready_capability(binary_path="trusted-codex-test")
+
+    monkeypatch.setattr(transport, "_read_codex_capability", probe)
+    client = CodexAppServerClient("codex-test")
+
+    capability = await client.capability_status()
+    assert capability.reason_code == "ready"
+
+    snapshot = transport.codex_subscription_auth_snapshot("codex-test")
+    assert snapshot.reason_code == "ready"
+    assert reads == ["codex-test"]
+
+
+def test_capability_maps_probe_failed_login_status_to_busy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A CLI spawn failure or timeout is unknown state, never 'not logged in'."""
+    import jarvis.codex_auth as auth_module
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex-test"
+
+        def _probe_version(self, _binary: str) -> str:
+            return "codex-cli 0.146.0"
+
+        def login_status(self) -> tuple[bool, str]:
+            return False, "probe_failed"
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(
+        transport,
+        "_trusted_native_codex_binary",
+        lambda binary, _version: binary,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_validated_subscription_home",
+        lambda **_kwargs: tmp_path,
+    )
+
+    capability = transport._read_codex_capability(None)
+
+    assert capability.reason_code == "busy"
+    assert capability.available is False
+    assert capability.chatgpt_authenticated is False
+    assert "probe failed" in capability.reason
+
+
+@pytest.mark.asyncio
+async def test_disconnect_leaves_a_foreign_mutation_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A disconnect refused because ANOTHER owner mutates must not clear it."""
+
+    async def no_servers() -> None:
+        return None
+
+    monkeypatch.setattr(transport, "close_shared_codex_app_servers", no_servers)
+    monkeypatch.setattr(transport, "_subscription_profile_mutating", True)
+
+    with pytest.raises(CodexSubscriptionUnavailable):
+        await transport.disconnect_and_logout_codex_subscription()
+
+    # The foreign owner's claim survives the refused disconnect.
+    assert transport._subscription_profile_mutating is True
+
+
+def test_reaper_launch_failure_releases_guard_and_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import jarvis.codex_auth as auth_module
+    import jarvis.core.private_directory as private_directory
+
+    released: list[str] = []
+
+    class FakeLoginProcess:
+        pid = 4711
+
+        def release_profile_lock(self) -> None:
+            released.append("released")
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def start_login(self) -> FakeLoginProcess:
+            return FakeLoginProcess()
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(
+        transport, "_prepare_subscription_login_home", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        transport,
+        "_read_codex_capability",
+        lambda _binary: _ready_capability(binary_path="codex-test"),
+    )
+    monkeypatch.setattr(
+        transport,
+        "_subscription_process_lock_path",
+        lambda: tmp_path / "lock" / "owner.lock",
+    )
+    monkeypatch.setattr(
+        private_directory,
+        "ensure_owner_only_directory",
+        lambda path, create=False: path,
+    )
+
+    def broken_reaper(_target: object) -> None:
+        raise RuntimeError("no threads left")
+
+    monkeypatch.setattr(
+        transport, "_launch_subscription_login_reaper", broken_reaper
+    )
+
+    with pytest.raises(RuntimeError, match="no threads left"):
+        transport.start_codex_subscription_login("codex-test")
+
+    # The guardian released the OS profile lock and the in-process state is
+    # clean again — no permanent "login in progress" wedge.
+    assert released == ["released"]
+    assert transport._subscription_login_in_flight is False
+    assert transport._subscription_profile_mutating is False
+    assert transport._subscription_login_process is None
+    assert (
+        transport.codex_subscription_auth_snapshot("codex-test").reason_code
+        == "ready"
+    )
 
 
 @pytest.mark.asyncio
@@ -1094,7 +1707,7 @@ async def test_capability_worker_keeps_profile_reserved_until_it_finishes(
 
     def slow_probe(_binary: str | None) -> CodexAppServerCapability:
         started.set()
-        assert release.wait(timeout=2.0)
+        assert release.wait(timeout=10.0)
         return CodexAppServerCapability(
             available=False,
             chatgpt_authenticated=False,
@@ -1172,27 +1785,35 @@ async def test_shared_client_ignores_active_codex_account_profiles(
 
 
 @pytest.mark.asyncio
-async def test_shared_clients_are_scoped_to_their_event_loop(
+async def test_shared_client_is_process_wide_and_refuses_a_second_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """One client per binary, process-wide.
+
+    A per-loop client could only ever be one that can never reserve the
+    single-owner profile, so a second loop is refused at ACQUISITION with a
+    message naming what to do — not handed a client that fails deep inside a
+    call with "already owned by another client".
+    """
     SpawnHarness(monkeypatch)
     await transport.close_shared_codex_app_servers()
     current = transport.get_shared_codex_app_server("codex-test")
+    assert transport.get_shared_codex_app_server("codex-test") is current
 
-    async def acquire_on_foreign_loop() -> int:
-        loop = asyncio.get_running_loop()
-        client = transport.get_shared_codex_app_server("codex-test")
-        identifier = id(client)
-        await client.close()
-        with transport._shared_clients_lock:
-            transport._shared_clients.pop(("codex-test", loop), None)
-        return identifier
+    def acquire_on_foreign_loop() -> BaseException | None:
+        async def acquire() -> BaseException | None:
+            try:
+                transport.get_shared_codex_app_server("codex-test")
+            except BaseException as exc:  # noqa: BLE001 - returned for assertion
+                return exc
+            return None
 
-    foreign_identifier = await asyncio.to_thread(
-        lambda: asyncio.run(acquire_on_foreign_loop())
-    )
+        return asyncio.run(acquire())
 
-    assert foreign_identifier != id(current)
+    error = await asyncio.to_thread(acquire_on_foreign_loop)
+
+    assert isinstance(error, CodexSubscriptionUnavailable)
+    assert "already running elsewhere" in str(error)
     await transport.close_shared_codex_app_servers()
 
 
@@ -1224,7 +1845,7 @@ async def test_second_client_cannot_share_the_subscription_profile(
     second = CodexAppServerClient()
 
     await first.ensure_started()
-    with pytest.raises(CodexSubscriptionUnavailable, match="another client"):
+    with pytest.raises(CodexSubscriptionUnavailable, match="already running elsewhere"):
         await second.ensure_started()
 
     assert len(harness.processes) == 1
@@ -1426,9 +2047,11 @@ def test_effective_config_audit_requires_empty_host_layers_and_session_origins()
 
 
 @pytest.mark.asyncio
-async def test_dedicated_home_is_revalidated_before_thread_start(
+async def test_dedicated_home_is_revalidated_before_a_warm_thread_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The first thread start rides the startup audit; every later one
+    revalidates the profile before it may send a thread/start frame."""
     harness = SpawnHarness(monkeypatch)
     validations = 0
 
@@ -1444,20 +2067,30 @@ async def test_dedicated_home_is_revalidated_before_thread_start(
     monkeypatch.setattr(transport, "_validated_subscription_home", validate_home)
     client = CodexAppServerClient()
 
+    # Startup validates the profile twice (before spawn and after the audit);
+    # the first thread start rides that, the warm one hits the poisoned third.
+    await client.thread_start()
     with pytest.raises(CodexSubscriptionUnavailable, match="configuration"):
         await client.thread_start()
 
-    assert not any(
-        message.get("method") == "thread/start"
+    assert [
+        message.get("method")
         for message in harness.processes[0].stdin.messages
-    )
+    ].count("thread/start") == 1
     await client.close()
 
 
 @pytest.mark.asyncio
-async def test_account_is_rechecked_immediately_before_every_thread_start(
+async def test_account_is_rechecked_before_every_warm_thread_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A live account switch between calls still stops the next thread.
+
+    The cold start's own account/read covers the thread start that triggered
+    it; every WARM thread start re-reads the live account, because
+    ``codex login --with-api-key`` can switch the shared process while it
+    stays alive.
+    """
     account_reads = 0
 
     def responder(process: FakeProcess, message: dict[str, Any]) -> None:
@@ -1470,7 +2103,7 @@ async def test_account_is_rechecked_immediately_before_every_thread_start(
             _respond(process, request_id, {})
         elif method == "account/read":
             account_reads += 1
-            account_type = "chatgpt" if account_reads <= 2 else "apiKey"
+            account_type = "chatgpt" if account_reads <= 1 else "apiKey"
             _respond(
                 process,
                 request_id,
@@ -1493,7 +2126,9 @@ async def test_account_is_rechecked_immediately_before_every_thread_start(
         await client.thread_start()
 
     methods = [item.get("method") for item in harness.processes[0].stdin.messages]
-    assert methods.count("account/read") == 3
+    # One at startup (which the first thread start rides) plus one for the
+    # warm second start — not one per start on top of the startup read.
+    assert methods.count("account/read") == 2
     assert methods.count("thread/start") == 1
 
 
@@ -1586,6 +2221,48 @@ async def test_account_requires_the_openai_authenticated_provider() -> None:
 
 
 @pytest.mark.asyncio
+async def test_realtime_start_fails_fast_on_a_realtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An upstream refusal (the 403 that ended v1, an invalid offer) must
+    surface as its honest text, never hide behind the blind SDP timeout."""
+
+    def responder(process: FakeProcess, message: dict[str, Any]) -> None:
+        if _respond_handshake(process, message):
+            return
+        request_id = message.get("id")
+        if not isinstance(request_id, int):
+            return
+        method = message.get("method")
+        if method == "thread/start":
+            _respond(process, request_id, {"thread": {"id": "voice-thread"}})
+        elif method == "thread/realtime/start":
+            process.emit(
+                {
+                    "method": "thread/realtime/error",
+                    "params": {
+                        "threadId": "voice-thread",
+                        "message": "unexpected status 403 Forbidden: Voice session access denied.",
+                    },
+                }
+            )
+            _respond(process, request_id, {})
+
+    SpawnHarness(monkeypatch, [responder])
+    client = CodexAppServerClient()
+    await client.thread_start(base_instructions="Answer directly.")
+
+    with pytest.raises(CodexAppServerError, match="Voice session access denied"):
+        await client.realtime_start(
+            "voice-thread",
+            offer_sdp="offer-sdp",
+            include_startup_context=False,
+            client_managed_handoffs=True,
+        )
+    await client.close()
+
+
+@pytest.mark.asyncio
 async def test_realtime_start_forces_handoff_and_startup_context_boundaries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1633,7 +2310,9 @@ def test_native_codex_version_and_hash_are_both_required(
             )
         },
     )
-    monkeypatch.setattr(transport, "_sha256_file", lambda _path: "approved-hash")
+    monkeypatch.setattr(
+        transport, "_sha256_file_cached", lambda _path: "approved-hash"
+    )
 
     assert (
         transport._trusted_native_codex_binary(
@@ -1641,14 +2320,586 @@ def test_native_codex_version_and_hash_are_both_required(
         )
         == str(binary.resolve())
     )
+    # The hash IS the pinned build: a launcher that cannot print its version
+    # (npm wrapper without node on PATH) must not brick a verified binary.
+    assert (
+        transport._trusted_native_codex_binary(str(binary), None)
+        == str(binary.resolve())
+    )
+
+    monkeypatch.setattr(
+        transport, "_sha256_file_cached", lambda _path: "wrong-hash"
+    )
+    # A real-but-different release names the required version...
     with pytest.raises(CodexSubscriptionUnavailable, match="requires Codex"):
         transport._trusted_native_codex_binary(str(binary), "codex-cli 0.147.0")
-
-    monkeypatch.setattr(transport, "_sha256_file", lambda _path: "wrong-hash")
+    # ...while an unknown build with the right version fails on the hash.
     with pytest.raises(CodexSubscriptionUnavailable, match="approved build"):
         transport._trusted_native_codex_binary(
             str(binary), transport._SUPPORTED_CODEX_VERSION
         )
+
+
+def test_wrong_release_maps_to_not_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real-but-different codex release is 'install the pinned one', not a
+    profile defect — the card then shows the pinned npm command."""
+    import jarvis.codex_auth as auth_module
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex-test"
+
+        def _probe_version(self, _binary: str) -> str:
+            return "codex-cli 0.150.0"
+
+    def refuse(_binary: str, _version: str | None) -> str:
+        raise transport.CodexSubscriptionBinaryUnsupported(
+            "Subscription voice requires Codex CLI 0.146.0."
+        )
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(transport, "_trusted_native_codex_binary", refuse)
+
+    capability = transport._read_codex_capability(None)
+
+    assert capability.reason_code == "not_installed"
+    assert capability.available is False
+    assert "requires Codex CLI 0.146.0" in capability.reason
+    assert capability.version == "codex-cli 0.150.0"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_reserve_is_released_by_the_abandon_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel landing on the reserve await must not park the profile on
+    'voice is starting' forever (the permanent-wedge class)."""
+    acquire_started = threading.Event()
+    acquire_release = threading.Event()
+
+    def blocking_acquire() -> FakeProfileProcessLock:
+        acquire_started.set()
+        assert acquire_release.wait(timeout=10.0)
+        return FakeProfileProcessLock()
+
+    monkeypatch.setattr(
+        transport, "_acquire_subscription_process_lock", blocking_acquire
+    )
+
+    client = CodexAppServerClient("codex-test")
+    task = asyncio.create_task(client.ensure_started())
+    await asyncio.to_thread(acquire_started.wait, 5.0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    acquire_release.set()
+    # The reserve worker completes AFTER the cancel; the abandon worker must
+    # then release it. Poll briefly instead of assuming scheduling order.
+    for _ in range(100):
+        with transport._subscription_login_lock:
+            if not transport._subscription_active_transports:
+                break
+        await asyncio.sleep(0.02)
+    with transport._subscription_login_lock:
+        assert transport._subscription_active_transports == set()
+        assert transport._subscription_transport_process_lock is None
+    assert client._profile_transport_epoch is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_disconnect_still_releases_the_mutation_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancelling disconnect mid-flight (even twice) must not leave the
+    profile permanently 'being checked or changed'."""
+    close_entered = asyncio.Event()
+    close_release = asyncio.Event()
+
+    async def blocking_close() -> None:
+        close_entered.set()
+        await close_release.wait()
+
+    monkeypatch.setattr(transport, "close_shared_codex_app_servers", blocking_close)
+    monkeypatch.setattr(
+        transport,
+        "_delete_codex_subscription_auth_locked",
+        lambda: (True, None),
+    )
+    # Gate the release so it provably happens AFTER both cancels — otherwise a
+    # fast runner could finish cleanup before the second cancel and the test
+    # would silently degrade to a single-cancel check.
+    finish_gate = threading.Event()
+    real_finish = transport._finish_subscription_disconnect_mutation
+
+    def gated_finish() -> None:
+        assert finish_gate.wait(timeout=10.0)
+        real_finish()
+
+    monkeypatch.setattr(
+        transport, "_finish_subscription_disconnect_mutation", gated_finish
+    )
+
+    task = asyncio.create_task(
+        transport.disconnect_and_logout_codex_subscription()
+    )
+    await asyncio.wait_for(close_entered.wait(), timeout=5.0)
+    with transport._subscription_login_lock:
+        assert transport._subscription_profile_mutating is True
+
+    task.cancel()
+    await asyncio.sleep(0.02)
+    task.cancel()  # A second cancel interrupts even shielded awaits.
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    close_release.set()
+    finish_gate.set()
+
+    for _ in range(100):
+        with transport._subscription_login_lock:
+            if not transport._subscription_profile_mutating:
+                break
+        await asyncio.sleep(0.02)
+    with transport._subscription_login_lock:
+        assert transport._subscription_profile_mutating is False
+        assert transport._subscription_mutation_process_lock is None
+
+
+def test_spawn_binary_is_rehashed_without_the_memo(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The copy that gets EXECUTED is verified fresh — a poisoned hash memo
+    must never launder an in-place swap into execution."""
+    binary = tmp_path / "codex.exe"
+    binary.write_bytes(b"approved-content")
+    approved = transport._sha256_file(binary)
+    monkeypatch.setattr(transport.sys, "platform", "win32")
+    monkeypatch.setattr(transport, "_normalized_machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        transport,
+        "_TRUSTED_CODEX_TARGETS",
+        {
+            ("win32", "x86_64"): (
+                "win32-x64",
+                "x86_64-pc-windows-msvc",
+                "codex.exe",
+                approved,
+            )
+        },
+    )
+    # A poisoned memo claiming the file is approved must be ignored here.
+    monkeypatch.setattr(
+        transport, "_sha256_file_cached", lambda _path: approved
+    )
+
+    _REAL_VERIFY_SPAWN_BINARY(str(binary))
+
+    binary.write_bytes(b"swapped-content")
+    with pytest.raises(CodexSubscriptionUnavailable, match="changed since"):
+        _REAL_VERIFY_SPAWN_BINARY(str(binary))
+
+
+def test_stale_epoch_release_is_ignored() -> None:
+    """A superseded holder's release must never tear down a newer reservation."""
+    client = CodexAppServerClient("codex-test")
+    first = transport._reserve_subscription_transport(client)
+    second = transport._reserve_subscription_transport(client)  # adoption bump
+
+    transport._release_subscription_transport(client, first)
+    with transport._subscription_login_lock:
+        # The stale release was a no-op: the newer reservation survives.
+        assert transport._subscription_active_transports == {id(client)}
+        assert transport._subscription_transport_process_lock is not None
+
+    transport._release_subscription_transport(client, second)
+    with transport._subscription_login_lock:
+        assert transport._subscription_active_transports == set()
+        assert transport._subscription_transport_process_lock is None
+
+
+def test_failure_memo_is_not_served_on_the_stale_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One transient probe failure must not paint the card for the whole
+    next busy window via the stale-cache path."""
+
+    def probe(_binary: str | None) -> CodexAppServerCapability:
+        raise OSError("cli exploded")
+
+    monkeypatch.setattr(transport, "_read_codex_capability", probe)
+    with pytest.raises(OSError):
+        transport.codex_subscription_auth_snapshot("codex-test")
+
+    def contended() -> FakeProfileProcessLock:
+        raise CodexSubscriptionUnavailable("owned elsewhere")
+
+    monkeypatch.setattr(transport, "_acquire_subscription_process_lock", contended)
+    with transport._subscription_login_lock:
+        # Age the memo past the fresh TTL: within it, serving the memo IS the
+        # coalescing contract; the stale path is what must exclude it.
+        transport._subscription_snapshot_cache_at = (
+            time.monotonic() - transport._SUBSCRIPTION_SNAPSHOT_CACHE_TTL_S - 1.0
+        )
+
+    snapshot = transport.codex_subscription_auth_snapshot("codex-test")
+    assert snapshot.reason_code == "busy"
+    # The stale path answered with the live contention, not the failure memo.
+    assert "owned elsewhere" in snapshot.reason
+
+
+@pytest.mark.asyncio
+async def test_live_account_gate_records_the_plan_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sticky diagnosis is written where the truth is discovered — the
+    live account gate — so a plan that turns unsupported AFTER activation
+    still flips every status surface, not just the activation route."""
+    client = CodexAppServerClient("codex-test")
+
+    async def no_start() -> None:
+        return None
+
+    async def refuse() -> None:
+        raise transport.CodexSubscriptionPlanUnsupported(
+            "Subscription voice permits only personal ChatGPT accounts."
+        )
+
+    async def no_close(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(client, "ensure_started", no_start)
+    monkeypatch.setattr(client, "_verify_live_chatgpt_account", refuse)
+    monkeypatch.setattr(client, "_close_process", no_close)
+
+    with pytest.raises(transport.CodexSubscriptionPlanUnsupported):
+        await client.require_chatgpt_login()
+
+    assert transport.codex_subscription_activation_block() == (
+        "Subscription voice permits only personal ChatGPT accounts."
+    )
+
+
+def test_unreadable_profile_reports_busy_not_setup_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An antivirus-locked or slow-disk profile read is transiently unknown —
+    never 'create a fresh voice-only login'."""
+    import jarvis.codex_auth as auth_module
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex-test"
+
+        def _probe_version(self, _binary: str) -> str:
+            return "codex-cli 0.146.0"
+
+    def unreadable(**_kwargs: object) -> Path:
+        raise transport.CodexSubscriptionInspectionFailed(
+            "The dedicated Codex voice profile could not be inspected."
+        )
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(
+        transport,
+        "_trusted_native_codex_binary",
+        lambda binary, _version: binary,
+    )
+    monkeypatch.setattr(transport, "_validated_subscription_home", unreadable)
+
+    capability = transport._read_codex_capability(None)
+
+    assert capability.reason_code == "busy"
+    assert "could not be inspected" in capability.reason
+
+
+@pytest.mark.asyncio
+async def test_warm_thread_start_plan_refusal_is_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A plan that turns unsupported BETWEEN calls is discovered by the warm
+    per-thread account re-check — it must record the sticky diagnosis too."""
+    client = CodexAppServerClient("codex-test")
+
+    async def already_ready() -> None:
+        return None
+
+    async def refuse() -> None:
+        raise transport.CodexSubscriptionPlanUnsupported(
+            "Subscription voice permits only personal ChatGPT accounts."
+        )
+
+    async def no_close(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(client, "ensure_started", already_ready)
+    monkeypatch.setattr(client, "_verify_live_chatgpt_account", refuse)
+    monkeypatch.setattr(client, "_close_process", no_close)
+    monkeypatch.setattr(
+        transport, "_validated_subscription_home", lambda **_kwargs: tmp_path
+    )
+    client._workspace = SimpleNamespace(
+        root=tmp_path,
+        instructions=tmp_path / "instructions.md",
+        compact_prompt=tmp_path / "compact.md",
+        model_catalog=tmp_path / "models.json",
+        sqlite_home=tmp_path,
+        log_dir=tmp_path,
+        child_home=tmp_path,
+        child_appdata=tmp_path,
+        child_local_appdata=tmp_path,
+        child_tmp=tmp_path,
+    )
+    client._sink_base_url = "http://127.0.0.1:1/"
+
+    with pytest.raises(transport.CodexSubscriptionPlanUnsupported):
+        await client.thread_start(
+            base_instructions="transport only",
+            developer_instructions="no tools",
+            ephemeral=True,
+        )
+
+    assert "personal ChatGPT accounts" in (
+        transport.codex_subscription_activation_block() or ""
+    )
+
+
+def test_connect_rebuilds_an_invalid_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """setup_invalid must not be an in-app dead end: the explicit login action
+    rebuilds the Jarvis-owned profile instead of failing on the same check."""
+    calls: list[str] = []
+    attempts = {"n": 0}
+
+    def flaky_home(**kwargs: object) -> Path:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise CodexSubscriptionUnavailable(
+                "The dedicated Codex voice profile contains configuration or "
+                "runtime state. Create a fresh voice-only login."
+            )
+        return tmp_path
+
+    monkeypatch.setattr(transport, "_validated_subscription_home", flaky_home)
+    monkeypatch.setattr(
+        transport,
+        "_rebuild_invalid_subscription_home",
+        lambda: calls.append("rebuilt"),
+    )
+
+    home = transport._prepare_subscription_login_home()
+
+    assert calls == ["rebuilt"]
+    assert home == tmp_path
+
+
+def test_logout_clears_an_invalid_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Disconnect must work in-app even when the profile fails validation."""
+    calls: list[str] = []
+
+    def invalid_home(**_kwargs: object) -> Path:
+        raise CodexSubscriptionUnavailable(
+            "The dedicated Codex voice profile contains an unknown runtime directory."
+        )
+
+    monkeypatch.setattr(transport, "_validated_subscription_home", invalid_home)
+    monkeypatch.setattr(
+        transport,
+        "_rebuild_invalid_subscription_home",
+        lambda: calls.append("removed"),
+    )
+
+    assert transport._delete_codex_subscription_auth_locked() == (True, None)
+    assert calls == ["removed"]
+
+
+def test_activation_block_survives_cache_invalidation_until_logout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cache invalidation happens on every mutation attempt — including an
+    ABORTED re-login — which is no evidence the refused plan changed. Only
+    explicit new evidence (here: logout) clears the verdict."""
+    transport.set_codex_subscription_activation_block(
+        "Subscription voice permits only personal ChatGPT accounts."
+    )
+    with transport._subscription_login_lock:
+        transport._invalidate_subscription_snapshot_locked()
+    assert (
+        transport.codex_subscription_activation_block()
+        == "Subscription voice permits only personal ChatGPT accounts."
+    )
+
+    monkeypatch.setattr(
+        transport,
+        "_delete_codex_subscription_auth_locked",
+        lambda: (True, None),
+    )
+    assert transport.logout_codex_subscription() == (True, None)
+    assert transport.codex_subscription_activation_block() is None
+
+
+@pytest.mark.asyncio
+async def test_cold_start_plan_refusal_is_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The FIRST activation (app-server not yet running) discovers the plan
+    refusal inside ensure_started — the sticky diagnosis must be recorded on
+    that cold path too, not only on the warm re-verification."""
+    client = CodexAppServerClient("codex-test")
+    monkeypatch.setattr(
+        transport,
+        "_read_codex_capability",
+        lambda _binary: _ready_capability(binary_path="codex-test"),
+    )
+
+    def refuse(**_kwargs: object) -> Path:
+        raise transport.CodexSubscriptionPlanUnsupported(
+            "Subscription voice permits only personal ChatGPT accounts."
+        )
+
+    monkeypatch.setattr(transport, "_validated_subscription_home", refuse)
+
+    with pytest.raises(transport.CodexSubscriptionPlanUnsupported):
+        await client.ensure_started()
+
+    assert "personal ChatGPT accounts" in (
+        transport.codex_subscription_activation_block() or ""
+    )
+
+
+@pytest.mark.asyncio
+async def test_login_ready_respects_the_activation_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Readiness surfaces must not advertise a provider whose account the
+    live gate refused permanently."""
+    monkeypatch.setattr(
+        transport,
+        "_read_codex_capability",
+        lambda _binary: _ready_capability(),
+    )
+    assert await transport.codex_subscription_login_ready("codex-test") is True
+
+    transport.set_codex_subscription_activation_block(
+        "Subscription voice permits only personal ChatGPT accounts."
+    )
+    assert await transport.codex_subscription_login_ready("codex-test") is False
+
+
+def test_headless_linux_reports_lifecycle_with_a_coherent_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reason TEXT degrades with the code: every surface renders one of
+    the two, and they must tell the same story."""
+    import jarvis.codex_auth as auth_module
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex-test"
+
+        def _probe_version(self, _binary: str) -> str:
+            return "codex-cli 0.146.0"
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(
+        transport,
+        "_trusted_native_codex_binary",
+        lambda binary, _version: binary,
+    )
+
+    def missing_profile(**_kwargs: object) -> Path:
+        raise transport.CodexSubscriptionProfileMissing("profile missing")
+
+    monkeypatch.setattr(transport, "_validated_subscription_home", missing_profile)
+    monkeypatch.setattr(transport.sys, "platform", "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+
+    capability = transport._read_codex_capability(None)
+
+    assert capability.reason_code == "lifecycle_unavailable"
+    assert "headless Linux" in capability.reason
+    assert "desktop" in capability.reason
+
+
+def test_profile_allowlist_accepts_codex_own_runtime_markers() -> None:
+    """Codex 0.146 writes these into CODEX_HOME on a normal run; rejecting
+    them bricked the profile right after the CLI's first use."""
+    assert ".sandbox_migration" in transport._ALLOWED_SUBSCRIPTION_HOME_ENTRIES
+    assert "installation_id" in transport._ALLOWED_SUBSCRIPTION_HOME_ENTRIES
+
+
+def test_capability_survives_a_version_probe_that_prints_a_shell_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """npm's codex launcher without node prints a localized error, not a version."""
+    import jarvis.codex_auth as auth_module
+
+    class FakeAuthService:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def _resolve_binary(self) -> str:
+            return "codex-test"
+
+        def _probe_version(self, _binary: str) -> str:
+            return 'Der Befehl ""node"" ist entweder falsch geschrieben oder\n'  # i18n-allow: verbatim Windows shell error under test
+
+        def login_status(self) -> tuple[bool, str]:
+            return True, "chatgpt"
+
+    monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
+    monkeypatch.setattr(
+        transport,
+        "_trusted_native_codex_binary",
+        lambda binary, _version: binary,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_validated_subscription_home",
+        lambda **_kwargs: tmp_path,
+    )
+
+    capability = transport._read_codex_capability(None)
+
+    assert capability.available is True
+    assert capability.chatgpt_authenticated is True
+    assert capability.reason_code == "ready"
+    # The shell error never becomes the version chip; the hash-proven pinned
+    # release is reported instead.
+    assert capability.version == transport._SUPPORTED_CODEX_VERSION
+
+
+def test_sha256_memo_rehashes_when_the_file_identity_changes(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "codex.exe"
+    binary.write_bytes(b"first-content")
+
+    first = transport._sha256_file_cached(binary)
+    assert transport._sha256_file_cached(binary) == first
+
+    binary.write_bytes(b"second-content-of-a-different-size")
+    second = transport._sha256_file_cached(binary)
+    assert second != first
+    assert second == transport._sha256_file(binary)
 
 
 def test_sha256_file_ignores_windows_fstat_ctime_semantics(
@@ -1936,7 +3187,7 @@ def test_exact_windows_codex_runtime_state_is_allowed_and_tampering_is_refused(
     monkeypatch.setattr(transport, "_sha256_file", hash_binary)
     home = transport._prepare_subscription_login_home()
     (home / "installation_id").write_text(
-        "8fd4ce9f-0c3d-4502-8ff7-c22a79a11833",
+        "019f0000-0100-4000-8000-000000000100",
         encoding="utf-8",
     )
     runtime = home / "tmp" / "arg0" / "codex-arg0Ab12Cd"
@@ -1976,7 +3227,7 @@ def test_installation_id_created_under_umask_077_is_accepted(tmp_path: Path) -> 
     home.mkdir(mode=0o700)
     installation_id = home / "installation_id"
     installation_id.write_text(
-        "8fd4ce9f-0c3d-4502-8ff7-c22a79a11833",
+        "019f0000-0100-4000-8000-000000000100",
         encoding="utf-8",
     )
     installation_id.chmod(0o600)
@@ -2014,7 +3265,7 @@ def test_exact_unix_codex_runtime_aliases_must_target_trusted_binary(
     )
     home = transport._prepare_subscription_login_home()
     (home / "installation_id").write_text(
-        "8fd4ce9f-0c3d-4502-8ff7-c22a79a11833",
+        "019f0000-0100-4000-8000-000000000100",
         encoding="utf-8",
     )
     if os.name == "posix":

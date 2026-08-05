@@ -134,14 +134,14 @@ dismiss them as smalltalk:
     * "I always work with Spotify"           → user entity, Facts/Habits
 - **Other-person identity facts**: same shape, just on their own
   entity page.
-    * "Jordan coordinates the garden project" → entities/jordan.md
-    * "My team lead is named Taylor"        → entities/taylor.md + relationship
+    * "Sam was born in 1976"             → entities/sam.md
+    * "My boss is named Tom"                → entities/tom.md + relationship
 - **Active projects / undertakings**: anything the user describes as
   current work-in-progress.
     * "I am working on a pixel-art editor"  → projects/pixel-art-editor.md
 - **Dated commitments / decisions / rules**: things with a temporal
   anchor or a "from now on" flavour.
-    * "I am travelling to Berlin next week"  → user entity, Schedule
+    * "I am travelling to Exampletown next week"  → user entity, Schedule
     * "From today I only use Provider X"      → concepts/<decision>.md
 
 ## What to skip

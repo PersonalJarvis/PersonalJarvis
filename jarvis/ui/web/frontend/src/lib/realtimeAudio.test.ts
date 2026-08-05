@@ -16,9 +16,14 @@ class FakePort {
 }
 
 class FakeAudioNode {
+  static instances: FakeAudioNode[] = [];
   port = new FakePort();
   connect = vi.fn(() => this);
   disconnect = vi.fn();
+
+  constructor() {
+    FakeAudioNode.instances.push(this);
+  }
 }
 
 class FakeAudioContext {
@@ -118,6 +123,7 @@ describe("realtime audio client", () => {
     });
     FakePeerConnection.instances = [];
     FakeWebSocket.instances = [];
+    FakeAudioNode.instances = [];
     wsFakes.mintWsTicket.mockClear();
   });
 
@@ -221,6 +227,52 @@ describe("realtime audio client", () => {
     await client.disconnect();
     expect(FakePeerConnection.instances[0].close).toHaveBeenCalledOnce();
     expect(track.stop).toHaveBeenCalledOnce();
+  });
+
+  it("replays the opening spoken during a slow subscription start", async () => {
+    // A cold subscription transport spends 15-25 s coming up. Captured PCM was
+    // DISCARDED for that whole window, so the user's first sentence vanished —
+    // and because that transport drives its own turn detection, nothing ever
+    // asked for a repeat. The desktop already retains and replays the opening.
+    installVoiceBrowserFakes();
+    const client = new RealtimeAudioClient({}, { startBudgetMs: 45_000 });
+    const connecting = client.connect();
+
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+
+    const capture = FakeAudioNode.instances.find((node) => node.port.onmessage);
+    expect(capture).toBeDefined();
+    const opening = new Uint8Array([1, 2, 3, 4]).buffer;
+    capture!.port.onmessage!({ data: opening } as MessageEvent);
+
+    const binaries = () => socket.sent.filter((item) => item instanceof ArrayBuffer);
+    expect(binaries()).toHaveLength(0);
+
+    socket.receive({ type: "audio_ready", output_sample_rate: 24_000 });
+    await connecting;
+
+    expect(binaries()).toEqual([opening]);
+    await client.disconnect();
+  });
+
+  it("drops a retained opening that never reached a ready socket", async () => {
+    installVoiceBrowserFakes();
+    const client = new RealtimeAudioClient({}, {});
+    const connecting = client.connect();
+
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    const capture = FakeAudioNode.instances.find((node) => node.port.onmessage);
+    capture!.port.onmessage!({ data: new Uint8Array([9]).buffer } as MessageEvent);
+
+    socket.close();
+    await expect(connecting).rejects.toBeInstanceOf(Error);
+    await client.disconnect();
+
+    expect(socket.sent.filter((item) => item instanceof ArrayBuffer)).toHaveLength(0);
   });
 
   it("keeps RTP detached and plays scrubbed subscription sideband PCM", async () => {

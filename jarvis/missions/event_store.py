@@ -334,7 +334,7 @@ class MissionEventStore:
 
         Used by the rerun endpoint to stay idempotent: a parent must not spawn
         a second LIVE re-run child while a prior one is still active (forensic
-        2026-06-22, mission 019eefcb-cee2 — a ``/rerun`` click-storm created
+        2026-06-22, mission 019f1044-0001 — a ``/rerun`` click-storm created
         nine children for one mission).
         """
         cur = await self.conn.execute(

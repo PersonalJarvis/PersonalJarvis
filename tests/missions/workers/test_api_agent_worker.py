@@ -231,7 +231,7 @@ class _RaisingBrain:
 async def test_quota_depleted_error_arms_family_cooldown(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Mission 019f3d0f (2026-07-07): gemini's prepaid credits were depleted
+    """Mission 019f1050 (2026-07-07): gemini's prepaid credits were depleted
     (429 RESOURCE_EXHAUSTED) and every retry re-picked gemini. A quota/auth
     provider error must arm the per-family cooldown so the factory's family
     walk skips this family on the retry and reaches the next healthy key."""
@@ -271,7 +271,7 @@ async def test_quota_depleted_error_arms_family_cooldown(
 async def test_dead_key_401_arms_family_cooldown(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Mission 019f3d01: a stale claude-api credential 401'd on every retry.
+    """Mission 019f104f: a stale claude-api credential 401'd on every retry.
     An auth error is family-unusable just like a quota error — arm the cooldown."""
     from jarvis.api_family_quota_state import api_family_in_cooldown
 

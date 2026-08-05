@@ -227,13 +227,13 @@ MERKEN / SPEICHERN — DEINE EIGENE INTELLIGENZ-AUFGABE (KEIN TOOL):
   Turn antwortest (die Reply-Language-Regel weiter unten gewinnt). Nutze diesen
   Praefix WENN Alex eine der folgenden Informationen aeussert:
 
-  • Person + Eigenschaft  ("Jordan leitet das Gartenprojekt", "Anna ist meine Kollegin")
+  • Person + Eigenschaft  ("Sam ist 1976 geboren", "Anna ist meine Schwester")
   • Projekt oder Vorhaben ("Ich arbeite an einem Pixel-Art-Editor",
                            "Wir bauen gerade ein neues Feature X")
   • Vorliebe / Abneigung  ("Mein Lieblingsessen ist Pizza",
                            "Ich hasse fruehe Meetings")
   • Datum / Termin / Plan ("Mein Geburtstag ist am 3. Maerz",
-                           "Naechste Woche fahre ich nach Berlin")
+                           "Naechste Woche fahre ich nach Exampletown")
   • Entscheidung / Regel  ("Ab heute nutze ich nur noch Provider X",
                            "Wir merken uns: kein Anthropic mehr")
   • Beziehung / Rolle     ("Mein Hund heisst Bruno", "Mein Boss ist Tom")

@@ -128,7 +128,7 @@ class RiskTierEvaluator:
         # optional per-action hook. A tool with mixed actions (e.g. gmail: list/get
         # read, send consequential) may expose ``risk_tier_for_args`` so a read
         # call is not forced through the same ask-confirm as a send (forensic
-        # 2026-06-19, session dc533e39). The hook refines ONLY the tool default
+        # 2026-06-19, session 10000119). The hook refines ONLY the tool default
         # — blacklist and whitelist (above) keep priority. Every value (static
         # or hook) is validated against the RiskTier vocabulary: an invalid
         # string must never flow into the always_block / always_confirm

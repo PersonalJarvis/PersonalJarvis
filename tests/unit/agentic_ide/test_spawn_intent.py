@@ -33,7 +33,11 @@ NAMES = ["Alex", "Blake", "Casey", "Dana"]
         # The maintainer's own phrasings (voice request 2026-07-25).
         ("Spawne 5 neue Terminals", 5, None),  # i18n-allow: spoken input under test
         ("Spawne 5 neue Claude Code Terminals", 5, "claude"),  # i18n-allow: spoken input under test
-        ("Spawne fünf neue Claude Code Terminals", 5, "claude"),  # i18n-allow: spoken input under test
+        (
+            "Spawne fünf neue Claude Code Terminals",  # i18n-allow: spoken input under test
+            5,
+            "claude",
+        ),
         # Number words, all three locales.
         ("Öffne drei Codex Terminals", 3, "codex"),  # i18n-allow: spoken input under test
         ("Open two Codex terminals", 2, "codex"),
@@ -112,6 +116,49 @@ def test_non_requests_are_left_alone(utterance: str) -> None:
     assert intent.detect_spawn(utterance) is None, utterance
 
 
+def test_live_browser_shortcut_question_stays_a_normal_conversation() -> None:
+    """A browser-tab question must never open a coding pane.
+
+    The live Realtime transcript started with a prepositional question, so the
+    old question guard missed it. ``tab`` plus the open verb then claimed the
+    turn as an Agentic IDE action and answered that T7 was open instead of
+    answering the shortcut question.
+    """
+    utterance = (
+        "Mit welcher Tastenkombination kann ich in meinem Chrome Browser einen "
+        "neuen Tab öffnen, wo meine Konfigurationen noch nicht da sind"
+    )  # i18n-allow: production transcript under test
+
+    assert intent.detect_spawn(utterance, names=NAMES) is None
+    assert intent.owns_turn(utterance, names=NAMES) is False
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Kann ich noch drei Terminals öffnen?",  # i18n-allow: fixture
+        "With which shortcut can I open a browser tab?",
+        "Can I open three more terminals?",
+        "¿Puedo abrir tres terminales?",
+    ],
+)
+def test_information_questions_never_open_panes(utterance: str) -> None:
+    assert intent.detect_spawn(utterance, names=NAMES) is None
+    assert intent.owns_turn(utterance, names=NAMES) is False
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Öffne einen neuen Tab in Chrome",  # i18n-allow: spoken input under test
+        "Open a new browser tab",
+    ],
+)
+def test_browser_tab_commands_never_open_coding_panes(utterance: str) -> None:
+    assert intent.detect_spawn(utterance, names=NAMES) is None
+    assert intent.owns_turn(utterance, names=NAMES) is False
+
+
 def test_workspace_owns_a_terminal_spawn_even_though_it_names_the_vehicle() -> None:
     """The precedence both routing gates read.
 
@@ -120,15 +167,17 @@ def test_workspace_owns_a_terminal_spawn_even_though_it_names_the_vehicle() -> N
     delegation marker, so returning True here is the entire fix — neither gate
     needs its own copy of this rule, and the two cannot drift apart.
     """
-    assert intent.owns_turn("Spawne 5 neue Terminals", names=NAMES) is True  # i18n-allow: spoken input under test
+    utterance = "Spawne 5 neue Terminals"  # i18n-allow: spoken input under test
+    assert intent.owns_turn(utterance, names=NAMES) is True
     assert intent.owns_turn("Open three more Claude Code terminals", names=NAMES) is True
     # Without a workspace open (no call-signs) it STILL owns the turn: the
     # feature opens a session in the recent folder, so a background mission
     # would be just as wrong there.
-    assert intent.owns_turn("Spawne 5 neue Terminals", names=[]) is True  # i18n-allow: spoken input under test
+    assert intent.owns_turn(utterance, names=[]) is True
     # And the unchanged half: naming the vehicle without naming terminals still
     # belongs to the background-agent path.
-    assert intent.owns_turn("Spawne einen Agenten", names=NAMES) is False  # i18n-allow: spoken input under test
+    background = "Spawne einen Agenten"  # i18n-allow: spoken input under test
+    assert intent.owns_turn(background, names=NAMES) is False
 
 
 # --------------------------------------------------------------------------- #
@@ -347,7 +396,9 @@ def test_follow_up_about_existing_terminals_does_not_spawn_worker_count() -> Non
 
 
 def test_close_all_codex_terminals_is_a_workspace_intent() -> None:
-    utterance = "Kannst du bitte alle Codex Terminals schließen?"  # i18n-allow: production transcript under test
+    utterance = (  # i18n-allow: production transcript under test
+        "Kannst du bitte alle Codex Terminals schließen?"
+    )
 
     found = intent.detect_close_fleet(utterance)
 

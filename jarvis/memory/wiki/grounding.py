@@ -263,7 +263,7 @@ def classify_user_attitude_evidence(
             re.search(rf"(?<!\w){re.escape(folded_slug)}(?!\w)", folded_fact)
         )
         # Subject metadata is only a fallback for subjectless shorthand.  It
-        # must not turn "My friend Lena likes Monaco" into a user-interest
+        # must not turn "My friend ExampleFriend likes Monaco" into a user-interest
         # claim merely because the relationship also mentioned the user.
         user_referenced = user_referenced or (
             folded_slug in folded_subjects

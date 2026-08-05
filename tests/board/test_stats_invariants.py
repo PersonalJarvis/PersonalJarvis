@@ -384,7 +384,7 @@ def test_longest_streak_spans_month_and_year_boundaries(tmp_path: Path) -> None:
 
 
 def test_word_counts_exact_on_fixture(tmp_path: Path) -> None:
-    """YOU SAID / NICO SAID are whitespace word counts over the stored turn
+    """YOU SAID / NOVA SAID are whitespace word counts over the stored turn
     texts — punctuation and repeated whitespace must not change the count."""
     sessions_db = tmp_path / "sessions.db"
     store = SessionStore(db_path=sessions_db)
@@ -422,7 +422,7 @@ def test_word_counts_exact_on_fixture(tmp_path: Path) -> None:
 def test_totals_are_timezone_invariant(tmp_path: Path) -> None:
     """Day *bucketing* legitimately follows the configured timezone, but the
     all-time totals must be identical whether the host thinks it is in UTC,
-    Berlin or Auckland — and repeated runs must be byte-stable."""
+    Exampletown or Auckland — and repeated runs must be byte-stable."""
     sessions_db = tmp_path / "sessions.db"
     store = SessionStore(db_path=sessions_db)
     store.open()
@@ -442,7 +442,7 @@ def test_totals_are_timezone_invariant(tmp_path: Path) -> None:
 
     zones = {
         "utc": UTC,
-        "berlin": _tz("Europe/Berlin", 2),
+        "exampletown": _tz("Etc/UTC", 2),
         "auckland": _tz("Pacific/Auckland", 12),
     }
     all_totals: dict[str, dict[str, float]] = {}
@@ -461,7 +461,7 @@ def test_totals_are_timezone_invariant(tmp_path: Path) -> None:
         assert snapshots[0] == snapshots[1], f"non-deterministic in {name}"
         all_totals[name] = snapshots[0][1]
 
-    assert all_totals["utc"] == all_totals["berlin"] == all_totals["auckland"]
+    assert all_totals["utc"] == all_totals["exampletown"] == all_totals["auckland"]
 
 
 def test_results_do_not_depend_on_file_mtime(tmp_path: Path) -> None:

@@ -209,7 +209,7 @@ def is_incomplete(text: str | None, language: str = "") -> IncompleteVerdict | N
         # → "…oder die Bahn"). Without this exemption a complete tag question is
         # held by the ContinuationBuffer and — if the user then says nothing —
         # never reaches the brain (live "Jarvis hört für immer zu" wedge
-        # 2026-06-19, session <SESSION_ID>: "…morgen ist ja Montag, oder?" buffered,
+        # 2026-06-19, session 10000118: "…morgen ist ja Montag, oder?" buffered,
         # never dispatched, discarded at the session idle-timeout).
         # ``rstrip()`` (ASCII-whitespace only) is sufficient here: STT emits the
         # bare "?" as the final glyph — it does not append trailing emoji or

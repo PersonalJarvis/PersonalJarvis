@@ -40,7 +40,7 @@ def test_only_subscription_cli_providers_use_cli_login() -> None:
     provider has none."""
     for spec in PROVIDERS:
         assert spec.auth_mode != "subscription_cli"  # never the legacy literal
-        if spec.id == "codex":
+        if spec.id in {"codex", "codex-subscription-realtime"}:
             assert spec.auth_mode == "codex"
             assert spec.login_cli == ("codex", "login")
         elif spec.id == "antigravity":

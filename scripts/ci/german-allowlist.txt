@@ -356,7 +356,7 @@ tests/unit/brain/test_output_filter.py
 jarvis/ui/web/dist/*
 
 # --- Rolling-Whisper wake echo/silence gates (2026-07-02): the German strings
-#     ("Hey Nico wie spät ist es", "Hey Fable …") are verbatim Whisper
+#     ("Hey Nova wie spät ist es", "Hey Fable …") are verbatim Whisper
 #     hallucination transcripts the tests pin as the wake-fixture content under
 #     test (bucket 4, same rationale as the speech turn-taking block above) ---
 tests/unit/speech/test_rolling_whisper_wake_echo_confirm.py

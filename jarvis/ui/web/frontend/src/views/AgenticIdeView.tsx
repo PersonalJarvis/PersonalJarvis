@@ -3,14 +3,14 @@
  *
  * Two states in one view:
  *
- * * no workspace open → a four-step wizard: folder, how many terminals, an
- *   aggregate agent allocation, then start,
+ * * no workspace open → a five-step wizard: folder, how many terminals, an
+ *   aggregate agent allocation, grid or chat view, then start,
  * * workspace open → the terminal grid (see AgenticGrid).
  *
  * The wizard order is deliberate and matches how the decision actually gets
- * made: you know the folder first, the number of panes second, and only then
- * care which agent sits in which pane. Every step is reversible and nothing is
- * started until the last one.
+ * made: you know the folder first, the number of panes second, then which agent
+ * sits in which pane, and last how you want to read them. Every step is
+ * reversible and nothing is started until the last one.
  *
  * i18n note: the section label and view header go through the locale files; the
  * panel copy inside is still English-only source awaiting its i18n keys.
@@ -18,8 +18,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useEventStore } from "@/store/events";
-import { AgenticGrid } from "@/components/agentic/AgenticGrid";
-import { VoicePanel } from "@/components/agentic/VoicePanel";
+import {
+  AgenticGrid,
+  rememberViewMode,
+  storedViewMode,
+  type WorkspaceView,
+} from "@/components/agentic/AgenticGrid";
+import {
+  VoiceBubble,
+  storedVoiceBubbleOpen,
+  storeVoiceBubbleOpen,
+} from "@/components/agentic/VoiceBubble";
 import {
   WorkspaceLauncher,
   type PlannedTerminal,
@@ -106,8 +115,28 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [loading, setLoading] = useState(true);
   const [meta, setMeta] = useState<AgentsResponse | null>(null);
   const [session, setSession] = useState<SessionState | null>(null);
+  const [promptTarget, setPromptTarget] = useState("");
   const [focusMode, setFocus] = useState(false);
   const [busy, setBusy] = useState(false);
+  /*
+   * The floating voice bubble — held HERE, not in the grid, because the
+   * conversation belongs to the app: the grid is keyed by workspace, and a
+   * bubble mounted inside it would reset the orb mid-sentence on every tab
+   * switch (the same reason the old voice column lived outside the grid).
+   * The choice survives restarts so the bubble greets its user where they
+   * left it.
+   */
+  const [voiceOpen, setVoiceOpen] = useState(storedVoiceBubbleOpen);
+  const toggleVoiceBubble = useCallback(() => {
+    setVoiceOpen((current) => {
+      storeVoiceBubbleOpen(!current);
+      return !current;
+    });
+  }, []);
+  const closeVoiceBubble = useCallback(() => {
+    storeVoiceBubbleOpen(false);
+    setVoiceOpen(false);
+  }, []);
 
   // Every open workspace, for the bar above. The one on screen is `session`;
   // these are the others, still running, one click away.
@@ -132,6 +161,12 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [folder, setFolder] = useState<string | null>(null);
   const [count, setCount] = useState(2);
   const [planned, setPlanned] = useState<PlannedTerminal[]>([]);
+  // Grid or chat, the wizard's last decision. Starts from the remembered
+  // reading preference so returning users see their usual answer preselected;
+  // it is written back only when a workspace actually opens (see `start`).
+  const [view, setView] = useState<WorkspaceView>(
+    () => storedViewMode() ?? "grid",
+  );
   // The registered subscriptions per CLI. Only ever used to OFFER a choice, so
   // a failed load costs the picker, never the wizard: with none loaded every
   // pane simply opens on the active account, exactly as before.
@@ -354,21 +389,19 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // so their absence is visible rather than silently missing.
   const splitChoices = useMemo(
     () =>
-      meta
-        ? agents.map((a) => ({
-            name: a.name,
-            displayName: a.display_name,
-            installed: a.installed,
-            kind: a.kind ?? "cli",
-            // For a plain terminal the useful second line is WHICH shell opens; a
-            // CLI's name already says what it is, so it gets no line of its own.
-            description:
-              a.kind === "shell" && a.version
-                ? `${a.version} — no agent, just a prompt`
-                : (a.description ?? ""),
-          }))
-        : undefined,
-    [agents, meta],
+      agents.map((a) => ({
+        name: a.name,
+        displayName: a.display_name,
+        installed: a.installed,
+        kind: a.kind ?? "cli",
+        // For a plain terminal the useful second line is WHICH shell opens; a
+        // CLI's name already says what it is, so it gets no line of its own.
+        description:
+          a.kind === "shell" && a.version
+            ? `${a.version} — no agent, just a prompt`
+            : (a.description ?? ""),
+      })),
+    [agents],
   );
 
   const chooseCount = (n: number) => {
@@ -430,6 +463,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const start = async () => {
     if (!folder) return;
     setBusy(true);
+    // Recorded BEFORE the grid can mount: the grid reads the stored preference
+    // once, when it appears, so the wizard's answer has to be on disk by then.
+    rememberViewMode(view);
     try {
       // The open answers with the whole state — the new workspace AND the bar.
       // Re-fetching instead would be a race that can blank what was just opened.
@@ -711,42 +747,62 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   if (session && !addingNew) {
     return (
       <div className="flex h-full flex-col">
-        <div className="flex min-h-0 flex-1">
-          <div className="min-h-0 min-w-0 flex-1">
-            {/*
-              Keyed by workspace, so switching tabs REPLACES the grid instead of
-              re-using it. That is deliberate: each pane's terminal is wired to
-              one call-sign for its whole life, and re-using the component across
-              workspaces would leave xterm instances pointed at the panes of the
-              workspace that just left.
-            */}
-            <AgenticGrid
-              key={session.id}
-              session={session}
-              workspaceBar={renderBar(true)}
-              appActions={<TopBarActions />}
-              onJumpToWorkspace={(id, pane) => void jumpToPane(id, pane)}
-              jumpTo={jumpTo}
-              focusMode={focusMode}
-              onToggleFocus={(v) => void toggleFocus(v)}
-              onClose={() => void close()}
-              busy={busy}
-              maxTerminals={maxTerminals}
-              agents={splitChoices}
-              onSessionChanged={setSession}
-              accounts={ideAccounts}
-              onStateChanged={applyStateFromSettings}
-              onScreen={onScreen}
-            />
-          </div>
+        <div className="min-h-0 min-w-0 flex-1">
           {/*
-            The voice column: talk to the assistant while the agents work.
-            OUTSIDE the per-workspace grid on purpose — the conversation
-            belongs to the app, not to a workspace, so switching tabs must not
-            reset the orb mid-sentence.
+            Keyed by workspace, so switching tabs REPLACES the grid instead of
+            re-using it. That is deliberate: each pane's terminal is wired to
+            one call-sign for its whole life, and re-using the component across
+            workspaces would leave xterm instances pointed at the panes of the
+            workspace that just left.
           */}
-          <VoicePanel />
+          <AgenticGrid
+            key={session.id}
+            session={session}
+            workspaceBar={renderBar(true)}
+            appActions={<TopBarActions />}
+            onJumpToWorkspace={(id, pane) => void jumpToPane(id, pane)}
+            jumpTo={jumpTo}
+            focusMode={focusMode}
+            onToggleFocus={(v) => void toggleFocus(v)}
+            onClose={() => void close()}
+            busy={busy}
+            maxTerminals={maxTerminals}
+            agents={splitChoices}
+            onSessionChanged={setSession}
+            accounts={ideAccounts}
+            onStateChanged={applyStateFromSettings}
+            onScreen={onScreen}
+            onPromptTargetChange={setPromptTarget}
+            voiceOpen={voiceOpen}
+            onToggleVoice={toggleVoiceBubble}
+          />
         </div>
+        {/*
+          The floating voice bubble: talk to the assistant while the agents
+          work. A fixed overlay rather than a column, so the terminals keep
+          the whole width in every view mode; OUTSIDE the per-workspace grid
+          on purpose — the conversation belongs to the app, not to a
+          workspace, so switching tabs must not reset the orb mid-sentence.
+        */}
+        <VoiceBubble
+          open={voiceOpen}
+          onClose={closeVoiceBubble}
+          onScreen={onScreen}
+          // The same jump the bell's list performs, from the bubble's update
+          // card: switch workspace if the pane lives in another one, then bring
+          // that pane into view.
+          onJumpToPane={(id, pane) => void jumpToPane(id, pane)}
+          promptTarget={
+            session.terminals.some(
+              (terminal) =>
+                terminal.name === promptTarget && terminal.accepts_prompts !== false,
+            )
+              ? promptTarget
+              : session.terminals.find(
+                  (terminal) => terminal.accepts_prompts !== false,
+                )?.name ?? ""
+          }
+        />
         {modeIntroFor === session.id && (
           <CodingModeIntro
             terminals={session.terminals.map((x) => x.name)}
@@ -823,6 +879,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           offer={offer}
           onResume={() => void resumeAll()}
           onDismissOffer={() => void dismissOffer()}
+          view={view}
+          onView={setView}
           onStart={() => void start()}
         />
       </div>

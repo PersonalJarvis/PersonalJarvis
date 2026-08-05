@@ -27,7 +27,7 @@ from jarvis.missions.worker_runtime.workspace import (
 def test_agents_contract_forbids_clarifying_questions() -> None:
     """Fix #3 (2026-05-29): a background mission has NO interactive user, so a
     clarifying question is a dead end that wastes the attempt (live: mission
-    019e6fea iter0 produced an empty diff because the worker only asked
+    019f1018 iter0 produced an empty diff because the worker only asked
     questions; one iter ran 630s with no tool use before timing out). The
     contract must tell the worker to adopt a sensible default and execute,
     never ask or wait for input."""
@@ -50,7 +50,7 @@ def test_agents_contract_still_carries_file_write_obligation() -> None:
 
 
 def test_agents_contract_sets_quality_bar_no_stub() -> None:
-    """Live incident 2026-05-31 (mission 019e7e04): the router brief said
+    """Live incident 2026-05-31 (mission 019f101d): the router brief said
     'Erstelle ein sinnvolles HTML-Grundgerüst', the Opus worker obeyed and  # i18n-allow: quotes the actual German router-brief text from the live incident
     shipped a 12-line stub, and the mission passed. The contract must set a
     quality floor: a complete, production-quality artefact is required and a
@@ -254,7 +254,7 @@ def test_workspace_subdir_constant_is_workspace() -> None:
 
 
 # --- AGENTS.md execution contract (Plan E, 2026-05-15) -----------------------
-# Live repro mission_019e2d35: gemini-3.1-pro-preview worker claimed success
+# Live repro mission_019f1005: gemini-3.1-pro-preview worker claimed success
 # in reply text without ever invoking file_write. AGENTS.md is the only
 # Jarvis-controlled artefact in the worker's system prompt, so the
 # file-write obligation must be spelled out here.
@@ -291,7 +291,7 @@ def test_agents_md_references_git_diff_validation(tmp_path: Path) -> None:
 def test_agents_md_forbids_text_only_success_claims(tmp_path: Path) -> None:
     """Both German and English false-success patterns must be explicitly
     called out as not counting. Live repro of both languages in
-    mission_019e2c18 / mission_019e2d35."""
+    mission_019f1004 / mission_019f1005."""
     workspace = prepare_workspace(tmp_path, mission_id="m-plan-e")
     agents_md = (workspace / "AGENTS.md").read_text(encoding="utf-8")
     assert "I have created the file" in agents_md, (
@@ -305,7 +305,7 @@ def test_agents_md_forbids_text_only_success_claims(tmp_path: Path) -> None:
 def test_agents_md_demands_cwd_relative_writes(tmp_path: Path) -> None:
     """Worker must not write absolute paths or %SystemDrive%-rooted files —
     those are invisible to the diff-based reviewer. Live repro: empty
-    Arbeitsordner/ subdirs created by gemini-pro under mission_019e2bbf."""
+    Arbeitsordner/ subdirs created by gemini-pro under mission_019f1003."""
     workspace = prepare_workspace(tmp_path, mission_id="m-plan-e")
     agents_md = (workspace / "AGENTS.md").read_text(encoding="utf-8")
     assert "current working directory" in agents_md or "cwd" in agents_md.lower(), (
@@ -317,7 +317,7 @@ def test_agents_md_demands_cwd_relative_writes(tmp_path: Path) -> None:
 
 
 def test_agents_md_permits_task_mandated_external_paths(tmp_path: Path) -> None:
-    """mission_019e7abd (2026-05-30): when the task itself names an absolute
+    """mission_019f101c (2026-05-30): when the task itself names an absolute
     target outside the worktree (e.g. the user's Desktop\\M\\ folder), the
     worker must NOT refuse, ask, or silently relocate it — the runtime now
     verifies external writes on disk. The contract must carve out this

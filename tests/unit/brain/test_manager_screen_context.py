@@ -345,6 +345,101 @@ async def test_no_vision_provider_returns_an_honest_reply(
     assert recorder.calls == []
 
 
+class _ScriptedDispatcher:
+    """Dispatcher returning a different aggregate per attempt."""
+
+    def __init__(self, *results: StreamingAggregate) -> None:
+        self._results = list(results)
+        self.calls: list[dict[str, Any]] = []
+        self.tool_overrides: list[dict[str, Any] | None] = []
+
+    async def dispatch(self, user_text: str, **kwargs: Any) -> StreamingAggregate:
+        self.calls.append({"user_text": user_text, **kwargs})
+        return self._results[min(len(self.calls) - 1, len(self._results) - 1)]
+
+
+def _scripted_manager(
+    *results: StreamingAggregate, chain: list[tuple[str, str]]
+) -> tuple[BrainManager, _ScriptedDispatcher]:
+    cfg = JarvisConfig()
+    cfg.brain.primary = "fake"
+    manager = BrainManager(config=cfg, bus=EventBus(), tools={})
+    dispatcher = _ScriptedDispatcher(*results)
+    manager._build_fallback_chain = lambda _level: chain  # type: ignore[method-assign]
+    manager._get_brain = lambda _name, _model: _FakeBrain(vision=True)  # type: ignore[method-assign]
+
+    def _build(_brain: Any, *, tools_override: Any = None, **_kwargs: Any) -> Any:
+        dispatcher.tool_overrides.append(tools_override)
+        return dispatcher
+
+    manager._build_dispatcher = _build  # type: ignore[method-assign]
+    return manager, dispatcher
+
+
+@pytest.mark.asyncio
+async def test_toolless_turn_falls_through_when_the_model_answers_with_a_tool_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A requested tool call cannot excuse empty text on a turn with NO tools.
+
+    Live 2026-08-02 09:58 (voice session 10000015): the screen was captured
+    correctly, the one vision-capable provider replied with 1170 tokens of
+    reasoning, zero text and ``finish_reason="tool_calls"`` — on a turn where
+    Screen Context had stripped every tool, so nothing could have executed. The
+    empty-response guard read the requested call as a legitimate silence, no
+    other provider was tried, and the user heard the generic failure phrase
+    while a fresh screenshot sat unused.
+    """
+    _patch_screen(
+        monkeypatch,
+        TurnScreenContext(status="captured", image=b"jpeg", mime="image/jpeg"),
+    )
+    silent = StreamingAggregate()
+    silent.text = ""
+    silent.tool_calls = [{"id": "1", "name": "computer_use", "input": {}}]
+    silent.finish_reason = "tool_calls"
+    grounded = StreamingAggregate()
+    grounded.text = "Your editor shows a failing test."
+    grounded.finish_reason = "stop"
+    manager, dispatcher = _scripted_manager(
+        silent, grounded, chain=[("first", "a"), ("second", "b")]
+    )
+
+    reply = await manager.generate("what is on my screen?", use_history=False)
+
+    assert reply == "Your editor shows a failing test."
+    assert len(dispatcher.calls) == 2, "the second vision provider must be tried"
+    assert dispatcher.tool_overrides == [{}, {}]
+
+
+@pytest.mark.asyncio
+async def test_executed_tool_call_still_excuses_empty_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tools-present path is untouched — a side effect is never re-run.
+
+    Fire-and-forget tools (``spawn_worker``) legitimately end a turn with empty
+    text. Falling through to another provider there would run the side effect a
+    second time, which is the regression the 2026-04-29 fix was written for.
+    """
+    _patch_screen(monkeypatch, TurnScreenContext(status="none"))
+    silent = StreamingAggregate()
+    silent.text = ""
+    silent.tool_calls = [{"id": "1", "name": "spawn_worker", "input": {}}]
+    silent.executed_tool_names = {"spawn_worker"}
+    silent.finish_reason = "suppress_response"
+    second = StreamingAggregate()
+    second.text = "should never be reached"
+    second.finish_reason = "stop"
+    manager, dispatcher = _scripted_manager(
+        silent, second, chain=[("first", "a"), ("second", "b")]
+    )
+
+    await manager.generate("research this in the background", use_history=False)
+
+    assert len(dispatcher.calls) == 1, "an executed side effect must not re-run"
+
+
 @pytest.mark.asyncio
 async def test_dropped_image_never_uses_the_screen_capture_failure_phrase(
     monkeypatch: pytest.MonkeyPatch,

@@ -115,7 +115,7 @@ not flooded on a long, busy mission. Pure transparency — read-only, never on t
 voice critical path (AP-9). The dominant slow-mission symptom this addresses:
 a long-but-healthy worker that emits no visible progress looks identical to a
 hang, so the user restarts the app mid-run and finished work is discarded as
-app_shutdown (forensic 2026-06-15, missions 019ecb35 / 019ec708)."""
+app_shutdown (forensic 2026-06-15, missions 019f1036 / 019f1033)."""
 
 _PROGRESS_NOTE_MAX_CHARS: int = 160
 """Cap on a single WorkerProgress note — enough for a tool name + a command /
@@ -125,7 +125,7 @@ path / text snippet, short enough to keep the event small."""
 # 5-15 minutes on average and never run much past 20 — nobody waits longer,
 # but the output must stay remarkable"). Supersedes the 2026-06-09 "more
 # time" mandate that allowed 3 x 20-minute iterations (38-49-minute missions,
-# live 019eb27f/019eb288 — users gave up and restarted the app mid-run).
+# live 019f102a/019f102b — users gave up and restarted the app mid-run).
 #
 # The shape: iteration 0 (the main build) gets the large budget; correction
 # iterations get the short one — they refine an EXISTING workspace guided by
@@ -154,7 +154,7 @@ def _worker_error_is_transient(err: str) -> bool:
     ``task_error``. Two families:
 
     - Throttling/availability: rate limits, 429, overloaded, 5xx.
-    - Subscription-window limits (live mission 019eb2fd, 2026-06-10 21:23):
+    - Subscription-window limits (live mission 019f102c, 2026-06-10 21:23):
       Claude Max says "You've hit your session limit · resets 11:10pm",
       ChatGPT/codex say "hit your usage limit" / "out of credits". The
       worker died AFTER writing the complete deliverable and the old
@@ -323,7 +323,7 @@ def _is_deliverable_path(rel: str) -> bool:
     mirror (anti-drift, BUG-008 class). False for managed worker-contract files
     (``AGENTS.md`` etc.), git-internal / state / dep-cache dirs, AND browser
     user-data / profile scratch (the 2026-06-21 chrome-profile leak,
-    mission_019eeb34-bb67: a QA worker's 4 gitignored Chrome profiles were
+    mission_019f1043-0001: a QA worker's 4 gitignored Chrome profiles were
     re-imported by the ``--ignored`` enumeration union below and buried the 2
     real deliverables in the Outputs view). Used to filter the untracked +
     ``--ignored`` union before copying into ``artifacts/files/``.
@@ -625,7 +625,7 @@ def _decode_git_quoted_path(raw: str) -> str:
 def _extract_new_file_paths_from_diff(diff: str) -> list[str]:
     """Recover paths of newly created files from a unified diff.
 
-    Live regression 2026-05-27 (mission_019e6858-ab9a): worker wrote
+    Live regression 2026-05-27 (mission_019f1016-0001): worker wrote
     test.html correctly, diff.patch carried the content, mission ended
     SUCCESS — but ``artifacts/files/`` was empty so the user saw only
     diff.patch + stream.jsonl as "deliverables" (which is garbage). Root
@@ -710,7 +710,7 @@ class TaskOutcome:
     BUDGET_EXCEEDED = "budget_exceeded"
     TIME_BUDGET_EXHAUSTED = "time_budget_exhausted"
     ERROR = "error"
-    # Live forensic 2026-05-16 (mission_019e3288): iter0 produced a real
+    # Live forensic 2026-05-16 (mission_019f1007): iter0 produced a real
     # 1237-byte diff, but the Critic spawn returned non-zero rc twice in
     # a row (EPERM symlink on `plugin-skills/browser-automation`, then
     # `Unknown agent id "critic"`). The runner mapped both into the
@@ -732,7 +732,7 @@ class TaskOutcome:
     # `_classify_worktree_setup_failure` and `_setup_failure_reason`, which
     # refine the surfaced reason to `git_missing` / `git_not_a_repository`.
     SETUP_FAILED = "setup_failed"
-    # Live deep-dive 2026-06-07 (mission 019ea1da): a Computer-Use mission whose
+    # Live deep-dive 2026-06-07 (mission 019f101f): a Computer-Use mission whose
     # final iteration hit the 630s wall-clock cap returned the generic ERROR,
     # which aggregated to `task_error` -- i.e. the "worker aborted" voice phrase.
     # The user heard a worker-abort phrase for what was really a TIMEOUT, on a
@@ -810,7 +810,7 @@ class Kontrollierer:
         # `_run_iterations` after every `_capture_diff` call so the
         # archive step can preserve the *best* iteration's output even
         # when later iterations overwrite the worktree with a no-op.
-        # See live forensic 2026-05-16 mission_019e3288.
+        # See live forensic 2026-05-16 mission_019f1007.
         self._task_iter_diffs: dict[str, list[tuple[int, str]]] = {}
         # Last classified worker-failure per mission (error_class,
         # error_detail, failed_provider) — written by the worker_error branch
@@ -890,7 +890,7 @@ class Kontrollierer:
     async def cancel_all_running(self, *, reason: str = "app_shutdown") -> list[str]:
         """Finalize + kill every in-flight mission (shutdown/restart path).
 
-        Live incident 2026-06-10 19:24:12 (missions 019eb27f + 019eb288):
+        Live incident 2026-06-10 19:24:12 (missions 019f102a + 019f102b):
         the app's self-restart killed the process with two missions in
         flight; nothing finalized them, so they lingered non-terminal until
         the recovery re-sweep buried them 30 minutes later as opaque
@@ -967,7 +967,7 @@ class Kontrollierer:
         # (missions_routes background_task) and the voice path (spawn_openclaw)
         # call run_mission with no such check, so a stale re-dispatch re-emitted
         # a second created->plan->approved lifecycle with no worker run (live
-        # 2026-05-29 on mission_019e70d0 — a duplicate Outputs card + re-spend).
+        # 2026-05-29 on mission_019f101b — a duplicate Outputs card + re-spend).
         # Error states (FAILED / TIMED_OUT / ESCALATED / ORCHESTRATOR_CRASH)
         # stay re-runnable ON PURPOSE: a crash_recovery'd mission must still be
         # retryable to completion (test_recovery_then_rerun_is_idempotent).
@@ -1097,7 +1097,7 @@ class Kontrollierer:
         elif TaskOutcome.TIMED_OUT in task_outcomes:
             # Final-attempt wall-clock timeout — honest "timeout" reason instead
             # of the generic "worker aborted" (deep-dive 2026-06-07,
-            # mission 019ea1da). The WorkerKilled event already carries
+            # mission 019f101f). The WorkerKilled event already carries
             # reason="timeout"; surface the same truth at the mission level so
             # the voice layer never speaks the "worker aborted" phrase for a run
             # that simply ran out of time.
@@ -1342,7 +1342,7 @@ class Kontrollierer:
 
             try:
                 # BUG-LIVE-03 (2026-05-14): never reuse the `openclaw` session-id
-                # across critic iterations. Live repro mission_019e2605
+                # across critic iterations. Live repro mission_019f1002
                 # showed that `openclaw` 2026.5.7 prefers the failover chain
                 # persisted in the session-state file over the explicit
                 # `--model` CLI flag on resume — so iter1 silently retried
@@ -1370,7 +1370,7 @@ class Kontrollierer:
 
             diff_text = self._capture_diff(worktree)
             log_text = self._read_stream_log(log_dir)
-            # Out-of-worktree deliverables (live mission_019e7abd, 2026-05-30):
+            # Out-of-worktree deliverables (live mission_019f101c, 2026-05-30):
             # a task may legitimately target an absolute path outside the
             # worktree (e.g. the user's Desktop). `_capture_diff` is
             # worktree-scoped and returns empty for those, which the Critic's
@@ -1403,7 +1403,7 @@ class Kontrollierer:
             )
             # Record this iteration's diff verbatim. Later iterations may
             # overwrite the worktree with a no-op Edit (live repro
-            # mission_019e3288: iter0=1237B real diff, iter1+iter2=0B), so
+            # mission_019f1007: iter0=1237B real diff, iter1+iter2=0B), so
             # capturing the worktree snapshot in `_archive_task_artifacts`
             # alone would lose iter0's real work. We persist every
             # iteration's bytes here and let the archive step pick the
@@ -1585,7 +1585,7 @@ class Kontrollierer:
                     # A worker that ran out of time (wall-clock cap) on its
                     # final attempt is a TIMEOUT, not a crash. Surface the
                     # honest `attempts_timed_out` reason (deep-dive 2026-06-07,
-                    # mission 019ea1da) so the voice layer speaks the "time limit
+                    # mission 019f101f) so the voice layer speaks the "time limit
                     # exceeded" phrase instead of the alarming "worker aborted"
                     # phrase that a real crash produces. Any other worker error
                     # (auth/billing/non-timeout crash) stays ERROR.
@@ -1717,7 +1717,7 @@ class Kontrollierer:
                 continue
             except (CriticSchemaInvalid, CriticVerdictInconsistent) as exc:
                 logger.warning("Task %s iter %d: critic failed: %s", step.task_id, iteration, exc)
-                # Live forensic 2026-05-16 (mission_019e3288): a Critic
+                # Live forensic 2026-05-16 (mission_019f1007): a Critic
                 # subprocess crash on iter0 (EPERM symlink + Unknown
                 # agent id) currently degrades to `continue` and the
                 # worker's real iter0 work is silently overwritten by
@@ -1781,7 +1781,7 @@ class Kontrollierer:
                 # abgeschlossen." Two shapes qualify — (a) empty diff + real
                 # tool evidence + answer, and (b) a pure question (no tools, no
                 # diff) whose answer IS the deliverable (mission_prompt is
-                # informational; live mission 019ec638, 2026-06-14). Code tasks
+                # informational; live mission 019f1030, 2026-06-14). Code tasks
                 # (non-empty diff) yield None here and keep the generic summary.
                 answer = readonly_answer(diff_text, log_text, prompt=mission_prompt)
                 if answer:
@@ -1836,7 +1836,7 @@ class Kontrollierer:
             # `timed_out` flag (a wall-clock / first-output timeout). The
             # orchestrator keys is_timeout off THIS, not a "timeout" substring
             # in worker_error — so a codex/gemini timeout that left a real diff
-            # is graded, not discarded (mission 019eacb8).
+            # is graded, not discarded (mission 019f1024).
             self.worker_timed_out = worker_timed_out
             # Non-None when the worker subprocess returned a terminal
             # `result` event with is_error=True. Carries the upstream
@@ -2089,7 +2089,7 @@ class Kontrollierer:
         # (rg / Get-Content / tool_result blocks), and any worker reading
         # this repo's own safety blacklist, security docs or frontend
         # secret-panel code was killed AFTER delivering a clean diff
-        # (live mission 019eadaf-272d, 2026-06-09 — 20 min of work
+        # (live mission 019f1025-0001, 2026-06-09 — 20 min of work
         # discarded via WorkerKilled(injection_detected) on rm -rf / from
         # jarvis.toml.example). Authored channels (assistant prose,
         # commands, tool_use inputs) stay fully scanned.
@@ -2213,7 +2213,7 @@ class Kontrollierer:
         content, so a freshly-written file fell through BOTH detection
         paths → empty diff → the Critic deterministically returned
         "revise" → critic_loop_exhausted even though the worker had
-        written the file correctly (live repro mission_019e5a0f, 3 empty
+        written the file correctly (live repro mission_019f1011, 3 empty
         iterations despite a real Write tool-call). Switching to `add -A`
         stages full blobs so `git diff HEAD` shows new files reliably.
 
@@ -2223,7 +2223,7 @@ class Kontrollierer:
         prompt reads the diff as text, so comment-prefixed lines are
         informational and don't require a parser change.
 
-        Committed-deliverable capture (2026-07-03, mission 019f26d0-bb07): when
+        Committed-deliverable capture (2026-07-03, mission 019f104b-0001): when
         the worktree records a BASE commit SHA (``read_worktree_base_sha``), we
         diff the index against that BASE rather than the live ``HEAD``. A worker
         that ``git commit``s its file advances ``HEAD`` past the deliverable, so
@@ -2258,7 +2258,7 @@ class Kontrollierer:
                 # reliably — including on Windows git, where plain `git diff
                 # HEAD` (working-tree vs HEAD) intermittently returned EMPTY
                 # for freshly-staged new files (live repro 2026-05-24). Verified
-                # green: mission_019e5a52 captured a 2728-byte diff for a
+                # green: mission_019f1013 captured a 2728-byte diff for a
                 # worker-created file via this exact sequence.
                 # `-c core.quotepath=false` keeps non-ASCII paths raw UTF-8
                 # instead of octal-escaping them (HIGH finding 2026-05-27).
@@ -2327,7 +2327,7 @@ class Kontrollierer:
         targets an absolute path OUTSIDE the worktree (e.g. the user's
         ``Desktop\\M\\``) therefore yields an empty diff, which the Critic's
         GROUND-TRUTH-RULE fails deterministically — even when the file was
-        created correctly (live mission_019e7abd, 2026-05-30: 3 empty
+        created correctly (live mission_019f101c, 2026-05-30: 3 empty
         iterations → ``critic_loop_exhausted`` while the 282-byte file sat on
         the Desktop). This helper restores ground truth: for every path the
         worker wrote with a real, non-errored ``Write``/``Edit`` tool_use
@@ -2490,7 +2490,7 @@ class Kontrollierer:
           actually ran, capturing the worktree state right after that
           iteration's worker finished. Preserves real work from earlier
           iterations even when later iterations land a no-op edit that
-          reverts the diff back to empty (live repro mission_019e3288,
+          reverts the diff back to empty (live repro mission_019f1007,
           2026-05-16: iter0=1237B, iter1+iter2=0B because the Critic
           crashed on iter0's review and Sonnet then re-applied an
           already-applied Edit).
@@ -2605,7 +2605,7 @@ class Kontrollierer:
                         untracked.append(rel)
 
             # THIRD enumeration — files the worker COMMITTED (2026-07-03, mission
-            # 019f26d0-bb07). A committed deliverable is tracked, so neither
+            # 019f104b-0001). A committed deliverable is tracked, so neither
             # `ls-files --others` above nor the staged `git diff HEAD` sees it,
             # and it is lost when the worktree is pruned. When a base commit was
             # recorded (`read_worktree_base_sha`), enumerate every file
@@ -2660,7 +2660,7 @@ class Kontrollierer:
                 # newly-created files reliably; plain `git diff HEAD`
                 # (working-tree vs HEAD) returned EMPTY for freshly-staged
                 # new files on Windows git, even though the blob was real
-                # (live proof mission_019e5a16: `git diff --cached` showed
+                # (live proof mission_019f1012: `git diff --cached` showed
                 # "+opus direct works" while `git diff HEAD` was empty).
                 # `-c core.quotepath=false` keeps non-ASCII paths raw UTF-8
                 # instead of octal-escaping them (HIGH finding 2026-05-27).
@@ -2697,7 +2697,7 @@ class Kontrollierer:
             # Recover current new-file paths the ``git ls-files --others`` call
             # missed because earlier ``_capture_diff`` invocations had
             # already run ``git add -A`` (live 2026-05-27 regression
-            # mission_019e6858-ab9a: SUCCESS but artifacts/files/ empty).
+            # mission_019f1016-0001: SUCCESS but artifacts/files/ empty).
             # Use the fresh worktree diff, not the largest historical diff:
             # the latter may name a first draft that a later worker deleted or
             # renamed. Per-iteration patches preserve that history separately.
@@ -2713,7 +2713,7 @@ class Kontrollierer:
             # sibling DOCUMENT deliverable that survives in the set (e.g. a
             # generate_guide.py that writes city_guide.html as an embedded
             # literal). The script is process scratch the user did not ask for —
-            # live forensic 2026-06-22 (mission_019ef099): a "make me one HTML
+            # live forensic 2026-06-22 (mission_019f1047): a "make me one HTML
             # file" mission shipped the HTML PLUS its Python generator, which the
             # user opened and saw "only code". Safe by construction: the emitted
             # document is never script-typed, so it always survives.

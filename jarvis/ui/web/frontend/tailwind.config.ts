@@ -46,6 +46,24 @@ const config: Config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        /*
+         * Two colours whose ROLE is fixed while their value flips with the
+         * theme. They exist because a large part of this UI is built from
+         * translucent washes rather than solid fills — `bg-white/[0.03]` for a
+         * raised surface, `border-white/[0.08]` for a hairline, `bg-black/60`
+         * for a dialog backdrop — and every one of those is a literal colour
+         * that only works on one ground.
+         *
+         *   sheen  — "lift this off the surface". White on dark, ink on light.
+         *   scrim  — "push this behind something". Black on dark, warm charcoal
+         *            on light, so a backdrop never turns blue-grey.
+         *
+         * Always use them WITH an alpha (`bg-sheen/[0.04]`, `bg-scrim/60`);
+         * at full opacity they are just the extreme ends of the palette and
+         * you almost certainly want --card / --background instead.
+         */
+        sheen: "rgb(var(--sheen-rgb) / <alpha-value>)",
+        scrim: "rgb(var(--scrim-rgb) / <alpha-value>)",
       },
       borderRadius: {
         lg: "var(--radius)",

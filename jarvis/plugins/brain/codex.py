@@ -60,12 +60,73 @@ _CLI_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 
 
 def _resolve_codex_binary() -> str | None:
-    """On-PATH ``codex`` binary (Windows shim variants included), or None."""
+    """On-PATH ``codex`` binary (Windows shim variants included), or None.
+
+    Delegates to the same resolver the Providers card uses. Doing its own
+    ``shutil.which`` meant the card could report the subscription as connected
+    while every action failed with "Codex CLI not found": a GUI-launched app on
+    macOS (and a Windows app started from Explorer) inherits a login PATH that
+    never saw the user's shell profile, and only ``CodexAuthService`` repairs
+    that via ``ensure_cli_paths()``. Two resolvers, two answers, one confusing
+    bug — so there is now one.
+    """
+    try:
+        from jarvis.codex_auth import CodexAuthService  # noqa: PLC0415
+
+        resolved = CodexAuthService()._resolve_binary()
+        if resolved:
+            return resolved
+    except Exception:  # noqa: BLE001 — fall back to the plain PATH probe
+        log.debug("Shared Codex binary resolution failed", exc_info=True)
     for name in ("codex", "codex.cmd", "codex.exe"):
         path = shutil.which(name)
         if path:
             return path
     return None
+
+
+async def _terminate_posix_process_group(pid: int, proc: Any) -> None:
+    """Reap a POSIX process group: ``SIGTERM``, a short grace, then ``SIGKILL``.
+
+    Best-effort by nature — a tree that already exited is the good outcome, and
+    a group we may not signal is not worth failing a teardown over.
+    """
+    import signal  # noqa: PLC0415 — POSIX-only, kept off the import path
+
+    killpg = getattr(os, "killpg", None)
+    getpgid = getattr(os, "getpgid", None)
+    if not callable(killpg):
+        return
+    try:
+        pgid = getpgid(pid) if callable(getpgid) else pid
+    except (ProcessLookupError, OSError):
+        # Silence is right: the child is already gone, or has no readable
+        # group. It was started with `start_new_session`, so its pid IS the
+        # group in every case that still matters — falling back is exact.
+        pgid = pid
+
+    def _signal(sig: int) -> bool:
+        try:
+            killpg(pgid, sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            # Silence is right: "already exited" is the outcome we wanted, and
+            # a group that is not ours to signal cannot be reaped by retrying.
+            # The bool tells the caller not to bother escalating.
+            return False
+        return True
+
+    if not _signal(signal.SIGTERM):
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=2.0)
+        return
+    except Exception as exc:  # noqa: BLE001 — SIGTERM ignored, escalate
+        log.debug(
+            "Codex CLI process group %s survived SIGTERM (%s); escalating",
+            pgid,
+            type(exc).__name__,
+        )
+    _signal(getattr(signal, "SIGKILL", signal.SIGTERM))
 
 
 def _codex_oauth_connected() -> bool:
@@ -279,6 +340,14 @@ class CodexBrain:
         )
 
         t0 = time.monotonic()
+        # POSIX: give the CLI its own process group so a timeout can reap the
+        # WHOLE tree. The npm launcher execs a real `codex` child; killing only
+        # the launcher left that child running, so every capped or cancelled
+        # subscription turn leaked a process on macOS and Linux while Windows
+        # was already clean via `taskkill /T`. Windows rejects the kwarg.
+        session_kwargs: dict[str, Any] = (
+            {} if sys.platform == "win32" else {"start_new_session": True}
+        )
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -288,6 +357,7 @@ class CodexBrain:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 creationflags=creationflags,
+                **session_kwargs,
             )
         except (FileNotFoundError, OSError) as exc:
             with suppress(OSError):
@@ -325,6 +395,11 @@ class CodexBrain:
                         creationflags=creationflags,
                     )
                     await asyncio.wait_for(killer.wait(), timeout=3.0)
+            elif sys.platform != "win32" and isinstance(pid, int) and pid > 0:
+                # The POSIX sibling of `taskkill /T`: the CLI leads its own
+                # group (start_new_session above), so one signal reaps the
+                # launcher AND the real codex child it exec'd.
+                await _terminate_posix_process_group(pid, proc)
             with suppress(OSError):
                 proc.kill()
             with suppress(Exception):  # noqa: BLE001

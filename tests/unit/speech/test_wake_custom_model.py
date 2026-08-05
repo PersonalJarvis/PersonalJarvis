@@ -29,7 +29,7 @@ def _no_vosk_model(monkeypatch):
 def _cfg(
     model_path: str,
     sensitivity: float = 0.5,
-    phrase: str = "Hey Nico",
+    phrase: str = "Hey Nova",
     engine: str = "custom_onnx",
 ) -> SimpleNamespace:
     return SimpleNamespace(
@@ -44,7 +44,7 @@ def _cfg(
 def test_custom_onnx_uses_calibrated_higher_threshold(tmp_path) -> None:
     from jarvis.speech.wake_phrase import resolve_wake_plan
 
-    model = tmp_path / "hey_nico.onnx"
+    model = tmp_path / "hey_nova.onnx"
     model.write_bytes(b"onnx")  # resolve only checks the path is a file
     plan = resolve_wake_plan(_cfg(str(model)), local_whisper_available=False)
     assert plan.engine == "custom_onnx"
@@ -77,9 +77,9 @@ def test_custom_onnx_threshold_is_pinned_regardless_of_legacy_sensitivity(
 #
 # Live bug 2026-07-02: the user changed the wake phrase to "Hey Fable"
 # (engine Auto) in Settings, but jarvis.toml still carried
-# custom_model_path=hey_nico.onnx from the earlier trained phrase — and the
-# resolver's "any custom path wins" rule kept the NICO model as the detector,
-# so the new phrase was deaf ("only Hey Nico still works"). Rule now:
+# custom_model_path=hey_nova.onnx from the earlier trained phrase — and the
+# resolver's "any custom path wins" rule kept the NOVA model as the detector,
+# so the new phrase was deaf ("only Hey Nova still works"). Rule now:
 # a custom model is auto-adopted only when it BELONGS to the configured
 # phrase (model filename tokens, sound-folded); an explicit
 # engine="custom_onnx" still forces it (user's own naming is their choice).
@@ -89,7 +89,7 @@ def test_custom_onnx_threshold_is_pinned_regardless_of_legacy_sensitivity(
 def test_stale_custom_model_does_not_hijack_new_phrase(tmp_path) -> None:
     from jarvis.speech.wake_phrase import resolve_wake_plan
 
-    model = tmp_path / "hey_nico.onnx"
+    model = tmp_path / "hey_nova.onnx"
     model.write_bytes(b"onnx")
     plan = resolve_wake_plan(
         _cfg(str(model), phrase="Hey Fable", engine="auto"),
@@ -105,10 +105,10 @@ def test_stale_custom_model_does_not_hijack_new_phrase(tmp_path) -> None:
 def test_matching_custom_model_still_adopted_on_auto(tmp_path) -> None:
     from jarvis.speech.wake_phrase import resolve_wake_plan
 
-    model = tmp_path / "hey_nico.onnx"
+    model = tmp_path / "hey_nova.onnx"
     model.write_bytes(b"onnx")
     plan = resolve_wake_plan(
-        _cfg(str(model), phrase="Hey Nico", engine="auto"),
+        _cfg(str(model), phrase="Hey Nova", engine="auto"),
         local_whisper_available=True,
     )
     assert plan.engine == "custom_onnx"
@@ -116,14 +116,14 @@ def test_matching_custom_model_still_adopted_on_auto(tmp_path) -> None:
 
 
 def test_sound_folded_spelling_still_owns_the_model(tmp_path) -> None:
-    # "Hey Niko" vs hey_nico.onnx: sound-folding makes the tokens compare
+    # "Hey Nova" vs hey_nova.onnx: sound-folding makes the tokens compare
     # equal, so a spelling variant of the SAME word keeps the trained model.
     from jarvis.speech.wake_phrase import resolve_wake_plan
 
-    model = tmp_path / "hey_nico.onnx"
+    model = tmp_path / "hey_nova.onnx"
     model.write_bytes(b"onnx")
     plan = resolve_wake_plan(
-        _cfg(str(model), phrase="Hey Niko", engine="auto"),
+        _cfg(str(model), phrase="Hey Nova", engine="auto"),
         local_whisper_available=True,
     )
     assert plan.engine == "custom_onnx"
@@ -151,7 +151,7 @@ def test_stale_custom_model_lets_other_phrases_through_generically(tmp_path) -> 
     # 2026-07-07: no bundled model wins anything).
     from jarvis.speech.wake_phrase import resolve_wake_plan
 
-    model = tmp_path / "hey_nico.onnx"
+    model = tmp_path / "hey_nova.onnx"
     model.write_bytes(b"onnx")
     plan = resolve_wake_plan(
         _cfg(str(model), phrase="Hey Jarvis", engine="auto"),
@@ -168,7 +168,7 @@ def test_stale_custom_model_without_whisper_is_hotkey_only(tmp_path) -> None:
     # fallback and never a dead listener.
     from jarvis.speech.wake_phrase import resolve_wake_plan
 
-    model = tmp_path / "hey_nico.onnx"
+    model = tmp_path / "hey_nova.onnx"
     model.write_bytes(b"onnx")
     plan = resolve_wake_plan(
         _cfg(str(model), phrase="Hey Fable", engine="auto"),

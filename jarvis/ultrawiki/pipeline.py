@@ -491,6 +491,14 @@ class PipelineWorker:
         # deference; it does not raise the batch size.
         if not attempted or self._media_mode() == "eager":
             attempted += await self._media_pass()
+        # The word lexicon runs LAST, in whatever gap is left. Like the event
+        # backfill it TERMINATES — once the vocabulary is harvested and
+        # embedded it costs one cursor read per pass — but building it over a
+        # large corpus takes many passes, and placing it above the media lane
+        # would starve that lane for the whole build. Word search degrades
+        # gracefully while it fills; a photo nobody described stays invisible.
+        if not attempted:
+            attempted += await self._lexicon_pass()
         await self._promote_pass()
         attempted += await self._legacy_tombstone_repair_pass()
         # Sample AFTER every pass, including passes that achieved nothing: a
@@ -1380,6 +1388,92 @@ class PipelineWorker:
             cursor = max(cursor, int(item["id"]))
         await self._store.set_meta(key, str(cursor))
         return len(items)
+
+    # -- word lexicon --------------------------------------------------------
+
+    async def _lexicon_pass(self) -> int:
+        """Harvest vocabulary, then embed the terms word search compares against.
+
+        Two bounded steps per pass, harvest first: embedding a term the corpus
+        has not been walked for yet would be paying for a word nobody can
+        search. Both are resumable — the harvest by a cursor, the embedding by
+        "which terms have no vector in this space" — so a restart continues
+        instead of starting over, and a finished lexicon costs one cursor read
+        per pass.
+
+        Every capability is probed, so a third-party store or a test fake
+        simply has no lexicon lane (and no error). An embedding slot that is
+        unusable pauses only THIS lane: word search still answers through the
+        provider-free co-occurrence path.
+        """
+        ultrawiki = getattr(self._cfg, "ultrawiki", None)
+        if not bool(getattr(ultrawiki, "lexicon_enabled", True)):
+            return 0
+        if not callable(getattr(self._store, "lexicon_scan_batch", None)):
+            return 0
+        from jarvis.ultrawiki import lexicon as lexicon_mod  # noqa: PLC0415 — lazy (AP-26)
+
+        try:
+            harvested = await lexicon_mod.harvest_pass(
+                self._store, limit=lexicon_mod.HARVEST_BATCH
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — an optional lane never kills ingestion
+            log.warning(
+                "UltraWiki lexicon harvest failed; retrying next pass", exc_info=True
+            )
+            return 0
+        if harvested:
+            return harvested
+
+        # Vocabulary is up to date — spend the pass on term vectors instead.
+        # A rebuild in flight is left alone: its shadow space is incomplete, so
+        # embedding terms into it would pin the lexicon to a geometry no search
+        # answers from yet (D-3).
+        if await self._reembed_is_running():
+            return 0
+        try:
+            model, dim = await self._store.embedding_space()
+        except Exception:  # noqa: BLE001 — an unreadable pin pauses the lane only
+            log.debug("UltraWiki lexicon: embedding space unreadable", exc_info=True)
+            return 0
+        if not model or int(dim) <= 0:
+            return 0  # nothing embedded yet; the document lanes go first
+        backend, _configured_model, reason = await self._embedding_slot()
+        if backend is None:
+            self._note_stage_pause("lexicon", reason)
+            return 0
+        if self._embed_cooldown_reason():
+            return 0  # the provider asked everyone to wait; this lane can
+        self._clear_stage_pause("lexicon")
+        try:
+            embedded = await lexicon_mod.embed_terms_pass(
+                self._store,
+                backend,
+                # The store's ACTIVE pin, never the configured model: term
+                # vectors have to live in the same space as the passages they
+                # will be compared against.
+                model=model,
+                dim=int(dim),
+                limit=lexicon_mod.EMBED_BATCH,
+                max_terms=int(getattr(ultrawiki, "lexicon_max_terms", 20000) or 20000),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a provider outage pauses, never kills
+            if _global_embed_failure(exc):
+                self._begin_embed_cooldown(exc)
+            else:
+                log.info(
+                    "UltraWiki lexicon: term embedding failed (%s); "
+                    "retrying next pass",
+                    exc,
+                )
+            return 0
+        if embedded:
+            log.debug("UltraWiki lexicon: embedded %d term(s)", embedded)
+        return embedded
 
     # -- media enrichment ----------------------------------------------------
 

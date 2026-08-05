@@ -10,8 +10,8 @@ surface, so the CLI adds defense in depth on the client side:
   In an interactive TTY the user is prompted; when piped/non-interactive the
   command **fails closed** unless ``--yes`` / ``-y`` (or ``JARVIS_CLI_ASSUME_YES``)
   is set.
-* **dangerous** (every ``DELETE`` plus an explicit path denylist — restart, place
-  a call, dispatch a mission, …): always require an explicit ``--yes``; an
+* **dangerous** (every ``DELETE`` plus an explicit path denylist — restart,
+  place an outbound call, dispatch a mission, …): always require an explicit ``--yes``; an
   interactive ``[y/N]`` prompt alone does not authorize them.
 
 ``--dry-run`` short-circuits any command: it prints the exact request that would
@@ -39,7 +39,6 @@ _MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # Kept deliberately small and explicit; extend as curated commands are added.
 _DANGEROUS_MARKERS: tuple[str, ...] = (
     "/restart",
-    "/call",
     "/outbound",
     "/dispatch",
     "/rerun",
@@ -60,7 +59,14 @@ def is_dangerous(method: str, path: str) -> bool:
     if method.upper() == "DELETE":
         return True
     low = path.lower()
-    return any(marker in low for marker in _DANGEROUS_MARKERS)
+    route = low.split("?", 1)[0]
+    segments = tuple(segment for segment in route.split("/") if segment)
+    legacy_contact_call = (
+        len(segments) == 4
+        and segments[:2] == ("api", "contacts")
+        and segments[-1] == "call"
+    )
+    return any(marker in low for marker in _DANGEROUS_MARKERS) or legacy_contact_call
 
 
 def _assume_yes_env() -> bool:

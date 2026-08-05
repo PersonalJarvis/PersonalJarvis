@@ -57,7 +57,7 @@ class _WarmableSTT:
 def _wake(stt, *, fallback_s: float = 30.0) -> RollingWhisperWake:
     return RollingWhisperWake(
         stt,
-        pattern=re.compile(r"nico", re.IGNORECASE),
+        pattern=re.compile(r"nova", re.IGNORECASE),
         poll_interval_s=0.01,
         cooldown_s=0.0,
         save_debug_wavs=False,

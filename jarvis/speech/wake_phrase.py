@@ -108,7 +108,7 @@ class WakeMatcher:
     ) -> None:
         self._pattern = pattern
         # Sound-fold the core so a sound-equivalent ASR spelling of the wake word
-        # ("Nico" -> "Niko"/"Nicko"/"Nikko") compares equal (see ``sound_fold``).
+        # ("Nova" -> "Nova"/"Nicko"/"Nikko") compares equal (see ``sound_fold``).
         self._core = [sound_fold(c) for c in (core_tokens or [])]
         self._ratio = fuzzy_ratio
         self._require_prefix = require_known_prefix
@@ -121,7 +121,7 @@ class WakeMatcher:
 
         Short proper-noun wake words ("Neko", "Mia", "Leo") are penalised
         hardest by ``SequenceMatcher``: a single STT mishearing ("Neko" ->
-        "Niko") is a one-character substitution, which on a 4-char token drops
+        "Nova") is a one-character substitution, which on a 4-char token drops
         the ratio to ~0.75 — just under the 0.8 default, so the word "never
         works". For short cores we therefore relax the bar to allow ~one
         character of drift (never below an absolute 0.6 floor so it cannot
@@ -175,7 +175,7 @@ class WakeMatcher:
             if self._require_prefix:
                 # The configured phrase has a wake prefix ("Hey Fable") -> the
                 # core must be IMMEDIATELY preceded by a prefix token. The bare
-                # core word inside ordinary speech ("1 Fable Pro", "Nico, mein
+                # core word inside ordinary speech ("1 Fable Pro", "Nova, mein
                 # Barsch.") stays silent — the 2026-07-02 user mandate that
                 # REVERSED the 2026-06-29 "prefix optional" trade-off. Any
                 # known prefix counts ("Hallo Fable" still wakes a "Hey Fable"
@@ -202,7 +202,7 @@ def compile_wake_matcher(phrase: str, *, fuzzy_ratio: float = 0.8) -> WakeMatche
     window) split the phrase across snapshots. That trade-off is REVERSED by
     explicit user instruction (2026-07-02): the bare core word in ordinary /
     dictated speech kept activating Jarvis (live: 'WAKE matched fable in
-    "1 Fable Pro"', 'nico in "Nico, mein Barsch."'; bench: 71.7 % false accepts
+    "1 Fable Pro"', 'nova in "Nova, mein Barsch."'; bench: 71.7 % false accepts
     on real bare-core windows). Fire ONLY on the configured phrase. The
     split-window concern is addressed by the faster transcription cadence
     (2026-07-02 wake-latency work) — consecutive windows overlap by more than a
@@ -231,16 +231,16 @@ def _canonical_keyword(phrase: str) -> str:
 def custom_model_matches_phrase(model_path: str, phrase: str) -> bool:
     """True when a trained wake-model FILE belongs to ``phrase``.
 
-    The trainer names models after their phrase (``hey_nico.onnx`` for
-    "Hey Nico"), so ownership is decided by comparing the sound-folded core
+    The trainer names models after their phrase (``hey_nova.onnx`` for
+    "Hey Nova"), so ownership is decided by comparing the sound-folded core
     tokens of the phrase against the sound-folded tokens of the file stem.
     Sound-folding keeps spelling variants of the same word together
-    ("Hey Niko" still owns ``hey_nico.onnx``). An empty phrase owns nothing.
+    ("Hey Nova" still owns ``hey_nova.onnx``). An empty phrase owns nothing.
 
     Why this exists (live bug 2026-07-02): ``custom_model_path`` stays in the
     config when the user changes the wake phrase in Settings, and the resolver
     used to let ANY custom path win — the stale model then kept detecting the
-    OLD word and the new phrase was deaf ("only Hey Nico still works").
+    OLD word and the new phrase was deaf ("only Hey Nova still works").
     """
     core = [sound_fold(t) for t in phrase_core_for_match(phrase)]
     if not core:
@@ -340,8 +340,8 @@ def resolve_wake_plan(
     # configured phrase; an explicit engine="custom_onnx" still forces it
     # regardless of its filename (the user's own training, their own naming).
     # Live bug 2026-07-02: the phrase was changed to "Hey Fable" in Settings,
-    # but the stale hey_nico.onnx path left in config used to win here
-    # unconditionally — the NICO model stayed the detector and the new phrase
+    # but the stale hey_nova.onnx path left in config used to win here
+    # unconditionally — the NOVA model stayed the detector and the new phrase
     # was deaf. A stale model falls through to the normal any-phrase path and
     # is kept in config so switching the phrase back re-adopts it.
     custom_missing = False
@@ -370,7 +370,7 @@ def resolve_wake_plan(
                 # — scores up to 1.000 on breath/ambient/other speech. The
                 # verifier matches against this phrase's sound-folded fuzzy
                 # matcher, so it works for ANY configured wake word and
-                # tolerates ASR spelling drift ("Niko" for "Nico").
+                # tolerates ASR spelling drift ("Nova" for "Nova").
                 verify_prefix=True,
             )
         else:

@@ -22,6 +22,7 @@ from jarvis.core.branding import (
 )
 from jarvis.core.branding import (
     LINUX_WM_CLASS,
+    WINDOWS_BRANDED_LAUNCH_ENV_VAR,
     WINDOWS_BRANDED_LAUNCHER_DIR_NAME,
 )
 from jarvis.core.branding import (
@@ -79,7 +80,7 @@ _IID_IPROPERTYSTORE = "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}"
 # ``ensure_branded_launcher_exe`` + ``maybe_reexec_through_branded_launcher``.
 # Set in the child's env when we re-exec through the branded exe, so the child
 # does not re-exec again (loop guard).
-_BRANDED_LAUNCH_ENV = "JARVIS_BRANDED_LAUNCH"
+_BRANDED_LAUNCH_ENV = WINDOWS_BRANDED_LAUNCH_ENV_VAR
 
 
 def register_windows_app_user_model_id(
@@ -926,13 +927,20 @@ def apply_tk_window_icon(root: Any) -> None:
 
 
 def set_window_icon_by_title(
-    title: str, ico_path: Path, *, quiet: bool = False
+    title: str,
+    ico_path: Path,
+    *,
+    quiet: bool = False,
+    expected_pid: int | None = None,
 ) -> bool:
-    """Sets the taskbar and titlebar icon of the window matching ``title``.
+    """Set the icon only when the titled window belongs to ``expected_pid``.
 
     Needed because pywebview doesn't stably expose the HWND. ``FindWindowW``
     against the title is a pragmatic way — the Jarvis window title is
-    constant ("Personal Jarvis") and unique.
+    constant ("Personal Jarvis"). The title is not globally unique, though: a
+    terminal opened in the repository commonly has the same title. Never stamp
+    a title match until its owning PID is verified, or the terminal receives
+    Jarvis's AUMID/relaunch metadata and gets grouped with the desktop app.
 
     Args:
         title: Window title exactly as set by pywebview.
@@ -940,6 +948,8 @@ def set_window_icon_by_title(
         quiet: If True, "hwnd not found" notices are logged at debug
             instead of warning. For polling loops where the window is
             expected to appear only after a few iterations.
+        expected_pid: Required owner of the matched window. Defaults to the
+            current process.
 
     Returns:
         True if both icons could be set.
@@ -959,12 +969,27 @@ def set_window_icon_by_title(
 
     user32 = ctypes.windll.user32
     user32.FindWindowW.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
     hwnd = user32.FindWindowW(None, title)
     if not hwnd:
         if quiet:
             logger.debug("Window '{}' not found (yet)", title)
         else:
             logger.warning("Window '{}' not found — icon not set", title)
+        return False
+    owner_pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner_pid))
+    wanted_pid = os.getpid() if expected_pid is None else expected_pid
+    if owner_pid.value != wanted_pid:
+        logger.debug(
+            "Window '{}' belongs to pid={}, not pid={}; icon not set",
+            title,
+            owner_pid.value,
+            wanted_pid,
+        )
         return False
     return _apply_icon_to_hwnd(int(hwnd), ico_path)
 

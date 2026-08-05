@@ -17,9 +17,19 @@ the recommended pull.
 
 Model discovery is NATIVE (``/api/tags`` + ``/api/show``): with no configured
 model the brain runs the smallest DOWNLOADED model whose declared capabilities
-match the turn (``completion``, plus ``tools`` for tool turns); ``:cloud``
-references never count as local, and a model-less server produces an honest
-"pull one first" error instead of a hardcoded default that would 404.
+match the turn (``completion``, plus ``tools`` for tool turns, plus ``vision``
+for a turn carrying images); ``:cloud`` references never count as local, and a
+model-less server produces an honest "pull one first" error instead of a
+hardcoded default that would 404.
+
+**Vision is a MODEL property, never a server property.** A blanket
+``supports_vision = True`` on the class made every Ollama install advertise
+sight: ``resolve_vision_brain`` picked it for Screen Context and the CU planner
+let it plan from screenshots, so a host whose only pull is a text-only model
+answered *about* the picture it had never seen. The flag is therefore resolved
+per SELECTED model from the cached catalog (the same route OpenRouter takes),
+the image path negotiates a ``vision``-capable download, and a server without
+one raises an honest error instead of describing a screenshot blind.
 """
 
 from __future__ import annotations
@@ -44,6 +54,10 @@ DEFAULT_SERVER_ROOT = "http://localhost:11434"
 # the OpenAI-compat layer (Gemma-family models have known streaming-tool-call
 # defects there). Used in error/help text only — never silently pulled.
 RECOMMENDED_PULL = "qwen3.5"
+
+# The multimodal counterpart, named only in help text for a turn that carries
+# images and finds no ``vision``-capable download. Never silently pulled.
+RECOMMENDED_VISION_PULL = "qwen3-vl"
 
 # Local server: an unreachable endpoint must fail fast (2 s) so the fallback
 # chain moves on, while a slow CPU-bound generation may legitimately stream
@@ -72,6 +86,54 @@ def normalize_server_root(url: str) -> str:
     return root.rstrip("/")
 
 
+def _request_has_images(req: BrainRequest) -> bool:
+    """True when any user message of ``req`` carries an image block.
+
+    ``getattr`` for the same backwards-compatibility reason the shared streamer
+    uses it: a Protocol predating multimodal messages has no ``images`` field.
+    """
+    for message in getattr(req, "messages", ()) or ():
+        if getattr(message, "images", ()):
+            return True
+    return False
+
+
+def _declared_vision_support(model: str) -> bool:
+    """Whether this install can be handed an image, read SYNCHRONOUSLY.
+
+    ``resolve_vision_brain`` and the CU planner ask for ``supports_vision``
+    before any call has been made, so the answer may not hit the network here
+    (that would block the caller's event loop). It comes from the cached model
+    catalog instead, which stores each download's declared ``/api/show``
+    capabilities under the generic modality fields.
+
+    Fail-OPEN on unknown: with a configured model whose capabilities are not
+    cached, or a catalog that has never been fetched on this host, the answer
+    stays ``True`` — the image path then negotiates a real vision model and
+    raises an honest error if there is none, which is strictly better than
+    declaring an install blind and silently routing every screenshot to the
+    cloud. Fail-CLOSED once the catalog actually says no: a server whose
+    downloads are all text-only answers ``False`` and drops out of the vision
+    chain, so the resolver crosses to a provider that can see (AP-21/AP-22).
+    """
+    try:
+        from jarvis.brain.model_catalog import (  # noqa: PLC0415 — lazy (AP-26)
+            model_capabilities,
+            pick_vision_model,
+            provider_has_modality_data,
+        )
+
+        if model:
+            vision = model_capabilities("ollama", model)["vision"]
+            return True if vision is None else bool(vision)
+        if not provider_has_modality_data("ollama"):
+            return True
+        return pick_vision_model("ollama") is not None
+    except Exception:  # noqa: BLE001 — a probe must never break construction
+        log.debug("ollama: vision capability probe failed — assuming capable")
+        return True
+
+
 def default_server_root() -> str:
     """Vendor-default server root: ``OLLAMA_HOST`` if set, else localhost.
 
@@ -86,6 +148,11 @@ class OllamaBrain:
     # Conservative floor — the real window is model-dependent (the qwen line
     # reaches 128k); the manager treats this as a budget hint, not a hard cap.
     context_window: int = 32_768
+    # Class-attr DEFAULTS (capable). The INSTANCE narrows them per selected
+    # model in ``__init__`` and again once the server has answered — an Ollama
+    # server serves whatever the user pulled, and a text-only pull must not be
+    # sent screenshots (the vision resolver and the CU planner both gate on
+    # ``supports_vision``).
     supports_tools: bool = True
     supports_vision: bool = True
 
@@ -94,10 +161,14 @@ class OllamaBrain:
         self._client: Any = None
         self._server_root: str | None = None
         self._credential: str | None = None
-        # Discovery cache per requirement profile (False = plain chat,
-        # True = chat + tools) — a tool-less turn may run a smaller model
-        # than a tool turn without re-asking the server every time.
-        self._discovered: dict[bool, str] = {}
+        # Discovery cache per requirement profile (tools, vision) — a plain
+        # chat turn may run a smaller model than a tool turn or an image turn
+        # without re-asking the server every time.
+        self._discovered: dict[tuple[bool, bool], str] = {}
+        # Per-model ``/api/show`` capability cache, shared by discovery and the
+        # image path so one turn never probes the same download twice.
+        self._caps_cache: dict[str, set[str] | None] = {}
+        self.supports_vision = _declared_vision_support(self._model)
 
     def can_call_tools(self) -> bool:
         return self.supports_tools
@@ -128,7 +199,9 @@ class OllamaBrain:
             )
         return self._client
 
-    async def _resolve_model(self, *, need_tools: bool = False) -> str:
+    async def _resolve_model(
+        self, *, need_tools: bool = False, need_vision: bool = False
+    ) -> str:
         """The configured model, else the smallest CAPABLE download.
 
         Hard rules for the silent default (three live incidents 2026-07-25):
@@ -139,13 +212,16 @@ class OllamaBrain:
         32 GB box and froze the whole desktop) — but only one whose DECLARED
         ``/api/show`` capabilities match the turn: ``completion`` always
         (bge-m3 would 400 on chat), plus ``tools`` when the request carries
-        tools (deepseek-llm 400s on a tool turn). The user's explicit model
-        pick always overrides this.
+        tools (deepseek-llm 400s on a tool turn), plus ``vision`` when it
+        carries images (a text-only model does not refuse a screenshot — it
+        answers about the words around it). The user's explicit model pick
+        always overrides this.
         """
         if self._model:
             return self._model
-        if need_tools in self._discovered:
-            return self._discovered[need_tools]
+        profile = (need_tools, need_vision)
+        if profile in self._discovered:
+            return self._discovered[profile]
         root = self._resolve_root()
         try:
             async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
@@ -178,42 +254,99 @@ class OllamaBrain:
                     continue
                 if need_tools and "tools" not in caps:
                     continue
-            self._discovered[need_tools] = name
+                # Vision is the one requirement that must NOT fail open: an
+                # unprobeable model is skipped rather than handed a screenshot
+                # it cannot see, because a blind answer looks exactly like a
+                # sighted one.
+                if need_vision and "vision" not in caps:
+                    continue
+            elif need_vision:
+                continue
+            self._discovered[(need_tools, need_vision)] = name
             log.info(
-                "ollama: no model configured — using smallest capable download (tools=%s): %s",
+                "ollama: no model configured — using smallest capable download "
+                "(tools=%s, vision=%s): %s",
                 need_tools,
+                need_vision,
                 name,
             )
             return name
+        if need_vision:
+            self.supports_vision = False
+            raise RuntimeError(
+                f"None of the models downloaded at {root} can see images — run: "
+                f"ollama pull {RECOMMENDED_VISION_PULL} (a multimodal model), "
+                "then retry."
+            )
         wanted = "chat + tool calling" if need_tools else "chat"
         raise RuntimeError(
             f"None of the models downloaded at {root} supports {wanted} — run: "
             f"ollama pull {RECOMMENDED_PULL}, then retry."
         )
 
-    @staticmethod
-    async def _capabilities(name: str, root: str) -> set[str] | None:
+    async def _capabilities(self, name: str, root: str) -> set[str] | None:
         """DECLARED capabilities of one download via native ``/api/show``.
 
         Gate on capability, never the model name (AP-21). ``None`` = the probe
-        could not answer — the caller FAILS OPEN and accepts the candidate (a
-        probe glitch must never brick the pick; the real call then errors
-        honestly)."""
+        could not answer — the caller FAILS OPEN for chat/tools (a probe glitch
+        must never brick the pick; the real call then errors honestly) and
+        fails CLOSED for vision, where a wrong yes is invisible.
+
+        Cached per model for the lifetime of the brain instance: discovery and
+        the image path both ask, and the answer only changes when the user
+        re-pulls a model — at which point the catalog TTL and a new instance
+        pick it up.
+        """
+        if name in self._caps_cache:
+            return self._caps_cache[name]
+        caps_set: set[str] | None = None
         try:
             async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
                 resp = await client.post(f"{root}/api/show", json={"model": name})
                 resp.raise_for_status()
                 caps = resp.json().get("capabilities")
+            if isinstance(caps, list):
+                caps_set = {str(c) for c in caps}
         except Exception:  # noqa: BLE001 — probe glitch must not block the pick
-            return None
-        if not isinstance(caps, list):
-            return None
-        return {str(c) for c in caps}
+            caps_set = None
+        self._caps_cache[name] = caps_set
+        return caps_set
+
+    async def _pinned_model_can_see(self, model: str) -> bool:
+        """Whether the user's PINNED model declares ``vision`` (``/api/show``).
+
+        Fails CLOSED on an unanswerable probe: an image turn must not run on a
+        model we cannot confirm as multimodal.
+        """
+        caps = await self._capabilities(model, self._resolve_root())
+        return caps is not None and "vision" in caps
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         client = self._ensure_client()
-        model = await self._resolve_model(need_tools=bool(req.tools))
-        async for delta in stream_complete(client, model, req):
+        need_vision = _request_has_images(req)
+        model = await self._resolve_model(
+            need_tools=bool(req.tools), need_vision=need_vision
+        )
+        if need_vision and self._model and not await self._pinned_model_can_see(model):
+            # A pinned text-only model is the user's own choice, so we do not
+            # silently swap it — but we also refuse to answer about a picture
+            # it never saw. The caller degrades honestly (Screen Context says
+            # it cannot look; the CU planner skips this brain).
+            self.supports_vision = False
+            raise RuntimeError(
+                f"The configured Ollama model '{model}' cannot see images. Pick a "
+                f"multimodal model on the Ollama card (ollama pull "
+                f"{RECOMMENDED_VISION_PULL}), or leave the model empty so Jarvis "
+                "picks a vision-capable download for image turns."
+            )
+        if need_vision:
+            # The negotiated model DOES see — keep the instance flag honest for
+            # the next synchronous resolver question.
+            self.supports_vision = True
+        # Invariant at this point: either the request carries no images, or the
+        # model just negotiated declares ``vision`` — so the streamer may encode
+        # them.
+        async for delta in stream_complete(client, model, req, supports_vision=True):
             yield delta
 
     def estimate_cost(self, req: BrainRequest) -> float:

@@ -8,6 +8,7 @@ import pytest
 from jarvis.core.bus import EventBus
 from jarvis.core.events import TranscriptFinal, TranscriptionUpdate
 from jarvis.core.protocols import AudioChunk, Transcript
+from jarvis.speech.continuation_buffer import ContinuationBuffer
 from jarvis.speech.pipeline import (
     _TIMEOUT_NO_ANSWER_PHRASE,
     SpeechPipeline,
@@ -80,6 +81,7 @@ def _make_pipeline(
     pipe._config = None
     pipe._turn_state = TurnTakingState.LISTENING
     pipe._pending_user_context = []
+    pipe._continuation_buffer = ContinuationBuffer()
     pipe._last_endpoint_reason = None
     pipe._session_has_assistant_spoken = False
     pipe._player = None  # no audio in unit tests; _emit_completeness_signal is safe with None
@@ -88,7 +90,13 @@ def _make_pipeline(
     pipe._spawn_watchdog_tasks = []
     pipe._spoken: list[tuple[str, str | None]] = []
 
-    async def _brain(_text: str, _lang: str) -> str:
+    async def _brain(
+        _text: str,
+        _lang: str,
+        *,
+        consume_pending_voice_attachments: bool = False,
+    ) -> str:
+        del consume_pending_voice_attachments
         return brain_response
 
     async def _speak(
@@ -445,7 +453,13 @@ async def test_brain_call_timeout_returns_to_listening_without_hanging() -> None
     pipe = _make_pipeline(FakeSTT(text="Mach das Licht an"))
     pipe._brain_timeout_s = 0.05
 
-    async def _slow_brain(_text: str, _lang: str) -> str:
+    async def _slow_brain(
+        _text: str,
+        _lang: str,
+        *,
+        consume_pending_voice_attachments: bool = False,
+    ) -> str:
+        del consume_pending_voice_attachments
         await asyncio.sleep(1.0)
         return "ignored"
 
@@ -651,7 +665,7 @@ async def test_streaming_empty_non_suppressed_speaks_clarifying_question() -> No
 @pytest.mark.asyncio
 async def test_streaming_long_tool_loop_speaks_real_answer_not_timeout() -> None:
     """Integration regression for the 2026-06-14 "Jarvis hangs up / that took
-    too long" bug (data/jarvis_desktop.log 14:21 + 14:24, "weather in Melbourne").
+    too long" bug (data/jarvis_desktop.log 14:21 + 14:24, "weather in Exampleville").
 
     A NON-computer-use brain tool-use loop (geocoding + DuckDuckGo + open-meteo,
     ~20 s of real work) produces NO spoken sentence for longer than the
@@ -668,7 +682,7 @@ async def test_streaming_long_tool_loop_speaks_real_answer_not_timeout() -> None
     ``_await_playback`` unit test (test_speak_playback_timeout.py) complements.
     """
     pipe = _make_streaming_pipeline(
-        FakeSTT(text="What's the weather in Melbourne"),
+        FakeSTT(text="What's the weather in Exampleville"),
         stream_chunks=[],  # replaced by the custom brain below
         all_failed=False,
         suppressed=False,
@@ -681,7 +695,7 @@ async def test_streaming_long_tool_loop_speaks_real_answer_not_timeout() -> None
     # completed answer returns to LISTENING rather than the one-shot hang-up.
     pipe._continue_listening_after_response = True  # type: ignore[attr-defined]
 
-    answer = "It is eighteen degrees and sunny in Melbourne."
+    answer = "It is eighteen degrees and sunny in Exampleville."
 
     class _SlowToolLoopBrain:
         _last_turn_all_failed = False
@@ -702,7 +716,7 @@ async def test_streaming_long_tool_loop_speaks_real_answer_not_timeout() -> None
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
     assert keep_session is True
-    assert any("Melbourne" in t for t in pipe._synthesized), (
+    assert any("Exampleville" in t for t in pipe._synthesized), (
         "the working tool-loop answer was beheaded before reaching TTS"
     )
     spoken_blob = " ".join(t.lower() for t, _ in pipe._spoken)
@@ -710,6 +724,37 @@ async def test_streaming_long_tool_loop_speaks_real_answer_not_timeout() -> None
         f"timeout fallback wrongly spoken on a working turn: {pipe._spoken}"
     )
     assert pipe._turn_state == TurnTakingState.LISTENING
+
+
+@pytest.mark.asyncio
+async def test_streaming_legacy_adapter_keeps_voice_confirmation_enabled() -> None:
+    pipe = _make_streaming_pipeline(
+        FakeSTT(text="Run the monitored action"),
+        stream_chunks=[],
+        all_failed=False,
+    )
+    received_voice_confirm: list[bool] = []
+
+    class _PreAttachmentBrain:
+        async def generate_stream(
+            self,
+            _text: str,
+            *,
+            on_progress=None,
+            allow_voice_confirm: bool = False,
+        ):
+            received_voice_confirm.append(allow_voice_confirm)
+            if on_progress is not None:
+                on_progress()
+            yield "Done."
+
+    pipe._brain = _PreAttachmentBrain()
+
+    response, barged = await pipe._brain_streaming("Run it", "en")
+
+    assert response == "Done."
+    assert barged is False
+    assert received_voice_confirm == [True]
 
 
 # ---------------------------------------------------------------------------
@@ -941,7 +986,13 @@ async def test_brain_timeout_speaks_fallback_instead_of_silent_hangup() -> None:
     pipe._streaming_enabled = lambda: False  # exercise the _brain_with_ack path
     pipe._brain_timeout_s = 0.05
 
-    async def _stalling_brain(_text: str, _lang: str) -> str:
+    async def _stalling_brain(
+        _text: str,
+        _lang: str,
+        *,
+        consume_pending_voice_attachments: bool = False,
+    ) -> str:
+        del consume_pending_voice_attachments
         await asyncio.sleep(0.5)  # exceeds the 0.05s brain timeout
         return "never reached"
 

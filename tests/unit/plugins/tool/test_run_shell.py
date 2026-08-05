@@ -12,7 +12,7 @@ import sys
 
 import pytest
 
-from jarvis.plugins.tool.run_shell import RunShellTool
+from jarvis.plugins.tool.run_shell import RunShellTool, _windows_subprocess_env
 
 windows_only = pytest.mark.skipif(
     sys.platform != "win32", reason="Windows shell semantics"
@@ -62,6 +62,41 @@ async def test_quoted_cmd_payload_is_executed() -> None:
     )
     assert result.success is True
     assert "quoted-ok" in result.output["stdout"]
+
+
+@windows_only
+def test_windows_subprocess_env_compacts_semantic_path_duplicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SystemRoot", r"C:\Windows")
+    monkeypatch.setenv(
+        "PATH",
+        (
+            r'"C:\Tools";c:\tools\;%SystemRoot%\System32;'
+            r"C:\Windows\System32;C:\Other"
+        ),
+    )
+    monkeypatch.setenv("JARVIS_TEST_SENTINEL", "preserved")
+
+    env = _windows_subprocess_env()
+
+    assert env["PATH"].split(";") == [
+        r'"C:\Tools"',
+        r"%SystemRoot%\System32",
+        r"C:\Other",
+    ]
+    assert env["JARVIS_TEST_SENTINEL"] == "preserved"
+
+
+@windows_only
+def test_windows_subprocess_env_rejects_unique_oversized_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entries = [rf"C:\unique\{index:04d}\{'x' * 40}" for index in range(180)]
+    monkeypatch.setenv("PATH", ";".join(entries))
+
+    with pytest.raises(ValueError, match="remains too long for cmd.exe"):
+        _windows_subprocess_env()
 
 
 @posix_only

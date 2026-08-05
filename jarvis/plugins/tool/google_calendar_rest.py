@@ -152,7 +152,7 @@ class GoogleCalendarRestTool:
         "id). list_events returns each event's calendar_id; pass it back as "
         "calendar_id on update_event/delete_event when the event is not on the "
         "primary calendar. Times are RFC3339 (e.g. 2026-06-28T15:00:00) with an "
-        "optional IANA time_zone (e.g. Europe/Berlin); a bare date "
+        "optional IANA time_zone (e.g. Etc/UTC); a bare date "
         "(2026-06-28) makes an all-day event. Requires the Google Calendar "
         "plugin to be connected in the Plugins view."
     )
@@ -177,7 +177,7 @@ class GoogleCalendarRestTool:
             "summary": {"type": "string", "description": "event title (create/update)"},
             "start": {"type": "string", "description": "RFC3339 datetime or YYYY-MM-DD"},
             "end": {"type": "string", "description": "RFC3339 datetime or YYYY-MM-DD"},
-            "time_zone": {"type": "string", "description": "IANA tz, e.g. Europe/Berlin"},
+            "time_zone": {"type": "string", "description": "IANA tz, e.g. Etc/UTC"},
             "description": {"type": "string"},
             "location": {"type": "string"},
             "event_id": {"type": "string", "description": "event id (update/delete)"},

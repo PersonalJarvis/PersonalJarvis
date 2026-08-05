@@ -428,7 +428,7 @@ async def test_wake_self_heals_a_wedged_model_via_recover() -> None:
     stt = _HangingThenRecoverSTT()
     wake = RollingWhisperWake(
         stt,
-        pattern=re.compile(r"nico", re.IGNORECASE),
+        pattern=re.compile(r"nova", re.IGNORECASE),
         poll_interval_s=0.01,
         cooldown_s=0.0,
         save_debug_wavs=False,

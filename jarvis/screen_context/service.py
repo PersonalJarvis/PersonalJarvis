@@ -902,9 +902,7 @@ class ScreenContextService:
         )
         try:
             loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # No asyncio loop is normal for synchronous desktop callers; the
-            # owned daemon timer below provides the equivalent expiry path.
+        except RuntimeError:  # Non-async callers use the equivalent timer fallback.
             timer = threading.Timer(
                 delay_s,
                 self._expire_handle,

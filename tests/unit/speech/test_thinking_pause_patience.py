@@ -139,7 +139,7 @@ async def test_intervening_speech_resets_empty_tail_run() -> None:
     pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
     await asyncio.gather(*_probe_tasks())
     # The user speaks a real word → non-empty tail → empty-run must reset.
-    pipe._probe_stt = _InstantSTT(text="Melbourne")
+    pipe._probe_stt = _InstantSTT(text="Exampleville")
     pipe._on_vad_probe(b"\x00\x00" * 256, tail_loud=True)
     await asyncio.gather(*_probe_tasks())
     # Another single empty probe → count back to 1, NOT 2 → must still defer.

@@ -31,6 +31,7 @@ import {
   MessageCircleQuestion,
   Plug,
   Settings2,
+  Type,
   UsersRound,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -49,12 +50,14 @@ import { SlotsPanel } from "@/components/ultrawiki/SlotsPanel";
 import { ImportProgress } from "@/components/ultrawiki/ImportProgress";
 import { ExplorePanel } from "@/components/ultrawiki/ExplorePanel";
 import { PeoplePanel } from "@/components/ultrawiki/PeoplePanel";
+import { WordSearchPanel } from "@/components/ultrawiki/WordSearchPanel";
 
 type UltraTab =
   | "overview"
   | "explore"
   | "people"
   | "ask"
+  | "words"
   | "sources"
   | "contents"
   | "settings";
@@ -187,6 +190,13 @@ export function UltraWikiPanel(): JSX.Element {
           testId="ultrawiki-tab-ask"
         />
         <UltraTabButton
+          active={tab === "words"}
+          onClick={() => setTab("words")}
+          icon={<Type className="h-3.5 w-3.5" aria-hidden />}
+          label={t("ultrawiki.words.tab")}
+          testId="ultrawiki-tab-words"
+        />
+        <UltraTabButton
           active={tab === "sources"}
           onClick={() => setTab("sources")}
           icon={<Plug className="h-3.5 w-3.5" aria-hidden />}
@@ -244,6 +254,12 @@ export function UltraWikiPanel(): JSX.Element {
             slots={status.slots}
             ingestedItems={status.counts.total ?? 0}
             onOpenSources={() => setTab("sources")}
+          />
+        )}
+        {tab === "words" && (
+          <WordSearchPanel
+            onOpenSources={() => setTab("sources")}
+            onOpenSettings={() => setTab("settings")}
           />
         )}
         {tab === "sources" && (

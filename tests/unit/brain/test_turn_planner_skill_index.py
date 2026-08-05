@@ -25,7 +25,7 @@ from jarvis.skills.relevance import RelevanceRanking, ScoredSkill, build_index
 #: Naming only one indexed term scores ~0.74 against a cut-off near 0.98, i.e.
 #: NARROW — which is correct behaviour, so the fixture names both.
 FOCUS_UTTERANCE = "aktiviere den fokus und den konzentrationsmodus"  # i18n-allow
-WEATHER_UTTERANCE = "wie ist das wetter heute in berlin"  # i18n-allow
+WEATHER_UTTERANCE = "wie ist das wetter heute in exampletown"  # i18n-allow
 LITERAL_SKILL_WORD = "welche skills habe ich installiert"  # i18n-allow
 
 

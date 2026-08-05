@@ -98,7 +98,7 @@ _DEFAULT_TIMEOUT_S: float = 600.0
 # of these strings coming in as `requested_model` must be ignored and
 # resolved from the `[brain.sub_jarvis]` config chain instead.
 #
-# Discovered live 2026-05-14: mission_019e2572 + mission_019e256f both
+# Discovered live 2026-05-14: mission_019f1001 + mission_019f1000 both
 # spawned `openclaw agent --model xai/sonnet` and the worker CLI rejected with
 # `FailoverError: Unknown model: xai/sonnet`. See stderr.log in those
 # mission dirs for the smoking gun.

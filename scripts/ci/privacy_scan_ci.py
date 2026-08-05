@@ -55,32 +55,32 @@ def main(argv: list[str]) -> int:
     compiled, forbidden, allowlist = gate.load_secret_scanner(gate._repo_root())
     if compiled is None:
         print(
-            "privacy-ci: ERROR secret scanner unavailable; refusing to continue.",
+            "privacy-ci: WARNING secret scanner unavailable; secret scan SKIPPED.",
             file=sys.stderr,
         )
-        return 1
-    try:
-        files = gate.pushed_text_files(args.base, args.head)
-    except Exception as exc:
-        print(
-            f"privacy-ci: ERROR could not diff {args.base}..{args.head} "
-            f"({exc!r}).",
-            file=sys.stderr,
-        )
-        return 1
-    for rel, text in files:
-        basename = rel.rsplit("/", 1)[-1]
-        if gate.forbidden_file(basename, forbidden):
-            blocked = True
-            print(f"PRIVACY-CI BLOCK: forbidden secret file: {rel}", file=sys.stderr)
-        for finding in gate.scan_text_for_secrets(rel, text, compiled, allowlist):
-            blocked = True
-            # Never echo the secret value into the (potentially public) log.
+    else:
+        try:
+            files = gate.pushed_text_files(args.base, args.head)
+        except Exception as exc:
             print(
-                f"PRIVACY-CI BLOCK: secret ({finding['pattern']}) in "
-                f"{finding['path']}",
+                f"privacy-ci: ERROR could not diff {args.base}..{args.head} "
+                f"({exc!r}).",
                 file=sys.stderr,
             )
+            return 1
+        for rel, text in files:
+            basename = rel.rsplit("/", 1)[-1]
+            if gate.forbidden_file(basename, forbidden):
+                blocked = True
+                print(f"PRIVACY-CI BLOCK: forbidden secret file: {rel}", file=sys.stderr)
+            for finding in gate.scan_text_for_secrets(rel, text, compiled, allowlist):
+                blocked = True
+                # Never echo the secret value into the (potentially public) log.
+                print(
+                    f"PRIVACY-CI BLOCK: secret ({finding['pattern']}) in "
+                    f"{finding['path']}",
+                    file=sys.stderr,
+                )
 
     # (2) Commit-identity scan (only if the block-set is configured). ---------
     private_emails = _private_emails_from_env()

@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,6 +57,10 @@ from loguru import logger
 #: the invisible degradation this module's own docstring warns about. The bound
 #: is a reprieve, not a target: a healthy split still returns in a few seconds.
 SPLIT_TIMEOUT_S = 60.0
+
+#: The least time a second planner needs to be worth starting. A subscription
+#: CLI pays a 10-12 s cold process start before it thinks at all.
+_MIN_ATTEMPT_S = 20.0
 
 #: A fleet larger than this is not a split any model plans usefully, and the
 #: deterministic layer runs out of real directories long before it. Above the
@@ -93,8 +98,8 @@ class WorkSplit:
     """Why the fallback was used, when it was. Empty on the happy path."""
 
 
-def _resolve_splitter() -> Any:
-    """The model that plans a split, or None when nothing qualifies.
+def _resolve_splitter() -> tuple[Any, str]:
+    """The model that plans a split, or ``(None, "")`` when nothing qualifies.
 
     Shares ``writer.resolve_writer`` with the prompt composer on purpose: these
     two are the Agentic IDE's only billed calls, and a user who moved briefs
@@ -102,8 +107,20 @@ def _resolve_splitter() -> Any:
     """
     from .writer import resolve_writer
 
-    brain, _source = resolve_writer(cli_timeout_s=SPLIT_TIMEOUT_S)
-    return brain
+    return resolve_writer(cli_timeout_s=SPLIT_TIMEOUT_S)
+
+
+def _rescue_splitter(tried: Sequence[str]) -> tuple[Any, str]:
+    """The next planner after one accepted the job and failed inside it.
+
+    Same reasoning as the composer's rescue: a depleted key answering 429 must
+    cost the provider, not the fleet. A crude by-directory split while a
+    signed-in provider sits idle is the invisible degradation this module's own
+    docstring warns about.
+    """
+    from .writer import resolve_rescue_writer
+
+    return resolve_rescue_writer(cli_timeout_s=SPLIT_TIMEOUT_S, exclude=tuple(tried))
 
 
 _SYSTEM_PROMPT = (
@@ -361,7 +378,14 @@ async def split(
             said, folder=folder, count=wanted, note="fleet larger than the planning cap"
         )
 
-    planner = brain if brain is not None else _resolve_splitter()
+    pinned = brain is not None
+    if pinned:
+        planner, planner_source = brain, ""
+    else:
+        # Off the event loop: this loads the config and probes every
+        # subscription candidate for a sign-in, and a fan-out has N panes
+        # waiting behind it.
+        planner, planner_source = await asyncio.to_thread(_resolve_splitter)
     if planner is None:
         return _fallback(
             said,
@@ -378,59 +402,71 @@ async def split(
     except Exception:  # noqa: BLE001 - a profile is context, never required
         profile_lines = []
 
-    try:
-        areas = await asyncio.to_thread(_top_level_areas, folder)
-        payload = await asyncio.wait_for(
-            _llm_split(
-                brain=planner,
-                system_prompt=_SYSTEM_PROMPT,
-                user_block=_user_block(
-                    instruction=said,
-                    count=wanted,
-                    folder=folder,
-                    areas=areas,
-                    profile=profile_lines,
-                    conversation=tuple(conversation or ()),
-                ),
-            ),
-            timeout=timeout_s,
-        )
-    except TimeoutError:
-        return _fallback(
-            said,
-            folder=folder,
-            count=wanted,
-            note=f"the planner timed out after {timeout_s:g}s",
-        )
-    except Exception as exc:  # noqa: BLE001 - any provider failure degrades
-        logger.info("Agentic IDE work split fell back: {}", exc)
-        return _fallback(
-            said,
-            folder=folder,
-            count=wanted,
-            note=f"the planner was unavailable ({type(exc).__name__})",
-        )
-
-    parsed = _parse(payload, count=wanted, instruction=said)
-    if parsed is None:
-        logger.info(
-            "Agentic IDE work split: planner answer rejected "
-            "(wanted {} distinct assignments) — splitting deterministically",
-            wanted,
-        )
-        return _fallback(
-            said,
-            folder=folder,
-            count=wanted,
-            note="the planner's answer was incomplete or overlapping",
-        )
-
-    logger.info(
-        "Agentic IDE work split: {} areas planned ({})",
-        len(parsed),
-        ", ".join(a.area for a in parsed),
+    areas = await asyncio.to_thread(_top_level_areas, folder)
+    user_block = _user_block(
+        instruction=said,
+        count=wanted,
+        folder=folder,
+        areas=areas,
+        profile=profile_lines,
+        conversation=tuple(conversation or ()),
     )
-    return WorkSplit(assignments=tuple(parsed), split_by="llm")
+
+    # One budget across every attempt: a planner that dies hands the plan to the
+    # next rung rather than dropping the fleet onto the by-directory split while
+    # a working provider sits idle (AP-22) — but N full timeouts in a row would
+    # be the same crude split, only minutes later.
+    deadline = time.monotonic() + timeout_s
+    tried: list[str] = [planner_source] if planner_source else []
+    note = ""
+
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining < _MIN_ATTEMPT_S:
+            return _fallback(
+                said,
+                folder=folder,
+                count=wanted,
+                note=note or f"the planner timed out after {timeout_s:g}s",
+            )
+
+        try:
+            payload = await asyncio.wait_for(
+                _llm_split(brain=planner, system_prompt=_SYSTEM_PROMPT, user_block=user_block),
+                timeout=remaining,
+            )
+        except TimeoutError:
+            note = f"the planner timed out after {timeout_s:g}s"
+        except Exception as exc:  # noqa: BLE001 - any provider failure crosses over
+            logger.info(
+                "Agentic IDE work split failed on {}: {}", planner_source or "the planner", exc
+            )
+            note = f"the planner was unavailable ({type(exc).__name__})"
+        else:
+            parsed = _parse(payload, count=wanted, instruction=said)
+            if parsed is not None:
+                logger.info(
+                    "Agentic IDE work split: {} areas planned ({})",
+                    len(parsed),
+                    ", ".join(a.area for a in parsed),
+                )
+                return WorkSplit(assignments=tuple(parsed), split_by="llm")
+            logger.info(
+                "Agentic IDE work split: answer from {} rejected (wanted {} distinct assignments)",
+                planner_source or "the planner",
+                wanted,
+            )
+            note = "the planner's answer was incomplete or overlapping"
+
+        if pinned:
+            # The caller chose this model; substituting one is not ours to do.
+            return _fallback(said, folder=folder, count=wanted, note=note)
+
+        nxt, nxt_source = await asyncio.to_thread(_rescue_splitter, tried)
+        if nxt is None:
+            return _fallback(said, folder=folder, count=wanted, note=note)
+        planner, planner_source = nxt, nxt_source
+        tried.append(nxt_source)
 
 
 __all__ = [

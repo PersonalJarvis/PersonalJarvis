@@ -612,22 +612,24 @@ class SubprocessBarOverlay:
 
 
 class SubprocessMascotOverlay(SubprocessBarOverlay):
-    """Surface proxy driving the mascot ``OrbOverlay`` in the same host.
+    """Surface proxy driving the orb window (``OrbOverlay``) in the same host.
 
     Same spawn / ready / EOF-degrade plumbing as the bar proxy — the host
-    process picks the surface from the init line's ``"surface"`` key. Unlike
-    the bar (which draws no text bubble and no mouth), the mascot renders
-    all of them, so the text/mouth/animation ops are FORWARDED over stdio
-    instead of no-opped locally.
+    process picks the surface from the init line's ``"surface"`` key and the
+    look from ``"style"`` (``mascot`` or ``voice_orb``). Unlike the bar (which
+    draws no text bubble and no mouth), the orb window renders all of them, so
+    the text/mouth/animation ops are FORWARDED over stdio instead of no-opped
+    locally.
     """
 
     _EVENTS_THREAD_NAME = "orb-host-events"
     _STDERR_THREAD_NAME = "orb-host-stderr"
     _RESPAWN_THREAD_NAME = "orb-host-respawn"
 
-    def __init__(self, mascot_path: str | None = None) -> None:
+    def __init__(self, mascot_path: str | None = None, style: str = "mascot") -> None:
         super().__init__()
         self._mascot_path = mascot_path
+        self._style = str(style or "mascot")
         # OrbOverlay(sticky=False) always starts withdrawn. The base proxy's
         # persistent-bar visibility default does not apply to this surface.
         self._visible = False
@@ -636,8 +638,18 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
         return {
             "op": "init",
             "surface": "mascot",
+            "style": self._style,
             "mascot_path": self._mascot_path,
         }
+
+    def set_style(self, style: str) -> None:
+        """Re-style the hosted orb window live (mascot <-> voice orb).
+
+        Remembered locally as well: a host respawn re-sends the init line, and
+        without this the window would come back wearing the OLD look.
+        """
+        self._style = str(style or "mascot")
+        self._send({"op": "set_style", "style": self._style})
 
     # The mascot draws the comment bubble and the mouth — forward the ops the
     # bar proxy no-ops locally (wire shapes match host.dispatch()).

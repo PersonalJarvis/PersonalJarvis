@@ -85,6 +85,82 @@ def is_terminal_report_only(data: str) -> bool:
     return bool(payload) and not _REPORT_RE.sub("", payload)
 
 
+#: Pointer traffic and focus flips — frames xterm sends on the user's behalf
+#: without a single key going down. SGR mouse reports (``ESC [ < b;x;y M/m``,
+#: wheel ticks included), legacy X10 reports (``ESC [ M`` + three bytes), and
+#: the focus-tracking pair (``ESC [ I`` / ``ESC [ O``) a TUI receives whenever
+#: the pane is clicked or merely clicked away from.
+_POINTER_RE = re.compile(
+    r"(?:"
+    r"\x1b\[<\d+;\d+;\d+[Mm]"
+    r"|(?s:\x1b\[M.{3})"
+    r"|\x1b\[[IO]"
+    r")"
+)
+
+_PASTE_START = "\x1b[200~"
+_PASTE_END = "\x1b[201~"
+
+
+def is_pointer_noise_only(data: str) -> bool:
+    """True only when the entire input is mouse reports and focus events.
+
+    These frames must still reach the PTY — the TUI asked for them — but they
+    are not TYPING: nothing is echoed, so they must not arm the activity
+    detector's keystroke shadow. Stamping them did: scrolling a busy pane, or
+    just clicking into it, silenced its movement for ``STILL_S`` and the badge
+    said "done" over an agent mid-job (maintainer report 2026-08-01). A frame
+    that mixes pointer bytes with anything else counts as typing — this only
+    ever excuses traffic that is provably not a keyboard.
+    """
+    payload = data or ""
+    return bool(payload) and not _POINTER_RE.sub("", payload)
+
+
+def is_newline_chord_only(data: str) -> bool:
+    """True for the terminal's explicit "insert line, do not submit" chord."""
+    return data == "\x1b\r"
+
+
+def classify_terminal_input(data: str, bracketed_paste_active: bool) -> tuple[bool, bool, bool]:
+    """Return ``(submits, edits, paste_active)`` for one xterm input chunk.
+
+    Newlines inside bracketed paste delimit pasted text; they do not press
+    Enter. The markers and payload may arrive in separate WebSocket frames, so
+    callers retain the returned paste state for the next chunk. ``edits`` is
+    true only for bytes that can change the prompt, which lets receipt checks
+    ignore protocol framing while invalidating stale observations after real
+    keyboard input.
+    """
+    active = bracketed_paste_active
+    submits = False
+    edits = False
+    index = 0
+    while index < len(data):
+        if data.startswith(_PASTE_START, index):
+            active = True
+            index += len(_PASTE_START)
+            continue
+        if data.startswith(_PASTE_END, index):
+            active = False
+            index += len(_PASTE_END)
+            continue
+        if active:
+            edits = True
+            index += 1
+            continue
+        if data.startswith("\x1b\r", index):
+            edits = True
+            index += 2
+            continue
+        if data[index] in "\r\n":
+            submits = True
+        else:
+            edits = True
+        index += 1
+    return submits, edits, active
+
+
 def _rgb(colour: str) -> str:
     """``#e8e8ec`` → ``rgb:e8e8/e8e8/ecec`` — the 16-bit form terminals use."""
     raw = colour.lstrip("#").lower()
@@ -134,5 +210,8 @@ __all__ = [
     "DEVICE_ATTRIBUTES",
     "THEME_COLOURS",
     "TerminalQueryResponder",
+    "classify_terminal_input",
+    "is_newline_chord_only",
+    "is_pointer_noise_only",
     "is_terminal_report_only",
 ]

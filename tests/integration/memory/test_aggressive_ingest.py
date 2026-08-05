@@ -284,25 +284,25 @@ async def test_ack_path_still_fires_when_brain_says_notiert(stack) -> None:
     )
     bridge.start()
 
-    jordan_update = PageUpdate(
-        target_path=vault_root / "entities" / "jordan.md",
+    sam_update = PageUpdate(
+        target_path=vault_root / "entities" / "sam.md",
         operation="create",
-        new_body=_entity_body("jordan", "Jordan leitet den Gartenbau."),  # i18n-allow
+        new_body=_entity_body("sam", "Sam wurde 1976 geboren."),  # i18n-allow
         reason="explicit user note",
     )
 
     with patch.object(
-        curator._llm, "propose_updates", return_value=[jordan_update],
+        curator._llm, "propose_updates", return_value=[sam_update],
     ):
         await _drive_voice_turn(
             bus,
-            user_text="Jordan leitet den Gartenbau.",  # below aggressive minimum  # i18n-allow
+            user_text="Sam wurde 1976 geboren.",   # 26 chars -- below aggressive min  # i18n-allow
             brain_text="Notiert.",                     # explicit ack keyword
         )
 
     bridge.stop()
 
-    page = vault_root / "entities" / "jordan.md"
+    page = vault_root / "entities" / "sam.md"
     assert page.is_file(), (
         "ack path must still fire for fact-shaped texts even when they "
         "are below the aggressive-path min_user_chars threshold"

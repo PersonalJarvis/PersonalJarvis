@@ -8,7 +8,7 @@ have never heard of, a folder of photos, a voice note, a decade-old archive.
 
 The EU right to data portability is **not** the foundation, and no design here
 may assume it. A downloader in São Paulo, Lagos, Jakarta or Ohio has to reach
-the same result as one in Berlin.
+the same result as one in Exampletown.
 
 What is genuinely universal is something else, and it is enough:
 

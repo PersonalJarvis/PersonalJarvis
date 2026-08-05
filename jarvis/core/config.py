@@ -1523,6 +1523,16 @@ class UIConfig(BaseModel):
     # switches live (a ConfigReloaded / UiLanguageChanged event reaches the
     # frontend over /ws). Distinct from brain.reply_language (what Jarvis SPEAKS).
     language: Literal["en", "de", "es"] = "en"
+    # Colour theme of the whole desktop app: "dark" (the product default —
+    # matte black + signal yellow), "light" (warm paper + dark gold), or
+    # "system" (follow the OS appearance, re-evaluated live when the OS flips).
+    # Persisted here rather than only in the browser so the CHOICE survives a
+    # cleared web store, so the native window frame can be painted in the right
+    # colour before the web view has loaded anything (jarvis/ui/shell/window.py),
+    # and so `jarvis api settings put-appearance` can drive it like every other
+    # user-facing action. The frontend caches it in localStorage purely to paint
+    # the boot splash without waiting for HTTP.
+    theme: Literal["dark", "light", "system"] = "dark"
     # Dev mode: the frontend is not mounted from frontend/dist/ but loaded from
     # a running Vite dev server (HMR). Activated via ENV JARVIS_DEV=1 or CLI
     # --dev; the fields here simply hold the parameters.
@@ -1541,8 +1551,9 @@ class UIConfig(BaseModel):
     # (see surface_security.open_access_granted). Toggled live from
     # Settings → API Keys → Control Key.
     require_browser_login: bool = False
-    # On-screen overlay style: "jarvis_bar" (slim default), "mascot" (ghost
-    # orb), or "none". The mascot remains fully selectable.
+    # On-screen overlay style: "jarvis_bar" (slim default), "mascot" (the ghost
+    # mascot), "voice_orb" (the procedural weather sphere — the desktop twin of
+    # the in-app orb), or "none". One list: jarvis.ui.overlay_styles.
     orb_style: str = "jarvis_bar"
     # Optional explicit path to the mascot PNG. Empty = search for default asset.
     orb_mascot_path: str = ""
@@ -2353,6 +2364,25 @@ class UltraWikiConfig(BaseModel):
     # (the epsilon-sized recency tiebreak still settles exact ties).
     recency_half_life_days: float = 180.0
 
+    # -- word lexicon (jarvis/ultrawiki/lexicon.py) --------------------------
+    # The vocabulary index behind word search: every term the corpus uses,
+    # embedded into the SAME space as the passages, so one word can be
+    # expanded into the ~20 terms nearest it by meaning.
+    #
+    # false stops the background harvest and the term embedding. Word search
+    # keeps working — it falls back to neighbours derived from which words
+    # keep company with the query in real passages, which needs no provider
+    # at all — it is simply blunter. Existing rows are left untouched.
+    lexicon_enabled: bool = True
+    # Ceiling on how many terms ever carry a vector. The vocabulary itself is
+    # unbounded (a term still answers an exact lookup for free); this bounds
+    # the part that costs embedding calls, most-seen terms first. ~20 000
+    # covers the working vocabulary of a personal corpus in several languages
+    # at roughly the cost of embedding 20 000 very short texts, once.
+    lexicon_max_terms: int = 20000
+    # How many neighbours a word search asks for when the caller does not say.
+    word_search_neighbours: int = 20
+
 
 class WikiContextConfig(BaseModel):
     """Configuration for the wiki context injector (B5 Agent C).
@@ -2374,16 +2404,26 @@ class WikiContextConfig(BaseModel):
 
     enabled: bool = True
     max_chars: int = 1500
-    latency_budget_ms: int = 80
+    # 150 (was 80): the vault search opens its SQLite connection lazily
+    # inside this budget, so the first qualifying turn of a process regularly
+    # timed out. The factory warms the connection at boot; the wider budget
+    # covers a lost warm-up race and stays inaudible next to the brain call.
+    latency_budget_ms: int = 150
     min_keyword_length: int = 4
 
     # Relevance gate (jarvis/brain/wiki_relevance.py). Retrieval always
     # returns a ranked list, so without a gate every unrelated question gets
     # a personal note welded onto its answer. ``relevance_gate = false``
-    # restores the pre-gate behaviour: search every turn, inject every hit.
+    # restores the ungated behaviour: search every turn, inject every hit.
+    # With the gate on, every turn beyond greeting length is SEARCHED
+    # (retrieval-first); the gate grades how strictly the hits are filtered.
     relevance_gate: bool = True
     # Share of the question's content terms a hit must cover to be injected.
     min_coverage: float = 0.5
+    # The stricter bar applied when the turn has no personal anchor (world-
+    # shaped questions, statements): a page must cover nearly the whole
+    # question before it may ride along uninvited.
+    strict_min_coverage: float = 0.75
     # Share of the best hit's score (within the SAME search call) a hit must
     # reach. Relative by design — the vault's scores are only comparable
     # within one call, so an absolute cutoff would be noise.

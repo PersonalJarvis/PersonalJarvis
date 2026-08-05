@@ -489,3 +489,50 @@ def test_post_tts_preview_rejects_other_provider(server: WebServer) -> None:
             "/api/tts/preview", json={"provider": "grok-voice", "language": "en"}
         )
         assert resp.status_code == 400
+
+
+# ── Probe budgets: a local model's first call LOADS it ───────────────────────
+
+
+def test_local_card_gets_a_load_from_disk_probe_budget() -> None:
+    """Measured 2026-08-05: a 30B model's first call took 70 s on a 32 GB box —
+    pure load-from-disk time. Under the cloud budget the probe was timing the
+    LOAD, not the model, and every large local model tested as broken."""
+    from jarvis.ui.web import provider_routes as pr
+
+    assert pr._model_probe_budget_s("ollama") >= 120.0
+    assert pr._model_probe_budget_s("local-openai") >= 120.0
+    # A hosted model answers in seconds; a longer wait would only delay the
+    # honest "this key cannot use that model".
+    assert pr._model_probe_budget_s("gemini") == pr._CLOUD_MODEL_PROBE_S
+    assert pr._model_probe_budget_s("openai") == pr._CLOUD_MODEL_PROBE_S
+
+
+def test_local_probe_timeout_explains_itself() -> None:
+    """"timeout after 240.0s" tells the user nothing about what to do next."""
+    from jarvis.ui.web import provider_routes as pr
+
+    detail = pr._model_probe_detail(
+        "ollama", "qwen3-coder:30b", "timeout after 240.0s", 240.0
+    )
+    assert "loaded into memory" in detail
+    assert "qwen3-coder:30b" in detail
+    # Every other error keeps the provider's own, more precise words.
+    assert pr._model_probe_detail("ollama", "m", "404 model not found", 240.0) == (
+        "404 model not found"
+    )
+    assert pr._model_probe_detail("gemini", "m", "timeout after 20.0s", 20.0) == (
+        "timeout after 20.0s"
+    )
+
+
+def test_test_button_ceiling_stays_above_its_own_budget() -> None:
+    """The route ceiling exists to guarantee an HTTP answer; a ceiling BELOW
+    the per-call budget would cut every slow local test at the wrong layer."""
+    from jarvis.ui.web import provider_routes as pr
+    from jarvis.ui.web.provider_spec import get_spec
+
+    for provider_id in ("ollama", "gemini", "piper-local"):
+        spec = get_spec(provider_id)
+        assert spec is not None
+        assert pr._tier_test_ceiling_s(spec) > pr._tier_test_budget_s(spec)

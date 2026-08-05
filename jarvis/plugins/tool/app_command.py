@@ -156,6 +156,45 @@ def _summarize(title: str, data: Any) -> str:
     return f"{title} succeeded."
 
 
+def _apply_visible_terminal_context(
+    command_id: str, args: dict[str, Any], ctx: Any
+) -> dict[str, Any]:
+    """Correct a model's stale pane guess from the user's deictic wording.
+
+    Realtime models can call registry tools directly, before the manager's
+    deterministic Agentic-IDE path runs. The execution context still carries
+    the exact user utterance, so "the terminal here" can be resolved from the
+    UI's current chat stage even if prior conversation made the model pass T1.
+    """
+    expected_kind = {
+        "agentic-ide-prompt": "prompt",
+        "agentic-ide-terminal-report": "report",
+    }.get(command_id)
+    utterance = str(getattr(ctx, "user_utterance", "") or "")
+    if expected_kind is None or not utterance:
+        return args
+    try:
+        from jarvis.agentic_ide import intent as ide_intent
+        from jarvis.agentic_ide.session import get_registry
+
+        session = get_registry().session
+        current = session.contextual_terminal() if session is not None else None
+        if session is None or current is None:
+            return args
+        found = ide_intent.detect_visible(
+            utterance,
+            terminal=current.name,
+            names=[term.name for term in session.terminals],
+        )
+        if found is None or found.kind != expected_kind:
+            return args
+        corrected = dict(args)
+        corrected["name"] = current.name
+        return corrected
+    except Exception:  # noqa: BLE001 - context is a correction, never a blocker
+        return args
+
+
 class _Runtime:
     """Shared execution plumbing: resolve the live app + control key once."""
 
@@ -221,6 +260,7 @@ class RegistryCommandTool:
     async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
         cmd = self._cmd
         cmd_args = _with_defaults(cmd.params, args or {})
+        cmd_args = _apply_visible_terminal_context(cmd.id, cmd_args, ctx)
         problems = _validate_args(cmd.params, cmd_args)
         if problems:
             return ToolResult(

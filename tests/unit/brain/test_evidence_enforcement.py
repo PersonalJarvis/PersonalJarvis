@@ -1,4 +1,4 @@
-"""Evidence-gate enforcement (live repro 2026-06-17, session <SESSION_ID>).
+"""Evidence-gate enforcement (live repro 2026-06-17, session 10000108).
 
 "Was ist in meiner Google Cloud Console gerade los?" — the gate mandated
 `cli_gcloud` (require_tool), but the deep model answered WITHOUT calling it

@@ -428,7 +428,7 @@ async def _live_continuation_map(request: Request) -> dict[str, str]:
     been continued and that child is actively running. The user then sees a
     cancelled card sitting next to its own live continuation — both showing the
     identical stored prompt — and cannot tell whether "the mission" is running
-    (regression scenario: a cancelled parent with a live continuation).
+    (forensic 2026-06-28, missions 019f1049 → 019f104a).
 
     Returns ``{parent_id: child_id}`` for every parent whose NEWEST re-run child
     is still non-terminal (live). Best-effort: ``{}`` on a missing manager, an
@@ -592,7 +592,7 @@ async def list_outputs(request: Request) -> OutputsResponse:
             # Running missions tick wall-clock from created_ms: right after
             # dispatch created_ms == updated_ms, so updated-minus-created
             # rendered a frozen "RUNNING 0.0s" until the next mission event
-            # (live mission 019eae15-5a31). The frontend polls every 3 s,
+            # (live mission 019f1026-0001). The frontend polls every 3 s,
             # so now-minus-created ticks without a client-side timer. A
             # still-running mission also has no completion timestamp —
             # the card then falls back to started_at for its time label.
@@ -710,7 +710,7 @@ def _is_deliverable_relpath(rel_parts: tuple[str, ...]) -> bool:
         return False
     # Defence-in-depth (2026-06-21): hide tool-scratch the archive's --ignored
     # union may have re-imported on a PRE-FIX mission — a browser/QA worker's
-    # gitignored Chrome user-data profiles (mission_019eeb34-bb67: 199 cache
+    # gitignored Chrome user-data profiles (mission_019f1043-0001: 199 cache
     # blobs buried 2 real deliverables here). Shares the orchestrator's archive
     # predicate (single source of truth, anti-drift). ``rel_parts[4:]`` is the
     # path BELOW ``tasks/<id>/artifacts/files/`` — the deliverable-relative part.
@@ -796,7 +796,7 @@ async def list_output_artifacts(slug: str, request: Request) -> dict[str, Any]:
     Returned shape:
         {
           "files": [
-            {"path": "tasks/019e3288/artifacts/files/HelloBot.html",
+            {"path": "tasks/019f1007/artifacts/files/HelloBot.html",
              "size": 1237, "mtime": 1778963665.0, "is_text": true,
              "preview": "<html>...\\n..."},
             ...

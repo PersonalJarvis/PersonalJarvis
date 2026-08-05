@@ -15,13 +15,14 @@ from uuid import uuid4
 
 import pytest
 
-from jarvis.brain.drop_context import ingest_drop, items_from_paths
+from jarvis.brain.drop_context import items_from_paths
 from jarvis.brain.manager import BrainManager
 from jarvis.brain.streaming import StreamingAggregate
 from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
 from jarvis.core.protocols import BrainDelta, BrainRequest
 from jarvis.overlay import drop_bridge
+from jarvis.ui.drop_intake import capture_presence_drop
 
 
 class _FakeBrain:
@@ -82,14 +83,13 @@ def _wire_desktop_app_drop(manager, loop, done: asyncio.Event) -> None:
         async def _run() -> None:
             accepted = False
             try:
-                accepted = bool(
-                    await ingest_drop(
-                        brain=manager,
-                        thread_id="default",
-                        items=items,
-                        dragged_text=dragged,
-                    )
+                result = await capture_presence_drop(
+                    brain=manager,
+                    thread_id="default",
+                    items=items,
+                    dragged_text=dragged,
                 )
+                accepted = result.captured
             finally:
                 drop_bridge.report_drop_result(accepted)
                 done.set()

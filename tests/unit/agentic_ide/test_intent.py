@@ -109,6 +109,45 @@ def test_unrelated_turns_are_left_alone(utterance: str) -> None:
     assert intent.owns_turn(utterance, names=NAMES) is False
 
 
+def test_visible_chat_terminal_resolves_a_deictic_prompt() -> None:
+    utterance = (
+        "Kannst du bitte das Terminal prompten "  # i18n-allow: spoken input
+        "hier und prüfen, ob der neue Subscription-Pfad "  # i18n-allow: spoken input
+        "dieselben Funktionen hat?"  # i18n-allow: spoken input
+    )
+
+    found = intent.detect_visible(utterance, terminal="T4", names=["T1", "T4"])
+
+    assert found is not None
+    assert found.terminal == "T4"
+    assert found.kind == intent.KIND_PROMPT
+
+
+def test_visible_chat_terminal_resolves_a_deictic_report() -> None:
+    found = intent.detect_visible(
+        "Can you check what the terminal here is doing?",
+        terminal="T4",
+        names=["T1", "T4"],
+    )
+
+    assert found is not None
+    assert found.terminal == "T4"
+    assert found.kind == intent.KIND_REPORT
+
+
+def test_explicit_call_sign_beats_the_visible_chat_terminal() -> None:
+    assert intent.detect_visible(
+        "Prompt T1, not this terminal, to run the tests",
+        terminal="T4",
+        names=["T1", "T4"],
+    ) is None
+    explicit = intent.detect(
+        "Prompt T1, not this terminal, to run the tests", names=["T1", "T4"]
+    )
+    assert explicit is not None
+    assert explicit.terminal == "T1"
+
+
 def test_no_open_workspace_means_no_claim() -> None:
     """With no terminals running, nothing can be addressed."""
     assert intent.detect("Sag Alex, sie soll die Tests starten", names=[]) is None  # i18n-allow: German speech input under test
@@ -216,6 +255,72 @@ def test_addressing_everyone_reaches_every_running_pane(utterance: str) -> None:
     found = intent.detect_all(utterance, names=MULTI_NAMES)
     assert [item.terminal for item in found] == MULTI_NAMES
     assert all(item.kind == intent.KIND_PROMPT for item in found)
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # i18n-allow: production transcript under test
+        "Nein, du solltest alle prompten ausser T12 und T13, dass sie weitermachen sollen.",
+        # i18n-allow: normalized production transcript under test
+        "Du solltest alle prompten außer T12 und T13, dass sie weitermachen sollen.",
+        "Prompt all except T12 and T13 to continue working.",
+        "Prompt all terminals except T12 and T13 to continue working.",
+        "Instruye a todos excepto T12 y T13 que continúen trabajando.",
+    ],
+)
+def test_collective_prompt_excludes_named_terminals(utterance: str) -> None:
+    panes = [f"T{number}" for number in range(1, 14)]
+
+    found = intent.detect_all(utterance, names=panes)
+
+    assert [item.terminal for item in found] == panes[:11]
+    assert all(item.kind == intent.KIND_PROMPT for item in found)
+
+
+def test_collective_other_panes_understands_a_negative_exception_clause() -> None:
+    """A named pane is not necessarily a target; sentence polarity decides."""
+    panes = [f"T{number}" for number in range(1, 14)]
+    utterance = (
+        # i18n-allow: production-shaped input under test
+        "T12 und T13 musst du jetzt nichts machen, alle anderen sollen "
+        "weitermachen."
+    )
+
+    found = intent.detect_all(utterance, names=panes)
+
+    assert [item.terminal for item in found] == panes[:11]
+
+
+def test_original_contextual_wording_treats_named_panes_as_exceptions() -> None:
+    panes = [f"T{number}" for number in range(1, 14)]
+    utterance = (
+        # i18n-allow: verbatim production transcript under test
+        "Ja, ich soll auf jeden Fall alle Sachen fixen, die gemacht wurden. "
+        "T12 und T13 musst du jetzt nichts machen, weil alle anderen machen "
+        "auf jeden Fall den richtigen, gibt den richtigen Prompt."
+    )
+
+    found = intent.detect_all(utterance, names=panes)
+
+    assert [item.terminal for item in found] == panes[:11]
+
+
+def test_explicit_positive_target_still_wins_over_a_negative_mention() -> None:
+    found = intent.detect_all(
+        "Prompt T11, not T12, to continue working.", names=["T11", "T12", "T13"]
+    )
+
+    assert [item.terminal for item in found] == ["T11"]
+    assert found[0].instruction == "continue working."
+
+
+def test_negative_task_for_one_terminal_is_not_mistaken_for_an_exclusion() -> None:
+    found = intent.detect_all(
+        "Prompt T12 not to delete any files.", names=["T11", "T12", "T13"]
+    )
+
+    assert [item.terminal for item in found] == ["T12"]
 
 
 def test_detect_still_returns_the_first_match_for_existing_callers() -> None:

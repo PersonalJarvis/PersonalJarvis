@@ -2,8 +2,8 @@
 ``search_web`` for genuinely fresh / volatile facts (or an explicit search
 request) — the "Frische-Grenze" mandate.
 
-Live forensic 2026-06-20: a plain knowledge question — "Kannst du mir sagen,
-was ich alles beachten muss, wenn ich auswandern moechte?" — made the  # i18n-allow
+Synthetic regression fixture: a plain knowledge question — "Kannst du mir sagen,
+wie eine allgemeine Beispiel-Checkliste aufgebaut ist?" — made the  # i18n-allow
 router LLM fire ``search_web`` THREE
 times (proven from sessions.db voice_events: 3x ``ActionProposed search_web``,
 ``jarvis_text`` empty) instead of just answering. The Run-Inspector labels a
@@ -45,7 +45,7 @@ def test_search_web_description_reserved_for_fresh_facts() -> None:
         "knowledge it can answer directly"
     )
     # The old over-eager evergreen triggers must be gone — these turned a plain
-    # "explain X" / "what is X" question into a web search (emigration forensic).
+    # "explain X" / "what is X" question into a web search (evergreen-knowledge regression).
     assert "erklär mir x" not in desc and "erklaer mir x" not in desc, (  # i18n-allow
         "search_web description still advertises evergreen 'explain X' as a "
         "primary trigger — that is the over-eager research bug"
@@ -73,10 +73,10 @@ def test_router_prompt_pins_the_emigration_forensic_as_direct_answer() -> None:
 
     This is the established pinning style in this codebase (the prompt pins
     'einstein' / 'hauptstadt' / 'news' as category examples). Pinning the
-    emigration case keeps the doctrine from silently regressing.
+    evergreen-knowledge case keeps the doctrine from silently regressing.
     """
     low = SYSTEM_PROMPT.lower()
     assert "auswander" in low, (
-        "pin the emigration forensic: an emigration-basics question is "
+        "pin the evergreen-knowledge regression: an emigration-basics question is "
         "evergreen knowledge answered directly, not searched"
     )

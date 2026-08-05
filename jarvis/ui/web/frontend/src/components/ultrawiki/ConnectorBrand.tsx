@@ -100,7 +100,7 @@ export function ConnectorBrandMark({
         // carry the brand); our neutral icons and monograms sit on the card's
         // own surface, so a built-in never masquerades as a vendor tile.
         tier === "asset"
-          ? "border-white/10 bg-white/[0.07]"
+          ? "border-sheen/10 bg-sheen/[0.07]"
           : "border-border/60 bg-secondary/40",
         className,
       )}

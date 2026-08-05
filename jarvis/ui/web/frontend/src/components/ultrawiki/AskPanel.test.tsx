@@ -37,6 +37,12 @@ const HIT: UltraWikiSearchHit = {
   // Empty means "the item's own stamp IS timestamp_utc" — the shape every
   // leg but the event leg produces.
   recorded_utc: "",
+  // Passage provenance: the vector leg names the chunk it matched, the
+  // keyword leg cannot, and null is that honest "cannot say".
+  document_id: null,
+  chunk_index: null,
+  char_start: null,
+  char_end: null,
 };
 
 function installFetchMock(routes: Record<string, () => unknown>) {

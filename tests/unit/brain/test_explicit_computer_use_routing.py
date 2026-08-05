@@ -36,7 +36,7 @@ from jarvis.brain.local_action_gate import (
     match_local_action,
 )
 
-# The exact live utterance that broke, plus adjacent explicit-CU phrasings that
+# The exact synthetic utterance that broke, plus adjacent explicit-CU phrasings that
 # carry NO open verb (so the open-app fallback can never save them).
 REPRO_PHRASE = (
     "Kannst du für mich bitte mit Computer-Use in Spotify das Lied Perfect "  # i18n-allow

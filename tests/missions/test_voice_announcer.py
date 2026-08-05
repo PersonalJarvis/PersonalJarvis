@@ -363,7 +363,7 @@ async def test_crash_recovery_is_not_announced(store_and_bus) -> None:
 
 @pytest.mark.asyncio
 async def test_failed_attempts_timed_out_speaks_honest_timeout(store_and_bus) -> None:
-    """Live deep-dive 2026-06-07 (mission 019ea1da): a Computer-Use mission whose
+    """Live deep-dive 2026-06-07 (mission 019f101f): a Computer-Use mission whose
     final iteration hit the 630s wall-clock cap was failed as ``task_error``, so
     the announcer spoke the generic "mission failed / worker aborted" phrase for
     what was really a timeout. The honest reason ``attempts_timed_out`` must

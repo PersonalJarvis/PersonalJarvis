@@ -110,7 +110,7 @@ _MCP_CONFIG_FILENAME: str = ".jarvis-mcp.json"
 # the config is readable. Maintainer decision 2026-06-14 (supersedes the
 # 2026-06-10 fable mandate): ``claude-fable-5`` is approved-access-only and the
 # Claude Max subscription cannot reach it via the CLI ("Claude Fable 5 is
-# currently unavailable", live mission 019ec615), so the last-resort default is
+# currently unavailable", live mission 019f102e), so the last-resort default is
 # ``claude-opus-4-8`` — a model the subscription CAN reach. The
 # model-unavailable retry below is the safety net on top of this constant.
 _DEFAULT_CLAUDE_MODEL: str = "claude-opus-4-8"
@@ -130,7 +130,7 @@ _MODEL_UNAVAILABLE_MARKERS: tuple[str, ...] = (
 def _claude_error_is_model_unavailable(text: str) -> bool:
     """True when ``claude --print`` rejected the requested ``--model``.
 
-    Live mission 019ec615 (2026-06-14): the config pins the worker to
+    Live mission 019f102e (2026-06-14): the config pins the worker to
     ``claude-fable-5`` (an approved-access model the Claude Max subscription
     cannot reach via the CLI), so every claude worker died with "Claude Fable 5
     is currently unavailable". The CLI default model IS accessible, so a
@@ -405,7 +405,7 @@ class ClaudeDirectWorker:
         # So this worker must NOT re-impose a "refuse unless provider==claude-api"
         # guard: the old guard assumed a SubJarvisWorker fall-through that NO LONGER
         # EXISTS and turned every non-claude sub_jarvis setting into an INSTANT
-        # mission failure (forensic 2026-06-08: missions 019ea82e* / 019ea830* died
+        # mission failure (forensic 2026-06-08: missions 019f1020* / 019f1021* died
         # in ~3 s with "primary provider is <X>, expected claude-api"). We resolve
         # the claude model from the chain, run on Claude here, and only LOG when the
         # configured provider differs.
@@ -432,7 +432,7 @@ class ClaudeDirectWorker:
         # 2. Build the claude argv. ``force_default_model`` omits ``--model``
         # entirely so the CLI picks its own accessible default — the recovery
         # path when the configured model is approved-access-only and the
-        # subscription can't reach it (live mission 019ec615, 2026-06-14:
+        # subscription can't reach it (live mission 019f102e, 2026-06-14:
         # claude-fable-5 "is currently unavailable").
         argv_prefix = _resolve_claude_argv_prefix()
         from jarvis.claude_auth import (
@@ -484,7 +484,7 @@ class ClaudeDirectWorker:
         # 3. Spawn the subprocess with the prompt on stdin. The helper sources
         # the Windows creation flags itself and degrades CREATE_BREAKAWAY_FROM_JOB
         # gracefully when the host process is in a job that forbids breakaway
-        # (WinError 5, live mission 019ec602 2026-06-14).
+        # (WinError 5, live mission 019f102d 2026-06-14).
         t0 = time.perf_counter()
         spawn_env = dict(env)
         if safe_mode:
@@ -551,7 +551,7 @@ class ClaudeDirectWorker:
         # and NO on-disk stream.jsonl, so a long-but-healthy worker looked
         # identical to a hang — the user pressed the app's Restart button
         # mid-run and the finished work was discarded as app_shutdown (live
-        # missions 019ecb35 / 019ec708, forensic 2026-06-15). Now every raw
+        # missions 019f1036 / 019f1033, forensic 2026-06-15). Now every raw
         # line is tee'd to stream.jsonl immediately and translated events are
         # yielded as they arrive, so the orchestrator can emit live
         # WorkerProgress and the forensics file survives any exit.
@@ -755,7 +755,7 @@ class ClaudeDirectWorker:
             clear_claude_quota_cooldown()
             clear_claude_auth_dead()
 
-        # Model-unavailable recovery (live mission 019ec615, 2026-06-14): the
+        # Model-unavailable recovery (live mission 019f102e, 2026-06-14): the
         # configured --model (claude-fable-5) is approved-access-only and the
         # Claude Max subscription can't reach it via the CLI. The CLI default
         # IS accessible, so retry once WITHOUT --model rather than failing.
@@ -806,7 +806,7 @@ class ClaudeDirectWorker:
                 yield ev
             return
 
-        # Auth-failure recovery (2026-07-06, missions 019f36e5 + 019f38b1 —
+        # Auth-failure recovery (2026-07-06, missions 019f104c + 019f104d —
         # the exact mirror of the codex-side 2026-06-08 incident): the Claude
         # Max OAuth token expired in place (nothing refreshes ~/.claude on
         # this host anymore) and every spawn died "Failed to authenticate.
@@ -888,7 +888,7 @@ class ClaudeDirectWorker:
             )
 
         # Claude Max quota fallback (mirror of the codex->claude direction).
-        # Live mission 019eb2fd (2026-06-10 21:23): with the Claude Max
+        # Live mission 019f102c (2026-06-10 21:23): with the Claude Max
         # five-hour window exhausted ("You've hit your session limit · resets
         # 11:10pm"), every claude-routed mission died in ~16 s while codex (a
         # separate ChatGPT subscription) was healthy. When the limit hit

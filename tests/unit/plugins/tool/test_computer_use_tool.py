@@ -246,7 +246,7 @@ async def test_without_bus_keeps_synchronous_contract() -> None:
 
 
 # ---------------------------------------------------------------------------
-# suppress_response flag + localized ACK (fix for session <SESSION_ID>, 2026-06-18)
+# suppress_response flag + localized ACK (fix for session 10000113, 2026-06-18)
 #
 # Root cause: ComputerUseTool lacked suppress_response=True, so tool_use_loop
 # fed the internal English steering instruction into a second brain iteration
@@ -374,7 +374,7 @@ async def test_with_bus_ack_contains_no_internal_english_instruction() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Success readback surfaces the verifier observation (fix for session <SESSION_ID>,
+# Success readback surfaces the verifier observation (fix for session 10000107,
 # 2026-06-18). "open the browser and check which tabs I have open" → CU opened
 # Chrome, the verifier's observation ("...shows the active tab X") landed in
 # stdout, but _run_background discarded it and spoke only "Done." On success the

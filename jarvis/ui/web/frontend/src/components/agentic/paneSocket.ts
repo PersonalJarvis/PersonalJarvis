@@ -126,6 +126,8 @@ export interface PaneSocketOptions {
   name: string;
   cols: number;
   rows: number;
+  /** Whether this viewer is foregrounded and may own the shared PTY size. */
+  claimOwner?: boolean;
   /**
    * The workspace this pane belongs to. Several can be open and the front one
    * changes while sockets are alive: without it the server resolves the pane
@@ -230,6 +232,7 @@ function paneUrl(opts: PaneSocketOptions, ticket: string | null): string {
   const query = new URLSearchParams({
     cols: String(opts.cols),
     rows: String(opts.rows),
+    claim: opts.claimOwner === false ? "0" : "1",
   });
   if (opts.workspaceId) query.set("workspace", opts.workspaceId);
   if (opts.appearance) query.set("appearance", opts.appearance);

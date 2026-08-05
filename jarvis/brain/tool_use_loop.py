@@ -159,7 +159,7 @@ _INSTRUCTIONAL_QUESTION_RE = re.compile(
 # These utterances must NEVER trigger side-effect tools — the Curator
 # (jarvis/memory/curator/) extracts the facts automatically in the background
 # and merges them into USER.md. Observation 2026-05-05: Gemini-3-Flash-Preview
-# interpreted "Ich heiße Alex" as a task and spawned a Phase-6  # i18n-allow: sanitized German forensic fixture preserving the trigger shape
+# interpreted "Ich heiße Personal Jarvis Maintainer" as a task and spawned a Phase-6  # i18n-allow: forensic quote of the actual German utterance that triggered this bug
 # worker for a manual USER.md edit (failed with exit_code=1) —
 # a clear tool-choice misfire in weaker models.
 _SELF_IDENTIFICATION_RE = re.compile(
@@ -313,7 +313,7 @@ def _should_block_action_as_research(
     Kosten..."), so it wins over the *generic* research keyword guard. Without
     this exception the two deterministic rules collide — the evidence gate
     forces the tool while this guard forbids it — and the only reachable
-    outcome is the unverified-answer fallback (trace 5edf0245). The override is
+    outcome is the unverified-answer fallback (trace 20000010). The override is
     scoped to the mandated tool only, so other action tools stay blocked under
     a research intent.
     """

@@ -182,13 +182,13 @@ describe("useAssistantNameSeed mount seed", () => {
       "fetch",
       vi.fn(async () => ({
         ok: true,
-        json: async () => ({ resolved: "Nico" }),
+        json: async () => ({ resolved: "Nova" }),
       })) as unknown as typeof fetch,
     );
 
     render(<Harness />);
 
-    await waitFor(() => expect(useEventStore.getState().assistantName).toBe("Nico"));
-    expect(localStorage.getItem("jarvis.assistantName")).toBe("Nico");
+    await waitFor(() => expect(useEventStore.getState().assistantName).toBe("Nova"));
+    expect(localStorage.getItem("jarvis.assistantName")).toBe("Nova");
   });
 });

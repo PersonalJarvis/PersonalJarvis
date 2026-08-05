@@ -310,7 +310,7 @@ async def test_iter1_does_not_resume_jarvis_agent_session(
 async def test_critic_unavailable_short_circuits_when_iter0_has_real_diff(
     manager: MissionManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Live forensic 2026-05-16 (mission_019e3288): the Critic subprocess
+    """Live forensic 2026-05-16 (mission_019f1007): the Critic subprocess
     crashed on iter0 (EPERM symlink on `plugin-skills/browser-automation`,
     then `Unknown agent id "critic"`), but the worker had already produced
     a real 1237-byte diff. The old behavior swallowed the crash via
@@ -992,7 +992,7 @@ async def test_worker_timeout_every_iteration_fails_with_timeout_reason(
     assert killed[-1].reason == "timeout"  # type: ignore[attr-defined]
     # The MISSION-level failure reason must be honest about the timeout too —
     # NOT the generic 'task_error' (the "worker aborted" voice phrase) that a
-    # real worker crash produces. Live deep-dive 2026-06-07 (mission 019ea1da):
+    # real worker crash produces. Live deep-dive 2026-06-07 (mission 019f101f):
     # a Computer-Use mission whose final iteration hit the 630s wall-clock cap
     # was mislabeled task_error, so the user heard a worker-abort phrase for a
     # mission they never consciously spawned. A worker that ran out of time on
@@ -1045,7 +1045,7 @@ async def test_worker_auth_error_retries_with_fresh_factory_pick(
     """An auth-failure (401) on iter0 must RETRY — the worker factory is
     consulted again and (with the provider flagged auth-dead) picks a
     DIFFERENT family, so the mission completes instead of failing terminally.
-    Regression for 2026-07-06: missions 019f36e5 + 019f38b1 died task_error
+    Regression for 2026-07-06: missions 019f104c + 019f104d died task_error
     while a healthy codex login and OpenRouter key were available (AP-22)."""
     dead_worker = _AuthErrorWorker()
     healthy_worker = FakeWorker()

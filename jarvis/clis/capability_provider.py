@@ -113,7 +113,7 @@ def connected_domain_tool_map(cli_registry: Any) -> dict[str, str]:
 # "jarvis" is the WAKE WORD: it is present in virtually every transcript
 # ("Hey Jarvis, …"), so the jarvisctl CLI's self-referential "jarvis" object
 # would force cli_jarvisctl on EVERY utterance — including pure smalltalk like
-# "Hey Jarvis, was geht ab?" (live bug 2026-06-18, session <SESSION_ID>). The wake
+# "Hey Jarvis, was geht ab?" (live bug 2026-06-18, session 10000115). The wake
 # word can never be a domain-specific signal, so it is dropped here.
 _KEYWORD_DENYLIST: frozenset[str] = frozenset(
     {"kosten", "cost", "costs", "preis", "preise", "price", "geld", "money",

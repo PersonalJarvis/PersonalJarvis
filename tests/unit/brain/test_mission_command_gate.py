@@ -138,7 +138,7 @@ def test_cancel_en_positive(phrase: str) -> None:
         "Wie geht es dir?",  # i18n-allow
         "Was ist die Hauptstadt von Deutschland?",  # i18n-allow
         "Erzähl mir einen Witz",  # i18n-allow
-        "Wie weit ist Berlin von Muenchen?",         # 'wie weit' but no mission-context word  # i18n-allow
+        "Wie weit ist Exampletown von Muenchen?",         # 'wie weit' but no mission-context word  # i18n-allow
         "Status der Wirtschaft",                       # status, but no mission reference  # i18n-allow
         "Stoppe die Musik",                            # 'stop' but music, not mission  # i18n-allow
         "Lass das stoppen, das Lied",                  # generic stop  # i18n-allow

@@ -22,7 +22,8 @@ import inspect
 import logging
 import time
 from collections.abc import Mapping
-from typing import Any, Literal, get_args
+from types import SimpleNamespace
+from typing import Any, Final, Literal, get_args
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -196,6 +197,13 @@ class BrainModelSaveResponse(BaseModel):
     probe: BrainModelProbe | None = None
 
 
+# Local model downloads: the name to pull into the user's own server. Free-form
+# on purpose — the curated shortlist is a starting point, and the Ollama library
+# holds far more than any list here could track.
+class PullModelBody(BaseModel):
+    model: str = Field(default="", max_length=200)
+
+
 # Phase 3: selectable Computer-Use model per provider. CU runs on the provider's
 # main ``model`` by default; a pinned ``cu_model`` lets the user run CU on a
 # different (e.g. stronger) model than chat. ``cu_model == ""`` means "use my
@@ -301,7 +309,10 @@ def _is_credential_present(spec: ProviderSpec, binary_path: str | None = None) -
 
 def _cli_installed(spec: ProviderSpec) -> bool | None:
     if spec.auth_mode == "codex":
-        return CodexAuthService().status().installed
+        # Honor a configured custom binary path; the default-constructed
+        # service would report the PATH install even when the user pinned a
+        # different binary.
+        return CodexAuthService(_codex_binary_path()).status().installed
     return None
 
 
@@ -415,6 +426,21 @@ def _installed_local_models(provider_id: str, models: list[Any]) -> list[Any]:
     return kept
 
 
+def _pull_capable_ids() -> frozenset[str]:
+    """Provider ids whose server has a native model-download API.
+
+    Lazy + defensive: the provider list must render even if the pull module
+    cannot be imported on this install.
+    """
+    try:
+        from jarvis.brain.ollama_pull import PULL_CAPABLE_PROVIDERS
+
+        return PULL_CAPABLE_PROVIDERS
+    except Exception as exc:  # noqa: BLE001 — the provider list must never 500
+        log.debug("Pull-capability lookup failed (%s); no card offers downloads.", exc)
+        return frozenset()
+
+
 def _spec_to_payload(
     spec: ProviderSpec,
     *,
@@ -475,10 +501,13 @@ def _spec_to_payload(
     }
     codex_status = None
     if spec.auth_mode == "codex":
+        from_isolated_snapshot = (
+            spec.id == "codex-subscription-realtime"
+            and codex_subscription_status is not None
+        )
         codex_status = (
             dict(codex_subscription_status)
-            if spec.id == "codex-subscription-realtime"
-            and codex_subscription_status is not None
+            if from_isolated_snapshot
             else CodexAuthService(_codex_binary_path()).status().to_dict()
         )
         if (
@@ -491,10 +520,20 @@ def _spec_to_payload(
                 codex_status["message"] = "Connected via ChatGPT."
             else:
                 codex_status["mode"] = "not_connected"
-                codex_status["message"] = (
-                    "ChatGPT subscription voice is not ready. "
-                    "Reconnect with ChatGPT and review the setup status."
-                )
+                # The isolated snapshot's message carries the precise
+                # diagnosis (for example the exact required Codex version)
+                # that the card's detail line renders — keep it. A status
+                # read from the ORDINARY Codex profile is exactly what the
+                # authoritative override corrects, so its message must not
+                # survive; nor may an empty message reach the card.
+                if (
+                    not from_isolated_snapshot
+                    or not str(codex_status.get("message") or "").strip()
+                ):
+                    codex_status["message"] = (
+                        "ChatGPT subscription voice is not ready. "
+                        "Reconnect with ChatGPT and review the setup status."
+                    )
     antigravity_status = None
     if spec.id == "antigravity":
         from jarvis.google_cli.auth_service import GoogleCliAuthService
@@ -529,6 +568,10 @@ def _spec_to_payload(
         "supports_base_url": spec.supports_base_url,
         "default_base_url": spec.default_base_url,
         "base_url": _stored_base_url(spec),
+        # Whether this card's server can be TOLD to fetch a model
+        # (POST /providers/{id}/pull). A capability flag, so the UI renders the
+        # download panel without knowing a provider name (AP-21).
+        "supports_model_pull": spec.id in _pull_capable_ids(),
         # Maintainer-recommended pick for this tier (UI badge) + the model it
         # points at. Presentation only — never gates behavior (AP-21).
         "recommended": spec.recommended,
@@ -586,9 +629,12 @@ def _spec_to_payload(
         ),
         "active": active,
         "cli_installed": (
-            bool(codex_status["installed"])
-            if codex_status is not None
-            else _cli_installed(spec)
+            # During a transient busy window the isolated snapshot cannot say
+            # whether the CLI exists; answer from the PATH probe instead of
+            # rendering a false "not installed" install prompt.
+            _cli_installed(spec)
+            if codex_status is None or codex_status.get("reason_code") == "busy"
+            else bool(codex_status["installed"])
         ),
         # Overlay, not a new tier (see the CU-own-provider plan): a brain
         # provider can be BOTH the main Brain ("active") AND/OR the dedicated
@@ -848,49 +894,18 @@ def _resolve_cfg(request: Request):
         return cfg_attr
     try:
         return cfg_mod.load_config()
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — the screen degrades, it never 500s
+        # Swallowed silently this failure was indistinguishable from "nothing
+        # is configured": a broken jarvis.toml made every downstream probe read
+        # an absent config and the card announced "Codex CLI is not installed"
+        # — the wrong problem and the wrong fix (AP-30).
+        log.warning(
+            "Provider routes could not load the configuration (%s: %s); "
+            "provider status will be reported as unconfigured",
+            type(exc).__name__,
+            exc,
+        )
         return None
-
-
-def _select_pipeline_voice_mode(
-    request: Request, *, persist: bool
-) -> tuple[bool, bool]:
-    """Make a successful STT/TTS selection the active voice engine.
-
-    Provider cards are an engine choice, not only dormant configuration:
-    realtime cards already select ``realtime``, so STT and TTS cards must
-    symmetrically select the classic ``pipeline``. Without this coupling the
-    UI can truthfully show a local model as active while the next call still
-    opens a stale realtime provider and never reaches that model.
-
-    Returns ``(voice_mode_persisted, session_restarted)``. A persistence
-    failure is reported in the route response but does not discard the valid
-    live provider switch; this mirrors the realtime-provider route.
-    """
-    voice_mode_persisted = False
-    if persist:
-        try:
-            from jarvis.core.config_writer import set_voice_mode
-
-            set_voice_mode("pipeline")
-            voice_mode_persisted = True
-        except Exception as exc:  # noqa: BLE001 — live selection remains valid
-            log.warning(
-                "voice-mode persist failed after pipeline provider switch: %s",
-                exc,
-            )
-
-    cfg = _resolve_cfg(request)
-    if cfg is not None and getattr(cfg, "voice", None) is not None:
-        try:
-            cfg.voice.mode = "pipeline"  # type: ignore[attr-defined]
-        except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
-            log.debug("In-memory voice.mode update skipped: %s", exc)
-
-    from jarvis.ui.web.voice_runtime import apply_voice_mode
-
-    session_restarted = apply_voice_mode(request, "pipeline")
-    return voice_mode_persisted, session_restarted
 
 
 def _codex_binary_path(request: Request | None = None) -> str | None:
@@ -898,9 +913,67 @@ def _codex_binary_path(request: Request | None = None) -> str | None:
     if cfg is None:
         try:
             cfg = cfg_mod.load_config()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — fall back to PATH resolution
+            # Same trap: without the log, a broken config silently becomes
+            # "no pinned binary path", which reads downstream as a missing CLI.
+            log.warning(
+                "Codex binary path unavailable — configuration could not be "
+                "loaded (%s: %s); falling back to PATH resolution",
+                type(exc).__name__,
+                exc,
+            )
             cfg = None
     return getattr(getattr(cfg, "codex", None), "binary_path", "") or None
+
+
+# Ceiling for the pre-switch wait on a browser WebRTC offer. Long enough to
+# cover ICE gathering (~1.5 s) plus one socket round trip, short enough that a
+# client which cannot produce one is not punished for it.
+_REALTIME_OFFER_WAIT_S: Final = 3.0
+_REALTIME_OFFER_POLL_S: Final = 0.1
+
+
+def _realtime_provider_requires_offer(provider_id: str) -> bool:
+    """Whether ``provider_id``'s transport needs a browser WebRTC offer.
+
+    A capability the adapter class declares, never a provider name (AP-21).
+    """
+    try:
+        from jarvis.core.registry import load
+        from jarvis.realtime.protocol import RealtimeProvider
+
+        provider_cls = load("jarvis.realtime", provider_id, protocol=RealtimeProvider)
+    except Exception as exc:  # noqa: BLE001 — an unloadable adapter needs no wait
+        log.debug("Realtime offer-capability probe skipped for %s: %s", provider_id, exc)
+        return False
+    return bool(getattr(provider_cls, "requires_webrtc_offer", False))
+
+
+async def _await_transport_offer(timeout_s: float) -> bool:
+    """Wait (bounded) until the UI has registered a WebRTC offer.
+
+    Polls the broker's non-consuming count: ``acquire`` would LEASE the offer
+    and hand it to nobody, which is worse than not waiting at all.
+    """
+    try:
+        from jarvis.realtime.offer_broker import (
+            get_realtime_transport_offer_broker,
+        )
+    except ImportError:  # Optional realtime support is absent on a minimal install.
+        return False
+    broker = get_realtime_transport_offer_broker()
+    deadline = asyncio.get_running_loop().time() + max(0.0, timeout_s)
+    while True:
+        if await broker.pending_count() > 0:
+            return True
+        if asyncio.get_running_loop().time() >= deadline:
+            log.info(
+                "No browser WebRTC offer appeared within %.1fs; reopening the "
+                "realtime session anyway",
+                timeout_s,
+            )
+            return False
+        await asyncio.sleep(_REALTIME_OFFER_POLL_S)
 
 
 def _codex_subscription_status_payload(binary_path: str | None) -> dict[str, Any]:
@@ -910,23 +983,89 @@ def _codex_subscription_status_payload(binary_path: str | None) -> dict[str, Any
     The live account and plan are verified when the user explicitly activates
     the experimental provider or starts a call.
     """
-    from jarvis.codex_app_server import codex_subscription_auth_snapshot
+    from jarvis.codex_app_server import (
+        CODEX_SUBSCRIPTION_REASON_CODES,
+        CodexAppServerCapability,
+        codex_subscription_activation_block,
+        codex_subscription_auth_snapshot,
+    )
 
-    snapshot = codex_subscription_auth_snapshot(binary_path)
+    try:
+        snapshot = codex_subscription_auth_snapshot(binary_path)
+    except Exception as exc:  # noqa: BLE001 — a raising probe must not 500 the screen
+        # The probe owner re-raises real errors by design; the routes built on
+        # this payload (the whole API-Keys screen among them) must degrade to
+        # a transient status instead of an empty screen (BUG-008 class).
+        log.warning("Codex subscription status probe failed: %s", type(exc).__name__)
+        snapshot = CodexAppServerCapability(
+            available=False,
+            chatgpt_authenticated=False,
+            binary_path=None,
+            version=None,
+            reason=(
+                f"The Codex status probe failed ({type(exc).__name__}); "
+                "retrying shortly."
+            ),
+            reason_code="busy",
+        )
     installed = bool(snapshot.available or snapshot.version)
+    if snapshot.reason_code == "not_installed":
+        # The pinned release is absent. SOME codex may have answered the
+        # version probe, but the actionable truth is "install the supported
+        # release" — the card's install row keys off this flag.
+        installed = False
+    elif (
+        not installed
+        and snapshot.binary_path is None
+        and snapshot.reason_code
+        in {"busy", "login_required", "login_in_progress", "lifecycle_unavailable"}
+    ):
+        # Ownership windows (login in flight, busy probe) are silent about
+        # the CLI itself. A pure PATH resolution answers "is it installed"
+        # without touching the owned profile — the card must never tell a
+        # user mid-login to reinstall the CLI that is running their login.
+        try:
+            installed = (
+                CodexAuthService(binary_path)._resolve_binary() is not None
+            )
+        except Exception:  # noqa: BLE001 — presence stays unknown, not fatal
+            log.debug(
+                "Codex CLI presence probe failed during an ownership window",
+                exc_info=True,
+            )
     connected = bool(snapshot.available and snapshot.chatgpt_authenticated)
-    if connected:
+    activation_block = codex_subscription_activation_block() if connected else None
+    if activation_block:
+        # The login works, but the live account check refused activation for
+        # good (for example a business/enterprise plan). Without this sticky
+        # diagnosis every surface would keep claiming "ready" after the one
+        # honest activation toast has faded.
+        connected = False
+        message = activation_block
+        reason_code = "plan_unsupported"
+    elif connected:
         message = "Dedicated ChatGPT subscription voice login is ready."
-    elif snapshot.available:
+        reason_code = "ready"
+    elif snapshot.available and snapshot.reason_code == "login_required":
         message = "Connect the dedicated ChatGPT subscription voice login."
+        reason_code = snapshot.reason_code
     else:
+        # Non-login states carry their own degraded reason (for example the
+        # headless-Linux text) — overwriting it with the login invite would
+        # ask for exactly the action the reason declares impossible.
         message = snapshot.reason
+        reason_code = snapshot.reason_code
+    if reason_code not in CODEX_SUBSCRIPTION_REASON_CODES:
+        # Five-layer drift guard (BUG-008 class): an unknown vocabulary value
+        # must degrade to a transient state, never reach the UI unmapped.
+        log.warning("Unknown codex subscription reason_code %r", reason_code)
+        reason_code = "busy"
     return {
         "installed": installed,
         "connected": connected,
         "mode": "chatgpt" if connected else "not_connected",
         "message": message,
-        "reason_code": "ready" if connected else snapshot.reason_code,
+        "reason_code": reason_code,
         "version": snapshot.version,
         "accountLabel": "ChatGPT subscription voice" if connected else None,
         "user_email": None,
@@ -1061,8 +1200,27 @@ async def list_providers(request: Request) -> dict[str, Any]:
 
 # Belt-and-suspenders ceiling for the whole /test call. run_provider_test's own
 # timeout_s (60 s, generous for NVIDIA NIM's 13-30 s cold-start TTFB) bounds the
-# individual probe; this outer bound guarantees the HTTP response itself.
+# individual probe; this outer bound guarantees the HTTP response itself. Local
+# cards raise BOTH (see _tier_test_budget_s) — their first call loads weights.
+_DEFAULT_TIER_TEST_S = 60.0
 _PROVIDER_TEST_HARD_TIMEOUT_S = 75.0
+
+
+def _tier_test_budget_s(spec: ProviderSpec) -> float:
+    """Per-call budget for the Test button; local cards get the load allowance.
+
+    The local STT path already did this (a cold on-device recognizer gets 180 s
+    there); a local BRAIN needs it for the same reason, and without it a large
+    downloaded model reported as broken while it was merely loading.
+    """
+    if spec.auth_mode == "none":
+        return _LOCAL_MODEL_PROBE_S
+    return _DEFAULT_TIER_TEST_S
+
+
+def _tier_test_ceiling_s(spec: ProviderSpec) -> float:
+    """Hard route ceiling: always above the per-call budget it bounds."""
+    return _tier_test_budget_s(spec) + 15.0
 
 
 async def _run_tier_test(
@@ -1086,7 +1244,40 @@ async def _run_tier_test(
         from jarvis.dictation.polish_probe import probe_polish_family
 
         return await probe_polish_family(family, cfg, model=model or "")
-    return await _provider_test.run_provider_test(spec, cfg, model=model)
+    if spec.id == "codex-subscription-realtime":
+        # This card is judged by the ISOLATED voice profile, never the
+        # ordinary Codex login: the default codex_status seam would answer
+        # "ok — Connected." for a user whose normal `codex login` works but
+        # whose voice profile was never connected (and "not connected" for
+        # the normal case of a voice-only login).
+        payload = await asyncio.to_thread(
+            _codex_subscription_status_payload,
+            getattr(getattr(cfg, "codex", None), "binary_path", "") or None,
+        )
+        if payload.get("reason_code") in {"busy", "login_in_progress"}:
+            # Transient — the same instant renders "checking" (or "finish the
+            # login") on the card and unknown on the tab dot; a not_configured
+            # verdict here would be the one dissenting surface. rate_limited
+            # is the existing "transient, integration fine" status in the
+            # test vocabulary, and the payload message carries the honest
+            # wording for whichever transient state this is.
+            return _provider_test.ProviderTestResult(
+                spec.id,
+                _provider_test.RATE_LIMITED,
+                str(payload.get("message") or "")
+                or "The ChatGPT voice status is still being checked — try "
+                "again in a moment.",
+            )
+        isolated_status = SimpleNamespace(
+            connected=bool(payload.get("connected")),
+            message=str(payload.get("message") or ""),
+        )
+        return await _provider_test.run_provider_test(
+            spec, cfg, codex_status=lambda: isolated_status, model=model
+        )
+    return await _provider_test.run_provider_test(
+        spec, cfg, model=model, timeout_s=_tier_test_budget_s(spec)
+    )
 
 
 @router.post("/providers/{provider_id}/test")
@@ -1112,24 +1303,21 @@ async def test_provider_connection(
             status_code=503, detail="Configuration is unavailable (headless mode?)"
         )
 
-    # Hard ceiling ABOVE run_provider_test's own per-call timeout (60 s): the
-    # route must always answer, else the UI's "Testing…" spinner never resolves.
-    # Any async path that slips past the inner bounds is cut here and reported
-    # as an honest "unreachable" instead of a hung HTTP request.
+    # Hard ceiling ABOVE the per-call timeout the tier uses: the route must
+    # always answer, else the UI's "Testing…" spinner never resolves. Any async
+    # path that slips past the inner bounds is cut here and reported as an
+    # honest "unreachable" instead of a hung HTTP request.
+    ceiling = _tier_test_ceiling_s(spec)
     try:
-        result = await asyncio.wait_for(
-            _run_tier_test(spec, cfg),
-            timeout=_PROVIDER_TEST_HARD_TIMEOUT_S,
-        )
+        result = await asyncio.wait_for(_run_tier_test(spec, cfg), timeout=ceiling)
     except TimeoutError:
         result = _provider_test.ProviderTestResult(
             provider=spec.id,
             status=_provider_test.UNREACHABLE,
             detail=(
-                f"Test timed out after {_PROVIDER_TEST_HARD_TIMEOUT_S:.0f}s — "
-                "the provider did not answer."
+                f"Test timed out after {ceiling:.0f}s — the provider did not answer."
             ),
-            latency_ms=_PROVIDER_TEST_HARD_TIMEOUT_S * 1000.0,
+            latency_ms=ceiling * 1000.0,
         )
     # This exact result is newer than any overlapping section sweep. Cancel the
     # older snapshot so the UI refresh cannot resurrect a pre-test status.
@@ -1266,10 +1454,65 @@ async def _tier_section_health(
             subject_id=spec.id,
         )
     try:
-        configured = await _provider_credential_present_for_binary_async(
-            spec,
-            binary_path,
-        )
+        if spec.id == "codex-subscription-realtime":
+            # One snapshot call answers both "configured?" and "busy?" — a
+            # second probe would wait out the same busy window twice.
+            codex_payload = await asyncio.to_thread(
+                _codex_subscription_status_payload, binary_path
+            )
+            if codex_payload.get("reason_code") == "busy":
+                # Transiently unknown is not "needs setup": the amber dot
+                # with "not connected" would contradict a card that says
+                # "checking — one moment".
+                return SectionHealth(
+                    status=_section_health.UNKNOWN,
+                    reason="busy",
+                    detail=f"{spec.label}: status check in progress",
+                    subject_id=spec.id,
+                )
+            if codex_payload.get("reason_code") == "login_in_progress":
+                # The user is mid-login; an amber "not connected" dot would
+                # contradict the card telling them to finish that login.
+                return SectionHealth(
+                    status=_section_health.UNKNOWN,
+                    reason="login_in_progress",
+                    detail=f"{spec.label}: login in progress",
+                    subject_id=spec.id,
+                )
+            if codex_payload.get("reason_code") == "plan_unsupported":
+                # Connected but permanently refused: "not connected or
+                # configured" would name the wrong remedy in the hover text.
+                return SectionHealth(
+                    status=_section_health.NEEDS_SETUP,
+                    reason="plan_unsupported",
+                    detail=(
+                        f"{spec.label}: "
+                        f"{codex_payload.get('message') or 'ChatGPT plan not supported'}"
+                    ),
+                    subject_id=spec.id,
+                )
+            if codex_payload.get("reason_code") in {
+                "lifecycle_unavailable",
+                "not_installed",
+            }:
+                # Same rule: the hover text must name the actual remedy (an
+                # unsupported host, or installing the pinned release) — never
+                # "not connected or configured".
+                return SectionHealth(
+                    status=_section_health.NEEDS_SETUP,
+                    reason=str(codex_payload.get("reason_code")),
+                    detail=(
+                        f"{spec.label}: "
+                        f"{codex_payload.get('message') or 'not available'}"
+                    ),
+                    subject_id=spec.id,
+                )
+            configured = bool(codex_payload.get("connected"))
+        else:
+            configured = await _provider_credential_present_for_binary_async(
+                spec,
+                binary_path,
+            )
     except Exception:  # noqa: BLE001 — a probe failure is "not set up", not a crash
         configured = False
     if not configured:
@@ -1642,12 +1885,12 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
     """
     while True:
         cfg = _resolve_cfg(request)
-        # The dictation subject is the one subject whose resolution blocks (see
-        # ``_warm_active_polish``); every other one is an attribute read. Warm
-        # it off the loop BEFORE the snapshot is taken, because the snapshot
-        # feeds the cache fingerprint and this route is polled.
+        # Subject resolution can block: dictation warms a keyring-backed memo
+        # (see ``_warm_active_polish``) and the realtime subject may run the
+        # Codex subscription snapshot when a fallback chain names it. Both
+        # belong off the loop, because this route is polled.
         await _warm_active_polish(request)
-        subjects = _section_health_subjects(request, cfg)
+        subjects = await asyncio.to_thread(_section_health_subjects, request, cfg)
         fingerprint = _section_health_fingerprint(request, cfg, subjects)
         cache = getattr(request.app.state, "_section_health_cache", None)
         now = time.time()
@@ -1703,7 +1946,9 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
 
         current_cfg = _resolve_cfg(request)
         await _warm_active_polish(request)
-        current_subjects = _section_health_subjects(request, current_cfg)
+        current_subjects = await asyncio.to_thread(
+            _section_health_subjects, request, current_cfg
+        )
         current_fingerprint = _section_health_fingerprint(
             request, current_cfg, current_subjects
         )
@@ -1888,8 +2133,33 @@ def _set_cu_model_in_memory(cfg: Any, provider: str, value: str) -> None:
         log.debug("In-memory cu_model update skipped for %s: %s", provider, exc)
 
 
+#: Cloud model probe: a hosted model answers a 1-token prompt in seconds, and a
+#: longer wait would just delay an honest "this key cannot use that model".
+_CLOUD_MODEL_PROBE_S = 20.0
+
+#: Local model probe: the FIRST call to a local model loads its weights off disk
+#: into memory, and an 18 GB download needs over a minute for that on a normal
+#: machine (measured 2026-08-05: 70 s for a 30B model on a 32 GB box). Under the
+#: cloud budget every large local model tested as broken while being perfectly
+#: fine — the probe was timing the load, not the model.
+_LOCAL_MODEL_PROBE_S = 240.0
+
+
+def _model_probe_budget_s(provider: str) -> float:
+    """Probe budget for ``provider``: a load-from-disk allowance for local cards.
+
+    Locality comes from the card's auth mode — a keyless server the user runs
+    themselves — the same definition the brain resolver uses for its local tail,
+    never a provider name (AP-21).
+    """
+    spec = get_spec(provider)
+    if spec is not None and spec.auth_mode == "none":
+        return _LOCAL_MODEL_PROBE_S
+    return _CLOUD_MODEL_PROBE_S
+
+
 async def _probe_brain_model(
-    provider: str, model: str, *, timeout_s: float = 20.0
+    provider: str, model: str, *, timeout_s: float | None = None
 ) -> _provider_test.ProviderTestResult:
     """Run a REAL 1-token call against the *specific* ``model`` and classify it.
 
@@ -1897,12 +2167,16 @@ async def _probe_brain_model(
     model), this validates the model the user just selected — so a typo or a
     model the key has no access to comes back as ``model_unavailable`` rather
     than silently "saved but broken". Module-level so it is monkeypatchable.
+
+    ``timeout_s`` defaults to a per-card budget: a local server is allowed the
+    minutes its first call spends loading weights, a hosted one is not.
     """
     from jarvis.brain.healthcheck import BrainHealthChecker
     from jarvis.brain.provider_registry import BrainProviderRegistry
 
+    budget = timeout_s if timeout_s is not None else _model_probe_budget_s(provider)
     checker = BrainHealthChecker(BrainProviderRegistry())
-    hr = await checker.probe(provider, model, timeout_s=timeout_s)
+    hr = await checker.probe(provider, model, timeout_s=budget)
     if getattr(hr, "ok", False):
         return _provider_test.ProviderTestResult(
             provider, _provider_test.OK, "", getattr(hr, "duration_ms", 0.0)
@@ -1911,9 +2185,32 @@ async def _probe_brain_model(
     return _provider_test.ProviderTestResult(
         provider,
         _provider_test.classify_provider_error(err),
-        err or "",
+        _model_probe_detail(provider, model, err, budget),
         getattr(hr, "duration_ms", 0.0),
     )
+
+
+def _model_probe_detail(
+    provider: str, model: str, error: str | None, budget: float
+) -> str:
+    """The sentence the card shows — "timeout after 240.0s" explains nothing.
+
+    A local model that times out is almost always still loading, and the user's
+    next step ("wait, or pick a smaller model") is completely different from the
+    one a dead endpoint calls for. Every other error keeps the provider's own
+    words, which are usually more precise than anything we could add.
+    """
+    raw = error or ""
+    spec = get_spec(provider)
+    is_local = spec is not None and spec.auth_mode == "none"
+    if is_local and "timeout" in raw.lower():
+        return (
+            f"{model} did not answer within {budget:.0f}s. A local model is "
+            "loaded into memory on its first call, and a large one can take "
+            "minutes — leave it loading and test again, or choose a smaller "
+            "model."
+        )
+    return raw
 
 
 def _require_catalog_provider(provider_id: str):
@@ -2346,6 +2643,71 @@ async def get_local_install_status(provider_id: str) -> dict[str, Any]:
     return result
 
 
+def _require_pull_capable(provider_id: str) -> None:
+    """404 for an unknown card, 400 for one whose server cannot be told to pull.
+
+    Not a preference: a generic OpenAI-compatible server has no standard "fetch
+    this model" call, so the honest answer is that this card cannot download for
+    you — never a silent no-op.
+    """
+    if get_spec(provider_id) is None:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+    from jarvis.brain.ollama_pull import PULL_CAPABLE_PROVIDERS
+
+    if provider_id not in PULL_CAPABLE_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{provider_id}' has no download API — load the model in the "
+                "server itself, then it appears in the model picker."
+            ),
+        )
+
+
+@router.get("/providers/{provider_id}/pullable-models")
+async def list_pullable_models(provider_id: str) -> dict[str, Any]:
+    """Curated local models to download, annotated for THIS machine.
+
+    Answers the question a keyless install actually has — "which model should I
+    get, and will it run here?" — with the shortlist, each entry's approximate
+    size, whether it is already installed, and a memory verdict from the host's
+    own RAM. Advisory, never a block: Ollama offloads to GPU memory this probe
+    cannot see.
+    """
+    _require_pull_capable(provider_id)
+    from jarvis.brain.ollama_pull import recommendations
+
+    return await recommendations()
+
+
+@router.post("/providers/{provider_id}/pull")
+async def start_model_pull(provider_id: str, body: PullModelBody) -> dict[str, Any]:
+    """Download a model into the local server (§3: recoverable in-app).
+
+    Any name the library knows may be pulled, not only the curated ones. Returns
+    immediately with a ``state`` the UI polls — a synchronous route would hold
+    the request open for the length of a multi-gigabyte download — and a second
+    call while a pull is in flight joins it instead of duplicating it.
+    """
+    _require_pull_capable(provider_id)
+    from jarvis.brain.ollama_pull import start_pull
+
+    return await start_pull(body.model)
+
+
+@router.get("/providers/{provider_id}/pull/status")
+async def get_model_pull_status(provider_id: str, model: str) -> dict[str, Any]:
+    """Progress of one model download, checked against the server's inventory.
+
+    The inventory wins over this process's own bookkeeping: a model pulled from
+    the CLI or a previous app run reads as installed rather than "idle".
+    """
+    _require_pull_capable(provider_id)
+    from jarvis.brain.ollama_pull import pull_status
+
+    return await pull_status(model)
+
+
 @router.get("/providers/{provider_id}/cu-model")
 async def get_cu_model(provider_id: str, request: Request) -> CuModelResponse:
     """Return the per-provider Computer-Use model selection (Phase 3).
@@ -2744,10 +3106,57 @@ async def _openai_realtime_voice_sample(
     return bytes(pcm), output_rate
 
 
+async def _codex_subscription_voice_sample(
+    api_key: str, *, model: str, voice: str, text: str, language: str
+) -> tuple[bytes, int]:
+    """Sample the subscription voice through its own ChatGPT-Live transport."""
+    del api_key, model
+    from jarvis.plugins.realtime.codex_subscription import (  # noqa: PLC0415
+        CodexSubscriptionRealtimeProvider,
+    )
+    from jarvis.realtime.protocol import RealtimeSessionConfig  # noqa: PLC0415
+
+    provider = CodexSubscriptionRealtimeProvider(
+        binary_path=_codex_binary_path(),
+        # A preview sends no microphone audio and needs no input recognizer.
+        input_transcriber_factory=lambda: None,
+    )
+    session = await provider.open_session(
+        RealtimeSessionConfig(
+            instructions="Speak only the trusted sample text supplied by the client.",
+            language=language,
+            voice=voice,
+        )
+    )
+    pcm = bytearray()
+    sample_rate = int(getattr(provider, "output_sample_rate", 24_000) or 24_000)
+    try:
+        await session.send_speech(text)
+        async for event in session.receive():
+            if event.type == "audio_delta" and event.audio is not None:
+                pcm += bytes(event.audio.pcm)
+                sample_rate = int(event.audio.sample_rate or sample_rate)
+            elif event.type == "error":
+                raise RuntimeError(str(event.error or "subscription preview failed"))
+            elif event.type == "turn_complete":
+                break
+    finally:
+        await session.close()
+    return bytes(pcm), sample_rate
+
+
+# Capability metadata read by the generic route below. Subscription auth is
+# verified by the adapter itself; requiring an API key here would recreate the
+# exact billing-path parity bug this sampler closes.
+_codex_subscription_voice_sample.requires_api_key = False  # type: ignore[attr-defined]
+_codex_subscription_voice_sample.timeout_s = 50.0  # type: ignore[attr-defined]
+
+
 # Only providers whose preview transport can run without an interactive media
 # offer appear here. A cataloged provider may intentionally omit a sampler;
 # ``preview_available`` keeps the UI from rendering a button that cannot work.
 _REALTIME_PREVIEW_SAMPLERS: dict[str, Any] = {
+    "codex-subscription-realtime": _codex_subscription_voice_sample,
     "gemini-live": _gemini_live_voice_sample,
     "openai-realtime": _openai_realtime_voice_sample,
 }
@@ -2800,8 +3209,9 @@ async def realtime_voice_preview(
             detail=f"Voice preview is not available for provider '{provider_id}'.",
         )
 
-    api_key = cfg_mod.get_provider_secret(provider_id)
-    if not api_key:
+    requires_api_key = bool(getattr(sampler, "requires_api_key", True))
+    api_key = cfg_mod.get_provider_secret(provider_id) if requires_api_key else ""
+    if requires_api_key and not api_key:
         raise HTTPException(
             status_code=409,
             detail=(
@@ -2814,9 +3224,13 @@ async def realtime_voice_preview(
     sample = _TTS_PREVIEW_SAMPLES.get(lang, _TTS_PREVIEW_SAMPLES[_TTS_PREVIEW_DEFAULT_LANG])
 
     try:
+        preview_timeout_s = float(
+            getattr(sampler, "timeout_s", _REALTIME_PREVIEW_TIMEOUT_S)
+            or _REALTIME_PREVIEW_TIMEOUT_S
+        )
         pcm, sample_rate = await asyncio.wait_for(
             sampler(api_key, model=model, voice=voice, text=sample, language=lang),
-            timeout=_REALTIME_PREVIEW_TIMEOUT_S,
+            timeout=preview_timeout_s,
         )
     except HTTPException:
         raise
@@ -2824,7 +3238,7 @@ async def realtime_voice_preview(
         raise HTTPException(
             status_code=502,
             detail=(
-                f"Voice preview timed out after {_REALTIME_PREVIEW_TIMEOUT_S:.0f}s — "
+                f"Voice preview timed out after {preview_timeout_s:.0f}s — "
                 "the provider did not answer."
             ),
         ) from exc
@@ -2837,8 +3251,8 @@ async def realtime_voice_preview(
         raise HTTPException(
             status_code=502,
             detail=(
-                "Voice preview produced no audio — check the provider's API key "
-                "and quota."
+                "Voice preview produced no audio — check the provider "
+                "connection and quota."
             ),
         )
     wav = _pcm_to_wav(pcm, sample_rate=sample_rate, channels=1)
@@ -3251,22 +3665,16 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             )
             restart_required = True
 
-    voice_mode_persisted, session_restarted = _select_pipeline_voice_mode(
-        request, persist=body.persist
-    )
-
     await _emit(request, SecretConfigured(key="tts.provider", action="set"))
-    await _emit(request, SecretConfigured(key="voice.mode", action="set"))
 
     _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": body.provider,
-        "persisted": body.persist and voice_mode_persisted,
-        "voice_mode_persisted": voice_mode_persisted,
+        "persisted": body.persist,
         "live_switched": live_switched,
         "restart_required": restart_required,
-        "session_restarted": session_restarted,
+        "session_restarted": False,
     }
 
 
@@ -3643,23 +4051,16 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 status_code=500, detail=f"STT provider save failed: {exc}"
             ) from exc
 
-    voice_mode_persisted, session_restarted = _select_pipeline_voice_mode(
-        request, persist=body.persist
-    )
-    persisted = persisted and voice_mode_persisted
-
     await _emit(request, SecretConfigured(key="stt.provider", action="set"))
-    await _emit(request, SecretConfigured(key="voice.mode", action="set"))
 
     _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": body.provider,
         "persisted": persisted,
-        "voice_mode_persisted": voice_mode_persisted,
         "live_switched": live_switched,
         "restart_required": False,
-        "session_restarted": session_restarted,
+        "session_restarted": False,
     }
 
 
@@ -3668,14 +4069,13 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     """Switch the active realtime provider.
 
     The desktop and browser runtimes resolve ``voice.mode`` plus the selected
-    provider whenever a voice session opens. An active desktop call is closed
-    and reopened against the new selection; no application restart is required.
+    provider whenever a voice session opens. An active realtime call is closed
+    and reopened against the new provider; no application restart is required.
     Realtime is cross-family (AP-22), so validation is registry/tier based.
 
-    Activating a realtime provider also makes Realtime the ACTIVE voice mode
-    (``[voice].mode``) — the "Active" badge reads ``[voice].mode``, not
-    ``[brain.realtime].provider``, so without this the badge could never
-    follow an activation (Feature A4).
+    Provider selection and voice-engine selection are intentionally independent.
+    This route never changes ``[voice].mode``; only the explicit voice-mode
+    settings action may switch between Pipeline and Realtime.
     """
     spec = get_spec(body.provider)
     if spec is None:
@@ -3698,7 +4098,47 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 "the experimental transport before activating it."
             ),
         )
-    credential_present = await _provider_credential_present_async(spec, request)
+    if spec.id == "codex-subscription-realtime":
+        # One snapshot call answers both "configured?" and "busy?". A busy
+        # window is transient — telling the user to "connect first" while the
+        # card says "checking" would send them to re-do a working login.
+        codex_payload = await asyncio.to_thread(
+            _codex_subscription_status_payload, _codex_binary_path(request)
+        )
+        if codex_payload.get("reason_code") == "busy":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The ChatGPT subscription voice status is being checked. "
+                    "Try again in a moment."
+                ),
+            )
+        if codex_payload.get("reason_code") == "login_in_progress":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The ChatGPT subscription login is still running. Finish "
+                    "it in the browser window, then activate."
+                ),
+            )
+        if codex_payload.get("reason_code") != "plan_unsupported" and not (
+            codex_payload.get("connected")
+        ):
+            # Answer with the payload's precise diagnosis — the generic "no
+            # configured credentials" would be wrong for most codex states.
+            raise HTTPException(
+                status_code=409,
+                detail=str(
+                    codex_payload.get("message")
+                    or "Connect the dedicated ChatGPT subscription voice login."
+                ),
+            )
+        # plan_unsupported deliberately passes through: verify_activation
+        # re-judges the LIVE account, which is the only way the sticky block
+        # can clear when the plan changed back.
+        credential_present = True
+    else:
+        credential_present = await _provider_credential_present_async(spec, request)
     if not credential_present:
         raise HTTPException(
             status_code=409,
@@ -3720,11 +4160,30 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         if callable(verify_activation):
             result = verify_activation(_resolve_cfg(request))
             if inspect.isawaitable(result):
-                await result
+                # A cold activation gate can start app-server, whose RPCs each
+                # carry ~20s timeouts. Bound the whole HTTP response instead
+                # of letting a wedged gate hold the request open indefinitely.
+                await asyncio.wait_for(result, timeout=45.0)
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The provider's activation check timed out. Try again in a "
+                "moment."
+            ),
+        ) from exc
     except Exception as exc:  # noqa: BLE001 - provider gate returns a safe 409
+        # A refused plan already recorded its sticky diagnosis where it was
+        # discovered (require_chatgpt_login) — the live call path shares it.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if spec.id == "codex-subscription-realtime":
+        from jarvis.codex_app_server import set_codex_subscription_activation_block
 
-    voice_mode_write_ok = True
+        # A passed activation is the proof the account works again. Off-loop:
+        # the helper takes the login mutex, which worker threads may hold
+        # across filesystem work.
+        await asyncio.to_thread(set_codex_subscription_activation_block, None)
+
     if body.persist:
         try:
             from jarvis.core.config_writer import set_realtime_provider
@@ -3736,13 +4195,6 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             raise HTTPException(
                 status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
-        try:
-            from jarvis.core.config_writer import set_voice_mode
-
-            set_voice_mode("realtime")
-        except Exception as exc:  # noqa: BLE001 — best-effort, mirrors set_realtime_provider above
-            voice_mode_write_ok = False
-            log.warning("voice-mode persist failed after realtime switch: %s", exc)
 
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "brain", None) is not None:
@@ -3756,16 +4208,25 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 realtime_cfg.provider = body.provider
         except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
             log.debug("In-memory realtime.provider update skipped: %s", exc)
-    if cfg is not None and getattr(cfg, "voice", None) is not None:
-        try:
-            cfg.voice.mode = "realtime"  # type: ignore[attr-defined]
-        except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
-            log.debug("In-memory voice.mode update skipped: %s", exc)
-
     await _emit(request, SecretConfigured(key="brain.realtime.provider", action="set"))
-    await _emit(request, SecretConfigured(key="voice.mode", action="set"))
 
-    from jarvis.ui.web.voice_runtime import reconnect_realtime
+    from jarvis.ui.web.voice_runtime import reconnect_realtime, voice_engine_status
+
+    # A switch REOPENS an open call immediately. A transport that needs a
+    # browser WebRTC offer cannot start without one, and the client only learns
+    # it must publish one from the status snapshot it fetches AFTER this
+    # response — so the reopened session used to start with nothing registered
+    # and hang for the whole handshake budget. The UI now asks for an offer
+    # before this request; give it a bounded moment to land. Idle installs skip
+    # the wait entirely (there is no call to reopen), and a client that cannot
+    # produce an offer just spends the ceiling once rather than failing early
+    # on a provider that might still work.
+    if await asyncio.to_thread(_realtime_provider_requires_offer, body.provider):
+        try:
+            if bool(voice_engine_status(request).get("session_active", False)):
+                await _await_transport_offer(_REALTIME_OFFER_WAIT_S)
+        except Exception as exc:  # noqa: BLE001 — never block a switch on this
+            log.debug("Realtime offer pre-wait skipped: %s", exc)
 
     session_restarted = reconnect_realtime(
         request, reason=f"realtime_provider:{body.provider}"
@@ -3775,13 +4236,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     return {
         "ok": True,
         "active": body.provider,
-        # True only when persist was requested AND both writes (provider +
-        # voice mode) actually landed — previously this reported
-        # body.persist unconditionally even when the voice-mode write above
-        # failed and was only logged, so the UI showed "persisted" for a
-        # switch that silently left [voice].mode stale on disk.
-        "persisted": body.persist and voice_mode_write_ok,
-        "voice_mode_persisted": voice_mode_write_ok,
+        "persisted": body.persist,
         "restart_required": False,
         "session_restarted": session_restarted,
     }

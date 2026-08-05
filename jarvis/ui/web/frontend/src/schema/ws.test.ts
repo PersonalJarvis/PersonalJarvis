@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WSCommand, WSWelcome } from "./ws";
+import { WSAudioLevel, WSCommand, WSWelcome } from "./ws";
 
 describe("WSCommand mission.inject", () => {
   it("validates a mission.inject command", () => {
@@ -27,5 +27,14 @@ describe("WSWelcome", () => {
       version: "1.0.0",
     });
     expect("token" in parsed).toBe(false);
+  });
+});
+
+describe("WSAudioLevel", () => {
+  it("accepts only normalized microphone samples", () => {
+    expect(WSAudioLevel.parse({ type: "audio.level", input: 0.72 }).input).toBe(0.72);
+    expect(WSAudioLevel.safeParse({ type: "audio.level", input: 1.2 }).success).toBe(
+      false,
+    );
   });
 });

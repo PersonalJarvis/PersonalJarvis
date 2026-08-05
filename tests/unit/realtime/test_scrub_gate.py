@@ -141,6 +141,19 @@ async def test_other_non_blocking_scrub_actions_do_not_raise_generic_error(
 
 
 @pytest.mark.asyncio
+async def test_end_call_control_split_across_deltas_never_reaches_display():
+    """Streaming boundaries must not defeat control-token stripping."""
+    gate = ScrubHoldGate(language="de")
+
+    first = await gate.feed_transcript("Talk soon. [[END")
+    second = await gate.feed_transcript("_CALL]]Bis bald. [[END_CALL]]")
+
+    assert first + second == "Talk soon. Bis bald. "
+    assert END_CALL_SIGNAL not in first + second
+    assert gate.hard_leak_pending() is False
+
+
+@pytest.mark.asyncio
 async def test_streamed_jargon_prefix_can_complete_a_user_facing_compound():
     """A partial ``MCP-Server`` transcript must not abort a clean reply."""
     gate = ScrubHoldGate(language="de")
@@ -361,7 +374,7 @@ async def test_en_bloc_upfront_transcript_keeps_audio_flowing():
 
 @pytest.mark.asyncio
 async def test_audio_flows_unconditionally_once_the_opening_is_vetted():
-    """Maintainer mandate 2026-07-18: no mid-reply holds of any kind.
+    """Regression contract: no mid-reply holds of any kind.
 
     Every release-rationing scheme tried here (per-delta credit, coverage
     budget, 400 ms bounded grace) turned provider transcription lag into
@@ -426,3 +439,132 @@ async def test_repeated_pushes_before_any_transcript_stay_closed():
     assert await gate.push_audio(_chunk(9_600)) == []
     assert await gate.push_audio(_chunk(9_600)) == []
     assert gate.fail_closed() is True
+
+
+@pytest.mark.asyncio
+async def test_trust_direct_speech_releases_audio_that_has_no_transcript():
+    """A delegate readback renders text Jarvis itself scrubbed.
+
+    Its audio carries no MODEL transcript, so the opening hold could never
+    clear and the turn boundary dropped the whole answer as "no_transcript".
+    Measured live 2026-08-02: the action ran, the reply existed, the user
+    heard nothing.
+    """
+    gate = ScrubHoldGate(language="en")
+    assert await gate.push_audio(_chunk(4)) == []  # held, as before
+
+    gate.trust_direct_speech()
+
+    assert gate.release_available()
+    assert gate.fail_closed() is False
+    assert gate.hard_leak_pending() is False
+
+
+@pytest.mark.asyncio
+async def test_trust_direct_speech_keeps_the_trailing_kill_switch():
+    """The relaxation is bounded: it clears the OPENING hold, nothing else.
+
+    Anything that leaks in a later transcript must still drop every unplayed
+    chunk, exactly as it would without the trust call.
+    """
+    gate = ScrubHoldGate(language="en")
+    gate.trust_direct_speech()
+    assert await gate.push_audio(_chunk(4))
+
+    await gate.feed_transcript(
+        "Traceback (most recent call last):\n  File x\nValueError: y\n\n"
+    )
+    assert gate.hard_leak_pending() is True
+    assert await gate.push_audio(_chunk(4)) == []
+
+
+@pytest.mark.asyncio
+async def test_drain_keeps_direct_speech_trust_until_its_audio_played():
+    """A boundary belonging to ANOTHER response must not revoke the clearance.
+
+    On a transport that generates its own responses, the model's concurrent
+    generation ends — and drains this gate — between the injection of a
+    trusted delegate readback and its first audible frame. Revoking there left
+    the readback with no clearance and no model transcript of its own, so the
+    next boundary dropped the whole answer as "no_transcript": the action had
+    already run and the user heard nothing.
+    """
+    gate = ScrubHoldGate(language="en")
+    gate.trust_direct_speech("The settings are open.")
+
+    # The other response's boundary lands before any readback audio arrives.
+    gate.drain()
+
+    # The readback is still trusted, so its audio flows instead of being held.
+    assert await gate.push_audio(_chunk(4))
+    assert gate.fail_closed() is False
+    assert gate.hard_leak_pending() is False
+
+
+@pytest.mark.asyncio
+async def test_drain_revokes_direct_speech_trust_once_it_has_played():
+    """The exception is scoped: it survives ONE boundary, not the session.
+
+    Once the injected utterance has actually been heard, a drain is an
+    ordinary barge-in/turn end for it and the gate returns to fail-closed for
+    everything the model produces afterwards.
+    """
+    gate = ScrubHoldGate(language="en")
+    gate.trust_direct_speech("The settings are open.")
+    assert await gate.push_audio(_chunk(4))  # the readback became audible
+
+    gate.drain()
+
+    # Model audio after that boundary is gated again, with no transcript yet.
+    assert await gate.push_audio(_chunk(4)) == []
+    assert gate.fail_closed() is True
+
+
+@pytest.mark.asyncio
+async def test_drain_never_carries_a_hard_leak_forward():
+    """A revoked-by-leak injection must not be resurrected by the exception."""
+    gate = ScrubHoldGate(language="en")
+    gate.trust_direct_speech("The settings are open.")
+    await gate.feed_transcript(
+        "Traceback (most recent call last):\n  File x\nValueError: y\n\n"
+    )
+    assert gate.hard_leak_pending() is True
+
+    gate.drain()
+
+    assert gate.hard_leak_pending() is False
+    assert await gate.push_audio(_chunk(4)) == []
+
+
+@pytest.mark.asyncio
+async def test_direct_speech_clearance_expires_after_its_rendering_budget():
+    """One injection must not open the gate for the rest of the call.
+
+    On a transport that generates its own responses, a sticky clearance let
+    FOREIGN audio ride the trusted injection unvetted (live 2026-08-04: an
+    unrelated English fragment played instead of the delegated answer).
+    """
+    gate = ScrubHoldGate(language="en")
+    gate.trust_direct_speech("Short answer.")
+    five_seconds = AudioChunk(
+        pcm=b"\x00\x01" * (24_000 * 5), sample_rate=24_000, timestamp_ns=0
+    )
+    assert await gate.push_audio(five_seconds)
+    assert await gate.push_audio(five_seconds)
+    assert await gate.push_audio(five_seconds)
+    # The utterance's generous rendering budget is spent: whatever streams
+    # now belongs to another response and is vetted fail-closed again.
+    assert await gate.push_audio(five_seconds) == []
+
+
+@pytest.mark.asyncio
+async def test_direct_speech_budget_never_clips_a_long_trusted_answer():
+    """The bound must be an overestimate — clamping the trusted answer itself
+    would recreate 'the action ran and the user heard nothing'."""
+    gate = ScrubHoldGate(language="en")
+    gate.trust_direct_speech("word " * 200)
+    one_minute = AudioChunk(
+        pcm=b"\x00\x01" * (24_000 * 60), sample_rate=24_000, timestamp_ns=0
+    )
+    assert await gate.push_audio(one_minute)
+    assert await gate.push_audio(one_minute)

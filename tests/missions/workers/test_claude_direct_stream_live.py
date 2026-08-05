@@ -1,6 +1,6 @@
 """Live-streaming contract for ClaudeDirectWorker (parity with the Codex worker).
 
-The Codex worker was refactored on 2026-06-10 (missions 019eb27f/019eb288) to
+The Codex worker was refactored on 2026-06-10 (missions 019f102a/019f102b) to
 consume stdout line-by-line, tee every raw line to ``stream.jsonl`` immediately,
 and yield translated events WHILE the subprocess is still running — so a
 long-but-healthy worker shows visible progress instead of an opaque spinner and

@@ -1,95 +1,274 @@
 /**
- * The voice orb — the assistant's presence as a living sphere.
+ * A compact voice orb made from softly evolving procedural weather.
  *
- * Modeled on the familiar voice-mode orbs (a soft sphere of drifting cloud
- * textures that breathes, vibrates and swells with the conversation), but in
- * this app's own brand: signal-yellow light on the dark surface, never a
- * borrowed palette.
+ * The visual target is a luminous, cloud-filled presence rather than a glossy
+ * gradient ball. A low-resolution fractal field is color-mapped through the
+ * product's ivory, gold and amber palette, then enlarged with interpolation.
+ * That deliberate softness creates organic depth without visible bands,
+ * outlines, rotating particles or image assets.
  *
- * ## How the life-likeness is made
- *
- * The orb is a circular clip filled with a handful of soft radial-gradient
- * "clouds", each drifting on its own slow Lissajous path. Three motions layer
- * on top, all driven by the voice state:
- *
- * * **Breathing** — the whole sphere scales on a slow sine. Idle breathes
- *   slowly and shallowly; speaking breathes fast and deep, with a second
- *   out-of-phase wobble so it reads as talking rather than pulsing.
- * * **Vibration** — a small high-frequency jitter on each cloud's radius.
- *   Barely visible while idle, distinct while listening and speaking — this is
- *   the "vibrating sphere" texture of the original.
- * * **Swirl** — the cloud constellation rotates while thinking, the classic
- *   "working on it" cue.
- *
- * State changes never snap: every parameter eases toward its target a little
- * each frame, so the orb flows from listening into speaking the way the real
- * ones do.
- *
- * Honest about cost: one 2D canvas, no filters (the gradients are soft by
- * construction), the animation pauses whenever the document is hidden, and a
- * `prefers-reduced-motion` viewer gets a still sphere.
+ * Voice states alter pace, breathing, turbulence and highlight energy while
+ * the color identity stays stable. Rendering pauses with the document, runs
+ * at a capped 20 fps, and becomes a state-aware still for reduced motion.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { readVoiceInputLevel } from "@/lib/voiceInputLevel";
 import { useDocumentVisible } from "@/hooks/useDocumentVisible";
 import type { VoiceState } from "@/store/events";
 
-/** The motion parameters one voice state asks for. */
 interface Motion {
-  /** How far the clouds roam, as a fraction of the radius. */
-  drift: number;
-  /** Cloud drift speed multiplier. */
-  speed: number;
-  /** Whole-sphere breathing depth (fraction of scale). */
+  /** Horizontal travel through the procedural weather field. */
+  flowX: number;
+  /** Vertical travel through the procedural weather field. */
+  flowY: number;
+  /** Whole-sphere breathing depth, as a scale fraction. */
   breathAmp: number;
-  /** Breathing rate, Hz. */
+  /** Whole-sphere breathing rate in hertz. */
   breathHz: number;
-  /** High-frequency cloud jitter depth — the vibration. */
-  jitter: number;
-  /** Constellation rotation, radians per second. */
-  swirl: number;
-  /** 0..1 — how much of the bright palette shows (error dims to grey). */
-  vivid: number;
+  /** Strength of the domain-warped cloud shapes. */
+  turbulence: number;
+  /** Brightness of the cream cloud highlights. */
+  energy: number;
+  /** Strength of the assistant-speech envelope. */
+  voiceImpact: number;
 }
 
 const MOTIONS: Record<VoiceState, Motion> = {
-  idle: { drift: 0.16, speed: 0.5, breathAmp: 0.015, breathHz: 0.22, jitter: 0.004, swirl: 0.05, vivid: 0.8 },
-  listening: { drift: 0.3, speed: 1.1, breathAmp: 0.045, breathHz: 1.0, jitter: 0.014, swirl: 0.12, vivid: 1 },
-  thinking: { drift: 0.24, speed: 0.9, breathAmp: 0.02, breathHz: 0.5, jitter: 0.006, swirl: 0.9, vivid: 0.9 },
-  speaking: { drift: 0.34, speed: 1.4, breathAmp: 0.07, breathHz: 2.1, jitter: 0.02, swirl: 0.18, vivid: 1 },
-  error: { drift: 0.08, speed: 0.25, breathAmp: 0.008, breathHz: 0.15, jitter: 0, swirl: 0, vivid: 0 },
+  idle: {
+    flowX: 0.025,
+    flowY: 0.008,
+    breathAmp: 0.004,
+    breathHz: 0.14,
+    turbulence: 0.8,
+    energy: 0.86,
+    voiceImpact: 0,
+  },
+  listening: {
+    flowX: 0.11,
+    flowY: 0.035,
+    breathAmp: 0.016,
+    breathHz: 0.72,
+    turbulence: 1.02,
+    energy: 0.98,
+    voiceImpact: 0,
+  },
+  thinking: {
+    flowX: 0.42,
+    flowY: -0.19,
+    breathAmp: 0.009,
+    breathHz: 0.32,
+    turbulence: 1.28,
+    energy: 1.02,
+    voiceImpact: 0,
+  },
+  speaking: {
+    flowX: 0.34,
+    flowY: 0.085,
+    breathAmp: 0.016,
+    breathHz: 0.82,
+    turbulence: 1.02,
+    energy: 1,
+    voiceImpact: 0.045,
+  },
+  paused: {
+    // Stiller than idle: the session is held, not gone — the weather keeps
+    // drifting, just with nothing to say and no breath worth noticing.
+    flowX: 0.015,
+    flowY: 0.004,
+    breathAmp: 0.003,
+    breathHz: 0.1,
+    turbulence: 0.75,
+    energy: 0.78,
+    voiceImpact: 0,
+  },
+  error: {
+    flowX: 0.012,
+    flowY: 0,
+    breathAmp: 0.003,
+    breathHz: 0.12,
+    turbulence: 0.7,
+    energy: 0.72,
+    voiceImpact: 0,
+  },
 };
 
-/** Brand-gold cloud palette, light to deep — the sphere's inner weather. */
-const CLOUDS = [
-  "255, 247, 214", // warm white
-  "255, 232, 138", // pale gold
-  "255, 214, 10", //  signal yellow (the brand primary)
-  "255, 179, 0", //   amber
-  "245, 158, 11", //  deep amber
-  "255, 241, 176", // cream highlight
-];
+type Rgb = readonly [number, number, number];
 
-/** Grey twins of the palette, cross-faded in for the error state. */
-const GREYS = ["221, 221, 221", "187, 187, 187", "153, 153, 153", "119, 119, 119", "102, 102, 102", "204, 204, 204"];
+const IVORY: Rgb = [255, 250, 235];
+const PALE_GOLD: Rgb = [248, 226, 151];
+const SIGNAL_GOLD: Rgb = [231, 196, 110];
+const AMBER: Rgb = [210, 147, 24];
+const DEEP_AMBER: Rgb = [126, 66, 2];
+const CLOUD_LIGHT: Rgb = [255, 249, 216];
+// 48² pixels at 20 fps keeps this decorative renderer near 553k value-noise
+// samples per second, leaving the main thread available for terminal streaming.
+const TEXTURE_SIZE = 48;
+const NOISE_SIZE = 64;
+const FRAME_INTERVAL_MS = 1000 / 20;
 
-/** Fixed per-cloud motion seeds — the same weather on every mount. */
-const SEEDS = [0.9, 2.1, 3.7, 4.6, 5.9, 0.3];
-
-function mix(a: number, b: number, k: number): number {
-  return a + (b - a) * k;
+function mix(a: number, b: number, amount: number): number {
+  return a + (b - a) * amount;
 }
 
-/** "r, g, b" cross-faded between the grey and vivid palettes. */
-function cloudColor(index: number, vivid: number): string {
-  const c = CLOUDS[index % CLOUDS.length].split(",").map(Number);
-  const g = GREYS[index % GREYS.length].split(",").map(Number);
-  return c.map((v, i) => Math.round(mix(g[i], v, vivid))).join(", ");
+function clamp(value: number, min = 0, max = 1): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const position = clamp((value - edge0) / (edge1 - edge0));
+  return position * position * (3 - 2 * position);
+}
+
+/** Irregular syllable-like movement without pretending it is measured audio. */
+function speechEnvelope(elapsed: number): number {
+  const cadence = 0.5 + 0.5 * Math.sin(elapsed * Math.PI * 5.4 + Math.sin(elapsed * 1.7) * 0.8);
+  const articulation = 0.5 + 0.5 * Math.sin(elapsed * Math.PI * 9.2 + 1.3);
+  return smoothstep(0.38, 0.86, cadence * 0.74 + articulation * 0.26);
+}
+
+/** One soft outward beat when assistant speech begins. */
+function speakingOnset(age: number): number {
+  if (age < 0 || age >= 0.24) return 0;
+  return Math.sin((age / 0.24) * Math.PI) * Math.exp(-age * 2.4);
+}
+
+/** A stable tile of pseudo-random values avoids expensive trigonometry per pixel. */
+const NOISE_GRID = (() => {
+  const grid = new Float32Array(NOISE_SIZE * NOISE_SIZE);
+  let seed = 0x51f15e;
+  for (let index = 0; index < grid.length; index += 1) {
+    seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0;
+    grid[index] = seed / 0xffffffff;
+  }
+  return grid;
+})();
+
+function gridValue(x: number, y: number): number {
+  return NOISE_GRID[((y & (NOISE_SIZE - 1)) * NOISE_SIZE) + (x & (NOISE_SIZE - 1))];
+}
+
+function noiseAt(x: number, y: number): number {
+  const left = Math.floor(x);
+  const top = Math.floor(y);
+  const tx = x - left;
+  const ty = y - top;
+  const sx = tx * tx * (3 - 2 * tx);
+  const sy = ty * ty * (3 - 2 * ty);
+  const upper = mix(gridValue(left, top), gridValue(left + 1, top), sx);
+  const lower = mix(gridValue(left, top + 1), gridValue(left + 1, top + 1), sx);
+  return mix(upper, lower, sy);
+}
+
+function fractalNoise(x: number, y: number): number {
+  let value = 0;
+  let amplitude = 0.54;
+  let normalizer = 0;
+  for (let octave = 0; octave < 3; octave += 1) {
+    value += noiseAt(x, y) * amplitude;
+    normalizer += amplitude;
+    x = x * 2.03 + 11.7;
+    y = y * 2.01 - 7.9;
+    amplitude *= 0.5;
+  }
+  return value / normalizer;
+}
+
+function paintWeather(
+  image: ImageData,
+  phaseX: number,
+  phaseY: number,
+  motion: Motion,
+  impact: number,
+): void {
+  const data = image.data;
+
+  for (let y = 0; y < TEXTURE_SIZE; y += 1) {
+    const ny = (y / (TEXTURE_SIZE - 1)) * 2 - 1;
+    for (let x = 0; x < TEXTURE_SIZE; x += 1) {
+      const nx = (x / (TEXTURE_SIZE - 1)) * 2 - 1;
+      // Speech briefly compresses the material while the silhouette expands.
+      const sampleX = nx * (1 + impact * 0.055);
+      const sampleY = ny * (1 - impact * 0.035);
+      const warpX = fractalNoise(sampleX * 1.3 + phaseX + 8.2, sampleY * 1.22 + phaseY + 3.4);
+      const warpY = fractalNoise(
+        sampleX * 1.18 - phaseX * 0.55 + 19.7,
+        sampleY * 1.35 + phaseY * 0.8 + 12.1,
+      );
+      const cloudField = fractalNoise(
+        sampleX * 1.85 + warpX * motion.turbulence * 1.35 + phaseX,
+        sampleY * 1.72 + warpY * motion.turbulence * 1.2 + phaseY,
+      );
+      const detail = fractalNoise(
+        sampleX * 3.15 - phaseX * 0.45 + 31.2,
+        sampleY * 2.9 + phaseY * 0.35,
+      );
+      const weather = cloudField * 0.76 + detail * 0.24;
+
+      // Warping the vertical color position removes the synthetic horizon band.
+      const vertical = clamp((ny + 1) * 0.5 + (weather - 0.5) * 0.28);
+      let start: Rgb;
+      let end: Rgb;
+      let paletteMix: number;
+      if (vertical < 0.22) {
+        start = IVORY;
+        end = PALE_GOLD;
+        paletteMix = vertical / 0.22;
+      } else if (vertical < 0.5) {
+        start = PALE_GOLD;
+        end = SIGNAL_GOLD;
+        paletteMix = (vertical - 0.22) / 0.28;
+      } else if (vertical < 0.76) {
+        start = SIGNAL_GOLD;
+        end = AMBER;
+        paletteMix = (vertical - 0.5) / 0.26;
+      } else {
+        start = AMBER;
+        end = DEEP_AMBER;
+        paletteMix = (vertical - 0.76) / 0.24;
+      }
+      let red = mix(start[0], end[0], paletteMix);
+      let green = mix(start[1], end[1], paletteMix);
+      let blue = mix(start[2], end[2], paletteMix);
+
+      const shadow =
+        smoothstep(0.48, 0.66, 1 - weather) * smoothstep(0.28, 0.95, vertical) * 0.18;
+      red = mix(red, DEEP_AMBER[0], shadow);
+      green = mix(green, DEEP_AMBER[1], shadow);
+      blue = mix(blue, DEEP_AMBER[2], shadow);
+
+      // Large cream masses form the soft, irregular clouds visible in the target.
+      const cloud = smoothstep(0.46, 0.64, weather) * (1 - vertical * 0.32);
+      const cloudMix = cloud * 0.78 * motion.energy;
+      red = mix(red, CLOUD_LIGHT[0], cloudMix);
+      green = mix(green, CLOUD_LIGHT[1], cloudMix);
+      blue = mix(blue, CLOUD_LIGHT[2], cloudMix);
+
+      // A second, quieter field breaks up any remaining uniform areas.
+      const shimmer = smoothstep(0.58, 0.76, warpX * 0.55 + detail * 0.45);
+      const shimmerMix = shimmer * 0.24 * motion.energy;
+      red = mix(red, PALE_GOLD[0], shimmerMix);
+      green = mix(green, PALE_GOLD[1], shimmerMix);
+      blue = mix(blue, PALE_GOLD[2], shimmerMix);
+
+      // Restrained spherical shading, with no dark outline or glossy rim.
+      const radius = Math.sqrt(nx * nx + ny * ny);
+      const edgeShade = smoothstep(0.7, 1, radius) * 0.1;
+      const volumeLight = 1.02 + (1 - Math.min(1, radius)) * 0.05 - edgeShade;
+      const offset = (y * TEXTURE_SIZE + x) * 4;
+      // Deterministic sub-LSB dither prevents broad 8-bit color contours.
+      const dither = ((((x * 73 + y * 151) & 255) / 255) - 0.5) * 0.8;
+      data[offset] = clamp(Math.round(red * volumeLight + dither), 0, 255);
+      data[offset + 1] = clamp(Math.round(green * volumeLight + dither), 0, 255);
+      data[offset + 2] = clamp(Math.round(blue * volumeLight + dither), 0, 255);
+      data[offset + 3] = 255;
+    }
+  }
 }
 
 export function VoiceOrb({
   state,
-  size = 176,
+  size = 160,
   className,
 }: {
   state: VoiceState;
@@ -97,131 +276,150 @@ export function VoiceOrb({
   className?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  // Read by the draw loop without restarting it — a state flip mid-frame just
-  // gives the easing a new target.
+  const redrawStillRef = useRef<(() => void) | null>(null);
   const stateRef = useRef<VoiceState>(state);
   useEffect(() => {
     stateRef.current = state;
+    redrawStillRef.current?.();
   }, [state]);
 
-  // Nobody watches a hidden window; the sphere holds its breath until they do.
   const visible = useDocumentVisible();
+  const [reducedMotion, setReducedMotion] = useState(
+    () => window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false,
+  );
+
+  useEffect(() => {
+    const query = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    if (!query) return;
+    const update = (event: MediaQueryListEvent) => setReducedMotion(event.matches);
+    setReducedMotion(query.matches);
+    query.addEventListener?.("change", update);
+    return () => query.removeEventListener?.("change", update);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !visible) return;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return; // jsdom / a WebView without canvas — the orb stays a disc
+    if (!ctx) return;
 
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const texture = document.createElement("canvas");
+    texture.width = TEXTURE_SIZE;
+    texture.height = TEXTURE_SIZE;
+    const textureCtx = texture.getContext("2d");
+    if (!textureCtx) return;
+    const weather = textureCtx.createImageData(TEXTURE_SIZE, TEXTURE_SIZE);
+
+    const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
     canvas.width = Math.round(size * dpr);
     canvas.height = Math.round(size * dpr);
     const half = (size * dpr) / 2;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
 
-    // The live parameters, eased toward the current state's targets each frame.
     const live: Motion = { ...MOTIONS[stateRef.current] };
-    let angle = 0;
     let last = performance.now();
+    let phaseX = 0;
+    let phaseY = 0;
+    let breathPhase = 0;
+    let activityElapsed = 0;
+    let activeState = stateRef.current;
+    let speakingAge = Number.POSITIVE_INFINITY;
+    let liveImpact = 0;
+    let liveInput = 0;
 
     const drawFrame = (now: number) => {
-      const t = now / 1000;
-      const dt = Math.min(0.1, (now - last) / 1000);
+      const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
       last = now;
 
       const target = MOTIONS[stateRef.current] ?? MOTIONS.idle;
-      for (const key of Object.keys(live) as (keyof Motion)[]) {
-        live[key] = mix(live[key], target[key], 0.055);
+      if (stateRef.current !== activeState) {
+        activeState = stateRef.current;
+        speakingAge = activeState === "speaking" ? 0 : Number.POSITIVE_INFINITY;
       }
-      angle += live.swirl * dt;
+      const ease = 1 - Math.exp(-dt * 3.2);
+      for (const key of Object.keys(live) as (keyof Motion)[]) {
+        live[key] = mix(live[key], target[key], ease);
+      }
+      phaseX += dt * live.flowX;
+      phaseY += dt * live.flowY;
+      breathPhase += dt * live.breathHz * Math.PI * 2;
+      activityElapsed += dt;
+      if (Number.isFinite(speakingAge)) speakingAge += dt;
 
-      // Breathing, with the second wobble that makes "speaking" read as speech.
+      // The panel receives lifecycle states on every platform, but no reliable
+      // normalized TTS output level. This choreography reacts to the truthful
+      // speaking state without masquerading as a measured audio waveform.
+      const speech = activeState === "speaking" ? speechEnvelope(activityElapsed) : 0;
+      const onset = activeState === "speaking" ? speakingOnset(speakingAge) : 0;
+      const impactTarget = live.voiceImpact * speech + 0.032 * onset;
+      const impactEase = 1 - Math.exp(-dt * (impactTarget > liveImpact ? 22 : 8));
+      liveImpact = mix(liveImpact, impactTarget, impactEase);
+
+      // Native capture and browser realtime both write the real normalized
+      // microphone level into a shared ref. A quick attack makes consonants
+      // feel immediate; the softer release prevents a nervous flicker between
+      // syllables. Only listening reacts, so stale samples cannot move the orb
+      // while the assistant is thinking or speaking.
+      const inputTarget = activeState === "listening" ? readVoiceInputLevel(now) : 0;
+      const inputEase = 1 - Math.exp(-dt * (inputTarget > liveInput ? 24 : 9));
+      liveInput = mix(liveInput, inputTarget, inputEase);
+      const visualImpact = liveImpact + liveInput * 0.055;
+
       const breath =
-        1 +
-        live.breathAmp * Math.sin(2 * Math.PI * live.breathHz * t) +
-        0.35 * live.breathAmp * Math.sin(2 * Math.PI * live.breathHz * 2.7 * t + 1.3);
-      const radius = (half - 2 * dpr) * breath;
+        0.965 -
+        live.breathAmp * 0.65 +
+        live.breathAmp * 0.52 * Math.sin(breathPhase) +
+        live.breathAmp * 0.13 * Math.sin(breathPhase * 2.05 + 1.4) +
+        visualImpact;
+      const radius = (half - 0.75 * dpr) * Math.min(1, breath);
+
+      paintWeather(weather, phaseX, phaseY, live, visualImpact);
+      textureCtx.putImageData(weather, 0, 0);
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.save();
       ctx.beginPath();
       ctx.arc(half, half, radius, 0, Math.PI * 2);
       ctx.clip();
-
-      // The sphere's body: a dark-amber ground the clouds glow out of.
-      const body = ctx.createRadialGradient(
-        half - radius * 0.3,
-        half - radius * 0.35,
-        radius * 0.1,
-        half,
-        half,
-        radius,
-      );
-      body.addColorStop(0, `rgba(${cloudColor(1, live.vivid)}, 0.9)`);
-      body.addColorStop(0.55, `rgba(${cloudColor(3, live.vivid)}, 0.85)`);
-      body.addColorStop(1, `rgba(${cloudColor(4, live.vivid)}, 0.95)`);
-      ctx.fillStyle = body;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // The inner weather: soft clouds on slow individual orbits.
-      ctx.globalCompositeOperation = "lighter";
-      SEEDS.forEach((seed, i) => {
-        const wobble = live.jitter * Math.sin(2 * Math.PI * 13 * t + seed * 7);
-        const reach = radius * live.drift;
-        const cx =
-          half +
-          reach * Math.sin(t * live.speed * (0.7 + seed * 0.13) + seed + angle) +
-          reach * 0.4 * Math.sin(t * live.speed * 1.7 + seed * 2);
-        const cy =
-          half +
-          reach * Math.cos(t * live.speed * (0.5 + seed * 0.17) + seed * 3 + angle) +
-          reach * 0.4 * Math.cos(t * live.speed * 1.3 + seed);
-        const r =
-          radius * (0.42 + 0.22 * Math.sin(t * live.speed * 0.9 + seed * 5) + wobble);
-        if (r <= 0) return;
-        const cloud = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-        cloud.addColorStop(0, `rgba(${cloudColor(i, live.vivid)}, 0.5)`);
-        cloud.addColorStop(1, `rgba(${cloudColor(i, live.vivid)}, 0)`);
-        ctx.fillStyle = cloud;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-      });
-      ctx.globalCompositeOperation = "source-over";
-
-      // A soft top-light, so it reads as a sphere rather than a disc.
-      const sheen = ctx.createRadialGradient(
-        half - radius * 0.35,
-        half - radius * 0.45,
-        0,
-        half - radius * 0.35,
-        half - radius * 0.45,
-        radius * 1.1,
-      );
-      sheen.addColorStop(0, `rgba(255, 255, 255, ${0.28 * Math.max(0.4, live.vivid)})`);
-      sheen.addColorStop(0.5, "rgba(255, 255, 255, 0)");
-      ctx.fillStyle = sheen;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
+      ctx.drawImage(texture, half - radius, half - radius, radius * 2, radius * 2);
       ctx.restore();
     };
 
-    // A viewer who asked for reduced motion gets the sphere, standing still.
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
-      drawFrame(performance.now());
-      return;
+    if (reducedMotion) {
+      const drawStill = () => {
+        Object.assign(live, MOTIONS[stateRef.current] ?? MOTIONS.idle);
+        const now = performance.now();
+        last = now;
+        drawFrame(now);
+      };
+      redrawStillRef.current = drawStill;
+      drawStill();
+      return () => {
+        if (redrawStillRef.current === drawStill) redrawStillRef.current = null;
+      };
     }
 
+    redrawStillRef.current = null;
+    let lastPaint = performance.now();
+    drawFrame(lastPaint);
     let raf = requestAnimationFrame(function loop(now: number) {
-      drawFrame(now);
+      if (now - lastPaint >= FRAME_INTERVAL_MS) {
+        drawFrame(now);
+        lastPaint = now;
+      }
       raf = requestAnimationFrame(loop);
     });
     return () => cancelAnimationFrame(raf);
-  }, [visible, size]);
+  }, [visible, reducedMotion, size]);
 
   return (
     <canvas
       ref={canvasRef}
       data-testid="voice-orb-canvas"
+      data-state={state}
       aria-hidden="true"
-      className={cn("rounded-full", className)}
+      className={cn("block rounded-full bg-transparent", className)}
       style={{ width: size, height: size }}
     />
   );

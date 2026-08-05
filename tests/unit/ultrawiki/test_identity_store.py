@@ -70,7 +70,7 @@ async def test_identity_migration_is_idempotent(tmp_path):
     path = tmp_path / "ultrawiki.db"
     first = UltraStore(path)
     await first.open()
-    entity_id = await first.upsert_entity(display_name="Viktoria Novak")
+    entity_id = await first.upsert_entity(display_name="Testoria Novak")
     await first.close()
 
     second = UltraStore(path)
@@ -100,19 +100,19 @@ async def test_golden_set_resolves_with_zero_wrong_merges(store):
     same_person = [
         # One person, three sources, three spellings and two phone formats.
         {
-            "name": "Viktoria Novak",
-            "emails": ["viktoria@example.com"],
+            "name": "Testoria Novak",
+            "emails": ["testoria@example.com"],
             "phones": ["+49 151 2345 6789"],
-            "contact_slug": "viktoria-novak",
+            "contact_slug": "testoria-novak",
         },
-        {"name": "V. Novak", "emails": ["VIKTORIA@Example.com"]},
-        {"name": "Novak, Viktoria", "phones": ["0049-151-23456789"]},
+        {"name": "T. Novak", "emails": ["TESTORIA@Example.com"]},
+        {"name": "Novak, Testoria", "phones": ["0049-151-23456789"]},
     ]
     distinct_people = [
         # A brother: same surname, similar given name, own phone number.
-        {"name": "Viktor Novak", "phones": ["+49 151 9999 0000"]},
+        {"name": "Testor Novak", "phones": ["+49 151 9999 0000"]},
         # A nickname with no other evidence at all.
-        {"name": "Viki"},
+        {"name": "Test"},
         # Two people who merely share a surname.
         {"name": "John Smith", "emails": ["john@example.com"]},
         {"name": "Jane Smith", "emails": ["jane@example.com"]},
@@ -148,8 +148,8 @@ async def test_golden_set_resolves_with_zero_wrong_merges(store):
 
     # 4 — the uncertain cases are queued, and only those.
     pairs = await queue_pairs(store)
-    assert frozenset({"Viktoria Novak", "Viktor Novak"}) in pairs
-    assert frozenset({"Viktoria Novak", "Viki"}) in pairs
+    assert frozenset({"Testoria Novak", "Testor Novak"}) in pairs
+    assert frozenset({"Testoria Novak", "Test"}) in pairs
     assert frozenset({"John Smith", "Jane Smith"}) not in pairs
 
 
@@ -409,9 +409,9 @@ async def test_repeated_observation_of_one_person_is_idempotent(store):
 def build_contacts(tmp_path) -> ContactStore:
     contacts = ContactStore(base_dir=tmp_path / "contacts")
     contacts.put(
-        name="Viktoria Novak",
-        aliases=["Viki"],
-        emails=["viktoria@example.com"],
+        name="Testoria Novak",
+        aliases=["Test"],
+        emails=["testoria@example.com"],
         phones=["+49 151 2345 6789"],
     )
     contacts.put(name="John Smith", emails=["john@example.com"])
@@ -428,7 +428,7 @@ async def test_seeding_from_contacts_is_idempotent(store, tmp_path):
     assert first.merged == 0
     people = await store.list_people(limit=10)
     assert {person["display_name"] for person in people} == {
-        "Viktoria Novak",
+        "Testoria Novak",
         "John Smith",
         "No Contact Details",
     }
@@ -445,7 +445,7 @@ async def test_seeding_merges_with_what_the_corpus_already_knew(store, tmp_path)
     """A contact whose phone number already appeared during ingest joins that
     entity deterministically instead of becoming a twin."""
     ingested = await store.resolve_identity(
-        name="V. Novak", phones=["0049-151-23456789"]
+        name="T. Novak", phones=["0049-151-23456789"]
     )
     contacts = build_contacts(tmp_path)
 
@@ -453,15 +453,15 @@ async def test_seeding_merges_with_what_the_corpus_already_knew(store, tmp_path)
     assert report.created == 2  # the third contact matched the ingested entity
     assert report.linked == 1
     profile = await store.get_person(ingested.entity_id)
-    assert "viktoria@example.com" in profile["emails"]
+    assert "testoria@example.com" in profile["emails"]
     assert profile["contacts"] == [contacts.list_all()[2].slug]
-    assert "viki" in [name.lower() for name in profile["names"]]
+    assert "test" in [name.lower() for name in profile["names"]]
 
 
 async def test_seeded_alias_becomes_a_searchable_identifier(store, tmp_path):
     await seed_from_contacts(store, contact_store=build_contacts(tmp_path))
-    found = await store.list_people(query="viki", limit=10)
-    assert [person["display_name"] for person in found] == ["Viktoria Novak"]
+    found = await store.list_people(query="test", limit=10)
+    assert [person["display_name"] for person in found] == ["Testoria Novak"]
 
 
 async def test_people_list_filters_and_pages(store):
@@ -606,8 +606,8 @@ async def test_a_shared_identifier_never_fuses_across_kinds(store):
 
 
 async def test_near_names_of_different_kinds_are_never_proposed(store):
-    await store.resolve_identity(name="Viktoria Novak", kind=EntityKind.PERSON)
-    await store.resolve_identity(name="Viktoria Novaks", kind=EntityKind.PLACE)
+    await store.resolve_identity(name="Testoria Novak", kind=EntityKind.PERSON)
+    await store.resolve_identity(name="Testoria Novaks", kind=EntityKind.PLACE)
     assert await store.list_confirm_queue(limit=20) == []
 
 

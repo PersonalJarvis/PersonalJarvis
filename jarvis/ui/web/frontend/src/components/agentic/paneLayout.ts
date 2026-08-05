@@ -25,25 +25,28 @@
  * a laptop; a weight does, and it is also what makes "half" mean half at every
  * window size.
  *
- * Three families of weight, each attached to the most stable identity available:
+ * Two families of weight, each attached to the most stable identity available:
  *
  * * `columns` — by column index, because a column has no id of its own (the
  *   backend renumbers them on every open and close). `remapColumnWeights` carries
  *   them across such a renumber by matching on the panes each column holds.
- * * `bands` — by band index. A band is a line of columns, and which columns share
- *   one depends on the window width, so there is nothing stabler to key on.
  * * `panes` — by call-sign, which IS stable for a pane's whole life.
+ *
+ * There used to be a third, `bands`, for the height of each line of columns.
+ * The workspace does not wrap into lines any more (see the header of
+ * `./layout`), so there is exactly one line and nothing to divide between two
+ * of them.
  *
  * ## Fractions, not a CSS grid
  *
  * The layout is returned as fractional rectangles because one CSS grid cannot
- * express it: `grid-template-columns` is shared by every row, so two bands could
- * never have different column widths. Panes are therefore positioned absolutely
- * inside one container — which keeps the property the grid was chosen for in the
- * first place, that a pane is never re-parented and so never unmounts (see the
- * header of `./layout`).
+ * express it: `grid-template-columns` is shared by every row, so a column's
+ * width could never be dragged independently of the panes stacked below it.
+ * Panes are therefore positioned absolutely inside one container — which keeps
+ * the property the grid was chosen for in the first place, that a pane is never
+ * re-parented and so never unmounts (see the header of `./layout`).
  */
-import { paneColumns, type Positioned } from "./layout";
+import type { Positioned } from "./layout";
 
 /** Smallest a pane may be dragged to, on either axis. */
 export const MIN_SEAM_PANE_PX = 120;
@@ -65,15 +68,13 @@ export interface Sized extends Positioned {
 export interface PaneWeights {
   /** Width of each column, by column index (left to right). */
   columns: number[];
-  /** Height of each band, by band index (top to bottom). */
-  bands: number[];
   /** Height of each pane within its own column's stack, by call-sign. */
   panes: Record<string, number>;
 }
 
 /** The even split — what a workspace looks like before anything is dragged. */
 export function evenWeights(): PaneWeights {
-  return { columns: [], bands: [], panes: {} };
+  return { columns: [], panes: {} };
 }
 
 /** A pane's rectangle, as fractions of the workspace on both axes. */
@@ -82,8 +83,6 @@ export interface PaneBox {
   y: number;
   w: number;
   h: number;
-  /** Which band it sits in, top to bottom. */
-  band: number;
   /** Its column's index among all columns, left to right. */
   columnIndex: number;
   /** Its place in that column's stack, top to bottom. */
@@ -91,7 +90,7 @@ export interface PaneBox {
 }
 
 /** Which boundary a seam is, and therefore which weights a drag changes. */
-export type SeamKind = "column" | "band" | "pane";
+export type SeamKind = "column" | "pane";
 
 /**
  * A draggable boundary between two neighbours.
@@ -110,16 +109,18 @@ export interface PaneSeam {
   h: number;
   /**
    * The two neighbours, as keys into the matching weight family: column indexes
-   * for `column`, band indexes for `band`, call-signs for `pane`.
+   * for `column`, call-signs for `pane`.
    */
   before: string | number;
   after: string | number;
   /** Combined weight of every sibling the drag redistributes within. */
   groupWeight: number;
   /**
-   * Fraction of the workspace axis those siblings span — 1 for columns (a band
-   * is the full width) and bands (the full height), the band's own height for
-   * panes stacked inside one column. Turns a pointer's pixels into weight.
+   * Fraction of the workspace axis those siblings span. Always 1 now that a
+   * workspace is one line of columns — the columns span its full width, and a
+   * column's stack its full height — but kept as a field because it is what
+   * turns a pointer's pixels into weight, and reading `deltaPx / (axisPx * f)`
+   * at the drag site is what makes that conversion checkable.
    */
   axisFraction: number;
   /** Plain-language name, used as the seam's tooltip and accessible label. */
@@ -131,14 +132,14 @@ export interface WorkspaceLayout {
   /** One box per input pane, in input order. */
   boxes: PaneBox[];
   seams: PaneSeam[];
-  /** Lines of columns the workspace wraps into. */
-  bands: number;
   /**
-   * Height below which panes stop shrinking and the workspace scrolls instead,
-   * in multiples of one minimum pane height — the tallest stack of each band,
-   * added up. See `MIN_PANE_HEIGHT_PX` in `./layout` for why there is a floor.
+   * Columns the workspace holds, left to right.
+   *
+   * Purely informational now: the workspace is drawn at exactly the size it was
+   * given on both axes, so nothing multiplies this by a minimum width any more
+   * (see the header of `./layout`).
    */
-  minHeightUnits: number;
+  columns: number;
 }
 
 function weightAt(list: readonly number[], index: number): number {
@@ -154,17 +155,18 @@ function paneWeight(weights: PaneWeights, name: string): number {
 /**
  * Lay a workspace out.
  *
- * `maxPerBand` is the width-derived cap from `bandCapacityFor` — the same number
- * the arrangement in `./layout` is computed from, so the two never disagree
- * about where a workspace wraps.
+ * Every column the panes name gets a place on ONE line, however many there are:
+ * the workspace never re-arranges itself to fit a window, and never grows past
+ * it either (see the header of `./layout`). The boxes are fractions of whatever
+ * area the caller draws them in, so "one more pane" is always "everything a
+ * little smaller" and never "scroll to find it".
  */
 export function paneLayout<T extends Sized>(
   panes: readonly T[],
-  maxPerBand: number,
   weights: PaneWeights = evenWeights(),
 ): WorkspaceLayout {
   if (panes.length === 0) {
-    return { boxes: [], seams: [], bands: 0, minHeightUnits: 0 };
+    return { boxes: [], seams: [], columns: 0 };
   }
 
   // Columns in left-to-right order with gaps closed, exactly as `paneGrid` does
@@ -179,123 +181,76 @@ export function paneLayout<T extends Sized>(
   });
   for (const stack of stacks) stack.sort((a, b) => panes[a].slot - panes[b].slot);
 
-  const perBand = Math.max(1, paneColumns(ordered.length, maxPerBand));
-  const bandCount = Math.ceil(ordered.length / perBand);
-
-  // ------------------------------------------------------------------ bands
-  const bandWeights = Array.from({ length: bandCount }, (_, band) =>
-    weightAt(weights.bands, band),
-  );
-  const bandTotal = bandWeights.reduce((sum, w) => sum + w, 0) || 1;
-  const bandY: number[] = [];
-  const bandH: number[] = [];
-  let yCursor = 0;
-  for (let band = 0; band < bandCount; band += 1) {
-    const height = bandWeights[band] / bandTotal;
-    bandY.push(yCursor);
-    bandH.push(height);
-    yCursor += height;
-  }
+  const columnWeights = stacks.map((_, index) => weightAt(weights.columns, index));
+  const columnTotal = columnWeights.reduce((sum, w) => sum + w, 0) || 1;
 
   const boxes: PaneBox[] = new Array(panes.length);
   const seams: PaneSeam[] = [];
-  let minHeightUnits = 0;
+  let xCursor = 0;
 
-  for (let band = 0; band < bandCount; band += 1) {
-    const first = band * perBand;
-    const inBand = ordered.slice(first, first + perBand).map((_, i) => first + i);
-    const columnWeights = inBand.map((index) => weightAt(weights.columns, index));
-    const columnTotal = columnWeights.reduce((sum, w) => sum + w, 0) || 1;
+  stacks.forEach((stack, index) => {
+    const width = columnWeights[index] / columnTotal;
 
-    let tallest = 1;
-    let xCursor = 0;
-    inBand.forEach((index, position) => {
-      const width = columnWeights[position] / columnTotal;
-      const stack = stacks[index];
-      tallest = Math.max(tallest, stack.length);
-
-      // ------------------------------------------------- panes in this column
-      const stackWeights = stack.map((pane) => paneWeight(weights, panes[pane].name));
-      const stackTotal = stackWeights.reduce((sum, w) => sum + w, 0) || 1;
-      let stackCursor = 0;
-      stack.forEach((pane, slot) => {
-        const share = stackWeights[slot] / stackTotal;
-        boxes[pane] = {
-          x: xCursor,
-          y: bandY[band] + bandH[band] * stackCursor,
-          w: width,
-          h: bandH[band] * share,
-          band,
-          columnIndex: index,
-          slotIndex: slot,
-        };
-        if (slot > 0) {
-          seams.push({
-            id: `pane:${panes[stack[slot - 1]].name}:${panes[pane].name}`,
-            kind: "pane",
-            orientation: "horizontal",
-            x: xCursor,
-            y: bandY[band] + bandH[band] * stackCursor,
-            w: width,
-            h: 0,
-            before: panes[stack[slot - 1]].name,
-            after: panes[pane].name,
-            groupWeight: stackTotal,
-            axisFraction: bandH[band],
-            label: `Drag to resize ${panes[stack[slot - 1]].name} and ${panes[pane].name}`,
-          });
-        }
-        stackCursor += share;
-      });
-
-      if (position > 0) {
+    // --------------------------------------------------- panes in this column
+    const stackWeights = stack.map((pane) => paneWeight(weights, panes[pane].name));
+    const stackTotal = stackWeights.reduce((sum, w) => sum + w, 0) || 1;
+    let stackCursor = 0;
+    stack.forEach((pane, slot) => {
+      const share = stackWeights[slot] / stackTotal;
+      boxes[pane] = {
+        x: xCursor,
+        y: stackCursor,
+        w: width,
+        h: share,
+        columnIndex: index,
+        slotIndex: slot,
+      };
+      if (slot > 0) {
         seams.push({
-          id: `column:${inBand[position - 1]}:${index}`,
-          kind: "column",
-          orientation: "vertical",
+          id: `pane:${panes[stack[slot - 1]].name}:${panes[pane].name}`,
+          kind: "pane",
+          orientation: "horizontal",
           x: xCursor,
-          y: bandY[band],
-          w: 0,
-          h: bandH[band],
-          before: inBand[position - 1],
-          after: index,
-          groupWeight: columnTotal,
+          y: stackCursor,
+          w: width,
+          h: 0,
+          before: panes[stack[slot - 1]].name,
+          after: panes[pane].name,
+          groupWeight: stackTotal,
           axisFraction: 1,
-          label: "Drag to resize these two columns of terminals",
+          label: `Drag to resize ${panes[stack[slot - 1]].name} and ${panes[pane].name}`,
         });
       }
-      xCursor += width;
+      stackCursor += share;
     });
 
-    minHeightUnits += tallest;
-
-    if (band > 0) {
+    if (index > 0) {
       seams.push({
-        id: `band:${band - 1}:${band}`,
-        kind: "band",
-        orientation: "horizontal",
-        x: 0,
-        y: bandY[band],
-        w: 1,
-        h: 0,
-        before: band - 1,
-        after: band,
-        groupWeight: bandTotal,
+        id: `column:${index - 1}:${index}`,
+        kind: "column",
+        orientation: "vertical",
+        x: xCursor,
+        y: 0,
+        w: 0,
+        h: 1,
+        before: index - 1,
+        after: index,
+        groupWeight: columnTotal,
         axisFraction: 1,
-        label: "Drag to resize these two rows of terminals",
+        label: "Drag to resize these two columns of terminals",
       });
     }
-  }
+    xCursor += width;
+  });
 
-  return { boxes, seams, bands: bandCount, minHeightUnits };
+  return { boxes, seams, columns: stacks.length };
 }
 
 // ---------------------------------------------------------------- dragging
 
 function readSide(weights: PaneWeights, seam: PaneSeam, side: string | number): number {
   if (seam.kind === "pane") return paneWeight(weights, String(side));
-  const list = seam.kind === "column" ? weights.columns : weights.bands;
-  return weightAt(list, Number(side));
+  return weightAt(weights.columns, Number(side));
 }
 
 function writeSide(
@@ -307,15 +262,14 @@ function writeSide(
   if (seam.kind === "pane") {
     return { ...weights, panes: { ...weights.panes, [String(side)]: value } };
   }
-  const key = seam.kind === "column" ? "columns" : "bands";
-  const list = [...weights[key]];
+  const list = [...weights.columns];
   const index = Number(side);
   // A weight nobody has dragged yet is absent, not zero — fill the gap with the
   // default so writing index 5 of an empty list does not create four holes that
   // read back as 0 and collapse their columns.
   while (list.length <= index) list.push(1);
   list[index] = value;
-  return { ...weights, [key]: list };
+  return { ...weights, columns: list };
 }
 
 /**
@@ -368,6 +322,44 @@ export function dragSeam(
 export function evenSeam(weights: PaneWeights, seam: PaneSeam): PaneWeights {
   const half = (readSide(weights, seam, seam.before) + readSide(weights, seam, seam.after)) / 2;
   return writeSide(writeSide(weights, seam, seam.before, half), seam, seam.after, half);
+}
+
+/**
+ * How close two fractions have to be before nobody could see the difference.
+ *
+ * A fraction of the workspace, so on a 4K monitor this is four thousandths of a
+ * pixel — far below anything a screen can draw, and loose enough that a seam
+ * dragged to visually-even (or the float noise a chain of drags leaves behind)
+ * counts as even rather than leaving the toolbar offering a button that would
+ * change nothing.
+ */
+const EVEN_EPSILON = 1e-4;
+
+/**
+ * Is every terminal already sharing its space equally with its siblings?
+ *
+ * Answered by comparing the layout the current weights produce against the one
+ * `evenWeights` produces, rather than by inspecting the weights themselves.
+ * That is the honest question — "would evening this out move anything on
+ * screen" — and it is the same answer for weights of `[1, 1]` and `[7, 7]`,
+ * which no comparison of the stored numbers alone would give.
+ */
+export function isEvenLayout<T extends Sized>(
+  panes: readonly T[],
+  weights: PaneWeights,
+): boolean {
+  const current = paneLayout(panes, weights);
+  const even = paneLayout(panes, evenWeights());
+  return current.boxes.every((box, index) => {
+    const target = even.boxes[index];
+    if (!target) return false;
+    return (
+      Math.abs(box.x - target.x) <= EVEN_EPSILON &&
+      Math.abs(box.y - target.y) <= EVEN_EPSILON &&
+      Math.abs(box.w - target.w) <= EVEN_EPSILON &&
+      Math.abs(box.h - target.h) <= EVEN_EPSILON
+    );
+  });
 }
 
 // ------------------------------------------------------- splits and closes
@@ -479,7 +471,7 @@ export function remapColumnWeights<T extends Sized>(
   const panes = Object.fromEntries(
     Object.entries(weights.panes).filter(([name]) => live.has(name)),
   );
-  return { columns, bands: [...weights.bands], panes };
+  return { columns, panes };
 }
 
 /**
@@ -490,10 +482,9 @@ export function remapColumnWeights<T extends Sized>(
  * lost width to make room for a new full-height column — and people reasonably
  * expect the pane they clicked to be the only one that changes.
  *
- * Halving is skipped in the one case where it would be a lie: when the new
- * column wrapped onto a different line than its anchor, the two are not sharing
- * anything, and shrinking the anchor to half of its band would leave it oddly
- * narrow next to neighbours it never split from.
+ * Halving now holds for every split, including the ones that used to land on
+ * another line: a workspace is one line of columns, so the new pane and its
+ * anchor are always neighbours sharing the room the anchor had.
  */
 export function weightsAfterSplit<T extends Sized>(
   weights: PaneWeights,
@@ -501,7 +492,6 @@ export function weightsAfterSplit<T extends Sized>(
   after: readonly T[],
   anchor: string,
   added: string,
-  maxPerBand: number,
 ): PaneWeights {
   const carried = remapColumnWeights(weights, before, after);
   const nowIn = columnIndexes(after);
@@ -517,11 +507,6 @@ export function weightsAfterSplit<T extends Sized>(
       ...carried,
       panes: { ...carried.panes, [anchor]: half, [added]: half },
     };
-  }
-
-  const perBand = Math.max(1, paneColumns(columnCount(after), maxPerBand));
-  if (Math.floor(anchorColumn / perBand) !== Math.floor(addedColumn / perBand)) {
-    return carried;
   }
 
   // Split right: the two halves together occupy the width the anchor had.

@@ -13,6 +13,11 @@ import {
 } from "@/lib/realtimeAudio";
 import { useEventStore, type VoiceState } from "@/store/events";
 import { cn } from "@/lib/utils";
+import {
+  clearVoiceInputLevel,
+  setBrowserVoiceInputOwnership,
+  setVoiceInputLevel,
+} from "@/lib/voiceInputLevel";
 
 type ConnectionState = "idle" | "connecting" | "connected" | "error";
 
@@ -70,21 +75,30 @@ export function waveformPhase(
 export function BrowserRealtimeControl() {
   const t = useT();
   const capabilities = useCapabilities();
-  const { mode, realtimeAvailable, requiresWebRtcOffer } = useVoiceMode();
+  const { mode, realtimeAvailable, requiresWebRtcOffer, startBudgetMs } =
+    useVoiceMode();
   const setVoice = useEventStore((store) => store.setVoice);
   const setTranscription = useEventStore((store) => store.setTranscription);
   const voiceState = useEventStore((store) => store.voiceState);
   const transcriptionFinal = useEventStore((store) => store.transcriptionFinal);
   const transcription = useEventStore((store) => store.transcription);
+  const pushToast = useEventStore((store) => store.pushToast);
   const [state, setState] = useState<ConnectionState>("idle");
   const [effectiveProvider, setEffectiveProvider] = useState("");
   const [error, setError] = useState("");
+  // A non-fatal note from the provider (a recoverable warning, an unusable
+  // WebRTC answer). Distinct from `error`, which means the call is over.
+  const [notice, setNotice] = useState("");
+  // The last surface-spoken reply, kept so a browser that cannot synthesise
+  // speech still SHOWS the answer instead of swallowing the whole turn.
+  const [spokenText, setSpokenText] = useState("");
   // The microphone level lands in a ref, not in state: it arrives ~30 times a
   // second and only the animation loop consumes it. Routing it through
   // setState re-rendered this control (and everything it renders) at 30 Hz to
   // repaint a five-segment meter.
   const levelRef = useRef(0);
   const clientRef = useRef<RealtimeAudioClient | null>(null);
+  const connectionGenerationRef = useRef(0);
   const browserSurface = Boolean(
     capabilities.data &&
       (capabilities.data.native_file_actions === false || !hasEmbeddedDesktopBridge()),
@@ -105,45 +119,104 @@ export function BrowserRealtimeControl() {
   );
 
   const stop = useCallback(async () => {
+    connectionGenerationRef.current += 1;
     const client = clientRef.current;
     clientRef.current = null;
-    await client?.disconnect();
     setState("idle");
     setEffectiveProvider("");
     setError("");
+    setNotice("");
+    setSpokenText("");
     levelRef.current = 0;
+    clearVoiceInputLevel("browser");
+    setBrowserVoiceInputOwnership(false);
     setVoice("idle");
+    await client?.disconnect();
   }, [setVoice]);
 
   const start = useCallback(async () => {
     if (!realtimeAvailable || state === "connecting") return;
-    await clientRef.current?.disconnect();
+    const generation = connectionGenerationRef.current + 1;
+    connectionGenerationRef.current = generation;
+    const previousClient = clientRef.current;
+    clientRef.current = null;
     setState("connecting");
     setError("");
     setEffectiveProvider("");
+    levelRef.current = 0;
+    clearVoiceInputLevel("browser");
+    await previousClient?.disconnect();
+    if (connectionGenerationRef.current !== generation) return;
 
-    const client = new RealtimeAudioClient(
+    let client: RealtimeAudioClient;
+    const isCurrent = () =>
+      connectionGenerationRef.current === generation && clientRef.current === client;
+    client = new RealtimeAudioClient(
       {
         onTranscript: (text, isFinal, role) => {
+          if (!isCurrent()) return;
           if (role === "user") setTranscription(text, isFinal);
           if (role === "user" && isFinal) setVoice("thinking");
         },
         onAudio: () => {
+          if (!isCurrent()) return;
           setError("");
           setVoice("speaking");
         },
         onInputLevel: (value) => {
+          if (!isCurrent()) return;
           levelRef.current = value;
+          setVoiceInputLevel(value, "browser");
         },
         onStatus: (status, payload) => {
+          if (!isCurrent()) return;
+          // The backend authors one precise English sentence per failure —
+          // "automatic usage-billed fallback is disabled for this provider",
+          // the exact transport error, the socket close reason. Replacing all
+          // of them with one generic line sent users to test a credential
+          // that was never the problem.
+          const backendDetail =
+            (typeof payload.error === "string" ? payload.error.trim() : "") ||
+            (typeof payload.reason === "string" ? payload.reason.trim() : "");
           if (status === "audio_ready") {
             const provider =
               typeof payload.provider === "string" ? payload.provider : "";
             if (provider) setEffectiveProvider(provider);
             setState("connected");
+            setNotice("");
             setVoice("listening");
           } else if (status === "mode_fallback") {
             setEffectiveProvider(t("sidebar.realtime_pipeline_fallback"));
+          } else if (status === "provider_fallback") {
+            // The call just moved to a DIFFERENT provider family — which can
+            // mean different billing. Saying nothing here is an AP-22
+            // violation: the card would still name the provider that died.
+            const from =
+              typeof payload.provider === "string" ? payload.provider : "";
+            pushToast(
+              "warning",
+              t("sidebar.realtime_provider_fallback")
+                .replace("{0}", from || t("sidebar.realtime_provider_unknown"))
+                .replace("{1}", backendDetail),
+            );
+            setNotice(
+              t("sidebar.realtime_provider_fallback_short").replace(
+                "{0}",
+                from || t("sidebar.realtime_provider_unknown"),
+              ),
+            );
+          } else if (status === "provider_warning") {
+            // Recoverable: the session continues. A note, never an error.
+            setNotice(backendDetail || t("sidebar.realtime_provider_warning"));
+          } else if (status === "webrtc_transport_unavailable") {
+            setNotice(t("sidebar.realtime_webrtc_degraded"));
+          } else if (status === "error_spoken") {
+            // The trusted reply the provider did not speak. Audio starts via
+            // onAudio; keep the text so an engine without speech synthesis
+            // still shows the answer rather than losing the turn.
+            const text = typeof payload.text === "string" ? payload.text : "";
+            if (text.trim()) setSpokenText(text.trim());
+            setError("");
           } else if (status === "hangup") {
             // The session ended through a voice hang-up command or end_call.
             // Release the microphone and return to idle.
@@ -161,20 +234,28 @@ export function BrowserRealtimeControl() {
             setError(t("sidebar.realtime_browser_tts_unavailable"));
             setVoice("listening");
           } else if (status === "provider_error" || status === "disconnected") {
+            clientRef.current = null;
+            void client.disconnect();
             setState("error");
-            setError(t("sidebar.realtime_error"));
+            setError(backendDetail || t("sidebar.realtime_error"));
+            levelRef.current = 0;
+            clearVoiceInputLevel("browser");
             setVoice("error");
           }
         },
       },
-      { requiresWebRtcOffer },
+      { requiresWebRtcOffer, startBudgetMs },
     );
     clientRef.current = client;
     try {
       await client.connect();
+      if (!isCurrent()) return;
       setState("connected");
     } catch (cause) {
-      if (clientRef.current === client) clientRef.current = null;
+      if (!isCurrent()) return;
+      clientRef.current = null;
+      void client.disconnect();
+      clearVoiceInputLevel("browser");
       setState("error");
       setError(
         cause instanceof RealtimeAudioSupportError
@@ -186,10 +267,12 @@ export function BrowserRealtimeControl() {
       setVoice("error");
     }
   }, [
+    pushToast,
     realtimeAvailable,
     requiresWebRtcOffer,
     setTranscription,
     setVoice,
+    startBudgetMs,
     state,
     stop,
     supportMessage,
@@ -197,16 +280,21 @@ export function BrowserRealtimeControl() {
   ]);
 
   useEffect(() => {
-    if (visible) return;
-    const client = clientRef.current;
-    clientRef.current = null;
-    if (client) void client.disconnect();
-  }, [visible]);
+    setBrowserVoiceInputOwnership(
+      visible && (state === "connecting" || state === "connected"),
+    );
+  }, [state, visible]);
+
+  useEffect(() => {
+    if (!visible) void stop();
+  }, [stop, visible]);
 
   useEffect(
     () => () => {
+      connectionGenerationRef.current += 1;
       const client = clientRef.current;
       clientRef.current = null;
+      setBrowserVoiceInputOwnership(false);
       if (client) void client.disconnect();
     },
     [],
@@ -277,6 +365,25 @@ export function BrowserRealtimeControl() {
             ? [t(progressKey), effectiveProvider].filter(Boolean).join(" · ")
             : t("sidebar.realtime_browser_hint"))}
       </div>
+      {notice && !error && (
+        <div
+          data-testid="realtime-provider-notice"
+          className="mt-1 text-[10px] leading-snug text-amber-600 dark:text-amber-400"
+          aria-live="polite"
+        >
+          {notice}
+        </div>
+      )}
+      {/* The surface-spoken reply, shown only when speech synthesis could not
+          deliver it — otherwise the whole turn is silent AND invisible. */}
+      {spokenText && error && (
+        <div
+          data-testid="realtime-spoken-text"
+          className="mt-1 text-[10px] leading-snug text-foreground"
+        >
+          {spokenText}
+        </div>
+      )}
     </div>
   );
 }

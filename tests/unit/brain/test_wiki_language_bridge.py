@@ -145,9 +145,9 @@ def test_exact_token_is_still_searched_alongside_the_prefix(tmp_path: Path) -> N
     """The prefix is OR-ed IN ADDITION, so exact matches keep their rank."""
     from jarvis.memory.wiki.search import _build_match_expr
 
-    expr = _build_match_expr(["dinner", "viktoria"])
+    expr = _build_match_expr(["dinner", "testoria"])
     assert '"dinner"' in expr and '"dinner"*' in expr
-    assert '"viktoria"' in expr and '"viktoria"*' in expr
+    assert '"testoria"' in expr and '"testoria"*' in expr
 
 
 @pytest.mark.asyncio

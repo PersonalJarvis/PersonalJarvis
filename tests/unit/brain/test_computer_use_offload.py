@@ -412,15 +412,15 @@ async def test_manager_retains_signed_mission_result_for_follow_up(
         kind="subagent",
         source_layer="missions.voice.announcer",
         detail=(
-            '{"mission_id":"019f5ca2-e30f",'
-            '"result_uri":"mission://019f5ca2-e30f"}'
+            '{"mission_id":"019f1052-0001",'
+            '"result_uri":"mission://019f1052-0001"}'
         ),
     ))
 
     assert mgr._history
     content = str(mgr._history[-1].content)
     assert "Nova-Agent mission result" in content
-    assert "019f5ca2-e30f" in content
+    assert "019f1052-0001" in content
     assert "result_uri" in content
 
 

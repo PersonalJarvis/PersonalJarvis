@@ -131,18 +131,42 @@ class MacOSScriptDucker:
         del own_pid  # per-app player volumes never touch our own process
         skip = self._normalized_never(never)
         ducked: list[int] = []
+        # "A known player is running" is NOT the same as "we ducked one": a
+        # player already sitting at (or below) the duck volume is running and
+        # handled, it simply needs no change. Falling back to the MASTER output
+        # in that case lowered Jarvis's own TTS — the exact side effect the
+        # opt-in fallback exists to keep rare — for no gain at all.
+        player_running = False
         for token, (name, bundle_id) in _PLAYERS.items():
             if name.lower() in skip:
                 continue
             try:
                 proc = self._run(_duck_script(bundle_id, self._duck))
                 prev = self._parse_volume(proc, name)
-                if prev is not None and prev > self._duck:
+                if prev is None:
+                    continue  # not running, or the script failed → not handled
+                player_running = True
+                if prev > self._duck:
                     self._saved[token] = prev
+                    ducked.append(token)
+                elif token in self._saved:
+                    # The player is still sitting at the duck volume AND we
+                    # still hold the level it had before: a previous restore
+                    # never landed (osascript timeout, an Automation prompt
+                    # dismissed, Jarvis killed mid-session). Without this the
+                    # token can never come back — the duck script reads the
+                    # already-ducked volume, `prev > duck` stays false, so no
+                    # session ever reports it again and the saved level is
+                    # stranded in this dict while the user's music stays
+                    # silent for good. Hand it to THIS session's restore.
+                    log.info(
+                        "ducking: re-adopting %s (still at the duck volume with "
+                        "an unrestored level of %d)", name, self._saved[token],
+                    )
                     ducked.append(token)
             except Exception:  # noqa: BLE001 — timeout/TCC denial: skip player
                 log.debug("ducking skip (%s)", name, exc_info=True)
-        if not ducked and self._master_fallback:
+        if not ducked and not player_running and self._master_fallback:
             try:
                 proc = self._run(_master_duck_script(self._duck))
                 prev = self._parse_volume(proc, "master")

@@ -6,10 +6,10 @@ with three real markdown pages, and walks the same flow the Wave-2
 walk-through covers in ``docs/plans/b3/00-OVERVIEW.md §7``:
 
 1. ``GET /api/wiki/tree``                 → 3 files across 2 folders.
-2. ``GET /api/wiki/page/sam``          → body contains "garden project".
+2. ``GET /api/wiki/page/example-parent``  → body contains a fixture marker.
 3. ``GET /api/wiki/graph``                → at least 2 edges.
-4. ``GET /api/wiki/search?q=pizza``       → 1 hit on alex.
-5. ``GET /api/wiki/backlinks/sam``     → 1 hit (alex).
+4. ``GET /api/wiki/search?q=pizza``       → 1 hit on example-user.
+5. ``GET /api/wiki/backlinks/example-parent`` → 1 hit (example-user).
 
 No mocks; the only side-effects are temp-directory file writes and an
 HTTP round-trip via FastAPI's ``TestClient``.
@@ -33,15 +33,15 @@ def _seed_vault(vault: Path) -> None:
     (vault / "concepts").mkdir(parents=True)
     (vault / "sessions").mkdir(parents=True)
 
-    (vault / "entities" / "sam.md").write_text(
-        "---\ntype: entity\nslug: sam\n---\n\n"
-        "# Sam\n\n## Summary\nSam mentors community projects.\n\n"
-        "## Facts\n- Joined the garden project in 2024.\n",
+    (vault / "entities" / "example-parent.md").write_text(
+        "---\ntype: entity\nslug: example-parent\n---\n\n"
+        "# Example Parent\n\n## Summary\nSynthetic fixture entity.\n\n"
+        "## Facts\n- Fixture marker alpha.\n",
         encoding="utf-8",
     )
-    (vault / "entities" / "alex.md").write_text(
-        "---\ntype: entity\nslug: alex\n---\n\n"
-        "# Alex\n\n## Summary\nMentor is [[sam]].\n\n"
+    (vault / "entities" / "example-user.md").write_text(
+        "---\ntype: entity\nslug: example-user\n---\n\n"
+        "# Example User\n\n## Summary\nRelated to [[example-parent]].\n\n"
         "## Facts\n- Working on [[pixel-art-editor]].\n"
         "- Favorite food is Pizza (source: voice-fact:demo).\n",
         encoding="utf-8",
@@ -100,10 +100,10 @@ def test_full_flow_tree_page_graph_search_backlinks(
         assert tree["stats"]["total_pages"] == 3
 
         # 2. page
-        page = client.get("/api/wiki/page/sam").json()
+        page = client.get("/api/wiki/page/example-parent").json()
         assert page["ok"] is True
-        assert page["slug"] == "sam"
-        assert "garden project" in page["body_md"]
+        assert page["slug"] == "example-parent"
+        assert "Fixture marker alpha" in page["body_md"]
         assert page["frontmatter_valid"] is True
 
         # 3. graph
@@ -116,9 +116,9 @@ def test_full_flow_tree_page_graph_search_backlinks(
         search = client.get("/api/wiki/search", params={"q": "pizza"}).json()
         assert search["ok"] is True
         assert len(search["hits"]) >= 1
-        assert search["hits"][0]["slug"] == "alex"
+        assert search["hits"][0]["slug"] == "example-user"
 
         # 5. backlinks
-        backlinks = client.get("/api/wiki/backlinks/sam").json()
+        backlinks = client.get("/api/wiki/backlinks/example-parent").json()
         assert backlinks["ok"] is True
-        assert any(b["slug"] == "alex" for b in backlinks["backlinks"])
+        assert any(b["slug"] == "example-user" for b in backlinks["backlinks"])

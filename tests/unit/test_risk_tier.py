@@ -91,7 +91,7 @@ def test_needs_confirmation_whitelist_skips():
 
 
 # ----------------------------------------------------------------------
-# Per-action risk (forensic 2026-06-19, session dc533e39): a read-only
+# Per-action risk (forensic 2026-06-19, session 10000119): a read-only
 # ``gmail action=list_messages`` (the morning-routine "check unread mail"
 # step) was forced through the ask-tier confirmation and Jarvis spoke
 # "Do you really want me to send the email?" for a calendar question. The

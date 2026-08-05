@@ -29,7 +29,11 @@ import threading
 import time
 from pathlib import Path
 
-from jarvis.core.branding import MACOS_APP_DIR_NAME, MANAGED_INSTALL_MARKER
+from jarvis.core.branding import (
+    MACOS_APP_DIR_NAME,
+    MANAGED_INSTALL_MARKER,
+    WINDOWS_BRANDED_LAUNCH_ENV_VAR,
+)
 
 LAUNCHER_MODULE = "jarvis.ui.web.launcher"
 MANAGED_MARKER = MANAGED_INSTALL_MARKER
@@ -109,13 +113,25 @@ def fresh_user_env(
     Without this, the restart chain FOSSILIZES the env config layer: each
     restarted process inherits the ``JARVIS__*`` values captured when the
     first tray process started, so a config fix that updates all three pinned
-    layers (jarvis.toml + config-soll.json + user env) keeps being overridden  # i18n-allow: config-soll.json is a filename
+    layers, including config-soll.json, keeps being overridden  # i18n-allow: filename
     by the stale inherited copy on every ``restart-app`` — live case
     2026-07-17: the TTS voice pin kept resurrecting a replaced voice. Only
     ``JARVIS__*`` keys (the pydantic config-override namespace) are refreshed;
-    everything else stays inherited.
+    everything else stays inherited except per-process launch guards, which must
+    reset for a genuinely new launch chain.
     """
     env = dict(os.environ if base is None else base)
+    # This is a one-process loop guard set only on the branded launcher child.
+    # An in-app restart starts a genuinely new launch chain, so inheriting the
+    # marker would make that chain skip branding and fall back to pythonw.exe's
+    # Python icon. Match case-insensitively because Windows environment names are
+    # case-insensitive even though a supplied test/POSIX mapping may not be.
+    for transient in [
+        key
+        for key in env
+        if key.upper() == WINDOWS_BRANDED_LAUNCH_ENV_VAR.upper()
+    ]:
+        del env[transient]
     persisted = _read_persisted()
     if persisted is None:
         return env

@@ -286,7 +286,7 @@ def test_a_long_utterance_scores_lower_than_a_terse_one() -> None:
     )
     terse = index.rank(FOCUS)
     rambling = index.rank(
-        f"{FOCUS} wetter berlin photosynthese rezept fahrrad urlaub steuer"
+        f"{FOCUS} wetter exampletown photosynthese rezept fahrrad urlaub steuer"
     )
     assert terse.top is not None and rambling.top is not None
     assert terse.top.score > rambling.top.score

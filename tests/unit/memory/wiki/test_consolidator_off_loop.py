@@ -90,7 +90,7 @@ async def test_journal_read_runs_off_the_event_loop(stack) -> None:
 async def test_journal_write_runs_off_the_event_loop(stack) -> None:
     consolidator, recording, journal = stack
     journal.append(
-        [CandidateFact(fact="Lena moved to Hamburg.", kind="person", subjects=("lena",))],
+        [CandidateFact(fact="ExampleFriend moved to Exampleville.", kind="person", subjects=("examplefriend",))],
         source_label="voice-fact:1",
         turn_hash="h1",
     )
@@ -109,7 +109,7 @@ async def test_neighbour_retrieval_runs_off_the_event_loop(
     """Retrieval reads up to ``k_nearest * batch`` full pages plus FTS5."""
     consolidator, _recording, journal = stack
     journal.append(
-        [CandidateFact(fact="Lena moved to Hamburg.", kind="person", subjects=("lena",))],
+        [CandidateFact(fact="ExampleFriend moved to Exampleville.", kind="person", subjects=("examplefriend",))],
         source_label="voice-fact:1",
         turn_hash="h1",
     )
@@ -140,14 +140,14 @@ async def test_neighbour_retrieval_runs_off_the_event_loop(
 def test_page_reads_are_memoised_within_one_cycle(stack) -> None:
     """Validation probes the same pages repeatedly; disk must see one read."""
     consolidator, _recording, _journal = stack
-    target = "entities/lena.md"
-    (consolidator._vault_root / "entities" / "lena.md").write_text(
-        "# Lena\n\nLives in Hamburg.\n", encoding="utf-8"
+    target = "entities/examplefriend.md"
+    (consolidator._vault_root / "entities" / "examplefriend.md").write_text(
+        "# ExampleFriend\n\nLives in Exampleville.\n", encoding="utf-8"
     )
 
     first = consolidator._read_page(target)
-    (consolidator._vault_root / "entities" / "lena.md").write_text(
-        "# Lena\n\nRewritten mid-cycle.\n", encoding="utf-8"
+    (consolidator._vault_root / "entities" / "examplefriend.md").write_text(
+        "# ExampleFriend\n\nRewritten mid-cycle.\n", encoding="utf-8"
     )
     second = consolidator._read_page(target)
 

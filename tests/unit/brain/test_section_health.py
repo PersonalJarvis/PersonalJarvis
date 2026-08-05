@@ -103,6 +103,17 @@ async def test_every_catalog_provider_health_is_bound_to_its_exact_id(
         "codex_subscription_login_ready",
         _subscription_ready,
     )
+    # The subscription-realtime card is judged from a live status snapshot of the
+    # local Codex app-server, not from a stored credential. Left unstubbed that is
+    # a real call to whatever machine runs the suite: it answers "busy" while a
+    # status check is in flight and "not_installed" on a host without the CLI, so
+    # the card would be graded on this machine's Codex state instead of on the
+    # binding under test.
+    monkeypatch.setattr(
+        provider_routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path=None: {"connected": True, "reason_code": None},
+    )
     # On-device cards ask the disk whether engine + weights are really there.
     # On a machine that never installed them that is an honest "needs setup" —
     # true, and not what this test is about.

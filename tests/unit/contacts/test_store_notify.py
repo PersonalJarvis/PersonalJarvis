@@ -43,7 +43,7 @@ def test_upsert_existing_emits_updated(tmp_path, seen):
 
 def test_upsert_new_emits_created(tmp_path, seen):
     store = ContactStore(base_dir=tmp_path)
-    store.upsert(name="Laura", email="laura@example.com")
+    store.upsert(name="ExampleContact", email="examplecontact@example.com")
     assert seen[-1][0] == "created"
 
 

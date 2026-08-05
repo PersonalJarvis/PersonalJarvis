@@ -194,7 +194,7 @@ MIN_PHONE_DIGITS = 6
 #: must not even reach the queue.
 PROPOSE_THRESHOLD = 0.82
 
-#: Score assigned to a nickname/abbreviation hit ("viki" inside "viktoria").
+#: Score assigned to a nickname/abbreviation hit ("test" inside "testoria").
 #: Deliberately just above the proposal threshold: it is enough to ask, never
 #: enough to act.
 NICKNAME_SCORE = 0.84
@@ -338,7 +338,7 @@ def _is_subsequence(short: str, long: str) -> bool:
 def nickname_score(a: str, b: str) -> float:
     """:data:`NICKNAME_SCORE` when one name abbreviates a token of the other.
 
-    "Viki" is not similar to "Viktoria Novak" by any string metric, yet it is
+    "Test" is not similar to "Testoria Novak" by any string metric, yet it is
     the canonical example of a probable match. The rule is deliberately narrow:
     the short form must be a single word, start on the same character, be a
     subsequence of one token of the long form, and not be dwarfed by it.
@@ -360,7 +360,7 @@ def name_similarity(a: str, b: str) -> float:
     """0..1 similarity of two ALREADY NORMALIZED names.
 
     Three deterministic views, best one wins: raw character similarity, the
-    same over token-sorted forms (so "novak viktoria" matches "viktoria
+    same over token-sorted forms (so "novak testoria" matches "testoria
     novak"), and the nickname rule.
     """
     if not a or not b:

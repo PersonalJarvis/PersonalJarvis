@@ -32,7 +32,7 @@ from jarvis.core.capabilities import _normalize
 # A genitive contact detail ("Christophs Nummer ist …", "Sams Mail ist …").
 # High precision on its own: a possessive name + a contact field + "ist/lautet"
 # is almost always "save this person's detail". The non-genitive "<field> von X
-# ist" form is intentionally NOT here (it also matches "die Adresse von Berlin  # i18n-allow: quoted German counter-example the classifier must NOT match
+# ist" form is intentionally NOT here (it also matches "die Adresse von Exampletown  # i18n-allow: quoted German counter-example the classifier must NOT match
 # ist zentral") — it only counts as a corroborating ``_DETAIL_RE`` signal.
 _GENITIVE_DETAIL_RE = re.compile(
     r"\b\w+s\s+(mail|e-?mail|mailadresse|emailadresse|nummer|telefonnummer|"

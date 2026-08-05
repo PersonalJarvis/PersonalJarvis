@@ -387,7 +387,7 @@ SPAWN_INPUTS = [
     "Bau eine Landingpage",
     "Wie viele PRs sind in jarvis-repo offen?",
     "Mach einen Screenshot und sag mir was du siehst",
-    # Regression — Voice-Session 2026-05-11 17:22 (Bug-Report von Alex):
+    # Regression from a reported voice session:
     # "Kannst du bitte einen Subagenten spawnen, welcher..." fiel ohne
     # Match auf den LLM-Pfad zurueck (40s Gemini-Stream-Timeout). "spawn"
     # als Verb-Trigger plus "Subagent"-Marker fangen beide unabhaengig.
@@ -655,7 +655,7 @@ def test_open_app_intent_does_not_force_spawn_with_seeded_registry(
     "utterance",
     [
         # The exact live transcript (realtime voice turn 2026-07-14 09:05,
-        # trace c82aa1a6): force-spawned a heavy mission that then FAILED,
+        # trace 20000011): force-spawned a heavy mission that then FAILED,
         # while the realtime model hallucinated a notebook list.
         "Kannst du mir bitte mal gucken, alle all meine Notebooks auflisten?",
         "Liste bitte alle meine Notebooks auf.",
@@ -1217,8 +1217,8 @@ def test_instructional_questions_do_not_force_spawn(utterance: str) -> None:
 # Opinion / advice / recommendation / decision questions are CONVERSATION, not
 # work — they must be answered inline, NEVER force-spawned to a worker, even
 # when they contain an everyday word that collides with an action verb in the
-# universal catalogue. A conversational garden-planning question containing
-# "Frage" and "halt" exposed the false-positive path.
+# universal catalogue. A relocation-comparison turn once force-spawned:
+# "Hey du, ich hab ne Frage ... was würdest du mir empfehlen?"
 # force-spawned a worker because has_action_intent matched the NOUN "Frage"
 # (-> verb "frag"/"frage") and the FILLER particle "halt" (-> verb "halt"), so
 # _is_generic_subagent_work classified a pure chat turn as generic sub-agent
@@ -1230,8 +1230,8 @@ def test_instructional_questions_do_not_force_spawn(utterance: str) -> None:
 @pytest.mark.parametrize(
     "utterance",
     [
-        # representative regression utterance — "Frage" + "möchte" + advice ask
-        "Hey du, ich hab ne Frage, ich möchte einen Garten planen. Was würdest du mir empfehlen?",
+        # the real bug utterance (abbreviated) — "Frage" + "möchte" + advice ask
+        "Hey du, ich hab ne Frage, ich plane ein Beispielprojekt. Was würdest du mir empfehlen?",
         # noun "Frage" collides with the action verb "frag"
         "Ich hab da mal eine Frage: was hältst du davon?",
         # filler particle "halt" collides with the action verb "halt"
@@ -1247,7 +1247,7 @@ def test_instructional_questions_do_not_force_spawn(utterance: str) -> None:
 def test_opinion_advice_questions_do_not_force_spawn(utterance: str) -> None:
     """Opinion/advice questions are talk, not work — answered inline even when an
     everyday word ('Frage' -> 'frag', filler 'halt') collides with an action
-    verb. Reproduces the strict-mode
+    verb (live bug 2026-06-19, advice turn). Reproduces the real strict-mode
     path with a seeded registry, where has_action_intent fires and
     _is_generic_subagent_work would otherwise force-spawn."""
     from jarvis.core.capabilities import get_registry
@@ -1277,12 +1277,12 @@ def test_opinion_advice_questions_do_not_force_spawn(utterance: str) -> None:
         "Wie siehst du das?",
         "Was ist deine Meinung dazu?",
         # decision help (DE)
-        "Soll ich den Garten im Süden oder Norden anlegen?",
+        "Soll ich nach Beispielstadt oder nach Musterstadt ziehen?",
         # conversational opener (DE)
         "Ich hab da mal eine Frage.",
         # advice / opinion (EN)
         "What would you recommend?",
-        "Should I plant the garden on the north or south side?",
+        "Should I move to Example City or Sample City?",
         "I have a question.",
         # advice / opinion (ES)
         "¿Qué me recomiendas?",
@@ -1371,7 +1371,7 @@ def test_declarative_info_request_never_force_spawns() -> None:
             "Ich will wissen, was heute alles Wichtiges ansteht und wann die "
             "beste Zeit ist, um von Deutschland bei Hacker News und Post "
             "abzusetzen."
-        )  # i18n-allow: German voice fixture (the live utterance under test)
+        )  # i18n-allow: German voice fixture (the synthetic utterance under test)
         assert manager._should_force_spawn(utterance) is False, (
             "a declarative info request must never force-spawn a mission "
             "(mandate 2026-07-21: explicit ask only)"
@@ -2123,7 +2123,7 @@ def test_whisper_fp_exact_only_seeds_still_filter_when_alone(
         "Musik leiser bitte",
         "Applaus für die Band einspielen",
         "Untertitel im VLC anzeigen lassen",
-        "Tschüss sagen zu Laura per Email",
+        "Tschüss sagen zu Beispielkontakt per Email",
         "Thank you note in Word erstellen",
     ],
 )
@@ -2300,7 +2300,9 @@ def test_check_unsupported_intent_fires_for_unregistered_action() -> None:
     sys.modules["jarvis.core.capabilities"] = mock_module
     try:
         manager, _executor = _manager_with_spawn()
-        result = manager._check_unsupported_intent("Schick bitte eine E-Mail an Sam")
+        result = manager._check_unsupported_intent(
+            "Schick bitte eine E-Mail an Beispielkontakt"
+        )
         assert result is not None, (
             "_check_unsupported_intent must return refusal for unregistered action"
         )
@@ -2483,7 +2485,7 @@ def test_external_integration_without_capability_stays_unsupported() -> None:
     try:
         manager = _strict_manager_with_mock_registry()
         for utterance in (
-            "schick eine Email an Sam",
+            "schick eine Email an Beispielkontakt",
             "trag einen Termin in meinen Kalender ein",
             "spiel Musik auf Spotify",
         ):
@@ -2570,7 +2572,7 @@ class _FakeProfileForPrompt:
     """Minimal UserProfile stand-in: only render_for_prompt is exercised."""
 
     def render_for_prompt(self, *, max_chars: int = 2000) -> str:
-        return "## Ueber den User\n- **Name:** Alex"
+        return "## About the user\n- **Name:** Example User"
 
 
 class _FakeUpdateProfileTool:
@@ -2759,7 +2761,7 @@ def test_contact_capabilities_do_not_resolve_external_hard_negatives() -> None:
     reg = get_registry()
     seed_registry(reg)
     for utterance in (
-        "Schick eine Email an sam@example.com mit dem Betreff Hallo",
+        "Schick eine Email an contact@example.com mit dem Betreff Hallo",
         "Trag einen Termin morgen 10 Uhr ein",
         "Sende eine WhatsApp an Mama",
         "Bestelle eine Pizza",
@@ -2830,7 +2832,7 @@ def test_voice_save_contact_stays_router_tier() -> None:
     "utterance",
     [
         "ruf Christoph an",
-        "ruf Laura an",
+        "ruf Beispielkontakt an",
         "call Christoph",
     ],
 )
@@ -2872,7 +2874,7 @@ _HEAVY_RESEARCH_SHOULD_SPAWN = [
 ]
 
 _HEAVY_RESEARCH_STAYS_INLINE = [
-    "Was ist das Wetter in Melbourne?",  # no research verb → fast lookup
+    "Was ist das Wetter in Exampleville?",  # no research verb → fast lookup
     "Wie spät ist es in Sydney?",  # no research verb
     "Recherchier das mal kurz",  # verb but no scope (short, 1 verb, no marker)
     "Analysier kurz den Satz",  # verb but no scope
@@ -2968,7 +2970,7 @@ def _spawn_calls(executor: _RecordingExecutor) -> list[Any]:
 # "subagent" mention never spawns. Per the mandate, the explicit trigger wins:
 # spawn the universal worker (it does its best / reports honestly).
 _EXPLICIT_SUBAGENT_OVER_REFUSAL = [
-    "Spawn a subagent to book a trip to Berlin",
+    "Spawn a subagent to book a trip to Exampletown",
     "Spawne einen Subagenten und schick eine Email an meinen Chef",  # i18n-allow
 ]
 
@@ -3027,7 +3029,7 @@ async def test_external_task_without_trigger_still_refuses() -> None:
     'spawn' mention bypasses the refusal — the gate is not weakened globally."""
     manager, executor = _seeded_strict_manager_with_local_actions()
     reply = await manager.generate(
-        "Buche mir einen Flug nach Berlin"  # i18n-allow: German voice fixture
+        "Buche mir einen Flug nach Exampletown"  # i18n-allow: German voice fixture
     )
     assert not _spawn_calls(executor), (
         "an unsupported external task WITHOUT an explicit trigger must not spawn"
@@ -3076,7 +3078,7 @@ def test_heavy_research_never_force_spawns_without_explicit_trigger() -> None:
 def test_quick_weather_lookup_does_not_force_spawn() -> None:
     """A quick weather lookup must STILL stay inline (no false spawn)."""
     manager, _ = _manager_with_spawn(force_spawn_mode="strict")
-    assert manager._should_force_spawn("Was ist das Wetter in Melbourne?") is False
+    assert manager._should_force_spawn("Was ist das Wetter in Exampleville?") is False
 
 
 def test_heavy_research_disabled_flag_restores_inline() -> None:
@@ -3094,7 +3096,7 @@ def test_research_question_answer_deliverable_routes_inline_not_spawned() -> Non
     The Worker->Critic pipeline verifies BUILT ARTIFACTS via git diff; it is
     structurally hostile to an answer-only research turn — it cannot grade a
     spoken answer or independently verify a web citation, so the request hits the
-    empty-diff veto and loops to critic_loop_exhausted (live mission 019ecb56:
+    empty-diff veto and loops to critic_loop_exhausted (live mission 019f1037:
     "research the AI news of the last years" failed at 1042s). It is STILL heavy
     research (the detector keeps firing), but the spawn DECISION must send an
     answer-only request inline. Only an explicit mission phrase (handled earlier
@@ -3115,7 +3117,7 @@ def test_research_question_answer_deliverable_routes_inline_not_spawned() -> Non
 # Drag-dropped mission recap (ui.web.ws.mission_inject) — must be DISCUSSED
 # inline, NEVER re-dispatched as a new mission.
 #
-# Live doom-loop 2026-06-16 (missions.db 019ed04e / 019ed051): the user dragged
+# Live doom-loop 2026-06-16 (missions.db 019f103c / 019f103d): the user dragged
 # a finished/failed mission card onto the JarvisDock to get a recap. The recap
 # directive embeds the dropped card's OWN text verbatim, so a title that
 # contains a spawn trigger ("sub-agent") or an action verb ("Write …") leaks

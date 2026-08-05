@@ -111,7 +111,7 @@ def manager_factory():
             BrainMessage(
                 role="user",
                 content=(
-                    "Ich war heute mit Joy im Park und wir haben über ihren "  # i18n-allow
+                    "Ich war heute mit ExampleRelative im Park und wir haben über ihren "  # i18n-allow
                     "Geburtstag im August gesprochen."  # i18n-allow
                 ),
             )
@@ -119,7 +119,7 @@ def manager_factory():
         mgr._history.append(
             BrainMessage(
                 role="assistant",
-                content="Klingt nach einem schönen Nachmittag im Park mit Joy.",  # i18n-allow
+                content="Klingt nach einem schönen Nachmittag im Park mit ExampleRelative.",  # i18n-allow
             )
         )
         return mgr, executor, bus
@@ -133,13 +133,13 @@ async def test_explicit_command_ingests_and_announces_after_write(manager_factor
     tool = FakeWikiIngestTool(
         ToolResult(
             success=True,
-            output="Wiki ingest done:\n- applied: 1\nPages touched:\n  - joy.md",
+            output="Wiki ingest done:\n- applied: 1\nPages touched:\n  - examplerelative.md",
         ),
         delay_s=0.02,  # a real gap between "write" and "announce" to order against
     )
     mgr, executor, bus = manager_factory(tools={"wiki-ingest": tool})
     reply = await mgr._run_wiki_ingest_fast_path(
-        "Schreib ins Wiki, dass Joys Geburtstag am 14. August ist"  # i18n-allow
+        "Schreib ins Wiki, dass ExampleRelative am Beispieldatum einen synthetischen Meilenstein hat"  # i18n-allow
     )
     assert reply is not None                     # immediate progress ack
     await asyncio.sleep(0.05)                    # let the background task run
@@ -389,8 +389,7 @@ async def test_reported_obsidian_follow_up_ingests_inline_facts(manager_factory)
 
     reply = await mgr._run_wiki_ingest_fast_path(
         "Kannst du bitte einen Eintrag da eintragen, dass ich ziemlich "  # i18n-allow
-        "genervt bin und dass ich in San Francisco "  # i18n-allow
-        "wohne?"  # i18n-allow: production transcript under test
+        "genervt bin und dass ich in Beispielstadt wohne?"  # i18n-allow
     )
 
     assert reply is not None
@@ -398,7 +397,7 @@ async def test_reported_obsidian_follow_up_ingests_inline_facts(manager_factory)
     assert len(tool.calls) == 1
     saved = tool.calls[0]["text"].lower()
     assert "genervt" in saved
-    assert "san francisco" in saved
+    assert "beispielstadt" in saved
     assert "was steht" not in saved
 
 
@@ -422,10 +421,10 @@ async def test_live_polite_travel_fact_reaches_wiki_before_local_action(
     )
     reply = await mgr.generate(
         "Kannst du bitte mein Wiki-System eintragen, dass ich morgen nach "  # i18n-allow
-        "San Francisco reisen will?"  # i18n-allow: production transcript under test
+        "Beispielstadt reisen will?"  # i18n-allow
     )
 
     assert reply
     await asyncio.sleep(0.05)
     assert len(tool.calls) == 1
-    assert "san francisco" in tool.calls[0]["text"].lower()
+    assert "beispielstadt" in tool.calls[0]["text"].lower()

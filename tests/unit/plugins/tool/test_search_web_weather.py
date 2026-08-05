@@ -41,7 +41,7 @@ class _FakeResponse:
 _GEO_PAYLOAD = {
     "results": [
         {
-            "name": "Berlin",
+            "name": "Exampletown",
             "country": "Germany",
             "latitude": 52.52,
             "longitude": 13.41,
@@ -110,8 +110,8 @@ def _fake_httpx(monkeypatch: pytest.MonkeyPatch):
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
-        ("weather Berlin tomorrow 11 June 2026", "Berlin"),
-        ("Wetter Berlin morgen", "Berlin"),  # i18n-allow: German voice fixture
+        ("weather Exampletown tomorrow 11 June 2026", "Exampletown"),
+        ("Wetter Exampletown morgen", "Exampletown"),  # i18n-allow: German voice fixture
         ("what's the weather like in London next week", "London"),
         ("weather tomorrow", ""),
         ("¿Qué tiempo hace mañana en Madrid?", "Madrid"),
@@ -127,12 +127,12 @@ def test_extract_weather_location(query: str, expected: str) -> None:
 
 async def test_weather_query_returns_forecast() -> None:
     tool = SearchWebTool()
-    result = await tool.execute({"query": "weather Berlin tomorrow"}, _ctx())
+    result = await tool.execute({"query": "weather Exampletown tomorrow"}, _ctx())
     assert result.success is True
     results = result.output["results"]
     assert len(results) == 1
     snippet = results[0]["snippet"]
-    assert "Berlin" in results[0]["title"]
+    assert "Exampletown" in results[0]["title"]
     # Tomorrow's row must carry temps + precipitation chance from the payload.
     assert "19.5" in snippet and "12.8" in snippet and "80" in snippet
     # Open-Meteo was used, never DDG.
@@ -172,7 +172,7 @@ async def test_weather_lookup_failure_falls_back_to_ddg(
     falls through to DDG instead of raising (AD-OE6 zero-silent-drop)."""
     monkeypatch.setattr(httpx, "AsyncClient", _RaisingGeocodeClient)
     tool = SearchWebTool()
-    result = await tool.execute({"query": "weather Berlin tomorrow"}, _ctx())
+    result = await tool.execute({"query": "weather Exampletown tomorrow"}, _ctx())
     assert result.success is True
     assert any("duckduckgo" in u for u in _FakeClient.calls)
 

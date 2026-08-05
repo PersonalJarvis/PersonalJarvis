@@ -19,13 +19,14 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from jarvis.agentic_ide import prompt_composer
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.prompt_composer import ComposedPrompt
-from jarvis.agentic_ide.session import Registry
+from jarvis.agentic_ide.session import PendingPromptAttachmentBatch, Registry
 from jarvis.brain.manager import BrainManager
 from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
@@ -125,6 +126,53 @@ async def test_two_addressed_panes_both_receive_the_prompt(
     assert reply is not None
     assert _sent_to(registry, first)
     assert _sent_to(registry, second)
+
+
+async def test_collective_exception_only_prompts_the_requested_panes(
+    manager: BrainManager, registry: Registry, tmp_path: Path
+) -> None:
+    """Mentioning exceptions must subtract them, not turn them into targets."""
+    await _open(registry, tmp_path, 4)
+    first, second, third, fourth = _names(registry)
+
+    reply = await manager._run_agentic_ide_fast_path(
+        f"Prompt all except {third} and {fourth} to continue working"
+    )
+
+    assert reply is not None
+    assert _sent_to(registry, first)
+    assert _sent_to(registry, second)
+    assert not _sent_to(registry, third)
+    assert not _sent_to(registry, fourth)
+
+
+async def test_only_a_spoken_brain_turn_consumes_orb_context(
+    manager: BrainManager, registry: Registry, tmp_path: Path
+) -> None:
+    await _open(registry, tmp_path, 1)
+    (name,) = _names(registry)
+    assert registry.session is not None
+    term = registry.session.find(name)
+    assert term is not None
+    attachment = SimpleNamespace(name="layout.png")
+    batch = PendingPromptAttachmentBatch(
+        "batch-a", (attachment,), ("layout.png",)
+    )
+    term.pending_prompt_attachment_batches.append(batch)
+
+    # Chat, CLI, and every other ordinary BrainManager caller keep the drop.
+    await manager.generate(
+        f"Tell {name} to inspect the current layout", use_history=False
+    )
+    assert term.pending_prompt_attachment_batches == [batch]
+
+    # SpeechPipeline is the sole caller that opts this turn modality in.
+    await manager.generate(
+        f"Tell {name} to fix the current layout",
+        use_history=False,
+        consume_pending_voice_attachments=True,
+    )
+    assert term.pending_prompt_attachment_batches == []
 
 
 async def test_the_reply_names_every_pane_that_got_it(

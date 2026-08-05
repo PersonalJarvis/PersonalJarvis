@@ -52,7 +52,7 @@ def _make(client: TestClient, **overrides: object) -> dict:
         "relationship": "friend",
         "emails": ["christoph@example.com"],
         "phones": ["+49 151 2345 6789"],
-        "address": {"city": "Berlin", "postal_code": "10115"},
+        "address": {"city": "Exampletown", "postal_code": "10115"},
         "note": "My oldest friend.",
     }
     body.update(overrides)
@@ -83,7 +83,7 @@ def test_post_creates_contact(client: TestClient) -> None:
             "relationship": "friend",
             "emails": ["christoph@example.com"],
             "phones": ["+49 151 2345 6789"],
-            "address": {"city": "Berlin"},
+            "address": {"city": "Exampletown"},
             "note": "Oldest friend.",
         },
     )
@@ -94,7 +94,7 @@ def test_post_creates_contact(client: TestClient) -> None:
     assert body["relationship"] == "friend"
     assert body["emails"] == ["christoph@example.com"]
     assert body["phones"] == ["+4915123456789"]  # normalised
-    assert body["address"]["city"] == "Berlin"
+    assert body["address"]["city"] == "Exampletown"
     assert body["primary_email"] == "christoph@example.com"
 
 

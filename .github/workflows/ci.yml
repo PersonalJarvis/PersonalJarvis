@@ -387,6 +387,43 @@ jobs:
       - name: bash 3.2 parse gate (BLOCKING)
         run: python scripts/ci/check_shell_bash32.py --require
 
+  # Tree-wide hygiene gates that used to live ONLY in the local pre-push hook.
+  # When pre-push was cut back to the two credential gates (2026-08-05), these
+  # three needed a home that reports instead of blocking an unrelated push:
+  #
+  #   * private keys   — a leaked signing key is permanent (AP-29). Also still
+  #     runs in pre-push and pre-commit; the redundancy is deliberate.
+  #   * dist consistency — dist/index.html and every chunk it loads must resolve
+  #     to TRACKED files, or a fresh clone boots to a blank spinner while the
+  #     builder's machine looks fine (AP-23).
+  #   * brand logos    — a bundled SVG is executable content; a script or remote
+  #     reference in one would run on render.
+  #
+  # Stdlib + git only, so no pip install. Runs on push AND PR. BLOCKING.
+  repo-hygiene:
+    name: repo-hygiene (keys / bundle / logos)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Private-key gate (BLOCKING)
+        run: python scripts/ci/check_no_private_keys.py
+
+      - name: Dist consistency gate (BLOCKING)
+        run: python scripts/ci/check_dist_consistency.py
+
+      - name: Brand-logo gate (BLOCKING)
+        run: python scripts/ci/check_brand_logos.py
+
   # Output Language Policy enforcement (CLAUDE.md, HIGHEST PRIORITY): block any
   # NEWLY ADDED German text from reaching GitHub. Diff-based, so the in-flight
   # DE->EN translation backlog (pre-existing German) does NOT turn this red - only
@@ -421,10 +458,16 @@ jobs:
   # scripts/ci/privacy_pre_push.py) and, when PRIVACY_PRIVATE_EMAILS is set as a
   # repo variable, the private-email identity check. Does NOT scan the real
   # name/PII (that is the ship skill's job to the public repo, and would
-  # false-positive here). stdlib + git only, so no pip install. BLOCKING, PR-only.
+  # false-positive here). stdlib + git only, so no pip install. BLOCKING.
+  #
+  # Runs on push as well as PR (2026-08-05). It used to be PR-only, which meant
+  # that on a repo whose maintainer pushes straight to main it ran nowhere at
+  # all — and it is now one of only two layers left, since pre-push was cut back
+  # to the credential gates. On push the diff base is the previous head; a first
+  # push to a new branch has no previous head, so it falls back to the merge
+  # base with origin/main.
   privacy-gate:
     name: privacy-gate (no secrets / no private identity)
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -439,10 +482,36 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Resolve diff base (PR base, previous push head, or merge base)
+        id: base
+        shell: bash
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            base="${{ github.event.before }}"
+          fi
+          # A branch's first push reports an all-zero "before"; so does a forced
+          # history rewrite. Fall back to the merge base with main, which is the
+          # widest base that still excludes what main already carries.
+          case "$base" in
+            ""|*[!0]*) : ;;
+            *) base="" ;;
+          esac
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin main:refs/remotes/origin/main 2>/dev/null || true
+            base="$(git merge-base HEAD refs/remotes/origin/main 2>/dev/null || echo "")"
+          fi
+          if [ -z "$base" ]; then
+            echo "No usable diff base — scanning against the empty tree."
+            base="$(git hash-object -t tree /dev/null)"
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "Diff base: $base"
+
       - name: Privacy gate (BLOCKING - secrets + forbidden files + identity)
         env:
           PRIVACY_PRIVATE_EMAILS: ${{ vars.PRIVACY_PRIVATE_EMAILS }}
-        run: python scripts/ci/privacy_scan_ci.py --base "${{ github.event.pull_request.base.sha }}"
+        run: python scripts/ci/privacy_scan_ci.py --base "${{ steps.base.outputs.base }}"
 
   # Docs privacy gate (layer-3 backstop for the .githooks/pre-push docs scan,
   # which `--no-verify` can skip). Scans the tracked docs/ tree for the
@@ -454,10 +523,14 @@ jobs:
   # appear, so it cannot false-positive on code where the name lives
   # legitimately. The privacy scan itself is stdlib-only; the public-reader
   # contract also parses YAML frontmatter and therefore installs the PyYAML
-  # version pinned by the universal lock. BLOCKING, PR-only.
+  # version pinned by the universal lock. BLOCKING.
+  #
+  # Runs on push as well as PR (2026-08-05): both steps scan the whole tracked
+  # docs/ tree rather than a diff, so there is no base-widening reason to keep
+  # them off pushes — and PR-only meant they never ran on a repo whose
+  # maintainer pushes straight to main.
   docs-privacy:
     name: docs-privacy (no personal data in docs/)
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

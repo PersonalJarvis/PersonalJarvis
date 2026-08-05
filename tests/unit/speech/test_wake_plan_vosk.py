@@ -107,8 +107,8 @@ def test_no_model_for_language_falls_back_to_stt_match(vosk_model_dir) -> None:
 
 
 def test_stale_custom_model_resolves_to_vosk(vosk_model_dir, tmp_path) -> None:
-    # A leftover hey_nico.onnx must not keep the NEW phrase on the weak path.
-    stale = tmp_path / "hey_nico.onnx"
+    # A leftover hey_nova.onnx must not keep the NEW phrase on the weak path.
+    stale = tmp_path / "hey_nova.onnx"
     stale.write_bytes(b"onnx")
     plan = resolve_wake_plan(
         _cfg(custom=str(stale)),

@@ -2,7 +2,7 @@
  * Local, synchronous cache for the resolved assistant display name.
  *
  * The assistant's name is derived from the user's configured wake word (e.g.
- * "Nico" / "Athena"). It lives authoritatively on the backend and is fetched by
+ * "Nova" / "Athena"). It lives authoritatively on the backend and is fetched by
  * `useAssistantNameSeed` after mount. That fetch is asynchronous, so during the
  * first paint the store would otherwise fall back to a hardcoded placeholder —
  * which MUST NEVER be a trademarked name such as "Jarvis" (Marvel), because the

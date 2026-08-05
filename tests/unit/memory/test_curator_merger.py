@@ -157,11 +157,11 @@ class TestPersonMerge:
         person_store: PersonStore,
     ) -> None:
         cand = _cand(
-            "person:Avery",
+            "person:ExampleContact",
             "identity",
             "profession",
-            "Architect",
-            relationship="colleague",
+            "Designerin",
+            relationship="partner",
         )
         report = await merger.apply([cand])
         assert report.applied == 1
@@ -170,12 +170,12 @@ class TestPersonMerge:
         # File was created
         persons = person_store.list_all()
         assert len(persons) == 1
-        person = persons[0]
-        assert person.name == "Avery"
-        assert person.relationship == "colleague"
-        # The observation is stored in the person's file.
-        text = person.path.read_text(encoding="utf-8")
-        assert "Architect" in text
+        examplecontact = persons[0]
+        assert examplecontact.name == "ExampleContact"
+        assert examplecontact.relationship == "partner"
+        # Observation steht in der Person-Datei
+        text = examplecontact.path.read_text(encoding="utf-8")
+        assert "Designerin" in text
 
     @pytest.mark.asyncio
     async def test_person_facts_do_not_leak_into_user_profile(
@@ -183,15 +183,15 @@ class TestPersonMerge:
         merger: Merger,
         profile: UserProfile,
     ) -> None:
-        """Core rule: a synthetic person record must not touch USER.md."""
+        """Core rule: person:ExampleContact must NOT touch USER.md."""
         before_meta = dict(profile.meta)
 
         cand = _cand(
-            "person:Avery",
+            "person:ExampleContact",
             "identity",
             "profession",
-            "Architect",
-            relationship="colleague",
+            "Designerin",
+            relationship="partner",
         )
         await merger.apply([cand])
 
@@ -224,15 +224,15 @@ class TestBusEvents:
         self, merger: Merger, fake_bus
     ) -> None:
         cand = _cand(
-            "person:Avery", "identity", "profession", "Architect",
-            relationship="colleague",
+            "person:ExampleContact", "identity", "profession", "Designerin",
+            relationship="partner",
         )
         await merger.apply([cand])
 
         assert len(fake_bus.published) == 1
         evt = fake_bus.published[0]
         assert isinstance(evt, ProfileUpdated)
-        assert evt.subject == "person:Avery"
+        assert evt.subject == "person:ExampleContact"
 
     @pytest.mark.asyncio
     async def test_no_events_when_nothing_applied(

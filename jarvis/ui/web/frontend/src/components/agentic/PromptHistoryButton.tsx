@@ -129,8 +129,8 @@ export function PromptHistoryButton({
             "flex h-6 min-w-6 shrink-0 items-center justify-center gap-1 rounded-md px-1.5",
             "text-[10px] font-medium tabular-nums transition-colors active:translate-y-px",
             light
-              ? "text-[#6b6b73] hover:bg-black/10 hover:text-[#2b2b33]"
-              : "text-[#9a9aa5] hover:bg-white/10 hover:text-[#e8e8ec]",
+              ? "text-[#6b6b73] hover:bg-scrim/10 hover:text-[#2b2b33]"
+              : "text-[#9a9aa5] hover:bg-sheen/10 hover:text-[#e8e8ec]",
           )}
         >
           <History className="h-3.5 w-3.5" aria-hidden="true" />

@@ -38,7 +38,7 @@ def test_thin_english_interjection_does_not_flip_german_conversation() -> None:
 
 def test_substantive_english_turn_switches_conversation() -> None:
     m = _mgr(conv="de")
-    m._update_turn_language("What is the weather like in Berlin tomorrow")
+    m._update_turn_language("What is the weather like in Exampletown tomorrow")
     assert m._turn_detected_lang == "en"
     assert m.conversation_language == "en"
 

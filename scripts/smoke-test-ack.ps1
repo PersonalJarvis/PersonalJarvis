@@ -105,7 +105,7 @@ if (-not (Test-Path $LogPath)) {
 $utterances = @(
     @{ Lang = "de"; Text = "Was war noch mal mein naechster Termin?";       Notes = "wiki / awareness lookup" },
     @{ Lang = "de"; Text = "Oeffne mir bitte den Browser.";                 Notes = "open_app" },
-    @{ Lang = "de"; Text = "Suche nach Wetter Berlin.";                     Notes = "search_web" },
+    @{ Lang = "de"; Text = "Suche nach Wetter Exampletown.";                     Notes = "search_web" },
     @{ Lang = "de"; Text = "Hallo Jarvis, wie geht es dir?";                Notes = "smalltalk (expect no ack)" },
     @{ Lang = "de"; Text = "Spiel etwas Synthwave.";                        Notes = "open_app / playback" },
     @{ Lang = "en"; Text = "What was my last meeting about?";               Notes = "awareness recall" },

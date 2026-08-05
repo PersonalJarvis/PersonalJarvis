@@ -86,7 +86,7 @@ _GRAPH_TARGET_DIR_BY_KIND = {
 # response and try another provider without a second model call.
 _NUMERIC_VALUE_RE = re.compile(r"(?<!\d)\d+(?:[.,:/-]\d+)*(?:\s*%)?(?!\d)")
 _ORDERED_LIST_PREFIX_RE = re.compile(r"^\s*\d+[.)]\s+")
-# Inline code carries identifiers (``session `f260abcc-…```` in a Sources
+# Inline code carries identifiers (``session `20000002-…```` in a Sources
 # line), not numeric claims about the world. Fragmenting a cited UUID into
 # pseudo-numbers once wedged the whole provider chain: every judge that
 # followed the schema's citation style was rejected for "unsupported"
@@ -404,8 +404,8 @@ class Consolidator:
         """k-nearest existing pages per candidate, deduped across the batch.
 
         Two complementary signals, no embeddings (CLOUD.md base install):
-        subject-slug overlap (deterministic — ``subjects=("lena",)`` pulls
-        ``entities/lena.md`` when it exists) and FTS5/BM25 hits on the fact
+        subject-slug overlap (deterministic — ``subjects=("examplefriend",)`` pulls
+        ``entities/examplefriend.md`` when it exists) and FTS5/BM25 hits on the fact
         text. Returns ``{vault-relative-posix-path: full page text}``.
         """
         found: dict[str, str] = {}

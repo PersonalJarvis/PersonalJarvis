@@ -254,7 +254,7 @@ def test_external_system_markers_includes_github_pr() -> None:
 # A single-step external-artefact task ("create an HTML file with today's
 # news") does not need a full worktree of the repo. Cloning + exploring the
 # whole repo cost a live mission 10+ minutes and >1.3M input tokens before it
-# wrote a trivial file (mission 019eb17d, 2026-06-10). `needs_repo=False`
+# wrote a trivial file (mission 019f1027, 2026-06-10). `needs_repo=False`
 # routes such steps to a lean (empty) git workspace. The default stays True so
 # every existing path keeps the full worktree and old persisted plans
 # deserialize byte-compatibly.

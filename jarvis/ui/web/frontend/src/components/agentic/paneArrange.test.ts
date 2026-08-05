@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { EDGE_MAX_PX, pickTarget, zoneFor, type PaneRect } from "./paneArrange";
+import { pickTarget, zoneFor, type PaneRect } from "./paneArrange";
 
 /** A 200×100 pane at the origin — round numbers so the arithmetic is readable. */
 const RECT: PaneRect = { left: 0, top: 0, width: 200, height: 100 };
@@ -36,34 +36,49 @@ describe("zoneFor", () => {
     }
   });
 
-  it("gives every point in a TALL pane a side, at any height", () => {
-    // Nobody aims vertically while dragging sideways, so the whole middle of a
-    // grid column has to be a landing place rather than a dead zone.
-    for (const y of [200, 400, 490, 600, 700, 800]) {
+  it("gives every point on a TALL pane's FLANKS a side, at any height", () => {
+    // Nobody aims vertically while dragging sideways, so the part of a grid
+    // column a sideways drag crosses has to be a landing place at every height
+    // — otherwise carrying a pane past this one stacks it by accident.
+    for (const y of [50, 200, 400, 490, 600, 800, 930]) {
       expect(zoneFor(COLUMN, 560, y)).toBe("left");
       expect(zoneFor(COLUMN, 800, y)).toBe("right");
     }
   });
 
-  it("keeps the top and bottom edges for joining the target's column", () => {
+  it("reads the middle of a pane as joining the target's column", () => {
     expect(zoneFor(RECT, 100, 3)).toBe("above");
     expect(zoneFor(RECT, 100, 97)).toBe("below");
     expect(zoneFor(COLUMN, 680, 45)).toBe("above");
     expect(zoneFor(COLUMN, 680, 935)).toBe("below");
   });
 
-  it("keeps a stack-it band the same size however tall the pane grows", () => {
-    // An edge is a place the user aims at; aiming does not get harder because
-    // the pane got taller, and a band that grows with it eats the whole drag.
+  it("stacks anywhere down a tall pane's middle, not just at its edges", () => {
+    // The bug this replaced (reported 2026-08-03): the vertical zones were two
+    // 88 px bands, which in a 900 px column is under a tenth of the pane at
+    // each end, so "put this terminal underneath that one" was a shot nobody
+    // could land. Pointing at the middle of the lower half is the obvious way
+    // to ask for it, and it is now the answer at ANY depth.
+    for (const y of [500, 600, 700, 800, 900]) {
+      expect(zoneFor(COLUMN, 680, y)).toBe("below");
+    }
+    for (const y of [50, 150, 300, 400, 480]) {
+      expect(zoneFor(COLUMN, 680, y)).toBe("above");
+    }
+  });
+
+  it("keeps the stack-it stripe the same size however tall the pane grows", () => {
+    // A pane's width barely moves as the grid fills — its height is what
+    // changes — so the target the user aims at is measured across the axis that
+    // holds still, and a taller pane is not a harder one to stack into.
     const shortPane: PaneRect = { left: 0, top: 0, width: 360, height: 400 };
-    const insideBand = EDGE_MAX_PX - 10;
-    expect(zoneFor(COLUMN, 680, COLUMN.top + insideBand)).toBe("above");
-    expect(zoneFor(shortPane, 180, insideBand)).toBe("above");
-    // Just past the ceiling it is a sideways landing again — in BOTH panes,
-    // which is the property a share alone could not give.
-    const pastBand = EDGE_MAX_PX + 10;
-    expect(zoneFor(COLUMN, 560, COLUMN.top + pastBand)).toBe("left");
-    expect(zoneFor(shortPane, 100, pastBand)).toBe("left");
+    expect(zoneFor(COLUMN, 680, COLUMN.top + 300)).toBe("above");
+    expect(zoneFor(shortPane, 180, 120)).toBe("above");
+    // Out on the flanks it is a sideways landing again — in BOTH panes, at the
+    // same fraction of the width, which is the property the bands could not
+    // give at two different heights.
+    expect(zoneFor(COLUMN, 560, COLUMN.top + 300)).toBe("left");
+    expect(zoneFor(shortPane, 60, 120)).toBe("left");
   });
 
   it("swaps only when the modifier asks for it", () => {

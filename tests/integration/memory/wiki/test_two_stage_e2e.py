@@ -9,10 +9,10 @@ AtomicWriter → tmp vault.
 
 Four conversation turns drive the scenario:
 
-1. Lena introduced → her entity page appears, the user's profile links
-   her, a concept page records the Hamburg move.
-2. Lena's new job → her ONE page is updated in place; old facts survive.
-3. Contradiction (Berlin, not Hamburg) → a corrected concept page is
+1. ExampleFriend introduced → her entity page appears, the user's profile links
+   her, a concept page records the Exampleville move.
+2. ExampleFriend's new job → her ONE page is updated in place; old facts survive.
+3. Contradiction (Exampletown, not Exampleville) → a corrected concept page is
    added and the old one is superseded (``valid_until`` +
    ``superseded-by`` wikilink) — nothing deleted.
 4. A turn carrying an API key → Stage 1 refuses it before journal storage
@@ -139,17 +139,17 @@ def _concept(slug: str, summary: str) -> str:
         f"---\ntype: concept\nslug: {slug}\naliases: []\n"
         f"created: 2026-06-10\nupdated: 2026-06-10\n---\n\n"
         f"# {name}\n\n## Summary\n\n{summary}\n\n## Definition\n\n{summary}\n\n"
-        f"## Examples\n\n- conversation\n\n## Related\n\n- [[entities/lena|Lena]]\n\n"
+        f"## Examples\n\n- conversation\n\n## Related\n\n- [[entities/examplefriend|ExampleFriend]]\n\n"
         f"## Sources\n\n- conversation\n"
     )
 
 
-PROFILE_WITH_LENA = (
+PROFILE_WITH_EXAMPLEFRIEND = (
     "---\ntype: entity\nentity_kind: person\nslug: alex\n"
     "aliases: [Alex, the user]\ncreated: 2026-05-14\nupdated: 2026-06-10\n---\n\n"
     "# Alex\n\n## Summary\n\nThe project owner.\n\n## Identity\n\n"
     "## Preferences\n\n## Work style\n\n## Values\n\n"
-    "## Relationships\n\n- [[entities/lena|Lena]] — friend, veterinarian\n\n"
+    "## Relationships\n\n- [[entities/examplefriend|ExampleFriend]] — friend, specialist\n\n"
     "## Active projects\n\n## Decisions\n\n## Sources\n\n- seed\n- conversation\n"
 )
 
@@ -268,102 +268,102 @@ async def test_friend_page_appears_links_grows_and_contradictions_supersede(stac
     vault_root, bus, brain, journal, scheduler, _bridge = stack
     counters_before = telemetry.snapshot()
 
-    # ---- Turn 1: Lena introduced ---------------------------------------
+    # ---- Turn 1: ExampleFriend introduced ---------------------------------------
     brain.extractor_responses.append(_facts_json([
-        {"fact": "Lena is a friend of the user and works as a veterinarian.",
-         "kind": "person", "subjects": ["lena"]},
-        {"fact": "The user is friends with Lena.",
-         "kind": "identity", "subjects": ["alex", "lena"]},
-        {"fact": "Lena moved to Hamburg last month.",
-         "kind": "event", "subjects": ["lena"]},
+        {"fact": "ExampleFriend is a friend of the user and works as a specialist.",
+         "kind": "person", "subjects": ["examplefriend"]},
+        {"fact": "The user is friends with ExampleFriend.",
+         "kind": "identity", "subjects": ["alex", "examplefriend"]},
+        {"fact": "ExampleFriend moved to Exampleville last month.",
+         "kind": "event", "subjects": ["examplefriend"]},
     ]))
     await _turn(
         bus, journal,
-        "My friend Lena moved to Hamburg last month. She works as a veterinarian.",
+        "My friend ExampleFriend moved to Exampleville last month. She works as a specialist.",
     )
     rows = journal.pending()
-    cid_lena, cid_profile, cid_move = (r.id for r in rows)
+    cid_examplefriend, cid_profile, cid_move = (r.id for r in rows)
     brain.judge_responses.append(json.dumps([
-        {"candidate_id": cid_lena, "decision": "add",
-         "target": "entities/lena.md",
-         "new_body": _entity("lena",
-                             ["Lena works as a veterinarian.",
-                              "Lena lives in Hamburg."],
+        {"candidate_id": cid_examplefriend, "decision": "add",
+         "target": "entities/examplefriend.md",
+         "new_body": _entity("examplefriend",
+                             ["ExampleFriend works as a specialist.",
+                              "ExampleFriend lives in Exampleville."],
                              ["[[entities/alex|Alex]] — friend"]),
          "reason": "new person"},
         {"candidate_id": cid_profile, "decision": "update",
          "target": "entities/alex.md",
-         "new_body": PROFILE_WITH_LENA,
+         "new_body": PROFILE_WITH_EXAMPLEFRIEND,
          "reason": "link the friend into the profile"},
         {"candidate_id": cid_move, "decision": "add",
-         "target": "concepts/lena-in-hamburg.md",
-         "new_body": _concept("lena-in-hamburg", "Lena moved to Hamburg in May 2026."),
+         "target": "concepts/examplefriend-in-exampleville.md",
+         "new_body": _concept("examplefriend-in-exampleville", "ExampleFriend moved to Exampleville in May 2026."),
          "reason": "durable event"},
     ]))
     result = await scheduler.trigger(TriggerSource.JOURNAL)
     assert result.triggered is True
 
-    lena_page = vault_root / "entities" / "lena.md"
-    assert lena_page.is_file(), "the friend page must appear"
+    examplefriend_page = vault_root / "entities" / "examplefriend.md"
+    assert examplefriend_page.is_file(), "the friend page must appear"
     profile = (vault_root / "entities" / "alex.md").read_text(encoding="utf-8")
-    assert "[[entities/lena|Lena]]" in profile, "profile links into the graph"
-    assert (vault_root / "concepts" / "lena-in-hamburg.md").is_file()
+    assert "[[entities/examplefriend|ExampleFriend]]" in profile, "profile links into the graph"
+    assert (vault_root / "concepts" / "examplefriend-in-exampleville.md").is_file()
     assert journal.backlog_count() == 0
 
     # ---- Turn 2: the page grows in place -------------------------------
     _age_vault(vault_root)
     brain.extractor_responses.append(_facts_json([
-        {"fact": "Lena got a new job at the animal clinic in Altona.",
-         "kind": "person", "subjects": ["lena"]},
+        {"fact": "ExampleFriend got a new job at the example studio in Example District.",
+         "kind": "person", "subjects": ["examplefriend"]},
     ]))
-    await _turn(bus, journal, "Lena got a new job at the animal clinic in Altona.")
+    await _turn(bus, journal, "ExampleFriend got a new job at the example studio in Example District.")
     cid_job = journal.pending()[0].id
-    lena_with_job = lena_page.read_text(encoding="utf-8").replace(
-        "- Lena lives in Hamburg.\n",
-        "- Lena lives in Hamburg.\n- Lena works at the animal clinic in Altona.\n",
+    examplefriend_with_job = examplefriend_page.read_text(encoding="utf-8").replace(
+        "- ExampleFriend lives in Exampleville.\n",
+        "- ExampleFriend lives in Exampleville.\n- ExampleFriend works at the example studio in Example District.\n",
     )
     brain.judge_responses.append(json.dumps([
         {"candidate_id": cid_job, "decision": "update",
-         "target": "entities/lena.md",
-         "new_body": lena_with_job,
+         "target": "entities/examplefriend.md",
+         "new_body": examplefriend_with_job,
          "reason": "merge job fact"},
     ]))
     await scheduler.trigger(TriggerSource.JOURNAL)
 
-    pages = sorted((vault_root / "entities").glob("lena*.md"))
-    assert pages == [lena_page], "UPDATE must stay in place — no lena-2.md"
-    content = lena_page.read_text(encoding="utf-8")
-    assert "- Lena works as a veterinarian." in content, "old facts survive"
-    assert "- Lena works at the animal clinic in Altona." in content
+    pages = sorted((vault_root / "entities").glob("examplefriend*.md"))
+    assert pages == [examplefriend_page], "UPDATE must stay in place — no examplefriend-2.md"
+    content = examplefriend_page.read_text(encoding="utf-8")
+    assert "- ExampleFriend works as a specialist." in content, "old facts survive"
+    assert "- ExampleFriend works at the example studio in Example District." in content
     # Body-awareness: the judge SAW the existing page body in its prompt.
-    assert "Lena works as a veterinarian." in brain.judge_prompts[1]
+    assert "ExampleFriend works as a specialist." in brain.judge_prompts[1]
 
     # ---- Turn 3: contradiction → supersede, never delete ----------------
     _age_vault(vault_root)
     brain.extractor_responses.append(_facts_json([
-        {"fact": "Lena actually moved to Berlin, not Hamburg.",
-         "kind": "event", "subjects": ["lena"]},
+        {"fact": "ExampleFriend actually moved to Exampletown, not Exampleville.",
+         "kind": "event", "subjects": ["examplefriend"]},
     ]))
-    await _turn(bus, journal, "Correction: Lena actually moved to Berlin, not Hamburg.")
-    cid_berlin = journal.pending()[0].id
+    await _turn(bus, journal, "Correction: ExampleFriend actually moved to Exampletown, not Exampleville.")
+    cid_exampletown = journal.pending()[0].id
     brain.judge_responses.append(json.dumps([
-        {"candidate_id": cid_berlin, "decision": "add",
-         "target": "concepts/lena-in-berlin.md",
-         "new_body": _concept("lena-in-berlin", "Lena moved to Berlin in June 2026."),
+        {"candidate_id": cid_exampletown, "decision": "add",
+         "target": "concepts/examplefriend-in-exampletown.md",
+         "new_body": _concept("examplefriend-in-exampletown", "ExampleFriend moved to Exampletown in June 2026."),
          "reason": "corrected event"},
-        {"candidate_id": cid_berlin, "decision": "invalidate",
-         "target": "concepts/lena-in-hamburg.md",
-         "superseded_by": "lena-in-berlin",
+        {"candidate_id": cid_exampletown, "decision": "invalidate",
+         "target": "concepts/examplefriend-in-exampleville.md",
+         "superseded_by": "examplefriend-in-exampletown",
          "reason": "contradicted by the correction"},
     ]))
     await scheduler.trigger(TriggerSource.JOURNAL)
 
-    hamburg = (vault_root / "concepts" / "lena-in-hamburg.md").read_text(encoding="utf-8")
-    assert "valid_until: " in hamburg, "superseded page carries valid_until"
-    assert "superseded-by:" in hamburg
-    assert "lena-in-berlin" in hamburg
-    assert (vault_root / "concepts" / "lena-in-berlin.md").is_file()
-    assert (vault_root / "concepts" / "lena-in-hamburg.md").is_file(), "never deleted"
+    exampleville = (vault_root / "concepts" / "examplefriend-in-exampleville.md").read_text(encoding="utf-8")
+    assert "valid_until: " in exampleville, "superseded page carries valid_until"
+    assert "superseded-by:" in exampleville
+    assert "examplefriend-in-exampletown" in exampleville
+    assert (vault_root / "concepts" / "examplefriend-in-exampletown.md").is_file()
+    assert (vault_root / "concepts" / "examplefriend-in-exampleville.md").is_file(), "never deleted"
 
     # ---- Turn 4: secrets never persist (AP-2) ---------------------------
     _age_vault(vault_root)
@@ -421,7 +421,7 @@ async def test_friend_page_appears_links_grows_and_contradictions_supersede(stac
 
     assert _delta("wiki_candidates_extracted") == 5
     assert _delta("wiki_candidates_blocked_secret") == 1
-    assert _delta("wiki_consolidator_add") == 3       # lena, hamburg, berlin
-    assert _delta("wiki_consolidator_update") == 2    # profile, lena job
+    assert _delta("wiki_consolidator_add") == 3       # examplefriend, exampleville, exampletown
+    assert _delta("wiki_consolidator_update") == 2    # profile, examplefriend job
     assert _delta("wiki_consolidator_invalidate") == 1
     assert _delta("wiki_consolidator_runs") == 3

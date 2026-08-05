@@ -432,23 +432,23 @@ async def test_ack_path_alone_creates_page(stack) -> None:
     s = stack
     vault_root = s["vault_root"]
 
-    jordan_update = PageUpdate(
-        target_path=vault_root / "entities" / "jordan.md",
+    sam_update = PageUpdate(
+        target_path=vault_root / "entities" / "sam.md",
         operation="create",
-        new_body=_entity_body("jordan", "Jordan leitet den Gartenbau."),  # i18n-allow
+        new_body=_entity_body("sam", "Sam wurde 1976 geboren."),  # i18n-allow
         reason="ack-path fact",
     )
 
     with patch.object(
-        s["curator"]._llm, "propose_updates", return_value=[jordan_update],
+        s["curator"]._llm, "propose_updates", return_value=[sam_update],
     ):
         await _drive_voice_turn(
             s["bus"],
-            user_text="Jordan leitet den Gartenbau.",  # below aggressive minimum  # i18n-allow
+            user_text="Sam wurde 1976 geboren.",   # 26 chars -- below aggressive min  # i18n-allow
             brain_text="Notiert.",                     # explicit ack keyword
         )
 
-    assert (vault_root / "entities" / "jordan.md").is_file()
+    assert (vault_root / "entities" / "sam.md").is_file()
     assert telemetry.get("voice_turns_ingested_ack") == 1
     assert telemetry.get("voice_turns_ingested_aggressive") == 0
 

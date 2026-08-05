@@ -23,7 +23,15 @@
  * flex row sets that row's floor — which is how the whole section grew a
  * horizontal scrollbar it could never shrink back out of.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Maximize2, Minimize2 } from "lucide-react";
 import ForceGraph2D from "react-force-graph-2d";
@@ -36,11 +44,22 @@ import type {
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { sizeChanged } from "@/lib/wikiGraph";
+import { useGraphDimension } from "@/lib/graphDimension";
+import { GraphDimensionToggle } from "@/components/wiki/GraphDimensionToggle";
 import { corpusSpan, nodeRadius, recencyTint } from "@/lib/entityGraph";
 import {
   fetchExploreEntity,
   fetchExploreGraph,
 } from "@/lib/ultrawikiExploreApi";
+
+// The WebGL renderer is the heaviest dependency in the app. Behind `lazy` it
+// is fetched the first time somebody switches this map into space, and never
+// otherwise — including for everyone who only ever reads the flat one.
+const EntityGraph3D = lazy(() =>
+  import("@/components/ultrawiki/EntityGraph3D").then((mod) => ({
+    default: mod.EntityGraph3D,
+  })),
+);
 
 export interface EntityGraphProps {
   minMentions: number;
@@ -98,6 +117,10 @@ export function EntityGraph({
   >(undefined);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [isExpanded, setIsExpanded] = useState(false);
+  // Flat canvas or WebGL scene — the same preference the vault Memory Map
+  // reads, already degraded back to flat where 3D cannot be rendered at all.
+  const { dimension } = useGraphDimension();
+  const isSpatial = dimension === "3d";
 
   const query = useQuery({
     queryKey: ["ultrawiki", "explore", "graph", minMentions],
@@ -208,6 +231,25 @@ export function EntityGraph({
           >
             {t("ultrawiki.explore.graph_empty")}
           </p>
+        ) : isSpatial ? (
+          <Suspense
+            fallback={
+              <p
+                data-testid="explore-graph-3d-loading"
+                className="flex h-full items-center justify-center px-6 text-center text-xs text-muted-foreground"
+              >
+                {t("wiki_graph.loading_3d")}
+              </p>
+            }
+          >
+            <EntityGraph3D
+              graphData={graphData}
+              width={size.w}
+              height={size.h}
+              selectedKey={selectedKey}
+              onSelect={onSelect}
+            />
+          </Suspense>
         ) : (
           <ForceGraph2D<RenderNode, RenderEdge>
             ref={graphRef}
@@ -310,6 +352,8 @@ export function EntityGraph({
           </p>
         </div>
 
+        <div className="pointer-events-auto flex shrink-0 items-center gap-2">
+        <GraphDimensionToggle className="uw-stage-pill border-transparent bg-transparent" />
         <button
           type="button"
           data-testid="explore-graph-expand-toggle"
@@ -334,6 +378,7 @@ export function EntityGraph({
             <Maximize2 className="h-3.5 w-3.5" aria-hidden />
           )}
         </button>
+        </div>
       </div>
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-wrap items-end justify-between gap-2 p-3">

@@ -165,7 +165,7 @@ async def test_cancel_all_running_finalizes_inflight_missions(
 ) -> None:
     """App shutdown finalizes every in-flight mission as CANCELLED.
 
-    Live incident 2026-06-10 19:24:12 (missions 019eb27f + 019eb288): the
+    Live incident 2026-06-10 19:24:12 (missions 019f102a + 019f102b): the
     app's self-restart killed the process with two missions in flight;
     nothing finalized them, so they lingered non-terminal until the
     recovery re-sweep buried them 30 minutes later as opaque
@@ -213,7 +213,7 @@ async def test_cancel_cannot_be_followed_by_stale_state_transition(
 ) -> None:
     """A stale in-flight transition must not append after CANCELLED.
 
-    Live DB evidence (2026-06-15, mission 019ecbb2-c9ff): shutdown wrote
+    Live DB evidence (2026-06-15, mission 019f1038-0001): shutdown wrote
     RUNNING -> CANCELLED, then a concurrently running iteration appended
     RUNNING -> CRITIQUING afterward. That leaves the UI showing active work
     for an already terminal mission.

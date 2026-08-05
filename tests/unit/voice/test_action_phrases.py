@@ -328,7 +328,7 @@ class TestElevationPausePhrases:
 
 class TestCuSuccessReadback:
     """The SUCCESS sibling of cu_failure_readback (live bug 2026-06-18, session
-    <SESSION_ID>): "open the browser and check which tabs I have open" was answered
+    10000107): "open the browser and check which tabs I have open" was answered
     only with a content-free "Done." while the verifier's observation ("...shows
     the active tab X") sat in the harness stdout and was discarded. On success we
     must SPEAK that observation so an informational request is actually answered.

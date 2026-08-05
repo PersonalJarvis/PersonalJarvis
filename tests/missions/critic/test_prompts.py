@@ -163,14 +163,14 @@ def test_template_states_read_only_mode() -> None:
 def test_template_has_ground_truth_rule() -> None:
     """Fix B regression: empty-diff must veto regardless of log claims.
     Without this rule the Critic was sycophantic to worker-text claims like
-    'file successfully created' (live repro mission_019e2c18, 2026-05-15)."""
+    'file successfully created' (live repro mission_019f1004, 2026-05-15)."""
     assert "GROUND-TRUTH-RULE" in CRITIC_SYSTEM_PROMPT
     assert "diff is ground truth" in CRITIC_SYSTEM_PROMPT
     assert "log is hearsay" in CRITIC_SYSTEM_PROMPT
 
 
 def test_template_has_meta_phrase_rule() -> None:
-    """Live false-positive mission_019eb1ac (2026-06-10): the user asked Jarvis
+    """Live false-positive mission_019f1028 (2026-06-10): the user asked Jarvis
     to "spawn a subagent that creates an HTML file". The worker produced a
     substantial HTML file, but the Critic treated the routing meta-instruction
     ("spawn a subagent") as part of the deliverable and returned verdict=revise
@@ -188,7 +188,7 @@ def test_template_has_meta_phrase_rule() -> None:
 
 
 def test_ground_truth_rule_recognizes_verified_external_writes() -> None:
-    """mission_019e7abd (2026-05-30): a worker may legitimately write to an
+    """mission_019f101c (2026-05-30): a worker may legitimately write to an
     absolute path OUTSIDE the worktree (e.g. the user's Desktop). The
     Kontrollierer surfaces such deliverables as `diff --external-target` blocks
     that are verified on disk. The GROUND-TRUTH-RULE must treat those as real

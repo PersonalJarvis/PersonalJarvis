@@ -147,7 +147,7 @@ class SileroEndpointer:
         # Autonomous long-utterance patience (probe-independent). Once this much
         # ACTIVE speech has accumulated in the current utterance, the user is
         # clearly dictating a long request, not a short command — grant the wider
-        # silence window so a thinking pause is not cut. Fixes session <SESSION_ID>:
+        # silence window so a thinking pause is not cut. Fixes session 10000113:
         # the STT probe never surfaced a partial, so the probe-driven
         # extend_silence_window never armed. Resets per utterance via the
         # existing _extra_silence_frames=0 at speech start.

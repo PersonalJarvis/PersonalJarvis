@@ -1,6 +1,6 @@
 """Codex-Worker model-slug normalization (Wave 6 BUG-LIVE follow-up).
 
-Live repro 2026-05-18 mission_019e3c52-0acd:
+Live repro 2026-05-18 mission_019f100d-0001:
     Codex with ChatGPT account returned HTTP 400 because the
     MissionDecomposer hardcoded Step.model="sonnet" as default and the
     worker passed it through to `codex exec --model sonnet`. The error
@@ -141,7 +141,7 @@ def test_codex_cmd_disables_multi_agent_collab_tools() -> None:
     multi_agent collaboration tools (spawn_agent / wait) to spawn a NESTED codex
     agent and block on it.
 
-    Live mission 019ec708 (2026-06-14): the prompt was phrased "spawn a
+    Live mission 019f1033 (2026-06-14): the prompt was phrased "spawn a
     Jarvis-Agent which will help me plan a trip from London to Taiwan"; codex
     worker called spawn_agent("Hooke") then `wait` and hung for the full worker
     timeout (frozen stream, no WorkerDraftReady for 7+ min). Jarvis's D9
@@ -160,7 +160,7 @@ def test_codex_cmd_disables_multi_agent_collab_tools() -> None:
 
 
 def test_codex_cmd_caps_reasoning_effort_for_speed() -> None:
-    """Mission latency (live mission 019ec742, 2026-06-14): the codex worker ran
+    """Mission latency (live mission 019f1034, 2026-06-14): the codex worker ran
     452s then 399s at the user's `~/.codex/config.toml` `model_reasoning_effort
     = "xhigh"` → 899s critic_loop_exhausted. A Jarvis-Agent mission worker re-runs
     across up to MAX_CRITIC_LOOPS iterations, so a 7-minute xhigh pass per run is
@@ -178,7 +178,7 @@ def test_codex_cmd_caps_reasoning_effort_for_speed() -> None:
 def test_codex_cmd_enables_web_search_for_research() -> None:
     """A mission worker with no web access cannot research current events — it
     FABRICATES them, and the critic correctly rejects the hallucinations 3x ->
-    critic_loop_exhausted (live mission 019ecb56, 2026-06-15: "research the AI
+    critic_loop_exhausted (live mission 019f1037, 2026-06-15: "research the AI
     news of the last years" failed at 1042s after the worker invented GPT-5.5 /
     Claude Fable / a 2026 AI Agent Index as sourced facts).
 

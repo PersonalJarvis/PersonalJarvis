@@ -147,3 +147,51 @@ def test_already_quiet_player_is_not_tokenized():
     d = _ducker(run, duck_volume_percent=0)
     assert d.mute_others(own_pid=1, never=frozenset()) == []
     assert d._saved == {}
+
+
+def test_master_fallback_skipped_when_a_running_player_is_already_quiet():
+    """"Nothing was ducked" is not "no player is running".
+
+    Music running at volume 0 needs no duck, so the tier is already handled.
+    Falling through to the MASTER output there lowered Jarvis's own TTS — the
+    side effect the fallback is opt-in to avoid — and silenced the answer the
+    user was waiting for, for no gain.
+    """
+    run = FakeRunner({_MUSIC: "0", _SPOTIFY: "-", "master": "80"})
+    d = _ducker(run, master_fallback=True, duck_volume_percent=0)
+    assert d.mute_others(own_pid=1, never=frozenset()) == []
+    assert not any("output volume" in s for s in run.scripts)
+    assert d._saved == {}
+
+
+def test_unrestored_player_is_re_adopted_by_the_next_session():
+    """A duck whose restore never landed must not strand the user's volume.
+
+    The player then sits AT the duck volume with our saved level still in
+    ``_saved``: every later duck reads that already-ducked volume, so
+    ``prev > duck`` stays false and the token is never reported again — the
+    music stays silent for good. The next session has to re-adopt it.
+    """
+    run = FakeRunner({_MUSIC: "65", _SPOTIFY: "-"})
+    d = _ducker(run)
+    assert d.mute_others(own_pid=1, never=frozenset()) == [1]
+
+    # Session 1 ends, but the restore osascript times out -> saved level stays.
+    run._results[_MUSIC] = subprocess.TimeoutExpired(cmd="osascript", timeout=3.0)
+    d.restore([1])
+    assert d._saved == {1: 65}
+
+    # Session 2: Music still reads 0 (ducked). It must come back as a token.
+    run._results[_MUSIC] = "0"
+    assert d.mute_others(own_pid=1, never=frozenset()) == [1]
+    d.restore([1])
+    assert any("set sound volume to 65" in s for s in run.scripts)
+    assert d._saved == {}
+
+
+def test_re_adoption_needs_a_saved_level_not_just_a_quiet_player():
+    """A player the USER turned down must never be claimed as ours."""
+    run = FakeRunner({_MUSIC: "0", _SPOTIFY: "-"})
+    d = _ducker(run)
+    assert d.mute_others(own_pid=1, never=frozenset()) == []
+    assert d._saved == {}

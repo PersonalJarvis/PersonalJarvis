@@ -1729,3 +1729,115 @@ async def test_hangup_cancels_realtime_start_while_builder_is_blocked(
         assert await asyncio.wait_for(task, timeout=0.5) == HANGUP_HOTKEY
     finally:
         release_build.set()
+
+
+@pytest.mark.asyncio
+async def test_capture_latency_extends_the_audible_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A microphone frame handed over at time T was RECORDED earlier.
+
+    Ignoring that, the guard released frames that still carried the
+    assistant's own voice: the provider heard itself and the model answered
+    its own last sentence. With a slow capture path (MME reports ~0.3 s here)
+    the same frame that is safe on a fast one is still echo, and must stay
+    local - late, quiet, or not at all, but never uploaded.
+    """
+    pipe = _pipe()
+    pipe._continue_listening_after_response = True
+    monkeypatch.setattr(pipeline_mod, "_REALTIME_POST_OUTPUT_ECHO_GUARD_S", 0.7)
+    monkeypatch.setattr(pipeline_mod, "_REALTIME_HW_ECHO_TAIL_MARGIN_S", 0.2)
+    monkeypatch.setattr(
+        "jarvis.audio.capture.last_input_latency_s", lambda: 0.3
+    )
+    output_finished = asyncio.Event()
+    echo_pcm = b"\x01\x00" * 32  # 0.05 s after the turn: echo either way
+    tail_pcm = b"\x02\x00" * 32  # 0.35 s: safe on a fast mic, echo on this one
+    live_pcm = b"\x04\x00" * 32  # past the whole tail: normal pass-through
+    detector_inputs: list[bytes] = []
+
+    class _Detector:
+        def __init__(self, **_kwargs: object) -> None:
+            self.active = False
+
+        def warmup(self) -> None:
+            return None
+
+        def start_output(self) -> None:
+            self.active = True
+
+        def stop_output(self) -> None:
+            self.active = False
+
+        def feed(self, pcm: bytes) -> bytes | None:
+            detector_inputs.append(pcm)
+            return None
+
+    class _Mic:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            return False
+
+        async def stream(self):
+            await output_finished.wait()
+            await asyncio.sleep(0.05)
+            yield AudioChunk(pcm=echo_pcm, sample_rate=16_000, timestamp_ns=0)
+            await asyncio.sleep(0.3)
+            yield AudioChunk(pcm=tail_pcm, sample_rate=16_000, timestamp_ns=0)
+            await asyncio.sleep(0.45)
+            yield AudioChunk(pcm=live_pcm, sample_rate=16_000, timestamp_ns=0)
+            await asyncio.Event().wait()
+
+    class _Session(_HandshakeOnlyRealtimeSession):
+        def __init__(self, send_binary, send_json) -> None:
+            super().__init__(send_binary, send_json)
+            self.audio_frames: list[bytes] = []
+            self.received_live = asyncio.Event()
+
+        async def handle_control(self, message) -> None:
+            self.controls.append(message)
+            if message.get("type") == "audio_start":
+                await self._send_json(
+                    {
+                        "type": "audio_ready",
+                        "provider": "fake-live",
+                        "input_sample_rate": 16_000,
+                        "output_sample_rate": 24_000,
+                    }
+                )
+                await self._send_binary(b"\x03\x00" * 32)
+                await self._send_json({"type": "turn_complete"})
+                output_finished.set()
+
+        async def handle_audio_frame(self, pcm: bytes) -> None:
+            self.audio_frames.append(pcm)
+            if pcm == live_pcm:
+                self.received_live.set()
+
+        async def wait_finished(self) -> None:
+            await self.received_live.wait()
+
+    built: dict[str, object] = {}
+
+    def _build(**kwargs):
+        session = _Session(kwargs["send_binary"], kwargs["send_json"])
+        built["session"] = session
+        return session
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(
+        "jarvis.realtime.desktop.DesktopRealtimeBargeInDetector", _Detector
+    )
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _Mic())
+
+    await asyncio.wait_for(pipe._active_realtime_session(), timeout=4.0)
+
+    session = built["session"]
+    # Both early frames were inspected locally...
+    assert detector_inputs == [echo_pcm, tail_pcm]
+    # ...but only the frame recorded after the assistant had truly fallen
+    # silent reached the provider. Without the capture latency, tail_pcm was
+    # uploaded and the model answered its own echo.
+    assert session.audio_frames == [live_pcm]

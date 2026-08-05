@@ -1,6 +1,6 @@
 """End-to-end verification for the sub-mission provider-fallback fix (2026-06-08).
 
-THE BUG (forensic `data/missions.db`, missions 019ea82e* / 019ea830*): with
+THE BUG (forensic `data/missions.db`, missions 019f1020* / 019f1021*): with
 ``[brain.sub_jarvis].provider`` set to anything but ``claude-api`` / codex
 (here: ``grok``), every mission died in ~3 s because ``ClaudeDirectWorker``
 refused to run ("primary provider is grok, expected claude-api") — a guard that

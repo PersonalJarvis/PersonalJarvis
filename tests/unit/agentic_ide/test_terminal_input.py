@@ -9,6 +9,8 @@ from jarvis.agentic_ide.terminal_input import (
     DEVICE_ATTRIBUTES,
     THEME_COLOURS,
     TerminalQueryResponder,
+    classify_terminal_input,
+    is_newline_chord_only,
     is_terminal_report_only,
 )
 
@@ -88,6 +90,24 @@ def test_typing_is_never_mistaken_for_a_reply() -> None:
     assert is_terminal_report_only("review this") is False
     assert is_terminal_report_only(REPORTS + "review this") is False
     assert is_terminal_report_only("") is False
+
+
+def test_only_the_explicit_newline_chord_is_not_a_submit() -> None:
+    assert is_newline_chord_only("\x1b\r") is True
+    assert is_newline_chord_only("\r") is False
+    assert is_newline_chord_only("text\r") is False
+
+
+def test_chunked_bracketed_paste_newlines_are_edits_not_submissions() -> None:
+    submits, edits, active = classify_terminal_input("\x1b[200~first\n", False)
+    assert (submits, edits, active) == (False, True, True)
+
+    submits, edits, active = classify_terminal_input("second\r\n\x1b[201~", active)
+    assert (submits, edits, active) == (False, True, False)
+
+
+def test_text_followed_by_enter_is_an_edit_and_a_submission() -> None:
+    assert classify_terminal_input("new task\r", False) == (True, True, False)
 
 
 def test_a_cursor_position_report_still_reaches_the_agent() -> None:

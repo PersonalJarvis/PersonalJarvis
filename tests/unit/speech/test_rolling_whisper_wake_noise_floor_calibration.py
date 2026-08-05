@@ -89,10 +89,10 @@ async def test_quiet_laptop_mic_wake_fires_after_floor_calibration() -> None:
     """Speech at rms/peak ~0.004 — real 'quiet laptop' volume, BELOW the legacy
     absolute peak gate (0.008) and match gate (0.006) — must fire once the
     session floor has settled on that mic's much lower hiss (~0.0008)."""
-    stt = _PhraseSTT("hey nico")
+    stt = _PhraseSTT("hey nova")
     wake = RollingWhisperWake(
         stt,
-        pattern=re.compile(r"nico", re.IGNORECASE),
+        pattern=re.compile(r"nova", re.IGNORECASE),
         poll_interval_s=0.01,
         cooldown_s=0.0,
         save_debug_wavs=False,
@@ -107,7 +107,7 @@ async def test_quiet_laptop_mic_wake_fires_after_floor_calibration() -> None:
         assert not detect.done(), "hiss alone must never wake"
         holder["chunk"] = _const_chunk(130)  # speech ~0.004 rms/peak
         kw = await asyncio.wait_for(detect, timeout=5.0)
-        assert kw == "nico", "quiet-laptop wake was dropped by absolute gates"
+        assert kw == "nova", "quiet-laptop wake was dropped by absolute gates"
         assert stt.calls >= 1, "speech window never reached Whisper"
     finally:
         stop.set()
@@ -124,10 +124,10 @@ async def test_hallucination_at_quiet_mic_floor_stays_suppressed() -> None:
     breath/rustle window (rms ~0.0014, peak ~0.0026) whose transcript
     hallucinates the phrase must NOT fire — it sits below 1.4x-floor-derived
     match gate. Silence can never fire, on ANY mic."""
-    stt = _PhraseSTT("hey nico")  # every transcription "hears" the phrase
+    stt = _PhraseSTT("hey nova")  # every transcription "hears" the phrase
     wake = RollingWhisperWake(
         stt,
-        pattern=re.compile(r"nico", re.IGNORECASE),
+        pattern=re.compile(r"nova", re.IGNORECASE),
         poll_interval_s=0.01,
         cooldown_s=0.0,
         save_debug_wavs=False,
@@ -164,7 +164,7 @@ async def test_hallucination_at_quiet_mic_floor_stays_suppressed() -> None:
 
 def _wake_with_floor(floor: float, **kwargs) -> RollingWhisperWake:
     wake = RollingWhisperWake(
-        _PhraseSTT("hey nico"), pattern=re.compile(r"nico"), **kwargs
+        _PhraseSTT("hey nova"), pattern=re.compile(r"nova"), **kwargs
     )
     wake._noise_floor._floor = floor
     return wake

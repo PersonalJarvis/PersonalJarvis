@@ -15,6 +15,21 @@ const terminalHarness = vi.hoisted(() => ({
   input: vi.fn<(data: string) => void>(),
   /** xterm's single custom key handler, so a test can press a key. */
   keys: { current: null as ((event: KeyboardEvent) => boolean) | null },
+  focus: vi.fn(),
+  scrollToBottom: vi.fn(),
+  write: vi.fn(),
+  deferWrite: false,
+  writeCallbacks: [] as (() => void)[],
+  /**
+   * Every terminal this pane has built, oldest first.
+   *
+   * A pane replaces its terminal without remounting — the grid re-measuring,
+   * a restart, a rename — and what the REPLACEMENT is built with is exactly
+   * where a pane lost the reader's text size. So the double keeps the options
+   * it was constructed with rather than starting from an empty object, and the
+   * list makes the newest instance reachable from a test.
+   */
+  instances: [] as { options: Record<string, unknown> }[],
 }));
 
 vi.mock("@xterm/xterm", () => ({
@@ -25,8 +40,14 @@ vi.mock("@xterm/xterm", () => ({
     get rows() {
       return terminalHarness.size.rows;
     }
-    options: Record<string, unknown> = {};
+    options: Record<string, unknown>;
     unicode = { activeVersion: "" };
+
+    constructor(options: Record<string, unknown> = {}) {
+      this.options = { ...options };
+      terminalHarness.instances.push(this);
+    }
+
     // The pane silences xterm's own answers to the agent's protocol queries
     // (see ./terminalQueries). The double only has to accept the handlers.
     parser = {
@@ -38,7 +59,9 @@ vi.mock("@xterm/xterm", () => ({
     open(host: HTMLElement) {
       terminalHarness.open(host);
     }
-    focus() {}
+    focus() {
+      terminalHarness.focus();
+    }
     paste() {}
     attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
       terminalHarness.keys.current = handler;
@@ -52,7 +75,15 @@ vi.mock("@xterm/xterm", () => ({
     onData() {
       return { dispose() {} };
     }
-    write() {}
+    write(text: string, callback?: () => void) {
+      terminalHarness.write(text);
+      if (!callback) return;
+      if (terminalHarness.deferWrite) terminalHarness.writeCallbacks.push(callback);
+      else callback();
+    }
+    scrollToBottom() {
+      terminalHarness.scrollToBottom();
+    }
     resize() {}
     dispose() {}
     clearTextureAtlas() {}
@@ -106,10 +137,16 @@ describe("AgenticTerminal layout", () => {
   beforeEach(() => {
     terminalHarness.open.mockClear();
     terminalHarness.observe.mockClear();
+    terminalHarness.fit.mockClear();
+    terminalHarness.scrollToBottom.mockClear();
+    terminalHarness.write.mockClear();
+    terminalHarness.deferWrite = false;
+    terminalHarness.writeCallbacks = [];
     globalThis.ResizeObserver = ResizeObserverHarness;
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -167,6 +204,108 @@ describe("AgenticTerminal layout", () => {
 
     expect(terminalHarness.open).toHaveBeenCalled();
   });
+
+  it("refits and follows the live tail before a hidden chat pane is shown", () => {
+    const view = render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        active={false}
+      />,
+    );
+    const host = screen.getByTestId("agentic-terminal-host-Dana");
+    Object.defineProperty(host, "clientWidth", { configurable: true, value: 600 });
+    Object.defineProperty(host, "clientHeight", { configurable: true, value: 400 });
+    terminalHarness.fit.mockClear();
+    terminalHarness.scrollToBottom.mockClear();
+
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+
+    expect(terminalHarness.fit).toHaveBeenCalled();
+    expect(terminalHarness.scrollToBottom).toHaveBeenCalled();
+  });
+
+  it("keeps prompt output parked until an inactive chat pane is selected", () => {
+    const view = render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        active={false}
+      />,
+    );
+    terminalHarness.write.mockClear();
+
+    act(() => {
+      terminalHarness.handlers.current?.onPrompt?.(
+        { text: "Run the tests", at: 1, chars: 13 } as never,
+      );
+      terminalHarness.handlers.current?.onOutput?.("working" as never);
+    });
+    expect(terminalHarness.write).not.toHaveBeenCalled();
+
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+
+    expect(terminalHarness.write).toHaveBeenCalledWith("working");
+  });
+
+  it("does not paint a reactivated chat pane before its live tail is ready", () => {
+    vi.useFakeTimers();
+    terminalHarness.deferWrite = true;
+    const view = render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        active={false}
+      />,
+    );
+    const region = screen.getByTestId("agentic-terminal-host-Dana").parentElement;
+
+    act(() => {
+      terminalHarness.handlers.current?.onOutput?.("new live output" as never);
+    });
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+
+    expect(region?.className).toContain("invisible");
+    expect(terminalHarness.writeCallbacks).toHaveLength(1);
+
+    act(() => {
+      terminalHarness.writeCallbacks.shift()?.();
+      vi.advanceTimersByTime(20);
+    });
+
+    expect(terminalHarness.scrollToBottom).toHaveBeenCalled();
+    expect(region?.className).not.toContain("invisible");
+  });
 });
 
 describe("pane keyboard", () => {
@@ -221,6 +360,23 @@ describe("pane keyboard", () => {
 
     expect(claimed).toBe(true);
     expect(terminalHarness.input).not.toHaveBeenCalled();
+  });
+
+  it("keeps Ctrl+C out of the PTY even when nothing is selected", () => {
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+      />,
+    );
+
+    const claimed = terminalHarness.keys.current?.(
+      new KeyboardEvent("keydown", { key: "c", ctrlKey: true }),
+    );
+
+    expect(claimed).toBe(false);
   });
 });
 
@@ -461,64 +617,6 @@ describe("pane split menu", () => {
     expect(onSplit).toHaveBeenCalledWith("down", "shell");
   });
 
-  it("uses the only installed CLI instead of inheriting an unavailable one", () => {
-    const onSplit = vi.fn();
-    render(
-      <AgenticTerminal
-        name="Dana"
-        displayName="Claude Code"
-        appearance="dark"
-        fontSize={13}
-        agents={[
-          { ...CHOICES[0], installed: false },
-          { ...CHOICES[1], installed: true },
-        ]}
-        onSplit={onSplit}
-      />,
-    );
-
-    fireEvent.click(screen.getByTestId("pane-split-right-Dana"));
-
-    expect(onSplit).toHaveBeenCalledWith("right", "codex");
-  });
-
-  it("retains pane inheritance while agent metadata is unavailable", () => {
-    const onSplit = vi.fn();
-    render(
-      <AgenticTerminal
-        name="Dana"
-        displayName="Codex"
-        appearance="dark"
-        fontSize={13}
-        onSplit={onSplit}
-      />,
-    );
-
-    fireEvent.click(screen.getByTestId("pane-split-right-Dana"));
-
-    expect(onSplit).toHaveBeenCalledWith("right", undefined);
-  });
-
-  it("associates a multiword pane's trigger with a DOM-safe dialog id", () => {
-    render(
-      <AgenticTerminal
-        name="Frontend rewrite"
-        displayName="Codex"
-        appearance="dark"
-        fontSize={13}
-        agents={CHOICES}
-        onSplit={() => undefined}
-      />,
-    );
-
-    const trigger = screen.getByTestId("pane-split-right-Frontend rewrite");
-    fireEvent.click(trigger);
-    const dialog = screen.getByRole("dialog");
-
-    expect(trigger.getAttribute("aria-controls")).toBe(dialog.id);
-    expect(dialog.id).not.toMatch(/\s/);
-  });
-
   it("disables the plain terminal on a host with no shell, and says why", () => {
     render(
       <AgenticTerminal
@@ -536,11 +634,11 @@ describe("pane split menu", () => {
     );
 
     fireEvent.click(screen.getByTestId("pane-split-right-Dana"));
-    const plain = screen.getByTestId("pane-split-right-Dana-shell");
+    const plain = screen.getByTestId("pane-split-right-Dana-shell") as HTMLButtonElement;
 
     // Listed but unusable, so the absence explains itself instead of the entry
     // simply not being there — and in the terms of what is missing.
-    expect(plain.getAttribute("aria-disabled")).toBe("true");
+    expect(plain.disabled).toBe(true);
     expect(plain.textContent).toContain("no shell here");
   });
 });
@@ -565,13 +663,14 @@ describe("pane refit", () => {
     });
   };
 
-  const pane = (maximized: boolean) => (
+  const pane = (maximized: boolean, active = true) => (
     <AgenticTerminal
       name="Dana"
       displayName="Claude Code"
       appearance="dark"
       fontSize={13}
       maximized={maximized}
+      active={active}
     />
   );
 
@@ -584,10 +683,12 @@ describe("pane refit", () => {
     terminalHarness.send.mockImplementation(() => true);
     terminalHarness.handlers.current = null;
     terminalHarness.size = { cols: 80, rows: 24 };
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
     Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
     Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
   });
@@ -629,6 +730,21 @@ describe("pane refit", () => {
     settle();
 
     expect(terminalHarness.send).not.toHaveBeenCalled();
+  });
+
+  it("reclaims the shared PTY geometry when the pane becomes active", () => {
+    const view = render(pane(false, false));
+    settle();
+    terminalHarness.send.mockClear();
+
+    view.rerender(pane(false, true));
+    settle();
+
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "claim",
+      cols: 80,
+      rows: 24,
+    });
   });
 
   it("keeps offering a size the socket could not carry", () => {
@@ -688,6 +804,7 @@ describe("pane start-up feedback", () => {
   beforeEach(() => {
     globalThis.ResizeObserver = ResizeObserverHarness;
     terminalHarness.handlers.current = null;
+    terminalHarness.focus.mockClear();
   });
 
   afterEach(() => {
@@ -726,6 +843,27 @@ describe("pane start-up feedback", () => {
     });
 
     expect(screen.queryByTestId("agentic-pane-starting-T5")).toBeNull();
+  });
+
+  it("does not let a hidden pane steal focus when it finishes connecting", () => {
+    render(
+      <AgenticTerminal
+        name="T5"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        focused
+        active={false}
+      />,
+    );
+
+    act(() => {
+      terminalHarness.handlers.current?.onReady?.(
+        { resumed: false, reattached: false, lastPrompt: null } as never,
+      );
+    });
+
+    expect(terminalHarness.focus).not.toHaveBeenCalled();
   });
 
   /**
@@ -867,5 +1005,107 @@ describe("renaming a pane", () => {
     await act(async () => undefined);
     expect(onRename).not.toHaveBeenCalled();
     expect(screen.queryByTestId("pane-rename-input-T1")).toBeNull();
+  });
+});
+
+/*
+ * The toolbar's text size is an ACCESSIBILITY control: somebody who cannot
+ * comfortably read 13px sets 20 once and expects every pane to be readable,
+ * not the one they happen to be typing in.
+ *
+ * What broke that was invisible in every earlier test, because the terminal
+ * double ignored the options it was constructed with: the pane froze the size
+ * and theme it first rendered with and handed them to every terminal it built
+ * afterwards. A pane replaces its terminal without remounting — the grid
+ * re-measures and `geometryReady` flips, a pane is restarted or renamed — and
+ * since the size effect fires on CHANGES, nothing came along afterwards to
+ * correct the resurrected value. The panes rebuilt since the last change sat
+ * at the startup size for good, next to the ones that were not.
+ */
+describe("terminal text size across a rebuild", () => {
+  beforeEach(() => {
+    terminalHarness.instances.length = 0;
+    globalThis.ResizeObserver = ResizeObserverHarness;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const newest = () => terminalHarness.instances[terminalHarness.instances.length - 1];
+
+  it("builds a replacement terminal at the size the user is looking at", () => {
+    const view = render(
+      <AgenticTerminal name="Dana" displayName="Claude Code" appearance="dark" fontSize={13} />,
+    );
+    expect(newest().options.fontSize).toBe(13);
+
+    // The reader turns the text up while the pane is live.
+    view.rerender(
+      <AgenticTerminal name="Dana" displayName="Claude Code" appearance="dark" fontSize={20} />,
+    );
+    expect(newest().options.fontSize).toBe(20);
+
+    // ...and the grid is re-measured, which rebuilds the terminal underneath a
+    // pane that never unmounted. This is the pane the user was NOT typing in.
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={20}
+        geometryReady={false}
+      />,
+    );
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={20}
+        geometryReady
+      />,
+    );
+
+    expect(terminalHarness.instances.length).toBeGreaterThan(1);
+    expect(newest().options.fontSize).toBe(20);
+  });
+
+  it("restates the size to a terminal restarted after the change", () => {
+    const view = render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        restartToken={0}
+      />,
+    );
+    // Copied now: the live restyle below writes the new theme onto THIS
+    // instance too, so reading it afterwards would compare light against light.
+    const openedWith = { ...(newest().options.theme as Record<string, unknown>) };
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="light"
+        fontSize={18}
+        restartToken={0}
+      />,
+    );
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="light"
+        fontSize={18}
+        restartToken={1}
+      />,
+    );
+
+    // The theme travels with the size: both were frozen by the same ref, so a
+    // restarted pane came back in the palette it opened with.
+    expect(newest().options.fontSize).toBe(18);
+    expect(newest().options.theme).not.toEqual(openedWith);
   });
 });

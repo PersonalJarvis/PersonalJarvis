@@ -680,7 +680,7 @@ async def test_rerun_is_idempotent_while_child_alive(
 ) -> None:
     """A burst of /rerun POSTs must NOT spawn one child mission per request.
 
-    Forensic 2026-06-22 (mission 019eefcb-cee2): a click-storm / re-render loop
+    Forensic 2026-06-22 (mission 019f1044-0001): a click-storm / re-render loop
     POSTed /rerun nine times in three seconds and the endpoint created NINE
     child missions — "one mission, nine sub-agents". The source mission stays
     terminal forever (a permanent audit record) and is thus re-runnable

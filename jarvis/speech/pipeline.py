@@ -155,6 +155,17 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("jarvis.speech.pipeline")
 
+# Supervisor state for "a realtime transport is opening but cannot carry the
+# call yet". A subscription transport spends 15-45 s here, and the session is
+# already accepted into LISTENING by then — so without its own state every
+# surface claims the user is being heard while the provider has not accepted a
+# single frame (ST-7). The orb surface already speaks this vocabulary
+# (``jarvis/overlay/surface.py``); the supervisor enum and the orb bus bridge
+# are what carry it there. ``Supervisor.set_state`` ignores a state it does not
+# know, so this degrades to the previous behaviour with one warning rather than
+# raising on an install whose enum predates it.
+_REALTIME_CONNECTING_STATE = "CONNECTING"
+
 
 async def _run_voice_critical_thread(fn: Callable[[], Any]) -> Any:
     """Run blocking voice startup work outside the shared default executor.
@@ -280,7 +291,7 @@ def _should_hold_complete_delegation_for_grace(text: str | None) -> bool:
 # Minimum word count of the live partial past which we treat the utterance as a
 # long dictation (not a short command) and grant it the wider silence window. A
 # short command (e.g. "open Chrome", "hang up") never reaches it → stays snappy.
-# Lowered 12 → 7 (live bug 2026-06-18, session <SESSION_ID>): the 10-word question
+# Lowered 12 → 7 (live bug 2026-06-18, session 10000115): the 10-word question
 # "Hey Jarvis, was geht ab? Kannst du mir bitte mal …" fell just under the old
 # 12-word threshold, got only the base 1.5 s window, and was cut mid-sentence
 # when the user paused to think after "mal". 7 still keeps every ordinary 2–6
@@ -382,7 +393,10 @@ _BRAIN_UNAVAILABLE_PHRASE: dict[str, str] = {
 # user into silence (the "Jarvis listens forever, never answers" bug,
 # 2026-05-25). Short, bilingual, TTS-clean (``_speak`` does not scrub).
 _STT_UNAVAILABLE_PHRASE: dict[str, str] = {
-    "de": "Entschuldige, ich habe dich akustisch gerade nicht verstanden. Sag es bitte noch einmal.",
+    "de": (
+        "Entschuldige, ich habe dich akustisch gerade nicht verstanden. "
+        "Sag es bitte noch einmal."
+    ),
     "en": "Sorry, I didn't catch that just now. Could you say it again?",
     "es": "Perdona, no te he entendido bien ahora mismo. ¿Puedes repetirlo, por favor?",
 }
@@ -429,7 +443,10 @@ _REALTIME_UNAVAILABLE_PHRASE: dict[str, str] = {
 # language decision via ``_resolve_timeout_phrase`` below (CLAUDE.md §1 — no
 # per-layer language re-derivation).
 _TIMEOUT_TOOL_STALL_PHRASE: dict[str, str] = {
-    "de": "Ich habe rechtzeitig keine Antwort bekommen. Ein Tool, auf das ich gewartet habe, hat nicht reagiert.",
+    "de": (
+        "Ich habe rechtzeitig keine Antwort bekommen. Ein Tool, auf das ich "
+        "gewartet habe, hat nicht reagiert."
+    ),
     "en": "I couldn't get an answer in time. A tool I was waiting on didn't respond.",
     "es": "No pude obtener una respuesta a tiempo. Una herramienta que esperaba no respondió.",
 }
@@ -862,6 +879,11 @@ _DICTATION_FINAL_RETRY_MAX_S = 2.0
 # every cloud provider returns in a fraction of it), so the ceiling can only ever
 # be reached by something that is genuinely stuck.
 _DICTATION_TRANSCRIBE_TIMEOUT_PER_AUDIO_S = 2.0
+
+# A CUDA model load + first decode measured ~11 s on the reference desktop.
+# Joining longer than this means the post-ready warmer itself is unhealthy;
+# abandon its whole provider instance rather than racing its native session.
+_DICTATION_WARMUP_JOIN_TIMEOUT_S = 20.0
 
 
 def _dictation_retry_worthwhile(exc: BaseException | None) -> bool:
@@ -1626,7 +1648,9 @@ def _is_likely_partial_correction(
     if incoming_words[: len(current_words)] == current_words:
         return True
     shared_prefix = 0
-    for current_word, incoming_word in zip(current_words, incoming_words):
+    for current_word, incoming_word in zip(
+        current_words, incoming_words, strict=False
+    ):
         if current_word != incoming_word:
             break
         shared_prefix += 1
@@ -1641,7 +1665,10 @@ def _is_likely_repeated_tail(
         return False
     suffix = current_words[-len(incoming_words):]
     matches = sum(
-        1 for current_word, incoming_word in zip(suffix, incoming_words)
+        1
+        for current_word, incoming_word in zip(
+            suffix, incoming_words, strict=False
+        )
         if current_word == incoming_word
     )
     return matches >= max(2, len(incoming_words) - 1)
@@ -1756,7 +1783,10 @@ class SpeechPipeline:
         tts: GeminiFlashTTS | None = None,
         wake: OpenWakeWordProvider | None = None,
         brain_callback: BrainCallback | None = None,
-        vad_silence_ms: int = 1500,   # User-Feedback 2026-04-22 (2): 350ms schnitt bei Denkpausen ab. 2026-06-08: 1200→1500ms ("1,5-Sekunden-Pause-Regel") — gibt mehr Luft für Denkpausen und reduziert das Zerstückeln langer Anweisungen in Fragmente. Kurze Commands wie 'auflegen' bleiben schnell, weil HANGUP_RE vor dem Brain-Call greift.
+        # Raised from 350 to 1500 ms so natural thinking pauses do not fragment
+        # long instructions. Short hang-up commands remain fast because the
+        # detector runs before the brain call.
+        vad_silence_ms: int = 1500,
         stt_final_timeout_s: float = 8.0,
         # No-PROGRESS (stall) window for a streaming brain turn — NOT a total
         # wall-clock cap. The deadline resets every time the turn makes progress
@@ -2628,6 +2658,13 @@ class SpeechPipeline:
         # 7-24 s starved warm-up (see ``_warmup_phase_a``). Kept on the instance
         # so a graceful shutdown can cancel + await it.
         self._deferred_warmup_task: asyncio.Task | None = None
+        # Prompt-free dictation STT is a separate provider from voice/wake STT.
+        # It is warmed only after honest readiness and tracked for shutdown.
+        self._dictation_warmup_task: asyncio.Task | None = None
+        self._dictation_warmup_provider: Any = None
+        self._dictation_warmup_succeeded_provider: Any = None
+        self._dictation_warmup_reschedule = False
+        self._dictation_warmup_shutdown = False
         self._audio_topology_task: asyncio.Task | None = None
 
         # ContinuationBuffer (Spec docs/superpowers/specs/
@@ -2645,7 +2682,7 @@ class SpeechPipeline:
         # neither a continuation nor a clarifying question, this timer dispatches
         # it to the brain after the grace window so it is never silently dropped
         # at the session idle-timeout (AD-OE6; "Jarvis hört für immer zu" wedge
-        # 2026-06-19, session <SESSION_ID>). See _arm_continuation_drain.
+        # 2026-06-19, session 10000118). See _arm_continuation_drain.
         self._continuation_drain_task: asyncio.Task[None] | None = None
         # Continuation recombine (2026-06-16): re-attach a fast-follow utterance
         # to the in-flight turn. See ContinuationWindow + _maybe_recombine_continuation.
@@ -2780,6 +2817,7 @@ class SpeechPipeline:
         # Dictation owns a prompt-free instance and a separate fallback chain;
         # both must be rebuilt from the new provider on the next key press.
         self._reset_dictation_stt()
+        self._schedule_dictation_warmup()
         log.info(
             "STT live switch applied: %s -> %s (dictation cache invalidated).",
             type(previous).__name__ if previous is not None else "none",
@@ -2842,6 +2880,7 @@ class SpeechPipeline:
         # transcribing in the previous recognition language for the rest of the
         # process — a setting that appears to apply and silently does not.
         self._reset_dictation_stt()
+        self._schedule_dictation_warmup()
         log.info(
             "STT-Live-Switch: recognition language is now %r (%s)",
             language,
@@ -3320,11 +3359,11 @@ class SpeechPipeline:
         log.info("voice activity start")
         self._schedule_turn_state(TurnTakingState.USER_SPEAKING)
         # A resumed utterance freezes the continuation grace so a slow follow-up
-        # still recombines with the just-finished turn (session <SESSION_ID>). The
+        # still recombines with the just-finished turn (session 10000113). The
         # SAME freeze must reach the pre-dispatch ContinuationBuffer: a fragment
         # held there ("Kannst du bitte...") whose continuation begins inside the
         # window but finalizes just past the 8 s deadline would otherwise be
-        # dropped and split the turn (session <SESSION_ID>, 2026-06-18). Fail-open:
+        # dropped and split the turn (session 10000107, 2026-06-18). Fail-open:
         # continuation hygiene must never crash the turn.
         try:
             win = getattr(self, "_continuation_window", None)
@@ -3474,7 +3513,7 @@ class SpeechPipeline:
             # The RAW decode, deliberately. This probe asks "did anything get
             # said in the tail?" and answers with text LENGTH plus the
             # hallucination markers. A provider-cleaned string breaks both:
-            # a tail of pure hesitation ("ähm ...") cleans down to nothing and  # i18n-allow: quoted input
+            # a tail of hesitation ("ähm ...") cleans to nothing,  # i18n-allow: input
             # would read as silence, so Jarvis would cut off the one person
             # who is visibly still thinking.
             raw_text = (
@@ -4679,7 +4718,7 @@ class SpeechPipeline:
                 suppress_ms = int(
                     getattr(cfg_ack, "suppress_if_brain_faster_than_ms", suppress_ms)
                 )
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 — retain the safe default
             pass
 
         if suppress_ms > 0:
@@ -5176,7 +5215,8 @@ class SpeechPipeline:
                 for t in tasks_to_cancel:
                     try:
                         await t
-                    except (asyncio.CancelledError, Exception):
+                    except (asyncio.CancelledError, Exception):  # noqa: S110
+                        # Shutdown has already cancelled these owned tasks.
                         pass
                 if self._vision_provider is not None:
                     try:
@@ -5218,10 +5258,12 @@ class SpeechPipeline:
         into ``_ack_pcm`` / ``_task_ack_pcm`` after a live TTS-provider switch
         already cleared them. Guarded so shutdown never raises.
         """
+        self._dictation_warmup_shutdown = True
         for attr in (
             "_warmup_background_task",
             "_warmup_ready_cue_task",
             "_deferred_warmup_task",
+            "_dictation_warmup_task",
             "_audio_topology_task",
         ):
             task = getattr(self, attr, None)
@@ -5238,7 +5280,8 @@ class SpeechPipeline:
                 log.warning(
                     "Warm-up background task %s did not stop within 2s.", attr
                 )
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001 — shutdown swallow
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                # Shutdown is best-effort after the bounded wait above.
                 pass
             setattr(self, attr, None)
 
@@ -5461,6 +5504,10 @@ class SpeechPipeline:
                 self._audio_topology_task.add_done_callback(
                     self._log_audio_topology_done
                 )
+            # Warming voice/wake STT above does not warm dictation's separate,
+            # prompt-free provider. Start it only AFTER honest readiness so its
+            # model load + first CUDA decode can never delay boot (AP-26).
+            self._schedule_dictation_warmup()
         finally:
             # Never orphan the concurrently-started TTS init: if this deferred
             # task is cancelled (desktop shutdown) before the ``await tts_task``
@@ -5473,7 +5520,8 @@ class SpeechPipeline:
                 tts_task.cancel()
                 try:
                     await tts_task
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001 — shutdown swallow
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                    # Preserve the original cancellation after owned-task cleanup.
                     pass
 
     async def _warmup_phase_b(self) -> None:
@@ -7710,6 +7758,9 @@ class SpeechPipeline:
         held_muted_reply: dict[str, Any] | None = None
         muted_reply_flush_task: asyncio.Task[Any] | None = None
         turn_complete = asyncio.Event()
+        # One warning per session when the supervisor cannot represent the
+        # connecting phase — a loud-once note, never a per-message log spam.
+        connecting_state_reported = False
         speaking = False
         post_output_echo_guard_until = 0.0
         # End of the tail's physically-audible phase (device latency residue);
@@ -7731,6 +7782,21 @@ class SpeechPipeline:
             except (TypeError, ValueError):
                 return 0.0
             return min(_REALTIME_OUTPUT_LATENCY_CAP_S, max(0.0, latency))
+
+        def _reported_input_latency_s() -> float:
+            try:
+                from jarvis.audio.capture import (  # noqa: PLC0415
+                    last_input_latency_s,
+                )
+
+                return max(0.0, float(last_input_latency_s()))
+            except Exception:  # noqa: BLE001 - a missing figure only costs margin
+                log.debug(
+                    "Capture latency unavailable; echo tail keeps its fixed "
+                    "margin only",
+                    exc_info=True,
+                )
+                return 0.0
 
         def _clear_tail_pending() -> None:
             nonlocal tail_pending_bytes
@@ -7755,18 +7821,34 @@ class SpeechPipeline:
                 self._touch_assistant_speech_activity()
             if preserve_echo_tail:
                 output_latency_s = _reported_output_latency_s()
-                guard_s = _REALTIME_POST_OUTPUT_ECHO_GUARD_S + output_latency_s
+                # A frame handed to us now was RECORDED one capture latency
+                # ago, so the audible phase reaches that much further back.
+                # Without it the guard released frames still carrying the
+                # assistant's own voice, the provider heard itself, and the
+                # model answered its own last sentence.
+                input_latency_s = _reported_input_latency_s()
+                audible_s = (
+                    output_latency_s
+                    + input_latency_s
+                    + _REALTIME_HW_ECHO_TAIL_MARGIN_S
+                )
+                # Never end the tail before the audible phase it protects; on a
+                # slow capture path that simply leaves nothing to buffer, which
+                # is correct - those frames are echo, not the user.
+                guard_s = max(
+                    _REALTIME_POST_OUTPUT_ECHO_GUARD_S + output_latency_s,
+                    audible_s,
+                )
                 now = time.monotonic()
                 post_output_echo_guard_until = now + guard_s
-                post_output_hw_tail_until = (
-                    now + output_latency_s + _REALTIME_HW_ECHO_TAIL_MARGIN_S
-                )
+                post_output_hw_tail_until = now + audible_s
                 log.info(
-                    "Realtime echo tail armed for %.3fs "
-                    "(device output latency %.3fs, audible phase %.3fs).",
+                    "Realtime echo tail armed for %.3fs (device output latency "
+                    "%.3fs, capture latency %.3fs, audible phase %.3fs).",
                     guard_s,
                     output_latency_s,
-                    output_latency_s + _REALTIME_HW_ECHO_TAIL_MARGIN_S,
+                    input_latency_s,
+                    audible_s,
                 )
                 return
             post_output_echo_guard_until = 0.0
@@ -7877,8 +7959,52 @@ class SpeechPipeline:
         async def _send_json(message: dict[str, Any]) -> None:
             nonlocal semantic_turn_committed, speaking
             nonlocal surface_playback_epoch, surface_playback_task
+            nonlocal connecting_state_reported
             kind = str(message.get("type", ""))
-            if kind == "audio_ready":
+            if kind == "audio_starting":
+                # The provider handshake is ABOUT to run and can legitimately
+                # take tens of seconds. Until this arrived, the session was
+                # accepted into LISTENING (see the activation path) and nothing
+                # touched that again until the transport was up — so the bar,
+                # the orb and the web UI all claimed the user was being heard
+                # while the provider had not accepted a single frame (ST-7).
+                self._active_realtime_language = str(
+                    message.get("language", "") or ""
+                )
+                log.info(
+                    "Realtime desktop session starting: provider=%s language=%s "
+                    "budget=%ss",
+                    message.get("provider", "unknown"),
+                    self._active_realtime_language or "unknown",
+                    message.get("handshake_budget_s", "unknown"),
+                )
+                await self._transition(_REALTIME_CONNECTING_STATE)
+                supervisor = getattr(self, "_supervisor", None)
+                if (
+                    supervisor is not None
+                    and not connecting_state_reported
+                    and getattr(supervisor, "state", "") != _REALTIME_CONNECTING_STATE
+                ):
+                    # The supervisor ignores states it does not know, by design.
+                    # Say so once instead of leaving the surface silently on its
+                    # previous state — that silence IS the bug this branch fixes.
+                    connecting_state_reported = True
+                    log.warning(
+                        "Supervisor does not know the %s state; the bar and orb "
+                        "keep their previous state through the handshake",
+                        _REALTIME_CONNECTING_STATE,
+                    )
+            elif kind == "language":
+                # Mid-call language flip from the ONE resolver. Recorded so the
+                # surface can label the call honestly; never re-derived here.
+                self._active_realtime_language = str(
+                    message.get("language", "") or ""
+                )
+                log.info(
+                    "Realtime desktop call language: %s",
+                    self._active_realtime_language or "unknown",
+                )
+            elif kind == "audio_ready":
                 if speaking:
                     # A transport that just completed its handshake cannot be
                     # mid-output: an open segment here is stale state from
@@ -8114,6 +8240,27 @@ class SpeechPipeline:
                             await self._set_turn_state(TurnTakingState.LISTENING)
             elif kind == "provider_error":
                 log.warning("Realtime desktop status: %s", message)
+            elif kind == "provider_fallback":
+                # The call is crossing to a DIFFERENT provider family, which can
+                # mean a different billing path (AP-22). The user-facing notice
+                # rides the bus (``ErrorOccurred`` on the ``realtime.*`` layer,
+                # published alongside this frame) so it reaches every surface in
+                # the UI language; this branch exists so the desktop dispatch
+                # never drops the frame in silence (AP-30). The rebuilt session
+                # announces itself with a fresh ``audio_ready``, whose own
+                # branch above returns the turn state to LISTENING.
+                log.warning(
+                    "Realtime desktop provider fallback: from=%s status=%s error=%s",
+                    message.get("provider", "unknown"),
+                    message.get("status", "unknown"),
+                    message.get("error", ""),
+                )
+            elif kind == "provider_warning":
+                # Recoverable: the session continues on the same provider.
+                log.warning(
+                    "Realtime desktop provider warning: %s",
+                    message.get("error", ""),
+                )
 
         # Open the microphone BEFORE building the realtime session AND before
         # the provider handshake, buffering locally until the session accepts
@@ -8644,11 +8791,51 @@ class SpeechPipeline:
         the wake listener never inherits it.
         """
         stop_event.set()
+
+        def _retrieve_late_result(done: asyncio.Task) -> None:
+            if done.cancelled():
+                return
+            try:
+                exc = done.exception()
+            except asyncio.CancelledError:
+                return
+            if exc is not None:
+                log.debug("Detached PTT live transcript failed: %s", exc)
+
+        async def _cancel_bounded(label: str) -> None:
+            task.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=0.25)
+            except TimeoutError:
+                log.warning(
+                    "%s ignored cancellation for 250 ms; continuing without it.",
+                    label,
+                )
+                task.add_done_callback(_retrieve_late_result)
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
+                # The child task itself acknowledged cancellation.
+            except Exception as exc:  # noqa: BLE001 — cosmetic failure is contained
+                log.debug("%s failed while stopping: %s", label, exc)
+
         if task.done():
             try:
-                await task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                task.result()
+            except asyncio.CancelledError:
                 pass
+            except Exception as exc:  # noqa: BLE001 — cosmetic failure is contained
+                log.debug("PTT live transcript ended with an error: %s", exc)
+            return
+
+        # A sleeping probe or a local-preview call is purely cosmetic and does
+        # not own the authoritative STT provider. Cancel it immediately on the
+        # endpoint edge instead of adding its remaining preview timeout to the
+        # user's release-to-text latency. Only a provider call marked by
+        # ``inference_active`` needs the AP-24 quiescence wait below.
+        if not inference_active.is_set():
+            await _cancel_bounded("Cosmetic PTT probe")
             return
 
         timed_out = False
@@ -8667,14 +8854,11 @@ class SpeechPipeline:
                     self._stt_final_timeout_s,
                 )
             except asyncio.CancelledError:
-                task.cancel()
-                try:
-                    await task
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
-                    pass
+                await _cancel_bounded("PTT live transcript")
                 raise
-            except Exception:  # noqa: BLE001 — cosmetic probe failure is contained
+            except Exception as exc:  # noqa: BLE001 — cosmetic probe failure is contained
                 if task.done():
+                    log.debug("PTT live transcript ended with an error: %s", exc)
                     return
 
         if inference_active.is_set():
@@ -8693,11 +8877,7 @@ class SpeechPipeline:
                     "PTT live-transcript provider has no recovery hook; "
                     "cancelling the timed-out probe before final STT."
                 )
-        task.cancel()
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
-            pass
+        await _cancel_bounded("PTT live transcript")
 
     async def _ptt_live_transcribe(
         self,
@@ -9228,6 +9408,137 @@ class SpeechPipeline:
         self._dictation_stt_instance = instance
         return instance
 
+    async def _warm_dictation_provider(self, provider: Any) -> None:
+        """Prime one dictation provider off-path; never make boot depend on it."""
+        warm = getattr(provider, "warm_up", None)
+        if not callable(warm):
+            return
+        started = time.monotonic()
+        try:
+            await asyncio.to_thread(warm)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — lazy final STT still gets a chance
+            log.warning("Dictation STT warm-up failed; using lazy load: %s", exc)
+        else:
+            self._dictation_warmup_succeeded_provider = provider
+            log.info(
+                "Dictation STT warm-up done in %.0f ms.",
+                (time.monotonic() - started) * 1000.0,
+            )
+
+    def _schedule_dictation_warmup(self, provider: Any = None) -> None:
+        """Start one tracked post-ready warm-up for the current provider."""
+        if getattr(self, "_dictation_warmup_shutdown", False):
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        provider = provider if provider is not None else self._dictation_stt()
+        if provider is None or not callable(getattr(provider, "warm_up", None)):
+            return
+        if getattr(self, "_dictation_warmup_succeeded_provider", None) is provider:
+            return
+        current = getattr(self, "_dictation_warmup_task", None)
+        current_provider = getattr(self, "_dictation_warmup_provider", None)
+        if current is not None and not current.done():
+            if current_provider is provider:
+                return
+            # A live provider switch must not race two native warm-ups. Once the
+            # old task settles, warm whichever provider is current at that time.
+            if not getattr(self, "_dictation_warmup_reschedule", False):
+                self._dictation_warmup_reschedule = True
+
+                def _schedule_current(_done: asyncio.Task) -> None:
+                    self._dictation_warmup_reschedule = False
+                    self._schedule_dictation_warmup()
+
+                current.add_done_callback(_schedule_current)
+            return
+        # Do not retain a previous provider (and its GPU model) after a live
+        # switch. The active task/provider fields below become the sole owner.
+        if getattr(self, "_dictation_warmup_succeeded_provider", None) is not provider:
+            self._dictation_warmup_succeeded_provider = None
+        self._dictation_warmup_provider = provider
+        self._dictation_warmup_task = asyncio.create_task(
+            self._warm_dictation_provider(provider),
+            name="dictation-stt-warmup",
+        )
+
+    async def _join_dictation_warmup(self, provider: Any) -> Any:
+        """Join matching warm-up before authoritative STT, returning its provider.
+
+        A timeout abandons the entire provider instance, never its native model
+        in place: its worker may still be constructing or decoding. The caller
+        receives a fresh instance with a fresh engine and lock (AP-24).
+        """
+        task = getattr(self, "_dictation_warmup_task", None)
+        warmup_provider = getattr(self, "_dictation_warmup_provider", None)
+        if task is not None and warmup_provider is not provider:
+            # A live provider switch may arrive while the old native model is
+            # still loading. Join that generation before scheduling or calling
+            # the replacement so two native engines do not contend at once.
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(task), timeout=_DICTATION_WARMUP_JOIN_TIMEOUT_S
+                )
+            except TimeoutError:
+                log.warning(
+                    "Previous dictation STT warm-up did not stop within %.0fs; "
+                    "abandoning that provider instance before the live switch.",
+                    _DICTATION_WARMUP_JOIN_TIMEOUT_S,
+                )
+                task.cancel()
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
+            if getattr(self, "_dictation_warmup_task", None) is task:
+                self._dictation_warmup_task = None
+                self._dictation_warmup_provider = None
+            self._schedule_dictation_warmup(provider)
+            task = getattr(self, "_dictation_warmup_task", None)
+        if (
+            task is None
+            or getattr(self, "_dictation_warmup_provider", None) is not provider
+        ):
+            return provider
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task), timeout=_DICTATION_WARMUP_JOIN_TIMEOUT_S
+            )
+            return provider
+        except TimeoutError:
+            log.warning(
+                "Dictation STT warm-up did not finish within %.0fs; replacing "
+                "the provider instance before transcription.",
+                _DICTATION_WARMUP_JOIN_TIMEOUT_S,
+            )
+            task.cancel()
+            if getattr(self, "_dictation_stt_instance", None) is provider:
+                self._dictation_stt_instance = None
+            fresh = self._dictation_stt()
+            self._dictation_warmup_succeeded_provider = None
+            self._dictation_warmup_provider = None
+            self._dictation_warmup_task = None
+            return fresh
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
+            log.warning(
+                "Dictation STT warm-up was cancelled independently; replacing "
+                "the provider instance before transcription."
+            )
+            if getattr(self, "_dictation_stt_instance", None) is provider:
+                self._dictation_stt_instance = None
+            fresh = self._dictation_stt()
+            self._dictation_warmup_succeeded_provider = None
+            self._dictation_warmup_provider = None
+            self._dictation_warmup_task = None
+            return fresh
+
     def _reset_dictation_stt(self) -> None:
         """Drop every cached STT fallback so the next use resolves them again.
 
@@ -9245,6 +9556,7 @@ class SpeechPipeline:
         moment; what it clears is "the caches a provider swap invalidates".
         """
         self._dictation_stt_instance = None
+        self._dictation_warmup_succeeded_provider = None
         self._voice_stt_fallback_chain = None
         self._voice_stt_fallback_instances = {}
 
@@ -9334,6 +9646,7 @@ class SpeechPipeline:
                 )
             )
             return
+        self._schedule_dictation_warmup(stt)
         # ``getattr`` defaults keep pipelines built via ``__new__`` working —
         # a widely used pattern in this repo's unit tests, which bypass
         # ``__init__`` entirely.
@@ -9581,7 +9894,7 @@ class SpeechPipeline:
             """
             # ``stt_failures`` is appended to, never rebound, so it needs no
             # ``nonlocal`` — the list object itself is the shared state.
-            nonlocal stt_error, stt_error_detail, session_language
+            nonlocal stt, stt_error, stt_error_detail, session_language
             nonlocal stt_calls, stt_latency_ms
             ceiling = max(
                 float(getattr(self, "_stt_final_timeout_s", 8.0) or 8.0),
@@ -9592,6 +9905,10 @@ class SpeechPipeline:
                 ask_for = resolve_recognition_language(
                     pinned=dictation_language, session_language=session_language
                 )
+            # Startup/live-switch warm-up and this call share one native task.
+            # Joining it avoids both an 11 s cold final decode and a concurrent
+            # model call that would return TranscribeBusy (AP-24).
+            stt = await self._join_dictation_warmup(stt)
             inference_active.set()
             call_started = time.perf_counter()
             try:
@@ -9834,6 +10151,13 @@ class SpeechPipeline:
                         )
                         if stop_event.is_set():
                             return
+                        # An installed local engine owns the cosmetic preview
+                        # lane even while it is warming, busy, or rebuilding.
+                        # ``None`` means "keep the previous line", not "send the
+                        # same throwaway tail to the paid provider". Falling
+                        # through here was the source of repeated 402 -> local
+                        # fallback decodes during one dictation.
+                        want_preview = False
                         # The reading this preview took from the AUDIO. Free —
                         # the decoder produced it either way — and the only
                         # reading a cloud provider's translated words cannot
@@ -9897,7 +10221,6 @@ class SpeechPipeline:
                                 )
                         if local_text is not None:
                             tail_text = local_text
-                            want_preview = False  # served without touching the quota
                     # Cloud preview only where no local engine can run (a base or
                     # headless install), and then strictly within its budget so
                     # it can never again outbid the transcript for requests.
@@ -10351,7 +10674,8 @@ class SpeechPipeline:
                     for t in (drain_task, stop_task, hangup_task):
                         try:
                             await t
-                        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                            # These probe tasks were explicitly cancelled above.
                             pass
 
             # The microphone lease is now closed on EVERY end path — key
@@ -10545,7 +10869,8 @@ class SpeechPipeline:
                             source_layer="speech.dictation", text="", is_final=True
                         )
                     )
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001, S110
+                    # The primary failure is already logged; this event is optional.
                     pass
         finally:
             # Terminal-event guarantee. Consumers open on ``DictationStarted``
@@ -11955,7 +12280,7 @@ class SpeechPipeline:
                 # of its own, so without an autonomous flush the fragment hangs
                 # in LISTENING until the session idle-timeout silently discards
                 # it — the brain never sees it ("Jarvis hört für immer zu" wedge
-                # 2026-06-19, session <SESSION_ID>: the complete tag question
+                # 2026-06-19, session 10000118: the complete tag question
                 # "…Montag, oder?" was held as a trailing conjunction and dropped
                 # 30 s later, never answered). Arm a drain timer that DISPATCHES
                 # the held fragment to the brain after the grace window so the
@@ -12152,7 +12477,11 @@ class SpeechPipeline:
             # path above, which uses it as a no-progress (stall) window. This path
             # is a production minority; the stall fix lives on the streaming path.
             response = await asyncio.wait_for(
-                self._brain_with_ack(text, lang),
+                self._brain_with_ack(
+                    text,
+                    lang,
+                    consume_pending_voice_attachments=True,
+                ),
                 timeout=self._brain_timeout_s,
             )
         except TimeoutError:
@@ -12522,7 +12851,7 @@ class SpeechPipeline:
         if buf is None or not buf.has_pending():
             # Continuation already arrived / buffer drained — nothing to ask.
             return
-        # AD-OE5 floor guard (live incident 2026-06-17 14:47, session <SESSION_ID>):
+        # AD-OE5 floor guard (live incident 2026-06-17 14:47, session 10000014):
         # the user trailed off on "...liegt sie im..." → the fragment was held
         # (reason=trailing_ellipsis) and the clarify timer force-armed; 4 ms later
         # the user RESUMED speaking the continuation. The fixed grace then fired
@@ -12575,7 +12904,7 @@ class SpeechPipeline:
         question is armed) AND no further utterance ever arrives, the fragment
         would hang in LISTENING until the session idle-timeout silently discards
         it, with the brain never called. Live wedge 2026-06-19 (session
-        <SESSION_ID>): the complete tag question "…morgen ist ja Montag, oder?" was
+        10000118): the complete tag question "…morgen ist ja Montag, oder?" was
         classified as a trailing conjunction, held, and dropped ~30 s later —
         Jarvis "listened forever" and never answered.
 
@@ -12719,7 +13048,11 @@ class SpeechPipeline:
             # Enforce the fragment cap: drop the oldest entry if over limit.
             while len(pending) > max_frags:
                 dropped = pending.pop(0)
-                log.info("Pending-buffer cap (%d) exceeded — dropped oldest: %r", max_frags, dropped)
+                log.info(
+                    "Pending-buffer cap (%d) exceeded — dropped oldest: %r",
+                    max_frags,
+                    dropped,
+                )
             combined_for_ui = " ".join(pending).strip()
             # Publish incomplete transcript for UI (reuses existing wire format —
             # no new enum, spec §8 / BUG-008 avoidance).
@@ -12864,7 +13197,15 @@ class SpeechPipeline:
                     self._brain_streaming(text, lang)
                 )
             else:
-                reply = await self._brain.generate(text)
+                try:
+                    generate_call = self._brain.generate(
+                        text, consume_pending_voice_attachments=True
+                    )
+                except TypeError:
+                    # Compatibility for small test/provider adapters that still
+                    # expose the pre-modality Brain protocol.
+                    generate_call = self._brain.generate(text)
+                reply = await generate_call
                 if reply:
                     await self._speak(reply, language=lang, kind=SPOKEN_KIND_COMPLETION)
         except Exception as exc:  # noqa: BLE001 — AD-OE6: never crash the turn
@@ -12872,7 +13213,8 @@ class SpeechPipeline:
         finally:
             try:
                 await self._set_turn_state(TurnTakingState.LISTENING)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
+                # The dispatch failure above is already logged with its traceback.
                 pass
 
     async def _emit_completeness_signal(
@@ -13135,9 +13477,10 @@ class SpeechPipeline:
                 # ``allow_voice_confirm=True``: this is a conversational voice
                 # turn, so a consequential ask-tier tool is deferred into a spoken
                 # yes/no confirmation instead of blocking on a UI approval no voice
-                # user can give (forensic 2026-06-18). Graduated fallback: a brain
-                # that accepts ``on_progress`` but NOT ``allow_voice_confirm`` (older
-                # builds, test fakes) must still receive the stall-guard heartbeat —
+                # user can give (forensic 2026-06-18). Graduated fallback drops the
+                # newest attachment keyword first, preserving voice confirmation on
+                # pre-attachment adapters. Older adapters that accept only
+                # ``on_progress`` must still receive the stall-guard heartbeat —
                 # dropping straight to the bare call here loses ``on_progress`` and
                 # the no-first-frame ceiling would behead the working turn (BUG-032).
                 try:
@@ -13145,14 +13488,23 @@ class SpeechPipeline:
                         text,
                         on_progress=self._mark_brain_progress,
                         allow_voice_confirm=True,
+                        consume_pending_voice_attachments=True,
                     )
                 except TypeError:
                     try:
                         stream = self._brain.generate_stream(
-                            text, on_progress=self._mark_brain_progress,
+                            text,
+                            on_progress=self._mark_brain_progress,
+                            allow_voice_confirm=True,
                         )
                     except TypeError:
-                        stream = self._brain.generate_stream(text)
+                        try:
+                            stream = self._brain.generate_stream(
+                                text,
+                                on_progress=self._mark_brain_progress,
+                            )
+                        except TypeError:
+                            stream = self._brain.generate_stream(text)
                 async for chunk in stream:
                     if not chunk:
                         continue
@@ -13289,7 +13641,8 @@ class SpeechPipeline:
             for t in (produce_task, play_task, barge_task, hangup_task, *synth_tasks):
                 try:
                     await t
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                    # Owned playback tasks were explicitly cancelled above.
                     pass
             # Drop any buffered-but-unplayed sentence channels so a cancelled
             # turn can never replay ghost audio on the next turn.
@@ -13898,7 +14251,13 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001
             log.warning("Brain-timeout fallback speak failed: %s", exc)
 
-    async def _brain_with_ack(self, text: str, lang: str) -> str:
+    async def _brain_with_ack(
+        self,
+        text: str,
+        lang: str,
+        *,
+        consume_pending_voice_attachments: bool = False,
+    ) -> str:
         """Brain-Call mit optionalem Zwischen-Ack.
 
         Startet Brain-Call und einen ``_task_ack_delay_s``-Timer parallel.
@@ -13908,7 +14267,18 @@ class SpeechPipeline:
             Brain weiterwarten. Nach Ack-Playback wieder THINKING anzeigen,
             damit der Orb den richtigen Modus hat.
         """
-        brain_task = asyncio.create_task(self._brain(text), name="brain")
+        generate = getattr(self._brain, "generate", None)
+        if consume_pending_voice_attachments and callable(generate):
+            try:
+                brain_call = generate(
+                    text, consume_pending_voice_attachments=True
+                )
+            except TypeError:
+                # Compatibility for older Brain adapters without turn modality.
+                brain_call = generate(text)
+        else:
+            brain_call = self._brain(text)
+        brain_task = asyncio.create_task(brain_call, name="brain")
         timer_task = asyncio.create_task(
             asyncio.sleep(self._task_ack_delay_s), name="ack-timer"
         )
@@ -14332,14 +14702,15 @@ class SpeechPipeline:
                         # else: watchdog already aborted the wedged device + logged.
                         self._player.stop()
         except Exception as exc:  # noqa: BLE001
-            log.exception("Playback-Fehler: %s", exc)
+            log.exception("Playback failure: %s", exc)
         finally:
             for t in (play_task, barge_task, hangup_task):
                 if not t.done():
                     t.cancel()
                 try:
                     await t
-                except (asyncio.CancelledError, Exception):
+                except (asyncio.CancelledError, Exception):  # noqa: S110
+                    # Owned playback tasks were explicitly cancelled above.
                     pass
         if (
             play_task.done()
@@ -14530,10 +14901,11 @@ async def _main() -> None:
     )
     print()
     print("=" * 64)
-    print("  Personal Jarvis — Speech-Pipeline")
+    print("  Personal Jarvis — Speech pipeline")
     print("=" * 64)
     print("  CALL    :  say your wake word           |  Ctrl+RightAlt+J  |  F3+F4")
-    print("  HANG UP :  say 'auflegen'               |  F1+F2")  # i18n-allow: quoted German hangup trigger phrase
+    # i18n-allow: quoted German hang-up trigger phrase
+    print("  HANG UP :  say 'auflegen'               |  F1+F2")
     print("  QUIT    :  Ctrl+C in the terminal")
     print()
     print("  When Jarvis hears you: chime + a short spoken ack back.")

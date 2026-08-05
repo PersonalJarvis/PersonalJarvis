@@ -166,7 +166,7 @@ When a vocabulary spans Python ↔ SQL ↔ Pydantic ↔ TypeScript ↔ UI label 
 
 ## Optimistic Execution & the "Oops" Protocol (binding)
 
-The core UX contract is **one uninterrupted spoken conversation**. The Talker (router-brain + ack-brain) acknowledges optimistically and never blocks on an MCP round-trip; the Heavy-Duty Worker (Mission-Manager + `claude-cli` Sonnet) executes in the background off the chat transcript. The binding public behavior is defined by the decisions below and guarded by the mission and speech test suites.
+The core UX contract is **one uninterrupted spoken conversation**. The Talker (router-brain + ack-brain) acknowledges optimistically and never blocks on an MCP round-trip; the Heavy-Duty Worker (Mission-Manager + `claude-cli` Sonnet) executes in the background off the chat transcript. Reality-aligned plan + KPIs (M1–M5) + 4-wave execution: [`docs/plans/optimistic-execution-v1/README.md`](plans/optimistic-execution-v1/README.md).
 
 ### Architecture Decisions
 - **AD-OE1** The optimistic ACK ("Geht klar") is emitted **before** the worker dispatch returns — never after. Audit every `_handle_utterance` return path (BUG-007/BUG-020 territory).
@@ -186,7 +186,7 @@ The core UX contract is **one uninterrupted spoken conversation**. The Talker (r
 
 ## Cross-platform desktop features (the six ports, behind `jarvis/platform/`)
 
-The six desktop power-user features that were historically Windows-only are now **cross-platform behind the shared `jarvis/platform/` capability seam** (`detect_platform()` + a cached frozen `Capabilities` snapshot, AD-5). Each feature is one `Protocol` + one per-OS implementation + a `sys.platform` factory + a graceful logged null-fallback (AD-6); the Windows implementations are **untouched** (AD-7). Public support status is tracked in [`docs/os-parity.md`](os-parity.md); **ADR-0020 (cross-platform elevation) supersedes ADR-0001** but reuses the HMAC / Pydantic-argv / `shell=False` security core unchanged.
+The six desktop power-user features that were historically Windows-only are now **cross-platform behind the shared `jarvis/platform/` capability seam** (`detect_platform()` + a cached frozen `Capabilities` snapshot, AD-5). Each feature is one `Protocol` + one per-OS implementation + a `sys.platform` factory + a graceful logged null-fallback (AD-6); the Windows implementations are **untouched** (AD-7). The migration plan is `docs/plans/cross-platform-mac-linux/`; **ADR-0020 (cross-platform elevation) supersedes ADR-0001** but reuses the HMAC / Pydantic-argv / `shell=False` security core unchanged.
 
 | Feature | Factory | Windows | macOS | Linux | Verification |
 |---|---|---|---|---|---|
@@ -198,7 +198,7 @@ The six desktop power-user features that were historically Windows-only are now 
 | CU screen indicator | `cu.indicator.controller.wire_cu_indicator` | PySide6 sidecar + capture-affinity | PySide6 sidecar + capture guard | PySide6 sidecar (X11); Wayland no-op | live sign-off (glow + Esc) |
 | Admin/elevation | `admin.transport.make_admin_transport` + `admin.elevator.make_elevator` | UAC + SDDL pipe | Authorization Services + unix socket | pkexec/sudo + unix socket | live sign-off (prompt); never CI-E2E |
 
-**Verification is honestly labelled per feature in [`docs/os-parity.md`](os-parity.md).** CI coverage and real-device verification are distinct; never claim a platform is live-verified when only automated checks have run.
+**Verification is honestly labelled per feature in `docs/plans/cross-platform-mac-linux/SIGNOFF-LOG.md`.** As of this writing the maintainer has Windows only and nothing is pushed, so every macOS/Linux **live** GUI/permission behavior is `unverified-on-real-desktop` and the `ci.yml` matrix is `CI-configured` (first green run pending push) — **never** claim "CI-verified" or "live-verified" until that log says so.
 
 - **Dependency reality (AD-14 — do not "fix" this):** `pynput` + `ptyprocess` live in the `[desktop]` extra (`ptyprocess` gated `sys_platform != 'win32'`); `pyobjc-framework-{Quartz,ApplicationServices,Accessibility}` in `[desktop-macos]` (`sys_platform == 'darwin'`). **Linux `pyatspi` is NOT on PyPI — never add it as a pip dependency.** It is GObject-Introspection, distro-packaged (`apt install python3-pyatspi gir1.2-atspi-2.0`), surfaced via the `capabilities.has_ax_tree` runtime probe.
 - **Doctrine intact:** the headless €5-VPS base install ships **none** of these desktop extras and still boots on a fresh `python:3.11-slim` Linux container — every port is extras-gated and degrades to a logged no-op (AD-6) when its capability is absent.

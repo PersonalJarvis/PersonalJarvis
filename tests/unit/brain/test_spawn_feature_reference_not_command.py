@@ -63,7 +63,7 @@ def _manager() -> BrainManager:
     )
 
 
-# The exact live utterance that mis-fired (2026-07-01 21:26:44).
+# The exact synthetic utterance that mis-fired (2026-07-01 21:26:44).
 LIVE_META_UTTERANCE = (
     "Ja, mach das mal. Ach, Ticker, das ist echt nervig. "  # i18n-allow
     "Auto-Spawn, das müssen wir erstmal fixen, Digga."  # i18n-allow

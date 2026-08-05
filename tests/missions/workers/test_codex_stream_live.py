@@ -1,6 +1,6 @@
 """Live-streaming contract for CodexDirectWorker (2026-06-10 root cause).
 
-Live incident chain (missions 019eb27f + 019eb288, jarvis_desktop.log
+Live incident chain (missions 019f102a + 019f102b, jarvis_desktop.log
 19:24:12): the worker collected ALL stdout via ``communicate()`` until
 process exit, so during the whole run there was NO stream.jsonl on disk,
 NO translated events upstream, and NO visible progress. A gpt-5.5 xhigh

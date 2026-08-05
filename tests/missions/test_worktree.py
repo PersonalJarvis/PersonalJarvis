@@ -103,7 +103,7 @@ def test_create_two_tasks_get_different_paths(manager: WorktreeManager) -> None:
 # empty `git init` repo with one empty initial commit, so the same diff-capture
 # sequence (`git add -A .` + `git diff --cached HEAD`) still surfaces the
 # worker's written files — but the worker is not tempted to explore 1.3M tokens
-# of unrelated code first (live mission 019eb17d, 2026-06-10).
+# of unrelated code first (live mission 019f1027, 2026-06-10).
 
 
 def _git_out(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -185,7 +185,7 @@ def test_lean_workspace_excludes_node_modules_from_diff_capture(
     lean workspace so the per-iteration ``git add -A .`` does not have to stat
     tens of thousands of files.
 
-    Live forensic (mission 019ee416, 2026-06-20): a worker installed Remotion
+    Live forensic (mission 019f103f, 2026-06-20): a worker installed Remotion
     into the lean workspace, built a complete promo video, but every
     ``_capture_diff`` call ran ``git add -A`` into a 10 s timeout walking
     node_modules -> empty diff -> "no usable output" -> the finished build was
@@ -671,8 +671,8 @@ def test_prune_and_sweep_leaked_preserves_mission_archive_dirs(
     """
     import os
 
-    archive = manager._outputs_root / "mission_019e70d0-6c19"
-    files_dir = archive / "tasks" / "019e70d0-6c1c" / "artifacts" / "files"
+    archive = manager._outputs_root / "mission_019f101b-0001"
+    files_dir = archive / "tasks" / "019f101b-6c1c" / "artifacts" / "files"
     files_dir.mkdir(parents=True, exist_ok=True)
     deliverable = files_dir / "jarvis-live-proof3.html"
     deliverable.write_text("<h1>three</h1>", encoding="utf-8")

@@ -754,11 +754,13 @@ class TestModelClassification:
 
 
 class TestRealtimeCatalog:
-    def test_codex_subscription_catalog_matches_app_server_v1(self) -> None:
+    def test_codex_subscription_catalog_matches_app_server_v3(self) -> None:
         from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
 
+        # v3 (ChatGPT-Live): the server chooses the model; the voice roster
+        # below is the server-confirmed nine (verified live 2026-08-01).
         assert [m.id for m in REALTIME_MODELS["codex-subscription-realtime"]] == [
-            "gpt-realtime-1.5"
+            "auto"
         ]
         assert [v.id for v in REALTIME_VOICES["codex-subscription-realtime"]] == [
             "cove",

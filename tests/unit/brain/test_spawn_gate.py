@@ -1,9 +1,8 @@
 """Explicit-delegation gate for LLM-chosen agent spawns (spawn_gate.py).
 
-Contract: a background agent may be spawned by the model
+Regression contract: a background agent may be spawned by the model
 ONLY when the user explicitly asks for one (or confirms a delegation offer one
-turn later). The synthetic conversational fixtures below reproduce the trigger
-shape that once spawned an unrequested agent before the gate existed.
+turn later). The two synthetic regression utterances below represent ordinary conversational remarks — both spawned an unrequested agent before the gate existed.
 """
 from __future__ import annotations
 
@@ -24,18 +23,20 @@ def _fresh_offer_window():
     OFFER_WINDOW.disarm()
 
 
-# ── regressions: conversational turns must NEVER unlock a spawn ─────────
+# ── synthetic regressions: conversational turns must NEVER unlock a spawn ──────
 
 
 @pytest.mark.parametrize(
     "utterance",
     [
-        # synthetic remarks that contain no delegation request
-        "Ich überlege, ob wir im Garten mehr Sensoren brauchen.",  # i18n-allow
-        "Ah, ich will gucken, welche Pflanzen ins Nordbeet passen.",  # i18n-allow
+        # synthetic regression A — a remark, spawned an agent anyway
+        "Dies ist eine beiläufige Bemerkung, bei der man sich "  # i18n-allow: synthetic utterance
+        "jeden Tag ein Beispielauto vorstellen kann.",  # i18n-allow: synthetic utterance
+        # synthetic regression B — an intention, spawned an agent anyway
+        "Ich überlege, welchen Ansatz ich für das Beispielprojekt wähle.",  # i18n-allow: synthetic utterance
         "What is the richest place in Europe after Monaco?",
         "Wie viele Milliardäre gibt es in Starnberg?",  # i18n-allow: DE turn fixture
-        "Research the best irrigation methods.",
+        "Research the best cities to move to.",
         "",
     ],
 )
@@ -95,7 +96,7 @@ def test_auto_spawn_feature_complaint_blocks() -> None:
 
 
 def test_short_yes_after_blocked_turn_unlocks_exactly_once() -> None:
-    remark = "Ich will gucken, welche Pflanzen ins Nordbeet passen."  # i18n-allow
+    remark = "Ich überlege, welchen Ansatz ich für das Beispielprojekt wähle."  # i18n-allow: synthetic utterance
     assert llm_spawn_allowed(remark) is False
     # model offered delegation; the user's short yes unlocks ONE spawn ...
     assert llm_spawn_allowed("Ja, mach das.") is True  # i18n-allow: DE confirm
@@ -105,15 +106,15 @@ def test_short_yes_after_blocked_turn_unlocks_exactly_once() -> None:
 
 
 def test_yes_in_english_and_spanish_unlocks_too() -> None:
-    assert llm_spawn_allowed("figure out which plants fit the north bed") is False
+    assert llm_spawn_allowed("figure out where I should move next") is False
     assert llm_spawn_allowed("Yes, go ahead.") is True
     OFFER_WINDOW.disarm()
-    assert llm_spawn_allowed("figure out which plants fit the north bed") is False
+    assert llm_spawn_allowed("figure out where I should move next") is False
     assert llm_spawn_allowed("Sí, hazlo.") is True
 
 
 def test_long_sentence_containing_yes_does_not_unlock() -> None:
-    question = "Welche Pflanzen passen ins Nordbeet?"  # i18n-allow: DE turn fixture
+    question = "Welchen Ansatz soll ich für das Beispielprojekt wählen?"  # i18n-allow: DE turn fixture
     assert llm_spawn_allowed(question) is False
     assert (
         llm_spawn_allowed(
@@ -124,7 +125,7 @@ def test_long_sentence_containing_yes_does_not_unlock() -> None:
 
 
 def test_veto_closes_the_offer_window_for_good() -> None:
-    assert llm_spawn_allowed("Find out which plants fit the north bed.") is False
+    assert llm_spawn_allowed("Find out where I should move next.") is False
     assert llm_spawn_allowed("No, don't.") is False
     # a later bare yes must not resurrect the declined offer
     assert llm_spawn_allowed("Yes.") is False
@@ -139,12 +140,12 @@ def test_blocked_turn_cannot_confirm_itself() -> None:
 
 def test_expired_offer_window_does_not_unlock() -> None:
     window = DelegationOfferWindow(ttl_s=-1.0)
-    window.arm("find out which plants fit the north bed")
+    window.arm("find out where I should move next")
     assert window.consume_confirm("yes, do it") is False
 
 
 def test_explicit_request_disarms_a_stale_offer() -> None:
-    assert llm_spawn_allowed("Find out which plants fit the north bed.") is False
+    assert llm_spawn_allowed("Find out where I should move next.") is False
     assert llm_spawn_allowed("Spawn an agent for something else.") is True
     # the explicit spawn consumed the conversation state — a stray later yes
     # must not unlock another spawn from the stale offer

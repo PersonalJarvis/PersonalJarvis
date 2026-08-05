@@ -83,7 +83,7 @@ class ContinuationWindow:
         Once the user is actually forming the follow-up, the clock must not keep
         running against them: a slow-to-finalize continuation would otherwise
         miss ``try_recombine`` even though it began well inside the grace (live
-        bug 2026-06-18, session <SESSION_ID>: ~3 s to formulate the next fragment >
+        bug 2026-06-18, session 10000113: ~3 s to formulate the next fragment >
         the 2.5 s grace, so it became a fresh turn). Re-enters the 'in flight'
         state (deadline cleared) — but ONLY while still armed and not already
         expired, so a genuinely late resume cannot resurrect a dead window.

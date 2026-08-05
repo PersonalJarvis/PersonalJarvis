@@ -64,7 +64,7 @@ async def test_wake_word_to_bar_reveal_event_path_is_under_budget() -> None:
     bridge = OrbBusBridge(bus=SimpleNamespace(), orb=orb)
     t0 = time.perf_counter()
     await bridge._on_wake_word_detected(  # noqa: SLF001
-        WakeWordDetected(source_layer="speech", keyword="hey_nico")
+        WakeWordDetected(source_layer="speech", keyword="hey_nova")
     )
     assert orb.shown_mode == "listen", "wake must reveal the listening bar"
     assert orb.show_monotonic is not None

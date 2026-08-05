@@ -13,7 +13,7 @@ title: "Concept: Router-Discipline"
 slug: router-discipline
 diataxis: explanation
 status: active
-owner: sam
+owner: maintainers
 last_reviewed: 2026-04-28
 phase: 5
 ---
@@ -29,7 +29,7 @@ title: "How-To: Add a new Brain provider"
 slug: add-brain-provider
 diataxis: howto
 status: active
-owner: sam
+owner: maintainers
 last_reviewed: 2026-04-28
 phase: 4
 audience: developer
@@ -312,7 +312,7 @@ title: "ADR-0009: Self-Healing Worker-Critic"
 slug: adr-0009-self-healing
 diataxis: adr
 status: active             # or accepted / superseded / deprecated
-owner: sam
+owner: maintainers
 last_reviewed: 2026-04-28
 phase: 6
 related:

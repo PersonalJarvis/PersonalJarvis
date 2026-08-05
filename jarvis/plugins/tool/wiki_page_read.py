@@ -7,7 +7,7 @@ Why a second wiki tool exists
 ``wiki-recall`` returns up to 5 hits with a 240-character snippet each.
 That is enough for "what do we know about X" but truncates anything
 longer.  When the brain has already narrowed the answer down to one page
-(e.g. user asks "read me everything about Joy") it needs the *full*
+(e.g. user asks "read me everything about ExampleRelative") it needs the *full*
 markdown content, not a snippet.  This tool fills that gap.
 
 Placement rule
@@ -77,7 +77,7 @@ class WikiPageReadTool:
     description: str = (
         "Read a single page from the user's long-term Obsidian wiki, in full. "
         "Use this after wiki-recall when you need the complete content of one "
-        "page (e.g. the user asks to 'read me everything about Joy' or wants "
+        "page (e.g. the user asks to 'read me everything about ExampleRelative' or wants "
         "a summary that needs more than the 240-char snippet). The path is "
         "vault-relative, e.g. 'people/sam.md'."
     )
@@ -97,7 +97,7 @@ class WikiPageReadTool:
     }
     input_examples: list[dict[str, Any]] = [
         {"path": "people/sam.md"},
-        {"path": "people/joy.md"},
+        {"path": "people/examplerelative.md"},
     ]
 
     def __init__(self, vault_root: Path) -> None:

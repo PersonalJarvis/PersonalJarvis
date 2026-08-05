@@ -411,7 +411,7 @@ _DELEGATE_DEADLINE_S: float = 20.0
 # reasoning knob ignore the hint (AP-21: capability hint, no provider pin).
 _DELEGATE_REASONING_EFFORT: Literal["none"] = "none"
 # Appended to the system prompt of DELEGATED voice turns only. Live 2026-07-17
-# (turn af736681): the tool loop spent 5 sequential rounds on one question —
+# (turn 20000012): the tool loop spent 5 sequential rounds on one question —
 # three near-identical wiki-recall calls, then wiki-list, then wiki-page-read —
 # and ran the 20 s deadline out. Every round is a full provider round-trip, so
 # round count IS the latency. Static text (byte-stable across turns) so the
@@ -548,7 +548,7 @@ class _PendingScreenConfirm:
 # file / report / document) offloads to a sub-agent mission, because the
 # Worker->Critic pipeline grades artifacts via git diff and is hostile to an
 # answer-only research turn (empty-diff veto -> critic_loop_exhausted, live
-# mission 019ecb56, 2026-06-15). These three regexes decide "wants an artifact".
+# mission 019f1037, 2026-06-15). These three regexes decide "wants an artifact".
 #
 # A build/produce VERB (write/create/build/generate/export/save + DE forms).
 # Deliberately disjoint from the research/analysis verbs in
@@ -946,7 +946,8 @@ def _is_definitional_question_about(user_text: str, token: str) -> bool:
 # work: the brain answers them inline — they must NEVER force-spawn a worker,
 # even when they contain an everyday word that collides with an action verb in
 # the universal catalogue ("Frage" -> "frag"/"frage", the filler particle
-# "halt" -> "halt"). A conversational advice question containing both words
+# "halt" -> "halt"). A synthetic advice question once force-spawned:
+# "ich hab ne Frage ... was würdest du mir empfehlen?"
 # force-spawned because has_action_intent matched "Frage"/"halt", so
 # _is_generic_subagent_work classified a pure chat turn as generic sub-agent
 # work; the answer then returned out-of-band via the MissionAnnouncer and never
@@ -1466,7 +1467,7 @@ def _evidence_answer_is_unverified(
     from the tool's result. If the model returns a non-empty answer but the
     mandated tool never ran (``executed_tool_names``), that answer is necessarily
     unverified — at worst a confabulation (live repro 2026-06-17, session
-    <SESSION_ID>: the model invented "the gcloud tool blocked execution because it
+    10000108: the model invented "the gcloud tool blocked execution because it
     classified the request as an explanatory question"). Empty answers and
     fire-and-forget ``suppress_response`` turns are handled elsewhere, so they
     are excluded here.
@@ -2197,7 +2198,7 @@ def _provider_down_phrase(lang: str, idx: int, cause: str | None = None) -> str:
 
 
 # AD-OE6: a model round that dies AFTER tools already ran must end in an honest
-# spoken notice, never silence. Forensic 2026-07-05 (session <SESSION_ID>): the
+# spoken notice, never silence. Forensic 2026-07-05 (session 10000110): the
 # provider sent finish_reason="error" on a ~224k-token round following 10+
 # executed tools; the empty-response guard is (correctly) skipped when tool
 # calls exist, so the turn counted as success with empty text — the user heard
@@ -3539,7 +3540,7 @@ class BrainManager:
             parts.append(persona_block)
 
         # User's own standing-instructions file (AGENTS.md / CLAUDE.md equivalent),
-        # named after the assistant (e.g. Alex.md). Distinct from the persona: the
+        # named after the assistant (e.g. Assistant.md). Distinct from the persona: the
         # user writes personal preferences here, and the block is framed so they
         # refine behaviour but never override safety/confirmations. Read fresh each
         # turn -> an edit applies on the next turn, no restart. A read fault must
@@ -5903,6 +5904,7 @@ class BrainManager:
         user_text: str,
         *,
         trace_id: UUID | None = None,
+        consume_pending_voice_attachments: bool = False,
     ) -> str | None:
         """Deliver a spoken instruction to the addressed Agentic-IDE terminal.
 
@@ -5967,6 +5969,15 @@ class BrainManager:
             addressed = ide_intent.detect_all(
                 user_text, names=candidates
             )
+            if not addressed:
+                current = session.contextual_terminal()
+                visible = ide_intent.detect_visible(
+                    user_text,
+                    terminal=current.name if current is not None else None,
+                    names=candidates,
+                )
+                if visible is not None:
+                    addressed = [visible]
         except Exception:  # noqa: BLE001 - detection must never break a turn
             return None
 
@@ -6012,6 +6023,9 @@ class BrainManager:
                     utterance=original,
                     instruction="",
                     language=out_lang,
+                    consume_pending_voice_attachments=(
+                        consume_pending_voice_attachments
+                    ),
                 )
 
         if not addressed:
@@ -6040,6 +6054,9 @@ class BrainManager:
                 session=session,
                 candidates=candidates,
                 language=out_lang,
+                consume_pending_voice_attachments=(
+                    consume_pending_voice_attachments
+                ),
             )
             if retry is not None:
                 return retry
@@ -6117,6 +6134,7 @@ class BrainManager:
             instruction=found.instruction,
             language=out_lang,
             assignments=assignments,
+            consume_pending_voice_attachments=consume_pending_voice_attachments,
         )
         if leftover is not None:
             # Armed only now: a question about the rest of the fleet is worth
@@ -6168,6 +6186,7 @@ class BrainManager:
         instruction: str,
         language: str,
         assignments: dict[str, str] | None = None,
+        consume_pending_voice_attachments: bool = False,
     ) -> str | None:
         """Compose and type one instruction into the addressed panes.
 
@@ -6202,6 +6221,7 @@ class BrainManager:
                 instruction=instruction,
                 assignments=assignments,
                 conversation=self._agentic_ide_conversation(utterance),
+                include_pending_attachments=consume_pending_voice_attachments,
             )
         except Exception:  # noqa: BLE001 - never crash the turn over a pane
             log.warning("Agentic IDE fast-path failed", exc_info=True)
@@ -6231,6 +6251,7 @@ class BrainManager:
         session: Any,
         candidates: list[str],
         language: str,
+        consume_pending_voice_attachments: bool = False,
     ) -> str | None:
         """Deliver the PREVIOUS turn's briefing when the user says it never went.
 
@@ -6314,6 +6335,7 @@ class BrainManager:
             utterance=previous,
             instruction="",
             language=language,
+            consume_pending_voice_attachments=consume_pending_voice_attachments,
         )
 
     def _ask_which_agentic_ide_terminal(
@@ -7096,7 +7118,7 @@ class BrainManager:
         # never a heavy-worker spawn. Guards the verb-collision false positive
         # where an everyday word ("Frage" -> "frag", the filler "halt") trips
         # has_action_intent and pushes a pure chat turn into
-        # _is_generic_subagent_work. The
+        # _is_generic_subagent_work. Live bug 2026-06-19 (advice turn). The
         # explicit heavy-work trigger hoisted above still wins, so "spawn a
         # subagent and tell me what you'd recommend" dispatches as asked.
         if _is_opinion_advice_question(t):
@@ -9088,6 +9110,7 @@ class BrainManager:
         publish_response: bool = True,
         history_override: Iterable[BrainMessage] | None = None,
         force_output_language: str | None = None,
+        consume_pending_voice_attachments: bool = False,
     ) -> str:
         """Generate a turn, optionally leaving its public response event to the caller.
 
@@ -9117,6 +9140,9 @@ class BrainManager:
                 prefer_tool_model=prefer_tool_model,
                 emit_tool_ack=emit_tool_ack,
                 force_output_language=force_output_language,
+                consume_pending_voice_attachments=(
+                    consume_pending_voice_attachments
+                ),
             )
         finally:
             # Keep the last completed turn inspectable for diagnostics/tests,
@@ -9144,6 +9170,7 @@ class BrainManager:
         prefer_tool_model: bool = False,
         emit_tool_ack: bool = True,
         force_output_language: str | None = None,
+        consume_pending_voice_attachments: bool = False,
     ) -> str:
         # 1. Intercept meta-commands (cancel, switch, depth override).
         # User request 2026-04-25: no standardised confirmation phrases
@@ -9457,7 +9484,7 @@ class BrainManager:
         # must reach it even when the plugin's API/MCP integration is absent,
         # instead of suppressing the local-action fast path and falling through
         # to a tool-less CLI talker that hallucinates a permissions refusal.
-        # Live bug 2026-06-21 (sessions.db turn 67276501-…): plugin-discord
+        # Live bug 2026-06-21 (sessions.db turn 10000101-…): plugin-discord
         # matched the bare word "Discord", the antigravity deep brain (a CLI
         # talker that drops all tools) then said "ich habe keinen Zugriff auf
         # Discord". The gate decision is authoritative and precise: only a
@@ -9610,7 +9637,9 @@ class BrainManager:
         # moves the UI even when a pane happens to share that word. Returns None
         # on every turn that does not address a terminal.
         ide_reply = await self._run_agentic_ide_fast_path(
-            user_text, trace_id=turn_trace_id,
+            user_text,
+            trace_id=turn_trace_id,
+            consume_pending_voice_attachments=consume_pending_voice_attachments,
         )
         if ide_reply is not None:
             await self._record_response_side_effects(
@@ -10298,7 +10327,22 @@ class BrainManager:
                 # abgelehnt, drittes fiel auf multi_spawn zurueck und
                 # scheiterte ebenfalls.
                 response_empty = not (agg.text or "").strip()
-                tool_calls_executed = bool(agg.tool_calls)
+                # A REQUESTED tool call only excuses empty text when a tool
+                # could actually have run. On a turn that offered NO tools at
+                # all — a Screen Context turn strips every one of them — a
+                # model-emitted call executed nothing by construction, so
+                # treating it as a legitimate silence is always wrong.
+                #
+                # Live 2026-08-02 09:58: "kannst du bitte schnell einen
+                # Screenshot machen?" captured the screen correctly, the one
+                # vision-capable provider in the chain answered with 1170
+                # tokens of reasoning, zero text and finish_reason=tool_calls,
+                # this guard read it as legitimate, no other provider was
+                # tried, and the user heard "that didn't work just now" while a
+                # fresh screenshot sat unused. Gating on ``_turn_tools`` keeps
+                # the tools-present behaviour byte-identical, so no executed
+                # side effect can ever be re-run by a fallback.
+                tool_calls_executed = bool(agg.tool_calls) and bool(_turn_tools)
                 suppressed = (agg.finish_reason == "suppress_response")
                 if response_empty and not tool_calls_executed and not suppressed:
                     log.warning(
@@ -10343,7 +10387,7 @@ class BrainManager:
                 # response guard above is correctly skipped when tool calls
                 # exist, so without this branch the turn counts as a success
                 # with empty text and the user hears NOTHING (forensic
-                # 2026-07-05, session <SESSION_ID>, 223k-token round). Do NOT
+                # 2026-07-05, session 10000110, 223k-token round). Do NOT
                 # fall through to the next provider — the executed tools
                 # would re-run their side effects; speak honestly instead.
                 if (
@@ -10569,7 +10613,7 @@ class BrainManager:
             )
             return agg.text
 
-        # Evidence-gate enforcement (live repro 2026-06-17, session <SESSION_ID>):
+        # Evidence-gate enforcement (live repro 2026-06-17, session 10000108):
         # the gate MANDATED a tool this turn, but neither the normal tool loop
         # nor the leaked-tool recovery above actually ran it — so the model's
         # answer is unverified, at worst a confabulation ("the gcloud tool
@@ -10834,6 +10878,7 @@ class BrainManager:
         on_progress: Callable[[], None] | None = None,
         allow_voice_confirm: bool = False,
         conversation_id: str | None = None,
+        consume_pending_voice_attachments: bool = False,
     ) -> AsyncIterator[str]:
         """Latency sprint 1: streaming variant of ``generate``.
 
@@ -10892,6 +10937,9 @@ class BrainManager:
                     on_progress=on_progress,
                     allow_voice_confirm=allow_voice_confirm,
                     conversation_id=conversation_id,
+                    consume_pending_voice_attachments=(
+                        consume_pending_voice_attachments
+                    ),
                 )
             finally:
                 # Sentinel signals "brain is done (or crashed)".

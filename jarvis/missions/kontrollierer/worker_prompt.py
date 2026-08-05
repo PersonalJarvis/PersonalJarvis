@@ -50,7 +50,7 @@ ARTIFACT_LANGUAGE_DIRECTIVE: Final[str] = (
 
 
 # Prepended to every worker prompt, right after the language directive. Root
-# cause (2026-06-22, mission 019ef052): the user asked for a SINGLE HTML file;
+# cause (2026-06-22, mission 019f1046): the user asked for a SINGLE HTML file;
 # the worker shipped four (index.html + app.js + styles.css + assets/). The
 # standing _QUALITY_DIRECTIVE ("never downgrade to a minimal version, treat a
 # skeleton hint as a floor not a ceiling") reads a single self-contained file as

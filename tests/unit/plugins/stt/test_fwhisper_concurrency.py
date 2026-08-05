@@ -1,7 +1,7 @@
 """faster-whisper transcription must never run concurrently on one model, and a
 WEDGED model must self-heal.
 
-Live forensic 2026-06-29 (custom wake "Hey Nico"): the wake went dead for HOURS —
+Live forensic 2026-06-29 (custom wake "Hey Nova"): the wake went dead for HOURS —
 every transcribe timed out at 8 s, was abandoned, retried, hung again, forever;
 an app restart did not even clear it. Root cause: the wake poll loop and the VAD
 "listening bubble" probe share ONE ``FasterWhisperProvider`` (``_probe_stt =

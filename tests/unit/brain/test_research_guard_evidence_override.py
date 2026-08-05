@@ -1,6 +1,6 @@
 """The research-intent guard must yield to an explicit evidence-gate mandate.
 
-Bug (trace 5edf0245): "Vergleiche mir mal, was ich diesen Monat bei Google
+Bug (trace 20000010): "Vergleiche mir mal, was ich diesen Monat bei Google
 Cloud ... verbraucht habe" fires BOTH the evidence gate (mandates cli_gcloud
 for the `cloud` domain) AND the research guard (blocks any cli_* action tool
 because "Vergleiche" is a research keyword). The two deterministic rules

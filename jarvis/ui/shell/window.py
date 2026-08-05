@@ -19,6 +19,9 @@ class WindowConfig:
     min_width: int = 760
     min_height: int = 560
     start_hidden: bool = False
+    # Default ground only. A caller that knows the user's [ui] theme should pass
+    # ``jarvis.ui.theme.window_background(...)`` instead, so the frame matches
+    # the app it is about to contain.
     background_color: str = "#0a0e14"     # Jarvis dark theme
     # Frameless is supported by pywebview, but we keep the standard frame
     # for the first version — window controls come from the OS.

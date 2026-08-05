@@ -45,6 +45,44 @@ class _FakeRegistry:
         return _FakeClass(self._providers[name])
 
 
+class _StreamingBrain:
+    def __init__(self, text: str = "", *, fail: bool = False) -> None:
+        self._text = text
+        self._fail = fail
+
+    async def complete(self, request: Any):  # noqa: ARG002
+        from jarvis.core.protocols import BrainDelta
+
+        if self._fail:
+            raise RuntimeError("provider stream failed")
+        yield BrainDelta(content=self._text)
+        yield BrainDelta(finish_reason="stop")
+
+
+class _StreamingRegistry(_FakeRegistry):
+    def __init__(self, responses: dict[str, str | Exception]) -> None:
+        super().__init__({name: True for name in responses})
+        self._responses = responses
+        self.tried: list[str] = []
+
+    def instantiate(self, name: str, **kwargs: Any) -> Any:  # noqa: ARG002
+        self.tried.append(name)
+        response = self._responses[name]
+        if isinstance(response, Exception):
+            return _StreamingBrain(fail=True)
+        return _StreamingBrain(response)
+
+
+async def _aggregate_text(kwargs: dict[str, Any], text: str) -> Any:
+    """Feed text through the same async ``BrainDelta`` stream as live brains."""
+    from jarvis.core.protocols import BrainDelta
+
+    async def _stream():
+        yield BrainDelta(content=text)
+
+    return await kwargs["aggregate"](_stream())
+
+
 class _Cfg:
     class ultrawiki:  # noqa: N801 — mirrors the config attribute path
         distill_provider = ""
@@ -90,6 +128,45 @@ def test_a_provider_that_will_not_load_is_treated_as_blind(all_credential_ready)
     assert [name for name, _ in vision_chain(_Cfg(), registry)] == ["seeing"]
 
 
+def test_known_blind_model_is_swapped_for_a_seeing_sibling(
+    all_credential_ready, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.brain import model_catalog
+
+    monkeypatch.setattr(
+        model_catalog,
+        "model_capabilities",
+        lambda provider, model: {"vision": provider == "seeing" and model != "text-only"},
+    )
+    monkeypatch.setattr(
+        model_catalog, "pick_fast_vision_model", lambda provider: f"{provider}-vision"
+    )
+    import jarvis.memory.wiki.curator_llm as curator_mod
+
+    monkeypatch.setattr(curator_mod, "_cheap_model_for", lambda provider: "text-only")
+
+    registry = _FakeRegistry({"seeing": True})
+    assert vision_chain(_Cfg(), registry) == [("seeing", "seeing-vision")]
+
+
+def test_known_blind_model_without_a_seeing_sibling_is_excluded(
+    all_credential_ready, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.brain import model_catalog
+
+    monkeypatch.setattr(
+        model_catalog,
+        "model_capabilities",
+        lambda _provider, _model: {"vision": False},
+    )
+    monkeypatch.setattr(model_catalog, "pick_fast_vision_model", lambda _provider: None)
+    import jarvis.memory.wiki.curator_llm as curator_mod
+
+    monkeypatch.setattr(curator_mod, "_cheap_model_for", lambda _provider: "text-only")
+
+    assert vision_chain(_Cfg(), _FakeRegistry({"seeing": True})) == []
+
+
 async def test_no_seeing_provider_means_an_honest_reason_not_a_guess(
     all_credential_ready,
 ):
@@ -122,10 +199,9 @@ async def test_a_model_that_admits_it_saw_no_image_is_rejected(
         # Mirror the real helper: run validate(), and report failure when no
         # attempt passes it.
         validate = kwargs["validate"]
-        aggregate = kwargs["aggregate"]
         seen.append(kwargs["request"])
-        answer = aggregate(f"{CANNOT_SEE_MARKER}")
-        return None if not validate(answer) else (answer, "seeing")
+        answer = await _aggregate_text(kwargs, CANNOT_SEE_MARKER)
+        return None if validate(answer) else (answer, "seeing")
 
     import jarvis.memory.wiki.provider_chain as chain_mod
 
@@ -140,9 +216,9 @@ async def test_a_model_that_admits_it_saw_no_image_is_rejected(
 
 async def test_an_empty_or_trivial_answer_is_rejected(all_credential_ready, monkeypatch):
     async def _fake_complete(**kwargs: Any) -> Any:
-        validate, aggregate = kwargs["validate"], kwargs["aggregate"]
-        answer = aggregate("ok")
-        return None if not validate(answer) else (answer, "seeing")
+        validate = kwargs["validate"]
+        answer = await _aggregate_text(kwargs, "ok")
+        return None if validate(answer) else (answer, "seeing")
 
     import jarvis.memory.wiki.provider_chain as chain_mod
 
@@ -157,12 +233,12 @@ async def test_a_real_description_comes_back_with_its_provider(
     all_credential_ready, monkeypatch
 ):
     async def _fake_complete(**kwargs: Any) -> Any:
-        aggregate = kwargs["aggregate"]
-        answer = aggregate(
+        answer = await _aggregate_text(
+            kwargs,
             "A photo of two people on a beach at sunset, holding surfboards.\n"
             "Text: Malibu 2019"
         )
-        assert kwargs["validate"](answer)
+        assert kwargs["validate"](answer) is None
         return answer, "seeing"
 
     import jarvis.memory.wiki.provider_chain as chain_mod
@@ -176,6 +252,25 @@ async def test_a_real_description_comes_back_with_its_provider(
     assert result.provider == "seeing"
 
 
+async def test_live_chain_consumes_the_async_provider_stream(
+    all_credential_ready,
+) -> None:
+    """Regression for the live six-provider ``TypeError`` failure.
+
+    The media adapter used a synchronous ``for`` loop over the providers'
+    ``AsyncIterator[BrainDelta]``. Mocking the fallback helper hid that contract
+    mismatch, so this test deliberately crosses the real helper boundary.
+    """
+    registry = _StreamingRegistry({"seeing": "A photograph of a mountain range at dawn."})
+
+    result = await describe_image(PNG, filename="peak.png", cfg=_Cfg(), registry=registry)
+
+    assert result.ok is True
+    assert result.provider == "seeing"
+    assert "mountain range" in result.text
+    assert registry.tried == ["seeing"]
+
+
 async def test_the_image_actually_reaches_the_request(all_credential_ready, monkeypatch):
     """A request without the image attached would be the silent version of the
     same bug: the model answers about nothing and sounds fine."""
@@ -183,7 +278,7 @@ async def test_the_image_actually_reaches_the_request(all_credential_ready, monk
 
     async def _fake_complete(**kwargs: Any) -> Any:
         captured["request"] = kwargs["request"]
-        answer = kwargs["aggregate"]("A photograph of a mountain range at dawn.")
+        answer = await _aggregate_text(kwargs, "A photograph of a mountain range at dawn.")
         return answer, "seeing"
 
     import jarvis.memory.wiki.provider_chain as chain_mod
@@ -371,10 +466,11 @@ class TestPictureText:
         lines = "\n".join(f"Row {n}: telescope maintenance" for n in range(40))
 
         async def _fake_complete(**kwargs: Any) -> Any:
-            answer = kwargs["aggregate"](
+            answer = await _aggregate_text(
+                kwargs,
                 f"TEXT:\n{lines}\n\nDESCRIPTION:\nA screenshot of a table."
             )
-            assert kwargs["validate"](answer)
+            assert kwargs["validate"](answer) is None
             return answer, "seeing"
 
         import jarvis.memory.wiki.provider_chain as chain_mod
@@ -393,8 +489,8 @@ class TestPictureText:
         """The invented-photo guard must survive the new answer shape."""
 
         async def _fake_complete(**kwargs: Any) -> Any:
-            answer = kwargs["aggregate"](f"TEXT:\n{CANNOT_SEE_MARKER}")
-            assert not kwargs["validate"](answer)
+            answer = await _aggregate_text(kwargs, f"TEXT:\n{CANNOT_SEE_MARKER}")
+            assert kwargs["validate"](answer)
             return None
 
         import jarvis.memory.wiki.provider_chain as chain_mod

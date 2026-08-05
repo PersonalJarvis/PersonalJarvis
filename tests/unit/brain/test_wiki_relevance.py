@@ -64,8 +64,8 @@ def test_possessive_turns_a_definitional_question_into_a_memory_question() -> No
 @pytest.mark.parametrize(
     "utterance",
     [
-        "Wann war ich mit Viktoria essen?",  # i18n-allow: German user input under test
-        "When did I meet Viktoria?",
+        "Wann war ich mit Beispielkontakt essen?",  # i18n-allow: German input
+        "When did I meet Example Contact?",
         "Weisst du noch, wo wir letztes Jahr waren?",  # i18n-allow: German user input under test
         "Do you remember where we stayed?",
         "Wie heisst mein Zahnarzt?",  # i18n-allow: German user input under test
@@ -120,17 +120,21 @@ def test_gate_never_raises_on_odd_input() -> None:
 def test_hit_sharing_only_one_common_word_is_dropped() -> None:
     """The keyword index matches on ANY term; coverage is what filters."""
     hits = [
-        FakeHit(title="Trestle dinner", snippet="dinner with Viktoria in San Francisco", score=0.9),
+        FakeHit(
+            title="Demo dinner",
+            snippet="dinner with Example Contact in Example City",
+            score=0.9,
+        ),
         FakeHit(title="Car collection", snippet="thoughts about the world of engines", score=0.8),
     ]
-    kept = relevant_hits(hits, "dinner Viktoria Francisco")
-    assert [hit.title for hit in kept] == ["Trestle dinner"]
+    kept = relevant_hits(hits, "dinner Example Contact City")
+    assert [hit.title for hit in kept] == ["Demo dinner"]
 
 
 def test_weak_hit_below_the_relative_floor_is_dropped() -> None:
-    strong = FakeHit(title="Viktoria dinner", snippet="dinner with Viktoria", score=0.9)
-    weak = FakeHit(title="Viktoria dinner note", snippet="dinner with Viktoria", score=0.01)
-    kept = relevant_hits([strong, weak], "dinner Viktoria")
+    strong = FakeHit(title="Example dinner", snippet="dinner with Example Contact", score=0.9)
+    weak = FakeHit(title="Example dinner note", snippet="dinner with Example Contact", score=0.01)
+    kept = relevant_hits([strong, weak], "dinner Example Contact")
     assert kept == [strong]
 
 
@@ -138,10 +142,10 @@ def test_relative_floor_never_uses_an_absolute_cutoff() -> None:
     """Scores are only comparable within one call — a uniformly low-scoring
     call must still return its hits rather than being wiped by a fixed floor."""
     hits = [
-        FakeHit(title="Viktoria dinner", snippet="dinner with Viktoria", score=0.05),
-        FakeHit(title="Viktoria dinner two", snippet="dinner with Viktoria", score=0.04),
+        FakeHit(title="Example dinner", snippet="dinner with Example Contact", score=0.05),
+        FakeHit(title="Example dinner two", snippet="dinner with Example Contact", score=0.04),
     ]
-    assert len(relevant_hits(hits, "dinner Viktoria")) == 2
+    assert len(relevant_hits(hits, "dinner Example Contact")) == 2
 
 
 def test_empty_hits_and_termless_queries_are_safe() -> None:
@@ -154,7 +158,7 @@ def test_filter_tolerates_hits_missing_attributes() -> None:
     class Bare:
         pass
 
-    assert relevant_hits([Bare()], "dinner Viktoria") == []
+    assert relevant_hits([Bare()], "dinner Example Contact") == []
 
 
 def test_content_terms_folds_and_deduplicates() -> None:

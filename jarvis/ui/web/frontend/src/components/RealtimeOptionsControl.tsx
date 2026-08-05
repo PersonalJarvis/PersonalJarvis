@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Loader2 } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { AlertCircle, Check, ChevronDown, Loader2 } from "lucide-react";
 import {
   fetchRealtimeVoicePreview,
   getRealtimeOptions,
@@ -19,13 +19,15 @@ const PROVIDER_DEFAULT = "";
 /**
  * Per-realtime-provider MODEL + VOICE picker.
  *
- * Unlike every other tier, a realtime session needs BOTH a model and a voice
- * pinned per provider, so this is a small dedicated control against the
+ * Realtime providers expose a model and a voice configuration, so this is a
+ * small dedicated control against the
  * dedicated `GET/PUT /api/providers/{id}/realtime-options` endpoint rather
  * than the shared search-heavy `BrainModelSelector`.
  *
- * The model stays a plain `<select>` (a handful of curated entries). The
- * voice is a richer expanding picker. Providers with a standalone sampler
+ * Both choices use app-styled pickers so Windows does not replace them with
+ * a low-contrast native menu. A provider-managed model is shown as read-only
+ * instead of pretending the user can pick a model that the server rejects.
+ * Providers with a standalone sampler
  * expose per-voice audio previews; offer-only transports remain selectable
  * without showing a preview button that cannot work.
  *
@@ -48,11 +50,14 @@ export function RealtimeOptionsControl({
   const [voice, setVoice] = useState<string>(PROVIDER_DEFAULT);
   const [previewAvailable, setPreviewAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
   const [savingField, setSavingField] = useState<"model" | "voice" | null>(null);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    setLoadError(false);
     void getRealtimeOptions(providerId)
       .then((r) => {
         if (!alive) return;
@@ -66,14 +71,40 @@ export function RealtimeOptionsControl({
         setPreviewAvailable(r?.preview_available === true);
       })
       .catch(() => {
-        // Best-effort — the row degrades to empty dropdowns rather than
-        // breaking the card.
+        if (alive) setLoadError(true);
       })
       .finally(() => {
         if (alive) setLoading(false);
       });
     return () => {
       alive = false;
+    };
+  }, [providerId, reloadNonce]);
+
+  // The pin can move without this card: a voice command, the control CLI, or a
+  // second window all write `[brain.providers.<id>].model/voice` and announce
+  // it. Without this the card kept showing the previous voice — a picker that
+  // quietly disagrees with what the next call will actually use.
+  useEffect(() => {
+    const modelKey = `brain.providers.${providerId}.model`;
+    const voiceKey = `brain.providers.${providerId}.voice`;
+    function onConfigReloaded(event: Event) {
+      const detail = (event as CustomEvent<{ changed_keys?: unknown }>).detail;
+      const keys = Array.isArray(detail?.changed_keys)
+        ? (detail.changed_keys as string[])
+        : [];
+      if (keys.includes(modelKey) || keys.includes(voiceKey)) {
+        setReloadNonce((value) => value + 1);
+      }
+    }
+    function onRealtimeSwitched() {
+      setReloadNonce((value) => value + 1);
+    }
+    window.addEventListener("jarvis:config-reloaded", onConfigReloaded);
+    window.addEventListener("jarvis:realtime-switched", onRealtimeSwitched);
+    return () => {
+      window.removeEventListener("jarvis:config-reloaded", onConfigReloaded);
+      window.removeEventListener("jarvis:realtime-switched", onRealtimeSwitched);
     };
   }, [providerId]);
 
@@ -118,17 +149,48 @@ export function RealtimeOptionsControl({
     }
   }
 
-  if (loading) return null;
+  if (loading) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-center gap-2 py-1 text-xs text-muted-foreground"
+      >
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+        {t("apikeys_view.realtime_options_loading")}
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div
+        role="alert"
+        className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs"
+      >
+        <span className="flex min-w-0 items-center gap-2 text-destructive">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {t("apikeys_view.realtime_options_error")}
+        </span>
+        <button
+          type="button"
+          onClick={() => setReloadNonce((value) => value + 1)}
+          className="shrink-0 rounded-md border border-destructive/30 px-2 py-1 font-medium text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          {t("apikeys_view.realtime_options_retry")}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div
       className="space-y-1.5"
-      // A click into the selects must not bubble to the card's activate
-      // handler (it only filters input/button/a/label, not select).
+      // Configuration clicks must not bubble to the card's activate handler.
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
     >
-      <RealtimeSelectRow
+      <RealtimeModelRow
         label={t("apikeys_view.realtime_model_label")}
         value={model}
         options={models}
@@ -149,7 +211,7 @@ export function RealtimeOptionsControl({
   );
 }
 
-function RealtimeSelectRow({
+function RealtimeModelRow({
   label,
   value,
   options,
@@ -163,31 +225,144 @@ function RealtimeSelectRow({
   onChange: (value: string) => void;
 }) {
   const t = useT();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const panelId = useId();
+  const managed = options.length === 1 && options[0].id === "auto";
+  const currentEntry = options.find((option) => option.id === value);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  if (managed) {
+    return (
+      <div className="flex items-start gap-2">
+        <span className="w-14 shrink-0 pt-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+          {label}
+        </span>
+        <div
+          aria-label={label}
+          className="min-w-0 flex-1 rounded-md border border-primary/20 bg-primary/[0.06] px-2.5 py-1.5"
+        >
+          <div className="flex items-center gap-2 text-xs">
+            <span className="min-w-0 flex-1 truncate font-medium">
+              {options[0].label}
+            </span>
+            <span className="rounded-full border border-primary/25 bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-primary">
+              {t("apikeys_view.realtime_model_managed")}
+            </span>
+          </div>
+          <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+            {t("apikeys_view.realtime_model_managed_hint")}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  function pick(next: string) {
+    setOpen(false);
+    if (next !== value) onChange(next);
+  }
+
   return (
-    <div className="flex items-center gap-2">
+    <div ref={rootRef} className="relative flex items-center gap-2">
       <span className="w-14 shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
         {label}
       </span>
-      <select
+      <button
+        type="button"
         aria-label={label}
-        value={value}
+        aria-expanded={open}
+        aria-controls={panelId}
         disabled={saving}
-        onChange={(e) => onChange(e.target.value)}
-        className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs disabled:opacity-60"
+        onClick={() => setOpen((current) => !current)}
+        className={cn(
+          "flex min-w-0 flex-1 items-center justify-between gap-2 rounded-md border bg-background px-2.5 py-1.5 text-left text-xs disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+          open
+            ? "border-primary/50 ring-1 ring-primary/20"
+            : "border-input hover:border-primary/40",
+        )}
       >
-        <option value={PROVIDER_DEFAULT}>
-          {t("apikeys_view.realtime_provider_default")}
-        </option>
-        {options.map((o) => (
-          <option key={o.id} value={o.id}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      {saving && (
-        <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+        <span className={cn("truncate", !value && "text-muted-foreground")}>
+          {value
+            ? currentEntry?.label || value
+            : t("apikeys_view.realtime_provider_default")}
+        </span>
+        {saving ? (
+          <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden="true" />
+        ) : (
+          <ChevronDown
+            className={cn(
+              "h-3 w-3 shrink-0 text-muted-foreground transition-transform",
+              open && "rotate-180",
+            )}
+            aria-hidden="true"
+          />
+        )}
+      </button>
+      {open && (
+        <ul
+          id={panelId}
+          className="absolute left-16 right-0 top-full z-30 mt-1 max-h-56 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-xl scrollbar-jarvis"
+        >
+          <ModelOption
+            label={t("apikeys_view.realtime_provider_default")}
+            selected={!value}
+            onClick={() => pick(PROVIDER_DEFAULT)}
+          />
+          {options.map((option) => (
+            <ModelOption
+              key={option.id}
+              label={option.label}
+              selected={option.id === value}
+              onClick={() => pick(option.id)}
+            />
+          ))}
+        </ul>
       )}
     </div>
+  );
+}
+
+function ModelOption({
+  label,
+  selected,
+  onClick,
+}: {
+  label: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn(
+          "flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
+          selected && "bg-primary/20 font-medium text-primary",
+        )}
+      >
+        <span className="truncate">{label}</span>
+        {selected && <Check className="h-3 w-3 shrink-0" aria-hidden="true" />}
+      </button>
+    </li>
   );
 }
 
@@ -230,10 +405,13 @@ function RealtimeVoiceRow({
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelId = useId();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const urlRef = useRef<string | null>(null);
+  const previewGenerationRef = useRef(0);
 
   function stopPreview() {
+    previewGenerationRef.current += 1;
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
@@ -249,7 +427,7 @@ function RealtimeVoiceRow({
   // Stop and free any playing preview when the component unmounts.
   useEffect(() => stopPreview, []);
 
-  // Close the panel on an outside click.
+  // Close the panel on an outside click or Escape.
   useEffect(() => {
     if (!open) return;
     function onDown(e: MouseEvent) {
@@ -257,8 +435,15 @@ function RealtimeVoiceRow({
         setOpen(false);
       }
     }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
     document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [open]);
 
   async function preview(voiceId: string) {
@@ -268,6 +453,7 @@ function RealtimeVoiceRow({
       return;
     }
     stopPreview();
+    const generation = previewGenerationRef.current;
     setLoadingId(voiceId);
     try {
       const blob = await fetchRealtimeVoicePreview({
@@ -276,16 +462,22 @@ function RealtimeVoiceRow({
         language: previewLang,
         model,
       });
+      if (previewGenerationRef.current !== generation) return;
       const url = URL.createObjectURL(blob);
       urlRef.current = url;
       const audio = new Audio(url);
       audioRef.current = audio;
-      audio.onended = () => stopPreview();
-      audio.onerror = () => stopPreview();
+      audio.onended = () => {
+        if (previewGenerationRef.current === generation) stopPreview();
+      };
+      audio.onerror = () => {
+        if (previewGenerationRef.current === generation) stopPreview();
+      };
       setLoadingId(null);
       setPreviewingId(voiceId);
       await audio.play();
     } catch (e) {
+      if (previewGenerationRef.current !== generation) return;
       pushToast(
         "error",
         `${t("apikeys_voice.preview_failed")}: ${(e as Error).message}`,
@@ -311,10 +503,11 @@ function RealtimeVoiceRow({
           type="button"
           aria-label={label}
           aria-expanded={open}
+          aria-controls={panelId}
           disabled={saving}
           onClick={() => setOpen((o) => !o)}
           className={cn(
-            "flex min-w-0 flex-1 items-center justify-between gap-2 rounded-md border bg-background px-2 py-1 text-left text-xs transition-colors disabled:opacity-60",
+            "flex min-w-0 flex-1 items-center justify-between gap-2 rounded-md border bg-background px-2 py-1 text-left text-xs transition-colors disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
             open
               ? "border-primary/50 ring-1 ring-primary/20"
               : "border-input hover:border-primary/40",
@@ -351,7 +544,10 @@ function RealtimeVoiceRow({
 
       {/* Inline-expanding voice list with per-voice audition. */}
       {open && (
-        <div className="overflow-hidden rounded-md border border-border bg-popover">
+        <div
+          id={panelId}
+          className="overflow-hidden rounded-md border border-border bg-popover"
+        >
           {previewAvailable && (
             <div
               className="flex items-center justify-end gap-1 border-b border-border px-2.5 py-1"

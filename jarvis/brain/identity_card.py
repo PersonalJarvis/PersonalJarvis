@@ -217,7 +217,7 @@ class _Collector:
                 return True
             # Containment only counts for substantial strings: "de" inside
             # "dentist" is a coincidence, "runs a solo business" inside "runs a
-            # solo business in Berlin" is a restatement.
+            # solo business in Exampletown" is a restatement.
             if min(len(key), len(seen)) >= 12 and (key in seen or seen in key):
                 return True
         return False

@@ -288,7 +288,7 @@ class MissionAnnouncer:
             # Among the codes: critic_unavailable is emitted when the Critic
             # subprocess crashed but iter0 produced a real diff — the user hears
             # that the work succeeded and only the reviewer failed (the diff is
-            # recoverable from the artifacts dir; live repro mission_019e3288).
+            # recoverable from the artifacts dir; live repro mission_019f1007).
             de_map = FAILURE_REASON_PHRASES["de"]
             en_map = FAILURE_REASON_PHRASES["en"]
             if lang == "de":

@@ -5,7 +5,7 @@ SKIPS a mission whose last event/heartbeat is younger than the staleness window
 (a parallel ``--no-lock`` instance may genuinely own it). But that guard is
 boot-only: a mission whose owning instance dies *after* boot is never re-checked
 and lingers non-terminal (e.g. CRITIQUING) in the DB and UI forever ("missions
-never find an end" — live forensic 2026-06-10, mission 019eb25c).
+never find an end" — live forensic 2026-06-10, mission 019f1029).
 
 ``periodic_recovery_sweep`` closes that gap by re-running the SAME conservative,
 active-guarded sweep on a timer: once an orphan's last activity crosses the

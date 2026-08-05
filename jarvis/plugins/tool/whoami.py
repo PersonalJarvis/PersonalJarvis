@@ -53,7 +53,8 @@ class WhoAmITool:
             profile: The UserProfile handle (USER.md). Can be `None` if the
                 workspace could not be loaded — in that case `execute`
                 returns a friendly error message instead of crashing.
-            people: Optional `PersonStore` for synthetic colleague examples.
+            people: Optional `PersonStore` for the "ExampleContact as partner,
+                Paul as colleague" line.
         """
         self._profile = profile
         self._people = people

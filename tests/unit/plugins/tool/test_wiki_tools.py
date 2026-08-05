@@ -34,8 +34,8 @@ def vault(tmp_path: Path) -> Path:
         "# Sam\n\nA person Jarvis knows.\n",
         encoding="utf-8",
     )
-    (tmp_path / "people" / "joy.md").write_text(
-        "# Joy\n\nAnother person Jarvis knows.\n",
+    (tmp_path / "people" / "examplerelative.md").write_text(
+        "# ExampleRelative\n\nAnother person Jarvis knows.\n",
         encoding="utf-8",
     )
     (tmp_path / "schema.md").write_text("# schema\n", encoding="utf-8")
@@ -229,7 +229,7 @@ async def test_wiki_ingest_rejects_too_long_text() -> None:
 async def test_wiki_ingest_no_curator_registered_returns_clean_error() -> None:
     tool = WikiIngestTool(curator_resolver=lambda: None)
     result = await tool.execute(
-        {"text": "Joy hat am 14. August Geburtstag."}, ctx=None,
+        {"text": "ExampleRelative hat am Beispieldatum einen synthetischen Meilenstein."}, ctx=None,
     )
     assert result.success is False
     assert "bootstrap" in (result.error or "").lower()
@@ -238,27 +238,27 @@ async def test_wiki_ingest_no_curator_registered_returns_clean_error() -> None:
 @pytest.mark.asyncio
 async def test_wiki_ingest_delegates_to_curator_with_default_source() -> None:
     fake = _FakeCurator(
-        result=_FakeWriteResult(applied=[Path("people/joy.md")]),
+        result=_FakeWriteResult(applied=[Path("people/examplerelative.md")]),
     )
     tool = WikiIngestTool(curator_resolver=lambda: fake)
     result = await tool.execute(
-        {"text": "Joy hat am 14. August Geburtstag."}, ctx=None,
+        {"text": "ExampleRelative hat am Beispieldatum einen synthetischen Meilenstein."}, ctx=None,
     )
     assert result.success is True
     assert len(fake.calls) == 1
     text, source = fake.calls[0]
-    assert "Joy" in text
+    assert "ExampleRelative" in text
     assert source == "tool:wiki-ingest"
     assert "applied: 1" in result.output
-    assert "joy.md" in result.output
+    assert "examplerelative.md" in result.output
 
 
 @pytest.mark.asyncio
 async def test_wiki_ingest_passes_explicit_source() -> None:
-    fake = _FakeCurator(result=_FakeWriteResult(applied=[Path("people/joy.md")]))
+    fake = _FakeCurator(result=_FakeWriteResult(applied=[Path("people/examplerelative.md")]))
     tool = WikiIngestTool(curator_resolver=lambda: fake)
     await tool.execute(
-        {"text": "Joy hat am 14. August Geburtstag.", "source": "chat:milestone"},
+        {"text": "ExampleRelative hat am Beispieldatum einen synthetischen Meilenstein.", "source": "chat:milestone"},
         ctx=None,
     )
     assert fake.calls[0][1] == "chat:milestone"
@@ -282,13 +282,13 @@ async def test_wiki_ingest_reports_not_salient_when_no_updates() -> None:
 async def test_wiki_ingest_does_not_claim_success_for_recent_edit_only() -> None:
     fake = _FakeCurator(
         result=_FakeWriteResult(
-            skipped_due_to_recent_edit=[Path("people/joy.md")],
+            skipped_due_to_recent_edit=[Path("people/examplerelative.md")],
         )
     )
     tool = WikiIngestTool(curator_resolver=lambda: fake)
 
     result = await tool.execute(
-        {"text": "Joy's birthday is August 14th."}, ctx=None,
+        {"text": "ExampleRelative's synthetic milestone is ExampleDate."}, ctx=None,
     )
 
     assert result.success is False
@@ -299,7 +299,7 @@ async def test_wiki_ingest_does_not_claim_success_for_recent_edit_only() -> None
 async def test_wiki_ingest_does_not_claim_success_for_sensitive_content_block() -> None:
     fake = _FakeCurator(
         result=_FakeWriteResult(
-            blocked_pii=[Path("people/joy.md")],
+            blocked_pii=[Path("people/examplerelative.md")],
         )
     )
     tool = WikiIngestTool(curator_resolver=lambda: fake)
@@ -317,7 +317,7 @@ async def test_wiki_ingest_surfaces_curator_exception_cleanly() -> None:
     fake = _FakeCurator(raise_on_ingest=RuntimeError("curator boom"))
     tool = WikiIngestTool(curator_resolver=lambda: fake)
     result = await tool.execute(
-        {"text": "Joy hat am 14. August Geburtstag."}, ctx=None,
+        {"text": "ExampleRelative hat am Beispieldatum einen synthetischen Meilenstein."}, ctx=None,
     )
     assert result.success is False
     assert "curator ingest failed" in (result.error or "").lower()

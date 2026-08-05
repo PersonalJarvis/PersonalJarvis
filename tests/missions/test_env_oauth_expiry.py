@@ -1,6 +1,6 @@
 """The live Claude OAuth token reader must be EXPIRY- and multi-dir-aware.
 
-Forensic ground truth (2026-07-06, missions 019f36e5 + 019f38b1): the Claude
+Forensic ground truth (2026-07-06, missions 019f104c + 019f104d): the Claude
 Max OAuth access token in ``~/.claude/.credentials.json`` expired at 02:53 and
 nothing on the host refreshes it anymore (interactive Claude sessions run on a
 different CLAUDE_CONFIG_DIR profile). ``read_live_claude_oauth_token`` returned

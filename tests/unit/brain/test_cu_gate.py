@@ -1,6 +1,6 @@
 """Explicit-desktop gate for LLM-chosen computer_use calls (cu_gate.py).
 
-Live incident 2026-07-21 11:36 (voice session <SESSION_ID>): a pure knowledge
+Live incident 2026-07-21 11:36 (voice session 10000012): a pure knowledge
 question about the Gulfstream G100's runway requirement was delegated to the
 router brain, which called computer_use — Safari opened on the user's screen
 and googled the answer. The gate pins that a question-shaped turn without any
@@ -36,8 +36,8 @@ def _fresh_run_registry():
         # voice-session 2026-07-21 11:36 — googled in Safari before the gate.
         # Also pins that the German NOUN "Start- und Landebahn" (runway) never
         # counts as the action verb "start".
-        "braucht die Golf braucht die Golf 100 Start- und Landebahn.",  # i18n-allow: live utterance
-        "Kann eine Gulfstream 800 in St. Moritz landen?",  # i18n-allow: live utterance
+        "braucht die Golf braucht die Golf 100 Start- und Landebahn.",  # i18n-allow: synthetic utterance
+        "Kann eine Gulfstream 800 in St. Moritz landen?",  # i18n-allow: synthetic utterance
         "Wie lang ist die Landebahn in St. Moritz?",  # i18n-allow: DE turn fixture
         "What runway length does a Gulfstream G100 need?",
         "What type of runway does it need?",
@@ -53,7 +53,7 @@ def test_knowledge_question_blocks_computer_use(utterance: str) -> None:
 
 # ── tech proper names are not on-screen commands ──────────────────────────
 #
-# Live incident 2026-07-27 11:52 (voice session <SESSION_ID>, flight recorder
+# Live incident 2026-07-27 11:52 (voice session 10000013, flight recorder
 # ActionProposed dispatch_to_harness/screenshot): a model-comparison question
 # naming "Open AI Embedding 3 Large" matched the bare ``open\w*`` vehicle verb,
 # the gate allowed, and computer_use screenshotted the desktop and started
@@ -64,7 +64,7 @@ def test_knowledge_question_blocks_computer_use(utterance: str) -> None:
 @pytest.mark.parametrize(
     "utterance",
     [
-        # The live utterance, verbatim from the flight recorder.
+        # The synthetic utterance, verbatim from the flight recorder.
         "Hey, kannst du mal einen Vergleich machen von den "  # i18n-allow: live
         "beiden Modellen und zwar von den beiden Embedding "  # i18n-allow: live
         "Modellen? Einmal von dem Embedding Modell ähm aus "  # i18n-allow: live
@@ -136,6 +136,89 @@ def test_product_name_masking_leaves_real_commands_intact(utterance: str) -> Non
 )
 def test_explicit_desktop_ask_allows_computer_use(utterance: str) -> None:
     assert llm_computer_use_allowed(utterance) is True
+
+
+# ── looking is not operating (maintainer mandate 2026-08-02, BUG-124) ─────
+#
+# The user asked "what is on my screen?" and Computer-Use started every time:
+# the bare surface noun ("Bildschirm") was enough to pass the gate, so a
+# question that Screen Context answers with ONE screenshot instead moved the
+# mouse. These pin the split — surface nouns no longer authorize a mission on
+# their own when the turn reads as a look request.
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # The reported utterance, and its nearest phrasings.
+        "Hey, was ist da auf meinem Bildschirm?",  # i18n-allow: synthetic utterance
+        "Was siehst du auf meinem Bildschirm?",  # i18n-allow: DE turn fixture
+        "Kannst du mal auf meinen Bildschirm schauen?",  # i18n-allow: DE fixture
+        "Schau dir das mal an.",  # i18n-allow: DE turn fixture
+        "Was steht da im Terminal?",  # i18n-allow: DE turn fixture
+        "Lies mir das Fenster vor.",  # i18n-allow: DE turn fixture
+        "What is on my screen right now?",
+        "Can you see this error on my screen?",
+        "Read this window to me.",
+        "¿Qué ves en mi pantalla?",
+        # A screenshot request names the feature outright — it is the least
+        # ambiguous look request there is and must never reach the harness.
+        "Mach mal einen Screenshot.",  # i18n-allow: DE turn fixture
+        "Mach mir mal eben einen Screenshot davon.",  # i18n-allow: DE fixture
+        "Take a quick screenshot for me.",
+        "Hazme una captura de pantalla, por favor.",
+    ],
+)
+def test_look_request_never_drives_the_desktop(utterance: str) -> None:
+    assert llm_computer_use_allowed(utterance) is False
+
+
+def test_look_request_stays_blocked_inside_a_live_desktop_episode() -> None:
+    """A question mid-episode is still a question, not a corrective follow-up.
+
+    The recent-run window exists so "try again" keeps working after a mission.
+    It must not re-open the desktop for "what is on my screen?", or every
+    conversation that follows a Computer-Use run inherits the original defect.
+    """
+    look = "Was ist da auf meinem Bildschirm?"  # i18n-allow: DE turn fixture
+    cu_run_registry.register_run("m3", "open the browser", token=None)
+    assert llm_computer_use_allowed(look) is False
+    # The vehicle-free corrective follow-up is unaffected by the new rule.
+    assert llm_computer_use_allowed("Versuch es nochmal.") is True  # i18n-allow
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # An action verb wins over the look vocabulary in the same sentence:
+        # the user wants something DONE to what they are pointing at.
+        "Klick auf den Button auf meinem Bildschirm.",  # i18n-allow: DE trigger
+        "Schau in Chrome nach und klick auf Anmelden.",  # i18n-allow: DE trigger
+        "Look at my screen and close that window.",
+        # Naming the harness IS the explicit ask the mandate asks for.
+        "Mach das per Computer-Use",
+        "Use computer use to open Spotify",
+    ],
+)
+def test_explicit_action_outranks_the_look_vocabulary(utterance: str) -> None:
+    assert llm_computer_use_allowed(utterance) is True
+
+
+def test_visual_intent_probe_failure_keeps_desktop_automation_working() -> None:
+    """A classifier defect must degrade to the old behaviour, never brick CU."""
+    import jarvis.screen_context.intent as intent_module
+
+    def _boom(*_args: object, **_kwargs: object) -> bool:
+        raise RuntimeError("classifier exploded")
+
+    original = intent_module.requests_screen_operation
+    intent_module.requests_screen_operation = _boom  # type: ignore[assignment]
+    try:
+        # The probe is what is under test; the turn is only its input.
+        look = "Was ist auf meinem Bildschirm?"  # i18n-allow: DE turn fixture
+        assert llm_computer_use_allowed(look) is True
+    finally:
+        intent_module.requests_screen_operation = original  # type: ignore[assignment]
 
 
 # ── BUG-105 corrective follow-ups inside a desktop episode ────────────────

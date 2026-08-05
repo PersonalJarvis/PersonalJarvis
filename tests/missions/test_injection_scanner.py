@@ -180,7 +180,7 @@ def test_has_high_severity_false_for_empty() -> None:
 
 # --- extract_worker_authored_text: scan only what the worker WROTE ---
 #
-# Live mission 019eadaf-272d (2026-06-09) was killed via
+# Live mission 019f1025-0001 (2026-06-09) was killed via
 # WorkerKilled(injection_detected) AFTER delivering a clean 30 KB diff,
 # because the safety scan ran over the raw stream.jsonl — which contains
 # the OUTPUT of the worker's READ commands (rg / Get-Content). The worker

@@ -41,7 +41,7 @@ class TestUniversality:
         """The constraint the whole design rests on.
 
         A person in São Paulo, Lagos or Jakarta clicks the same button as one
-        in Berlin. An instruction phrased as a legal right would be useless to
+        in Exampletown. An instruction phrased as a legal right would be useless to
         most of the people reading it.
         """
         for entry in PLATFORMS:

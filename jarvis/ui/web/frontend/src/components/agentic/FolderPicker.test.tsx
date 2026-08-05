@@ -27,13 +27,13 @@ const LISTING = {
     { name: "webshop", path: "/home/alex/webshop", is_project: true, is_repo: true },
     { name: "notes", path: "/home/alex/notes", is_project: false, is_repo: false },
   ],
-  device_name: "Studio MacBook",
+  device_name: "Alexs MacBook",
 };
 
 beforeEach(() => {
   vi.mocked(api.fetchFolders).mockResolvedValue(LISTING);
   vi.mocked(api.fetchRecents).mockResolvedValue({
-    device_name: "Studio MacBook",
+    device_name: "Alexs MacBook",
     recents: [],
   });
   vi.mocked(api.searchFolders).mockResolvedValue({
@@ -118,7 +118,7 @@ describe("extractDropPayload", () => {
 describe("FolderPicker", () => {
   it("labels the machine by its own name, not the account folder", async () => {
     render(<FolderPicker selected={null} onSelect={vi.fn()} />);
-    expect(await screen.findByText("Studio MacBook")).toBeTruthy();
+    expect(await screen.findByText("Alexs MacBook")).toBeTruthy();
   });
 
   it("filters the open list locally on a single character", async () => {
@@ -152,7 +152,7 @@ describe("FolderPicker", () => {
 
   it("offers recent workspaces and replays their layout", async () => {
     vi.mocked(api.fetchRecents).mockResolvedValue({
-      device_name: "Studio MacBook",
+      device_name: "Alexs MacBook",
       recents: [
         {
           path: "/home/alex/webshop",

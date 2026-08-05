@@ -578,7 +578,7 @@ UNRELATED_NAMES = (
     "Ivo Bergqvist",
     "Juno Almeida",
     "Kiran Adeyemi",
-    "Lena Vukovic",
+    "ExampleFriend Vukovic",
 )
 
 

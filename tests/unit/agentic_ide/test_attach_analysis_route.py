@@ -153,6 +153,86 @@ async def test_deliver_false_types_nothing_into_the_pane(
     assert term is not None
 
 
+async def test_voice_orb_drop_is_staged_on_the_selected_pane(
+    client: TestClient, registry: Registry, tmp_path: Path
+) -> None:
+    name = await _workspace(registry, tmp_path)
+
+    response = client.post(
+        f"/api/agentic-ide/terminals/{name}/attach",
+        files=_upload(),
+        data={"stage_for_voice": "true", "deliver": "false"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["staged_for_voice"] == 1
+    assert body["voice_batch_id"]
+    assert registry.session is not None
+    term = registry.session.find(name)
+    assert term is not None
+    assert len(term.pending_prompt_attachment_batches) == 1
+    batch = term.pending_prompt_attachment_batches[0]
+    assert batch.batch_id == body["voice_batch_id"]
+    assert isinstance(batch.attachments[0], DropAnalysis)
+    assert "submit button overflows" in batch.attachments[0].detail
+
+
+async def test_pending_voice_drop_can_be_listed_and_removed(
+    client: TestClient, registry: Registry, tmp_path: Path
+) -> None:
+    name = await _workspace(registry, tmp_path)
+    staged = client.post(
+        f"/api/agentic-ide/terminals/{name}/attach",
+        files=_upload(),
+        data={"stage_for_voice": "true", "deliver": "false"},
+    ).json()
+
+    pending = client.get(
+        f"/api/agentic-ide/terminals/{name}/voice-attachments"
+    )
+    assert pending.status_code == 200
+    assert pending.json()["batches"] == [
+        {
+            "batch_id": staged["voice_batch_id"],
+            "files": ["shot.png"],
+            "reserved": False,
+        }
+    ]
+    assert client.get("/api/agentic-ide/voice-attachments").json()["batches"] == [
+        {
+            "terminal": name,
+            "batch_id": staged["voice_batch_id"],
+            "files": ["shot.png"],
+            "reserved": False,
+        }
+    ]
+
+    removed = client.delete(
+        f"/api/agentic-ide/terminals/{name}/voice-attachments/"
+        f"{staged['voice_batch_id']}"
+    )
+    assert removed.status_code == 200
+    assert client.get(
+        f"/api/agentic-ide/terminals/{name}/voice-attachments"
+    ).json()["batches"] == []
+
+
+async def test_voice_staging_refuses_to_also_type_the_loose_path(
+    client: TestClient, registry: Registry, tmp_path: Path
+) -> None:
+    name = await _workspace(registry, tmp_path)
+
+    response = client.post(
+        f"/api/agentic-ide/terminals/{name}/attach",
+        files=_upload(),
+        data={"stage_for_voice": "true"},
+    )
+
+    assert response.status_code == 422
+    assert "deliver=false" in response.json()["detail"]
+
+
 async def test_a_pane_drop_still_types_and_does_no_analysis(
     client: TestClient, registry: Registry, tmp_path: Path
 ) -> None:

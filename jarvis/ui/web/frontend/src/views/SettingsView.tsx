@@ -234,7 +234,7 @@ function LanguageDropdown({
       {open && (
         <ul
           role="listbox"
-          className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-primary/40 bg-card shadow-lg shadow-black/50"
+          className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-primary/40 bg-card shadow-lg shadow-scrim/50"
         >
           {options.map((code) => {
             const active = code === value;

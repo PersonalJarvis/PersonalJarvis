@@ -1,6 +1,6 @@
 """Regression tests for out-of-worktree deliverable verification.
 
-Root cause of mission_019e7abd (2026-05-30, live voice failure): the worker
+Root cause of mission_019f101c (2026-05-30, live voice failure): the worker
 wrote the requested HTML file to an absolute path OUTSIDE its git worktree
 (`<USER_HOME>\\Desktop\\M\\hello.html`, exactly as the task
 demanded). `_capture_diff` is worktree-scoped, so the captured diff was empty;
@@ -95,7 +95,7 @@ def _write_stream(path: str, content: str, *, errored: bool = False) -> str:
 def test_external_file_written_outside_worktree_is_credited(
     worktree: Path, kontrollierer: Kontrollierer, tmp_path: Path
 ) -> None:
-    """The exact mission_019e7abd shape: file on the user's Desktop, written by
+    """The exact mission_019f101c shape: file on the user's Desktop, written by
     a real Write tool call, must appear in the augmented diff with its content."""
     ext = tmp_path / "M" / "hello.html"
     ext.parent.mkdir(parents=True)

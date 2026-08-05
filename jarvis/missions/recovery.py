@@ -9,7 +9,7 @@ Pattern from ADR-0009 §"Decision §4 + Risk #9": scan list_non_terminal_mission
 emit MissionStateChanged + MissionFailed per stale mission, persist + publish.
 Idempotent — a second recovery iteration finds no more stale missions.
 
-ACTIVITY-AWARE (live forensic 2026-05-31, missions 019e6fea / 019e7095):
+ACTIVITY-AWARE (live forensic 2026-05-31, missions 019f1018 / 019f1019):
 the original sweep marked EVERY non-terminal mission FAILED unconditionally.
 When a SECOND instance booted against the shared `missions.db` (e.g. a
 `--headless` launch that never set JARVIS_PRIMARY_INSTANCE, so the recover-flag
@@ -65,7 +65,7 @@ RECOVERY_STALE_AFTER_MS: int = 30 * 60 * 1000  # 30 minutes
 # so the active-guard correctly SKIPPED it) is never re-checked, so when its
 # owning instance dies it stays non-terminal (e.g. CRITIQUING) forever in the DB
 # and the UI ("missions never find an end" — live forensic 2026-06-10, mission
-# 019eb25c). The re-sweep fixes that by re-running the same conservative,
+# 019f1029). The re-sweep fixes that by re-running the same conservative,
 # active-guarded sweep on a timer: once an orphaned mission crosses the existing
 # staleness threshold it is finalized on the next tick. The interval is short
 # relative to the 30-min staleness window, so the worst-case extra lifetime of an
@@ -136,7 +136,7 @@ async def startup_recover(
 
         # 1. Reconcile: a terminal event was recorded but the header lagged
         #    (crash between publish and header upsert, or an earlier wrong
-        #    crash_recovery that a later success overtook — mission 019e6fea).
+        #    crash_recovery that a later success overtook — mission 019f1018).
         terminal_state = _last_terminal_state(events)
         if terminal_state is not None:
             # `language` is required by the signature but IGNORED on conflict:
@@ -260,7 +260,7 @@ async def periodic_recovery_sweep(
     any mission that still looks live (recent event/heartbeat). That is correct
     at boot — a parallel ``--no-lock`` instance may genuinely own it — but it
     means a mission whose owner dies *after* boot is never re-checked and stays
-    non-terminal forever (mission 019eb25c, 2026-06-10). This loop closes that
+    non-terminal forever (mission 019f1029, 2026-06-10). This loop closes that
     gap: every ``interval_s`` it re-runs the SAME conservative sweep, so once an
     orphan's last activity crosses ``stale_after_ms`` the next tick finalizes it.
 
@@ -329,7 +329,7 @@ def _last_terminal_state(events: list[EventEnvelope]) -> str | None:
     """Header state to reconcile to, from the LAST terminal event, or None.
 
     Events are ascending by seq, so the last matching entry wins — a mission
-    that was wrongly crash_recovery'd and then truly approved (019e6fea:
+    that was wrongly crash_recovery'd and then truly approved (019f1018:
     MissionFailed@seq3390 then MissionApproved@seq3396) reconciles to APPROVED.
     """
     result: str | None = None

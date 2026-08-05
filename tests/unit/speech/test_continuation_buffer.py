@@ -4,7 +4,7 @@ Live regression 2026-05-26: one user task was fragmented across two voice turns
 (VAD endpoint cut at a trailing comma), and EACH fragment independently triggered
 `spawn_worker` → multiple sub-agent missions for one task. The buffer holds an
 incomplete utterance until the next utterance arrives, then dispatches the joined
-text as ONE turn. See SUBAGENT_SPAWN_REVIEW + Screenshot mission_019e63c6-*.
+text as ONE turn. See SUBAGENT_SPAWN_REVIEW + Screenshot mission_019f1015-*.
 
 The buffer is a tiny stdlib-only helper, sibling to ``hangup.py`` and
 ``completion.py``. Pipeline wiring is in ``_handle_utterance``.
@@ -190,14 +190,14 @@ def test_max_chain_forces_flush() -> None:
 
 # --------------------------------------------------------------------------- #
 # Speech-resume re-arm: a continuation that BEGINS inside the window but is     #
-# slow to finalize must still coalesce (live bug 2026-06-18, session <SESSION_ID>).#
+# slow to finalize must still coalesce (live bug 2026-06-18, session 10000107).#
 # --------------------------------------------------------------------------- #
 
 
 def test_speech_resume_rearms_deadline_so_slow_continuation_still_joins(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Live bug 2026-06-18 (session <SESSION_ID>): "Kannst du bitte..." was buffered,
+    """Live bug 2026-06-18 (session 10000107): "Kannst du bitte..." was buffered,
     the user resumed speaking ~1 s later (deep inside the 8 s window) but the
     continuation only FINALIZED 0.6 s past the deadline — so the lazy deadline
     check dropped the held fragment and the turn split into an empty Turn 0.
@@ -272,7 +272,7 @@ def test_speech_resume_after_expiry_does_not_resurrect(
 # --------------------------------------------------------------------------- #
 # Autonomous drain (AD-OE6 zero-silent-drop): flush_pending RETURNS the held    #
 # text so the pipeline can DISPATCH it to the brain instead of dropping it.     #
-# Live wedge 2026-06-19, session <SESSION_ID>: "…morgen ist ja Montag, oder?" was   #
+# Live wedge 2026-06-19, session 10000118: "…morgen ist ja Montag, oder?" was   #
 # held as a trailing conjunction, no continuation arrived, and the fragment was #
 # silently discarded at idle-timeout — the brain was never called and Jarvis    #
 # "listened forever". The buffer itself has no timer; the pipeline arms a drain  #

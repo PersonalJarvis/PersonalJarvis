@@ -1,6 +1,6 @@
 """Deterministic explicit-desktop gate for LLM-chosen computer_use calls.
 
-Live incident 2026-07-21 11:36 (voice session <SESSION_ID>): the user asked a pure
+Live incident 2026-07-21 11:36 (voice session 10000012): the user asked a pure
 knowledge question — "braucht die Golf 100 Start- und  # i18n-allow: forensic quote
 Landebahn" (what runway does the Gulfstream G100 need)  # i18n-allow: quote cont.
 — the realtime layer correctly delegated the turn to the router brain, and the
@@ -24,6 +24,19 @@ LLM-initiated ``computer_use`` call executes ONLY when one of these holds:
    (``cu_run_registry.has_recent_run``). This keeps the BUG-105 corrective
    follow-ups alive ("try again", "do it in my Chrome browser" — the latter
    also matches rule 1) without letting a cold research question start one.
+
+**Looking is not operating (maintainer mandate 2026-08-02).** A surface NOUN is
+not a command: "what is on my screen?" names the screen without asking for
+anything to be done to it, and it used to pass rule 1 on the bare noun alone —
+so a question that Screen Context answers with one screenshot instead started a
+desktop mission that moved the user's mouse. The vocabulary is therefore split
+into ACTION verbs and SURFACE nouns, and a turn that
+``jarvis.screen_context.intent`` reads as a look request is refused even when it
+names a surface and even inside a live desktop episode. Only an action verb, an
+explicitly named Computer-Use, or a surface noun in a turn that is NOT a look
+request may still drive the desktop. This gate is the enforcement half; the
+other half is that a successful Screen Context capture strips every tool from
+the turn (``BrainManager.generate``), so the two paths can never both run.
 
 Everything else is blocked and fed back to the model as a tool error telling
 it to answer inline (or via ``search_web`` for fresh facts). Over-ALLOWING is
@@ -66,7 +79,7 @@ _UMLAUT_TRANSLITERATION = str.maketrans(
 # Tech proper names and terms of art that merely CONTAIN a vehicle token.
 # Masked out of the turn before the vehicle match runs, so a product name can
 # never read as an on-screen command. Live incident 2026-07-27 11:52 (voice
-# session <SESSION_ID>): "…BGE-M3 und Gemini oder Open AI  # i18n-allow: live quote
+# session 10000013): "…BGE-M3 und Gemini oder Open AI  # i18n-allow: live quote
 # Embedding 3 Large, was der Unterschied?" — a pure  # i18n-allow: quote cont.
 # model-comparison question. The provider name
 # "Open AI" matched the English open-verb, the gate allowed, and the router's
@@ -98,6 +111,11 @@ _PRODUCT_NAME_NOISE_RE: re.Pattern[str] = re.compile(
 
 # Explicit desktop-vehicle vocabulary (DE/EN/ES) — speech-input matching data.
 #
+# Split into ACTION verbs and SURFACE nouns because the two carry different
+# authority: a verb asks for something to be DONE, a noun only names where. A
+# noun alone used to be enough, which is how "what is on my screen?" started a
+# desktop mission (see the module docstring).
+#
 # Deliberate exclusions (each one is a live trap):
 # * bare "start": the incident utterance itself contains the German NOUN
 #   "Start- und Landebahn" (runway) —  # i18n-allow: names the German noun under exclusion
@@ -109,7 +127,7 @@ _PRODUCT_NAME_NOISE_RE: re.Pattern[str] = re.compile(
 # * bare "open\w*": it swallowed every "Open…" product name as an open-verb
 #   (see _PRODUCT_NAME_NOISE_RE). Pinned to the real English conjugations,
 #   exactly like ``_OPEN_VERB_RE`` in jarvis/brain/local_action_gate.py.
-_DESKTOP_VEHICLE_RE: re.Pattern[str] = re.compile(
+_DESKTOP_ACTION_RE: re.Pattern[str] = re.compile(
     r"(?:"
     # --- action verbs (en) ---
     r"\bopen(?:s|ed|ing)?\b|\blaunch\w*\b|\bclick\w*\b|\bdouble-?click\w*\b|\btap\b"
@@ -131,8 +149,24 @@ _DESKTOP_VEHICLE_RE: re.Pattern[str] = re.compile(
     r"|\babr(?:e|a|as|ir)\b|\bcli(?:c|ca|quea)\b|\bpincha\w*|\bpulsa\w*"
     r"|\btecle\w*|\bdesplaz\w*|\barrastr\w*|\bpega\b|\bcierr\w*|\bnaveg\w*"
     r"|\bactualiz\w*|\brecarg\w*"
+    r")",
+    re.IGNORECASE,
+)
+
+# Naming the harness itself is the strongest possible desktop signal — the
+# maintainer mandate is "Computer-Use only when Computer-Use is asked for", and
+# this is that ask, spelled out. Mirrors ``_EXPLICIT_COMPUTER_USE_RE`` in
+# jarvis/screen_context/intent.py, which stands Screen Context down for the
+# same phrases.
+_EXPLICIT_HARNESS_RE: re.Pattern[str] = re.compile(
+    r"\bcomputer[-\s]?use\b",
+    re.IGNORECASE,
+)
+
+_DESKTOP_SURFACE_RE: re.Pattern[str] = re.compile(
+    r"(?:"
     # --- screen/app/browser nouns (en/de/es share most brand tokens) ---
-    r"|\bscreen\w*|\bdesktop\b|\bbrowser\w*|\bchrome\b|\bsafari\b"
+    r"\bscreen\w*|\bdesktop\b|\bbrowser\w*|\bchrome\b|\bsafari\b"
     r"|\bfirefox\b|\bedge\b|\btabs?\b|\bwindows?\b|\bmouse\b|\bcursor\w*"
     r"|\bkeyboard\b|\bterminal\w*|\bapps?\b|\bapplications?\b"
     r"|\bprogram(?:me?s?)?\b|\bwebsites?\b|\bwebpages?\b|\burls?\b"
@@ -162,11 +196,50 @@ def _normalized(text: str) -> str:
     return _PRODUCT_NAME_NOISE_RE.sub(" ", folded)
 
 
+def _is_look_request(user_text: str) -> bool:
+    """Whether this turn asks Jarvis to LOOK at the screen rather than use it.
+
+    Delegated to ``jarvis.screen_context.intent`` instead of re-derived here,
+    for the same reason the turn planner delegates it: two vocabularies for one
+    question drift apart, and the half that drifts decides whether the user's
+    mouse starts moving. That module is pure regex over the utterance — no IO,
+    no model call — so it keeps this gate's promise on the voice hot path.
+
+    A classifier defect must not brick desktop automation, so a raised
+    exception answers "not a look request" and leaves the old behaviour intact.
+    """
+    try:
+        from jarvis.screen_context.intent import (  # noqa: PLC0415
+            classify,
+            requests_screen_operation,
+        )
+        from jarvis.screen_context.models import VisualIntent  # noqa: PLC0415
+
+        if requests_screen_operation(user_text):
+            return False
+        return classify(user_text).intent is not VisualIntent.NONE
+    except Exception:  # noqa: BLE001 — the gate must never crash a tool turn
+        log.warning(
+            "cu_gate: visual-intent probe failed — treating the turn as a "
+            "non-look turn",
+            exc_info=True,
+        )
+        return False
+
+
 def llm_computer_use_allowed(user_text: str) -> bool:
     """May an LLM-chosen ``computer_use`` call execute for this user turn?
 
-    True when the turn names the desktop vehicle, or when the conversation is
-    still inside a recent desktop episode (BUG-105 corrective follow-ups).
+    True when the turn asks for an on-screen ACTION, names the Computer-Use
+    harness itself, names a desktop surface without asking to look at it, or
+    when the conversation is still inside a recent desktop episode (BUG-105
+    corrective follow-ups).
+
+    False for a look request ("what is on my screen?", "read this window to
+    me") even when it names a surface and even inside a live desktop episode.
+    Answering a question by driving the desktop is the defect this rule exists
+    for; Screen Context answers those turns with one short-lived screenshot.
+
     An EMPTY turn fails OPEN: this gate exists to stop question-shaped voice
     turns from hijacking the screen, and non-conversational launch routes
     (scheduled missions, REST) may reach the loop without a user utterance —
@@ -175,7 +248,19 @@ def llm_computer_use_allowed(user_text: str) -> bool:
     normalized = _normalized(user_text).strip()
     if not normalized:
         return True
-    if _DESKTOP_VEHICLE_RE.search(normalized):
+    if _DESKTOP_ACTION_RE.search(normalized) or _EXPLICIT_HARNESS_RE.search(
+        normalized
+    ):
+        return True
+    # Checked before the surface nouns AND before the recent-run window: a
+    # question about the screen stays a question, whatever else is going on.
+    if _is_look_request(user_text):
+        log.info(
+            "cu_gate: blocked computer_use — this turn asks to LOOK at the "
+            "screen, not to operate it"
+        )
+        return False
+    if _DESKTOP_SURFACE_RE.search(normalized):
         return True
     try:
         from jarvis.harness.cu_run_registry import has_recent_run  # noqa: PLC0415

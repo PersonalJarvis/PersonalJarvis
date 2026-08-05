@@ -63,6 +63,7 @@ from jarvis.ultrawiki.identity import (
     QueueStatus,
 )
 from jarvis.ultrawiki.identity_store import IdentityMixin
+from jarvis.ultrawiki.lexicon_store import LexiconMixin
 from jarvis.ultrawiki.types import (
     STATE_ORDER,
     ConsentState,
@@ -464,6 +465,15 @@ _ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # exactly the items that need re-embedding LAST — on a 236 k-item store
     # that is the difference between minutes and days.
     ("uw_items", "reembed_pending", "INTEGER NOT NULL DEFAULT 0"),
+    # Multi-chunk documents (migrations/0001_document_chunk_index.sql). SQLite
+    # gains them from that migration; every OTHER database — a Postgres store
+    # created before the feature, and a fresh one, since ``ddl_statements``
+    # writes the base table — has to gain them here, or ``replace_documents``
+    # inserts into columns that do not exist and the embed stage fails on
+    # every single item.
+    ("uw_documents", "chunk_index", "INTEGER NOT NULL DEFAULT 0"),
+    ("uw_documents", "char_start", "INTEGER NOT NULL DEFAULT 0"),
+    ("uw_documents", "char_end", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 #: Indexes that belong to :data:`_ADDITIVE_COLUMNS` — created after the columns
@@ -492,6 +502,10 @@ _ADDITIVE_INDEXES: tuple[str, ...] = (
     # like the rest of this tuple.
     "CREATE INDEX IF NOT EXISTS idx_uw_items_reembed_pending"
     " ON uw_items(state, deleted_at) WHERE reembed_pending = 1",
+    # What makes "replace this item's passages" atomic and idempotent on the
+    # backend that did not get migration 0001.
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_uw_documents_chunk"
+    " ON uw_documents(item_id, doc_type, chunk_index)",
 )
 
 #: The persisted per-source outcome of the last finished sync.
@@ -540,7 +554,7 @@ _DISTILLED_FINGERPRINT_SQL = (
 # ---------------------------------------------------------------------------
 
 
-class UltraStore(IdentityMixin, EventMixin):
+class UltraStore(IdentityMixin, EventMixin, LexiconMixin):
     """Async SQLite store for UltraWiki (the universal reference backend).
 
     One instance = one ``aiosqlite`` connection, opened lazily on first use
@@ -2397,12 +2411,38 @@ class UltraStore(IdentityMixin, EventMixin):
         *,
         area_id: str | None = None,
     ) -> tuple[list[SearchResult], str]:
-        """ANN leg via the derived ``uw_vec`` index.
+        """ANN leg via the derived ``uw_vec`` index — one hit per item.
 
         Returns ``(results, reason)`` — ``reason`` is an empty string on the
         healthy path and an honest English explanation whenever the vector
         leg is degraded (extension unavailable, nothing embedded yet, or a
         query-vector/pin mismatch).
+
+        Each hit carries the passage that actually matched (``document_id`` /
+        ``chunk_index`` / ``char_start`` / ``char_end``), so a caller can
+        locate it inside a 200 KB file instead of being told only which file
+        it was.
+        """
+        return await self.vector_search_passages(
+            query_vector, k, area_id=area_id, per_item=1
+        )
+
+    async def vector_search_passages(
+        self,
+        query_vector: Sequence[float],
+        k: int = 10,
+        *,
+        area_id: str | None = None,
+        per_item: int = 1,
+    ) -> tuple[list[SearchResult], str]:
+        """The ANN leg at PASSAGE granularity.
+
+        ``per_item`` is how many passages of one item may appear. ``1`` is the
+        classic behaviour (:meth:`vector_search`): one vote per item, which is
+        what fusion wants, because five passages of one file would otherwise
+        stack five RRF contributions against everyone else's one. A word
+        search asks for more, because "where in this document" is precisely
+        the question it is answering.
         """
         ok, reason = await self._ensure_vec(None)
         if not ok:
@@ -2414,7 +2454,11 @@ class UltraStore(IdentityMixin, EventMixin):
                 f"store's embedding space is pinned to dim={self._vec_dim}"
             )
         conn = await self._vec_ready_conn(await self._read_conn())
-        fetch_k = min(max(int(k) * 4, int(k) + 8), 200)
+        cap = max(1, int(per_item))
+        # Widen the KNN pool with the per-item allowance: asking for k rows
+        # when up to `cap` of them may belong to one item would return fewer
+        # distinct items the moment a single document dominates.
+        fetch_k = min(max(int(k) * 4 * cap, int(k) + 8), 400)
         knn_rows = await self._fetchall(
             conn,
             "SELECT rowid, distance FROM uw_vec WHERE embedding MATCH ? AND k = ?",
@@ -2428,6 +2472,8 @@ class UltraStore(IdentityMixin, EventMixin):
         for chunk in _chunks(doc_ids):
             sql = (
                 "SELECT d.id AS doc_id, d.text_norm AS text_norm,"  # noqa: S608 — the interpolation below is placeholder marks only
+                " d.chunk_index AS chunk_index, d.char_start AS char_start,"
+                " d.char_end AS char_end,"
                 " i.id AS item_id, i.source_id AS source_id, i.title AS title,"
                 " i.permalink AS permalink, i.timestamp_utc AS timestamp_utc"
                 " FROM uw_documents d JOIN uw_items i ON i.id = d.item_id"
@@ -2445,12 +2491,13 @@ class UltraStore(IdentityMixin, EventMixin):
                 joined.append((distance_by_doc[int(row["doc_id"])], row))
         joined.sort(key=lambda pair: pair[0])
         results: list[SearchResult] = []
-        seen_items: set[int] = set()
+        per_item_seen: dict[int, int] = {}
         for distance, row in joined:
             item_id = int(row["item_id"])
-            if item_id in seen_items:
-                continue  # dedupe multiple documents of one item to the best
-            seen_items.add(item_id)
+            taken = per_item_seen.get(item_id, 0)
+            if taken >= cap:
+                continue
+            per_item_seen[item_id] = taken + 1
             results.append(
                 SearchResult(
                     item_id=item_id,
@@ -2461,6 +2508,10 @@ class UltraStore(IdentityMixin, EventMixin):
                     timestamp_utc=row["timestamp_utc"],
                     score=round(_distance_score(distance), 4),
                     matched_by=("vector",),
+                    document_id=int(row["doc_id"]),
+                    chunk_index=int(row["chunk_index"] or 0),
+                    char_start=int(row["char_start"] or 0),
+                    char_end=int(row["char_end"] or 0),
                 )
             )
             if len(results) >= int(k):
@@ -2749,7 +2800,7 @@ class UltraStore(IdentityMixin, EventMixin):
 # ---------------------------------------------------------------------------
 
 
-class PostgresStore(IdentityMixin, EventMixin):
+class PostgresStore(IdentityMixin, EventMixin, LexiconMixin):
     """Postgres backend behind the same public surface as :class:`UltraStore`.
 
     - The keyword leg is a generated ``tsvector`` column with a GIN index,
@@ -2771,6 +2822,10 @@ class PostgresStore(IdentityMixin, EventMixin):
     #: The event keyword leg is the one thing the engines cannot share: a
     #: generated ``tsvector`` column here, an FTS5 side table on SQLite.
     _EVENT_DIALECT = "postgres"
+
+    #: Nearest-vector search over the word lexicon: a derived pgvector table
+    #: here, a ``vec_distance_cosine`` scan over the stored BLOBs on SQLite.
+    _LEXICON_DIALECT = "postgres"
 
     def __init__(self, conn_str: str) -> None:
         self._conn_str = conn_str
@@ -2893,6 +2948,24 @@ class PostgresStore(IdentityMixin, EventMixin):
             "END $$",
             "CREATE INDEX IF NOT EXISTS idx_uw_embeddings_space"
             " ON uw_embeddings(model, dim)",
+            # Word lexicon (jarvis/ultrawiki/lexicon_store.py) — the Postgres
+            # twin of migrations/0005_term_lexicon.sql. The pgvector twin of
+            # the SQLite scan (uw_term_vec) is DERIVED lazily on first use,
+            # exactly like uw_vec, so a server without the extension still
+            # accumulates term vectors and gains word neighbours later.
+            "CREATE TABLE IF NOT EXISTS uw_terms ("
+            " id BIGSERIAL PRIMARY KEY, term TEXT NOT NULL UNIQUE,"
+            " doc_freq INTEGER NOT NULL DEFAULT 0,"
+            " created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+            "CREATE INDEX IF NOT EXISTS idx_uw_terms_freq"
+            " ON uw_terms(doc_freq DESC, id)",
+            "CREATE TABLE IF NOT EXISTS uw_term_embeddings ("
+            " term_id BIGINT NOT NULL REFERENCES uw_terms(id) ON DELETE CASCADE,"
+            " model TEXT NOT NULL, dim INTEGER NOT NULL,"
+            " vector BYTEA NOT NULL, created_at TEXT NOT NULL,"
+            " PRIMARY KEY (term_id, model, dim))",
+            "CREATE INDEX IF NOT EXISTS idx_uw_term_embeddings_space"
+            " ON uw_term_embeddings(model, dim)",
             "CREATE TABLE IF NOT EXISTS uw_distill_cache ("
             " content_hash TEXT NOT NULL, prompt_version INTEGER NOT NULL,"
             " model TEXT NOT NULL, result_json TEXT NOT NULL,"
@@ -4344,6 +4417,19 @@ class PostgresStore(IdentityMixin, EventMixin):
         *,
         area_id: str | None = None,
     ) -> tuple[list[SearchResult], str]:
+        return await self.vector_search_passages(
+            query_vector, k, area_id=area_id, per_item=1
+        )
+
+    async def vector_search_passages(
+        self,
+        query_vector: Sequence[float],
+        k: int = 10,
+        *,
+        area_id: str | None = None,
+        per_item: int = 1,
+    ) -> tuple[list[SearchResult], str]:
+        """Postgres twin of :meth:`UltraStore.vector_search_passages`."""
         ok, reason = await self._ensure_vec(None)
         if not ok:
             return [], reason
@@ -4355,8 +4441,10 @@ class PostgresStore(IdentityMixin, EventMixin):
             )
         conn = await self._ensure_open()
         literal = self._pgvector_literal(query_vector)
+        cap = max(1, int(per_item))
         sql = (
-            "SELECT d.item_id, i.source_id, i.title, d.text_norm,"
+            "SELECT d.id AS doc_id, d.item_id, i.source_id, i.title, d.text_norm,"
+            " d.chunk_index, d.char_start, d.char_end,"
             " i.permalink, i.timestamp_utc,"
             " (v.embedding <=> %s::vector) AS distance"
             " FROM uw_vec v"
@@ -4369,15 +4457,16 @@ class PostgresStore(IdentityMixin, EventMixin):
             sql += " AND i.areas_json::jsonb @> to_jsonb(%s::text)"
             params.append(area_id)
         sql += " ORDER BY distance LIMIT %s"
-        params.append(min(max(int(k) * 4, int(k) + 8), 200))
+        params.append(min(max(int(k) * 4 * cap, int(k) + 8), 400))
         rows = await self._fetchall(conn, sql, params)
         results: list[SearchResult] = []
-        seen_items: set[int] = set()
+        per_item_seen: dict[int, int] = {}
         for row in rows:
             item_id = int(row["item_id"])
-            if item_id in seen_items:
+            taken = per_item_seen.get(item_id, 0)
+            if taken >= cap:
                 continue
-            seen_items.add(item_id)
+            per_item_seen[item_id] = taken + 1
             results.append(
                 SearchResult(
                     item_id=item_id,
@@ -4388,6 +4477,10 @@ class PostgresStore(IdentityMixin, EventMixin):
                     timestamp_utc=row["timestamp_utc"],
                     score=round(_distance_score(float(row["distance"])), 4),
                     matched_by=("vector",),
+                    document_id=int(row["doc_id"]),
+                    chunk_index=int(row["chunk_index"] or 0),
+                    char_start=int(row["char_start"] or 0),
+                    char_end=int(row["char_end"] or 0),
                 )
             )
             if len(results) >= int(k):

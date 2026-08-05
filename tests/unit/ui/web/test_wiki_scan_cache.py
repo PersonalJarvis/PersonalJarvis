@@ -52,7 +52,7 @@ def _write_page(vault_root: Path, subdir: str, slug: str, body: str) -> Path:
 @pytest.fixture
 def vault(tmp_path: Path) -> Path:
     root = tmp_path / "vault"
-    _write_page(root, "entities", "lena", "Lives in Hamburg.")
+    _write_page(root, "entities", "examplefriend", "Lives in Exampleville.")
     _write_page(root, "concepts", "golf", "A sport the user practices.")
     return root
 
@@ -78,7 +78,7 @@ def test_unchanged_vault_is_not_reparsed(
 
     first = _scan_visible_pages_sync(vault)
     assert len(first) == 2
-    assert sorted(counter.calls) == ["golf.md", "lena.md"]
+    assert sorted(counter.calls) == ["golf.md", "examplefriend.md"]
 
     counter.calls.clear()
     second = _scan_visible_pages_sync(vault)
@@ -94,9 +94,9 @@ def test_edited_page_is_reparsed_and_others_are_not(
     _scan_visible_pages_sync(vault)
     counter = _ParseCounter(monkeypatch)
 
-    edited = vault / "entities" / "lena.md"
+    edited = vault / "entities" / "examplefriend.md"
     edited.write_text(
-        "---\ntype: entity\nslug: lena\n---\n\n# Lena\n\nMoved to Berlin.\n",
+        "---\ntype: entity\nslug: examplefriend\n---\n\n# ExampleFriend\n\nMoved to Exampletown.\n",
         encoding="utf-8",
     )
     # Make the change unmistakable even on a coarse-grained clock.
@@ -105,9 +105,9 @@ def test_edited_page_is_reparsed_and_others_are_not(
 
     pages = _scan_visible_pages_sync(vault)
 
-    assert counter.calls == ["lena.md"]
-    lena = next(p for p in pages if p.relative_path.name == "lena.md")
-    assert "Moved to Berlin." in lena.page.body
+    assert counter.calls == ["examplefriend.md"]
+    examplefriend = next(p for p in pages if p.relative_path.name == "examplefriend.md")
+    assert "Moved to Exampletown." in examplefriend.page.body
 
 
 def test_new_and_deleted_pages_are_picked_up(
@@ -121,7 +121,7 @@ def test_new_and_deleted_pages_are_picked_up(
 
     names = {p.relative_path.name for p in _scan_visible_pages_sync(vault)}
 
-    assert names == {"lena.md", "cabin.md"}
+    assert names == {"examplefriend.md", "cabin.md"}
     assert counter.calls == ["cabin.md"]
 
 
@@ -134,7 +134,7 @@ def test_explicit_invalidation_forces_a_full_reparse(
     invalidate_visible_page_cache(vault)
     _scan_visible_pages_sync(vault)
 
-    assert sorted(counter.calls) == ["golf.md", "lena.md"]
+    assert sorted(counter.calls) == ["golf.md", "examplefriend.md"]
 
 
 def test_cache_does_not_grow_without_bound(tmp_path: Path) -> None:
@@ -175,18 +175,18 @@ def test_symlink_escaping_the_vault_is_not_exposed(vault: Path, tmp_path: Path) 
     names = {p.relative_path.name for p in _scan_visible_pages_sync(vault)}
 
     assert "secret.md" not in names
-    assert names == {"lena.md", "golf.md"}
+    assert names == {"examplefriend.md", "golf.md"}
 
 
 def test_symlink_inside_the_vault_is_still_listed(vault: Path, tmp_path: Path) -> None:
     if not _symlinks_supported(tmp_path):
         pytest.skip("symlink creation unavailable on this host")
 
-    os.symlink(vault / "entities" / "lena.md", vault / "concepts" / "lena-alias.md")
+    os.symlink(vault / "entities" / "examplefriend.md", vault / "concepts" / "examplefriend-alias.md")
 
     names = {p.relative_path.name for p in _scan_visible_pages_sync(vault)}
 
-    assert names == {"lena.md", "golf.md", "lena-alias.md"}
+    assert names == {"examplefriend.md", "golf.md", "examplefriend-alias.md"}
 
 
 def test_symlinked_directory_is_not_descended(vault: Path, tmp_path: Path) -> None:

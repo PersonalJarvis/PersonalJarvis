@@ -263,7 +263,7 @@ _OPEN_NEGATION_RE = re.compile(r"\bnicht\b|\bkein\w*\b|\bniemals\b", re.IGNORECA
 # "starte eine Sub-Agent-Mission und recherchiere …" overcaptures "startest" as
 # an open-verb, and without this veto it was misrouted to the screenshot harness
 # ("ich erledige das am Bildschirm") instead of a research worker (live bug
-# 2026-06-15, sessions.db session 236877e6).
+# 2026-06-15, sessions.db session 10000106).
 _NOT_OPEN_APP_RE = re.compile(
     r"\b(?:"
     r"pr|prs|pull\s*request|repo|repository|github|gitlab|issue|issues|branch|"
@@ -315,7 +315,7 @@ _BARE_GOTO_RE = re.compile(
 )
 
 # Search-query browser launch (live bug 2026-06-15, sessions.db session
-# c995c9bc): "Open the Chrome browser for me and Google <query>" is ONE
+# 10000117): "Open the Chrome browser for me and Google <query>" is ONE
 # deterministic argv launch — open the browser straight to a Google results
 # page. It must NOT take the credit-gated Computer-Use vision loop (which
 # silently no-ops when the desktop extra is unavailable) and must NOT drop the
@@ -659,7 +659,7 @@ _EXTERNAL_INTEGRATION_NOUN_RE = re.compile(
     r"pizza|uber\s*eats|lyft|doordash|lieferando|"
     # Travel / lodging / ticketing — no booking integration exists, so
     # "book a trip/flight/hotel" must refuse honestly, not 3-loop-fail a worker
-    # (live gap 2026-06-14, mission_019ec761 critic_loop_exhausted).
+    # (live gap 2026-06-14, mission_019f1035 critic_loop_exhausted).
     r"flights?|fl[uü]ge?|trips?|reisen?|hotels?|unterk[uü]nfte?|airbnb|motel|"
     r"tickets?|zugticket|bahnticket|flugticket|mietwagen|rental\s+car|"
     # Dining reservation

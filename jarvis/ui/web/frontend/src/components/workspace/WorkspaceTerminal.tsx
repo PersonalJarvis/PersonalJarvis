@@ -14,7 +14,13 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { Terminal as TerminalIcon, AlertCircle } from "lucide-react";
 import { installNewlineBridge } from "../agentic/terminalNewline";
+import { PANE_CHROME, themeFor } from "../agentic/terminalThemes";
+import { useThemeValue } from "@/hooks/useTheme";
 import { TERMINAL_FONT_STACK, syncTerminalFont } from "@/lib/terminalFont";
+import {
+  activateTerminalLink,
+  TERMINAL_OSC_LINK_HANDLER,
+} from "@/lib/terminalLinks";
 
 type Status = "connecting" | "live" | "exited" | "error";
 
@@ -44,8 +50,15 @@ export function WorkspaceTerminal({
   title,
 }: WorkspaceTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const termRef = useRef<Terminal | null>(null);
   const [status, setStatus] = useState<Status>("connecting");
   const [error, setError] = useState<string | null>(null);
+  const appearance = useThemeValue();
+  // Read through a ref inside the setup effect: the theme must NOT be a
+  // dependency there, or switching it would tear down the PTY WebSocket and
+  // restart the agent. Recolouring happens in its own effect below.
+  const appearanceRef = useRef(appearance);
+  appearanceRef.current = appearance;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -58,16 +71,16 @@ export function WorkspaceTerminal({
       lineHeight: 1.15,
       cursorBlink: true,
       scrollback: 5000,
-      theme: {
-        background: "#0b0d10",
-        foreground: "#e6e6e6",
-        cursor: "#ffd60a",
-        selectionBackground: "#3a4252",
-      },
+      linkHandler: TERMINAL_OSC_LINK_HANDLER,
+      // The full 16-slot palette rather than four values, and the same one the
+      // Agentic IDE panes use — a coding agent's ANSI output is only readable
+      // if the "bright" row was re-derived for the ground it lands on.
+      theme: themeFor(appearanceRef.current),
     });
+    termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.loadAddon(new WebLinksAddon());
+    term.loadAddon(new WebLinksAddon(activateTerminalLink));
     term.open(container);
     // Shift+Enter breaks the line instead of sending a half-written
     // instruction — the same binding the Agentic IDE panes have, because it is
@@ -188,11 +201,22 @@ export function WorkspaceTerminal({
         /* ignore */
       }
       term.dispose();
+      termRef.current = null;
     };
   }, [paneKey, agentName, installName]);
 
+  // Recolour in place on a theme switch. xterm repaints from the new palette
+  // without touching the buffer, so scrollback and the live PTY both survive.
+  useEffect(() => {
+    const term = termRef.current;
+    if (term) term.options.theme = themeFor(appearance);
+  }, [appearance]);
+
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden rounded-lg border border-border bg-[#0b0d10]">
+    <div
+      className="relative flex h-full w-full flex-col overflow-hidden rounded-lg border border-border"
+      style={{ background: PANE_CHROME[appearance].shell }}
+    >
       <header className="flex items-center justify-between gap-2 border-b border-border bg-card/40 px-3 py-1.5">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <TerminalIcon className="h-3.5 w-3.5 text-primary" />

@@ -307,7 +307,7 @@ class SessionRecorder:
         # (a "completion"/"subagent" kind, which the pipeline deliberately lets
         # through the hangup gate, AD-OE6) must still be attributed to the
         # just-ended session; otherwise the user hears the answer but the
-        # transcript stays empty (forensic 2026-06-19, session 514cddc0).
+        # transcript stays empty (forensic 2026-06-19, session 10000112).
         if self._state is None:
             if isinstance(event, SpeechSpoken):
                 self._record_posthangup_readback(event)
@@ -1212,7 +1212,7 @@ def _payload_for(event: Event) -> dict[str, Any]:
     # persisted. Pull only the short, enum-like ``action`` selector so forensics
     # can tell which operation a mixed read/write tool ran: before this a gmail
     # read was indistinguishable from a send in the persisted event (forensic
-    # 2026-06-19, session dc533e39). Bounded length keeps a tool from smuggling
+    # 2026-06-19, session 10000119). Bounded length keeps a tool from smuggling
     # a payload through the key.
     raw_args = getattr(event, "args", None)
     if isinstance(raw_args, dict):

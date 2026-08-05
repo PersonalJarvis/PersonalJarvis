@@ -177,7 +177,7 @@ class Step(BaseModel):
     # or produce standalone deliverables ("create an HTML file with today's
     # news") and have no affinity to this repo's code. Cloning and exploring the
     # repo otherwise burned 10+ minutes and >1.3M input tokens before a trivial
-    # write (live mission 019eb17d, 2026-06-10).
+    # write (live mission 019f1027, 2026-06-10).
     needs_repo: bool = True
 
 

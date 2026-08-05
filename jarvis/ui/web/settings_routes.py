@@ -38,6 +38,7 @@ from jarvis.brain.manager import SUPPORTED_REPLY_LANGUAGES
 from jarvis.core.config import RECOGNITION_LANGUAGE_CHOICES
 from jarvis.memory.wiki.integration import get_running_curator
 from jarvis.speech.local_models import FASTER_WHISPER_PACKAGE
+from jarvis.ui.overlay_styles import OVERLAY_STYLES, normalize_overlay_style
 
 if TYPE_CHECKING:
     from jarvis.core.config import WikiCuratorConfig
@@ -69,6 +70,32 @@ def _realtime_requires_webrtc_offer(cfg: object) -> bool:
     except ImportError:  # Optional subscription transport degrades to no WebRTC requirement.
         return False
     return realtime_requires_webrtc_offer(cfg)
+
+
+#: Surface floor for the realtime start budget. Only ever RAISED by a
+#: provider's declared need — never lowered — so a browser that cannot reach
+#: the capability probe still behaves exactly as it always did.
+_REALTIME_SURFACE_HANDSHAKE_FLOOR_S = 20.0
+
+
+def _realtime_handshake_budget_s(cfg: object) -> float:
+    """Longest declared realtime handshake, or the historical surface floor.
+
+    The browser gave every start attempt a fixed 20 s. That is shorter than the
+    subscription transport's declared 45 s budget and its documented 15-25 s
+    cold start, so a cold subscription call could be reported as a timed-out
+    connection while the backend was still legitimately negotiating.
+    """
+    try:
+        from jarvis.realtime.factory import realtime_handshake_budget_s
+    except ImportError:  # Optional realtime support keeps the historical floor.
+        return _REALTIME_SURFACE_HANDSHAKE_FLOOR_S
+    try:
+        declared = float(realtime_handshake_budget_s(cfg))
+    except Exception:  # noqa: BLE001 — a probe failure must not break the screen
+        log.debug("Realtime handshake-budget probe failed", exc_info=True)
+        return _REALTIME_SURFACE_HANDSHAKE_FLOOR_S
+    return max(_REALTIME_SURFACE_HANDSHAKE_FLOOR_S, declared)
 
 
 async def _realtime_transport_offer_ready(required: bool) -> bool | None:
@@ -181,8 +208,8 @@ class VoiceModeBody(BaseModel):
 
 def _realtime_provider_display(
     cfg: object, provider_id: str | None
-) -> tuple[str | None, str | None]:
-    """(label, model) the sidebar shows for the resolved realtime provider.
+) -> tuple[str | None, str | None, str | None]:
+    """Provider label plus model id/label for the resolved realtime provider.
 
     The label comes from the provider registry; the model is the pin in
     ``[brain.providers.<id>].model``, resolved to the curated catalog's default
@@ -191,7 +218,7 @@ def _realtime_provider_display(
     failure degrades to ``None`` rather than breaking the status endpoint.
     """
     if not provider_id:
-        return None, None
+        return None, None, None
     label: str | None = None
     try:
         from jarvis.ui.web.provider_spec import get_spec
@@ -213,7 +240,22 @@ def _realtime_provider_display(
         model = model or None
     except Exception:  # noqa: BLE001 — model is cosmetic, never fatal
         model = None
-    return label, model
+    return label, model, _realtime_model_label(provider_id, model)
+
+
+def _realtime_model_label(provider_id: str | None, model: str | None) -> str | None:
+    """Return a curated display label while preserving unknown future ids."""
+    if not provider_id or not model:
+        return None
+    try:
+        from jarvis.brain.model_catalog import REALTIME_MODELS
+
+        for entry in REALTIME_MODELS.get(provider_id) or ():
+            if entry.id == model:
+                return entry.label
+    except Exception:  # noqa: BLE001 — display cosmetics must never break status
+        log.debug("Realtime model label lookup failed", exc_info=True)
+    return model
 
 
 @router.get("/voice-mode")
@@ -231,6 +273,9 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     requires_webrtc_offer = await asyncio.to_thread(
         _realtime_requires_webrtc_offer, cfg
     )
+    # Capability, not a provider id (AP-21): the surface must not call a start
+    # attempt dead while the backend is still inside a budget it declared.
+    handshake_budget_s = await asyncio.to_thread(_realtime_handshake_budget_s, cfg)
     transport_offer_ready = await _realtime_transport_offer_ready(
         requires_webrtc_offer
     )
@@ -244,14 +289,17 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
                 else "Waiting for the embedded desktop WebRTC offer."
             )
         )
-    prov_label, prov_model = _realtime_provider_display(cfg, prov)
+    prov_label, prov_model, prov_model_label = _realtime_provider_display(cfg, prov)
     from jarvis.ui.web.voice_runtime import voice_engine_status
 
     runtime = voice_engine_status(request)
+    session_provider = str(runtime.get("active_session_provider", "") or "")
+    session_model = str(runtime.get("active_session_model", "") or "")
     return {
         "mode": mode,
         "realtime_available": prov is not None,
         "requires_webrtc_offer": requires_webrtc_offer,
+        "handshake_budget_s": handshake_budget_s,
         "transport_offer_ready": transport_offer_ready,
         "transport_offer_detail": transport_offer_detail,
         "active_provider": prov,
@@ -261,12 +309,14 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
         # active_session_* fields below.
         "active_provider_label": prov_label,
         "active_model": prov_model,
+        "active_model_label": prov_model_label,
         "session_active": bool(runtime.get("session_active", False)),
         "active_session_mode": runtime.get("active_session_mode"),
-        "active_session_provider": str(
-            runtime.get("active_session_provider", "") or ""
+        "active_session_provider": session_provider,
+        "active_session_model": session_model,
+        "active_session_model_label": _realtime_model_label(
+            session_provider, session_model
         ),
-        "active_session_model": str(runtime.get("active_session_model", "") or ""),
         "transitioning": bool(runtime.get("transitioning", False)),
     }
 
@@ -281,13 +331,46 @@ async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, obj
     # A3: never pin the boot default to an unreachable engine. A provider may
     # use an API key or an external subscription login, so readiness — not a
     # particular credential shape — is the boundary.
-    if body.mode == "realtime" and await asyncio.to_thread(
-        _realtime_available_provider, cfg
-    ) is None:
-        raise HTTPException(
-            status_code=400,
-            detail="no realtime provider is configured and ready",
-        )
+    if body.mode == "realtime":
+        prov = await asyncio.to_thread(_realtime_available_provider, cfg)
+        if prov is None:
+            raise HTTPException(
+                status_code=400,
+                detail="no realtime provider is configured and ready",
+            )
+        if prov == "codex-subscription-realtime":
+            # The availability bool fails OPEN on a transient busy window (by
+            # design — the session opener verifies live). PERSISTING the mode
+            # is a standing decision, so it gates on the actual payload: a
+            # busy window answers "try again", a logged-out pinned provider
+            # is refused instead of pinning a mode that cannot start.
+            from jarvis.ui.web.provider_routes import (
+                _codex_binary_path,
+                _codex_subscription_status_payload,
+            )
+
+            payload = await asyncio.to_thread(
+                _codex_subscription_status_payload,
+                _codex_binary_path(request),
+            )
+            if payload.get("reason_code") in {"busy", "login_in_progress"}:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "The ChatGPT subscription voice status is being "
+                        "checked. Try again in a moment."
+                    ),
+                )
+            if not payload.get("connected"):
+                # The payload's precise diagnosis (plan refused, login
+                # required, …) beats the generic sentence.
+                raise HTTPException(
+                    status_code=400,
+                    detail=str(
+                        payload.get("message")
+                        or "no realtime provider is configured and ready"
+                    ),
+                )
 
     if cfg is not None and getattr(cfg, "voice", None) is not None:
         try:
@@ -461,6 +544,90 @@ async def put_ui_language(body: UiLanguageBody, request: Request) -> dict[str, o
             log.warning("UiLanguageChanged publish failed: %s", exc)
 
     return {"ok": True, "language": lang, "persisted": persisted}
+
+
+# ----------------------------------------------------------------------
+# Appearance — the app's colour theme.
+#
+# Lives in the backend rather than only in the browser store for three reasons,
+# all of which the desktop app hits in practice: the native window frame is
+# painted from config BEFORE the web view loads anything (a light app inside a
+# black frame is visible for the whole boot), the choice must survive a cleared
+# web store, and every user-facing action in this project ships as a REST route
+# so it becomes a `jarvis api settings ...` command (CLAUDE.md §5, CLI-first).
+#
+# "system" is stored as intent, not as a resolved value: the frontend re-reads
+# the OS preference live, so flipping the OS theme flips the app with it.
+# ----------------------------------------------------------------------
+
+_UI_THEMES: tuple[str, ...] = ("dark", "light", "system")
+
+
+class AppearanceBody(BaseModel):
+    theme: str = Field(..., min_length=1, description="dark | light | system")
+    persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
+
+
+def _current_ui_theme(request: Request) -> str:
+    # Read fresh from disk so a value just written by the Control API is
+    # reflected; fall back to the boot config, then the "dark" default.
+    try:
+        from jarvis.core.config import load_config
+
+        return str(getattr(load_config().ui, "theme", "dark"))
+    except Exception as exc:  # noqa: BLE001 — never 500 a settings read
+        log.debug("appearance fresh read failed, using boot config: %s", exc)
+    cfg = getattr(request.app.state, "config", None)
+    return str(getattr(getattr(cfg, "ui", None), "theme", "dark"))
+
+
+@router.get("/appearance")
+async def get_appearance(request: Request) -> dict[str, object]:
+    """The app's colour theme, plus the values this build accepts."""
+    return {"theme": _current_ui_theme(request), "options": list(_UI_THEMES)}
+
+
+@router.put("/appearance")
+async def put_appearance(body: AppearanceBody, request: Request) -> dict[str, object]:
+    """Switch the app's colour theme and persist it as the boot default."""
+    theme = (body.theme or "").strip().lower()
+    if theme not in _UI_THEMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown theme {body.theme!r} (allowed: {list(_UI_THEMES)})",
+        )
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core import config_writer
+            from jarvis.core.config import resolve_config_path
+
+            # Honour JARVIS_CONFIG (cloud-first) so the write lands in the same
+            # file load_config reads — no desktop/VPS split-brain.
+            config_writer.set_ui_theme(theme, path=resolve_config_path())
+            persisted = True
+        except Exception as exc:  # noqa: BLE001 — persist is best-effort
+            log.warning("appearance persist failed: %s", exc)
+
+    cfg = getattr(request.app.state, "config", None)
+    if cfg is not None and getattr(cfg, "ui", None) is not None:
+        try:
+            cfg.ui.theme = theme  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory cfg.ui.theme update skipped: %s", exc)
+
+    # Broadcast so EVERY open frontend repaints live.
+    bus = getattr(request.app.state, "bus", None)
+    if bus is not None:
+        try:
+            from jarvis.core.events import UiThemeChanged
+
+            await bus.publish(UiThemeChanged(theme=theme))
+        except Exception as exc:  # noqa: BLE001 — a bus hiccup must not fail the write
+            log.warning("UiThemeChanged publish failed: %s", exc)
+
+    return {"ok": True, "theme": theme, "persisted": persisted}
 
 
 # ----------------------------------------------------------------------
@@ -1731,7 +1898,7 @@ async def put_autostart(body: AutostartBody, request: Request) -> dict[str, obje
     }
 
 
-_OVERLAY_STYLES = ("jarvis_bar", "mascot", "none")
+_OVERLAY_STYLES = OVERLAY_STYLES
 
 
 class OverlayStyleBody(BaseModel):
@@ -1750,19 +1917,21 @@ async def get_overlay_style(request: Request) -> dict[str, object]:
 
 @router.put("/overlay-style")
 async def put_overlay_style(body: OverlayStyleBody, request: Request) -> dict[str, object]:
-    """Switch the on-screen overlay (jarvis_bar / mascot / none).
+    """Switch the on-screen overlay (see ``jarvis.ui.overlay_styles``).
 
     Persists [ui].orb_style and live-swaps the running surface via the
     DesktopApp (app.state.desktop_app.swap_overlay). When no live app is
     reachable (headless), the choice is persisted and applies on restart.
+
+    Legacy values from a not-yet-rebuilt client (``whisper_bar`` before the
+    rename, ``orb`` before the procedural renderer was removed) are normalized
+    rather than rejected.
     """
-    style = body.style.strip()
-    # Backwards-compat: accept the legacy "whisper_bar" value (renamed to
-    # "jarvis_bar" to drop a trademarked name) from any not-yet-rebuilt client.
-    if style == "whisper_bar":
-        style = "jarvis_bar"
-    if style not in _OVERLAY_STYLES:
-        raise HTTPException(status_code=400, detail=f"Unknown overlay style '{style}'")
+    style = normalize_overlay_style(body.style)
+    if style is None:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown overlay style '{body.style.strip()}'"
+        )
 
     # Best-effort in-memory cfg update so a later read agrees pre-restart.
     cfg = _config(request)

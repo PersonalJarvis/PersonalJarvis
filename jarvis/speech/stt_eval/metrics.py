@@ -6,14 +6,41 @@ import re
 import unicodedata
 from collections.abc import Sequence
 
-from jarvis.speech.tts_eval.metrics import word_error_rate
-
 _NON_WORD = re.compile(r"[^\w]+", flags=re.UNICODE)
+_WER_WORD = re.compile(r"[^\w']+", flags=re.UNICODE)
 
 
 def _comparison_text(text: str) -> str:
     value = unicodedata.normalize("NFKC", str(text or "")).casefold()
     return " ".join(part for part in _NON_WORD.split(value) if part)
+
+
+def _wer_words(text: str) -> list[str]:
+    """Preserve the historical WER tokenization used by evaluation reports."""
+    return [word for word in _WER_WORD.split((text or "").lower()) if word]
+
+
+def word_error_rate(reference: str, hypothesis: str) -> float:
+    """Return deterministic word-level Levenshtein error for STT output."""
+    expected = _wer_words(reference)
+    actual = _wer_words(hypothesis)
+    if not expected:
+        return 0.0 if not actual else 1.0
+
+    previous = list(range(len(actual) + 1))
+    for row, expected_word in enumerate(expected, start=1):
+        current = [row]
+        for column, actual_word in enumerate(actual, start=1):
+            substitution = 0 if expected_word == actual_word else 1
+            current.append(
+                min(
+                    previous[column] + 1,
+                    current[column - 1] + 1,
+                    previous[column - 1] + substitution,
+                )
+            )
+        previous = current
+    return previous[-1] / len(expected)
 
 
 def switch_error_rate(anchors: Sequence[str], hypothesis: str) -> float | None:

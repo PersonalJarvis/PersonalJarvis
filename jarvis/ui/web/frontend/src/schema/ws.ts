@@ -23,6 +23,13 @@ export const WSWelcome = z.object({
 });
 export type WSWelcomeT = z.infer<typeof WSWelcome>;
 
+/** Ephemeral normalized native-microphone level for canvas animation. */
+export const WSAudioLevel = z.object({
+  type: z.literal("audio.level"),
+  input: z.number().min(0).max(1),
+});
+export type WSAudioLevelT = z.infer<typeof WSAudioLevel>;
+
 /** Free-form user text / voice message heading inward. */
 export const WSMessageIn = z.object({
   type: z.literal("message"),
@@ -69,5 +76,6 @@ export const WSInbound = z.discriminatedUnion("type", [WSMessageIn, WSCommand]);
 export const WSOutbound = z.discriminatedUnion("type", [
   WSEventEnvelope,
   WSWelcome,
+  WSAudioLevel,
   WSTerminalSpawned,
 ]);

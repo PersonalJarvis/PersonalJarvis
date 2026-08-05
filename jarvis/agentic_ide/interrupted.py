@@ -37,8 +37,9 @@ That matters, because the tempting heuristics are all wrong:
   repaints its banner and its old transcript for several seconds before it
   settles at a prompt; reading that as work retracted the offer for every
   restored pane within two sweeps of it coming back, so the button reported
-  zero for ever. Movement only counts once the pane has been SEEN standing
-  still (:attr:`Terminal.idle_seen`).
+  zero for ever. Only a submission stamped for the current process proves
+  work; :attr:`Terminal.idle_seen` merely records that startup repainting has
+  settled.
 
 ## What the nudge is
 
