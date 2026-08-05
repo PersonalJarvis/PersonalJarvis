@@ -583,8 +583,13 @@ class _OpenAIRealtimeSession:
         instructions: str | None = None,
         language: str | None = None,
         tools: tuple[dict[str, Any], ...] | None = None,
+        turn_directive: str | None = None,
     ) -> None:
         del language  # Input transcription stays provider-inferred and multilingual.
+        # This transport REPLACES its instructions wholesale, and the turn
+        # directive is already embedded in them. Accepting the keyword keeps
+        # the per-turn update off the session's TypeError-retry path.
+        del turn_directive
         update: dict[str, Any] = {"type": "realtime"}
         if instructions is not None:
             update["instructions"] = instructions

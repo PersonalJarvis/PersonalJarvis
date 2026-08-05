@@ -336,10 +336,14 @@ class _GeminiLiveSession:
         instructions: str | None = None,
         language: str | None = None,
         tools: tuple[dict[str, Any], ...] | None = None,
+        turn_directive: str | None = None,
     ) -> None:
         # Gemini fixes system instructions at connect time. The orchestrator
         # reconnects on a substantive language change in a later session.
-        del instructions, language, tools
+        # Accepting turn_directive keeps the per-turn update off the
+        # session's TypeError-retry path; the directive is already embedded
+        # in the (fixed) instructions.
+        del instructions, language, tools, turn_directive
 
     async def request_response(self, *, required_tool: str | None = None) -> None:
         # Gemini Live creates a response automatically at the VAD turn boundary.

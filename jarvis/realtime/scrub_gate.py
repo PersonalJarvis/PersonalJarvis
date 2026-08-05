@@ -73,13 +73,14 @@ _COVERAGE_MS_PER_CHAR = 55.0
 # by the deliberate underestimation alone; log it as a transcription stall.
 _FINALIZE_EXCESS_LOG_MS = 5_000.0
 # Release budget for ONE injected direct-speech utterance — an OVERestimate
-# of its rendering time (the opposite direction of _COVERAGE_MS_PER_CHAR's
-# deliberate underestimate: 2x that rate, so a real voice can never outrun
-# it). Clamping the trusted answer itself would recreate "the action ran and
-# the user heard nothing", so the bound must stay generous — but not so
-# generous it misses the incident class it exists for: the live 2026-08-04
-# case was 8.2 s of foreign audio riding a stall-phrase-length clearance,
-# which a 10 s floor would have waved through entirely.
+# of its rendering time. 110 ms/char is ~1.5x the SLOWEST real voice this
+# module has measured (Gemini Live German, ~14 chars/s = ~71 ms/char), so a
+# legitimate readback keeps headroom at every length while the floor covers
+# leading pauses on short phrases. Clamping the trusted answer itself would
+# recreate "the action ran and the user heard nothing", so the bound must
+# stay generous — but not so generous it misses the incident class it exists
+# for: the live 2026-08-04 case was 8.2 s of foreign audio riding a
+# stall-phrase-length clearance, which a 10 s floor waved through entirely.
 _DIRECT_SPEECH_MS_PER_CHAR = 110.0
 _DIRECT_SPEECH_BUDGET_FLOOR_MS = 3_000.0
 

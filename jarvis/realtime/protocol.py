@@ -157,12 +157,28 @@ class RealtimeSession(Protocol):
         instructions: str | None = None,
         language: str | None = None,
         tools: tuple[dict[str, Any], ...] | None = None,
+        # Turn-scoped directive, delivered separately so an APPEND-only
+        # transport can supersede the previous one whole instead of leaving
+        # contradictory "this current turn" texts standing. Adapters that
+        # replace their instructions wholesale may simply ``del`` it — the
+        # same text is already embedded in ``instructions``. The session
+        # retries without it on TypeError for third-party adapters.
+        turn_directive: str | None = None,
     ) -> None: ...
 
     async def request_response(self, *, required_tool: str | None = None) -> None: ...
     async def send_text(self, text: str) -> None: ...
     async def truncate(self, audio_end_ms: int) -> None: ...
-    async def interrupt(self) -> None: ...
+    async def interrupt(
+        self,
+        *,
+        # True ONLY on the delegation/handoff paths: the interrupted
+        # utterance's one automatic-response entitlement is withdrawn with
+        # the cut. A plain barge-in must never set it — at that moment the
+        # input generation already belongs to the user's NEW utterance, and
+        # retiring it silences the answer to the question just asked.
+        retire_input_entitlement: bool = False,
+    ) -> None: ...
     async def send_tool_result(
         self, call_id: str, name: str, result: dict[str, Any]
     ) -> None: ...
