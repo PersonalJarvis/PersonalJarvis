@@ -39,7 +39,7 @@ import {
   promptTerminal,
   startIdeSession,
 } from "@/lib/agenticIdeApi";
-import { ChatActivity } from "@/components/chat/ChatActivity";
+import { AgenticTerminal } from "@/components/agentic/AgenticTerminal";
 import { VoiceBubble } from "@/components/agentic/VoiceBubble";
 import { getWSClient } from "@/hooks/useWebSocket";
 import {
@@ -102,6 +102,10 @@ export function ChatWorkspaceView() {
   const [refreshToken, setRefreshToken] = useState(0);
   const [busy, setBusy] = useState(false);
   const [starting, setStarting] = useState(false);
+  // Which workspace the live pane belongs to. Sent with the socket so a
+  // keystroke reaches the pane it was typed into: several workspaces can be
+  // open and the front one changes while sockets are alive.
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   // The spoken conversation, as a floating orb over this surface. Held here
   // rather than inside the composer: the conversation belongs to the app, and
   // a bubble mounted inside a component that re-renders per keystroke would
@@ -236,6 +240,7 @@ export function ChatWorkspaceView() {
     async (project: ChatProject, chat: ChatRow): Promise<string> => {
       const state = await fetchIdeState();
       const session = state.session;
+      if (session) setWorkspaceId(session.id);
       const sameFolder =
         session && session.folder.toLowerCase() === project.path.toLowerCase();
 
@@ -244,7 +249,6 @@ export function ChatWorkspaceView() {
         // A pane that is still coming up is ours too — waiting for it beats
         // starting a second agent beside it.
         if (live && live.status !== "exited" && live.status !== "error") {
-          await waitForPane(live.name);
           return live.name;
         }
       }
@@ -266,11 +270,10 @@ export function ChatWorkspaceView() {
         next.terminals[next.terminals.length - 1];
       if (!fresh) throw new Error("The agent started but reported no terminal.");
 
-      await waitForPane(fresh.name);
       await patchChat(project.id, chat.id, { terminal: fresh.name });
       return fresh.name;
     },
-    [agentId, agents, waitForPane],
+    [agentId, agents],
   );
 
   /**
@@ -296,20 +299,30 @@ export function ChatWorkspaceView() {
           target = await createChat(project.id, { agent: agentId, model: modelId });
         }
         const terminal = await ensureAgent(project, target);
-        await promptTerminal(terminal, text);
+        /*
+         * Mount the pane BEFORE waiting for it, then prompt.
+         *
+         * The order is the fix. A coding CLI is spawned when something attaches
+         * to its pseudo-terminal, so a send that waited for "live" before
+         * putting the pane on screen was waiting for a process its own silence
+         * was preventing — three panes sat at "pending" and every prompt was
+         * refused. Showing it first is what starts it.
+         */
         const updated = await patchChat(project.id, target.id, {
           title: target.title || text.slice(0, 48),
           terminal,
         });
         setOpen({ project, chat: updated });
         setRefreshToken((n) => n + 1);
+        await waitForPane(terminal);
+        await promptTerminal(terminal, text);
       } catch (error) {
         pushToast("error", error instanceof Error ? error.message : "Could not send that");
       } finally {
         setBusy(false);
       }
     },
-    [activeProject, agentId, ensureAgent, modelId, open, pushToast],
+    [activeProject, agentId, ensureAgent, modelId, open, pushToast, waitForPane],
   );
 
   /**
@@ -448,7 +461,29 @@ export function ChatWorkspaceView() {
 
         <div className="flex min-h-0 flex-1 flex-col">
           {open?.chat.terminal ? (
-            <ChatActivity terminal={open.chat.terminal} />
+            /*
+             * The REAL pane, not a rendering of one.
+             *
+             * A coding CLI is only spawned when something attaches to its
+             * pseudo-terminal — the socket IS the start signal. A surface that
+             * merely polled for output therefore watched a process that never
+             * began: three panes sat at "pending" forever and every prompt was
+             * refused, which is exactly what happened here. Mounting the pane
+             * starts the agent AND shows what it is doing, and it brings the
+             * years of replay, scroll and resize fixes with it.
+             */
+            <div className="min-h-0 flex-1 px-4 pb-2">
+              <AgenticTerminal
+                key={open.chat.terminal}
+                name={open.chat.terminal}
+                workspaceId={workspaceId ?? undefined}
+                displayName={open.chat.agent || "Agent"}
+                appearance="dark"
+                fontSize={13}
+                active
+                focused
+              />
+            </div>
           ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto scrollbar-jarvis px-6">
             {activeProject ? (
