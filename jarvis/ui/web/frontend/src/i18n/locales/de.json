@@ -1339,7 +1339,8 @@
     "filter_hint_starred": "Handverlesene Top-Modelle.",
     "filter_hint_free": "Kostenlose Modelle — kein API-Guthaben nötig.",
     "filter_hint_frontier": "Wenn der Preis egal ist — die leistungsstärksten Modelle.",
-    "filter_hint_value": "Die beste Leistung fürs Geld."
+    "filter_hint_value": "Die beste Leistung fürs Geld.",
+    "probe_slow_note": "Wird noch geprüft — beim ersten Aufruf lädt ein großes lokales Modell in den Speicher, das kann Minuten dauern."
   },
   "apikeys_voice": {
     "heading": "Stimme",

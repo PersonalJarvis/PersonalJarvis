@@ -1200,8 +1200,27 @@ async def list_providers(request: Request) -> dict[str, Any]:
 
 # Belt-and-suspenders ceiling for the whole /test call. run_provider_test's own
 # timeout_s (60 s, generous for NVIDIA NIM's 13-30 s cold-start TTFB) bounds the
-# individual probe; this outer bound guarantees the HTTP response itself.
+# individual probe; this outer bound guarantees the HTTP response itself. Local
+# cards raise BOTH (see _tier_test_budget_s) — their first call loads weights.
+_DEFAULT_TIER_TEST_S = 60.0
 _PROVIDER_TEST_HARD_TIMEOUT_S = 75.0
+
+
+def _tier_test_budget_s(spec: ProviderSpec) -> float:
+    """Per-call budget for the Test button; local cards get the load allowance.
+
+    The local STT path already did this (a cold on-device recognizer gets 180 s
+    there); a local BRAIN needs it for the same reason, and without it a large
+    downloaded model reported as broken while it was merely loading.
+    """
+    if spec.auth_mode == "none":
+        return _LOCAL_MODEL_PROBE_S
+    return _DEFAULT_TIER_TEST_S
+
+
+def _tier_test_ceiling_s(spec: ProviderSpec) -> float:
+    """Hard route ceiling: always above the per-call budget it bounds."""
+    return _tier_test_budget_s(spec) + 15.0
 
 
 async def _run_tier_test(
@@ -1256,7 +1275,9 @@ async def _run_tier_test(
         return await _provider_test.run_provider_test(
             spec, cfg, codex_status=lambda: isolated_status, model=model
         )
-    return await _provider_test.run_provider_test(spec, cfg, model=model)
+    return await _provider_test.run_provider_test(
+        spec, cfg, model=model, timeout_s=_tier_test_budget_s(spec)
+    )
 
 
 @router.post("/providers/{provider_id}/test")
@@ -1282,24 +1303,21 @@ async def test_provider_connection(
             status_code=503, detail="Configuration is unavailable (headless mode?)"
         )
 
-    # Hard ceiling ABOVE run_provider_test's own per-call timeout (60 s): the
-    # route must always answer, else the UI's "Testing…" spinner never resolves.
-    # Any async path that slips past the inner bounds is cut here and reported
-    # as an honest "unreachable" instead of a hung HTTP request.
+    # Hard ceiling ABOVE the per-call timeout the tier uses: the route must
+    # always answer, else the UI's "Testing…" spinner never resolves. Any async
+    # path that slips past the inner bounds is cut here and reported as an
+    # honest "unreachable" instead of a hung HTTP request.
+    ceiling = _tier_test_ceiling_s(spec)
     try:
-        result = await asyncio.wait_for(
-            _run_tier_test(spec, cfg),
-            timeout=_PROVIDER_TEST_HARD_TIMEOUT_S,
-        )
+        result = await asyncio.wait_for(_run_tier_test(spec, cfg), timeout=ceiling)
     except TimeoutError:
         result = _provider_test.ProviderTestResult(
             provider=spec.id,
             status=_provider_test.UNREACHABLE,
             detail=(
-                f"Test timed out after {_PROVIDER_TEST_HARD_TIMEOUT_S:.0f}s — "
-                "the provider did not answer."
+                f"Test timed out after {ceiling:.0f}s — the provider did not answer."
             ),
-            latency_ms=_PROVIDER_TEST_HARD_TIMEOUT_S * 1000.0,
+            latency_ms=ceiling * 1000.0,
         )
     # This exact result is newer than any overlapping section sweep. Cancel the
     # older snapshot so the UI refresh cannot resurrect a pre-test status.
@@ -2115,8 +2133,33 @@ def _set_cu_model_in_memory(cfg: Any, provider: str, value: str) -> None:
         log.debug("In-memory cu_model update skipped for %s: %s", provider, exc)
 
 
+#: Cloud model probe: a hosted model answers a 1-token prompt in seconds, and a
+#: longer wait would just delay an honest "this key cannot use that model".
+_CLOUD_MODEL_PROBE_S = 20.0
+
+#: Local model probe: the FIRST call to a local model loads its weights off disk
+#: into memory, and an 18 GB download needs over a minute for that on a normal
+#: machine (measured 2026-08-05: 70 s for a 30B model on a 32 GB box). Under the
+#: cloud budget every large local model tested as broken while being perfectly
+#: fine — the probe was timing the load, not the model.
+_LOCAL_MODEL_PROBE_S = 240.0
+
+
+def _model_probe_budget_s(provider: str) -> float:
+    """Probe budget for ``provider``: a load-from-disk allowance for local cards.
+
+    Locality comes from the card's auth mode — a keyless server the user runs
+    themselves — the same definition the brain resolver uses for its local tail,
+    never a provider name (AP-21).
+    """
+    spec = get_spec(provider)
+    if spec is not None and spec.auth_mode == "none":
+        return _LOCAL_MODEL_PROBE_S
+    return _CLOUD_MODEL_PROBE_S
+
+
 async def _probe_brain_model(
-    provider: str, model: str, *, timeout_s: float = 20.0
+    provider: str, model: str, *, timeout_s: float | None = None
 ) -> _provider_test.ProviderTestResult:
     """Run a REAL 1-token call against the *specific* ``model`` and classify it.
 
@@ -2124,12 +2167,16 @@ async def _probe_brain_model(
     model), this validates the model the user just selected — so a typo or a
     model the key has no access to comes back as ``model_unavailable`` rather
     than silently "saved but broken". Module-level so it is monkeypatchable.
+
+    ``timeout_s`` defaults to a per-card budget: a local server is allowed the
+    minutes its first call spends loading weights, a hosted one is not.
     """
     from jarvis.brain.healthcheck import BrainHealthChecker
     from jarvis.brain.provider_registry import BrainProviderRegistry
 
+    budget = timeout_s if timeout_s is not None else _model_probe_budget_s(provider)
     checker = BrainHealthChecker(BrainProviderRegistry())
-    hr = await checker.probe(provider, model, timeout_s=timeout_s)
+    hr = await checker.probe(provider, model, timeout_s=budget)
     if getattr(hr, "ok", False):
         return _provider_test.ProviderTestResult(
             provider, _provider_test.OK, "", getattr(hr, "duration_ms", 0.0)
@@ -2138,9 +2185,32 @@ async def _probe_brain_model(
     return _provider_test.ProviderTestResult(
         provider,
         _provider_test.classify_provider_error(err),
-        err or "",
+        _model_probe_detail(provider, model, err, budget),
         getattr(hr, "duration_ms", 0.0),
     )
+
+
+def _model_probe_detail(
+    provider: str, model: str, error: str | None, budget: float
+) -> str:
+    """The sentence the card shows — "timeout after 240.0s" explains nothing.
+
+    A local model that times out is almost always still loading, and the user's
+    next step ("wait, or pick a smaller model") is completely different from the
+    one a dead endpoint calls for. Every other error keeps the provider's own
+    words, which are usually more precise than anything we could add.
+    """
+    raw = error or ""
+    spec = get_spec(provider)
+    is_local = spec is not None and spec.auth_mode == "none"
+    if is_local and "timeout" in raw.lower():
+        return (
+            f"{model} did not answer within {budget:.0f}s. A local model is "
+            "loaded into memory on its first call, and a large one can take "
+            "minutes — leave it loading and test again, or choose a smaller "
+            "model."
+        )
+    return raw
 
 
 def _require_catalog_provider(provider_id: str):

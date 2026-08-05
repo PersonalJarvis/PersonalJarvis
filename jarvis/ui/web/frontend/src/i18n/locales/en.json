@@ -1339,7 +1339,8 @@
     "filter_hint_starred": "Hand-picked best models.",
     "filter_hint_free": "Zero-cost models — no API credit needed.",
     "filter_hint_frontier": "When price doesn't matter — the most capable models.",
-    "filter_hint_value": "The best performance for the price."
+    "filter_hint_value": "The best performance for the price.",
+    "probe_slow_note": "Still checking — the first call to a large local model loads it into memory and can take minutes."
   },
   "apikeys_voice": {
     "heading": "Voice",

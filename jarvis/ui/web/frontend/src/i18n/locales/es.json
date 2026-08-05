@@ -1339,7 +1339,8 @@
     "filter_hint_starred": "Los mejores modelos, elegidos a mano.",
     "filter_hint_free": "Modelos gratuitos — sin necesidad de crédito de API.",
     "filter_hint_frontier": "Cuando el precio no importa — los modelos más capaces.",
-    "filter_hint_value": "La mejor relación calidad-precio."
+    "filter_hint_value": "La mejor relación calidad-precio.",
+    "probe_slow_note": "Comprobando todavía: la primera llamada a un modelo local grande lo carga en memoria y puede tardar minutos."
   },
   "apikeys_voice": {
     "heading": "Voz",
