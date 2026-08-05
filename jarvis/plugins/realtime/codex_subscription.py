@@ -1306,6 +1306,33 @@ class _CodexSubscriptionRealtimeSession:
                     )
                     if not completed_id or completed_id == self._active_codex_turn_id:
                         self._active_codex_turn_id = ""
+                    # Boundary instrumentation (AP-30): whether this notice is
+                    # a reliable per-RESPONSE boundary on ChatGPT-Live is still
+                    # unconfirmed (the transcript-part trap of 2026-08-02 makes
+                    # guessing expensive), so record its relation to the open
+                    # response — a future live log decides whether it may close
+                    # the turn outright instead of the quiescence backstop.
+                    log.info(
+                        "Codex subscription realtime observed %s (turn=%r, "
+                        "response_open=%s, allowed=%s, quiescence_armed=%s)",
+                        method,
+                        completed_id or "?",
+                        response_open,
+                        response_allowed,
+                        completion_task is not None,
+                    )
+                    if (
+                        response_open
+                        and response_allowed
+                        and completion_task is None
+                        and not completion_emitted
+                    ):
+                        # The far end says its turn is over while no quiescence
+                        # timer is running (e.g. the reply's last chunk never
+                        # crossed the audible threshold). Without arming here,
+                        # that turn would never close locally and the
+                        # half-duplex gate would hold the microphone forever.
+                        _arm_completion()
                     continue
 
                 if method == "thread/realtime/started":
