@@ -18,7 +18,7 @@ each other:
 
 ```
 t=0.45 s  flash:  "Schaue ich nach."
-t=0.90 s  brain:  "Berlin."
+t=0.90 s  brain:  "Exampletown."
 ```
 
 The user perception is "Jarvis just said two things in a row" — the

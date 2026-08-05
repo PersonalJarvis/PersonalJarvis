@@ -4,7 +4,7 @@ slug: adr-021-web-search
 diataxis: adr
 status: active
 date: 2026-05-27
-owner: sam
+owner: maintainers
 phase: skills
 audience: developer
 y_statement: >

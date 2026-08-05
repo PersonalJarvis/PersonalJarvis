@@ -59,7 +59,7 @@ Say **"Hey Jarvis"** as the wake word **before every turn**. Note briefly after 
 | # | You say | Expectation | Alex's note: perceived | Subprocess? | Tone |
 |---|---|---|---|---|---|
 | 6 | "Lies die Datei jarvis.toml und sag mir was drin steht." ("Read the file jarvis.toml and tell me what's in it.") | Spawn → Jarvis-Agent reads → short summary, **no tool JSON in the voice output**. | _____ | _____ | _____ | <!-- i18n-allow: voice examples -->
-| 7 | "Such im Web nach dem aktuellen Wetter in Berlin." ("Search the web for the current weather in Berlin.") | Spawn → Jarvis-Agent → weather info. | _____ | _____ | _____ | <!-- i18n-allow: voice examples -->
+| 7 | "Such im Web nach dem aktuellen Wetter in Exampletown." ("Search the web for the current weather in Exampletown.") | Spawn → Jarvis-Agent → weather info. | _____ | _____ | _____ | <!-- i18n-allow: voice examples -->
 | 8 | "Mach einen Screenshot und sag mir was du siehst." ("Take a screenshot and tell me what you see.") | Spawn → Computer-Use → description. | _____ | _____ | _____ | <!-- i18n-allow: voice examples -->
 
 ### Block C — 2 bad-news turns (provoke errors — expectation: no cushioning, no "Es tut mir leid, aber" ("I'm sorry, but"))

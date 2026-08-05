@@ -5,7 +5,7 @@ missed normal-volume utterances inconsistently, and — user report mid-task —
 also ACTIVATED without the wake phrase being spoken. All findings below are
 measured with `scripts/wake_bench.py` against real captured audio
 (`data/wake_debug/`, 1.8 s / 16 kHz production windows; positives = windows
-whose capture transcript contained prefix+core, e.g. "Hey Nico"; negative
+whose capture transcript contained prefix+core, e.g. "Hey Nova"; negative
 classes: bare core word mid-sentence, ambient speech, quiet noise, silence).
 
 ## Root causes (all live-log/bench confirmed)
@@ -26,7 +26,7 @@ classes: bare core word mid-sentence, ambient speech, quiet noise, silence).
   - (a) Core-only matching (deliberate 2026-06-29 trade-off, now REVERSED by
     explicit user instruction): the bare core word mid-sentence activated —
     **71.7 % false-accept on real bare-core windows** ("1 Fable Pro",
-    "Nico, mein Barsch.").
+    "Nova, mein Barsch.").
   - (b) Phrase-bias hallucination on noise: quantified below (bias on/off ×
     quiet-noise negatives).
 

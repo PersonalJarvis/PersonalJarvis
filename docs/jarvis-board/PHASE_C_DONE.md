@@ -77,26 +77,26 @@ httpx.request("GET", "http://localhost:8765/api/v1/me",
 Output:
 
 ```
-pubkey=a050f7fdf922fc5f00d643f547bc02bcc216abf5c8b26341697459f64041989d
+pubkey=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 REGISTER -> 200 :: {
-  "pubkey": "a050f7fdf922fc5f00d643f547bc02bcc216abf5c8b26341697459f64041989d",
+  "pubkey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "display_name": "PhaseC-Smoke",
-  "created_at": "2026-04-25T09:05:14.584974"
+  "created_at": "2026-01-01T12:00:00.000000"
 }
 
 SYNC -> 200 :: {
   "accepted": true,
   "daily_stats_count": 1,
   "achievements_count": 1,
-  "received_at": "2026-04-25T09:05:15.040344Z"
+  "received_at": "2026-01-01T12:00:01.000000Z"
 }
 
 ME -> 200 :: {
-  "pubkey": "a050f7fdf922fc5f00d643f547bc02bcc216abf5c8b26341697459f64041989d",
+  "pubkey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "display_name": "PhaseC-Smoke",
-  "created_at": "2026-04-25T09:05:14.584974",
-  "last_sync_at": "2026-04-25T09:05:15.040344",
+  "created_at": "2026-01-01T12:00:00.000000",
+  "last_sync_at": "2026-01-01T12:00:01.000000",
   "push_count": 1
 }
 ```
@@ -104,10 +104,10 @@ ME -> 200 :: {
 Container log of the roundtrip:
 
 ```
-INFO: 172.21.0.1:53972 - "POST /api/v1/identity/register HTTP/1.1" 200 OK
-INFO: 172.21.0.1:56842 - "POST /api/v1/identity/register HTTP/1.1" 200 OK
-INFO: 172.21.0.1:56854 - "POST /api/v1/sync             HTTP/1.1" 200 OK
-INFO: 172.21.0.1:56858 - "GET  /api/v1/me               HTTP/1.1" 200 OK
+INFO: 192.0.2.1:51001 - "POST /api/v1/identity/register HTTP/1.1" 200 OK
+INFO: 192.0.2.1:51002 - "POST /api/v1/identity/register HTTP/1.1" 200 OK
+INFO: 192.0.2.1:51003 - "POST /api/v1/sync             HTTP/1.1" 200 OK
+INFO: 192.0.2.1:51004 - "GET  /api/v1/me               HTTP/1.1" 200 OK
 ```
 
 ---

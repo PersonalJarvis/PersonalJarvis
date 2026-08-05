@@ -303,7 +303,7 @@ def test_upsert_existing_emits_updated(tmp_path, seen):
 
 def test_upsert_new_emits_created(tmp_path, seen):
     store = ContactStore(base_dir=tmp_path)
-    store.upsert(name="Laura", email="laura@example.com")
+    store.upsert(name="ExampleContact", email="examplecontact@example.com")
     assert seen[-1][0] == "created"
 
 
@@ -449,13 +449,13 @@ def test_managed_block_excludes_pii(tmp_path):
         tmp_path,
         emails=["christoph@example.com"],
         phones=["+49 151 2345678"],
-        address={"street": "Musterweg 1", "city": "Berlin"},
+        address={"street": "Musterweg 1", "city": "Exampletown"},
     )
     page = render_person_page(contact, existing_text=None)
     assert "christoph@example.com" not in page
     assert "2345678" not in page
     assert "Musterweg" not in page
-    assert "Berlin" not in page
+    assert "Exampletown" not in page
 
 
 def test_fresh_page_has_person_frontmatter(tmp_path):
@@ -706,7 +706,7 @@ async def test_sync_unknown_slug_is_noop(env):
 
 async def test_sync_twice_second_is_noop(env):
     vault, store, mirror = env
-    contact = store.put(name="Laura")
+    contact = store.put(name="ExampleContact")
     assert await mirror.sync(contact.slug) is True
     assert await mirror.sync(contact.slug) is False  # block unchanged → no write
 
@@ -746,7 +746,7 @@ async def test_archive_missing_page_is_noop(env):
 async def test_reconcile_heals_missing_and_is_idempotent(env):
     vault, store, mirror = env
     store.put(name="Christoph Meyer")
-    store.put(name="Laura")
+    store.put(name="ExampleContact")
     assert await mirror.reconcile_all() == 2
     assert await mirror.reconcile_all() == 0
 
@@ -755,15 +755,15 @@ async def test_on_contact_changed_routes_actions(env):
     vault, store, mirror = env
     from jarvis.core.events import ContactChanged
 
-    contact = store.put(name="Laura")
+    contact = store.put(name="ExampleContact")
     await mirror.on_contact_changed(
-        ContactChanged(action="created", slug=contact.slug, name="Laura")
+        ContactChanged(action="created", slug=contact.slug, name="ExampleContact")
     )
     page = vault / "people" / f"{contact.slug}.md"
     assert page.exists()
     store.delete(contact.slug)
     await mirror.on_contact_changed(
-        ContactChanged(action="deleted", slug=contact.slug, name="Laura")
+        ContactChanged(action="deleted", slug=contact.slug, name="ExampleContact")
     )
     assert not page.exists()
 
@@ -784,7 +784,7 @@ async def test_skip_due_to_recent_edit_retries_once(tmp_path):
         store=store,
         retry_delay_s=0.3,
     )
-    contact = store.put(name="Laura", note="v1")
+    contact = store.put(name="ExampleContact", note="v1")
     assert await mirror.sync(contact.slug) is True
     store.update(contact.slug, note="v2")
     assert await mirror.sync(contact.slug) is True  # skipped → waits → retried
@@ -1034,7 +1034,7 @@ async def test_cleanup_detaches_everything(tmp_path):
         repo=MarkdownPageRepository(), store=store,
     )
     cleanup()
-    contact = store.put(name="Laura")
+    contact = store.put(name="ExampleContact")
     await asyncio.sleep(0.1)
     assert not (vault / "people" / f"{contact.slug}.md").exists()
 ```

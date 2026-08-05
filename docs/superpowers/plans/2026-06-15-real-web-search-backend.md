@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11, `httpx` (already used), `ddgs` (maintained successor to `duckduckgo_search`, pure-Python/cross-platform, key-free), `google-genai` (already used for Gemini), `pytest` with `httpx.MockTransport` and dependency-injected fakes (no `unittest.mock`, per repo convention).
 
-**Root cause (proven 2026-06-15):** Flight-recorder forensic of session `95a404b4…` shows the "top ten songs" turn fired `search_web` twice against `https://api.duckduckgo.com/`; both returned `HTTP 202`/empty (the documented "DDG has no data for this query" signal — see the weather note in `search_web.py:5-12`), so Gemini honestly reported it found nothing. The bug is the backend's capability, not the brain provider — it fails identically on Claude/Grok/OpenAI.
+**Root cause (proven 2026-06-15):** Flight-recorder forensic of session `10000114…` shows the "top ten songs" turn fired `search_web` twice against `https://api.duckduckgo.com/`; both returned `HTTP 202`/empty (the documented "DDG has no data for this query" signal — see the weather note in `search_web.py:5-12`), so Gemini honestly reported it found nothing. The bug is the backend's capability, not the brain provider — it fails identically on Claude/Grok/OpenAI.
 
 **Non-negotiable constraints (from CLAUDE.md / CLOUD.md):**
 - Base install must still boot and search on a fresh `python:3.11-slim` Linux container with no API key → the default backend must be key-free; `ddgs` import must be lazy with graceful fallback.

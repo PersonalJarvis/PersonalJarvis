@@ -6,7 +6,7 @@ progress: "LAYER A FIXED (2026-06-07, TDD, tests green) — Layers B/C/D still o
 fix_commit: uncommitted working tree (restart required for live voice)
 scope: Voice failure announcement · Mission-Manager outcome aggregation · Computer-Use force-spawn
 investigators: 2 parallel sub-agents (runtime forensics + static code-trace) + main-thread verification
-incident_mission_id: 019ea1da-4552-7ec4-8a88-ffba1773521e
+incident_mission_id: 019f101f-0001-7000-8000-00000000101f
 ---
 
 # Phantom "Der Worker ist abgebrochen" — Deep-Dive
@@ -89,7 +89,7 @@ included) + live log `data/jarvis_desktop.log`. Both timestamp-consistent.
 
 | Field | Value |
 |---|---|
-| `mission_id` | `019ea1da-4552-7ec4-8a88-ffba1773521e` |
+| `mission_id` | `019f101f-0001-7000-8000-00000000101f` |
 | Dispatched | 2026-06-07 **13:31:36.914** by `source_actor = hauptjarvis` (voice), `language=de` |
 | Originating utterance | ContinuationBuffer join of two fragments: **"Kannst du für mich bitte meinen… Man nen Explorer öffnen mit Computer-User."** |
 | Spawn trigger | `Force-Spawn OpenClaw` (log line 30558; log format since renamed to `Force-Spawn Jarvis-Agent`) — action verb *"öffnen"* + "Computer-User" marker |
@@ -374,7 +374,7 @@ Only the wall-clock-timeout path was relabelled.
 - Recovery (ruled out): `jarvis/missions/recovery.py:166-171`
 - Force-spawn: `jarvis/brain/manager.py` (`_should_force_spawn`)
 - Bootstrap wiring: `jarvis/missions/init.py` (listener/announcer mode resolve)
-- Runtime evidence: `data/missions.db` (mission `019ea1da…`, event seqs
+- Runtime evidence: `data/missions.db` (mission `019f101f…`, event seqs
   3734/3738/3745/3752/3753/3754/3755), `data/jarvis_desktop.log` (lines
   ~30476–31220, 2026-06-07 13:31:26 → 13:49:54)
 - Related memory: *Computer-Use "das dauert zu lange" = Voice-Stall-Guard köpft

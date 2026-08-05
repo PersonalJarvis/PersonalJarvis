@@ -243,9 +243,9 @@ Commit: `feat(wiki): consolidator quality counters in DEFAULT_COUNTERS`.
 
 Scripted `FakeBrain` (separate canned responses for extractor + consolidator calls), tmp vault with profile seed, real journal/extractor/consolidator/curator/writer stack:
 
-1. Turn 1 "My friend Lena moved to Hamburg and works as a veterinarian." → extractor facts → consolidator ADD → `entities/lena.md` exists, valid schema, linked from the profile's Relationships section (consolidator UPDATE on the profile in the same batch).
-2. Turn 2 "Lena got a new job at the animal clinic in Altona." → UPDATE in place: `entities/lena.md` still ONE file, old fact retained, new fact added, no `lena-2.md`.
-3. Turn 3 "Lena actually moved to Berlin, not Hamburg." → INVALIDATE/UPDATE: the superseded statement carries `valid_until` + `superseded-by` (or the body is corrected in place with the old fact marked superseded) — nothing deleted.
+1. Turn 1 "My friend ExampleFriend moved to Exampleville and works as a specialist." → extractor facts → consolidator ADD → `entities/examplefriend.md` exists, valid schema, linked from the profile's Relationships section (consolidator UPDATE on the profile in the same batch).
+2. Turn 2 "ExampleFriend got a new job at the example studio in Example District." → UPDATE in place: `entities/examplefriend.md` still ONE file, old fact retained, new fact added, no `examplefriend-2.md`.
+3. Turn 3 "ExampleFriend actually moved to Exampletown, not Exampleville." → INVALIDATE/UPDATE: the superseded statement carries `valid_until` + `superseded-by` (or the body is corrected in place with the old fact marked superseded) — nothing deleted.
 4. A turn containing `api_key = ABCD1234EFGH5678IJKL` → fact may journal, but the write is blocked (`blocked_pii`), journal row marked `rejected`, page absent.
 5. Zero dangling links across the produced pages (`dangling_link_targets` == `[]` for every written page); `memory.md` exists and its "Live status" reflects the runs; telemetry counters advanced.
 

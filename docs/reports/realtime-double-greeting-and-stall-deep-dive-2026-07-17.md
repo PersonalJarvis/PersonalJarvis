@@ -8,17 +8,17 @@ provider `gemini-live`, model `gemini-3.1-flash-live-preview`, tool mode `delega
 
 ## TL;DR
 
-The user heard, in turn 2: *"Servas Ruben,"* → **~10 s of dead silence** → the full answer **again
-starting with "Servas Ruben,"**. <!-- i18n-allow: forensic quote of the spoken product-surface output under analysis -->
+The user heard, in turn 2: *"Servas Alex,"* → **~10 s of dead silence** → the full answer **again
+starting with "Servas Alex,"**. <!-- i18n-allow: forensic quote of the spoken product-surface output under analysis -->
 That perceived "aborted, then repeated itself" behavior is the interaction of **two independent,
 fully verified defects**:
 
 1. **Doubled greeting (repetition bug).** The delegate brain's reply already opens with a
    salutation, and the live model prepends its *own* salutation when reading the injected
    `spoken_reply` back. Proof: the stored `jarvis_text` is exactly 237 chars =
-   `"Servas Ruben,"` (13 chars, live model's own opener) + the delegate brain's reply
+   `"Servas Alex,"` (13 chars, live model's own opener) + the delegate brain's reply
    (exactly 224 chars per `BrainTurnCompleted.text_len`), which itself starts with
-   `"Servas Ruben, i hätt …"`. <!-- i18n-allow: forensic quote of the spoken product-surface output under analysis -->
+   `"Servas Alex, i hätt …"`. <!-- i18n-allow: forensic quote of the spoken product-surface output under analysis -->
    No layer de-duplicates salutations on this path.
 2. **Scrub-gate starvation (the 10 s pause).** `ScrubHoldGate` releases audio only against
    scrub-vetted transcript chars (coverage budget, 55 ms/char — BUG-069 design). Gemini Live's
@@ -45,7 +45,7 @@ forensic. Turn 1 of the same session shows the stall class is **not** delegate-s
 | 15:11:45.464 | Delegate brain reply ready: provider `gemini`, model `gemini-3.5-flash`, `text_len=224`, `finish_reason=STOP` | `BrainTurnCompleted` |
 | ~15:11:45.5 | Trusted result injected into the live session (`spoken_reply`) | code path, see below |
 | 15:11:46.061 | **First audio AND first transcript of the whole turn** (4 984 ms after commit) | LatencySpans |
-| ~15:11:46.2 | Gate releases ≲1 s of audio (budget from the first transcript delta(s)); user hears "Servas Ruben," — then the gate starves; hold clock starts (15:11:56.670 − 10 483 ms ≈ 46.19) | derived: scrub-gate hold arithmetic <!-- i18n-allow: forensic quote of the spoken product-surface output under analysis --> |
+| ~15:11:46.2 | Gate releases ≲1 s of audio (budget from the first transcript delta(s)); user hears "Servas Alex," — then the gate starves; hold clock starts (15:11:56.670 − 10 483 ms ≈ 46.19) | derived: scrub-gate hold arithmetic <!-- i18n-allow: forensic quote of the spoken product-surface output under analysis --> |
 | 15:11:56.670 | Transcript catches up → backlog released after a **10 420 ms scrub-gate hold**; playback resumes with the delegate reply read 1:1, re-greeting included | desktop log |
 | 15:11:56.89 | Next chunk starts buffering again (second transcription stall) while the released backlog is still playing | derived (15:12:11.375 − 14 485 ms) |
 | 15:12:11.375 | `finalize()` releases a 120 ms tail, 12 276 ms beyond the coverage estimate → logged as provider transcription stall | desktop log |
@@ -66,7 +66,7 @@ Two layers each add a salutation, and nothing removes either one:
 
 1. **The delegate brain greets mid-conversation.** `_run_deterministic_delegate`
    (`jarvis/realtime/session.py:3403`) dispatches the router brain; the persona-shaped reply opens
-   with `"Servas Ruben,"` even though the conversation already exchanged greetings in turn 1. <!-- i18n-allow: forensic quote of the spoken product-surface output under analysis -->
+   with `"Servas Alex,"` even though the conversation already exchanged greetings in turn 1. <!-- i18n-allow: forensic quote of the spoken product-surface output under analysis -->
    The delegate prompt includes recent history (`_DELEGATE_HISTORY_MAX_MESSAGES`), but nothing
    instructs or enforces "no fresh salutation mid-conversation".
 2. **The live model greets again while reading back.** Delivery injects the reply either as a
@@ -96,7 +96,7 @@ therefore inherits the provider's transcription pacing:
   **output transcription** stalled twice: ~10.4 s (released 15:11:56.670) and ~14.5 s (released
   only by `finalize()` at 15:12:11.375, 12 276 ms beyond the coverage estimate).
 - After the first transcript delta(s) — the greeting — the budget covered ≲1 s of audio. Then
-  starvation: the user got "Servas Ruben," and silence, while the full answer sat vetted-pending
+  starvation: the user got "Servas Alex," and silence, while the full answer sat vetted-pending
   in the buffer. <!-- i18n-allow: forensic quote of the spoken product-surface output under analysis -->
 - Same class, same session, native turn: turn 1 stalled 5 672 ms mid-reply (15:11:29.246). The
   2026-07-17 smoothness forensic counted ~20 incidents in 2 days, worst 22.5 s.

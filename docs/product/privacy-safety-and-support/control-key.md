@@ -72,7 +72,7 @@ Key exists.
 ## Find and Copy the Key
 
 The key has a dedicated tab named after your assistant. For example, a wake
-word named Nico produces the **Nico Key** tab. The neutral first-run label is
+word named Nova produces the **Nova Key** tab. The neutral first-run label is
 **Assistant Key**.
 
 1. Open the installed Personal Jarvis app or an authenticated browser.

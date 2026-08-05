@@ -57,9 +57,9 @@ finding in this audit is smaller than either.
 Neither is a code bug; both are live and both produce the reported symptoms.
 
 **D-1 — an orphaned custom model disables the fastest engine.**
-`[wake].custom_model_path` points at `hey_nico.onnx` while `[wake].phrase` is
-`"Hey Ruben"`. Every boot logs *"Custom wake model 'hey_nico.onnx' belongs to a
-different phrase — resolving 'Hey Ruben' through the normal engine chain."* The
+`[wake].custom_model_path` points at `hey_nova.onnx` while `[wake].phrase` is
+`"Hey Alex"`. Every boot logs *"Custom wake model 'hey_nova.onnx' belongs to a
+different phrase — resolving 'Hey Alex' through the normal engine chain."* The
 `custom_onnx` path — the only one AP-25 names as capable of being both instant
 and ghost-free — is therefore never used. Fix: point it at a model trained for
 the actual phrase, or clear the key.
@@ -219,8 +219,8 @@ The shape gate's localisation window extends 0.3 s past the phrase, so any
 command word starting within 0.3 s is counted into the candidate, pushing the
 token count over the phrase's own and **disabling the shape path** — the only
 confirm route that works for an out-of-vocabulary name. Both confirm routes then
-fail at once. The natural way people talk — *"Hey Ruben, wie ist das Wetter"* <!-- i18n-allow: the German wake-plus-command utterance is the recognition input under test (closed-list reason 3/4) -->
-— is therefore materially less likely to fire than an isolated *"Hey Ruben."* +
+fail at once. The natural way people talk — *"Hey Alex, wie ist das Wetter"* <!-- i18n-allow: the German wake-plus-command utterance is the recognition input under test (closed-list reason 3/4) -->
+— is therefore materially less likely to fire than an isolated *"Hey Alex."* +
 pause. This is the highest-value recall finding in the audit and it matches the
 maintainer's usage directly.
 
@@ -340,7 +340,7 @@ Flipping `_shape_competition_ok` to fail-closed breaks
 `test_a_broken_competition_pass_fails_open`, whose docstring reads *"The extra
 check must never make the detector deaf"*. Routing the spelling/sibling rescues
 through the acoustic competition costs a **measured 13 %** of genuine "Hey
-Ruben" calls (`vosk_kws_provider.py:247-252`) — and the very tokens cited as
+Alex" calls (`vosk_kws_provider.py:247-252`) — and the very tokens cited as
 proof of looseness (`"herum"`, `"erhoben"`) are recorded in the test file as real
 free-decode output of *genuine* calls. The free ear spells the phrase in only
 28 % of genuine calls; shape lifted verify pass-rate 55 % → 74 %. Every such
@@ -467,7 +467,7 @@ xfail** plus an in-code note so the defect stays executable and visible.
   half shipped, the `audio_age_ms` half and the triple-floor job did not.
 
 Measured but DISMISSED: the wake language is pinned to `en` while the phrase is
-German — `vosk_model_supports_phrase` reports "Hey Ruben" IN VOCABULARY for BOTH
+German — `vosk_model_supports_phrase` reports "Hey Alex" IN VOCABULARY for BOTH
 installed models, so the pin is harmless here. Do not "fix" it.
 
 ## 8. Sequenced plan
@@ -475,7 +475,7 @@ installed models, so the pin is harmless here. Do not "fix" it.
 Each wave is independently shippable and leaves the tree green.
 
 **Wave 0 — stop the moving target (minutes, config only).**
-D-1 orphaned `hey_nico.onnx`; D-2 pin the engine explicitly. Also make `auto`
+D-1 orphaned `hey_nova.onnx`; D-2 pin the engine explicitly. Also make `auto`
 log its reason and prefer stability.
 
 **Wave 1 — the measured wins (largest felt improvement).**

@@ -52,7 +52,7 @@ spike fails), commercial Porcupine (closed source, per-user account).
 ## Spike gate (before any pipeline change)
 
 Measure the candidate model CPU-only against the real captured fixtures in
-`data/wake_debug/` (positives: Hey Nova / Hey Nico / Hey Alex / Hey Luca;
+`data/wake_debug/` (positives: Hey Nova / Hey Nova / Hey Alex / Hey Luca;
 negatives: bare-core, ambient speech, quiet noise, silence — the wake_bench
 fixture classes):
 

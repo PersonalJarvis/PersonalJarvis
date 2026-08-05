@@ -3,7 +3,7 @@ title: "ADR-0009: Self-Healing Worker-Critic"
 slug: adr-0009-self-healing-worker-critic
 diataxis: adr
 status: active
-owner: sam
+owner: maintainers
 last_reviewed: 2026-07-19
 phase: 6
 audience: developer

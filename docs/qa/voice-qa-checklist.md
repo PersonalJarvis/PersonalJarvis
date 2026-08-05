@@ -51,7 +51,7 @@ bug history says is most likely to quietly come back.
 
 | # | Say this | Pass criteria | Probes / red flag | Result |
 |---|----------|---------------|-------------------|--------|
-| C1 | "Wie ist das Wetter in Berlin?" | Real spoken weather | DDG-can't-do-weather refusal | |
+| C1 | "Wie ist das Wetter in Exampletown?" | Real spoken weather | DDG-can't-do-weather refusal | |
 | C2 | "What's the weather in London?" | Spoken, in English | Weather + English combined | |
 | C3 | "Was hältst du von exp.com?" | Real spoken opinion, **not** "Aktion erkannt, konnte sie nicht ausführen" | Leaked `search_web` → dropped result | |
 | C4 | "Suche mal, wer aktuell Bundeskanzler ist." | Spoken answer from search | General web-search path | |
@@ -209,8 +209,8 @@ and confirm the fallback is English:
 
 | Turn | You say | Required reply | Fail looks like |
 |------|---------|----------------|-----------------|
-| 1 | "Wie ist das Wetter in Hamburg?" | Real spoken weather, German | Refusal ("kann ich nicht") |
-| 2 | "What's the weather in Hamburg?" | Real spoken weather, English | Refusal or German reply |
+| 1 | "Wie ist das Wetter in Exampleville?" | Real spoken weather, German | Refusal ("kann ich nicht") |
+| 2 | "What's the weather in Exampleville?" | Real spoken weather, English | Refusal or German reply |
 
 ---
 

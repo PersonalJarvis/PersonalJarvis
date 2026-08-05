@@ -725,7 +725,7 @@ def test_snapshot_starts_unknown_but_valid():
 
 def test_record_write_success_and_failure_round_trip():
     h = WikiHealth()
-    h.record_write(True, pages=["entities/joy.md"], error=None, source="tool")
+    h.record_write(True, pages=["entities/examplerelative.md"], error=None, source="tool")
     assert h.snapshot()["last_write"]["ok"] is True
     h.record_write(False, pages=[], error="all providers failed", source="tool")
     last = h.snapshot()["last_write"]
@@ -954,8 +954,8 @@ def test_oldest_pending_ms_none_when_empty(tmp_path):
 def test_oldest_pending_ms_returns_first_pending(tmp_path):
     now = [1_000_000]
     j = _mk_journal(tmp_path, now)
-    j.append(source_label="test", turn_hash="h1", fact="Fact one about Joy.",
-             kind="fact", subjects=["joy"])
+    j.append(source_label="test", turn_hash="h1", fact="Fact one about ExampleRelative.",
+             kind="fact", subjects=["examplerelative"])
     now[0] += 60_000
     j.append(source_label="test", turn_hash="h2", fact="Fact two about Rome.",
              kind="fact", subjects=["rome"])
@@ -1103,7 +1103,7 @@ def test_anaphoric_commands_match_with_no_inline_content(text):
 
 
 @pytest.mark.parametrize(("text", "expected_fragment"), [
-    ("Schreib ins Wiki, dass Joys Geburtstag am 14. August ist",  # i18n-allow
+    ("Schreib ins Wiki, dass ExampleRelative am Beispieldatum einen synthetischen Meilenstein hat",  # i18n-allow
      "geburtstag"),
     ("Merk dir im Wiki: die VPS-IP ist jetzt statisch",           # i18n-allow
      "vps-ip"),
@@ -1120,7 +1120,7 @@ def test_inline_content_is_extracted(text, expected_fragment):
 
 
 @pytest.mark.parametrize("text", [
-    "Was steht im Wiki über Joy?",           # recall, not write  # i18n-allow
+    "Was steht im Wiki über ExampleRelative?",           # recall, not write  # i18n-allow
     "Wie funktioniert ein Wiki?",            # general question   # i18n-allow
     "what's in the wiki about the server?",
     "Merk dir das",                          # no wiki object     # i18n-allow
@@ -1368,11 +1368,11 @@ async def test_explicit_command_ingests_and_announces_after_write(manager_factor
     """'Schreib ins Wiki, dass X' → tool called with X; the completion
     announcement fires only AFTER the executor returned success."""  # i18n-allow
     tool = FakeWikiIngestTool(
-        ToolResult(success=True, output="Wiki ingest done:\n- applied: 1\nPages touched:\n  - joy.md")
+        ToolResult(success=True, output="Wiki ingest done:\n- applied: 1\nPages touched:\n  - examplerelative.md")
     )
     mgr, executor, bus = manager_factory(tools={"wiki-ingest": tool})
     reply = await mgr._run_wiki_ingest_fast_path(
-        "Schreib ins Wiki, dass Joys Geburtstag am 14. August ist"  # i18n-allow
+        "Schreib ins Wiki, dass ExampleRelative am Beispieldatum einen synthetischen Meilenstein hat"  # i18n-allow
     )
     assert reply is not None                     # immediate progress ack
     await asyncio.sleep(0.05)                    # let the background task run
@@ -1812,7 +1812,7 @@ async def test_explicit_command_produces_a_real_file(tmp_vault_curator):
     fake proposing LLM — copy the construction from
     test_curator_concurrent_edit.py and swap in the deterministic fake."""
     curator, vault_root = tmp_vault_curator
-    utterance = "Schreib ins Wiki, dass Joys Geburtstag am 14. August ist"  # i18n-allow
+    utterance = "Schreib ins Wiki, dass ExampleRelative am Beispieldatum einen synthetischen Meilenstein hat"  # i18n-allow
     m = match_wiki_intent(utterance)
     assert m is not None and m.content is not None
 

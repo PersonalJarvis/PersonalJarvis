@@ -2,7 +2,7 @@
 
 Goal: a custom wake word must trigger **first try, instantly**, like "Hey Google"
 on a Pixel — on Windows, Linux and macOS. Reported symptom: a clear, loud
-"Hey Nico" needed 2-3 repetitions before anything happened.
+"Hey Nova" needed 2-3 repetitions before anything happened.
 
 ## Root cause — from the live logs, not a guess
 
@@ -12,10 +12,10 @@ on a Pixel — on Windows, Linux and macOS. Reported symptom: a clear, loud
   (-10 to -22 dBFS). The earlier "must shout" volume fix was solving the wrong
   thing for this setup.
 - **The wake word IS matched when transcribed correctly** — `rolling-whisper:
-  WAKE matched 'nico' in 'Hey Nico'`. The matcher is not the problem.
+  WAKE matched 'nova' in 'Hey Nova'`. The matcher is not the problem.
 - **The transcription model wedges repeatedly.** Dozens of `5 consecutive
   transcribe failures -> rebuilding the wedged wake model` lines across the day.
-  Each wedge leaves the wake **totally deaf for tens of seconds**. Say "Hey Nico"
+  Each wedge leaves the wake **totally deaf for tens of seconds**. Say "Hey Nova"
   during a wedge and nothing happens; a few seconds later it is alive again —
   exactly "say it 2-3 times".
 - **The wake runs a weak `base` model on the CPU** while the RTX 5070 Ti sits
@@ -44,7 +44,7 @@ not make it reliable, which is the signal to change the approach, not tune again
    CPU-only host the deaf window is as short as possible.
 3. **Sound-folding matcher** — `jarvis/speech/wake_constants.py` +
    `wake_phrase.py`. Fold sound-equivalent spellings (`c`/`k`, `ck`, `ph`/`f`,
-   `y`/`i`, doubled letters) before the fuzzy compare, so `Nico`/`Niko`/`Nicko`/
+   `y`/`i`, doubled letters) before the fuzzy compare, so `Nova`/`Nova`/`Nicko`/
    `Nikko` all match without loosening the ratio (clearly different words still
    do not match — no extra false wakes). Pure Python; **byte-identical on Windows
    and Linux** (verified).
@@ -89,7 +89,7 @@ production wake word uses.
 
 The code is committed but the running app must **restart** to pick it up
 (Settings → restart, or `POST /api/settings/restart-app`). After restart, the
-GPU turbo model hot-swaps in a few seconds after boot; then say "Hey Nico" once.
+GPU turbo model hot-swaps in a few seconds after boot; then say "Hey Nova" once.
 If a custom voice ever over-triggers, set `[stt].wake_high_accuracy = false`.
 
 ## The transcript-content trap (2026-07-02, BUG-037 / AP-27)
@@ -214,7 +214,7 @@ voice, per phrase — what the FREE ear produces for a GENUINE call:
 
 ```
 "Hey Ben"    (de voice) -> "have you been"    3 tokens, every conf 1.00
-"Hey Ruben"  (de voice) -> "have you been"    3 tokens, every conf 1.00
+"Hey Alex"  (de voice) -> "have you been"    3 tokens, every conf 1.00
 "Hey Atlas"  (de voice) -> "have you at last" 4 tokens, every conf 1.00
 "Hey Claude" (de voice) -> "harry claude"     spelled -> fired
 "Hey Ben"    (us voice) -> "hey ben"          spelled -> fired

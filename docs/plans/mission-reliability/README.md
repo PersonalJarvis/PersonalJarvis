@@ -47,7 +47,7 @@ Final review (all waves): 0 BLOCKER, 3 MAJOR (all fixed: empty-`task_outcomes` v
 
 > **The bug reopened the moment the user switched the Heavy-Worker provider.** Waves 1–3.1 were all forensically measured while `[brain.sub_jarvis].provider = claude-api`. The instant the user set the Jarvis-Agent provider to anything else (live config on 06-08: `grok`, with a `gemini` fallback), **every single mission failed in ~3 s** — a brand-new root cause the earlier waves never exercised.
 
-**Forensic ground truth (`data/missions.db`, 06-08):** missions `019ea82e-3fac`, `019ea82e-8cc5`, `019ea830-072f` each: `WorkerSpawned pid=0` → `WorkerKilled reason=user` (~0.3 s) → `MissionFailed reason=task_error partial_artifacts=[]` (~3 s total, `cost_usd=0.0`). The verbatim worker error in `data/jarvis_desktop.log`:
+**Forensic ground truth (`data/missions.db`, 06-08):** missions `019f1020-3fac`, `019f1020-8cc5`, `019f1021-072f` each: `WorkerSpawned pid=0` → `WorkerKilled reason=user` (~0.3 s) → `MissionFailed reason=task_error partial_artifacts=[]` (~3 s total, `cost_usd=0.0`). The verbatim worker error in `data/jarvis_desktop.log`:
 
 ```
 ClaudeDirectWorker: primary provider is grok, expected claude-api
@@ -83,8 +83,8 @@ This honours the dedicated workers exactly (`claude-api` → ClaudeDirectWorker,
 > After the grok fix went live (confirmed: the Wave-4 warning string appears in `data/jarvis_desktop.log` at 20:58 / 21:11 — **no restore-trap**), the user switched the Jarvis-Agent to **Codex** and missions failed again — now running for **minutes**, not 3 s. Different root cause, surfaced *because* the worker now runs.
 
 **Forensic ground truth (`data/missions.db` + log, 06-08):**
-- Mission `019ea8db` (codex worker, 153 s, 3 iters → `task_error`): the codex subprocess emitted an error event whose `message` was a **dict** `{'message': 'Failed to refresh token. … Please log in again.'}`. `CodexDirectWorker` (`codex_direct_worker.py:423`) fed it into `ClaudeResult(result=…)` (a `str` field) → **Pydantic `ValidationError` → worker crash → opaque `task_error`**, hiding the real cause.
-- Mission `019ea8a5` (claude worker via the grok fix, **7.8 KB real diff**) → `critic_unavailable`: the critic ran via **codex-direct** (config had drifted to codex by critic time) and the dead codex token meant no schema-valid JSON twice.
+- Mission `019f1023` (codex worker, 153 s, 3 iters → `task_error`): the codex subprocess emitted an error event whose `message` was a **dict** `{'message': 'Failed to refresh token. … Please log in again.'}`. `CodexDirectWorker` (`codex_direct_worker.py:423`) fed it into `ClaudeResult(result=…)` (a `str` field) → **Pydantic `ValidationError` → worker crash → opaque `task_error`**, hiding the real cause.
+- Mission `019f1022` (claude worker via the grok fix, **7.8 KB real diff**) → `critic_unavailable`: the critic ran via **codex-direct** (config had drifted to codex by critic time) and the dead codex token meant no schema-valid JSON twice.
 - `Pre-Boot-Key-Check: kein Key in ['codex'] -> Provider 'codex' deaktiviert` while `codex status: connected=True mode=chatgpt` — **`codex status` lies**: it checks token *presence*, not *validity* (same class as the Gmail-OAuth-placeholder bug).
 
 **Root cause:** the user's **Codex ChatGPT OAuth session is expired and cannot refresh** (`codex login` needed). On top of that operational fact sat two code defects: (a) the worker *crashed* on the structured error instead of surfacing it; (b) a dead codex login failed every codex mission with no fallback.

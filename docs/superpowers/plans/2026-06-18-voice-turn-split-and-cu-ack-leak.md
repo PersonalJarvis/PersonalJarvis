@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix two independent voice-session defects forensically traced to session `71f2d2de` (2026-06-18 12:56): (C) an internal English Computer-Use steering instruction leaking into the visible/spoken answer, and (A) one continuous spoken request being chopped into three separate turns.
+**Goal:** Fix two independent voice-session defects forensically traced to session `10000113` (2026-06-18 12:56): (C) an internal English Computer-Use steering instruction leaking into the visible/spoken answer, and (A) one continuous spoken request being chopped into three separate turns.
 
 **Architecture:** Three surgical, independently-testable fixes. Bug C wires the already-existing localized `cu_dispatch_ack` phrase and the already-existing `suppress_response` tool-loop contract onto `ComputerUseTool`. Bug A is fixed in two layers of defense-in-depth: the VAD arms its long-utterance patience autonomously (no longer depending on the STT probe surfacing a partial), and the ContinuationWindow freezes its grace deadline the moment the user resumes speaking (so a slow follow-up still recombines).
 
@@ -12,7 +12,7 @@
 
 ## Forensic root causes (the evidence this plan is built on)
 
-All claims below are proven from `data/sessions.db` (session `71f2d2de`), `data/jarvis_desktop.log` (lines 75430–75738), and the code as it stands in the working tree.
+All claims below are proven from `data/sessions.db` (session `10000113`), `data/jarvis_desktop.log` (lines 75430–75738), and the code as it stands in the working tree.
 
 ### Bug C — English steering instruction became a user-facing bubble
 - `jarvis/plugins/tool/computer_use_tool.py:150-157` returns, as the tool's `output`, the English instruction *"Desktop mission started in the background; … Reply with a brief acknowledgement only — do NOT claim the task is already done."* This is an internal instruction for the router, English by policy.
@@ -117,7 +117,7 @@ In `jarvis/plugins/tool/computer_use_tool.py`, in the `ComputerUseTool` class bo
     # THIS output verbatim as the final answer and skip the second brain
     # iteration, exactly like spawn_worker — otherwise the model sees the
     # internal English steering instruction below and echoes it as its own
-    # assistant text (live bug 2026-06-18, session 71f2d2de). tool_use_loop
+    # assistant text (live bug 2026-06-18, session 10000113). tool_use_loop
     # honours this flag at jarvis/brain/tool_use_loop.py:662-666 / 709-728.
     suppress_response: bool = True
 ```
@@ -159,7 +159,7 @@ git commit -m "fix(voice): computer_use suppresses response, speaks localized di
 
 ComputerUseTool lacked suppress_response, so its internal English steering
 instruction was fed into a second brain iteration and echoed verbatim as a
-user-facing bubble (session 71f2d2de). Set suppress_response=True and return
+user-facing bubble (session 10000113). Set suppress_response=True and return
 the existing localized cu_dispatch_ack phrase instead."
 ```
 
@@ -237,7 +237,7 @@ and store them in `__init__` (near the probe-frame fields, ~line 96-102):
         # ACTIVE speech has accumulated in the current utterance, the user is
         # clearly dictating a long request, not issuing a short command — grant
         # the wider silence window so a thinking pause is not cut. Fixes the
-        # session-71f2d2de split where the STT probe never surfaced a partial,
+        # session-10000113 split where the STT probe never surfaced a partial,
         # so the probe-driven extend_silence_window never armed. Resets per
         # utterance via the same _extra_silence_frames=0 at speech start.
         self._long_utterance_speech_frames = max(1, long_utterance_speech_ms // 32)
@@ -270,7 +270,7 @@ git add jarvis/audio/vad.py tests/unit/audio/test_vad_turn_taking.py
 git commit -m "fix(voice): VAD arms long-utterance patience from speech frames, not only the STT probe
 
 The 3000 ms patience only armed when the STT probe surfaced a live partial; in
-session 71f2d2de it never did, so a long request was cut at the first pause
+session 10000113 it never did, so a long request was cut at the first pause
 (2976 ms < the patience that never armed). Grant the wider window once enough
 active speech has accumulated — probe-independent, reset per utterance, short
 commands stay snappy."
@@ -344,7 +344,7 @@ In `jarvis/speech/continuation_window.py`, add this method after `mark_idle` (af
         Once the user is actually forming the follow-up, the clock must not keep
         running against them: a slow-to-finalize continuation would otherwise
         miss ``try_recombine`` even though it began well inside the grace
-        (live bug 2026-06-18, session 71f2d2de: ~3 s to formulate the next
+        (live bug 2026-06-18, session 10000113: ~3 s to formulate the next
         fragment > the 2.5 s grace, so it became a fresh turn). Re-enters the
         'in flight' state (deadline cleared) — but ONLY while the window is
         still armed and not already expired, so a genuinely late resume cannot
@@ -369,7 +369,7 @@ In `jarvis/speech/pipeline.py`, locate the handler registered as the VAD `on_spe
 ```python
         # A resumed utterance freezes the continuation grace so a slow follow-up
         # still recombines with the in-flight/just-finished turn (session
-        # 71f2d2de). Fail-open: continuation hygiene must never crash the turn.
+        # 10000113). Fail-open: continuation hygiene must never crash the turn.
         try:
             win = getattr(self, "_continuation_window", None)
             if win is not None:
@@ -393,7 +393,7 @@ git commit -m "fix(voice): freeze continuation grace when the user resumes speak
 
 The 2500 ms recombine grace ran against the user's thinking pause and was
 checked only at follow-up finalization, so a ~3 s reformulation (session
-71f2d2de) expired the window and split the sentence. note_speech_resumed()
+10000113) expired the window and split the sentence. note_speech_resumed()
 freezes the deadline on speech start while still armed and unexpired."
 ```
 

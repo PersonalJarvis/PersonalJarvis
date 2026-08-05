@@ -26,7 +26,7 @@ Queried `data/missions.db` directly. Findings:
 - Dispatch source split:
   - `019ecc70/74/78` → `source_actor=hauptjarvis` (the **brain force-spawned** the
     recap as a worker mission).
-  - `019ed04e/051` → `source_actor=ui`, `parent_mission_id` set (the **"Restart"
+  - `019f103c/051` → `source_actor=ui`, `parent_mission_id` set (the **"Restart"
     button re-ran** a failed recap-mission, re-dispatching the doomed prompt).
 - A genuine **comparison control**: the last working mission (16:45, "write a
   market analysis research report") had the **same** `cli: codex, model: '', pid: 0,

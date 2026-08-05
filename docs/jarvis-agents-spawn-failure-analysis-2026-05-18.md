@@ -13,8 +13,8 @@
 Evidence from the last two missions:
 
 ```
-mission_019e3c51-d4f4 (20:21)
-mission_019e3c52-0acd (20:21)
+mission_019f100c-d4f4 (20:21)
+mission_019f100d-0001 (20:21)
 → stream.jsonl terminal frame:
   {"type":"error","status":400,"error":{
     "type":"invalid_request_error",
@@ -30,8 +30,8 @@ Read-first, then hypothesis. Source per finding:
 
 | Source | What was checked |
 |---|---|
-| [`../sub-agents-outputs/mission_019e3c52-0acd/`](file:///<USER_HOME>/Desktop/sub-agents-outputs/mission_019e3c52-0acd/) | Last failed mission, stream.jsonl + stderr |
-| [`../sub-agents-outputs/mission_019e3c51-d4f4/`](file:///<USER_HOME>/Desktop/sub-agents-outputs/mission_019e3c51-d4f4/) | Previous failed mission, identical pattern |
+| [`../sub-agents-outputs/mission_019f100d-0001/`](file:///<USER_HOME>/Desktop/sub-agents-outputs/mission_019f100d-0001/) | Last failed mission, stream.jsonl + stderr |
+| [`../sub-agents-outputs/mission_019f100c-d4f4/`](file:///<USER_HOME>/Desktop/sub-agents-outputs/mission_019f100c-d4f4/) | Previous failed mission, identical pattern |
 | `codex login status` | Live-CLI auth check |
 | `jarvis/core/config.load_config()` | Which provider is currently configured |
 | [`scripts/config-soll.json`](file:///<USER_HOME>/Desktop/Personal%20Jarvis/scripts/config-soll.json) | Drift-Guard target value  <!-- i18n-allow --> |
@@ -170,7 +170,7 @@ A plain listing for a later wave, **no code in this document**:
 
 ## Evidence Appendices
 
-### Mission 019e3c52-0acd (a few minutes ago)
+### Mission 019f100d-0001 (a few minutes ago)
 
 ```text
 stream.jsonl (terminal frame):
@@ -183,7 +183,7 @@ stderr.log: "Reading prompt from stdin..."
 artifacts/diff.patch: 0 bytes
 ```
 
-### Mission 019e3c51-d4f4
+### Mission 019f100c-d4f4
 
 Identical pattern, 2 minutes earlier.
 

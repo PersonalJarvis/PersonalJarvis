@@ -2101,7 +2101,7 @@ have caught it.
 - **Date**: 2026-05-11
 - **Severity**: HIGH — user-facing voice quality regression. User cannot
   finish complex sentences. Symptom (user words): "Jarvis always thinks you've already finished speaking … that used to work quite well, then a bug appeared." Concrete production case
-  (session ``bf44825d-c3cb-41d8-aac5-fc61482e52d4`` at 17:22): user said
+  (session ``10000001-0000-4000-8000-000000000001`` at 17:22): user said
   "Can you please spawn a sub-agent that..." — VAD endpointed
   after 160 ms of silence (budget was 1200 ms) and the brain was called
   on a half-question; the rest of the sentence ("...pulls out five research topics for me") became Turn 2 and arrived as a fragment.
@@ -2800,7 +2800,7 @@ test_empty_flush_without_carry_skips_stt}`.
 
 ### Symptom (what the user experiences)
 
-A custom wake word ("Hey Nico", any name on the `stt_match` / `RollingWhisperWake`
+A custom wake word ("Hey Nova", any name on the `stt_match` / `RollingWhisperWake`
 path) stops working **entirely**: no orb, no bar, no reaction — for HOURS — no
 matter how loud or how often the word is spoken, and **even an app restart does
 not clear it**. User report: "I have to shout it ten times", then "I restarted and
@@ -3078,7 +3078,7 @@ Code / OpenCode)" capability: those turns are Computer-Use tasks today, never
 
 ## BUG-040: Real tool refused as "missing" — the model called the OTHER separator spelling of a registered tool (HIGH, 2026-07-06)
 
-**Symptom.** Voice session 2026-07-05 19:47 (session 3e27dd8e, screenshot from
+**Symptom.** Voice session 2026-07-05 19:47 (session 10000110, screenshot from
 the maintainer): after four successful `cli_gh` calls the turn ended with the
 canned capability refusal ("Das kann ich gerade nicht ausfuehren — mir fehlt <!-- i18n-allow: forensic quote of the live German refusal -->
 dafuer das passende Werkzeug.") although every tool the model needed was <!-- i18n-allow: forensic quote of the live German refusal -->
@@ -3124,7 +3124,7 @@ shrinks over time.
 
 ## BUG-041: Total silence after a mid-stream provider error on a tool turn (HIGH, 2026-07-06)
 
-**Symptom.** Voice session 2026-07-05 19:48 (session 3e27dd8e, turn 2): the
+**Symptom.** Voice session 2026-07-05 19:48 (session 10000110, turn 2): the
 turn executed 10+ tools (cli_gh, search_web, run_shell), then Jarvis said
 NOTHING — no answer, no error, no retry. The log signature is the empty
 streamed line: `🤖 Jarvis [de] (streamed): ` with nothing after it.
@@ -3164,7 +3164,7 @@ new "empty but worked" shape needs its own honest phrase.
 
 **Symptom.** Every Jarvis-Agent mission ends ERROR after ~80–95 s with zero
 files saved (Outputs view full of red ERROR badges). jarvis_desktop.log
-15:50–15:52, mission_019f3cd8-1dd4: three identical iterations of
+15:50–15:52, mission_019f104e-0001: three identical iterations of
 `CodexDirectWorker … codex usage/rate limit hit ("You've hit your usage
 limit … try again at Jul 31st") — falling back to the Claude Max OAuth
 worker` followed by `ClaudeDirectWorker … claude auth is dead ('Not logged
@@ -3179,7 +3179,7 @@ happily — but no mission ever reached it.
 
 **Root cause — four AP-22 violations in the worker chain** (each next one
 only became visible once the previous was fixed and a live verify mission
-— 019f3d01, then 019f3d0f — walked one family further):
+— 019f104f, then 019f1050 — walked one family further):
 1. *No memory of the codex cap.* `claude_quota_state` existed for the Claude
    direction, but a usage-capped codex was deliberately NOT flagged ("the
    next mission retries codex automatically"), so
@@ -3202,7 +3202,7 @@ only became visible once the previous was fixed and a live verify mission
    SAME loop.
 4. *No memory of a failing API family.* With defect 3 fixed, the walk
    reached gemini — whose prepaid credits were DEPLETED (429
-   RESOURCE_EXHAUSTED, mission 019f3d0f). `ApiAgentWorker` recorded nothing
+   RESOURCE_EXHAUSTED, mission 019f1050). `ApiAgentWorker` recorded nothing
    about the failure, so every retry deterministically re-picked gemini;
    openrouter was never reached. The claude/codex directions had quota
    cooldowns, the API families had none.
@@ -3961,7 +3961,7 @@ untrusted answer generator, not a progress indicator.
 **Symptom.** Voice session 2026-07-14 09:28: "Kannst du mir mal bitte dabei
 helfen, zu schauen, was genau alles in meinem Wiki-System steht?" <!-- i18n-allow: quoted German user utterance under forensic analysis -->
 took 66 seconds and answered that the wiki holds USER.md, SOUL.md, and a
-people folder with profiles for Sam, Joy, and the user's mother. The real
+people folder with profiles for Sam, ExampleRelative, and the user's mother. The real
 vault holds none of those files (actual contents: the log/memory/schema
 core pages plus a few entity and project pages — none matching a single
 spoken name). Every named file in the spoken answer was invented.
@@ -4617,7 +4617,7 @@ Additional guards: `test_deaf_session_rebuilds_the_transport_and_receive_hops_on
 `test_deaf_grok_session_rebuild_carries_the_grok_contract` (grok).
 
 **Recurrence #2, 2026-07-16 10:23 — the deadline path has a blind spot and a
-Grok error wording killed the session (session `204b108a`, first live run
+Grok error wording killed the session (session `10000104`, first live run
 WITH the transport-rebuild escalation).** Turn 1 fine; turn 2 committed and
 transcribed ("Was?" — xAI's VAD again cut the utterance short), then the
 known wedge. The rebuild never fired, for a provable reason: the first stray
@@ -4644,7 +4644,7 @@ re-arming forever. Guards:
 `test_second_stray_after_unheeded_rearm_rebuilds_the_transport`.
 
 **Recurrence #3, 2026-07-16 10:51 — a swallowed `response.done` disarms EVERY
-idle-gated defense at once (session `1fd3fa38`, first live run WITH the
+idle-gated defense at once (session `10000103`, first live run WITH the
 recurrence-#2 fixes).** Turn 2 ("Hey", again VAD-truncated) was transcribed,
 the orchestrator requested its native reply, and 360 ms later the user's
 continued speech triggered the local barge-in (`realtime_cancel
@@ -5226,7 +5226,7 @@ day: delegate span p50 15-18 s, p90 22 s, worst 33.2 s; turns regularly ran
 into the 20 s `_DELEGATE_DEADLINE_S` and were force-finalized.
 
 **Evidence (data/flight_recorder/2026-07-17.jsonl + jarvis_desktop.log,
-turn af736681 10:21).** Five sequential tool rounds (wiki-recall ×3 →
+turn 20000012 10:21).** Five sequential tool rounds (wiki-recall ×3 →
 wiki-list → wiki-page-read) over a ~53k-token context; a fresh Gemini
 context cache created mid-turn (~1.5 s) plus a SECOND cache for the
 deadline-forced tools-stripped round; rounds 4-5 arrived as
@@ -6801,7 +6801,7 @@ not at intent to play.
 
 ## BUG-098: one exhausted Google project breaks both Gemini Live and the Tool Model mid-call, then reconnects the same dead account (CRITICAL, FIXED IN CODE 2026-07-20; LIVE DEPLOYMENT PENDING)
 
-**Symptom.** Realtime session `bfd8a2f1-9b0f-4aae-8108-eca925acc79b`
+**Symptom.** Realtime session `10000002-0000-4000-8000-000000000002`
 ran normally for almost four minutes, then two consecutive public-knowledge
 questions received improvised connection-error apologies. The API-Keys view
 subsequently showed both of these failures:
@@ -6925,7 +6925,7 @@ user-facing level indicator exists to show.
 ## BUG-100: high-latency speaker drain becomes a phantom user turn, and terminal teardown leaks a PortAudio task (CRITICAL, FIXED IN CODE 2026-07-20; HARDWARE VALIDATION PENDING)
 
 **Symptom.** Realtime voice session
-`fe594a99-3d8b-4b37-bb62-d481f02ba595` answered normally, then transcribed the
+`10000003-0000-4000-8000-000000000003` answered normally, then transcribed the
 last words coming from its own speakers as new user input. The assistant reply
 ending in `Was ansteht.` was followed by a user-role transcript containing
 exactly `Was ansteht.`. Earlier sessions show the same suffix pattern with
@@ -6983,7 +6983,7 @@ abort errors may be suppressed only with positive ownership evidence.
 
 ## BUG-101: loud speaker echo defeats the barge-in energy floor mid-answer — the assistant interrupts itself and answers its own words (CRITICAL, FIXED IN CODE 2026-07-20; HARDWARE VALIDATION PENDING)
 
-**Symptom.** Realtime voice session `c77b7a88-61b3-475d-98b1-7119bee0f03d`
+**Symptom.** Realtime voice session `10000004-0000-4000-8000-000000000004`
 (Mac built-in speakers + built-in mic, 2026-07-20): while the assistant was
 speaking about Thanksgiving, a barge-in fired with user text `Thanksgiving` —
 a word only the speakers were saying — truncating the answer. The next
@@ -7040,7 +7040,7 @@ candidates, passes uncorrelated speech, fails open without reference, stays
 armed after suppression), `tests/unit/audio/test_echo_reference.py` (tap +
 module contract), `tests/unit/speech/test_echo_guard.py` +
 `tests/unit/realtime/test_session_self_echo.py` (strict short judgment is
-barge-scoped; replay of session c77b7a88's turns 4/5). Physical validation on
+barge-scoped; replay of session 10000004's turns 4/5). Physical validation on
 the Mac speakers+mic setup remains pending.
 
 ---
@@ -7095,7 +7095,7 @@ plug/unplug validation on macOS/Windows/Linux remains pending.
 
 ## BUG-103: late action-result readback races the user's next utterance — the same answer is spoken twice in two different voices and doubles in the transcript (HIGH, FIXED 2026-07-20)
 
-**Symptom.** Realtime voice session `31dd0f25-8102-4159-83ca-466d6c1bb450`
+**Symptom.** Realtime voice session `10000005-0000-4000-8000-000000000005`
 (2026-07-20 17:49, Gemini Live, delegate tool mode): one answer was rendered
 by the surface TTS fallback voice (`gemini-flash-tts`, ~30 s) while the rest
 of the session used the live provider voice, and the transcript view showed
@@ -7416,7 +7416,7 @@ is advice, not enforcement).**
    the router prompt gained a NEVER-FOR-RESEARCH rule next to the BUG-105
    exception.
 
-Guards: `tests/unit/brain/test_cu_gate.py` (pins the live utterance, the
+Guards: `tests/unit/brain/test_cu_gate.py` (pins the synthetic utterance, the
 explicit-ask pass-through, and the follow-up window).
 
 **Class rule.** Every tool that acts on the user's visible world (desktop,
@@ -8520,7 +8520,7 @@ en model with a German and a US voice:
 | phrase | spoken (German voice) | free ear heard | verdict |
 |---|---|---|---|
 | Hey Ben | Hey Ben | `have you been` (3 tokens, conf 1.00) | suppressed |
-| Hey Ruben | Hey Ruben | `have you been` (3 tokens, conf 1.00) | suppressed |
+| Hey Alex | Hey Alex | `have you been` (3 tokens, conf 1.00) | suppressed |
 | Hey Atlas | Hey Atlas | `have you at last` (4 tokens, conf 1.00) | suppressed |
 
 * **The token count** assumes the free ear spends ONE token on the wake prefix.

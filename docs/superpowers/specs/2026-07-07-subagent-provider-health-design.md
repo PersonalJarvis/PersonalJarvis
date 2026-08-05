@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-07
 **Status:** Approved (maintainer, 2026-07-07)
-**Context:** The 2026-07-06 incident (missions `019f36e5` + `019f38b1`): the
+**Context:** The 2026-07-06 incident (missions `019f104c` + `019f104d`): the
 Claude Max OAuth token expired in place and every subagent mission died with
 "401 Invalid authentication credentials" — while the desktop app showed the
 subagent provider as connected, the Sub-Agents view showed only the raw

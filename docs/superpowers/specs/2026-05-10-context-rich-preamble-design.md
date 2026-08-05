@@ -20,7 +20,7 @@ The user must hear, within ~1 second of finishing their utterance, that Jarvis (
 
 ```
 Today (template):
-  User:   "Hey Jarvis, ich möchte morgen eine Reise nach San Francisco buchen,  <!-- i18n-allow: quoted German voice-input example -->
+  User:   "Hey Jarvis, ich möchte morgen eine Reise nach Exampleville buchen,  <!-- i18n-allow: quoted German voice-input example -->
            kannst du Flugdaten raussuchen?"
   Jarvis: "Verstanden, ich kümmere mich darum."        ← generic, swappable  <!-- i18n-allow: quoted German voice-output example -->
 

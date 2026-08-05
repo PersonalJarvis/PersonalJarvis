@@ -29,7 +29,7 @@ ROUTER_SAMPLES = [
     "Trag morgen einen Termin ein",  # i18n-allow: test content — user voice utterance DE
     "Lad das Dokument auf Drive hoch",  # i18n-allow: test content — user voice utterance DE
     "Erzähl mir einen Witz",  # i18n-allow: test content — user voice utterance DE
-    "Buche mir einen Flug nach Berlin",  # i18n-allow: test content — user voice utterance DE
+    "Buche mir einen Flug nach Exampletown",  # i18n-allow: test content — user voice utterance DE
     "öffne die Projektseite",  # i18n-allow: test content — user voice utterance DE
     "Wie spät ist es?",  # i18n-allow: test content — user voice utterance DE
     "spiel Spotify ab",

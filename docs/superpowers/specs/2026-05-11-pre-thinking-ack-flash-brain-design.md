@@ -479,7 +479,7 @@ Two columns matter: whether the Flash-Brain produces text at all (silent vs spea
 | User Input                            | Expected Flash-Brain Output            | Reason                                                        | Spoken Order                                |
 |---------------------------------------|----------------------------------------|---------------------------------------------------------------|---------------------------------------------|
 | `"Mach Spotify auf"`                  | Topic-specific sentence mentioning "Spotify" (LLM-generated, e.g. "Spotify öffne ich grad.") | Action with visible execution lag | Ack → app launch → Main response            | <!-- i18n-allow: quoted German voice example -->
-| `"Such mir SF-Flüge für morgen"`      | Topic-specific sentence mentioning "Flüge" and/or "San Francisco" | Multi-step external task             | Ack → spawn_worker → Final answer           | <!-- i18n-allow: quoted German voice example -->
+| `"Such mir SF-Flüge für morgen"`      | Topic-specific sentence mentioning "Flüge" and/or "Exampleville" | Multi-step external task             | Ack → spawn_worker → Final answer           | <!-- i18n-allow: quoted German voice example -->
 | `"Wann wird Albel eingestellt?"`      | Topic-specific sentence referencing "Albel" or "Einstellung" | External lookup needed                       | Ack → search_web → Main answer              | <!-- i18n-allow: quoted German voice example -->
 | `"Wann wurde Einstein geboren?"`      | `""` (silent)                          | Quick factual question, main brain answers directly in < 1 s  | Main response only                          | <!-- i18n-allow: quoted German voice example -->
 | `"Was ist die Hauptstadt von Italien?"`| `""` (silent)                         | Same — main brain trivia                                      | Main response only                          | <!-- i18n-allow: quoted German voice example -->
@@ -519,7 +519,7 @@ Empirical validation on 2026-05-13 with Grok-4-Fast-Non-Reasoning + v2.1 prompts
 The post-filter SHOULD treat the following patterns as answer-shaped and suppress:
 
 - **Date answer**: the output contains a date / time / day-of-week token (`\b\d{1,2}\.\s?\d{1,2}\.\s?\d{2,4}\b`, `\b\d{1,2}:\d{2}\b`, month names, `Montag`/`Dienstag`/…/`Monday`/…) AND is NOT preceded by an action verb (`suche`, `prüfe`, `hole`, `look up`, `check`, …). <!-- i18n-allow: German input vocabulary -->
-- **Single-word fact**: the output is one or two words ending in `.`, with the words being noun-shaped and not a topic-reference (e.g. `"Rom."`, `"Berlin."`, `"42."`).
+- **Single-word fact**: the output is one or two words ending in `.`, with the words being noun-shaped and not a topic-reference (e.g. `"Rom."`, `"Exampletown."`, `"42."`).
 - **"X is Y" definition**: the output matches `(.*)\s(ist|sind|war|waren|is|are|was|were)\s(.*)\.` AND lacks any action verb of the SPEAK-branch (recherchiere / suche / hole / schaue / starte / öffne / wechsle / look up / search / fetch / launch / change). <!-- i18n-allow: German input vocabulary -->
 
 The post-filter MUST NOT touch:
