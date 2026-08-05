@@ -47,6 +47,10 @@ interface NavItem {
   // English fallback shown when `labelKey` has no translation yet in the active
   // locale (the i18n resolver returns the key itself on a miss).
   fallbackLabel?: string;
+  // Draws a small "Beta" pill after the label — the Agentic IDE runs real
+  // coding-agent CLIs against the user's own filesystem, which is a step
+  // riskier than the rest of the app, so the row says so up front.
+  beta?: boolean;
 }
 
 // Resolve a nav row's label, preferring the active-locale translation and
@@ -157,6 +161,7 @@ const NAV_GROUPS: NavItem[][] = [
       labelKey: "nav.agentic_ide",
       icon: SquareTerminal,
       fallbackLabel: "Agentic IDE",
+      beta: true,
     },
   ],
 ];
@@ -504,6 +509,7 @@ export function Sidebar({
                 label={resolveNavLabel(t, item)}
                 active={item.matchIds ? item.matchIds.includes(active) : item.id === active}
                 badge={item.id === "agents" ? agentsCount : undefined}
+                betaLabel={item.beta ? t("nav.agentic_ide_beta") : undefined}
                 alert={item.id === "apikeys" ? apikeysHasError : false}
                 alertTitle={t("sidebar.apikeys_alert")}
                 warn={item.id === "skills" ? pluginsNeedReconnect : false}
@@ -577,6 +583,7 @@ function NavRow({
   label,
   active,
   badge,
+  betaLabel,
   alert = false,
   alertTitle,
   warn = false,
@@ -588,6 +595,9 @@ function NavRow({
   label: string;
   active: boolean;
   badge?: number;
+  /** Small pill rendered right after the label (e.g. "Beta") — set from
+   *  `item.beta`, translated by the caller so this component stays i18n-free. */
+  betaLabel?: string;
   /** Draw a red status dot on the row — a section this row fronts has a provider
    *  that is set up but failing, so the problem is visible app-wide. */
   alert?: boolean;
@@ -605,16 +615,18 @@ function NavRow({
   const Icon = item.icon;
   // On the rail the label is gone from the screen, so it has to survive
   // somewhere: as the hover text and as the accessible name. Without both, the
-  // narrow sidebar would be a column of unlabelled glyphs.
+  // narrow sidebar would be a column of unlabelled glyphs. The beta pill has no
+  // room on the rail either, so it folds into the same hover text.
   const hint = alert ? alertTitle : warn ? warnTitle : undefined;
+  const fullLabel = betaLabel ? `${label} (${betaLabel})` : label;
   return (
     <li>
       <button
         type="button"
         data-testid={`nav-row-${item.id}`}
         onClick={onClick}
-        aria-label={railed ? label : undefined}
-        title={railed ? (hint ? `${label} — ${hint}` : label) : hint}
+        aria-label={railed ? fullLabel : undefined}
+        title={railed ? (hint ? `${fullLabel} — ${hint}` : fullLabel) : hint}
         className={cn(
           "group relative flex w-full items-center rounded-lg text-sm transition-all",
           railed ? "justify-center px-0 py-2" : "gap-3 px-3 py-2",
@@ -630,7 +642,19 @@ function NavRow({
             active ? "text-primary" : "text-muted-foreground group-hover:text-foreground",
           )}
         />
-        {!railed && <span className="flex-1 text-left">{label}</span>}
+        {!railed && (
+          <span className="flex flex-1 items-center gap-1.5 text-left">
+            {label}
+            {betaLabel && (
+              <span
+                data-testid={`nav-beta-${item.id}`}
+                className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-primary"
+              >
+                {betaLabel}
+              </span>
+            )}
+          </span>
+        )}
         {/* On the rail the status dots ride ON the icon rather than after the
             label there is no room for — the signal is the point, not the row. */}
         {alert && (
