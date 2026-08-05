@@ -755,6 +755,8 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         install_hint="npm i -g @openai/codex@0.146.0",
         signup_url="https://chatgpt.com",
         credential_help=(
+            "Beta — subscription voice through Codex is not finished yet and "
+            "can break without notice. "
             "Uses the ChatGPT plan signed in through Codex. The voice itself "
             "needs no API key, and the app never switches it silently to "
             "metered API voice: if it cannot start, the call stops. Select an "

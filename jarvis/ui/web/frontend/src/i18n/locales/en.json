@@ -1213,10 +1213,10 @@
     "not_recommended": "Not recommended",
     "optional": "Optional",
     "optional_tooltip": "Nice to have, not required. Without it everything else keeps working exactly as before.",
-    "experimental": "Experimental",
+    "experimental": "Beta",
     "subscription_realtime_description": "Uses the ChatGPT plan connected through Codex. No API key is needed.",
-    "experimental_subscription_fallback": "This path uses Codex's experimental Realtime protocol. The app won't silently switch to metered API voice. If it cannot start, the call stops; select an API Realtime provider if you want usage billing.",
-    "experimental_subscription_consent": "Before you turn this on: your live audio and transcript go through your ChatGPT plan using an experimental Codex route. That covers the realtime voice session and its direct conversational replies. If work is handed to a separately configured Brain or tool provider, that provider keeps its own billing. Use this only on a personal, unmanaged computer. The route can change without notice. If it breaks, the call stops; the app never switches to paid API voice on its own. Continue?",
+    "experimental_subscription_fallback": "Beta: voice over the subscription is not finished yet — it runs on Codex's experimental Realtime protocol, so expect rough edges. The app won't silently switch to metered API voice. If it cannot start, the call stops; select an API Realtime provider if you want usage billing.",
+    "experimental_subscription_consent": "Before you turn this on: this path is still in beta. Your live audio and transcript go through your ChatGPT plan using an experimental Codex route. That covers the realtime voice session and its direct conversational replies. If work is handed to a separately configured Brain or tool provider, that provider keeps its own billing. Use this only on a personal, unmanaged computer. The route can change without notice. If it breaks, the call stops; the app never switches to paid API voice on its own. Continue?",
     "health_needs_setup": "Setup needed",
     "health_error": "Not working",
     "health_ok": "Working",
@@ -1271,8 +1271,8 @@
     "switch_done_computer_use": "Computer-Use → {0}",
     "switch_done_dictation": "Dictation wording → {0}",
     "switch_done_realtime": "Realtime → {0}",
-    "experimental_note": "This provider uses an unstable protocol that can change without notice. If it cannot start, the call stops.",
-    "experimental_consent": "Before you turn this on: this provider uses an experimental, unstable route that can change without notice. If it breaks, the call stops instead of switching to another provider on its own. Continue?"
+    "experimental_note": "Beta: this provider is not finished yet and uses an unstable protocol that can change without notice. If it cannot start, the call stops.",
+    "experimental_consent": "Before you turn this on: this provider is still in beta and uses an experimental, unstable route that can change without notice. If it breaks, the call stops instead of switching to another provider on its own. Continue?"
   },
   "apikeys_test": {
     "button": "Test",
