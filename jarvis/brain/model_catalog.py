@@ -32,7 +32,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import httpx
@@ -1640,7 +1640,59 @@ class ModelCatalog:
                 )
                 resp = await client.get(url, params=params)
             resp.raise_for_status()
-            return parse_models_response(provider, resp.json())
+            models = parse_models_response(provider, resp.json())
+            if provider == "ollama":
+                models = await self._enrich_ollama_capabilities(client, url, models)
+            return models
+
+    @staticmethod
+    async def _enrich_ollama_capabilities(
+        client: httpx.AsyncClient, tags_url: str, models: list[ModelInfo]
+    ) -> list[ModelInfo]:
+        """Attach each download's DECLARED capabilities from ``/api/show``.
+
+        ``/api/tags`` lists what is installed but says nothing about what each
+        model can DO, so a local install used to reach every capability consumer
+        as "unknown" — and unknown means "assume capable". A host whose only pull
+        is text-only therefore advertised vision, and Screen Context happily
+        asked it about a screenshot it could not see.
+
+        Ollama answers per model instead of per catalog, so this is one small
+        POST per download (a LAN/localhost round-trip, bounded concurrency). The
+        declared capability names are mapped onto the SAME generic fields the
+        gateway catalogs fill, so ``model_capabilities`` / ``pick_vision_model``
+        / ``provider_has_modality_data`` need no local-server special case.
+
+        Fail-open per model: a download whose probe does not answer keeps its
+        unknown (``None``) fields and is treated as capable, exactly as before.
+        Embedding-only downloads are DROPPED — offering bge-m3 in a brain picker
+        guarantees a 400 on the first chat turn.
+        """
+        root = tags_url[: -len("/api/tags")] if tags_url.endswith("/api/tags") else tags_url
+        semaphore = asyncio.Semaphore(8)
+
+        async def probe(info: ModelInfo) -> ModelInfo | None:
+            async with semaphore:
+                try:
+                    resp = await client.post(f"{root}/api/show", json={"model": info.id})
+                    resp.raise_for_status()
+                    caps = resp.json().get("capabilities")
+                except Exception as exc:  # noqa: BLE001 — unknown stays capable
+                    log.debug("ollama: /api/show failed for %s: %s", info.id, exc)
+                    return info
+                if not isinstance(caps, list):
+                    return info
+                declared = {str(c) for c in caps}
+                if "completion" not in declared:
+                    return None
+                return replace(
+                    info,
+                    input_modalities=("text", "image") if "vision" in declared else ("text",),
+                    supported_parameters=("tools",) if "tools" in declared else (),
+                )
+
+        probed = await asyncio.gather(*(probe(m) for m in models))
+        return [m for m in probed if m is not None]
 
     # -- static fallback ----------------------------------------------
 

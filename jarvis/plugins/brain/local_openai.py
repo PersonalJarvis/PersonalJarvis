@@ -16,11 +16,14 @@ behind a reverse proxy, vLLM with ``--api-key``) check it. Keyless by design
 ``PROVIDER_SECRET_CANDIDATES`` so the key-aware resolver treats it as always
 reachable and a dead server just fast-fails across families.
 
-Vision is deliberately declared unsupported: whether a given local server
-accepts image content is unknowable here, and the shared streamer then DROPS
-images with a warning instead of letting a text-only server reject the whole
-turn. Vision users take the Ollama card (which negotiates real multimodal
-models) or a cloud brain.
+Vision defaults to UNSUPPORTED and is only ever raised by evidence: whether a
+given local server accepts image content is unknowable in general, so the
+shared streamer DROPS images with a warning rather than letting a text-only
+server reject the whole turn. When the server's own ``/v1/models`` DOES declare
+image input for the selected model (some OpenAI-compatible servers publish the
+modality fields), the cached catalog carries that declaration and this brain
+believes it. Unknown stays blind — a confident description of a picture nobody
+looked at is the failure mode worth being conservative about.
 """
 
 from __future__ import annotations
@@ -52,6 +55,26 @@ _NO_BASE_URL_HELP = (
 )
 
 
+def _declared_vision_support(model: str) -> bool:
+    """Whether the SELECTED model declares image input, from the cached catalog.
+
+    Mirrors the Ollama card's probe but with the opposite default: Ollama can
+    ask its server what each download can do, a generic OpenAI-compatible
+    server usually cannot be asked at all — so silence means blind here.
+    Synchronous by necessity (``resolve_vision_brain`` asks before any call) and
+    therefore cache-only; it never touches the network.
+    """
+    if not model:
+        return False
+    try:
+        from jarvis.brain.model_catalog import model_capabilities  # noqa: PLC0415 — lazy (AP-26)
+
+        return model_capabilities("local-openai", model)["vision"] is True
+    except Exception:  # noqa: BLE001 — a probe must never break construction
+        log.debug("local-openai: vision capability probe failed — staying blind")
+        return False
+
+
 class LocalOpenAIBrain:
     name: str = "local-openai"
     # Conservative floor — the real window depends on the served model; the
@@ -65,6 +88,7 @@ class LocalOpenAIBrain:
         self._client: Any = None
         self._server_root: str | None = None
         self._credential: str | None = None
+        self.supports_vision = _declared_vision_support(self._model)
 
     def can_call_tools(self) -> bool:
         return self.supports_tools

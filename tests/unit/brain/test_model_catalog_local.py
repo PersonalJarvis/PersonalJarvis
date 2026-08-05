@@ -255,6 +255,74 @@ async def test_ollama_fetches_tags_keyless(tmp_path, monkeypatch) -> None:
     assert call["params"] == {}
 
 
+class _FakeOllamaClient(_FakeClient):
+    """Adds the native ``/api/show`` capability probe to the GET fake."""
+
+    def __init__(self, payload: dict[str, Any], show_caps: dict[str, list[str]]) -> None:
+        super().__init__(payload)
+        self.show_caps = show_caps
+        self.shown: list[str] = []
+
+    async def post(self, url: str, json: dict[str, Any] | None = None) -> _FakeResponse:
+        name = str((json or {}).get("model") or "")
+        self.shown.append(name)
+        assert url.endswith("/api/show")
+        return _FakeResponse({"capabilities": self.show_caps.get(name, [])})
+
+
+async def test_ollama_catalog_carries_declared_capabilities(tmp_path, monkeypatch) -> None:
+    """``/api/tags`` says WHAT is installed, ``/api/show`` says what it can DO.
+
+    Without the second half every local download reached the capability
+    consumers as "unknown" — and unknown means "assume capable", which is how a
+    text-only install came to advertise vision to Screen Context.
+    """
+    client = _FakeOllamaClient(
+        {"models": [{"name": "qwen3.5:9b"}, {"name": "qwen3-vl:8b"}]},
+        {
+            "qwen3.5:9b": ["completion", "tools"],
+            "qwen3-vl:8b": ["completion", "tools", "vision"],
+        },
+    )
+    _local_env(monkeypatch)
+
+    result = await _catalog(tmp_path, client).list_models("ollama")
+
+    caps = {m.id: (m.input_modalities, m.supported_parameters) for m in result.models}
+    assert caps["qwen3.5:9b"] == (("text",), ("tools",))
+    assert caps["qwen3-vl:8b"] == (("text", "image"), ("tools",))
+    assert sorted(client.shown) == ["qwen3-vl:8b", "qwen3.5:9b"]
+
+
+async def test_ollama_catalog_drops_embedding_only_downloads(tmp_path, monkeypatch) -> None:
+    """bge-m3 in a BRAIN picker guarantees a 400 on the first chat turn."""
+    client = _FakeOllamaClient(
+        {"models": [{"name": "bge-m3:latest"}, {"name": "qwen3.5:9b"}]},
+        {"bge-m3:latest": ["embedding"], "qwen3.5:9b": ["completion"]},
+    )
+    _local_env(monkeypatch)
+
+    result = await _catalog(tmp_path, client).list_models("ollama")
+
+    assert [m.id for m in result.models] == ["qwen3.5:9b"]
+
+
+async def test_ollama_catalog_survives_a_server_without_api_show(tmp_path, monkeypatch) -> None:
+    """Fail-open per model: an unanswerable probe leaves the entry unknown
+    (capable), exactly as before this enrichment existed."""
+
+    class _NoShow(_FakeOllamaClient):
+        async def post(self, url, json=None):  # type: ignore[override]
+            raise RuntimeError("api/show unavailable")
+
+    _local_env(monkeypatch)
+
+    result = await _catalog(tmp_path, _NoShow(_OLLAMA_TAGS, {})).list_models("ollama")
+
+    assert {m.id for m in result.models} == {"qwen3.5:9b", "glm-5.1:latest"}
+    assert all(m.input_modalities is None for m in result.models)
+
+
 async def test_ollama_honors_base_url_override(tmp_path, monkeypatch) -> None:
     """A pasted ``…/v1`` override is normalized to the server root first."""
     client = _FakeClient(_OLLAMA_TAGS)
