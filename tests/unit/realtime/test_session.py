@@ -6891,3 +6891,40 @@ async def test_a_recoverable_handshake_failure_stays_silent():
         "the classic pipeline owns this call; nothing should be announced"
     )
     await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_silent_provider_audio_does_not_advance_liveness_or_echo_horizon():
+    """Embedded/trailing silence is forwarded to the player but must not be
+    stamped as live output: silence cannot echo into the microphone, and
+    dating the echo horizon forward for it held the half-duplex gate deaf for
+    seconds after every reply (live 2026-08-04)."""
+    from types import SimpleNamespace
+
+    sess = RealtimeVoiceSession(
+        session_id="s-silence-liveness",
+        send_binary=lambda _pcm: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=FakeProvider([]),
+        config=_cfg(),
+        bus=None,
+    )
+    loud = SimpleNamespace(
+        pcm=(1200).to_bytes(2, "little", signed=True) * 480, sample_rate=24_000
+    )
+    quiet = SimpleNamespace(pcm=b"\x00" * 960, sample_rate=24_000)
+
+    await sess._emit_audio(loud)
+    stamped_at = sess._last_output_audio_at
+    horizon = sess._echo_playback_horizon
+    assert stamped_at > 0.0
+    assert horizon > 0.0
+
+    await sess._emit_audio(quiet)
+    assert sess._last_output_audio_at == stamped_at
+    assert sess._echo_playback_horizon == horizon
+
+    await sess._emit_audio(loud)
+    assert sess._last_output_audio_at >= stamped_at
+    assert sess._echo_playback_horizon > horizon
+    await sess.end(reason="test")

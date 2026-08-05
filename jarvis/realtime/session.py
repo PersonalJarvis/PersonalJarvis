@@ -6456,12 +6456,24 @@ class RealtimeVoiceSession:
             except Exception:  # noqa: BLE001, S110 — best-effort telemetry
                 pass
         self._note_audio_flow(pcm, chunk)
-        self._last_output_audio_at = time.monotonic()
+        # The chunk is FORWARDED either way — a live media track's embedded
+        # pauses must reach the player as real PCM or the output stream
+        # starves and the voice chops (measured 2026-08-02: six cuts in one
+        # answer). But only AUDIBLE audio may advance the liveness stamp and
+        # the echo horizon: silence cannot echo into the microphone, and
+        # stamping it as live output held the half-duplex gate deaf for the
+        # whole trailing-silence stretch after every reply (live 2026-08-04:
+        # 2-3 s of post-reply deafness per turn). Energy only, never
+        # transcript content (AP-27).
+        audible = _pcm16_peak(pcm) >= _EMBEDDED_SILENCE_PEAK
+        if audible:
+            self._last_output_audio_at = time.monotonic()
         self._output_samples_sent += len(pcm) // 2
-        # Real provider audio: advance the echo guard's playback horizon by
-        # this chunk's audible duration (BUG-089).
         rate = max(1, int(getattr(chunk, "sample_rate", 0) or 24_000))
-        self._advance_echo_horizon((len(pcm) / 2) / rate)
+        if audible:
+            # Real audible provider audio: advance the echo guard's playback
+            # horizon by this chunk's duration (BUG-089).
+            self._advance_echo_horizon((len(pcm) / 2) / rate)
         await self._send_binary(pcm)
 
     def _note_audio_flow(self, pcm: bytes, chunk: Any) -> None:
