@@ -452,6 +452,37 @@ async def test_context_refresh_appends_only_the_changed_lines() -> None:
 
 
 @pytest.mark.asyncio
+async def test_per_turn_update_travels_as_one_silent_developer_item() -> None:
+    """Context delta, current-turn block and language pin ride ONE append.
+
+    Every separate developer item was one more thing the model audibly
+    acknowledged — a live call spliced "Alles klar…" into the middle of its
+    own answer (2026-08-05 19:13). The payload also has to SAY the update is
+    silent configuration, or the model treats it as conversation.
+    """
+    client = _Client()
+    session = await _provider(client).open_session(
+        RealtimeSessionConfig(instructions="Persona line.\nClock: 12:00.")
+    )
+    baseline = len(client.text_appends)
+
+    await session.update_session(
+        instructions="Persona line.\nClock: 12:01.",
+        language="de",
+        turn_directive="Directive A.",
+    )
+
+    assert len(client.text_appends) == baseline + 1
+    _thread, payload, role = client.text_appends[-1]
+    assert role == "developer"
+    assert "Clock: 12:01." in payload
+    assert "Directive A." in payload
+    assert codex_subscription_mod._language_pin_text("de") in payload
+    assert "silently" in payload.lower()
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_turn_directive_supersedes_instead_of_accumulating() -> None:
     """A changed turn directive is delivered WHOLE, with replace semantics.
 

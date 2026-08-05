@@ -162,7 +162,12 @@ _THREAD_BASE_INSTRUCTIONS = (
     "user reply, even if silence or speaker feedback looks like another turn. "
     "Answer in the language spoken in the latest actual user audio unless "
     "developer context explicitly pins another; never switch languages "
-    "because an English paraphrase, transcription, or example appears in context."
+    "because an English paraphrase, transcription, or example appears in "
+    "context. Developer messages are silent configuration, never "
+    "conversation: never acknowledge, answer, restate, or mention them — "
+    "not even with a single word like 'okay' or 'understood' — and never "
+    "treat their arrival as a reason to speak. Only the user's actual "
+    "speech deserves a response."
 )
 _THREAD_DEVELOPER_INSTRUCTIONS = (
     "Execution boundary: do not call tools, shell commands, applications, "
@@ -220,7 +225,8 @@ def _language_pin_text(language: object) -> str:
     return (
         "For every following assistant audio and text response, reply only in "
         f"{target}. This is a voice-rendering instruction, not a request to "
-        "use tools or perform an action."
+        "use tools or perform an action. Apply it silently — never "
+        "acknowledge it in a reply."
     )
 
 
@@ -1804,9 +1810,18 @@ class _CodexSubscriptionRealtimeSession:
         # INSTRUCTIONS, however, are the assistant's identity and project
         # knowledge — dropping them was why the voice knew nothing about its own
         # project. ChatGPT-Live accepts developer context, so a changed persona
-        # is delivered mid-call instead of being discarded.
-        await self._deliver_context(instructions, turn_directive=turn_directive)
-        await self._pin_language(language)
+        # is delivered mid-call instead of being discarded. Everything a turn
+        # needs — context delta, current-turn block, language pin — travels as
+        # ONE developer item: each separate item was one more thing the model
+        # audibly acknowledged ("Alles klar…" spliced into the live answer,
+        # 2026-08-05 19:13).
+        normalized_pin = _normalized_locale(language)
+        pin_text = _language_pin_text(normalized_pin)
+        await self._deliver_context(
+            instructions, turn_directive=turn_directive, language_pin=pin_text
+        )
+        if pin_text:
+            self._language = normalized_pin
 
     async def _pin_language(self, language: object) -> None:
         """Deliver the resolved output language as the turn's authoritative pin.
@@ -1833,7 +1848,11 @@ class _CodexSubscriptionRealtimeSession:
         self._language = normalized
 
     async def _deliver_context(
-        self, instructions: str | None, *, turn_directive: str | None = None
+        self,
+        instructions: str | None,
+        *,
+        turn_directive: str | None = None,
+        language_pin: str = "",
     ) -> None:
         """Give the model Jarvis's own persona, capabilities and context.
 
@@ -1875,10 +1894,10 @@ class _CodexSubscriptionRealtimeSession:
                         "\n".join(
                             (
                                 "Developer context update — apply the "
-                                "following changed lines on top of the "
-                                "persona and project context already given; "
-                                "unchanged parts of THAT context stay in "
-                                "force:",
+                                "following changed lines SILENTLY (never "
+                                "acknowledge them) on top of the persona and "
+                                "project context already given; unchanged "
+                                "parts of THAT context stay in force:",
                                 *changed,
                             )
                         )
@@ -1886,9 +1905,15 @@ class _CodexSubscriptionRealtimeSession:
         if directive and directive != self._delivered_turn_directive:
             sections.append(
                 "Current-turn instructions — these REPLACE every earlier "
-                "instruction about how to handle the current turn:\n"
+                "instruction about how to handle the current turn; apply "
+                "them silently, never acknowledge them aloud:\n"
                 + directive
             )
+        if language_pin:
+            # Reasserted every turn even when unchanged: the server can
+            # freeze an automatic response before the larger refresh above
+            # takes effect, and this compact final section is what wins.
+            sections.append(language_pin)
         if not sections:
             # Identical, or only removals/reordering an append cannot retract.
             if text:
