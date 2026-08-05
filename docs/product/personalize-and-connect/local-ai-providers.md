@@ -44,15 +44,20 @@ speed up Whisper or a Brain model, but is not required for Nemotron or Piper.
 
 ### Ollama
 
-1. Install and start Ollama, then download a model with Ollama's own model
-   manager. Pick tool support for actions and vision support for images.
+1. Install and start Ollama.
 2. Open **API Keys & Providers > Brain > Ollama (local)**.
 3. Keep the default server address for this computer, or enter a trusted
    Ollama host and select **Save**.
-4. Select a downloaded model, choose **Test**, then **Set active**.
+4. Under **Models on this machine**, download a model without leaving the app.
+   Each entry shows its approximate size, what it is for, and whether it fits
+   this computer's memory. Any other model name from Ollama's library can be
+   entered directly. A download runs in the background and reports progress.
+5. Select a downloaded model, choose **Test**, then **Set active**.
 
 If no model is selected, the app can choose the smallest suitable download. A
-text-only model cannot gain unsupported tools or vision.
+text-only model cannot gain unsupported tools or vision: for screen questions
+and images, download a model marked as seeing images. The memory note is
+advice, not a limit — a graphics card can run a model the note calls tight.
 
 ### Another OpenAI-compatible server
 
@@ -137,7 +142,7 @@ or UltraWiki is local.
 | What you see | Likely cause | What to do |
 |---|---|---|
 | Engine installed, model not ready | Missing or incomplete model files | Keep the app open, check space and the error, then select **Try again**. |
-| Ollama test reports no model | Ollama is running with no downloaded model | Download one in Ollama's model manager, then retest. |
+| Ollama test reports no model | Ollama is running with no downloaded model | Download one under **Models on this machine** on the Ollama card, then retest. |
 | Self-hosted server is unreachable | Stopped server, wrong address, or blocked network | Restart it, copy its address, select **Save**, and retest. |
 | Chat works, but an action or image fails | The model lacks tools or vision | Choose a capable Ollama model or another suitable provider. |
 | Replies are very slow | The model is too large for available memory or compute | Choose a smaller Brain, use Nemotron for faster speech, or move the server. |
