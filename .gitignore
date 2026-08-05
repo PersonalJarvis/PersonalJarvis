@@ -159,13 +159,15 @@ Desktop.ini
 !.claude/agents/
 !.claude/commands/
 !.claude/skills/
-# ...except the security-github skill: a LOCAL-ONLY maintainer tool. It orchestrates
-# the depersonalized public-release push and must never itself be versioned or
-# pushed to any GitHub repo. Its deterministic engine lives (versioned) under
-# scripts/ci/privacy_gate/, so CI and the pre-push hook keep working without it.
+# ...except the security-github skill: RETIRED 2026-08-05. It orchestrated the
+# depersonalized public-release push — a staging build, a parallel clone, a
+# frontend build, and a sub-agent that read every tracked file hunting for
+# personal data, on every push. A push is `git push` now (CLAUDE.md §2). The
+# ignore rules stay as a tombstone so a stray local copy can never be
+# versioned; do not re-add the skill without the maintainer's say-so.
 .claude/skills/security-github/
 # .agents/ is the tool-neutral twin of .claude/ (synced by
-# scripts/ci/sync_agents_dir.py) — same include/exclude shape, so the private
+# scripts/ci/sync_agents_dir.py) — same include/exclude shape, so the retired
 # security-github skill can never leak in via the mirror either.
 .agents/*
 !.agents/README.md
