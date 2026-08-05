@@ -1809,15 +1809,43 @@ class _CodexSubscriptionRealtimeSession:
 
         ChatGPT-Live has no session-instructions field a client may set, but
         it does accept developer context — which is how the assistant learns
-        who it is and what this project is. Delivered once per distinct text
-        so a re-issued identical persona costs nothing.
+        who it is and what this project is. The transport is APPEND-only, and
+        the session refreshes the full ~20k-char block on every final user
+        transcript (its clock line alone changes every minute), so re-sending
+        the whole block grew the live thread by a full persona per turn: the
+        call got slower with every exchange and the model kept re-reading
+        stale copies of per-turn directives. The full block goes out once;
+        afterwards only the lines that actually changed are appended, under a
+        header that says the rest stays in force.
         """
         text = str(instructions or "").strip()
         if not text or text == self._delivered_context:
             return
+        payload = text
+        if self._delivered_context:
+            previous_lines = set(self._delivered_context.splitlines())
+            changed = [
+                line
+                for line in text.splitlines()
+                if line.strip() and line not in previous_lines
+            ]
+            if not changed:
+                # Only removals or reordering: nothing an append can retract.
+                self._delivered_context = text
+                return
+            payload = "\n".join(
+                (
+                    "Developer context update — only the CHANGED lines "
+                    "follow; everything else from the previous developer "
+                    "context stays in force:",
+                    *changed,
+                )
+            )
         try:
             await self._append_trusted(
-                lambda: self._client.realtime_append_text(self._thread_id, text, role="developer"),
+                lambda: self._client.realtime_append_text(
+                    self._thread_id, payload, role="developer"
+                ),
                 arms_response=False,
             )
         except Exception:  # noqa: BLE001 - a mute persona must not kill the call

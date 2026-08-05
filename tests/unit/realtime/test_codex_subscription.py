@@ -423,6 +423,35 @@ async def test_language_update_is_developer_context_and_speech_is_authoritative(
 
 
 @pytest.mark.asyncio
+async def test_context_refresh_appends_only_the_changed_lines() -> None:
+    """An append-only transport must not receive the full block per turn.
+
+    The session refreshes its ~20k-char instruction block on every final
+    user transcript (the clock line alone changes every minute); re-appending
+    all of it grew the live thread by a whole persona per exchange.
+    """
+    client = _Client()
+    session = await _provider(client).open_session(
+        RealtimeSessionConfig(instructions="Persona line.\nClock: 12:00.")
+    )
+
+    await session.update_session(instructions="Persona line.\nClock: 12:01.")
+
+    context_appends = [
+        text
+        for _thread, text, role in client.text_appends
+        if role == "developer" and "Persona line." in text or "Clock" in text
+    ]
+    assert context_appends[0] == "Persona line.\nClock: 12:00."
+    assert len(context_appends) == 2
+    update = context_appends[1]
+    assert "Clock: 12:01." in update
+    assert "Persona line." not in update
+    assert "stays in force" in update
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_open_pins_language_only_for_an_explicit_reply_language() -> None:
     """brain.reply_language = de must pin the FIRST reply, auto must not."""
     client = _Client()
