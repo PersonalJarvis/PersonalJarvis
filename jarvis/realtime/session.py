@@ -560,6 +560,16 @@ def _requires_jarvis_action(text: str) -> bool:
 _DELEGATE_RESULT_MAX_CHARS = 4_000
 
 
+# The one opener the transports' developer-message silence rule names as its
+# exception: a developer message beginning with this sentence IS a delivery
+# order and must be spoken. The Codex base instructions quote it verbatim
+# (jarvis.plugins.realtime.codex_subscription._THREAD_BASE_INSTRUCTIONS); a
+# parity test pins both sides so neither can drift alone — a categorical
+# silence rule without this exception mutes announcements and late action
+# results (independent review 2026-08-05).
+SPEAK_REQUEST_OPENER = "This developer message IS a request to speak."
+
+
 def _delegate_result_prompt(
     text: str,
     *,
@@ -598,6 +608,7 @@ def _delegate_result_prompt(
         else ""
     )
     return (
+        f"{SPEAK_REQUEST_OPENER} "
         "A trusted Jarvis action result is ready. Speak only a concise, natural "
         f"rendering of the tagged result in {language_name}. {framing}Preserve "
         "its exact success or failure meaning and every material fact. Say it "
@@ -621,6 +632,7 @@ def _direct_tool_result_retry_prompt(*, language: str) -> str:
     """Request speech for tool output already present in provider context."""
     language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
     return (
+        f"{SPEAK_REQUEST_OPENER} "
         "The function call for the user's current request already finished, "
         "but no spoken answer was produced. Use only the function result that "
         "is already present in this conversation and give the user a concise, "
@@ -1065,6 +1077,7 @@ def _external_update_prompt(text: str, *, language: str, kind: str) -> str:
     """Wrap trusted application state as data for one tool-free spoken update."""
     language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
     return (
+        f"{SPEAK_REQUEST_OPENER} "
         "A trusted internal Jarvis event is ready to be delivered to the user. "
         f"Speak one brief, natural update in {language_name}. Preserve every "
         "material fact, name, number, success or failure state, and uncertainty. "

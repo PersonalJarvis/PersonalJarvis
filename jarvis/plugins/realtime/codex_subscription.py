@@ -166,8 +166,11 @@ _THREAD_BASE_INSTRUCTIONS = (
     "context. Developer messages are silent configuration, never "
     "conversation: never acknowledge, answer, restate, or mention them — "
     "not even with a single word like 'okay' or 'understood' — and never "
-    "treat their arrival as a reason to speak. Only the user's actual "
-    "speech deserves a response."
+    "treat a configuration message's arrival as a reason to speak. The ONE "
+    "exception: a developer message that opens with 'This developer message "
+    "IS a request to speak.' is a delivery order — speak its content as "
+    "your own reply, in your own voice. Every other developer message "
+    "deserves no spoken reaction; only the user's actual speech does."
 )
 _THREAD_DEVELOPER_INSTRUCTIONS = (
     "Execution boundary: do not call tools, shell commands, applications, "
