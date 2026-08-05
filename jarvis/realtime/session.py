@@ -898,14 +898,20 @@ _TOOL_ROLE_DIRECTIVE = (
 )
 
 
-# One voice, one side, one reply. Lives in the SESSION instructions — the
-# channel every realtime transport provably delivers to its voice model —
-# because the equivalent rule in the Codex thread-start base instructions is
-# demonstrably inert there: three live calls in a row the voice performed
-# BOTH sides of a greeting exchange and hung itself up ("…Take care. Will do.
-# Catch you later. Later. Bye.", 2026-08-05 20:42) while rules delivered via
-# developer context (the ack ban, the language pin) were honored. Whatever
-# thread-start instructions configure, it is not the live voice.
+# One voice, one side, one reply. Lives in the SESSION instructions because
+# what the live evidence supports is: a rule stated ONCE at connection open
+# (the Codex thread-start base instructions) does not hold up in the live
+# conversation — three calls in a row the voice performed BOTH sides of a
+# greeting exchange and hung itself up ("…Take care. Will do. Catch you
+# later. Later. Bye.", 2026-08-05 20:42) — while rules delivered through the
+# session/developer-context channel (the ack ban, the language pin) are
+# honored. Whether thread-start is inert or merely fades under 19k chars of
+# context is deliberately left open; repeating the rule here is correct
+# under both explanations. BOTH halves of the developer-message rule must
+# ride this channel TOGETHER: shipping the silence half here while the
+# SPEAK_REQUEST_OPENER exception sat only in thread-start would mute
+# announcements and late action results all over again (independent review
+# C1, 2026-08-05).
 _ONE_SPEAKER_DIRECTIVE = (
     "Live-call discipline: you are ONE voice in a two-party phone-style "
     "conversation. Produce exactly one reply to the user's latest actual "
@@ -914,7 +920,11 @@ _ONE_SPEAKER_DIRECTIVE = (
     "quote, or role-play the user's answer, and never continue chatting with "
     "yourself — a pause is the user thinking or acting, not an invitation to "
     "fill it. Do not say goodbye, wrap up, or close the exchange unless the "
-    "user clearly did so first."
+    "user clearly did so first. Developer messages are silent configuration: "
+    "never acknowledge, answer, or mention them. The ONE exception: a "
+    f"developer message that opens with '{SPEAK_REQUEST_OPENER}' is a "
+    "delivery order — speak its content to the user as your own reply, in "
+    "your own voice."
 )
 
 

@@ -23,6 +23,23 @@ def test_base_instructions_quote_the_exact_speak_request_opener() -> None:
     assert "configuration message's arrival" in base
 
 
+def test_session_channel_carries_the_rule_AND_its_exception_together() -> None:
+    """Both halves must ride the channel the voice model provably reads.
+
+    Shipping the silence half in the per-session block while the exception
+    sat only in the thread-start instructions would mute announcements and
+    late action results all over again (independent review C1: the one-
+    speaker directive's "wait silently" plus the inline "never acknowledge"
+    headers outvoted an exception the voice may never see).
+    """
+    directive = session_mod._ONE_SPEAKER_DIRECTIVE
+    assert "silent configuration" in directive
+    assert f"'{session_mod.SPEAK_REQUEST_OPENER}'" in directive
+    # And the whole thing reaches the assembled session block.
+    block = session_mod._session_instructions("en")
+    assert f"'{session_mod.SPEAK_REQUEST_OPENER}'" in block
+
+
 def test_every_speak_request_prompt_opens_with_the_exception_sentence() -> None:
     opener = session_mod.SPEAK_REQUEST_OPENER
     prompts = (
