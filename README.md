@@ -20,15 +20,15 @@
 
 ---
 
-A classical voice assistant answers you. Personal Jarvis carries out the request. A small,
-fast router brain listens and decides what the request actually needs. Short things it
-handles itself. Anything heavy goes to a coding-agent worker (Claude Code, Codex CLI,
-Gemini CLI, or an in-process worker running on whatever API key you already have), which
-works in isolation, gets checked by a critic, and reports back in the language you spoke.
+A typical voice assistant talks back. Personal Jarvis does the thing. A small, fast router
+brain listens, decides how much the request actually needs, and handles the short stuff
+itself. Anything heavier goes to a coding-agent worker (Claude Code, Codex CLI, Gemini CLI,
+or an in-process worker on whatever API key you already have), which runs in isolation,
+gets checked by a critic, and reports back in the language you spoke.
 
-You choose the provider. Gemini, Claude, OpenAI and OpenRouter are one setting. It can
-rewrite its own configuration, and it runs on a headless server as readily as on a desktop
-with a microphone.
+You pick the provider: Gemini, Claude, OpenAI, or OpenRouter, one setting for each. It can
+rewrite its own configuration, and it runs on a headless server just as well as on a
+desktop with a microphone.
 
 ## What you can say
 
@@ -41,26 +41,24 @@ with a microphone.
 | *"Tell T1 to run the tests."* | The instruction lands in terminal 1 of the Agentic IDE workspace. |
 | *"Open the browser and pull up the weather."* | Jarvis takes the mouse and keyboard and does it on your screen. |
 
-All six run on shipped code. None of them is a roadmap item. Two carry a setup cost that
-is not out of the box: the phone call needs the optional `[telephony]` extra plus your own
-Twilio account, a number, and a publicly reachable HTTPS URL for the webhooks. Computer use
-needs a desktop install with a screen, not the headless one.
+All six work today; none of this is a roadmap item. Two need extra setup: the phone call
+needs the optional `[telephony]` extra plus your own Twilio account, a number, and a
+publicly reachable HTTPS URL for the webhooks, and computer use needs a desktop install
+with a screen, not the headless one.
 
 ## Which model answers you
 
-Three of them sit behind that table, and which one you get depends on what you asked for.
-You never choose; the handover happens mid-sentence.
+Three models sit behind that table, and you never choose between them: the handover
+happens mid-sentence, based on what the request needs.
 
-The **realtime model** carries the conversation. It hears you and speaks back in under a
-second, and it is built for talking rather than for thinking hard.
-
-The moment your request needs an actual tool, that turn goes to a **second model**. It is
-slower than the realtime one and noticeably smarter, and it is the one that does things:
-reading your wiki, changing a setting, placing the call, taking the screen. You hear the
-answer in the same voice, so from the outside it stays one conversation.
-
-Real work goes to a **third**: a coding agent that runs in an isolated copy of the
-workspace, gets reviewed by a critic, and comes back with a file.
+The **realtime model** carries the conversation itself. It hears you and answers in under
+a second, built for talking, not for thinking hard. The moment a request needs an actual
+tool, that turn hands off to a **second model**, slower and noticeably smarter, the one
+that reads your wiki, changes a setting, places the call, or takes the screen. It answers
+in the same voice, so from where you're sitting it never stopped being one conversation.
+Real work, the kind that takes minutes, goes to a **third**: a coding agent running in its
+own isolated copy of the workspace, reviewed by a critic, that comes back with a file
+instead of just an answer.
 
 <p align="center">
   <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/model-tiers.png" alt="The API Keys screen in the desktop app, with one tab per model tier: Realtime, Tool Model, and Agents" width="900" />
@@ -84,24 +82,23 @@ workspace, gets reviewed by a critic, and comes back with a file.
 
 ## What it does differently
 
-The router is deliberately small. It works out what you said, picks a tool or a worker,
-and gets out of the way. There is no single giant prompt trying to be everything. Anything
-non-trivial runs as a mission in an isolated worktree and gets reviewed by a critic before
-you ever hear the result.
+The router itself stays small. It works out what you said, picks a tool or a worker, and
+gets out of the way; there is no single giant prompt trying to be everything. Anything
+non-trivial runs as a mission in an isolated worktree and gets a critic's review before you
+ever hear the result. You are not left listening to silence while that happens, either: the
+moment the router picks an action, Jarvis says one line about that specific action, not a
+generic "working on it".
 
-While that runs you are not left listening to silence. The moment the router picks an
-action, Jarvis says one line about that specific action, not a generic "working on it".
-
-Providers are interchangeable, which matters most on the day one of them fails. If the
+Providers are interchangeable, and that matters most on the day one of them fails. If the
 configured provider is unreachable or out of quota, Jarvis crosses to a different provider
-family instead of leaving you stuck. Workers run on a subscription login or on a
-pay-per-token key, whichever you have. Speech and voice providers can be switched by voice;
-the brain provider cannot, on purpose, because that one stays yours to change in the app or
-the CLI.
+family instead of leaving you stuck. Workers run on a subscription login or a pay-per-token
+key, whichever you have. Speech and voice providers can be switched by voice mid-
+conversation; the brain provider cannot, on purpose, that one stays yours to change from
+the app or the CLI.
 
-It remembers. A Knowledge Wiki of plain Markdown files, plus an awareness layer, build up a
-picture of you across sessions. And it can change its own settings through a pipeline that
-validates, backs up, applies, verifies, and rolls back when something fails.
+It also remembers: a Knowledge Wiki of plain Markdown files, plus an awareness layer, build
+up a picture of you across sessions. And it can change its own settings through a guarded,
+audited pipeline, the full mechanics are under Self-modification below.
 
 ## How it works
 
@@ -112,9 +109,9 @@ validates, backs up, applies, verifies, and rolls back when something fails.
   alt="How Personal Jarvis works: routing voice and chat through safe actions or reviewed missions"
 />
 
-Higher layers reach lower ones only through protocols, and everything else talks over a
-typed, immutable EventBus. That strict seam is what makes harnesses, providers and plugins
-swappable in the first place.
+Higher layers can only reach lower ones through protocols; everything else talks over a
+typed, immutable EventBus. That's the strict seam that makes harnesses, providers, and
+plugins swappable in the first place.
 
 <details>
 <summary><b>The 8-layer map</b></summary>
@@ -254,9 +251,9 @@ VPS, terminate TLS with an HTTPS reverse proxy such as Caddy or Nginx. Plain
 ### Missions
 
 Anything non-trivial, say "research X and write me a report", spawns a worker in an
-isolated `git worktree`. That is a private sandbox copy of the workspace, with crash
-containment. A critic reviews the result, for up to three rounds, before you ever hear it,
-and deliverables land in **Outputs** as downloadable files.
+isolated `git worktree`: a private sandbox copy of the workspace, with crash containment. A
+critic reviews the result, for up to three rounds, before you ever hear it, and
+deliverables land in **Outputs** as downloadable files.
 
 ### Agentic IDE
 
@@ -324,28 +321,23 @@ Generated skills always land as drafts for your review. Nothing self-activates.
 
 ### Dictation
 
-Hold a key and talk, and what you said appears in whatever text field currently has focus.
-Any application, not only this one: a browser, an editor, a chat box, a form in some
-internal tool. Jarvis writes through the clipboard, sends the paste chord, and puts your
-old clipboard back where it was. When a paste does not land, it says so rather than quietly
-losing what you said.
+Hold a key, talk, and the text lands in whatever field has focus, in any application: a
+browser, an editor, a chat box, some internal tool's form. Jarvis writes it through the
+clipboard, sends the paste chord, and restores your old clipboard afterward; if a paste
+doesn't land, it tells you instead of silently losing what you said. One key is a hold, a
+second is a toggle, both can be armed together, and a third re-pastes the last thing you
+dictated into whatever field just ate it.
 
-One key is held down while you speak, a second one toggles, and you can have both armed at
-the same time. A third pastes the last thing you dictated again, for the field that ate it.
-Recognition runs on whichever speech provider you configured, and that can be a local
-model, in which case your voice never leaves the machine.
-
-Then it gets cleaned up twice. The first pass strips filler sounds by plain pattern
-matching, per language, with no model involved at all. The second is optional and does what
-pattern matching structurally cannot: punctuation, capitalization, false starts, spoken
-numbers. It sits behind a hard latency ceiling, and every failure path hands back your raw
-transcript unchanged rather than a mangled one. A separate pass translates instead, writing
-what you said in one fixed target language.
-
-Words the recognizer keeps getting wrong go into a dictionary you control. Everything
-dictated is kept on your disk in both raw and cleaned form, so you can see what a cleanup
-changed and take the original back. The audio is kept too, which means an entry that came
-back empty because a provider was down can be transcribed again later instead of being lost.
+Recognition runs on whatever speech provider you have configured, local model included, in
+which case your voice never leaves the machine. Cleanup happens in two passes: a plain
+pattern match strips filler sounds per language with no model involved at all, and an
+optional second pass, capped by a hard latency budget, handles punctuation, capitalization,
+false starts, and spoken numbers, falling back to your raw transcript unchanged if it
+fails. A separate pass translates instead of cleaning, writing what you said in one fixed
+target language. Words the recognizer keeps getting wrong go into a dictionary you control.
+Everything, raw transcript, cleaned version, and the original audio, stays on disk: you can
+see exactly what a cleanup pass changed, revert it, or retry a transcription that came back
+empty because a provider was briefly down.
 
 ### Realtime voice
 

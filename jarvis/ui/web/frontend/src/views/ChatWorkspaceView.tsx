@@ -101,6 +101,7 @@ export function ChatWorkspaceView() {
   const [pickedPath, setPickedPath] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [starting, setStarting] = useState(false);
   // The spoken conversation, as a floating orb over this surface. Held here
   // rather than inside the composer: the conversation belongs to the app, and
   // a bubble mounted inside a component that re-renders per keystroke would
@@ -194,6 +195,43 @@ export function ChatWorkspaceView() {
    * the pane it got, so reopening it later finds the terminal that already
    * holds the conversation instead of starting a second agent beside it.
    */
+  /**
+   * Wait for a freshly opened pane to be able to receive a prompt.
+   *
+   * A pane is born ``pending``: the process is spawned but its pseudo-terminal
+   * has not attached yet, and a prompt sent into that window is refused
+   * outright — which is exactly what happened, and what the user saw as "T2 is
+   * not running right now (status: pending) — nothing was sent."
+   *
+   * So the send waits for ``live`` instead of racing it. Generously bounded: a
+   * cold coding CLI on a large repository takes seconds, not milliseconds, and
+   * a timeout that fires early would reintroduce the same failure with a nicer
+   * message. A pane that dies on the way up says so rather than timing out.
+   */
+  const waitForPane = useCallback(async (name: string): Promise<void> => {
+    const deadline = Date.now() + 45_000;
+    while (Date.now() < deadline) {
+      const state = await fetchIdeState();
+      const pane = state.session?.terminals.find((t) => t.name === name);
+      if (!pane) throw new Error(`${name} disappeared before it could start.`);
+      if (pane.status === "live") return;
+      if (pane.status === "error" || pane.status === "exited") {
+        throw new Error(pane.error || `${name} stopped before it could start.`);
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 350));
+    }
+    throw new Error(`${name} did not finish starting. Open the terminal grid to see why.`);
+  }, []);
+
+  /**
+   * Make sure this chat has a LIVE agent, and say which pane it is.
+   *
+   * Three cases, in the order they actually happen: the chat is already bound
+   * to a running pane and we use it; the workspace is open on this project and
+   * we add a pane to it; nothing is open and we start one. The chat records
+   * the pane it got, so reopening it finds the terminal that already holds the
+   * conversation instead of starting a second agent beside it.
+   */
   const ensureAgent = useCallback(
     async (project: ChatProject, chat: ChatRow): Promise<string> => {
       const state = await fetchIdeState();
@@ -203,10 +241,15 @@ export function ChatWorkspaceView() {
 
       if (sameFolder && chat.terminal) {
         const live = session.terminals.find((t) => t.name === chat.terminal);
-        if (live) return live.name;
+        // A pane that is still coming up is ours too — waiting for it beats
+        // starting a second agent beside it.
+        if (live && live.status !== "exited" && live.status !== "error") {
+          await waitForPane(live.name);
+          return live.name;
+        }
       }
 
-      const agent = agentId || agents[0]?.id;
+      const agent = chat.agent || agentId || agents[0]?.id;
       if (!agent) throw new Error("No coding CLI is installed on this machine.");
 
       const before = sameFolder ? session.terminals.map((t) => t.name) : [];
@@ -223,10 +266,11 @@ export function ChatWorkspaceView() {
         next.terminals[next.terminals.length - 1];
       if (!fresh) throw new Error("The agent started but reported no terminal.");
 
+      await waitForPane(fresh.name);
       await patchChat(project.id, chat.id, { terminal: fresh.name });
       return fresh.name;
     },
-    [agentId, agents],
+    [agentId, agents, waitForPane],
   );
 
   /**
@@ -268,6 +312,38 @@ export function ChatWorkspaceView() {
     [activeProject, agentId, ensureAgent, modelId, open, pushToast],
   );
 
+  /**
+   * Bring a chat back to life when it is opened.
+   *
+   * Closing the app stops every agent — deliberately, an unwatched agent burns
+   * tokens invisibly — so a chat from yesterday has no pane. Clicking it starts
+   * one again in the same folder with the same CLI, which is what "open the
+   * chat" means to somebody who left it running.
+   *
+   * A chat that already has a live pane costs nothing here: `ensureAgent`
+   * recognises it and returns. Failures are quiet on purpose — the user asked
+   * to LOOK at a conversation, and a red box for an agent they have not typed
+   * to yet would be noise. The next send reports honestly.
+   */
+  const reopen = useCallback(
+    async (project: ChatProject, chat: ChatRow) => {
+      setStarting(true);
+      try {
+        const terminal = await ensureAgent(project, chat);
+        setOpen((current) =>
+          current && current.chat.id === chat.id
+            ? { project, chat: { ...current.chat, terminal } }
+            : current,
+        );
+      } catch {
+        /* see above — the send path is where this is reported */
+      } finally {
+        setStarting(false);
+      }
+    },
+    [ensureAgent],
+  );
+
   const composer = useMemo(
     () =>
       activeProject ? (
@@ -294,10 +370,10 @@ export function ChatWorkspaceView() {
             });
           }}
           onTalk={() => setTalking(true)}
-          busy={busy}
+          busy={busy || starting}
         />
       ) : null,
-    [activeProject, agentId, agents, busy, modelId, send],
+    [activeProject, agentId, agents, busy, modelId, send, starting],
   );
 
   return (
@@ -309,6 +385,7 @@ export function ChatWorkspaceView() {
           onOpenChat={(project, chat) => {
             setLastProject(project);
             setOpen({ project, chat });
+            void reopen(project, chat);
           }}
           onNewChat={(project) => void startChat(project)}
           onAddProject={() => setPicking(true)}
