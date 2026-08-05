@@ -16,11 +16,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Compass,
-  FileCode2,
   FolderOpen,
   LayoutGrid,
   ListChecks,
-  PanelRight,
   Sparkles,
   SquareTerminal,
   Wrench,
@@ -34,7 +32,16 @@ import { FolderPicker } from "@/components/agentic/FolderPicker";
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { useEventStore } from "@/store/events";
-import { fetchIdeAgents } from "@/lib/agenticIdeApi";
+import {
+  addTerminal,
+  fetchIdeAgents,
+  fetchIdeState,
+  promptTerminal,
+  startIdeSession,
+} from "@/lib/agenticIdeApi";
+import { ChatActivity } from "@/components/chat/ChatActivity";
+import { VoiceBubble } from "@/components/agentic/VoiceBubble";
+import { getWSClient } from "@/hooks/useWebSocket";
 import {
   type ChatProject,
   type ChatRow,
@@ -84,15 +91,6 @@ const OPENERS = [
   },
 ] as const;
 
-/**
- * How much an agent may do without asking, in the user's words.
- *
- * A display list on purpose: the enforcement lives in the risk tiers on the
- * server, and a picker that invented its own names would be describing a
- * policy nothing implements.
- */
-const APPROVAL_MODES = ["Ask before acting", "Auto for safe steps", "Full access"] as const;
-
 export function ChatWorkspaceView() {
   const pushToast = useEventStore((s) => s.pushToast);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
@@ -103,12 +101,15 @@ export function ChatWorkspaceView() {
   const [pickedPath, setPickedPath] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [tools, setTools] = useState(true);
+  // The spoken conversation, as a floating orb over this surface. Held here
+  // rather than inside the composer: the conversation belongs to the app, and
+  // a bubble mounted inside a component that re-renders per keystroke would
+  // reset the orb mid-sentence.
+  const [talking, setTalking] = useState(false);
 
   const [agents, setAgents] = useState<ComposerAgent[]>([]);
   const [agentId, setAgentId] = useState("");
   const [modelId, setModelId] = useState<string | null>(null);
-  const [approval, setApproval] = useState<string>(APPROVAL_MODES[0]);
 
   const list = useResizablePane({
     storageKey: "jarvis.chat.listWidth.v1",
@@ -184,6 +185,59 @@ export function ChatWorkspaceView() {
    * type. The title comes from what they wrote, so the row in the sidebar is
    * recognisable the moment it appears.
    */
+  /**
+   * Make sure this chat has a LIVE agent, and say which pane it is.
+   *
+   * Three cases, in the order they actually happen: the chat is already bound
+   * to a running pane and we use it; the workspace is open on this project and
+   * we add a pane to it; nothing is open and we start one. The chat records
+   * the pane it got, so reopening it later finds the terminal that already
+   * holds the conversation instead of starting a second agent beside it.
+   */
+  const ensureAgent = useCallback(
+    async (project: ChatProject, chat: ChatRow): Promise<string> => {
+      const state = await fetchIdeState();
+      const session = state.session;
+      const sameFolder =
+        session && session.folder.toLowerCase() === project.path.toLowerCase();
+
+      if (sameFolder && chat.terminal) {
+        const live = session.terminals.find((t) => t.name === chat.terminal);
+        if (live) return live.name;
+      }
+
+      const agent = agentId || agents[0]?.id;
+      if (!agent) throw new Error("No coding CLI is installed on this machine.");
+
+      const before = sameFolder ? session.terminals.map((t) => t.name) : [];
+      const next = sameFolder
+        ? await addTerminal({ agent })
+        : (await startIdeSession(project.path, [{ agent }])).session;
+      if (!next) throw new Error("The workspace closed while starting the agent.");
+
+      // The pane that was NOT there a moment ago is ours. Asked this way rather
+      // than by trusting a returned index, because the workspace is shared —
+      // another surface can add a pane between these two calls.
+      const fresh =
+        next.terminals.find((t) => !before.includes(t.name)) ??
+        next.terminals[next.terminals.length - 1];
+      if (!fresh) throw new Error("The agent started but reported no terminal.");
+
+      await patchChat(project.id, chat.id, { terminal: fresh.name });
+      return fresh.name;
+    },
+    [agentId, agents],
+  );
+
+  /**
+   * Send a prompt — for real.
+   *
+   * The chat is created here if the user typed straight into the starting
+   * screen, which is the common path: nobody presses "New chat" first, they
+   * type. Then an agent is started if this chat has none, and the prompt goes
+   * into it. What the agent does next is on screen a second later, because the
+   * feed below is already following that pane.
+   */
   const send = useCallback(
     async (text: string) => {
       const project = activeProject;
@@ -197,25 +251,21 @@ export function ChatWorkspaceView() {
         if (!target || target.project_id !== project.id) {
           target = await createChat(project.id, { agent: agentId, model: modelId });
         }
+        const terminal = await ensureAgent(project, target);
+        await promptTerminal(terminal, text);
         const updated = await patchChat(project.id, target.id, {
           title: target.title || text.slice(0, 48),
+          terminal,
         });
         setOpen({ project, chat: updated });
         setRefreshToken((n) => n + 1);
-        // The prompt reaches the agent when the conversation layer lands. Said
-        // plainly rather than swallowed: a box that accepts text and does
-        // nothing visible is the single most confusing state a chat can be in.
-        pushToast(
-          "info",
-          "Saved to this chat. Delivering it to the agent lands with the conversation view.",
-        );
       } catch (error) {
         pushToast("error", error instanceof Error ? error.message : "Could not send that");
       } finally {
         setBusy(false);
       }
     },
-    [activeProject, agentId, modelId, open, pushToast],
+    [activeProject, agentId, ensureAgent, modelId, open, pushToast],
   );
 
   const composer = useMemo(
@@ -228,16 +278,26 @@ export function ChatWorkspaceView() {
           modelId={modelId}
           onAgentChange={setAgentId}
           onModelChange={setModelId}
-          approval={approval}
-          approvalOptions={APPROVAL_MODES}
-          onApprovalChange={setApproval}
           onSend={send}
-          onDictate={() => setActiveSection("dictation")}
-          onTalk={() => setActiveSection("chats")}
+          onDictate={() => {
+            // Speech lands in whichever field has the caret (the app-wide
+            // dictation focus tracker decides that), so the box is focused
+            // first — a dictation started from a BUTTON has already moved
+            // focus onto the button by the time the transcript arrives.
+            document
+              .querySelector<HTMLTextAreaElement>('[data-dictation-target="true"]')
+              ?.focus();
+            getWSClient()?.send({
+              type: "command",
+              action: "stt_dictate",
+              payload: { mode: "start" },
+            });
+          }}
+          onTalk={() => setTalking(true)}
           busy={busy}
         />
       ) : null,
-    [activeProject, agentId, agents, approval, busy, modelId, send, setActiveSection],
+    [activeProject, agentId, agents, busy, modelId, send],
   );
 
   return (
@@ -307,19 +367,12 @@ export function ChatWorkspaceView() {
             <LayoutGrid className="h-3.5 w-3.5" aria-hidden />
             Terminal grid
           </button>
-          <button
-            type="button"
-            onClick={() => setTools((v) => !v)}
-            title={tools ? "Hide quick actions" : "Show quick actions"}
-            aria-label={tools ? "Hide quick actions" : "Show quick actions"}
-            aria-pressed={tools}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
-          >
-            <PanelRight className="h-3.5 w-3.5" aria-hidden />
-          </button>
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col">
+          {open?.chat.terminal ? (
+            <ChatActivity terminal={open.chat.terminal} />
+          ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto scrollbar-jarvis px-6">
             {activeProject ? (
               <div className="w-full max-w-3xl py-8">
@@ -367,21 +420,18 @@ export function ChatWorkspaceView() {
               </div>
             )}
           </div>
+          )}
 
           {composer}
         </div>
 
-        {/* Quick actions, floating rather than docked: they belong to the chat
-            on screen, and a fourth permanent column would take width from the
-            one thing this surface exists to show. */}
-        {tools && activeProject && (
-          <div className="pointer-events-none absolute right-4 top-14 flex flex-col gap-1">
-            <QuickAction icon={ListChecks} label="Review" hint="Ctrl+Shift+G" />
-            <QuickAction icon={SquareTerminal} label="Terminal" />
-            <QuickAction icon={FileCode2} label="Files" hint="Ctrl+P" />
-          </div>
-        )}
       </div>
+
+      <VoiceBubble
+        open={talking}
+        onClose={() => setTalking(false)}
+        promptTarget={open?.chat.terminal ?? ""}
+      />
 
       {picking && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-6">
@@ -427,26 +477,5 @@ export function ChatWorkspaceView() {
         </div>
       )}
     </div>
-  );
-}
-
-function QuickAction({
-  icon: Icon,
-  label,
-  hint,
-}: {
-  icon: typeof ListChecks;
-  label: string;
-  hint?: string;
-}) {
-  return (
-    <button
-      type="button"
-      className="pointer-events-auto flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-    >
-      <Icon className="h-3.5 w-3.5" aria-hidden />
-      <span>{label}</span>
-      {hint && <span className="ml-2 text-[10px] text-muted-foreground/50">{hint}</span>}
-    </button>
   );
 }

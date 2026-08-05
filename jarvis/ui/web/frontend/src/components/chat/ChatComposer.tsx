@@ -27,7 +27,6 @@ import {
   Mic,
   Monitor,
   Paperclip,
-  ShieldCheck,
   ArrowUp,
 } from "lucide-react";
 
@@ -50,10 +49,6 @@ export interface ChatComposerProps {
   modelId: string | null;
   onAgentChange: (agentId: string) => void;
   onModelChange: (modelId: string) => void;
-  /** How much the agent may do unasked. Wording comes from the caller. */
-  approval: string;
-  approvalOptions: readonly string[];
-  onApprovalChange: (value: string) => void;
   onSend: (text: string) => void | Promise<void>;
   /** Start dictation into this box. Absent = no speech-to-text on this device. */
   onDictate?: () => void;
@@ -72,9 +67,6 @@ export function ChatComposer({
   modelId,
   onAgentChange,
   onModelChange,
-  approval,
-  approvalOptions,
-  onApprovalChange,
   onSend,
   onDictate,
   onTalk,
@@ -83,7 +75,7 @@ export function ChatComposer({
   placeholder = "Just start typing…",
 }: ChatComposerProps) {
   const [text, setText] = useState("");
-  const [menu, setMenu] = useState<"agent" | "model" | "approval" | null>(null);
+  const [menu, setMenu] = useState<"agent" | "model" | null>(null);
   const box = useRef<HTMLTextAreaElement | null>(null);
 
   const agent = agents.find((a) => a.id === agentId) ?? agents[0];
@@ -158,18 +150,6 @@ export function ChatComposer({
 
         <div className="flex items-center gap-1 px-2 pb-2">
           <IconAction icon={Paperclip} label="Attach files" onClick={onAttach} />
-
-          <Chip
-            open={menu === "approval"}
-            onToggle={() => setMenu((m) => (m === "approval" ? null : "approval"))}
-            icon={<ShieldCheck className="h-3 w-3" aria-hidden />}
-            label={approval}
-            options={approvalOptions.map((value) => ({ id: value, label: value }))}
-            onPick={(value) => {
-              onApprovalChange(value);
-              setMenu(null);
-            }}
-          />
 
           <div className="flex-1" />
 

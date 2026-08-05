@@ -123,6 +123,11 @@ class PatchChatIn(BaseModel):
     archived: bool | None = None
     model: str | None = None
     account: str | None = None
+    #: Which live pane this chat is attached to. Written by the surface once a
+    #: prompt has actually started an agent, so reopening the chat finds the
+    #: terminal that already holds the conversation instead of starting a
+    #: second one beside it.
+    terminal: str | None = None
 
 
 class RemovedOut(BaseModel):

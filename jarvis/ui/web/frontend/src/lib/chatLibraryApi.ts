@@ -144,7 +144,7 @@ export async function createChat(
 export async function patchChat(
   projectId: string,
   chatId: string,
-  changes: Partial<Pick<ChatRow, "title" | "archived" | "model" | "account">>,
+  changes: Partial<Pick<ChatRow, "title" | "archived" | "model" | "account" | "terminal">>,
 ): Promise<ChatRow> {
   return request<ChatRow>(
     `/projects/${encodeURIComponent(projectId)}/chats/${encodeURIComponent(chatId)}`,
