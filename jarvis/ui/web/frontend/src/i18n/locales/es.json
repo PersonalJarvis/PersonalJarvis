@@ -1299,6 +1299,14 @@
     "hint_default": "Déjalo vacío para usar la dirección predeterminada mostrada arriba.",
     "hint_required": "Este proveedor necesita una URL de servidor: indica dónde se ejecuta tu servidor local."
   },
+  "apikeys_model_pull": {
+    "title": "Modelos en este equipo",
+    "memory": "{0} GB de RAM",
+    "size": "~{0} GB",
+    "installed": "Instalado",
+    "download": "Descargar",
+    "custom_placeholder": "Cualquier nombre de modelo, p. ej. mistral"
+  },
   "apikeys_model": {
     "heading": "Modelo",
     "recommended_tag": "Recomendado",

@@ -1299,6 +1299,14 @@
     "hint_default": "Leer lassen, um die oben gezeigte Standard-Adresse zu verwenden.",
     "hint_required": "Dieser Anbieter braucht eine Server-URL — trage ein, wo dein lokaler Server läuft."
   },
+  "apikeys_model_pull": {
+    "title": "Modelle auf diesem Rechner",
+    "memory": "{0} GB RAM",
+    "size": "~{0} GB",
+    "installed": "Installiert",
+    "download": "Laden",
+    "custom_placeholder": "Beliebiger Modellname, z. B. mistral"
+  },
   "apikeys_model": {
     "heading": "Modell",
     "recommended_tag": "Empfohlen",

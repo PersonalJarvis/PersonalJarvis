@@ -136,6 +136,13 @@ export interface ProviderDescriptor {
   /** Local/self-hosted cards: whether the card exposes an editable server URL
    *  (persisted via PUT /api/providers/{id}/base-url). */
   supports_base_url?: boolean;
+  /**
+   * Whether this card's server can be TOLD to download a model
+   * (POST /api/providers/{id}/pull). A capability flag rather than a provider
+   * name: a generic OpenAI-compatible server has no such API, an Ollama server
+   * does, and the UI decides on the flag alone.
+   */
+  supports_model_pull?: boolean;
   /** Placeholder while no override is stored; null = the user must set one. */
   default_base_url?: string | null;
   /** The stored server-URL override; null = the vendor default is in effect. */
@@ -801,6 +808,94 @@ export async function localInstallStatus(
     throw new Error(body.detail ?? `HTTP ${res.status}`);
   }
   return body as LocalInstallProgress;
+}
+
+/** One curated model a local server can download, annotated for THIS machine. */
+export interface PullableModel {
+  id: string;
+  label: string;
+  size_gb: number;
+  purpose: string;
+  tools: boolean;
+  vision: boolean;
+  installed: boolean;
+  /** "comfortable" | "tight" | "unknown" — advisory, never a block. */
+  fit: string;
+  fit_note: string;
+}
+
+export interface PullableModels {
+  server: string;
+  server_reachable: boolean;
+  message: string;
+  memory_gb: number | null;
+  models: PullableModel[];
+  installed: string[];
+}
+
+/** Progress of ONE model download on the local server. */
+export interface ModelPullProgress {
+  state: "idle" | "running" | "done" | "error";
+  model: string;
+  message: string;
+  installed?: boolean;
+  completed?: number;
+  total?: number;
+  percent?: number;
+  already?: boolean;
+}
+
+/** The curated shortlist plus what this machine already holds. */
+export async function pullableModels(
+  providerId: string,
+): Promise<PullableModels> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/pullable-models`,
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as PullableModels;
+}
+
+/**
+ * Start downloading `model` into the local server. Returns as soon as the pull
+ * is running — a multi-gigabyte download takes minutes, so the caller polls
+ * `modelPullStatus` instead of awaiting it.
+ */
+export async function startModelPull(
+  providerId: string,
+  model: string,
+): Promise<ModelPullProgress> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/pull`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    },
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as ModelPullProgress;
+}
+
+/** Poll one download; `installed` reflects the server's inventory, not the run. */
+export async function modelPullStatus(
+  providerId: string,
+  model: string,
+): Promise<ModelPullProgress> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/pull/status?model=${encodeURIComponent(model)}`,
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as ModelPullProgress;
 }
 
 export async function switchSttProvider(

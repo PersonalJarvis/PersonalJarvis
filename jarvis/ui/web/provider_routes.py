@@ -197,6 +197,13 @@ class BrainModelSaveResponse(BaseModel):
     probe: BrainModelProbe | None = None
 
 
+# Local model downloads: the name to pull into the user's own server. Free-form
+# on purpose — the curated shortlist is a starting point, and the Ollama library
+# holds far more than any list here could track.
+class PullModelBody(BaseModel):
+    model: str = Field(default="", max_length=200)
+
+
 # Phase 3: selectable Computer-Use model per provider. CU runs on the provider's
 # main ``model`` by default; a pinned ``cu_model`` lets the user run CU on a
 # different (e.g. stronger) model than chat. ``cu_model == ""`` means "use my
@@ -419,6 +426,21 @@ def _installed_local_models(provider_id: str, models: list[Any]) -> list[Any]:
     return kept
 
 
+def _pull_capable_ids() -> frozenset[str]:
+    """Provider ids whose server has a native model-download API.
+
+    Lazy + defensive: the provider list must render even if the pull module
+    cannot be imported on this install.
+    """
+    try:
+        from jarvis.brain.ollama_pull import PULL_CAPABLE_PROVIDERS
+
+        return PULL_CAPABLE_PROVIDERS
+    except Exception as exc:  # noqa: BLE001 — the provider list must never 500
+        log.debug("Pull-capability lookup failed (%s); no card offers downloads.", exc)
+        return frozenset()
+
+
 def _spec_to_payload(
     spec: ProviderSpec,
     *,
@@ -546,6 +568,10 @@ def _spec_to_payload(
         "supports_base_url": spec.supports_base_url,
         "default_base_url": spec.default_base_url,
         "base_url": _stored_base_url(spec),
+        # Whether this card's server can be TOLD to fetch a model
+        # (POST /providers/{id}/pull). A capability flag, so the UI renders the
+        # download panel without knowing a provider name (AP-21).
+        "supports_model_pull": spec.id in _pull_capable_ids(),
         # Maintainer-recommended pick for this tier (UI badge) + the model it
         # points at. Presentation only — never gates behavior (AP-21).
         "recommended": spec.recommended,
@@ -2545,6 +2571,71 @@ async def get_local_install_status(provider_id: str) -> dict[str, Any]:
     ):
         raise HTTPException(status_code=400, detail=result["message"])
     return result
+
+
+def _require_pull_capable(provider_id: str) -> None:
+    """404 for an unknown card, 400 for one whose server cannot be told to pull.
+
+    Not a preference: a generic OpenAI-compatible server has no standard "fetch
+    this model" call, so the honest answer is that this card cannot download for
+    you — never a silent no-op.
+    """
+    if get_spec(provider_id) is None:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+    from jarvis.brain.ollama_pull import PULL_CAPABLE_PROVIDERS
+
+    if provider_id not in PULL_CAPABLE_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{provider_id}' has no download API — load the model in the "
+                "server itself, then it appears in the model picker."
+            ),
+        )
+
+
+@router.get("/providers/{provider_id}/pullable-models")
+async def list_pullable_models(provider_id: str) -> dict[str, Any]:
+    """Curated local models to download, annotated for THIS machine.
+
+    Answers the question a keyless install actually has — "which model should I
+    get, and will it run here?" — with the shortlist, each entry's approximate
+    size, whether it is already installed, and a memory verdict from the host's
+    own RAM. Advisory, never a block: Ollama offloads to GPU memory this probe
+    cannot see.
+    """
+    _require_pull_capable(provider_id)
+    from jarvis.brain.ollama_pull import recommendations
+
+    return await recommendations()
+
+
+@router.post("/providers/{provider_id}/pull")
+async def start_model_pull(provider_id: str, body: PullModelBody) -> dict[str, Any]:
+    """Download a model into the local server (§3: recoverable in-app).
+
+    Any name the library knows may be pulled, not only the curated ones. Returns
+    immediately with a ``state`` the UI polls — a synchronous route would hold
+    the request open for the length of a multi-gigabyte download — and a second
+    call while a pull is in flight joins it instead of duplicating it.
+    """
+    _require_pull_capable(provider_id)
+    from jarvis.brain.ollama_pull import start_pull
+
+    return await start_pull(body.model)
+
+
+@router.get("/providers/{provider_id}/pull/status")
+async def get_model_pull_status(provider_id: str, model: str) -> dict[str, Any]:
+    """Progress of one model download, checked against the server's inventory.
+
+    The inventory wins over this process's own bookkeeping: a model pulled from
+    the CLI or a previous app run reads as installed rather than "idle".
+    """
+    _require_pull_capable(provider_id)
+    from jarvis.brain.ollama_pull import pull_status
+
+    return await pull_status(model)
 
 
 @router.get("/providers/{provider_id}/cu-model")

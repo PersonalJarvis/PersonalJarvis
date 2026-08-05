@@ -13,9 +13,15 @@ import {
   loginAntigravity,
   localInstallStatus,
   logoutAntigravity,
+  modelPullStatus,
+  pullableModels,
   startLocalInstall,
+  startModelPull,
   type LocalInstallProgress,
+  type ModelPullProgress,
   type ProviderDescriptor,
+  type PullableModel,
+  type PullableModels,
   type ProviderTestResult,
   type ProviderTestStatus,
   type ProviderTier,
@@ -1732,6 +1738,216 @@ function LocalRuntimePanel({
   );
 }
 
+/**
+ * The download half of a keyless local brain card: which models this machine
+ * could run, which it already has, and the one button that fetches one.
+ *
+ * Without it a keyless install dead-ended at "run: ollama pull <model>" — a
+ * terminal instruction in an app that has no terminal, and the exact point
+ * where §3's "recoverable in-app" contract broke. Nothing is inferred client
+ * side: installed state, fit verdict and progress all come from the server,
+ * because only it can see the user's inventory and memory. The fit verdict is
+ * advisory — a GPU runs models the RAM rule calls tight, so it never disables
+ * the button.
+ */
+function LocalModelDownloadPanel({
+  descriptor,
+  onChanged,
+}: {
+  descriptor: ProviderDescriptor;
+  onChanged: () => void;
+}) {
+  const t = useT();
+  const [catalog, setCatalog] = useState<PullableModels | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [custom, setCustom] = useState("");
+  const [progress, setProgress] = useState<ModelPullProgress | null>(null);
+  const running = progress?.state === "running";
+
+  // Hooks run before the capability check below, so the fetch itself is gated:
+  // a cloud card that mounted this panel would otherwise fire a request the
+  // route answers with 400 on every render of the provider list.
+  const pullable = Boolean(descriptor.supports_model_pull);
+  const load = useMemo(
+    () => async () => {
+      if (!pullable) return;
+      try {
+        setCatalog(await pullableModels(descriptor.id));
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [descriptor.id, pullable],
+  );
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // Poll only while a pull is in flight. A finished download refreshes both the
+  // shortlist (so the row flips to "installed") and the provider list (so the
+  // model picker sees the new model without a restart).
+  useEffect(() => {
+    if (!running || !progress) return;
+    let cancelled = false;
+    const model = progress.model;
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await modelPullStatus(descriptor.id, model);
+        if (cancelled) return;
+        setProgress(next);
+        if (next.state === "done" || next.state === "error") {
+          window.clearInterval(timer);
+          void load();
+          onChanged();
+        }
+      } catch (err) {
+        if (cancelled) return;
+        window.clearInterval(timer);
+        setError(err instanceof Error ? err.message : String(err));
+        setProgress(null);
+      }
+    }, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [running, progress, descriptor.id, load, onChanged]);
+
+  if (!pullable) return null;
+
+  const pull = async (model: string) => {
+    const name = model.trim();
+    if (!name) return;
+    setError(null);
+    try {
+      const started = await startModelPull(descriptor.id, name);
+      setProgress(started);
+      if (started.state === "done") {
+        void load();
+        onChanged();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const percent = progress?.percent ?? 0;
+  const rows: PullableModel[] = catalog?.models ?? [];
+
+  return (
+    <div
+      data-testid={`provider-model-pull-${descriptor.id}`}
+      className="space-y-2 rounded-md border border-border/60 bg-muted/30 p-3"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium">{t("apikeys_model_pull.title")}</p>
+        {catalog?.memory_gb ? (
+          <span className="text-[11px] text-muted-foreground">
+            {t("apikeys_model_pull.memory").replace(
+              "{0}",
+              String(catalog.memory_gb),
+            )}
+          </span>
+        ) : null}
+      </div>
+
+      {catalog && !catalog.server_reachable && (
+        <p className="text-[11px] text-amber-500">{catalog.message}</p>
+      )}
+
+      <div className="space-y-1.5">
+        {rows.map((row) => (
+          <div
+            key={row.id}
+            className="flex items-start justify-between gap-2 rounded border border-border/50 bg-background/50 px-2 py-1.5"
+          >
+            <div className="min-w-0">
+              <p className="truncate text-xs font-medium">
+                {row.label}{" "}
+                <span className="font-normal text-muted-foreground">
+                  {t("apikeys_model_pull.size").replace(
+                    "{0}",
+                    String(row.size_gb),
+                  )}
+                </span>
+              </p>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                {row.purpose}
+              </p>
+              {row.fit === "tight" && (
+                <p className="text-[11px] leading-snug text-amber-500">
+                  {row.fit_note}
+                </p>
+              )}
+            </div>
+            {row.installed ? (
+              <span className="flex shrink-0 items-center gap-1 text-[11px] text-emerald-500">
+                <Check className="h-3.5 w-3.5" />
+                {t("apikeys_model_pull.installed")}
+              </span>
+            ) : (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="shrink-0 gap-1.5"
+                disabled={running || !catalog?.server_reachable}
+                onClick={() => void pull(row.id)}
+              >
+                {running && progress?.model === row.id ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                {t("apikeys_model_pull.download")}
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Any name the library knows — the shortlist is a starting point, not a
+          gate, and a user who wants a specific model should not have to leave
+          the app for it. */}
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+          placeholder={t("apikeys_model_pull.custom_placeholder")}
+          className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+        />
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={running || !custom.trim() || !catalog?.server_reachable}
+          onClick={() => void pull(custom)}
+        >
+          {t("apikeys_model_pull.download")}
+        </Button>
+      </div>
+
+      {progress && progress.state !== "idle" && (
+        <div className="space-y-1">
+          <p className="text-[11px] text-muted-foreground">
+            {progress.model}: {progress.message}
+          </p>
+          {running && (
+            <div className="h-1 w-full overflow-hidden rounded bg-border">
+              <div
+                className="h-full bg-primary transition-all"
+                style={{ width: `${percent}%` }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+      {error && <p className="text-[11px] text-destructive">{error}</p>}
+    </div>
+  );
+}
+
 export function AuthWidget({
   descriptor,
   onChanged,
@@ -1775,6 +1991,9 @@ export function AuthWidget({
       {descriptor.supports_base_url && (
         <BaseUrlField descriptor={descriptor} onChanged={onChanged} />
       )}
+      <LocalModelDownloadPanel descriptor={descriptor} onChanged={onChanged} />
+      {/* Ordered after the server URL on purpose: a download can only be
+          offered once the card points at the right server. */}
       {descriptor.auth_mode === "none" && (
         <>
           <p className="text-xs text-muted-foreground">

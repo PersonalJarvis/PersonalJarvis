@@ -1299,6 +1299,14 @@
     "hint_default": "Leave empty to use the default address shown above.",
     "hint_required": "This provider needs a server URL — enter where your local server runs."
   },
+  "apikeys_model_pull": {
+    "title": "Models on this machine",
+    "memory": "{0} GB RAM",
+    "size": "~{0} GB",
+    "installed": "Installed",
+    "download": "Download",
+    "custom_placeholder": "Any model name, e.g. mistral"
+  },
   "apikeys_model": {
     "heading": "Model",
     "recommended_tag": "Recommended",
