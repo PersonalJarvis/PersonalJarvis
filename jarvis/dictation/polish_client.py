@@ -131,11 +131,50 @@ class PolishFamily:
     secret_candidates: tuple[str, ...]
     default_model: str
     default_timeout_ms: int
+    #: Provider card this family INHERITS its address from, or None for a
+    #: hosted endpoint that never moves. A self-hosted server has exactly one
+    #: address, and the user set it once on that provider's card; keeping a
+    #: second copy here pinned to localhost meant that moving the server to
+    #: another box silently left this feature talking to nothing. Data, not a
+    #: name branch (AP-21).
+    endpoint_provider: str | None = None
 
     @property
     def needs_key(self) -> bool:
         """Whether this family is reachable only with a credential."""
         return bool(self.secret_candidates)
+
+    @property
+    def effective_base_url(self) -> str:
+        """The address this family is ACTUALLY reached at right now.
+
+        A hosted family is its declared ``base_url``. A family that inherits
+        (``endpoint_provider``) follows whatever server the user configured on
+        that card — including one on another machine. Falls back to the
+        declared address when the lookup cannot be made, which is the previous
+        behaviour and never worse than it.
+        """
+        if not self.endpoint_provider:
+            return self.base_url
+        try:
+            from jarvis.core import config as cfg  # noqa: PLC0415 — lazy (AP-26)
+            from jarvis.plugins.brain.ollama import (  # noqa: PLC0415 — pure helpers
+                default_server_root,
+                normalize_server_root,
+            )
+
+            endpoint = cfg.resolve_provider_endpoint(
+                self.endpoint_provider, vendor_default_base_url=default_server_root()
+            )
+            root = normalize_server_root(endpoint.base_url or default_server_root())
+            return f"{root}/v1"
+        except Exception:  # noqa: BLE001 — an unreadable config keeps the default
+            log.debug(
+                "polish: could not resolve the %s endpoint; using %s",
+                self.endpoint_provider,
+                self.base_url,
+            )
+            return self.base_url
 
     @property
     def runs_on_device(self) -> bool:
@@ -147,10 +186,11 @@ class PolishFamily:
         "the endpoint is a loopback address" is about whether the user's words
         travel over a network at all — and that is the only thing
         :func:`resolve_polish_chain` may act on when the recognizer itself is
-        on-device. Derived from the declared ``base_url``, so a new family is
-        still one row and no name is ever branched on (AP-21).
+        on-device. Read off the EFFECTIVE address: an Ollama server on another
+        box in the house is keyless but not on-device, and claiming otherwise
+        would be a privacy promise we do not keep.
         """
-        host = (urlsplit(self.base_url).hostname or "").strip().lower()
+        host = (urlsplit(self.effective_base_url).hostname or "").strip().lower()
         return host in _LOOPBACK_HOSTS
 
 
@@ -227,10 +267,13 @@ POLISH_FAMILIES: Final[tuple[PolishFamily, ...]] = (
         id="ollama",
         label="Ollama (local)",
         transport="openai_chat",
+        # Declared address is the vendor default; the effective one follows the
+        # Ollama card, so a server moved to another machine keeps working.
         base_url="http://localhost:11434/v1",
         secret_candidates=(),
         default_model="llama3.1:8b",
         default_timeout_ms=3000,
+        endpoint_provider="ollama",
     ),
 )
 
@@ -717,7 +760,7 @@ class OpenAIChatPolishClient:
         """
         import httpx
 
-        url = f"{self._family.base_url.rstrip('/')}/chat/completions"
+        url = f"{self._family.effective_base_url.rstrip('/')}/chat/completions"
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"

@@ -718,6 +718,7 @@ function prettyProviderName(id: string): string {
     // backend's pretty label is unavailable (cosmetic fallback only).
     "openai-realtime": "OpenAI Realtime",
     "gemini-live": "Gemini Live",
+    "local-realtime": "Self-hosted realtime",
     "unknown": "—",
   };
   return map[id] ?? id;

@@ -564,6 +564,10 @@ discord = "jarvis.channels.discord:DiscordChannel"
 codex-subscription-realtime = "jarvis.plugins.realtime.codex_subscription:CodexSubscriptionRealtimeProvider"
 openai-realtime = "jarvis.plugins.realtime.openai_realtime:OpenAIRealtimeProvider"
 gemini-live = "jarvis.plugins.realtime.gemini_live:GeminiLiveProvider"
+# Self-hosted endpoint speaking the same realtime protocol — the local option
+# this tier lacked entirely. Keyless; only ever used when explicitly selected
+# with a server URL configured.
+local-realtime = "jarvis.plugins.realtime.openai_realtime:LocalRealtimeProvider"
 
 [project.entry-points."jarvis.tool"]
 open-app = "jarvis.plugins.tool.open_app:OpenAppTool"

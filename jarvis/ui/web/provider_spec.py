@@ -795,6 +795,31 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "remain a compatibility fallback until a dedicated key is saved."
         ),
     ),
+    # The local option this tier lacked entirely: every other realtime card
+    # bills a hosted account, so an install running brain, recognizer and voice
+    # on its own hardware still had to leave the machine for the low-latency
+    # voice mode. Protocol-shaped, never product-shaped — it names no project
+    # and bundles no server.
+    ProviderSpec(
+        id="local-realtime",
+        label="Self-hosted realtime (OpenAI-compatible)",
+        tier="realtime",
+        auth_mode="none",
+        secret_keys=(),
+        dashboard_url=None,
+        signup_url="https://platform.openai.com/docs/guides/realtime",
+        supports_base_url=True,
+        credential_help=(
+            "Any server on your own machine or network that speaks the OpenAI "
+            "Realtime WebSocket protocol. Enter its address (for example "
+            "http://localhost:8080) — no cloud account, nothing leaves your "
+            "network. The model and voice come from the server itself; leave "
+            "them on 'auto' unless it serves several. This card is only used "
+            "when you select it and set an address. If your server requires a "
+            "token, export JARVIS_LOCAL_REALTIME_API_KEY — most need none."
+        ),
+        experimental=True,
+    ),
     # grok-realtime was removed 2026-07-16 (BUG-064: the xAI realtime server
     # drops its session contract after any response cancel and goes deaf).
 )

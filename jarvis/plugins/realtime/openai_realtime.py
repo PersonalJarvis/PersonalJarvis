@@ -12,6 +12,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -201,14 +202,23 @@ def _response_status_error(event: Any) -> str:
     return f"{summary}: {detail}"[:800] if detail else summary
 
 
-def _session_payload(cfg: Any) -> dict[str, Any]:
+def _session_payload(
+    cfg: Any, *, transcription_model: str | None = "gpt-4o-mini-transcribe"
+) -> dict[str, Any]:
     """Build the current GA ``session.update`` payload.
 
     Audio output already includes a transcript side-channel, so the Realtime
     API accepts ``[\"audio\"]`` only; requesting text and audio together is
     invalid. PCM input and output are both explicitly declared as 24 kHz.
+
+    ``transcription_model`` is ``None`` for a self-hosted server: a hosted
+    OpenAI model id is meaningless there and naming one would have the server
+    reject the whole session for a field the user never chose. The server then
+    transcribes with whatever it ships.
     """
-    transcription: dict[str, Any] = {"model": "gpt-4o-mini-transcribe"}
+    transcription: dict[str, Any] = (
+        {"model": transcription_model} if transcription_model else {}
+    )
     input_language = str(getattr(cfg, "input_language", "auto") or "auto")
     input_language = input_language.strip().lower().replace("_", "-").split("-", 1)[0]
     if input_language in {"de", "en", "es"}:
@@ -222,7 +232,10 @@ def _session_payload(cfg: Any) -> dict[str, Any]:
         "format": {"type": "audio/pcm", "rate": _OUTPUT_RATE},
     }
     voice = str(getattr(cfg, "voice", "") or "").strip()
-    if voice:
+    # "auto" is the picker's way of saying "no preference" (the only honest
+    # entry a self-hosted card can offer); sending it as a voice NAME would
+    # have the server reject a voice it does not have.
+    if voice and voice != "auto":
         output["voice"] = voice
 
     turn_detection_config: dict[str, Any] = {
@@ -1079,6 +1092,69 @@ class _OpenAIRealtimeSession:
                     await result
 
 
+async def _open_realtime_session(
+    client: Any,
+    cfg: Any,
+    *,
+    model: str,
+    transcription_model: str | None = "gpt-4o-mini-transcribe",
+) -> _OpenAIRealtimeSession:
+    """Open, configure and hand back a live session on ``client``.
+
+    Shared by the hosted OpenAI card and the self-hosted one: they differ only
+    in which endpoint the client points at, and every hard-won detail below —
+    the cleanup after a failed ``__aenter__``, the session payload, the
+    mid-call history seed — must stay identical for both, so it lives here
+    once rather than in two drifting copies.
+    """
+    connection_cm = client.realtime.connect(model=model)
+    try:
+        connection = await connection_cm.__aenter__()
+    except BaseException as exc:
+        # ``__aenter__`` may allocate the WebSocket before failing or being
+        # cancelled. Python does not call ``__aexit__`` for a failed enter,
+        # so close both layers explicitly and preserve the original error.
+        try:
+            await connection_cm.__aexit__(type(exc), exc, exc.__traceback__)
+        except BaseException:  # noqa: BLE001 - cleanup must not mask root cause
+            log.debug(
+                "Realtime connection cleanup after failed enter failed",
+                exc_info=True,
+            )
+        try:
+            close = getattr(client, "close", None)
+            if close is not None:
+                result = close()
+                if hasattr(result, "__await__"):
+                    await result
+        except BaseException:  # noqa: BLE001 - preserve failure/cancellation
+            log.debug(
+                "Realtime client cleanup after failed enter failed", exc_info=True
+            )
+        raise
+    payload = _session_payload(cfg, transcription_model=transcription_model)
+    session = _OpenAIRealtimeSession(
+        connection=connection,
+        connection_cm=connection_cm,
+        client=client,
+        session_id=str(uuid4()),
+        session_payload=payload,
+        connect_model=model,
+        history_seed=tuple(getattr(cfg, "history", ()) or ()),
+    )
+    try:
+        await connection.session.update(session=payload)
+        await session.wait_until_ready()
+    except BaseException:
+        await session.close()
+        raise
+    # A mid-call open (cross-family fallback after another provider's transport
+    # died) carries the call transcript; restore it so the conversation survives
+    # the provider crossing (BUG-088).
+    await session._seed_conversation_history(connection)
+    return session
+
+
 class OpenAIRealtimeProvider:
     """Structural provider entry point for the OpenAI Realtime family."""
 
@@ -1109,50 +1185,177 @@ class OpenAIRealtimeProvider:
 
         client = AsyncOpenAI(api_key=self._api_key)
         connect_model = str(getattr(cfg, "model", "") or _MODEL)
-        connection_cm = client.realtime.connect(model=connect_model)
-        try:
-            connection = await connection_cm.__aenter__()
-        except BaseException as exc:
-            # ``__aenter__`` may allocate the WebSocket before failing or being
-            # cancelled. Python does not call ``__aexit__`` for a failed enter,
-            # so close both layers explicitly and preserve the original error.
-            try:
-                await connection_cm.__aexit__(type(exc), exc, exc.__traceback__)
-            except BaseException:  # noqa: BLE001 - cleanup must not mask root cause
-                log.debug(
-                    "OpenAI Realtime connection cleanup after failed enter failed",
-                    exc_info=True,
-                )
-            try:
-                close = getattr(client, "close", None)
-                if close is not None:
-                    result = close()
-                    if hasattr(result, "__await__"):
-                        await result
-            except BaseException:  # noqa: BLE001 - preserve failure/cancellation
-                log.debug(
-                    "OpenAI Realtime client cleanup after failed enter failed",
-                    exc_info=True,
-                )
-            raise
-        payload = _session_payload(cfg)
-        session = _OpenAIRealtimeSession(
-            connection=connection,
-            connection_cm=connection_cm,
-            client=client,
-            session_id=str(uuid4()),
-            session_payload=payload,
-            connect_model=connect_model,
-            history_seed=tuple(getattr(cfg, "history", ()) or ()),
+        return await _open_realtime_session(client, cfg, model=connect_model)
+
+
+# ---------------------------------------------------------------------------
+# Self-hosted realtime — the same protocol, the user's own endpoint
+# ---------------------------------------------------------------------------
+
+#: Connect timeout for the model probe against a self-hosted server. Short on
+#: purpose: a server that is not there must not delay the fallback to whatever
+#: else the install has.
+_LOCAL_PROBE_TIMEOUT_S = 3.0
+
+
+def _normalize_local_root(url: str) -> str:
+    """Normalize a user-entered server address to an ``…/v1`` API root.
+
+    Accepts ``host:port``, a full URL, a trailing slash, or an already-complete
+    ``…/v1``. ``0.0.0.0`` is a server BIND address and unusable as a client
+    target on Windows, so it maps to localhost — the same normalization the
+    local brain cards apply, kept local to this module because a plugin does
+    not reach into the rest of the tree.
+    """
+    root = (url or "").strip().rstrip("/")
+    if not root:
+        return ""
+    if "://" not in root:
+        root = f"http://{root}"
+    root = root.replace("://0.0.0.0", "://localhost")
+    if root.endswith("/v1"):
+        return root
+    return f"{root}/v1"
+
+
+class LocalRealtimeProvider:
+    """A self-hosted server that speaks the OpenAI Realtime WebSocket protocol.
+
+    Realtime was the one tier with no local option at all: every card in it
+    billed a hosted account, so an install running its brain, its recognizer
+    and its voice on its own hardware still had to leave the machine for the
+    low-latency voice mode — or give that mode up entirely.
+
+    Deliberately protocol-shaped rather than product-shaped: it names no
+    project and bundles no server, it speaks to whatever endpoint the user
+    points it at, on this machine or on another box on the LAN.
+
+    Keyless by design — the optional key is attached when the user stored one
+    (a reverse proxy, a shared GPU host) and its absence is normal. The card is
+    only ever a candidate once the user selected it AND configured a server
+    URL: an unconfigured endpoint must never join the ambient fallback chain
+    and swallow a turn.
+    """
+
+    name = "local-realtime"
+    supports_realtime = True
+    # Never an implicit stand-in: a self-hosted endpoint is a deliberate choice,
+    # and quietly routing a call into one the user did not pick is the opposite
+    # of what a local card is for.
+    implicit_usage_fallback_allowed = False
+    input_sample_rate = _INPUT_RATE
+    output_sample_rate = _OUTPUT_RATE
+    # No credential_candidates: this is the keyless path, so the factory builds
+    # it through ``external_login_ready`` + ``from_runtime_config`` rather than
+    # handing it a key.
+
+    def __init__(
+        self, *, base_url: str = "", api_key: str = "", model: str = ""
+    ) -> None:
+        self._base_url = _normalize_local_root(base_url)
+        self._api_key = (api_key or "").strip()
+        self._model = (model or "").strip()
+
+    # -- factory wiring ----------------------------------------------------
+
+    @staticmethod
+    def _provider_config(cfg: Any) -> Any:
+        """The card's stored settings, read defensively off the config object.
+
+        Attribute access only — no imports from the rest of the tree, which is
+        what keeps this module a plugin rather than a dependency.
+        """
+        providers = getattr(getattr(cfg, "brain", None), "providers", None) or {}
+        getter = getattr(providers, "get", None)
+        return getter("local-realtime") if callable(getter) else None
+
+    @classmethod
+    def external_login_ready(cls, cfg: Any = None) -> bool:
+        """Whether a server address is configured. Synchronous and offline.
+
+        The factory calls this on an audio loop, so it must never touch the
+        network: the question here is "is there an endpoint to try at all",
+        and ``open_session`` is what finds out whether it answers.
+        """
+        provider_cfg = cls._provider_config(cfg)
+        return bool(
+            _normalize_local_root(str(getattr(provider_cfg, "base_url", "") or ""))
         )
+
+    @classmethod
+    def from_runtime_config(cls, cfg: Any) -> LocalRealtimeProvider:
+        provider_cfg = cls._provider_config(cfg)
+        return cls(
+            base_url=str(getattr(provider_cfg, "base_url", "") or ""),
+            # ENV only — a credential never belongs in jarvis.toml (AP-12), and
+            # most self-hosted servers need none at all. A user who put one
+            # behind a proxy or started vLLM with --api-key exports it once.
+            api_key=os.environ.get("JARVIS_LOCAL_REALTIME_API_KEY", ""),
+            model=str(getattr(provider_cfg, "model", "") or ""),
+        )
+
+    # -- session -----------------------------------------------------------
+
+    async def can_open_duplex_session(self) -> bool:
+        return bool(self._base_url)
+
+    async def _resolve_model(self) -> str:
+        """The configured model, else the first one the server serves.
+
+        A self-hosted realtime server names its model whatever its operator
+        called it, so there is no default worth hardcoding. Asking
+        ``/v1/models`` mirrors what the local brain card does and spares the
+        user a field they would have to look up. A server that does not answer
+        that endpoint is not an error — the connect below carries the honest
+        failure.
+        """
+        if self._model:
+            return self._model
+        import httpx  # lazy (AP-26)
+
+        headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         try:
-            await connection.session.update(session=payload)
-            await session.wait_until_ready()
-        except BaseException:
-            await session.close()
-            raise
-        # A mid-call open (cross-family fallback after another provider's
-        # transport died) carries the call transcript; restore it so the
-        # conversation survives the provider crossing (BUG-088).
-        await session._seed_conversation_history(connection)
-        return session
+            async with httpx.AsyncClient(timeout=_LOCAL_PROBE_TIMEOUT_S) as client:
+                resp = await client.get(f"{self._base_url}/models", headers=headers)
+                resp.raise_for_status()
+                served = [
+                    str(entry.get("id") or "").strip()
+                    for entry in (resp.json().get("data") or [])
+                ]
+        except Exception as exc:  # noqa: BLE001 — the connect reports the real failure
+            log.info(
+                "local-realtime: /models probe failed at %s (%s); connecting with "
+                "the protocol default",
+                self._base_url,
+                type(exc).__name__,
+            )
+            return _MODEL
+        for name in served:
+            if name:
+                log.info("local-realtime: no model configured — using served %s", name)
+                return name
+        return _MODEL
+
+    async def open_session(self, cfg: Any) -> _OpenAIRealtimeSession:
+        if not self._base_url:
+            raise RuntimeError(
+                "No server URL configured for the self-hosted realtime provider "
+                "— set it on the provider card first (e.g. http://localhost:8080)."
+            )
+        from openai import AsyncOpenAI  # lazy (AP-26)
+
+        client = AsyncOpenAI(
+            # Most self-hosted servers ignore the key; the SDK still insists on
+            # a non-empty one.
+            api_key=self._api_key or "local",
+            base_url=self._base_url,
+        )
+        connect_model = str(getattr(cfg, "model", "") or "").strip()
+        if not connect_model or connect_model == "auto":
+            # "auto" is what the card offers while the server's roster is
+            # unknown; resolve it into a real name rather than sending a
+            # placeholder the server would reject.
+            connect_model = await self._resolve_model()
+        return await _open_realtime_session(
+            client, cfg, model=connect_model, transcription_model=None
+        )

@@ -496,6 +496,11 @@ REALTIME_MODELS: dict[str, list[ModelInfo]] = {
     "codex-subscription-realtime": _curated(
         [("auto", "ChatGPT-Live (model chosen by OpenAI)")]
     ),
+    # local-realtime: the served model is whatever its operator loaded, so the
+    # only honest curated entry is "ask the server". The adapter resolves it
+    # through /v1/models at connect time (same as the local brain card), and a
+    # user who wants a specific one pins it on the card.
+    "local-realtime": _curated([("auto", "Chosen by your server")]),
     "openai-realtime": _curated(
         [
             ("gpt-realtime", "GPT Realtime (default)"),
@@ -554,6 +559,11 @@ REALTIME_VOICES: dict[str, list[ModelInfo]] = {
             "sol",
         ]
     ),
+    # A self-hosted server ships whatever voices its operator installed, and a
+    # list of OpenAI voice names would be a guess the server then rejects. One
+    # honest entry: the adapter sends no voice override and the server uses its
+    # own default.
+    "local-realtime": _curated([("auto", "Your server's own voice")]),
     "openai-realtime": _ids(
         [
             "alloy",

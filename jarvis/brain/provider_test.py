@@ -289,10 +289,21 @@ async def _default_realtime_probe(spec: Any, cfg: Any, *, timeout_s: float) -> f
 
     provider_cls = load("jarvis.realtime", spec.id, protocol=RealtimeProvider)
     credentials = tuple(getattr(provider_cls, "credential_candidates", ()) or ())
-    api_key = get_secret_any(credentials)
-    if not api_key:
+    api_key = get_secret_any(credentials) if credentials else None
+    if credentials and not api_key:
         raise RuntimeError("No API key configured for the realtime provider")
-    provider = provider_cls(api_key=api_key)
+    if api_key:
+        provider = provider_cls(api_key=api_key)
+    else:
+        # A keyless card (a server the user hosts themselves) declares no
+        # credential slots at all. Building it the key way would demand a
+        # credential it does not have and report a working endpoint as broken —
+        # so it is built the same way the session factory builds it, from its
+        # own configuration.
+        from_runtime_config = getattr(provider_cls, "from_runtime_config", None)
+        provider = (
+            from_runtime_config(cfg) if callable(from_runtime_config) else provider_cls()
+        )
     session_config = RealtimeSessionConfig(
         instructions="Connection validation only. Do not respond until audio arrives.",
         language="en",
