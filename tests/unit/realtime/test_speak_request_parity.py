@@ -36,6 +36,12 @@ def test_every_speak_request_prompt_opens_with_the_exception_sentence() -> None:
             "It failed.", language="en", success=False, late=True
         ),
         session_mod._direct_tool_result_retry_prompt(language="en"),
+        # Unreachable on the Codex adapter today (the bridge line prefers
+        # send_speech there), but the same silence-rule class the moment a
+        # transport lacks that preference — the reviewer's latent-flank note.
+        session_mod._delegate_bridge_prompt(
+            language="en", exact_text="One moment please."
+        ),
     )
     for prompt in prompts:
         assert prompt.startswith(opener)

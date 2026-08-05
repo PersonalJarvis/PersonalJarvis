@@ -765,6 +765,7 @@ def _delegate_bridge_prompt(*, language: str, exact_text: str) -> str:
     """
     language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
     return (
+        f"{SPEAK_REQUEST_OPENER} "
         "The Jarvis orchestrator is still executing the user's request and "
         f"has no result yet. Tell the user, in {language_name}, that you are "
         "still working on it, by saying exactly this sentence and nothing "
