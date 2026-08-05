@@ -29,6 +29,10 @@ guarantee that only holds until somebody writes the next test.
 5. **The workspace display preferences.** The remembered terminal text size is
    kept outside the repo too, so an unredirected test would resize the panes of
    whoever ran it.
+6. **The project/chat library.** The newest of the five, and the one with the
+   most to lose: it holds the user's projects and their chat history, so a test
+   left pointing at it would both pollute the sidebar and give a delete test a
+   real project to remove.
 """
 
 from __future__ import annotations
@@ -65,6 +69,24 @@ def _ui_prefs_in_tmp(
     target = tmp_path_factory.mktemp("ui-prefs") / "ui_prefs.json"
     monkeypatch.setattr(ui_prefs, "_store_path", lambda: target)
     return target
+
+
+@pytest.fixture(autouse=True)
+def _chat_library_in_tmp(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Point the project/chat library at a throwaway directory.
+
+    Same store, same failure class as 1 and 2 above, one level up: this one
+    holds the user's PROJECTS and their chat history, so an unredirected test
+    would file its temporary folders into the sidebar of whoever ran it — and,
+    worse, could delete a real project on the way through a delete test.
+    """
+    from jarvis.agentic_ide import library
+
+    root = tmp_path_factory.mktemp("chat-library")
+    monkeypatch.setattr(library, "_root", lambda: root)
+    return root
 
 
 @pytest.fixture(autouse=True)
