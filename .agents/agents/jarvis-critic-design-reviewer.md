@@ -57,27 +57,27 @@ The constant `MAX_CRITIC_LOOPS` is defined as a module-level `Final[int] = 3`, N
 
 ```
 ## Critic-Loop Design Review
-**Geprueft:** <list der dateien>
-**ADR-0009-Compliance-Score:** <n>/5
+**Reviewed:** <list of files>
+**ADR-0009 compliance score:** <n>/5
 
-### Kriterium 1 — Evidence-Cite-Pflicht: <PASS|FAIL>
-**Beleg:** `<datei:zeile>` — <ein-Satz-Begruendung>
-<bei FAIL: konkreter Fix-Vorschlag in 1 Satz>
+### Criterion 1 — evidence-cite requirement: <PASS|FAIL>
+**Evidence:** `<file:line>` — <one-sentence rationale>
+<on FAIL: concrete fix proposal in one sentence>
 
-### Kriterium 2 — Adversarial Framing: <PASS|FAIL>
-**Beleg:** `<datei:zeile>`
+### Criterion 2 — adversarial framing: <PASS|FAIL>
+**Evidence:** `<file:line>`
 <…>
 
-### Kriterium 3 — Anchor-Token: <PASS|FAIL>
-**Beleg:** `<datei:zeile>`
+### Criterion 3 — anchor token: <PASS|FAIL>
+**Evidence:** `<file:line>`
 <…>
 
 ### Criterion 4 — verdict=approve only when all axes pass: <PASS|FAIL>
-**Beleg:** `<datei:zeile>`
+**Evidence:** `<file:line>`
 <…>
 
-### Kriterium 5 — MAX_CRITIC_LOOPS=3 hardcoded: <PASS|FAIL>
-**Beleg:** `<datei:zeile>`
+### Criterion 5 — MAX_CRITIC_LOOPS=3 hardcoded: <PASS|FAIL>
+**Evidence:** `<file:line>`
 <…>
 
 ### Verdict
