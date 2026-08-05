@@ -25,6 +25,13 @@ export interface ChatProject {
   exists: boolean;
   /** How many live chats it holds. The count travels; the chats do not. */
   chats: number;
+  /**
+   * Is this the holder for chats started without picking a folder?
+   *
+   * At most one per install. Its chats are listed on their own rather than
+   * among the projects, because nobody chose the folder they run in.
+   */
+  scratch: boolean;
 }
 
 export interface ChatRow {
@@ -99,6 +106,16 @@ export async function openProject(path: string, name?: string): Promise<ChatProj
     method: "POST",
     body: JSON.stringify({ path, name }),
   });
+}
+
+/**
+ * The one holder for chats that were started without choosing a folder.
+ *
+ * Idempotent, so the caller does not have to know whether it exists yet: the
+ * "new session" button asks for it every time and gets the same project back.
+ */
+export async function openScratchProject(): Promise<ChatProject> {
+  return request<ChatProject>("/projects/scratch", { method: "POST" });
 }
 
 export async function patchProject(

@@ -95,6 +95,13 @@ class Project:
     archived: bool = False
     created_at: float = 0.0
     last_opened_at: float = 0.0
+    #: Is this the holder for chats started WITHOUT choosing a folder?
+    #:
+    #: There is exactly one of these per install (see :func:`ensure_scratch`).
+    #: A coding agent always runs somewhere, so it still has a path — the home
+    #: directory — but it is not a project somebody picked, and the sidebar
+    #: lists its chats on their own rather than among the real projects.
+    scratch: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -254,6 +261,10 @@ def _load_projects() -> list[Project]:
                 archived=bool(item.get("archived")),
                 created_at=float(item.get("created_at") or 0.0),
                 last_opened_at=float(item.get("last_opened_at") or 0.0),
+                # Absent in every file written before scratch existed, which
+                # reads as False — the correct answer for a folder somebody
+                # opened on purpose.
+                scratch=bool(item.get("scratch")),
             )
         )
     return out
@@ -315,6 +326,58 @@ def ensure_project(path: str | Path, *, name: str | None = None) -> Project:
             name=(name or Path(resolved).name or resolved)[:TITLE_MAX],
             created_at=now,
             last_opened_at=now,
+        )
+        projects.append(created)
+        _save_projects(projects)
+        return created
+
+
+#: What the one project-less holder is called on screen. English because every
+#: artifact is (CLAUDE.md §1); it is a name, not a translated label.
+SCRATCH_NAME = "Sessions"
+
+
+def scratch_root() -> Path:
+    """Where a chat with no chosen folder runs.
+
+    The home directory, because a coding agent always runs SOMEWHERE and this
+    is the one folder that exists on every account, on every OS, without asking
+    anybody anything. Deliberately not the repo, a temp directory, or the
+    process's current folder: the first is not the user's, the second is
+    erased under running agents, and the third is wherever the app happened to
+    be started from.
+    """
+    return Path.home()
+
+
+def ensure_scratch() -> Project:
+    """The single holder for chats started without choosing a folder.
+
+    Idempotent like :func:`ensure_project` and derived the same way, so it
+    survives a lost store. Existing rows are upgraded in place rather than
+    duplicated: an install that opened its home folder as a normal project
+    before this existed keeps that project and simply gains the flag.
+    """
+    resolved = str(scratch_root())
+    pid = project_id_for(resolved)
+    now = time.time()
+    with _WRITE_LOCK:
+        projects = _load_projects()
+        for project in projects:
+            if project.id == pid:
+                project.last_opened_at = now
+                if not project.scratch:
+                    project.scratch = True
+                    project.name = SCRATCH_NAME
+                _save_projects(projects)
+                return project
+        created = Project(
+            id=pid,
+            path=resolved,
+            name=SCRATCH_NAME,
+            created_at=now,
+            last_opened_at=now,
+            scratch=True,
         )
         projects.append(created)
         _save_projects(projects)

@@ -63,6 +63,9 @@ class ProjectOut(BaseModel):
     #: Is the folder reachable on this machine right now? Reported, never acted
     #: on — see the module docstring.
     exists: bool = True
+    #: Is this the holder for chats started without choosing a folder? There is
+    #: at most one, and the sidebar lists its chats apart from the projects.
+    scratch: bool = False
     #: How many live chats it holds. The COUNT travels with the list; the chats
     #: themselves do not.
     chats: int = 0
@@ -199,6 +202,22 @@ def open_project(body: OpenProjectIn) -> ProjectOut:
     """
     project = library.ensure_project(body.path, name=body.name)
     return _project_out(project)
+
+
+@router.post(
+    "/projects/scratch",
+    response_model=ProjectOut,
+    summary="The holder for chats started without a folder",
+)
+def open_scratch() -> ProjectOut:
+    """Idempotent: there is exactly one of these, and this is how it is reached.
+
+    A chat still needs somewhere to run — a coding CLI is a process with a
+    working directory — so this returns a real project rooted at the home
+    folder. What makes it different is only that nobody picked it, which is why
+    the sidebar lists its chats on their own instead of among the projects.
+    """
+    return _project_out(library.ensure_scratch())
 
 
 @router.patch(
