@@ -2285,6 +2285,134 @@ async def test_interrupt_drops_the_remainder_without_any_codex_turn_id(
 
 
 @pytest.mark.asyncio
+async def test_interrupt_retires_an_entitlement_the_response_never_used(
+    monkeypatch,
+) -> None:
+    """A delegation interrupt must beat the response's FIRST frame too.
+
+    When Jarvis takes a turn deterministically it interrupts before the far
+    end has begun streaming. Closing only the OPEN response left the spoken
+    utterance's entitlement standing, so the "retired" native answer simply
+    started a moment later and played over the trusted delegate reply (live
+    2026-08-04: an unrelated English fragment replaced the computed weather
+    answer).
+    """
+    speech = (1000).to_bytes(2, "little", signed=True) * 480
+    endpoint = _FakeAudioEndpoint(
+        output_schedule=((0.35, speech), (0.02, speech))
+    )
+    transcriber = _ScheduledInputTranscriber(
+        [
+            (0.0, InputTranscriptEvent(kind="speech_started")),
+            (
+                0.02,
+                InputTranscriptEvent(
+                    kind="transcript", text="Wetter morgen?", is_final=True
+                ),
+            ),
+        ]
+    )
+    client = _Client()
+    client.subscription = _keeps_stream_open()
+    session = await _provider(
+        client,
+        endpoint=endpoint,
+        input_transcriber_factory=lambda: transcriber,
+    ).open_session(RealtimeSessionConfig())
+
+    stream = session.receive()
+    async with asyncio.timeout(1.5):
+        async for event in stream:
+            if event.type == "input_transcript" and event.is_final:
+                break
+
+    await session.interrupt()
+
+    audio_after = []
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(0.8):
+            async for event in stream:
+                if event.type == "audio_delta":
+                    audio_after.append(event)
+
+    assert audio_after == []
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_post_interrupt_captions_do_not_feed_the_rebuild_counter(
+    monkeypatch,
+) -> None:
+    """Echo captions caused by OUR OWN cut must not tear the transport down.
+
+    The far end predictably reacts to a local interrupt with captions of its
+    own truncated speech. Counting those toward the self-dialogue rebuild
+    threshold turned every delegation into a rebuild storm (live 2026-08-04:
+    three transport rebuilds inside one 43 s call).
+    """
+    monkeypatch.setattr(codex_subscription_mod, "_UNGROUNDED_RESPONSE_GRACE_S", 0.0)
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.01,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "assistant", "text": "Hi."},
+                ),
+            ),
+            (
+                0.02,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "user", "text": "Thanks."},
+                ),
+            ),
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "user", "text": "Sure thing."},
+                ),
+            ),
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {"threadId": "thread-1", "role": "user", "text": "Anything else?"},
+                ),
+            ),
+        ]
+    )
+    session = await _provider(
+        client,
+        input_transcriber_factory=_GroundedThenQuietTranscriber,
+    ).open_session(RealtimeSessionConfig())
+
+    stream = session.receive()
+    async with asyncio.timeout(1.5):
+        async for event in stream:
+            if event.type == "output_transcript_delta":
+                break
+
+    await session.interrupt()
+
+    events = []
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(0.8):
+            async for event in stream:
+                events.append(event)
+
+    rebuild_errors = [
+        event
+        for event in events
+        if event.type == "error" and getattr(event, "reconnect_advised", False)
+    ]
+    assert rebuild_errors == []
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_truncate_reports_the_played_position_to_the_model() -> None:
     """AD-3: the model must learn how much of its answer was actually heard.
 

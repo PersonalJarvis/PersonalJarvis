@@ -5678,6 +5678,17 @@ class RealtimeVoiceSession:
             and not turn_state.pending_tool_calls
             and not turn_state.provider_boundary_seen
         ):
+            if self._drop_provider_output_until_new_response:
+                # The competing native response was already retired when the
+                # delegate took the turn; a full boundary wait here would only
+                # add dead air before the trusted reply. Re-assert the
+                # interrupt (idempotent) so the far end is cut no matter which
+                # path armed the withhold, and inject immediately.
+                try:
+                    await self._session.interrupt()
+                except Exception:  # noqa: BLE001, S110 — best-effort boundary
+                    pass
+                return
             try:
                 await asyncio.wait_for(
                     turn_state.provider_ready.wait(),
@@ -5901,6 +5912,21 @@ class RealtimeVoiceSession:
         turn_state: _DelegateTurnState,
     ) -> None:
         try:
+            if bool(
+                getattr(self._session, "creates_responses_automatically", False)
+            ):
+                # This transport is already answering the SAME utterance on its
+                # own VAD, and it has no server-side response cancel. Retire
+                # that competing native answer now — the adapter drops its
+                # remaining frames — because merely withholding it lets it
+                # resume MID-SENTENCE the moment the trusted delivery clears
+                # the withhold (live 2026-08-04: ". It's concrete, not
+                # fluffy…" played instead of the computed weather answer).
+                self._drop_provider_output_until_new_response = True
+                try:
+                    await self._session.interrupt()
+                except Exception:  # noqa: BLE001, S110 — best-effort retire
+                    pass
             if turn_state.wait_for_provider_boundary or bool(
                 getattr(
                     self._session,

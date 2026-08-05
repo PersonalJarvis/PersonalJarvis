@@ -93,6 +93,13 @@ _UNGROUNDED_RESPONSE_GRACE_S = 3.0
 # it for other providers — so rebuilding on the first one ended a healthy call
 # every time the far end transcribed slowly. A run of them is the loop.
 _UNGROUNDED_CAPTIONS_BEFORE_REBUILD = 2
+# After a LOCAL interrupt (barge-in or a delegation retiring the competing
+# native answer), the far end predictably reacts with echo captions of its own
+# truncated speech and continuation fragments. Inside this window those are
+# consequences of OUR cut, not evidence of a self-dialogue loop — counting
+# them toward the rebuild threshold turned every delegation into a transport
+# rebuild storm (live 2026-08-04: 11 rejections, 3 rebuilds in 43 s).
+_POST_INTERRUPT_GRACE_S = 3.0
 # How long a trusted injection's permit may wait for the response it provokes.
 # Generous relative to the far end's latency, and bounded so an injection that
 # was never answered cannot authorize an unrelated response later in the call.
@@ -663,6 +670,9 @@ class _CodexSubscriptionRealtimeSession:
         # Local copy of the interrupt barrier; a mismatch means ``interrupt``
         # ran and everything still queued for the cut response is stale.
         output_barrier = self._output_drop_barrier
+        # Monotonic deadline of the post-interrupt grace window (see
+        # ``_POST_INTERRUPT_GRACE_S``); 0.0 while no interrupt is recent.
+        interrupt_grace_until = 0.0
         # Item types this session has already reported as unhandled. The v3 item
         # vocabulary is only partly known, and silently swallowing the rest is
         # why neither the real terminal-response item nor the never-observed
@@ -830,12 +840,22 @@ class _CodexSubscriptionRealtimeSession:
             else:
                 response_allowed = False
                 response_rejected_at = response_opened_at
-                log.warning(
-                    "Codex subscription realtime rejected an automatic response "
-                    "without a fresh local user utterance (%s); interrupting a "
-                    "probable self-echo turn",
-                    source,
-                )
+                if _within_interrupt_grace():
+                    # Expected fallout of OUR own cut: the far end streams the
+                    # remainder of the retired answer for a while. Dropping it
+                    # is routine, not an anomaly.
+                    log.info(
+                        "Codex subscription realtime dropped the far end's "
+                        "post-interrupt continuation (%s)",
+                        source,
+                    )
+                else:
+                    log.warning(
+                        "Codex subscription realtime rejected an automatic response "
+                        "without a fresh local user utterance (%s); interrupting a "
+                        "probable self-echo turn",
+                        source,
+                    )
                 await self._interrupt_active_codex_turn()
             return response_allowed
 
@@ -883,6 +903,13 @@ class _CodexSubscriptionRealtimeSession:
                 return False
             output_barrier = self._output_drop_barrier
             return True
+
+        def _within_interrupt_grace() -> bool:
+            """Whether a local interrupt is recent enough to explain fallout."""
+            return (
+                interrupt_grace_until > 0.0
+                and asyncio.get_running_loop().time() < interrupt_grace_until
+            )
 
         def _caption_is_too_early_to_judge() -> bool:
             """Whether an ungrounded caption landed too soon to count as evidence.
@@ -1020,6 +1047,19 @@ class _CodexSubscriptionRealtimeSession:
                     _cancel_completion()
                     _reset_assistant_capture()
                     _close_response(spent=True)
+                    # Jarvis owns everything spoken up to this cut (barge-in or
+                    # a delegation taking the turn): an utterance that already
+                    # happened must not re-authorize the far end's answer AFTER
+                    # the interrupt. Closing the open response alone left that
+                    # entitlement standing whenever the interrupt beat the
+                    # response's first frame, and the "retired" answer simply
+                    # started afterwards.
+                    consumed_input_generation = max(
+                        consumed_input_generation, local_input_generation
+                    )
+                    interrupt_grace_until = (
+                        asyncio.get_running_loop().time() + _POST_INTERRUPT_GRACE_S
+                    )
                     self._assistant_delta_text = ""
                     completion_emitted = True
                 if queue_kind == "local_input_failed":
@@ -1365,6 +1405,18 @@ class _CodexSubscriptionRealtimeSession:
                                     "Ignoring an ungrounded server user "
                                     "transcript that raced its own response "
                                     "window: %r",
+                                    text[:80],
+                                )
+                                _close_response(spent=True)
+                                continue
+                            if _within_interrupt_grace():
+                                # A cut response's echo of its own truncated
+                                # speech, not the far end inventing a turn:
+                                # never let OUR interrupt feed the rebuild
+                                # counter.
+                                log.info(
+                                    "Ignoring an ungrounded server user caption "
+                                    "inside the post-interrupt window: %r",
                                     text[:80],
                                 )
                                 _close_response(spent=True)
