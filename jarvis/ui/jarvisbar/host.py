@@ -15,8 +15,9 @@ Protocol (UTF-8, one JSON object per line):
   (optional ``opacity``); every further line is a surface command mirroring
   the ``OrbBusBridge`` surface API (``show``, ``hide``, ``set_level``, ...).
   An optional ``"surface"`` key selects what the host renders:
-  ``"jarvis_bar"`` (default) or ``"mascot"`` (the OrbOverlay mascot, with an
-  optional ``"mascot_path"`` passthrough).
+  ``"jarvis_bar"`` (default) or ``"mascot"`` (the OrbOverlay window, whose look
+  comes from the optional ``"style"`` key — ``"mascot"`` or ``"voice_orb"`` —
+  plus an optional ``"mascot_path"`` passthrough).
   stdin EOF means the parent died or shut down → the host stops the bar and
   exits, so no ownerless bar can linger on the user's desktop.
 - child → parent (stdout): events — ``{"event": "ready"}`` once the surface
@@ -133,6 +134,10 @@ def dispatch(surface: Any, msg: dict[str, Any]) -> bool:
         )
     elif op == "hide_comment":
         _call(surface, "hide_comment")
+    elif op == "set_style":
+        # Live re-style of the orb window (mascot <-> voice orb). The bar has
+        # no styles, so there the op degrades to the no-op _call() logs.
+        _call(surface, "set_style", str(msg.get("style", "mascot")))
     elif op == "start_mouth_animation":
         _call(surface, "start_mouth_animation", int(msg.get("duration_ms", 60000)))
     elif op == "stop_mouth_animation":
@@ -318,7 +323,10 @@ def _build_surface(cfg: dict[str, Any]) -> Any:
         return orb_overlay_cls(
             sticky=False,
             mic_reactive=False,
-            style="mascot",
+            # The look inside the orb window (mascot / voice_orb). Forwarded
+            # verbatim; OrbOverlay owns the one list of known styles and falls
+            # back to the mascot for anything it does not recognise.
+            style=str(cfg.get("style") or "mascot"),
             mascot_path=cfg.get("mascot_path") or None,
         )
     kwargs = {

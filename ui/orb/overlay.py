@@ -22,6 +22,7 @@ Rendering pipeline:
 
 Public API:
     overlay = OrbOverlay(style="mascot")    # SWG/Gigi PNG
+    overlay = OrbOverlay(style="voice_orb") # procedural weather sphere
     overlay.start()                         # blocks until mainloop exit
     overlay.show(mode="listen")             # voice modes: idle/listen/speak/think
     overlay.show(mode="speak")
@@ -32,13 +33,14 @@ Public API:
     overlay.set_style("mascot")             # runtime switch, no restart
 
 ENV overrides:
-    JARVIS_ORB_STYLE=mascot                 # legacy "orb" requests are ignored
+    JARVIS_ORB_STYLE=mascot|voice_orb       # legacy "orb" requests are ignored
     JARVIS_ORB_MASCOT_PATH=<path.png>       # alternative mascot path
 
 Standalone test:
     python -m ui.orb.overlay                    # demo sequence (mascot)
     python -m ui.orb.overlay --sticky           # permanently visible (preview)
     python -m ui.orb.overlay --sticky --mascot  # SWG mascot, static
+    python -m ui.orb.overlay --sticky --voice-orb  # procedural voice orb
     python -m ui.orb.overlay --mic --mascot     # SWG + mic-reactive
 """
 
@@ -64,6 +66,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageTk
 from jarvis.core.config import DEFAULT_CONFIG_FILE as JARVIS_TOML_PATH
 from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness
 from jarvis.ui.jarvisbar.modes import MODES
+from jarvis.ui.overlay_styles import LEGACY_STYLE_ALIASES, ORB_STYLES
 from ui.orb.animations import (
     ANIMATION_REGISTRY,
     Animation,
@@ -89,6 +92,14 @@ from ui.orb.taskbar import (
     get_taskbar_info,
     get_tray_notify_rect,
 )
+from ui.orb.voice_orb import VoiceOrbRenderer
+
+#: The looks this window can wear (ONE definition, in jarvis.ui.overlay_styles):
+#: ``mascot`` is the Gigi ghost, ``voice_orb`` the procedural weather sphere —
+#: the desktop twin of the in-app orb. Both share this window, so both are
+#: always on top and draggable to any monitor. The removed legacy procedural
+#: "orb" style is coerced to the mascot.
+DEFAULT_ORB_STYLE = "mascot"
 
 
 @dataclass
@@ -338,6 +349,54 @@ def _apply_jarvis_icon_to_tk_root(root: tk.Tk) -> None:
             "Tk icon setup failed; continuing without it.",
             exc_info=True,
         )
+
+
+def _coerce_style(style: str | None) -> str:
+    """Return a style this window can actually render.
+
+    Unknown values (the removed legacy ``"orb"``, a typo, a value written by a
+    newer build into an older ``jarvis.toml``) fall back to the mascot with one
+    warning rather than leaving the desktop without any overlay at all.
+    """
+    candidate = (style or "").strip().lower()
+    candidate = LEGACY_STYLE_ALIASES.get(candidate, candidate)
+    if candidate in ORB_STYLES:
+        return candidate
+    import logging
+
+    logging.getLogger("jarvis.orb").warning(
+        "Unknown orb style %r — falling back to %r (known: %s).",
+        style,
+        DEFAULT_ORB_STYLE,
+        ", ".join(ORB_STYLES),
+    )
+    return DEFAULT_ORB_STYLE
+
+
+def _apply_color_key(root: tk.Tk) -> bool:
+    """Make the key colour transparent on this Tk root. False = not supported.
+
+    Windows keys the magenta out natively on the layered window. On Linux the
+    same attribute is accepted only under a compositing window manager; under a
+    bare X11 session (and on Wayland) Tk raises, and the honest outcome is "no
+    overlay" rather than an opaque magenta square parked on the desktop. The
+    caller degrades; this never raises.
+    """
+    try:
+        root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
+        root.configure(bg=COLOR_KEY_HEX)
+        return True
+    except tk.TclError:
+        import logging
+
+        logging.getLogger("jarvis.orb").warning(
+            "This desktop session does not support Tk's transparent colour key "
+            "(typical for Wayland or X11 without a compositor) — the on-screen "
+            "orb stays hidden. Voice, the tray icon and the app window are "
+            "unaffected; pick 'None (hidden)' as the display style to silence "
+            "this."
+        )
+        return False
 
 
 def _hide_tk_window_from_task_switcher(root: tk.Tk) -> None:
@@ -1423,18 +1482,19 @@ class OrbOverlay:
         mascot_path: str | Path | None = None,
     ) -> None:
         """
-        style: only ``"mascot"`` is accepted. Legacy ``"orb"`` requests are
-        coerced to ``"mascot"``.
+        style: one of :data:`ORB_STYLES` — ``"mascot"`` (the Gigi ghost) or
+        ``"voice_orb"`` (the procedural weather sphere). Anything else,
+        including the legacy ``"orb"``, is coerced to ``"mascot"``.
         mascot_path: optional explicit path, otherwise via ENV or the default asset.
-        ENV-Override: ``JARVIS_ORB_STYLE=mascot`` may request mascot explicitly;
-        legacy ``orb`` values are ignored.
+        ENV-Override: ``JARVIS_ORB_STYLE=mascot|voice_orb`` selects the look;
+        unknown values are ignored.
         """
         self._sticky = sticky
         self._mic_reactive = mic_reactive
         self._root: tk.Tk | None = None
         self._canvas: tk.Canvas | None = None
         self._comment_bubble: OrbCommentBubble | None = None
-        self._renderer: MascotRenderer | None = None
+        self._renderer: MascotRenderer | VoiceOrbRenderer | None = None
         # Cached mascot anchor + min-show-time guard.
         self._mascot_x: int = 0
         self._mascot_y: int = 0
@@ -1480,18 +1540,11 @@ class OrbOverlay:
         # (mic-reactive mode is optional).
         self._mic = None
 
-        # Style resolution: mascot-only. Keep accepting the old knobs so
-        # existing launchers do not crash, but never render the legacy orb.
+        # Style resolution. Keep accepting the old knobs so existing launchers
+        # do not crash, but never render the removed legacy orb.
         env_style = (os.environ.get("JARVIS_ORB_STYLE") or "").strip().lower()
-        requested_style = env_style or (style or "mascot").lower()
-        if requested_style != "mascot":
-            import logging
-
-            logging.getLogger("jarvis.orb").warning(
-                "Ignoring legacy orb style request %r; using mascot.",
-                requested_style,
-            )
-        self._style = "mascot"
+        requested_style = env_style or (style or DEFAULT_ORB_STYLE).lower()
+        self._style = _coerce_style(requested_style)
         self._mascot_path_hint = str(mascot_path) if mascot_path else None
 
     # --- Public API ----------------------------------------------------
@@ -1537,8 +1590,18 @@ class OrbOverlay:
                 )
                 self._root.configure(bg=COLOR_KEY_HEX)
         else:
-            self._root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
-            self._root.configure(bg=COLOR_KEY_HEX)
+            if not _apply_color_key(self._root):
+                # No per-pixel transparency on this session: showing the window
+                # would put an opaque magenta square on the user's desktop.
+                # Tear the root down and report started, so the caller's
+                # start_in_thread() unblocks instead of timing out.
+                try:
+                    self._root.destroy()
+                except tk.TclError:
+                    pass
+                self._root = None
+                self._started.set()
+                return
             # The colour key belongs to THIS window only. Once this Tk loop
             # stops pumping — any long GIL-holding stretch on another thread
             # does it — Windows paints an unlayered ``Ghost`` stand-in over the
@@ -2363,23 +2426,13 @@ class OrbOverlay:
         return self._renderer.active_animation_names()
 
     def set_style(self, style: str) -> None:
-        """Switches the renderer at runtime (``"orb"`` or ``"mascot"``).
+        """Switches the renderer at runtime (see :data:`ORB_STYLES`).
 
         Thread-safe — queued via root.after. If ``"mascot"`` is requested but
         the PNG is not found, the current renderer stays unchanged
         (the caller learns about it via the logger warning entry).
         """
-        style = (style or "").lower()
-        if style == "orb":
-            import logging
-
-            logging.getLogger("jarvis.orb").warning(
-                "Ignoring legacy orb style request %r; using mascot.",
-                style,
-            )
-            style = "mascot"
-        if style != "mascot":
-            raise ValueError(f"Unknown style: {style!r} (allowed: mascot)")
+        style = _coerce_style(style)
         if self._root is None:
             # Not started yet → remember the style, start() picks it up
             self._style = style
@@ -2393,7 +2446,21 @@ class OrbOverlay:
         self._renderer = new_renderer
         self._style = style
 
-    def _build_renderer(self, style: str) -> MascotRenderer | None:
+    def _build_renderer(self, style: str) -> MascotRenderer | VoiceOrbRenderer | None:
+        if style == "voice_orb":
+            try:
+                return VoiceOrbRenderer(
+                    size=WIN_W, color_key=(int(COLOR_KEY_RGB[0]), int(COLOR_KEY_RGB[1]),
+                                           int(COLOR_KEY_RGB[2]))
+                )
+            except Exception as exc:  # noqa: BLE001
+                import logging
+
+                logging.getLogger("jarvis.orb").warning(
+                    "VoiceOrbRenderer init failed (%s); overlay will stay hidden.",
+                    exc,
+                )
+                return None
         if style == "mascot":
             mascot_path = _resolve_mascot_path(self._mascot_path_hint)
             if mascot_path is None:
@@ -2565,6 +2632,11 @@ def main() -> int:
         help="Uses the SWG/Gigi mascot.",
     )
     parser.add_argument(
+        "--voice-orb",
+        action="store_true",
+        help="Uses the procedural voice orb (the desktop twin of the in-app orb).",
+    )
+    parser.add_argument(
         "--mascot-path",
         type=str,
         default=None,
@@ -2597,7 +2669,7 @@ def main() -> int:
 
     use_mascot = args.mascot or bool(args.animation) or args.all_animations
     sticky = args.sticky or args.mic or bool(args.animation) or args.all_animations
-    style = "mascot" if use_mascot else "orb"
+    style = "voice_orb" if args.voice_orb and not use_mascot else "mascot"
 
     overlay = OrbOverlay(
         sticky=sticky,

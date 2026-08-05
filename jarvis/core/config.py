@@ -1551,8 +1551,9 @@ class UIConfig(BaseModel):
     # (see surface_security.open_access_granted). Toggled live from
     # Settings → API Keys → Control Key.
     require_browser_login: bool = False
-    # On-screen overlay style: "jarvis_bar" (slim default), "mascot" (ghost
-    # orb), or "none". The mascot remains fully selectable.
+    # On-screen overlay style: "jarvis_bar" (slim default), "mascot" (the ghost
+    # mascot), "voice_orb" (the procedural weather sphere — the desktop twin of
+    # the in-app orb), or "none". One list: jarvis.ui.overlay_styles.
     orb_style: str = "jarvis_bar"
     # Optional explicit path to the mascot PNG. Empty = search for default asset.
     orb_mascot_path: str = ""
@@ -2403,16 +2404,26 @@ class WikiContextConfig(BaseModel):
 
     enabled: bool = True
     max_chars: int = 1500
-    latency_budget_ms: int = 80
+    # 150 (was 80): the vault search opens its SQLite connection lazily
+    # inside this budget, so the first qualifying turn of a process regularly
+    # timed out. The factory warms the connection at boot; the wider budget
+    # covers a lost warm-up race and stays inaudible next to the brain call.
+    latency_budget_ms: int = 150
     min_keyword_length: int = 4
 
     # Relevance gate (jarvis/brain/wiki_relevance.py). Retrieval always
     # returns a ranked list, so without a gate every unrelated question gets
     # a personal note welded onto its answer. ``relevance_gate = false``
-    # restores the pre-gate behaviour: search every turn, inject every hit.
+    # restores the ungated behaviour: search every turn, inject every hit.
+    # With the gate on, every turn beyond greeting length is SEARCHED
+    # (retrieval-first); the gate grades how strictly the hits are filtered.
     relevance_gate: bool = True
     # Share of the question's content terms a hit must cover to be injected.
     min_coverage: float = 0.5
+    # The stricter bar applied when the turn has no personal anchor (world-
+    # shaped questions, statements): a page must cover nearly the whole
+    # question before it may ride along uninvited.
+    strict_min_coverage: float = 0.75
     # Share of the best hit's score (within the SAME search call) a hit must
     # reach. Relative by design — the vault's scores are only comparable
     # within one call, so an absolute cutoff would be noise.

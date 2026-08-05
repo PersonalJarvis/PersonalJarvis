@@ -92,6 +92,7 @@
     "feedback": "Comentarios",
     "agent_instructions": "{name}.md",
     "agentic_ide": "IDE agéntico",
+    "agentic_ide_beta": "Beta",
     "voice": "Voz de {name}",
     "voice_shortcuts": "Atajos",
     "voice_language": "Idioma",

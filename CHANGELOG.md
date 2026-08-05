@@ -9,6 +9,15 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Added the voice orb as a fourth on-screen display style: the glowing sphere
+  from the Agentic IDE now also runs as a free-floating desktop window, so it
+  can be dragged onto any monitor instead of living inside the app. Switching
+  between the mascot and the voice orb applies immediately, without a restart.
+  On a Linux session without per-pixel transparency the orb window stays hidden
+  with one actionable log line rather than showing an opaque square.
+
 ---
 
 ## [1.2.2] — 2026-08-04

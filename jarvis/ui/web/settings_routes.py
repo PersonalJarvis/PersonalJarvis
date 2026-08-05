@@ -38,6 +38,7 @@ from jarvis.brain.manager import SUPPORTED_REPLY_LANGUAGES
 from jarvis.core.config import RECOGNITION_LANGUAGE_CHOICES
 from jarvis.memory.wiki.integration import get_running_curator
 from jarvis.speech.local_models import FASTER_WHISPER_PACKAGE
+from jarvis.ui.overlay_styles import OVERLAY_STYLES, normalize_overlay_style
 
 if TYPE_CHECKING:
     from jarvis.core.config import WikiCuratorConfig
@@ -1897,7 +1898,7 @@ async def put_autostart(body: AutostartBody, request: Request) -> dict[str, obje
     }
 
 
-_OVERLAY_STYLES = ("jarvis_bar", "mascot", "none")
+_OVERLAY_STYLES = OVERLAY_STYLES
 
 
 class OverlayStyleBody(BaseModel):
@@ -1916,19 +1917,21 @@ async def get_overlay_style(request: Request) -> dict[str, object]:
 
 @router.put("/overlay-style")
 async def put_overlay_style(body: OverlayStyleBody, request: Request) -> dict[str, object]:
-    """Switch the on-screen overlay (jarvis_bar / mascot / none).
+    """Switch the on-screen overlay (see ``jarvis.ui.overlay_styles``).
 
     Persists [ui].orb_style and live-swaps the running surface via the
     DesktopApp (app.state.desktop_app.swap_overlay). When no live app is
     reachable (headless), the choice is persisted and applies on restart.
+
+    Legacy values from a not-yet-rebuilt client (``whisper_bar`` before the
+    rename, ``orb`` before the procedural renderer was removed) are normalized
+    rather than rejected.
     """
-    style = body.style.strip()
-    # Backwards-compat: accept the legacy "whisper_bar" value (renamed to
-    # "jarvis_bar" to drop a trademarked name) from any not-yet-rebuilt client.
-    if style == "whisper_bar":
-        style = "jarvis_bar"
-    if style not in _OVERLAY_STYLES:
-        raise HTTPException(status_code=400, detail=f"Unknown overlay style '{style}'")
+    style = normalize_overlay_style(body.style)
+    if style is None:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown overlay style '{body.style.strip()}'"
+        )
 
     # Best-effort in-memory cfg update so a later read agrees pre-restart.
     cfg = _config(request)

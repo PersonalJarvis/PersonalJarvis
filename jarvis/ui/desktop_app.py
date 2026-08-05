@@ -2475,16 +2475,18 @@ class DesktopApp:
 
                     surface = SubprocessMascotOverlay(
                         mascot_path=self.cfg.ui.orb_mascot_path or None,
+                        style=style,
                     )
                     surface.start_in_thread()
                     logger.info(
-                        "Mascot orb hosted out-of-process on macOS "
-                        "(jarvis.ui.jarvisbar.host)."
+                        "Orb window hosted out-of-process on macOS "
+                        "(jarvis.ui.jarvisbar.host, style={}).",
+                        style,
                     )
                     return surface
                 except Exception:  # noqa: BLE001 — cosmetic; never block boot
                     logger.opt(exception=True).warning(
-                        "macOS mascot host failed to start — falling back "
+                        "macOS orb host failed to start — falling back "
                         "to the no-op surface."
                     )
             from jarvis.ui.jarvisbar import NullOverlay
@@ -2508,7 +2510,7 @@ class DesktopApp:
                     self.cfg.ui, "bar_follow_cursor_monitor", True
                 ),
             )
-        else:  # "mascot" (and any legacy style value)
+        else:  # an orb style ("mascot" / "voice_orb"), or any legacy value
             from ui.orb.overlay import OrbOverlay
 
             surface = OrbOverlay(
@@ -2642,8 +2644,10 @@ class DesktopApp:
         """
         from loguru import logger
 
+        from jarvis.ui.overlay_styles import ORB_STYLES, OVERLAY_STYLES
+
         style = (style or "jarvis_bar").strip()
-        if style not in ("jarvis_bar", "mascot", "none"):
+        if style not in OVERLAY_STYLES:
             return {"ok": False, "applied_live": False, "style": style}
         bridge = getattr(self, "_bridge", None)
         if bridge is None:
@@ -2654,6 +2658,23 @@ class DesktopApp:
             if cache is None:
                 cache = self._surfaces = {}
             old = getattr(self, "_orb", None)
+
+            # Mascot <-> voice orb is a RENDERER swap inside one window, not a
+            # new surface: the orb window stays, only what it paints changes. So
+            # this transition applies live even though every other first-time
+            # transition needs a restart (a second tk.Tk() root would abort the
+            # process — BUG-031).
+            if style in ORB_STYLES and old is not None and hasattr(old, "set_style"):
+                old.set_style(style)
+                for key in [k for k, v in cache.items() if v is old]:
+                    cache.pop(key, None)
+                cache[style] = old
+                try:
+                    self.cfg.ui.orb_style = style  # best-effort in-memory
+                except Exception:  # noqa: BLE001
+                    logger.debug("in-memory orb_style update skipped", exc_info=True)
+                logger.info("Orb window re-styled live to {}.", style)
+                return {"ok": True, "applied_live": True, "style": style}
 
             if style == "none":
                 new = cache.get("none")

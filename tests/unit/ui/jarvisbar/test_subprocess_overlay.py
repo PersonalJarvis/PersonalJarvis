@@ -511,9 +511,31 @@ def _started_mascot(monkeypatch, **kwargs) -> tuple[SubprocessMascotOverlay, _Fa
 def test_mascot_init_line_declares_surface_and_mascot_path(monkeypatch) -> None:
     surface, proc = _started_mascot(monkeypatch, mascot_path="assets/m.png")
     init = proc.sent()[0]
-    assert init == {"op": "init", "surface": "mascot", "mascot_path": "assets/m.png"}
+    assert init == {
+        "op": "init",
+        "surface": "mascot",
+        "style": "mascot",
+        "mascot_path": "assets/m.png",
+    }
     assert surface._ready.is_set()  # scripted ready event consumed
     assert surface._visible is False  # sticky=False mascot starts withdrawn
+
+
+def test_voice_orb_style_reaches_the_host(monkeypatch) -> None:
+    surface, proc = _started_mascot(monkeypatch, style="voice_orb")
+    assert proc.sent()[0]["style"] == "voice_orb"
+
+
+def test_set_style_is_forwarded_and_survives_a_respawn(monkeypatch) -> None:
+    # The host may be respawned after a crash; it is re-initialized from the
+    # init line, so a live re-style has to update the remembered style too —
+    # otherwise the window comes back wearing the look the user just left.
+    surface, proc = _started_mascot(monkeypatch, style="mascot")
+
+    surface.set_style("voice_orb")
+
+    assert {"op": "set_style", "style": "voice_orb"} in proc.sent()
+    assert surface._init_payload()["style"] == "voice_orb"
 
 
 def test_bar_init_payload_is_unchanged_by_the_mascot_variant(monkeypatch) -> None:

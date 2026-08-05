@@ -1191,7 +1191,8 @@ def set_ultrawiki_slot(key: str, value: str, *, path: Path = DEFAULT_CONFIG_FILE
 def set_overlay_style(style: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the on-screen overlay style to ``[ui] orb_style`` in jarvis.toml.
 
-    ``style`` is one of ``"jarvis_bar"`` / ``"mascot"`` / ``"none"``. TOML-only
+    ``style`` is one of ``jarvis.ui.overlay_styles.OVERLAY_STYLES``
+    (``"jarvis_bar"`` / ``"mascot"`` / ``"voice_orb"`` / ``"none"``). TOML-only
     by design: ``ui.orb_style`` is NOT in the drift-guard's reference snapshot, so the
     drift-guard never reverts it (same rationale as :func:`set_autostart`). The
     Settings route applies the change live; this persists the boot default.

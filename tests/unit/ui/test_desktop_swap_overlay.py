@@ -92,3 +92,55 @@ def test_swap_without_bridge_is_persisted_only():
 def test_swap_rejects_unknown_style():
     app = _app(bridge=FakeBridge(), orb=FakeOld())
     assert app.swap_overlay("bogus")["ok"] is False
+
+
+class FakeOrbWindow(FakeOld):
+    """An orb surface: one window that can change what it paints."""
+
+    def __init__(self, style="mascot"):
+        super().__init__()
+        self.style = style
+
+    def set_style(self, style):
+        self.style = style
+
+
+def test_mascot_to_voice_orb_restyles_live_without_a_new_root():
+    # Both orb looks live in ONE window, so this transition needs no second Tk
+    # root and must not send the user through a restart.
+    bridge, orb = FakeBridge(), FakeOrbWindow("mascot")
+    app = _app(orb_style="mascot", bridge=bridge, orb=orb)
+    app._surfaces = {"mascot": orb}
+
+    result = app.swap_overlay("voice_orb")
+
+    assert result == {"ok": True, "applied_live": True, "style": "voice_orb"}
+    assert orb.style == "voice_orb"
+    assert orb.hidden is False  # same window — never hidden mid-swap
+    assert app.cfg.ui.orb_style == "voice_orb"
+    # Re-keyed, not duplicated: swapping back must find the same live window.
+    assert app._surfaces == {"voice_orb": orb}
+
+
+def test_voice_orb_back_to_mascot_also_applies_live():
+    bridge, orb = FakeBridge(), FakeOrbWindow("voice_orb")
+    app = _app(orb_style="voice_orb", bridge=bridge, orb=orb)
+    app._surfaces = {"voice_orb": orb}
+
+    assert app.swap_overlay("mascot")["applied_live"] is True
+    assert orb.style == "mascot"
+
+
+def test_bar_to_voice_orb_still_needs_a_restart():
+    # The bar surface has no orb window behind it, so this one really does need
+    # a fresh root — the restart path must stay intact.
+    bridge = FakeBridge()
+    app = _app(orb_style="jarvis_bar", bridge=bridge, orb=FakeOld())
+    app._surfaces = {}
+
+    assert app.swap_overlay("voice_orb") == {
+        "ok": True,
+        "applied_live": False,
+        "style": "voice_orb",
+    }
+    assert bridge.surface is None

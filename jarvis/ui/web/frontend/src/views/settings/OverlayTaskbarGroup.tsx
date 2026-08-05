@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { Monitor, Eye, Volume2, Bell, MousePointer } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { useOverlayStyle, type OverlayStyle } from "@/hooks/useOverlayStyle";
+import {
+  useOverlayStyle,
+  OVERLAY_STYLES,
+  type OverlayStyle,
+} from "@/hooks/useOverlayStyle";
 import { StylePreview } from "@/components/overlay/OverlayStylePreviews";
 import { useBarPersistent } from "@/hooks/useBarPersistent";
 import { useBarFollowCursor } from "@/hooks/useBarFollowCursor";
@@ -275,7 +279,7 @@ function OverlayStylePanel() {
     }
   }
 
-  const options = config?.options ?? (["jarvis_bar", "mascot", "none"] as OverlayStyle[]);
+  const options = config?.options ?? OVERLAY_STYLES;
 
   async function onPick(opt: OverlayStyle) {
     if (saving) return;
@@ -309,8 +313,10 @@ function OverlayStylePanel() {
             {t("settings_view.overlay_style.description")}
           </p>
 
-          {/* Visual preview cards — click to apply (no dropdown). */}
-          <div className="mt-4 grid grid-cols-3 gap-3">
+          {/* Visual preview cards — click to apply (no dropdown). Two columns
+              on a narrow window so a fourth style never squeezes the previews
+              into unreadable slivers. */}
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {options.map((opt) => (
               <button
                 key={opt}

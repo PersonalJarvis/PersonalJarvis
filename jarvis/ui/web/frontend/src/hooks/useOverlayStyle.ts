@@ -2,9 +2,23 @@ import { useCallback, useEffect, useState } from "react";
 
 /**
  * On-screen overlay style from GET /api/settings/overlay-style.
- * "jarvis_bar" = slim default bar, "mascot" = ghost orb, "none" = hidden.
+ * "jarvis_bar" = slim default bar, "mascot" = ghost mascot, "voice_orb" = the
+ * procedural voice orb, "none" = hidden.
+ *
+ * Mirror of the backend's one list (``jarvis/ui/overlay_styles.py``); the two
+ * are pinned together by tests/unit/ui/test_overlay_style_parity.py, which
+ * reads THIS union and the i18n labels. Keep the order identical — it is the
+ * order both pickers render.
  */
-export type OverlayStyle = "jarvis_bar" | "mascot" | "none";
+export type OverlayStyle = "jarvis_bar" | "mascot" | "voice_orb" | "none";
+
+/** Client-side fallback while GET is in flight (same order as the backend). */
+export const OVERLAY_STYLES: OverlayStyle[] = [
+  "jarvis_bar",
+  "mascot",
+  "voice_orb",
+  "none",
+];
 
 export interface OverlayStyleConfig {
   style: OverlayStyle;
@@ -59,7 +73,7 @@ export function useOverlayStyle() {
       setConfig((prev) =>
         prev
           ? { ...prev, style: result.style }
-          : { style: result.style, options: ["jarvis_bar", "mascot", "none"] },
+          : { style: result.style, options: [...OVERLAY_STYLES] },
       );
       return result;
     },

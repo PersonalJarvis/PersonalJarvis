@@ -1,4 +1,5 @@
 import { MascotGigi } from "@/components/MascotGigi";
+import { VoiceOrb } from "@/components/agentic/VoiceOrb";
 import type { OverlayStyle } from "@/hooks/useOverlayStyle";
 import {
   PREVIEW_BAR_SPAN,
@@ -16,7 +17,8 @@ import {
 } from "./voiceBars";
 
 /**
- * Shared visual previews for the on-screen overlay styles (Bar / Mascot / None).
+ * Shared visual previews for the on-screen overlay styles (Bar / Mascot /
+ * Voice orb / None).
  *
  * Lifted out of ``views/settings/OverlayTaskbarGroup.tsx`` so both the Settings
  * panel and the onboarding "System Style" step can render the same graphics
@@ -43,6 +45,10 @@ export function StylePreview({ style }: { style: OverlayStyle }) {
   if (style === "mascot") {
     return <MascotGigi size={46} reactToVoice={false} enableComments={false} />;
   }
+  // The voice orb is its own portrait: the very renderer the desktop overlay
+  // runs, at thumbnail size. Held at "idle" so the picker shows the calm
+  // resting look rather than pretending a session is live.
+  if (style === "voice_orb") return <VoiceOrb state="idle" size={46} />;
   if (style === "jarvis_bar") return <BarPreview />;
   return <NonePreview />;
 }

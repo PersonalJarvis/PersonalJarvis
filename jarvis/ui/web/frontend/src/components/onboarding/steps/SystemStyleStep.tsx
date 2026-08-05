@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { useOverlayStyle, type OverlayStyle } from "@/hooks/useOverlayStyle";
+import {
+  useOverlayStyle,
+  OVERLAY_STYLES,
+  type OverlayStyle,
+} from "@/hooks/useOverlayStyle";
 import { StylePreview } from "@/components/overlay/OverlayStylePreviews";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -39,7 +43,7 @@ export function SystemStyleStep({ goNext, skip }: StepProps) {
     if (config) setStyle(config.style);
   }, [config]);
 
-  const options = config?.options ?? (["jarvis_bar", "mascot", "none"] as OverlayStyle[]);
+  const options = config?.options ?? OVERLAY_STYLES;
 
   async function onPick(opt: OverlayStyle) {
     if (saving || restarting) return;
@@ -101,7 +105,7 @@ export function SystemStyleStep({ goNext, skip }: StepProps) {
         </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {options.map((opt) => (
           <button
             key={opt}
