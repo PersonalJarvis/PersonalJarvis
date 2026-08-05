@@ -475,8 +475,9 @@ def _handoff_variant(directive: str) -> str:
         )
         .replace(
             "Use end_call only when the user says goodbye.",
-            "When the user says goodbye, answer with a brief goodbye — the "
-            "call system ends the call itself.",
+            "When the user asks to end the call, answer with a brief goodbye "
+            "— the call system itself detects the explicit hang-up phrase; "
+            "you neither can nor need to end the call.",
         )
         .replace("Call jarvis_action on this turn ONLY", "Request a handoff on this turn ONLY")
         .replace("calling any function", "requesting a handoff")
@@ -2625,6 +2626,15 @@ class RealtimeVoiceSession:
                         tools_changed = bool(
                             callable(refresh_tools) and refresh_tools()
                         )
+                        turn_tool_directive = self._tool_directive(
+                            delegate_required=self._delegate_required_for_turn,
+                            action_pending=(
+                                self._has_pending_delegate_from_earlier_turn()
+                            ),
+                            delegate_discouraged=(
+                                not turn_plan.requires_orchestrator
+                            ),
+                        )
                         update_kwargs: dict[str, Any] = {
                             "instructions": _session_instructions(
                                 new_language,
@@ -2632,15 +2642,7 @@ class RealtimeVoiceSession:
                                 provider=self.active_provider,
                                 model=self._active_model,
                                 language_is_pinned=True,
-                                tool_directive=self._tool_directive(
-                                    delegate_required=self._delegate_required_for_turn,
-                                    action_pending=(
-                                        self._has_pending_delegate_from_earlier_turn()
-                                    ),
-                                    delegate_discouraged=(
-                                        not turn_plan.requires_orchestrator
-                                    ),
-                                ),
+                                tool_directive=turn_tool_directive,
                                 preferences=_preferences_block(self._config),
                                 # Zero extra round trips: this update already
                                 # fires on every final transcript, so a
@@ -2655,6 +2657,12 @@ class RealtimeVoiceSession:
                                 workspace_directive=self._workspace_directive(),
                             ),
                             "language": new_language,
+                            # For append-only transports: the turn-scoped
+                            # directive travels separately so the adapter can
+                            # supersede the previous one whole instead of
+                            # leaving contradictory "this current turn" texts
+                            # standing in the thread.
+                            "turn_directive": turn_tool_directive,
                         }
                         if tools_changed:
                             update_kwargs["tools"] = self._declared_tools()
@@ -2675,10 +2683,20 @@ class RealtimeVoiceSession:
                         try:
                             await self._session.update_session(**update_kwargs)
                         except TypeError:
-                            # Compatibility with third-party adapters built
-                            # against the older update-session protocol.
-                            update_kwargs.pop("tools", None)
-                            await self._session.update_session(**update_kwargs)
+                            # Compatibility with adapters built against the
+                            # older update-session protocols: retire the
+                            # NEWEST field first so an adapter that already
+                            # understands tools keeps receiving them.
+                            update_kwargs.pop("turn_directive", None)
+                            try:
+                                await self._session.update_session(
+                                    **update_kwargs
+                                )
+                            except TypeError:  # predates the tools field too
+                                update_kwargs.pop("tools", None)
+                                await self._session.update_session(
+                                    **update_kwargs
+                                )
                     if self._tool_bridge is not None and event.is_final and transcript:
                         await self._tool_bridge.handle_user_transcript(
                             self._last_user_text
@@ -5685,7 +5703,12 @@ class RealtimeVoiceSession:
                 # interrupt (idempotent) so the far end is cut no matter which
                 # path armed the withhold, and inject immediately.
                 try:
-                    await self._session.interrupt()
+                    try:
+                        await self._session.interrupt(
+                            retire_input_entitlement=True
+                        )
+                    except TypeError:  # adapter predates the retire flag
+                        await self._session.interrupt()
                 except Exception:  # noqa: BLE001, S110 — best-effort boundary
                     pass
                 return
@@ -5924,7 +5947,12 @@ class RealtimeVoiceSession:
                 # fluffy…" played instead of the computed weather answer).
                 self._drop_provider_output_until_new_response = True
                 try:
-                    await self._session.interrupt()
+                    try:
+                        await self._session.interrupt(
+                            retire_input_entitlement=True
+                        )
+                    except TypeError:  # adapter predates the retire flag
+                        await self._session.interrupt()
                 except Exception:  # noqa: BLE001, S110 — best-effort retire
                     pass
             if turn_state.wait_for_provider_boundary or bool(

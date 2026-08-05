@@ -511,12 +511,27 @@ class _CodexSubscriptionRealtimeSession:
         # counter makes ``receive`` drop every remaining frame of the response
         # that was cut off. Read by the receive loop, which keeps its own copy.
         self._output_drop_barrier = 0
+        # Set by ``interrupt(retire_input_entitlement=True)`` (delegation
+        # paths only), consumed by the receive loop's barrier handler: the
+        # delegated utterance's response entitlement is withdrawn so the far
+        # end's own answer to it can never start after the cut. A plain
+        # barge-in must NOT set this — at that moment the generation already
+        # belongs to the user's NEW utterance.
+        self._retire_entitlement_pending = False
         # Set by ``interrupt``, read and cleared by ``truncate``: the played
         # position only means something for a response that was actually cut.
         self._interrupt_pending_truncation = False
         # Last persona/context text actually delivered, so a re-issued
         # identical one is not sent again mid-call.
         self._delivered_context = ""
+        # Last turn-scoped directive delivered whole. Tracked separately from
+        # the context diff: the three per-turn directives are mutually
+        # exclusive, so a change is delivered as a full REPLACEMENT block —
+        # a line-diff would leave contradictory "this current turn" texts
+        # standing in the append-only thread.
+        self._delivered_turn_directive = ""
+        # One INFO line per session for the discarded tool declarations.
+        self._tools_discard_noted = False
         # False once the local recognizer stream DIED. It is the only grounding
         # source this transport has, so losing it must degrade to the same
         # fail-open behaviour as a host that never had one — otherwise the gate
@@ -1047,16 +1062,22 @@ class _CodexSubscriptionRealtimeSession:
                     _cancel_completion()
                     _reset_assistant_capture()
                     _close_response(spent=True)
-                    # Jarvis owns everything spoken up to this cut (barge-in or
-                    # a delegation taking the turn): an utterance that already
-                    # happened must not re-authorize the far end's answer AFTER
-                    # the interrupt. Closing the open response alone left that
-                    # entitlement standing whenever the interrupt beat the
-                    # response's first frame, and the "retired" answer simply
-                    # started afterwards.
-                    consumed_input_generation = max(
-                        consumed_input_generation, local_input_generation
-                    )
+                    if self._retire_entitlement_pending:
+                        # A DELEGATION took this turn: the utterance it was
+                        # dispatched for must not re-authorize the far end's
+                        # own answer AFTER the cut. Closing the open response
+                        # alone left that entitlement standing whenever the
+                        # interrupt beat the response's first frame, and the
+                        # "retired" answer simply started afterwards. Guarded
+                        # by the explicit flag because on a BARGE-IN the
+                        # current generation already belongs to the user's
+                        # NEW utterance — retiring it there silenced the
+                        # answer to the very question the user just asked
+                        # (independent review 2026-08-05).
+                        self._retire_entitlement_pending = False
+                        consumed_input_generation = max(
+                            consumed_input_generation, local_input_generation
+                        )
                     interrupt_grace_until = (
                         asyncio.get_running_loop().time() + _POST_INTERRUPT_GRACE_S
                     )
@@ -1631,8 +1652,14 @@ class _CodexSubscriptionRealtimeSession:
                         # to Jarvis's deterministic supervisor.
                         _cancel_completion()
                         # The model yielded control; whatever it produces next
-                        # needs its own grounding, never this turn's.
+                        # needs its own grounding, never this turn's — and the
+                        # yielded utterance's entitlement retires with it, or
+                        # the model's own answer to the handed-off request
+                        # could still start later.
                         _close_response(spent=True)
+                        consumed_input_generation = max(
+                            consumed_input_generation, local_input_generation
+                        )
                         self._handoff_interrupt_pending = True
                         direct_turn_id = str(
                             item.get("turn_id", "") or item.get("turnId", "") or ""
@@ -1752,6 +1779,7 @@ class _CodexSubscriptionRealtimeSession:
         instructions: str | None = None,
         language: str | None = None,
         tools: tuple[dict[str, Any], ...] | None = None,
+        turn_directive: str | None = None,
     ) -> None:
         # Tools cannot be declared here, and that is a transport fact rather
         # than a policy choice: the app-server realtime RPC surface is only
@@ -1763,7 +1791,7 @@ class _CodexSubscriptionRealtimeSession:
             # INFO once per session, DEBUG afterwards: the discard repeats on
             # every turn, but a session that silently swallows the entire tool
             # surface is exactly the AP-30 failure mode.
-            already_noted = getattr(self, "_tools_discard_noted", False)
+            already_noted = self._tools_discard_noted
             self._tools_discard_noted = True
             log.log(
                 logging.DEBUG if already_noted else logging.INFO,
@@ -1777,7 +1805,7 @@ class _CodexSubscriptionRealtimeSession:
         # knowledge — dropping them was why the voice knew nothing about its own
         # project. ChatGPT-Live accepts developer context, so a changed persona
         # is delivered mid-call instead of being discarded.
-        await self._deliver_context(instructions)
+        await self._deliver_context(instructions, turn_directive=turn_directive)
         await self._pin_language(language)
 
     async def _pin_language(self, language: object) -> None:
@@ -1804,7 +1832,9 @@ class _CodexSubscriptionRealtimeSession:
         )
         self._language = normalized
 
-    async def _deliver_context(self, instructions: str | None) -> None:
+    async def _deliver_context(
+        self, instructions: str | None, *, turn_directive: str | None = None
+    ) -> None:
         """Give the model Jarvis's own persona, capabilities and context.
 
         ChatGPT-Live has no session-instructions field a client may set, but
@@ -1815,32 +1845,58 @@ class _CodexSubscriptionRealtimeSession:
         the whole block grew the live thread by a full persona per turn: the
         call got slower with every exchange and the model kept re-reading
         stale copies of per-turn directives. The full block goes out once;
-        afterwards only the lines that actually changed are appended, under a
-        header that says the rest stays in force.
+        afterwards only the lines that actually changed are appended.
+
+        The TURN-scoped directive is the exception to line-diffing: its three
+        states (required / pending / discouraged) are mutually exclusive, so a
+        change is delivered as one whole block that explicitly REPLACES every
+        earlier current-turn instruction — a diff plus a blanket "everything
+        stays in force" left contradictory turn directives standing in the
+        thread (independent review 2026-08-05).
         """
         text = str(instructions or "").strip()
-        if not text or text == self._delivered_context:
-            return
-        payload = text
-        if self._delivered_context:
-            previous_lines = set(self._delivered_context.splitlines())
-            changed = [
-                line
-                for line in text.splitlines()
-                if line.strip() and line not in previous_lines
-            ]
-            if not changed:
-                # Only removals or reordering: nothing an append can retract.
-                self._delivered_context = text
-                return
-            payload = "\n".join(
-                (
-                    "Developer context update — only the CHANGED lines "
-                    "follow; everything else from the previous developer "
-                    "context stays in force:",
-                    *changed,
-                )
+        directive = str(turn_directive or "").strip()
+        directive_lines = set(directive.splitlines()) if directive else set()
+        sections: list[str] = []
+        if text and text != self._delivered_context:
+            if not self._delivered_context:
+                sections.append(text)
+            else:
+                previous_lines = set(self._delivered_context.splitlines())
+                changed = [
+                    line
+                    for line in text.splitlines()
+                    if line.strip()
+                    and line not in previous_lines
+                    and line not in directive_lines
+                ]
+                if changed:
+                    sections.append(
+                        "\n".join(
+                            (
+                                "Developer context update — apply the "
+                                "following changed lines on top of the "
+                                "persona and project context already given; "
+                                "unchanged parts of THAT context stay in "
+                                "force:",
+                                *changed,
+                            )
+                        )
+                    )
+        if directive and directive != self._delivered_turn_directive:
+            sections.append(
+                "Current-turn instructions — these REPLACE every earlier "
+                "instruction about how to handle the current turn:\n"
+                + directive
             )
+        if not sections:
+            # Identical, or only removals/reordering an append cannot retract.
+            if text:
+                self._delivered_context = text
+            if directive:
+                self._delivered_turn_directive = directive
+            return
+        payload = "\n\n".join(sections)
         try:
             await self._append_trusted(
                 lambda: self._client.realtime_append_text(
@@ -1855,7 +1911,10 @@ class _CodexSubscriptionRealtimeSession:
                 exc_info=True,
             )
             return
-        self._delivered_context = text
+        if text:
+            self._delivered_context = text
+        if directive:
+            self._delivered_turn_directive = directive
 
     async def _deliver_history(self, history: Any) -> None:
         """Restore bounded same-call context after a transport rebuild."""
@@ -1928,7 +1987,7 @@ class _CodexSubscriptionRealtimeSession:
                 exc_info=True,
             )
 
-    async def interrupt(self) -> None:
+    async def interrupt(self, *, retire_input_entitlement: bool = False) -> None:
         """Stop the assistant on barge-in, with or without a Codex turn id.
 
         ``turn/interrupt`` addresses an app-server TURN, and an ordinary
@@ -1942,8 +2001,19 @@ class _CodexSubscriptionRealtimeSession:
         works: raising the barrier makes ``receive`` retire the cut response,
         so every frame the far end still sends for it is dropped instead of
         played over the person who interrupted.
+
+        ``retire_input_entitlement`` separates the two callers, and getting it
+        wrong is audible either way. A DELEGATION owns the utterance it was
+        dispatched for, so the far end's own answer to that utterance must
+        never start later — the delegation paths pass True. A BARGE-IN happens
+        after the user's NEW utterance already bumped the local input
+        generation; retiring it there consumed the new question's one response
+        entitlement and the assistant fell permanently silent (found in
+        independent review 2026-08-05).
         """
         self._output_drop_barrier += 1
+        if retire_input_entitlement:
+            self._retire_entitlement_pending = True
         self._interrupt_pending_truncation = True
         await self._interrupt_active_codex_turn()
 

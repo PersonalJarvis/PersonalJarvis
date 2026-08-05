@@ -546,15 +546,15 @@ async def test_direct_speech_clearance_expires_after_its_rendering_budget():
     """
     gate = ScrubHoldGate(language="en")
     gate.trust_direct_speech("Short answer.")
-    five_seconds = AudioChunk(
-        pcm=b"\x00\x01" * (24_000 * 5), sample_rate=24_000, timestamp_ns=0
+    two_seconds = AudioChunk(
+        pcm=b"\x00\x01" * (24_000 * 2), sample_rate=24_000, timestamp_ns=0
     )
-    assert await gate.push_audio(five_seconds)
-    assert await gate.push_audio(five_seconds)
-    assert await gate.push_audio(five_seconds)
+    assert await gate.push_audio(two_seconds)
+    assert await gate.push_audio(two_seconds)
+    assert await gate.push_audio(two_seconds)
     # The utterance's generous rendering budget is spent: whatever streams
     # now belongs to another response and is vetted fail-closed again.
-    assert await gate.push_audio(five_seconds) == []
+    assert await gate.push_audio(two_seconds) == []
 
 
 @pytest.mark.asyncio

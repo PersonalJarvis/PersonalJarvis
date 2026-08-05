@@ -205,7 +205,6 @@ class _PcmSenderTrack:
         # Composed rather than subclassed at import time so the aiortc import
         # stays inside the function that needs it.
         self._impl = _build_sender_track(MediaStreamTrack)
-        self.queue: asyncio.Queue[bytes] = self._impl.queue
 
     @property
     def track(self) -> Any:
@@ -708,10 +707,14 @@ class RealtimeWebRtcAudioEndpoint:
         # and to a log reader as a healthy call.
         shed_bytes = self._sender.enqueue(payload)
         if shed_bytes:
-            self._outgoing_drops += max(1, shed_bytes // _WIRE_FRAME_BYTES)
+            previous_drops = self._outgoing_drops
+            self._outgoing_drops = previous_drops + max(
+                1, shed_bytes // _WIRE_FRAME_BYTES
+            )
             if (
-                self._outgoing_drops <= _DROP_LOG_EVERY
-                or self._outgoing_drops % _DROP_LOG_EVERY == 0
+                previous_drops == 0
+                or previous_drops // _DROP_LOG_EVERY
+                != self._outgoing_drops // _DROP_LOG_EVERY
             ):
                 log.warning(
                     "Realtime WebRTC sender shed ~%d stale outgoing microphone "

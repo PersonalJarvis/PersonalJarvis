@@ -72,15 +72,16 @@ _COVERAGE_MS_PER_CHAR = 55.0
 # A finalize() tail this far beyond the coverage estimate cannot be explained
 # by the deliberate underestimation alone; log it as a transcription stall.
 _FINALIZE_EXCESS_LOG_MS = 5_000.0
-# Release budget for ONE injected direct-speech utterance — a generous
-# OVERestimate of its rendering time (the opposite direction of
-# _COVERAGE_MS_PER_CHAR's deliberate underestimate). Clamping the trusted
-# answer itself would recreate "the action ran and the user heard nothing",
-# so the bound exists only to stop the clearance from covering an UNBOUNDED
-# amount of foreign audio on a transport that generates its own responses:
-# without it, one injection opened the gate for the rest of the call.
-_DIRECT_SPEECH_MS_PER_CHAR = 150.0
-_DIRECT_SPEECH_BUDGET_FLOOR_MS = 10_000.0
+# Release budget for ONE injected direct-speech utterance — an OVERestimate
+# of its rendering time (the opposite direction of _COVERAGE_MS_PER_CHAR's
+# deliberate underestimate: 2x that rate, so a real voice can never outrun
+# it). Clamping the trusted answer itself would recreate "the action ran and
+# the user heard nothing", so the bound must stay generous — but not so
+# generous it misses the incident class it exists for: the live 2026-08-04
+# case was 8.2 s of foreign audio riding a stall-phrase-length clearance,
+# which a 10 s floor would have waved through entirely.
+_DIRECT_SPEECH_MS_PER_CHAR = 110.0
+_DIRECT_SPEECH_BUDGET_FLOOR_MS = 3_000.0
 
 
 class ScrubHoldGate:
@@ -149,6 +150,7 @@ class ScrubHoldGate:
             int(self._direct_speech_released_ms),
             int(self._direct_speech_budget_ms),
         )
+        self._direct_speech_budget_ms = 0.0
 
     @property
     def pending_audio_ms(self) -> float:

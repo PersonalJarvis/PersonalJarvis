@@ -447,7 +447,45 @@ async def test_context_refresh_appends_only_the_changed_lines() -> None:
     update = context_appends[1]
     assert "Clock: 12:01." in update
     assert "Persona line." not in update
-    assert "stays in force" in update
+    assert "stay in force" in update
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_turn_directive_supersedes_instead_of_accumulating() -> None:
+    """A changed turn directive is delivered WHOLE, with replace semantics.
+
+    The three per-turn directives are mutually exclusive; a line-diff plus a
+    blanket "everything stays in force" left the thread claiming "answer
+    directly", "do not answer" and "say you are still working" all at once
+    (independent review 2026-08-05).
+    """
+    client = _Client()
+    session = await _provider(client).open_session(
+        RealtimeSessionConfig(instructions="Persona line.\nDirective A.")
+    )
+
+    await session.update_session(
+        instructions="Persona line.\nDirective B.",
+        turn_directive="Directive B.",
+    )
+    await session.update_session(
+        instructions="Persona line.\nDirective A.",
+        turn_directive="Directive A.",
+    )
+
+    appends = [text for _thread, text, _role in client.text_appends]
+    assert appends[0] == "Persona line.\nDirective A."
+    # Turn 2: the directive travels ONLY in its superseding section, never
+    # additionally as a diffed context line.
+    assert "REPLACE every earlier instruction" in appends[1]
+    assert "Directive B." in appends[1]
+    assert appends[1].count("Directive B.") == 1
+    # Turn 3: reverting re-issues the directive as a full replacement even
+    # though an identical copy already sits in the thread's opening block.
+    assert "REPLACE every earlier instruction" in appends[2]
+    assert "Directive A." in appends[2]
+    assert "Directive B." not in appends[2]
     await session.close()
 
 
@@ -2355,7 +2393,7 @@ async def test_interrupt_retires_an_entitlement_the_response_never_used(
             if event.type == "input_transcript" and event.is_final:
                 break
 
-    await session.interrupt()
+    await session.interrupt(retire_input_entitlement=True)
 
     audio_after = []
     with contextlib.suppress(TimeoutError):
@@ -2365,6 +2403,70 @@ async def test_interrupt_retires_an_entitlement_the_response_never_used(
                     audio_after.append(event)
 
     assert audio_after == []
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_barge_in_never_consumes_the_new_utterances_entitlement() -> None:
+    """A plain barge-in interrupt must keep the NEW question answerable.
+
+    At the moment ``_barge_in`` fires, the local input generation already
+    belongs to the user's new utterance. Retiring it there consumed that
+    question's one response entitlement, so the assistant fell permanently
+    silent after every barge-in (independent review 2026-08-05: 3 frames
+    before the change, 0 after). Only a delegation may retire the
+    entitlement, via ``retire_input_entitlement=True``.
+    """
+    speech = (1000).to_bytes(2, "little", signed=True) * 480
+    endpoint = _FakeAudioEndpoint(output_schedule=((0.5, speech), (0.02, speech)))
+    transcriber = _ScheduledInputTranscriber(
+        [
+            (0.0, InputTranscriptEvent(kind="speech_started")),
+            (
+                0.02,
+                InputTranscriptEvent(
+                    kind="transcript", text="Frage eins", is_final=True
+                ),
+            ),
+            (0.05, InputTranscriptEvent(kind="speech_started")),
+            (
+                0.02,
+                InputTranscriptEvent(
+                    kind="transcript", text="Warte, anders", is_final=True
+                ),
+            ),
+        ]
+    )
+    client = _Client()
+    client.subscription = _keeps_stream_open()
+    session = await _provider(
+        client,
+        endpoint=endpoint,
+        input_transcriber_factory=lambda: transcriber,
+    ).open_session(RealtimeSessionConfig())
+
+    stream = session.receive()
+    finals = 0
+    async with asyncio.timeout(1.5):
+        async for event in stream:
+            if event.type == "input_transcript" and event.is_final:
+                finals += 1
+                if finals == 2:
+                    break
+
+    await session.interrupt()
+
+    audio_after = []
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(1.0):
+            async for event in stream:
+                if event.type == "audio_delta":
+                    audio_after.append(event)
+                    break
+
+    assert audio_after, (
+        "the far end's answer to the barge-in utterance must stay audible"
+    )
     await session.close()
 
 
