@@ -840,6 +840,23 @@ class _CodexSubscriptionRealtimeSession:
                 _close_response(spent=True)
             response_open = True
             response_opened_at = asyncio.get_running_loop().time()
+            if last_output_activity > 0.0:
+                splice_gap_ms = (response_opened_at - last_output_activity) * 1000.0
+                if splice_gap_ms < 1_500.0:
+                    # Two responses splice into ONE playback stream here with
+                    # no marker the session could sequence on. A user-reported
+                    # ~2 s garble (2026-08-05 20:12) has exactly this shape as
+                    # its one plausible client-side mechanism; this line
+                    # timestamps the seam so the next incident is attributable
+                    # to the seam or to the server's own audio.
+                    log.info(
+                        "Codex subscription realtime opened a new response "
+                        "%d ms after the previous response's audio "
+                        "(source=%s) — back-to-back responses splice in one "
+                        "playback stream",
+                        int(splice_gap_ms),
+                        source,
+                    )
             response_rejected_at = 0.0
             active_response_generation = 0
             if not self._local_grounding_active():
