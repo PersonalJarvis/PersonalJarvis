@@ -58,6 +58,13 @@ interface SubagentMappingRow {
   dashboard_url: string | null;
   credential_help: string | null;
   is_active_brain: boolean;
+  /** Runs on the user's own hardware and has no credential at all. Such a card
+   * is ready the moment it exists — asking it for a key locked a local-only
+   * install out of picking any worker. */
+  keyless?: boolean;
+  /** The card's own display name from the provider spec, so the picker stops
+   * showing raw ids ("local-openai") next to proper labels ("xAI Grok"). */
+  label?: string | null;
   /** How this subagent is billed — "api" (per token) / "subscription" /
    * "subscription_or_api". Drives the billing badge so the API-vs-subscription
    * distinction is visible right on the subagent cards. */
@@ -1353,7 +1360,7 @@ function SubagentProviderCard({
   row: SubagentMappingRow;
   onSwitched: () => void | Promise<void>;
 }) {
-  const label = PROVIDER_LABELS[row.jarvis] ?? row.jarvis;
+  const label = row.label ?? PROVIDER_LABELS[row.jarvis] ?? row.jarvis;
   const brand = useAgentBrand();
   const { activating, activate } = useSubagentActivate(row, onSwitched);
 
@@ -1387,17 +1394,21 @@ function SubagentProviderCard({
             ? `Activate this ${brand} provider`
             : "Set an API key first"
       }
+      // A keyless card has no key to wait for: it is ready as soon as it is
+      // listed, and every credential line below has to say so.
       badge={
         <StatusPill
           state={row.is_active_brain ? "active" : row.key_set ? "ready" : "open"}
         />
       }
       subtitle={
-        row.dedicated_key_set
-          ? `Dedicated ${brand} key configured`
-          : row.shared_key_set
-            ? "Using the shared Brain key as a compatibility fallback"
-            : `Set a dedicated key for this ${brand}`
+        row.keyless
+          ? "Runs on this machine — no key needed"
+          : row.dedicated_key_set
+            ? `Dedicated ${brand} key configured`
+            : row.shared_key_set
+              ? "Using the shared Brain key as a compatibility fallback"
+              : `Set a dedicated key for this ${brand}`
       }
       warning={
         <div className="space-y-2" data-agent-card-control>
@@ -1409,6 +1420,11 @@ function SubagentProviderCard({
               credentialHelp={row.credential_help}
               onChanged={onSwitched}
             />
+          )}
+          {row.keyless && row.credential_help && (
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              {row.credential_help}
+            </p>
           )}
           {!row.key_set && (
             <CardHint icon={Lock}>

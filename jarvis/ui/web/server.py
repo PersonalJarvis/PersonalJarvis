@@ -1095,15 +1095,25 @@ class WebServer:
                     except Exception:  # noqa: BLE001
                         oauth_connected = False
                         oauth_stale = False
+                spec = get_spec(mapping.jarvis)
+                # A keyless local provider has nothing to save, so every
+                # credential question below has to answer differently for it.
+                # Without this the card demanded "save a dedicated ollama key
+                # on this card", offered a field for a key that does not exist,
+                # and refused activation — a local-only install could pick no
+                # worker at all. Read off the card's own auth mode, never a
+                # provider name (AP-21).
+                keyless = bool(spec and spec.auth_mode == "none")
                 # claude-api is dual-billed like Codex/Antigravity: the Claude Max
                 # subscription (claude CLI OAuth login) OR an Anthropic API key.
                 # Every other MAPPINGS provider bills per token on an API account.
                 row_billing = (
-                    "subscription_or_api"
+                    "local"
+                    if keyless
+                    else "subscription_or_api"
                     if mapping.jarvis == "claude-api"
                     else "api"
                 )
-                spec = get_spec(mapping.jarvis)
                 credential_source = (
                     "dedicated"
                     if dedicated_key_set
@@ -1119,17 +1129,33 @@ class WebServer:
                         "worker_slug": mapping.worker_slug,
                         "env_var": mapping.env_var,
                         "env_fallback": mapping.env_fallback,
-                        "key_set": api_key_set or oauth_connected or oauth_stale,
+                        # Readiness, not credential presence: a keyless card is
+                        # ready the moment it exists, and gating it on a key it
+                        # never has locked it out of the picker entirely.
+                        "key_set": (
+                            True
+                            if keyless
+                            else api_key_set or oauth_connected or oauth_stale
+                        ),
                         "api_key_set": api_key_set,
                         "dedicated_key_set": dedicated_key_set,
                         "shared_key_set": shared_key_set,
                         "oauth_connected": oauth_connected,
                         "oauth_stale": oauth_stale,
-                        "credential_source": credential_source,
-                        "secret_key": secret_key,
+                        "credential_source": "none" if keyless else credential_source,
+                        # No key field on a card with no key slot.
+                        "secret_key": None if keyless else secret_key,
+                        "keyless": keyless,
+                        # The card's own name, so the picker stops showing raw
+                        # ids like "local-openai" next to "xAI Grok".
+                        "label": spec.label if spec else mapping.jarvis,
                         "dashboard_url": spec.dashboard_url if spec else None,
                         "credential_help": (
-                            f"Dedicated {brand} key for {spec.label}. "
+                            f"Runs on your own hardware — no key, nothing leaves "
+                            f"this machine. Configure its server on the "
+                            f"{spec.label} card under Brain."
+                            if keyless and spec
+                            else f"Dedicated {brand} key for {spec.label}. "
                             "It is not used by Brain or Realtime."
                             if spec
                             else f"Dedicated {brand} API key."
