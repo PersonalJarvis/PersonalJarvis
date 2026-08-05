@@ -224,8 +224,11 @@ class TestDescribeField:
         assert set(d["allowed_values"]) == {"en", "de", "es"}
 
     def test_undeclared_extra_key_is_graceful(self) -> None:
-        # ui.theme is an undeclared extra="allow" key — no schema type.
-        assert describe_field("ui.theme")["value_type"] in ("str", "unknown")
+        # A key under an extra="allow" section that the schema does not declare
+        # has no type to report, and asking for one must not raise. The example
+        # is deliberately invented: any real key risks being declared later, as
+        # ui.theme was when the light theme turned it into a proper enum.
+        assert describe_field("ui.some_undeclared_key")["value_type"] in ("str", "unknown")
 
     def test_unknown_path_is_graceful(self) -> None:
         assert describe_field("totally.made.up.path")["value_type"] == "unknown"
