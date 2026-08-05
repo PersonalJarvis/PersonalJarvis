@@ -173,12 +173,41 @@ def load_private_emails() -> set[str]:
     return {ln.strip().lower() for ln in out.splitlines() if ln.strip()}
 
 
+#: Last-resort secret shapes, used ONLY when the privacy gate cannot be loaded.
+#: The gate's own table stays the single source of truth — this is deliberately
+#: the smaller, highest-confidence subset. It exists because the gate itself is
+#: withheld from the public distribution, so a clone of the public repo has no
+#: `scripts/ci/privacy_gate/` at all: without a built-in fallback the hook would
+#: load nothing, scan nothing, and report success — a secret guard that silently
+#: guards nothing for every contributor who is not the maintainer.
+_FALLBACK_SECRET_PATTERNS: dict[str, str] = {
+    "openai_legacy": r"\bsk-[A-Za-z0-9]{48}\b",
+    "openai_project": r"\bsk-proj-[A-Za-z0-9_-]{40,}\b",
+    "anthropic": r"\bsk-ant-[A-Za-z0-9_-]{60,}\b",
+    "google_api_key": r"\bAIza[0-9A-Za-z_-]{35}\b",
+    "github_token": r"\bgh[pousr]_[A-Za-z0-9]{36}\b",
+    "aws_access_key": r"\bAKIA[0-9A-Z]{16}\b",
+    "slack_token": r"\bxox[baprs]-[0-9A-Za-z-]{10,}\b",
+    "groq_key": r"\bgsk_[A-Za-z0-9]{40,}\b",
+    "google_oauth_secret": r"\bGOCSPX-[A-Za-z0-9_-]{20,}\b",
+    "private_key_block": r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----",
+}
+
+#: Basenames that must never be pushed, mirrored for the same fallback reason.
+_FALLBACK_FORBIDDEN_BASENAMES: frozenset[str] = frozenset(
+    {".env", "jarvis.toml", "credentials.json", "token.json", "id_rsa", "id_ed25519"}
+)
+
+
 def load_secret_scanner(repo_root: Path) -> tuple[dict | None, set, set]:
     """Import the privacy gate's strip_and_scan.py and return its scan ingredients.
 
-    Returns (compiled_patterns, forbidden_basenames, allowlist). On ANY failure
-    (file missing, import error, attribute missing) returns (None, set(), set())
-    so the caller fails OPEN for the secret checks — layer 3 (CI) is the backstop.
+    Returns (compiled_patterns, forbidden_basenames, allowlist). When the gate
+    cannot be loaded — which is the NORMAL case in a clone of the public repo,
+    where the gate is withheld — falls back to the built-in pattern subset above
+    rather than to no scanner at all. Only an unusable fallback (a broken regex
+    in this file) degrades to (None, set(), set()), where the caller fails OPEN
+    and layer 3 (CI) is the backstop.
     """
     try:
         gate_dir = (
@@ -199,13 +228,25 @@ def load_secret_scanner(repo_root: Path) -> tuple[dict | None, set, set]:
         forbidden = set(module.FORBIDDEN_BASENAMES)
         allowlist = module._load_allowlist(gate_dir)
         return compiled, forbidden, allowlist
-    except Exception as exc:  # pragma: no cover - defensive fail-open path
+    except Exception as exc:
         print(
-            f"privacy-pre-push: WARNING could not load secret scanner "
-            f"({exc!r}); failing OPEN for the secret/forbidden-file checks.",
+            f"privacy-pre-push: NOTE the privacy gate is not available "
+            f"({exc!r}); scanning with the built-in secret patterns instead.",
             file=sys.stderr,
         )
-        return None, set(), set()
+        try:
+            compiled = {
+                name: re.compile(p)
+                for name, p in _FALLBACK_SECRET_PATTERNS.items()
+            }
+        except re.error as bad:  # pragma: no cover - only a bug in this file
+            print(
+                f"privacy-pre-push: WARNING built-in secret patterns are broken "
+                f"({bad!r}); failing OPEN for the secret/forbidden-file checks.",
+                file=sys.stderr,
+            )
+            return None, set(), set()
+        return compiled, set(_FALLBACK_FORBIDDEN_BASENAMES), set()
 
 
 def resolve_base(
