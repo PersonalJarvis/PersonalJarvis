@@ -4636,20 +4636,14 @@ class RealtimeVoiceSession:
         return action_phrase(phrase_key, self._language), succeeded
 
     async def _begin_user_speech_turn(self) -> None:
-        """Close an interrupted reply before the next transcript opens a turn."""
-        # Withhold ONLY when there is a reply to interrupt. Arming this on
-        # every speech edge silently swallowed the HEAD of any answer the
-        # server began before the local transcript landed — on a transport
-        # whose local recognizer needs a network round trip that beheaded
-        # the first reply of a call into a mid-sentence entry and re-added
-        # seconds of perceived latency (live 2026-08-05 20:12: 105 audio
-        # events dropped between the speech edge and the final transcript;
-        # the user heard the answer only from "…ich bin ganz entspannt").
-        # The rare late continuation of an already-closed turn playing into
-        # the user's new utterance is the accepted trade: it becomes an
-        # audible barge-in (output active) and is cut on the next edge.
-        if self._output_active or self._response_requested_for_turn:
-            self._drop_provider_output_until_new_response = True
+        """Close an interrupted reply before the next transcript opens a turn.
+
+        Deliberately decides NOTHING about withholding or draining: every
+        caller invokes ``_barge_in`` right after this, and that method is the
+        one owner of the "is there a reply to cut" decision. A second copy of
+        that decision here is exactly how a conditional fix became a no-op
+        (2dff5890 → independent review W1).
+        """
         if self._turn_id and self._turn_has_activity():
             self._mark_latency_named(
                 "REALTIME_CANCEL",
@@ -6591,14 +6585,26 @@ class RealtimeVoiceSession:
         self._embedded_silence_ms = 0.0
 
     async def _barge_in(self, *, interrupt_provider: bool = True) -> None:
-        should_interrupt = bool(
-            interrupt_provider
-            and self._session is not None
-            and (self._output_active or self._response_requested_for_turn)
+        # Evaluated BEFORE the reset below: there is a reply to cut only when
+        # one is audible or already requested for this turn. Without one, the
+        # incoming audio belongs to the answer of the utterance that triggered
+        # this very edge — arming the withhold and draining the gate here
+        # swallowed that answer's un-transcribed head, because a slow local
+        # recognizer lets the server answer first (live 2026-08-05 20:12:
+        # 105 withheld audio events, playback entering mid-sentence). This
+        # method is the ONE owner of that decision; _begin_user_speech_turn
+        # deliberately decides nothing (the two-owner split is how the no-op
+        # fix of 2dff5890 happened).
+        reply_to_cut = bool(
+            self._output_active or self._response_requested_for_turn
         )
-        self._drop_provider_output_until_new_response = True
+        should_interrupt = bool(
+            interrupt_provider and self._session is not None and reply_to_cut
+        )
+        if reply_to_cut:
+            self._drop_provider_output_until_new_response = True
+            self._gate.drain()
         self._response_requested_for_turn = False
-        self._gate.drain()
         output_rate = int(getattr(self._provider, "output_sample_rate", 24_000) or 24_000)
         audio_end_ms = (
             int(self._output_samples_sent * 1000 / output_rate)

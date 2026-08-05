@@ -6930,15 +6930,26 @@ async def test_silent_provider_audio_does_not_advance_liveness_or_echo_horizon()
     await sess.end(reason="test")
 
 
+async def _drive_speech_edge(sess) -> None:
+    """The REAL pump sequence for a speech edge: begin + barge-in.
+
+    Testing ``_begin_user_speech_turn`` alone is exactly how the first fix
+    became a no-op — ``_barge_in`` runs one line later in production and
+    used to re-arm the withhold unconditionally (independent review W1/W3).
+    """
+    await sess._begin_user_speech_turn()
+    await sess._barge_in(interrupt_provider=True)
+
+
 @pytest.mark.asyncio
 async def test_speech_edge_without_a_playing_reply_does_not_withhold_audio():
     """A fresh utterance must not swallow the head of the answer it earns.
 
-    The speech edge armed the barge-in withhold unconditionally; on a
-    transport whose local recognizer needs a network round trip, the server's
-    answer regularly BEGINS before the final transcript lands, so its first
-    seconds were dropped and playback entered mid-sentence (live 2026-08-05
-    20:12: 105 withheld audio events, the reply audible only from its middle).
+    On a transport whose local recognizer needs a network round trip, the
+    server's answer regularly BEGINS before the final transcript lands; the
+    unconditional edge withhold dropped its first seconds and playback
+    entered mid-sentence (live 2026-08-05 20:12: 105 withheld audio events,
+    the reply audible only from its middle).
     """
     sess = RealtimeVoiceSession(
         session_id="s-speech-edge",
@@ -6949,18 +6960,48 @@ async def test_speech_edge_without_a_playing_reply_does_not_withhold_audio():
         bus=None,
     )
 
-    await sess._begin_user_speech_turn()
+    await _drive_speech_edge(sess)
     assert sess._drop_provider_output_until_new_response is False
 
     # With a reply audibly playing the same edge IS a barge-in: withhold.
     sess._output_active = True
-    await sess._begin_user_speech_turn()
+    await _drive_speech_edge(sess)
     assert sess._drop_provider_output_until_new_response is True
 
     # And a requested-but-not-yet-audible response counts the same way.
     sess._output_active = False
     sess._drop_provider_output_until_new_response = False
     sess._response_requested_for_turn = True
-    await sess._begin_user_speech_turn()
+    await _drive_speech_edge(sess)
     assert sess._drop_provider_output_until_new_response is True
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_speech_edge_keeps_the_untranscribed_answer_head_buffered():
+    """The gate buffer must survive an edge with no reply to cut (review W2).
+
+    The head of the incoming answer sits in the scrub gate awaiting its
+    transcript; draining it on every speech edge deleted exactly those
+    seconds even after the withhold itself was made conditional.
+    """
+    sess = RealtimeVoiceSession(
+        session_id="s-speech-edge-gate",
+        send_binary=lambda _pcm: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=FakeProvider([]),
+        config=_cfg(),
+        bus=None,
+    )
+    head = AudioChunk(pcm=b"\x00\x01" * 24_000, sample_rate=24_000, timestamp_ns=0)
+    assert await sess._gate.push_audio(head) == []
+    assert sess._gate.pending_audio_ms > 0
+
+    await _drive_speech_edge(sess)
+    assert sess._gate.pending_audio_ms > 0
+
+    # A real barge-in still discards the interrupted reply's buffer.
+    sess._output_active = True
+    await _drive_speech_edge(sess)
+    assert sess._gate.pending_audio_ms == 0
     await sess.end(reason="test")
