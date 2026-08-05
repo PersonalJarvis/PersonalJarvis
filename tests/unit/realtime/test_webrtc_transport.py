@@ -214,6 +214,82 @@ def test_the_send_queue_is_a_jitter_budget_not_a_hiding_place() -> None:
     assert webrtc_transport._SEND_QUEUE_MAX <= 20
 
 
+async def _no_pacing() -> None:
+    return None
+
+
+@pytest.mark.asyncio
+async def test_a_preroll_burst_is_delivered_losslessly_in_order() -> None:
+    """The pre-handshake microphone flush must survive the jitter queue.
+
+    ~1.2 s of the user's FIRST sentence is buffered during the handshake and
+    flushed in one unpaced burst. The old drop-oldest queue deleted ~2/3 of
+    it, so ChatGPT-Live heard a fragment and invented a user turn out of it
+    (live 2026-08-04). Overflow now drains ORDERED into the elastic residue.
+    """
+    sender = webrtc_transport._PcmSenderTrack()
+    track = sender.track
+    track._pace = _no_pacing
+    frame_bytes = webrtc_transport._WIRE_FRAME_BYTES
+    chunks = [
+        (1000 + i).to_bytes(2, "little", signed=True) * (frame_bytes // 2)
+        for i in range(40)
+    ]
+    for chunk in chunks:
+        assert sender.enqueue(chunk) == 0
+
+    received = bytearray()
+    for _ in range(40):
+        frame = await track.recv()
+        received += bytes(frame.planes[0])[: frame.samples * 2]
+
+    assert bytes(received) == b"".join(chunks)
+
+
+@pytest.mark.asyncio
+async def test_backlog_drains_by_skipping_silent_frames_only() -> None:
+    """A media track is clocked at realtime, so a delivered backlog can only
+    catch up by SKIPPING frames — and only silent ones are skippable without
+    losing speech. Without this, the preroll's lag would persist for the whole
+    call and every reply would arrive that much late."""
+    sender = webrtc_transport._PcmSenderTrack()
+    track = sender.track
+    track._pace = _no_pacing
+    frame_bytes = webrtc_transport._WIRE_FRAME_BYTES
+    loud = (1200).to_bytes(2, "little", signed=True) * (frame_bytes // 2)
+    quiet = b"\x00" * frame_bytes
+    for chunk in [loud] * 10 + [quiet] * 15 + [loud] * 5:
+        sender.enqueue(chunk)
+
+    delivered: list[bytes] = []
+    for _ in range(30):
+        frame = await track.recv()
+        payload = bytes(frame.planes[0])[: frame.samples * 2]
+        delivered.append(payload)
+        if sum(1 for item in delivered if item == loud) == 15:
+            break
+
+    # Every loud frame arrived, in fewer wall-clock slots than were enqueued:
+    # the silent middle shrank instead of the speech being dropped.
+    assert sum(1 for item in delivered if item == loud) == 15
+    assert len(delivered) < 30
+
+
+def test_a_stalled_sender_still_sheds_stale_audio() -> None:
+    """The elastic residue is not a hiding place: past the cap, the OLDEST
+    audio is shed and reported, exactly like the old jitter queue promised."""
+    sender = webrtc_transport._PcmSenderTrack()
+    frame_bytes = webrtc_transport._WIRE_FRAME_BYTES
+    chunk = (1000).to_bytes(2, "little", signed=True) * (frame_bytes // 2)
+    total = 0
+    shed = 0
+    while shed == 0 and total < 1000:
+        shed = sender.enqueue(chunk)
+        total += 1
+    assert 0 < total < 1000
+    assert shed > 0
+
+
 # --------------------------------------------------------------------------
 # WR-2 / WR-3 — the output stream always terminates
 # --------------------------------------------------------------------------

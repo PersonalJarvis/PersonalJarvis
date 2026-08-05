@@ -87,6 +87,21 @@ _FIRST_AUDIO_TIMEOUT_S = 30.0
 _MAX_PACING_CATCHUP_S = 1.0
 # One line per 50 dropped frames == per second of lost audio at 20 ms frames.
 _DROP_LOG_EVERY = 50
+# Overflow past the jitter queue drains ORDERED into the sender's elastic
+# residue instead of deleting the oldest 20 ms slices. The one legitimate
+# burst is the pre-handshake microphone preroll (~1-2 s of the user's FIRST
+# sentence flushed at once); dropping ~2/3 of it made ChatGPT-Live hear a
+# fragment and invent a user turn (live 2026-08-04). The cap keeps the old
+# guarantee that a genuinely stalled sender sheds STALE audio instead of
+# hiding many seconds of lag.
+_ELASTIC_BACKLOG_MAX_BYTES = int(_WIRE_RATE * 2 * 8.0)
+# A media track can never be sent FASTER than realtime, so a delivered backlog
+# would otherwise lag the whole call. It drains by skipping SILENT frames
+# (energy only, AP-27): pauses shrink, speech is never dropped, and the lag
+# disappears at the first gap in the user's speech.
+_CATCHUP_MIN_BACKLOG_BYTES = int(_WIRE_RATE * 2 * 0.2)
+_CATCHUP_SILENCE_PEAK = 300
+_CATCHUP_MAX_DROPS_PER_FRAME = 25
 
 
 def _is_clean_track_end(exc: BaseException) -> bool:
@@ -196,6 +211,10 @@ class _PcmSenderTrack:
     def track(self) -> Any:
         return self._impl
 
+    def enqueue(self, payload: bytes) -> int:
+        """Queue one wire-rate payload; returns stale bytes shed, if any."""
+        return self._impl.enqueue(payload)
+
 
 def _build_sender_track(base: Any) -> Any:
     """Return a live sender-track instance bound to ``aiortc``'s base class."""
@@ -217,6 +236,31 @@ def _build_sender_track(base: Any) -> Any:
             # produced, so the clock starts when the sender actually starts.
             self._start: float | None = None
             self._pacing_resyncs = 0
+            self._catchup_dropped = 0
+
+        def enqueue(self, payload: bytes) -> int:
+            """Queue a payload; overflow drains ORDERED into the residue.
+
+            The residue is consumed before the queue and everything queued is
+            older than this payload, so draining the queue into the residue
+            and appending keeps the stream byte-exact. Returns how many STALE
+            bytes the elastic cap shed (0 in any healthy call).
+            """
+            try:
+                self.queue.put_nowait(payload)
+                return 0
+            except asyncio.QueueFull:
+                while True:
+                    try:
+                        self._residue += self.queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                self._residue += payload
+                shed = len(self._residue) - _ELASTIC_BACKLOG_MAX_BYTES
+                if shed > 0:
+                    self._residue = self._residue[shed:]
+                    return shed
+                return 0
 
         async def _pace(self) -> None:
             """Sleep until this frame's wall-clock deadline, never longer.
@@ -262,20 +306,45 @@ def _build_sender_track(base: Any) -> Any:
                 raise MediaStreamError
             await self._pace()
             needed = _WIRE_FRAME_BYTES
-            while len(self._residue) < needed:
-                try:
-                    chunk = self.queue.get_nowait()
-                except asyncio.QueueEmpty:  # The current audio frame is intentionally padded below.
+            catchup_drops = 0
+            while True:
+                while len(self._residue) < needed:
+                    try:
+                        chunk = self.queue.get_nowait()
+                    except asyncio.QueueEmpty:  # The current audio frame is intentionally padded below.
+                        break
+                    self._residue += chunk
+                if len(self._residue) < needed:
+                    # Underrun: send silence so the far end keeps a continuous
+                    # stream (its VAD reads gaps as end-of-speech).
+                    payload = self._residue + b"\x00" * (needed - len(self._residue))
+                    self._residue = b""
                     break
-                self._residue += chunk
-            if len(self._residue) >= needed:
                 payload = self._residue[:needed]
                 self._residue = self._residue[needed:]
-            else:
-                # Underrun: send silence so the far end keeps a continuous
-                # stream (its VAD reads gaps as end-of-speech).
-                payload = self._residue + b"\x00" * (needed - len(self._residue))
-                self._residue = b""
+                # Backlog catch-up (see _CATCHUP_* above): a media track is
+                # clocked at realtime, so a delivered backlog can only drain
+                # by skipping frames — and only SILENT ones are skippable
+                # without losing speech. Energy only, never content (AP-27).
+                if (
+                    catchup_drops < _CATCHUP_MAX_DROPS_PER_FRAME
+                    and len(self._residue) >= _CATCHUP_MIN_BACKLOG_BYTES
+                ):
+                    quiet = np.frombuffer(payload, dtype=np.int16)
+                    peak = int(np.max(np.abs(quiet.astype(np.int32))))
+                    if peak < _CATCHUP_SILENCE_PEAK:
+                        catchup_drops += 1
+                        continue
+                break
+            if catchup_drops:
+                previous = self._catchup_dropped
+                self._catchup_dropped = previous + catchup_drops
+                if previous == 0 or previous // 250 != self._catchup_dropped // 250:
+                    log.info(
+                        "Realtime WebRTC sender is draining its backlog by "
+                        "skipping silent frames (%d skipped so far)",
+                        self._catchup_dropped,
+                    )
             samples = np.frombuffer(payload, dtype=np.int16).reshape(1, -1)
             frame = AudioFrame.from_ndarray(samples, format="s16", layout="mono")
             frame.sample_rate = _WIRE_RATE
@@ -625,29 +694,25 @@ class RealtimeWebRtcAudioEndpoint:
         payload = self._mic_resampler.convert(pcm, int(sample_rate or _JARVIS_RATE))
         if not payload:
             return
-        try:
-            self._sender.queue.put_nowait(payload)
-        except asyncio.QueueFull:
-            # Drop the oldest: stale microphone audio is worse than a gap.
-            # SAY so — this queue silently deleted user speech, which reads to
-            # the user as "it ignored me" and to a log reader as a healthy call.
-            # The receive side already reports its drops; this side did not.
-            with_suppress_get(self._sender.queue)
-            self._outgoing_drops += 1
+        # A burst past the jitter queue (the pre-handshake preroll, a blocked
+        # loop) drains ORDERED into the sender's elastic residue and is later
+        # caught up by skipping silent frames — user speech is only ever shed
+        # once the elastic cap proves the peer is genuinely not draining.
+        # SAY so when that happens: this path used to silently delete the
+        # user's first sentence, which reads to the user as "it ignored me"
+        # and to a log reader as a healthy call.
+        shed_bytes = self._sender.enqueue(payload)
+        if shed_bytes:
+            self._outgoing_drops += max(1, shed_bytes // _WIRE_FRAME_BYTES)
             if (
-                self._outgoing_drops == 1
+                self._outgoing_drops <= _DROP_LOG_EVERY
                 or self._outgoing_drops % _DROP_LOG_EVERY == 0
             ):
                 log.warning(
-                    "Realtime WebRTC send queue is full — dropped %d outgoing "
-                    "microphone frame(s); the far end is not draining audio at "
-                    "wall clock",
+                    "Realtime WebRTC sender shed ~%d stale outgoing microphone "
+                    "frame(s); the far end is not draining audio at wall clock",
                     self._outgoing_drops,
                 )
-            try:
-                self._sender.queue.put_nowait(payload)
-            except asyncio.QueueFull:  # noqa: S110 - a full queue after a drop means the peer is gone
-                pass
 
     async def next_output_pcm(self) -> bytes | None:
         """Return the next decoded 24 kHz chunk, or ``None`` at end of stream."""
