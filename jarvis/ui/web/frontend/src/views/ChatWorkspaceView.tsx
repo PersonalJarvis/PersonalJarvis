@@ -39,6 +39,7 @@ import {
   type ChatRow,
   createChat,
   openProject,
+  openScratchProject,
   patchChat,
   projectColor,
 } from "@/lib/chatLibraryApi";
@@ -46,6 +47,18 @@ import {
 interface OpenChat {
   project: ChatProject;
   chat: ChatRow;
+}
+
+/**
+ * The last segment of a path, whichever separator this machine uses.
+ *
+ * Read off the path rather than guessed from the browser: the folder lives on
+ * the machine the BACKEND runs on, which is not necessarily the one this window
+ * is open on. A path that ends in a separator still answers with its folder.
+ */
+function folderName(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || path;
 }
 
 export function ChatWorkspaceView() {
@@ -138,6 +151,24 @@ export function ChatWorkspaceView() {
     },
     [agentId, modelId, pushToast],
   );
+
+  /**
+   * Start a chat without choosing a folder first.
+   *
+   * The agent still runs somewhere — the home directory — because a coding CLI
+   * is a process with a working directory and there is no such thing as
+   * nowhere. What the user is spared is the decision: a question, a quick
+   * script, "which of these two files differs" are all worth asking without
+   * first naming a project to ask them in.
+   */
+  const startSession = useCallback(async () => {
+    try {
+      const project = await openScratchProject();
+      await startChat(project);
+    } catch (error) {
+      pushToast("error", error instanceof Error ? error.message : "Could not start a session");
+    }
+  }, [pushToast, startChat]);
 
   /**
    * Send the first prompt of a chat.
@@ -364,6 +395,7 @@ export function ChatWorkspaceView() {
           }}
           onNewChat={(project) => void startChat(project)}
           onAddProject={() => setPicking(true)}
+          onNewSession={() => void startSession()}
         />
       </div>
 
@@ -380,7 +412,12 @@ export function ChatWorkspaceView() {
         <header className="flex h-11 shrink-0 items-center gap-2 px-4">
           {open && (
             <>
-              <AgentMark agent={open.chat.agent} label={open.chat.agent || "?"} size="sm" />
+              <AgentMark
+                agent={open.chat.agent}
+                label={open.chat.agent || "?"}
+                size="sm"
+                variant="plain"
+              />
               <span className="min-w-0 truncate text-xs font-medium">
                 {open.chat.title || "New chat"}
               </span>
@@ -542,8 +579,32 @@ export function ChatWorkspaceView() {
                 <X className="h-4 w-4" aria-hidden />
               </button>
             </header>
-            <div className="min-h-0 flex-1 overflow-auto p-3">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
               <FolderPicker selected={pickedPath} onSelect={setPickedPath} />
+            </div>
+            {/*
+              What is about to be added, in words, above the button that adds it.
+
+              The picker deliberately does not report its own selection — it
+              expects the surface around it to, because the answer belongs next
+              to the control that acts on it. This dialog did not, so clicking
+              a folder produced no visible change anywhere and the only feedback
+              was a button going from 40% to 100% opacity. That is what "I
+              cannot add a folder" looks like from the outside.
+            */}
+            <div className="flex min-w-0 items-center gap-2 border-t border-border px-4 py-2 text-xs">
+              {pickedPath ? (
+                <>
+                  <span className="shrink-0 text-muted-foreground">Selected</span>
+                  <code className="min-w-0 truncate font-mono text-foreground">
+                    {pickedPath}
+                  </code>
+                </>
+              ) : (
+                <span className="text-muted-foreground">
+                  Pick a folder above — click one to select it.
+                </span>
+              )}
             </div>
             <footer className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">
               <button
@@ -552,17 +613,18 @@ export function ChatWorkspaceView() {
                   setPicking(false);
                   setPickedPath(null);
                 }}
-                className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                className="rounded-md px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
               >
                 Cancel
               </button>
               <button
                 type="button"
+                data-testid="confirm-add-project"
                 disabled={!pickedPath}
                 onClick={() => void addProject()}
-                className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-40"
+                className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40"
               >
-                Add project
+                {pickedPath ? `Add ${folderName(pickedPath)}` : "Add project"}
               </button>
             </footer>
           </div>

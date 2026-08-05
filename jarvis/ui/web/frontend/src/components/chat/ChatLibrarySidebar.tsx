@@ -2,23 +2,35 @@
  * Projects, their chats, and the few things you reach for constantly.
  *
  * The column is a reading list, not a file tree. It shows, in this order: what
- * you pinned, your projects with their conversations underneath, and what you
- * touched last. Each project shows its first few chats and says how to see the
- * rest — a repository with two hundred conversations must not be able to push
- * the project below it off the screen.
+ * you pinned, your projects with their conversations underneath, and the
+ * sessions you started without picking a folder at all. Each project shows its
+ * first few chats and says how to see the rest — a repository with two hundred
+ * conversations must not be able to push the project below it off the screen.
  *
  * **Chats are fetched per project, never all at once.** The first few projects
  * load with the column because they are the ones on screen; the rest load when
  * they are opened, and stay loaded afterwards. There is no request that
  * returns everything, which is what keeps a sidebar of forty repositories the
  * same cost as a sidebar of four.
+ *
+ * ## Why it is this quiet
+ *
+ * Every row used to fill with the product's signal yellow on hover and stay
+ * filled while active, and every chat carried a framed tile with its agent's
+ * logo in it. Forty rows of that is a grid of boxes on a bed of gold — the eye
+ * has nowhere to rest and the titles, which are the only thing anybody is
+ * actually reading, come last. So: selection is a barely-there lift of the
+ * surface, the agent's mark is the bare glyph at the weight of the text beside
+ * it, and the yellow is kept for the things that genuinely signal — a running
+ * agent, a folder that cannot be reached. The list is now mostly titles, which
+ * is what a list of conversations should mostly be.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   ChevronDown,
   ChevronRight,
-  Folder,
+  FolderPlus,
   Loader2,
   MoreHorizontal,
   Pencil,
@@ -31,6 +43,7 @@ import {
 } from "lucide-react";
 
 import { AgentMark } from "@/components/agentic/AgentMark";
+import { NavRevealButton } from "@/components/layout/NavRevealButton";
 import { cn } from "@/lib/utils";
 import {
   type ChatProject,
@@ -63,11 +76,24 @@ const EAGER_PROJECTS = 4;
 /** Chats shown per project before "Show more". */
 const CHATS_PREVIEW = 5;
 
+/**
+ * The one surface treatment in this column, in its two strengths.
+ *
+ * A plain lift of the surface — no hue, no border, no shadow. Selection is
+ * legible because the row is brighter than its neighbours, which is all a
+ * selection has to be; the product's accent colour stays reserved for state
+ * that means something.
+ */
+const ROW_HOVER = "hover:bg-foreground/[0.055]";
+const ROW_ACTIVE = "bg-foreground/[0.09] text-foreground";
+
 export interface ChatLibrarySidebarProps {
   activeChatId?: string | null;
   onOpenChat?: (project: ChatProject, chat: ChatRow) => void;
   onNewChat?: (project: ChatProject) => void;
   onAddProject?: () => void;
+  /** Start a chat with no project folder chosen. Absent = the row is not offered. */
+  onNewSession?: () => void;
   /** Bumped by the shell when something out there changed the library. */
   refreshToken?: number;
 }
@@ -87,6 +113,7 @@ export function ChatLibrarySidebar({
   onOpenChat,
   onNewChat,
   onAddProject,
+  onNewSession,
   refreshToken = 0,
 }: ChatLibrarySidebarProps) {
   const [projects, setProjects] = useState<ChatProject[]>([]);
@@ -140,8 +167,12 @@ export function ChatLibrarySidebar({
       setProjects(next);
       setLoadError(null);
       // The top of the list is what the user is about to click; everything
-      // below waits to be opened.
-      for (const project of next.slice(0, EAGER_PROJECTS)) void loadChats(project.id);
+      // below waits to be opened. The project-less sessions load with it
+      // regardless of where they sort — their band is always on screen.
+      const eager = next.slice(0, EAGER_PROJECTS);
+      for (const project of next) {
+        if (project.scratch || eager.includes(project)) void loadChats(project.id);
+      }
     } catch (error) {
       if (!alive.current) return;
       setLoadError(error instanceof Error ? error.message : "Could not load projects");
@@ -205,27 +236,38 @@ export function ChatLibrarySidebar({
     [loadChats, reload],
   );
 
-  /** Every loaded chat, newest first — the "Recent" band across all projects. */
-  const recent = useMemo(() => {
-    const rows: { project: ChatProject; chat: ChatRow }[] = [];
-    for (const project of projects) {
-      const state = chats[project.id];
-      if (state?.status !== "ready") continue;
-      for (const chat of state.chats) rows.push({ project, chat });
-    }
-    rows.sort((a, b) => b.chat.updated_at - a.chat.updated_at);
-    return rows.slice(0, 6);
-  }, [chats, projects]);
+  /**
+   * The holder for chats started without a folder, and what is in it.
+   *
+   * Deliberately NOT a "recent" band. That one re-listed the same conversations
+   * already visible under their projects two inches above, so the column said
+   * everything twice and the duplicate was the louder copy. This band shows the
+   * chats that appear nowhere else.
+   */
+  const scratch = useMemo(() => projects.find((p) => p.scratch) ?? null, [projects]);
+  const scratchChats = useMemo(() => {
+    if (!scratch) return [];
+    const state = chats[scratch.id];
+    if (state?.status !== "ready") return [];
+    const needle = filter.trim().toLowerCase();
+    return needle
+      ? state.chats.filter((c) => c.title.toLowerCase().includes(needle))
+      : state.chats;
+  }, [chats, filter, scratch]);
 
   /** Pinned projects float to their own band, like the reference client. */
-  const pinned = useMemo(() => projects.filter((p) => p.pinned), [projects]);
+  const pinned = useMemo(
+    () => projects.filter((p) => p.pinned && !p.scratch),
+    [projects],
+  );
 
   const visible = useMemo(() => {
+    const real = projects.filter((p) => !p.scratch);
     const needle = filter.trim().toLowerCase();
-    if (!needle) return projects;
+    if (!needle) return real;
     // Filters what is already on screen. Typing a letter must not fire one
     // request per project — that is the exact cost this column exists to avoid.
-    return projects.filter((project) => {
+    return real.filter((project) => {
       if (project.name.toLowerCase().includes(needle)) return true;
       const state = chats[project.id];
       return (
@@ -248,45 +290,68 @@ export function ChatLibrarySidebar({
   return (
     <div
       data-testid="chat-library-sidebar"
-      className="flex h-full min-h-0 w-full flex-col border-r border-border bg-card/25"
+      className="flex h-full min-h-0 w-full flex-col border-r border-border/60 bg-background"
     >
-      <div className="flex items-center gap-1 px-3 pb-2 pt-3">
-        <span className="flex-1 truncate text-sm font-semibold tracking-tight">Chat</span>
-        <IconButton
-          icon={Plus}
-          label="Add a project folder"
-          onClick={() => onAddProject?.()}
-        />
+      <div className="flex items-center gap-1 px-2 pb-2 pt-2.5">
+        {/* The way back to the app's own navigation, which this surface hides.
+            First thing in the column because that is where every editor keeps
+            it — and because a way back belongs at the start, not the end. */}
+        <NavRevealButton />
+        <span className="flex-1 truncate px-1 text-sm font-semibold tracking-tight">
+          Chat
+        </span>
       </div>
 
-      <div className="px-3 pb-2">
+      <div className="px-2 pb-2">
         <div className="relative flex items-center">
-          <Search className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-muted-foreground" />
+          <Search className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-muted-foreground/70" />
           <input
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
             placeholder="Search"
             aria-label="Search projects and chats"
-            className="h-8 w-full rounded-md border border-border bg-background/50 pl-7 pr-2 text-xs outline-none placeholder:text-muted-foreground/60 focus-visible:ring-1 focus-visible:ring-ring"
+            className="h-8 w-full rounded-md border border-transparent bg-foreground/[0.045] pl-7 pr-2 text-xs outline-none placeholder:text-muted-foreground/60 focus-visible:border-border focus-visible:bg-transparent"
           />
         </div>
       </div>
 
-      <button
-        type="button"
-        data-testid="sidebar-new-chat"
-        onClick={() => {
-          const target = pinned[0] ?? projects[0];
-          if (target) onNewChat?.(target);
-          else onAddProject?.();
-        }}
-        className="mx-2 mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors hover:bg-accent/50"
-      >
-        <SquarePen className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-        New chat
-      </button>
+      {/*
+        The two ways to start something, as full rows rather than icons.
 
-      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-2 pb-2">
+        They used to be a bare "+" beside the word "Chat" — one glyph carrying
+        two different meanings depending on which one you guessed it was, which
+        is how somebody ends up reporting that they cannot add a folder at all.
+        A row with a word on it can only mean the word.
+      */}
+      <div className="px-1.5 pb-1">
+        <SidebarAction
+          icon={SquarePen}
+          label="New chat"
+          testId="sidebar-new-chat"
+          onClick={() => {
+            const target = pinned[0] ?? visible[0];
+            if (target) onNewChat?.(target);
+            else onNewSession?.();
+          }}
+        />
+        {onNewSession && (
+          <SidebarAction
+            icon={Plus}
+            label="New session"
+            hint="A chat with no project folder"
+            testId="sidebar-new-session"
+            onClick={onNewSession}
+          />
+        )}
+        <SidebarAction
+          icon={FolderPlus}
+          label="Add project"
+          testId="sidebar-add-project"
+          onClick={() => onAddProject?.()}
+        />
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-1.5 pb-3">
         {loading ? (
           <div className="flex items-center gap-2 px-2 py-6 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -294,10 +359,6 @@ export function ChatLibrarySidebar({
           </div>
         ) : loadError ? (
           <div className="px-2 py-6 text-xs text-destructive">{loadError}</div>
-        ) : projects.length === 0 ? (
-          <div className="px-2 py-6 text-xs text-muted-foreground">
-            No projects yet. Add a folder to start your first chat.
-          </div>
         ) : (
           <>
             {pinned.length > 0 && (
@@ -308,7 +369,10 @@ export function ChatLibrarySidebar({
                     key={`pin-${project.id}`}
                     type="button"
                     onClick={() => onNewChat?.(project)}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent/40"
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground/80 transition-colors",
+                      ROW_HOVER,
+                    )}
                   >
                     <span
                       className="h-1.5 w-1.5 shrink-0 rounded-full"
@@ -321,8 +385,8 @@ export function ChatLibrarySidebar({
               </>
             )}
 
-            <Band>Projects</Band>
-            {visible.length === 0 && (
+            {visible.length > 0 && <Band>Projects</Band>}
+            {visible.length === 0 && projects.length > 0 && filter && (
               <div className="px-2 py-3 text-xs text-muted-foreground">Nothing matches that.</div>
             )}
             {visible.map((project) => {
@@ -332,8 +396,13 @@ export function ChatLibrarySidebar({
               const total =
                 state.status === "ready" ? state.chats.length : project.chats;
               return (
-                <div key={project.id} className="mb-1">
-                  <div className="group flex items-center gap-1 rounded-md px-1 py-1 transition-colors hover:bg-accent/30">
+                <div key={project.id} className="mb-0.5">
+                  <div
+                    className={cn(
+                      "group flex items-center gap-1 rounded-md px-1 py-1 transition-colors",
+                      ROW_HOVER,
+                    )}
+                  >
                     <button
                       type="button"
                       data-testid={`project-row-${project.id}`}
@@ -342,13 +411,13 @@ export function ChatLibrarySidebar({
                       className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                     >
                       {open ? (
-                        <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+                        <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/70" aria-hidden />
                       ) : (
-                        <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+                        <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/70" aria-hidden />
                       )}
-                      <Folder
-                        className="h-3.5 w-3.5 shrink-0"
-                        style={{ color: projectColor(project) }}
+                      <span
+                        className="h-1.5 w-1.5 shrink-0 rounded-full"
+                        style={{ background: projectColor(project) }}
                         aria-hidden
                       />
                       <span className="min-w-0 flex-1 truncate text-xs font-medium">
@@ -423,7 +492,7 @@ export function ChatLibrarySidebar({
                   </div>
 
                   {open && (
-                    <div className="ml-3.5 border-l border-border/50 pl-1">
+                    <div className="ml-3 pl-1.5">
                       {state.status === "loading" && (
                         <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
                           Loading chats…
@@ -469,27 +538,26 @@ export function ChatLibrarySidebar({
               );
             })}
 
-            {recent.length > 0 && !filter && (
+            {projects.length === 0 && (
+              <div className="px-2 py-6 text-xs text-muted-foreground">
+                Nothing here yet. Start a session, or add a project folder to
+                work in one.
+              </div>
+            )}
+
+            {scratchChats.length > 0 && (
               <>
-                <Band>Recent</Band>
-                {recent.map(({ project, chat }) => (
-                  <button
-                    key={`recent-${chat.id}`}
-                    type="button"
-                    onClick={() => onOpenChat?.(project, chat)}
-                    className={cn(
-                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/40",
-                      activeChatId === chat.id && "bg-accent/50",
-                    )}
-                  >
-                    <AgentMark agent={chat.agent} label={chat.agent || "?"} size="sm" />
-                    <span className="min-w-0 flex-1 truncate text-[11px]">
-                      {chat.title || "New chat"}
-                    </span>
-                    <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                      {shortAge(chat.updated_at)}
-                    </span>
-                  </button>
+                <Band>Sessions</Band>
+                {scratchChats.map((chat) => (
+                  <ChatRowItem
+                    key={`scratch-${chat.id}`}
+                    chat={chat}
+                    active={activeChatId === chat.id}
+                    onOpen={() => scratch && onOpenChat?.(scratch, chat)}
+                    onRename={() => scratch && void renameChat(scratch.id, chat)}
+                    onArchive={() => scratch && void archiveChat(scratch.id, chat)}
+                    onDelete={() => scratch && void removeChat(scratch.id, chat)}
+                  />
                 ))}
               </>
             )}
@@ -518,8 +586,9 @@ function ChatRowItem({
   return (
     <div
       className={cn(
-        "group/chat flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors hover:bg-accent/40",
-        active && "bg-accent/60",
+        "group/chat flex items-center gap-1 rounded-md px-1.5 py-[5px] transition-colors",
+        ROW_HOVER,
+        active && ROW_ACTIVE,
       )}
     >
       <button
@@ -528,8 +597,18 @@ function ChatRowItem({
         onClick={onOpen}
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
       >
-        <AgentMark agent={chat.agent} label={chat.agent || "?"} size="sm" />
-        <span className="min-w-0 flex-1 truncate text-[11px]">
+        <AgentMark
+          agent={chat.agent}
+          label={chat.agent || "?"}
+          size="sm"
+          variant="plain"
+        />
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-[12px]",
+            active ? "text-foreground" : "text-foreground/75",
+          )}
+        >
           {chat.title || "New chat"}
         </span>
         {chat.terminal ? (
@@ -539,7 +618,7 @@ function ChatRowItem({
             aria-label="Running"
           />
         ) : (
-          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground opacity-100 transition-opacity group-hover/chat:opacity-0">
+          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70 transition-opacity group-hover/chat:opacity-0">
             {shortAge(chat.updated_at)}
           </span>
         )}
@@ -553,9 +632,46 @@ function ChatRowItem({
   );
 }
 
+/**
+ * One of the column's standing actions — a word, an icon, a whole row to hit.
+ *
+ * Rows rather than a toolbar of glyphs because these are the three things a
+ * person arrives wanting to do, and each of them has to be able to say which
+ * one it is without being hovered.
+ */
+function SidebarAction({
+  icon: Icon,
+  label,
+  hint,
+  onClick,
+  testId,
+}: {
+  icon: typeof Pencil;
+  label: string;
+  hint?: string;
+  onClick: () => void;
+  testId?: string;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      onClick={onClick}
+      title={hint ?? label}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium text-foreground/85 transition-colors",
+        ROW_HOVER,
+      )}
+    >
+      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+      {label}
+    </button>
+  );
+}
+
 function Band({ children }: { children: React.ReactNode }) {
   return (
-    <div className="px-2 pb-1 pt-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+    <div className="px-2 pb-1 pt-4 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
       {children}
     </div>
   );
@@ -583,7 +699,7 @@ function IconButton({
       title={label}
       aria-label={label}
       className={cn(
-        "flex shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/60",
+        "flex shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/10",
         tiny ? "h-5 w-5" : "h-6 w-6",
         destructive ? "hover:text-destructive" : "hover:text-foreground",
         hideUntilHover && "opacity-0 focus-visible:opacity-100 group-hover:opacity-100",
@@ -610,7 +726,7 @@ function MenuItem({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-accent/60",
+        "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-foreground/[0.06]",
         destructive ? "text-destructive" : "text-foreground",
       )}
     >
