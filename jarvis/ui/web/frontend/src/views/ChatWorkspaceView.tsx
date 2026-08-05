@@ -8,22 +8,13 @@
  * gone or folded into the composer, which is where the answers to "where is
  * this going?" belong anyway.
  *
- * The middle column opens on a starting screen rather than an empty void: the
- * project's name as a question, and four openings that cover what people
- * actually ask a coding agent first. A blank canvas is the hardest place to
- * begin, and this surface is where every session starts.
+ * The middle column belongs to the agent. Before a prompt it holds the
+ * project's name as a question and says where the answer will appear; from the
+ * first prompt on it IS the agent, live, in that same rectangle. One surface in
+ * two states, never a menu of things to click instead.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Compass,
-  FolderOpen,
-  LayoutGrid,
-  ListChecks,
-  Sparkles,
-  SquareTerminal,
-  Wrench,
-  X,
-} from "lucide-react";
+import { FolderOpen, LayoutGrid, Loader2, SquareTerminal, X } from "lucide-react";
 
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { ChatComposer, type ComposerAgent } from "@/components/chat/ChatComposer";
@@ -55,41 +46,6 @@ interface OpenChat {
   project: ChatProject;
   chat: ChatRow;
 }
-
-/**
- * The four openings on the starting screen.
- *
- * Chosen to span what a coding agent is actually asked for on a first turn —
- * understand, build, review, repair — rather than to advertise features. Each
- * one is a real first sentence, so clicking it produces a prompt somebody
- * would have typed.
- */
-const OPENERS = [
-  {
-    icon: Compass,
-    tint: "text-sky-400",
-    title: "Explore and understand code",
-    prompt: "Walk me through how this project is put together and where its seams are.",
-  },
-  {
-    icon: Sparkles,
-    tint: "text-violet-400",
-    title: "Build a new feature or tool",
-    prompt: "I want to add a new feature. Ask me what it should do, then plan it.",
-  },
-  {
-    icon: ListChecks,
-    tint: "text-emerald-400",
-    title: "Review changes and suggest fixes",
-    prompt: "Review the changes on this branch and tell me what you would change.",
-  },
-  {
-    icon: Wrench,
-    tint: "text-amber-400",
-    title: "Fix problems and errors",
-    prompt: "Something is broken. Ask me for the symptom, then find the cause.",
-  },
-] as const;
 
 export function ChatWorkspaceView() {
   const pushToast = useEventStore((s) => s.pushToast);
@@ -357,6 +313,11 @@ export function ChatWorkspaceView() {
     [ensureAgent],
   );
 
+  // Something was asked for and the agent is not on screen yet — a cold coding
+  // CLI on a large repository takes seconds. Said once here so the empty fold
+  // and the composer cannot disagree about whether anything is happening.
+  const waiting = busy || starting;
+
   const composer = useMemo(
     () =>
       activeProject ? (
@@ -383,10 +344,10 @@ export function ChatWorkspaceView() {
             });
           }}
           onTalk={() => setTalking(true)}
-          busy={busy || starting}
+          busy={waiting}
         />
       ) : null,
-    [activeProject, agentId, agents, busy, modelId, send, starting],
+    [activeProject, agentId, agents, modelId, send, waiting],
   );
 
   return (
@@ -487,31 +448,32 @@ export function ChatWorkspaceView() {
           ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto scrollbar-jarvis px-6">
             {activeProject ? (
-              <div className="w-full max-w-3xl py-8">
-                <div className="mb-6 flex flex-col items-center text-center">
-                  <SquareTerminal
-                    className="mb-4 h-7 w-7 text-muted-foreground/70"
+              /*
+               * The same fold the pane will occupy, holding its place.
+               *
+               * Nothing to click here on purpose: the only thing to do on this
+               * screen is say what you want, and the box below already asks
+               * for it. What replaces this line is the agent itself, in this
+               * exact spot — so the wait reads as "it is coming here", not as
+               * "something is missing".
+               */
+              <div className="flex max-w-md flex-col items-center gap-3 py-8 text-center">
+                {waiting ? (
+                  <Loader2
+                    className="h-7 w-7 animate-spin text-muted-foreground/70"
                     aria-hidden
                   />
-                  <h1 className="text-xl font-semibold tracking-tight">
-                    What should we build in {activeProject.name}?
-                  </h1>
-                </div>
-                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-                  {OPENERS.map((opener) => (
-                    <button
-                      key={opener.title}
-                      type="button"
-                      onClick={() => void send(opener.prompt)}
-                      className="flex h-28 flex-col items-start gap-2 rounded-lg border border-border bg-card/40 p-3 text-left transition-colors hover:border-border hover:bg-accent/40"
-                    >
-                      <opener.icon className={`h-4 w-4 ${opener.tint}`} aria-hidden />
-                      <span className="text-xs leading-snug text-foreground/90">
-                        {opener.title}
-                      </span>
-                    </button>
-                  ))}
-                </div>
+                ) : (
+                  <SquareTerminal className="h-7 w-7 text-muted-foreground/70" aria-hidden />
+                )}
+                <h1 className="text-xl font-semibold tracking-tight">
+                  What should we build in {activeProject.name}?
+                </h1>
+                <p className="text-xs text-muted-foreground">
+                  {waiting
+                    ? "Starting the agent — it takes over this space in a moment."
+                    : "Type below. The agent opens right here and works in front of you."}
+                </p>
               </div>
             ) : (
               <div className="max-w-md text-center">
