@@ -39,6 +39,8 @@ dependable while adding richer voice controls and knowledge-map views.
   surface, so conversations and projects are reachable from the CLI too.
 - Added an icon-rail sidebar: the navigation collapses by default and has an
   explicit toggle, giving the workspace more room.
+- Added the Agentic IDE chat surface itself: a starting screen, a composer and
+  quick actions, so a conversation can begin without opening a terminal pane.
 - Added in-app downloading of local brain models, so the Ollama card fetches
   what it needs itself instead of sending you to a terminal.
 
