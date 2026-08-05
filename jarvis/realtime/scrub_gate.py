@@ -72,6 +72,15 @@ _COVERAGE_MS_PER_CHAR = 55.0
 # A finalize() tail this far beyond the coverage estimate cannot be explained
 # by the deliberate underestimation alone; log it as a transcription stall.
 _FINALIZE_EXCESS_LOG_MS = 5_000.0
+# Release budget for ONE injected direct-speech utterance — a generous
+# OVERestimate of its rendering time (the opposite direction of
+# _COVERAGE_MS_PER_CHAR's deliberate underestimate). Clamping the trusted
+# answer itself would recreate "the action ran and the user heard nothing",
+# so the bound exists only to stop the clearance from covering an UNBOUNDED
+# amount of foreign audio on a transport that generates its own responses:
+# without it, one injection opened the gate for the rest of the call.
+_DIRECT_SPEECH_MS_PER_CHAR = 150.0
+_DIRECT_SPEECH_BUDGET_FLOOR_MS = 10_000.0
 
 
 class ScrubHoldGate:
@@ -116,6 +125,30 @@ class ScrubHoldGate:
         # own audio has actually played.
         self._direct_speech_pending = False
         self._direct_speech_released_ms = 0.0
+        self._direct_speech_budget_ms = 0.0
+
+    def _expire_direct_speech_budget(self) -> None:
+        """Retire a direct-speech clearance whose audio must be over by now.
+
+        The injected utterance renders once; audio released far beyond its
+        generous rendering budget belongs to some OTHER response and goes back
+        to fail-closed vetting. When real vetted transcript chars exist, the
+        ordinary coverage machinery keeps its own verdict.
+        """
+        if not self._direct_speech_pending:
+            return
+        if self._direct_speech_released_ms <= self._direct_speech_budget_ms:
+            return
+        self._direct_speech_pending = False
+        if self._covered_chars <= 0:
+            self._coverage_active = False
+            self._cleared = False
+        log.info(
+            "scrub gate expired a direct-speech clearance after %d ms of "
+            "released audio (budget %d ms); later audio is vetted again",
+            int(self._direct_speech_released_ms),
+            int(self._direct_speech_budget_ms),
+        )
 
     @property
     def pending_audio_ms(self) -> float:
@@ -239,6 +272,7 @@ class ScrubHoldGate:
         """
         if self._hard_leak:
             return []
+        self._expire_direct_speech_budget()
         if not self._cleared and not self._coverage_active:
             if not self._pending and self._pending_since is None:
                 self._pending_since = time.monotonic()
@@ -258,6 +292,7 @@ class ScrubHoldGate:
 
     def release_available(self) -> list[AudioChunk]:
         """Release buffered audio only after a transcript cleared the gate."""
+        self._expire_direct_speech_budget()
         if self._hard_leak or not self._cleared:
             return []
         # Some providers send the transcript delta just before its matching
@@ -305,6 +340,12 @@ class ScrubHoldGate:
         self._cleared = True
         self._direct_speech_pending = True
         self._direct_speech_released_ms = 0.0
+        # Bounded, not sticky: the clearance covers THIS utterance's rendering
+        # (generously overestimated), never the rest of the call.
+        self._direct_speech_budget_ms = (
+            _DIRECT_SPEECH_BUDGET_FLOOR_MS
+            + len(str(text or "")) * _DIRECT_SPEECH_MS_PER_CHAR
+        )
         if text:
             log.debug(
                 "scrub gate trusts %d chars of injected direct speech",
@@ -350,6 +391,7 @@ class ScrubHoldGate:
         beyond the estimate means transcription lagged or died mid-turn;
         log it so the next incident names this producer (BUG-069 review).
         """
+        self._expire_direct_speech_budget()
         if self.fail_closed() or self._hard_leak:
             return []
         out = self._pending

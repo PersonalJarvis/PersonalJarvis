@@ -534,3 +534,37 @@ async def test_drain_never_carries_a_hard_leak_forward():
 
     assert gate.hard_leak_pending() is False
     assert await gate.push_audio(_chunk(4)) == []
+
+
+@pytest.mark.asyncio
+async def test_direct_speech_clearance_expires_after_its_rendering_budget():
+    """One injection must not open the gate for the rest of the call.
+
+    On a transport that generates its own responses, a sticky clearance let
+    FOREIGN audio ride the trusted injection unvetted (live 2026-08-04: an
+    unrelated English fragment played instead of the delegated answer).
+    """
+    gate = ScrubHoldGate(language="en")
+    gate.trust_direct_speech("Short answer.")
+    five_seconds = AudioChunk(
+        pcm=b"\x00\x01" * (24_000 * 5), sample_rate=24_000, timestamp_ns=0
+    )
+    assert await gate.push_audio(five_seconds)
+    assert await gate.push_audio(five_seconds)
+    assert await gate.push_audio(five_seconds)
+    # The utterance's generous rendering budget is spent: whatever streams
+    # now belongs to another response and is vetted fail-closed again.
+    assert await gate.push_audio(five_seconds) == []
+
+
+@pytest.mark.asyncio
+async def test_direct_speech_budget_never_clips_a_long_trusted_answer():
+    """The bound must be an overestimate — clamping the trusted answer itself
+    would recreate 'the action ran and the user heard nothing'."""
+    gate = ScrubHoldGate(language="en")
+    gate.trust_direct_speech("word " * 200)
+    one_minute = AudioChunk(
+        pcm=b"\x00\x01" * (24_000 * 60), sample_rate=24_000, timestamp_ns=0
+    )
+    assert await gate.push_audio(one_minute)
+    assert await gate.push_audio(one_minute)
