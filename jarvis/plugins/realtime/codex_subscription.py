@@ -1681,9 +1681,16 @@ class _CodexSubscriptionRealtimeSession:
         # session.update. The handoff item stays the one model-initiated action
         # channel. Say so once instead of discarding wordlessly (AP-30).
         if tools:
-            log.debug(
+            # INFO once per session, DEBUG afterwards: the discard repeats on
+            # every turn, but a session that silently swallows the entire tool
+            # surface is exactly the AP-30 failure mode.
+            already_noted = getattr(self, "_tools_discard_noted", False)
+            self._tools_discard_noted = True
+            log.log(
+                logging.DEBUG if already_noted else logging.INFO,
                 "Codex subscription realtime cannot declare %d tool(s): the "
-                "app-server realtime RPC surface has no session.update",
+                "app-server realtime RPC surface has no session.update — "
+                "actions travel as handoffs/delegation instead",
                 len(tools),
             )
         del tools

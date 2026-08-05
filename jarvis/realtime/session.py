@@ -422,6 +422,73 @@ _DELEGATE_PENDING_DIRECTIVE = (
     "If the user asks about it, say only that you are still working on it. The "
     "trusted result will be injected as soon as it is ready."
 )
+
+
+def _handoff_variant(directive: str) -> str:
+    """Render a function-vocabulary directive for a transport without tools.
+
+    A transport like ChatGPT-Live cannot receive tool declarations, so a
+    directive promising a callable ``jarvis_action`` (or ``end_call``) is
+    unfollowable there — the model "complies" by SPEAKING the request, which a
+    live session shows as the assistant voicing "Could you look up the
+    weather…" as its own answer. The rules themselves (delegate the user's
+    world, never announce without acting, never invent results) apply
+    unchanged; only the mechanism differs: on these transports the model
+    REQUESTS A HANDOFF and the supervisor injects the trusted result. Deriving
+    the text from the live directive keeps future rule edits in both variants;
+    the trailing catch-all keeps a future rephrasing from resurrecting the
+    dead function name (a parity test pins this).
+    """
+    return (
+        directive.replace(
+            "You have ONE action function: jarvis_action. It hands",
+            "You cannot call functions on this transport. Your ONE action "
+            "mechanism is the handoff request: it hands",
+        )
+        .replace("CALL jarvis_action", "REQUEST a handoff")
+        .replace("A jarvis_action round trip", "A handoff round trip")
+        .replace(
+            "call jarvis_action (again, with the user's correction folded in)",
+            "request a handoff (again, with the user's correction folded in)",
+        )
+        .replace(
+            "either call jarvis_action in the same response",
+            "either request the handoff in the same response",
+        )
+        .replace(
+            "An announcement without a function call in the same response",
+            "An announcement without a handoff request in the same response",
+        )
+        .replace(
+            "the latest successful jarvis_action result",
+            "the latest trusted injected result",
+        )
+        .replace(
+            "The function returns spoken_reply: deliver that content to the "
+            "user in your own voice, in the conversation language, without "
+            "reading JSON. If spoken_reply asks a confirmation question, ask "
+            "the user and call jarvis_action again with their answer.",
+            "The trusted result arrives as injected speech: deliver its "
+            "content to the user in your own voice, in the conversation "
+            "language. If it asks a confirmation question, ask the user and "
+            "request another handoff with their answer.",
+        )
+        .replace(
+            "Use end_call only when the user says goodbye.",
+            "When the user says goodbye, answer with a brief goodbye — the "
+            "call system ends the call itself.",
+        )
+        .replace("Call jarvis_action on this turn ONLY", "Request a handoff on this turn ONLY")
+        .replace("calling any function", "requesting a handoff")
+        .replace("jarvis_action", "a handoff")
+        .replace("end_call", "a handoff")
+    )
+
+
+_DELEGATE_ROLE_DIRECTIVE_HANDOFF = _handoff_variant(_DELEGATE_ROLE_DIRECTIVE)
+_DELEGATE_DISCOURAGED_DIRECTIVE_HANDOFF = _handoff_variant(
+    _DELEGATE_DISCOURAGED_DIRECTIVE
+)
 # Delivering a result whose turn already closed must never race the live turn:
 # the session waits until it is at rest, then speaks the result as an explicit
 # follow-up. The bound only decides how long a result may wait for that silence.
@@ -1795,7 +1862,7 @@ class RealtimeVoiceSession:
                     provider=str(getattr(provider, "name", "") or ""),
                     model=model,
                     language_is_pinned=self._language_is_pinned,
-                    tool_directive=self._tool_directive(),
+                    tool_directive=self._tool_directive(provider=provider),
                     preferences=_preferences_block(self._config),
                     workspace_directive=self._workspace_directive(),
                 ),
@@ -4845,18 +4912,26 @@ class RealtimeVoiceSession:
         delegate_required: bool = False,
         action_pending: bool = False,
         delegate_discouraged: bool = False,
+        provider: Any = None,
     ) -> str:
         if self._delegate_enabled:
+            # Capability, not provider name (AP-21): a transport that cannot
+            # receive tool declarations must never be promised a callable
+            # function — the model can only "comply" by speaking the call.
+            target = provider if provider is not None else self._provider
+            if not bool(getattr(target, "supports_direct_tools", True)):
+                role = _DELEGATE_ROLE_DIRECTIVE_HANDOFF
+                discouraged = _DELEGATE_DISCOURAGED_DIRECTIVE_HANDOFF
+            else:
+                role = _DELEGATE_ROLE_DIRECTIVE
+                discouraged = _DELEGATE_DISCOURAGED_DIRECTIVE
             if delegate_required:
-                return f"{_DELEGATE_ROLE_DIRECTIVE}\n\n{_DELEGATE_REQUIRED_DIRECTIVE}"
+                return f"{role}\n\n{_DELEGATE_REQUIRED_DIRECTIVE}"
             if action_pending:
-                return f"{_DELEGATE_ROLE_DIRECTIVE}\n\n{_DELEGATE_PENDING_DIRECTIVE}"
+                return f"{role}\n\n{_DELEGATE_PENDING_DIRECTIVE}"
             if delegate_discouraged:
-                return (
-                    f"{_DELEGATE_ROLE_DIRECTIVE}\n\n"
-                    f"{_DELEGATE_DISCOURAGED_DIRECTIVE}"
-                )
-            return _DELEGATE_ROLE_DIRECTIVE
+                return f"{role}\n\n{discouraged}"
+            return role
         if self._tool_bridge is not None:
             return _TOOL_ROLE_DIRECTIVE
         return ""
