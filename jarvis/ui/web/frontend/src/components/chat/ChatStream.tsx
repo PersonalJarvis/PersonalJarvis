@@ -72,9 +72,9 @@ export function ChatStream({ terminal, active = true }: ChatStreamProps) {
           following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 64;
         }}
         data-testid="chat-stream"
-        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-8 py-6"
+        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-8 py-10"
       >
-        <div className="mx-auto w-full max-w-3xl space-y-4">
+        <div className="mx-auto w-full max-w-[46rem] space-y-6">
           {error && (
             <div className="flex items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-3 text-sm text-amber-300">
               <TriangleAlert className="h-4 w-4 shrink-0" aria-hidden />
@@ -88,7 +88,7 @@ export function ChatStream({ terminal, active = true }: ChatStreamProps) {
             </div>
           )}
           {lines !== null && events.length === 0 && !error && (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-[15px] text-muted-foreground">
               The agent is ready. Say what you want done.
             </p>
           )}
@@ -125,7 +125,7 @@ function Block({ event }: { event: ChatEvent }) {
   if (event.kind === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-secondary/70 px-4 py-2.5 text-sm leading-relaxed">
+        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-3xl bg-secondary/60 px-5 py-3 text-[15px] leading-[1.65]">
           {event.text}
         </div>
       </div>
@@ -134,8 +134,8 @@ function Block({ event }: { event: ChatEvent }) {
 
   if (event.kind === "status") {
     return (
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+      <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
         {event.text}
       </div>
     );
@@ -148,7 +148,7 @@ function Block({ event }: { event: ChatEvent }) {
         type="button"
         onClick={() => long && setOpen((v) => !v)}
         className={cn(
-          "flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
+          "flex w-full items-start gap-2.5 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors",
           long && "hover:bg-accent/30",
           event.kind === "subagent" ? "text-violet-300" : "text-muted-foreground",
         )}
@@ -174,7 +174,7 @@ function Block({ event }: { event: ChatEvent }) {
   }
 
   return (
-    <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground/90">
+    <div className="whitespace-pre-wrap break-words text-[16px] leading-[1.75] tracking-[-0.003em] text-foreground/95">
       {event.text}
     </div>
   );

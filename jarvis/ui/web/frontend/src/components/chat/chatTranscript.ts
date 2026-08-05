@@ -47,17 +47,45 @@ export interface ChatEvent {
  * leaking back into the conversation.
  */
 const BANNER = [
-  /^[\s│┃|]*claude code\b/i,
-  /^[\s│┃|]*codex\b.*\bv\d/i,
-  /^\s*opus\s|^\s*sonnet\s/i,
-  /^\s*~[\\/]/,
+  /^[\s\u2502\u2503|]*claude code\b/i,
+  /^[\s\u2502\u2503|]*codex\b.*\bv\d/i,
+  /^\s*(opus|sonnet|haiku|gpt|gemini)\b.*\b(context|effort|max|plus|pro)\b/i,
+  /^\s*~[\/]/,
   /^\s*\d+\s+mcp servers?\b/i,
   /welcome to/i,
   /^\s*auto mode (on|off)\b/i,
   /shift\+tab to cycle/i,
-  /^\s*[←→]\s*\d+\s+agents?\s*$/i,
+  /^\s*[\u2190\u2192]\s*\d+\s+agents?\s*$/i,
   /^\s*for shortcuts\b/i,
+  // The CLI's PERSISTENT chrome — the rows it repaints below its input box on
+  // every frame. They are identical on turn one and turn fifty, they describe
+  // the tool's settings rather than the work, and left in they arrive between
+  // every pair of sentences the agent says.
+  /^\s*[\u{1F4C1}\u{1F33F}\u{1F331}]/u,
+  /^\s*(high|medium|low|minimal)\s*[\u00b7\u2022]\s*\/?(effort|thinking)/i,
+  /^\s*\/(effort|model|mcp|help|clear|resume|status)\b/i,
+  /^\s*\?\s*for shortcuts/i,
+  /^\s*esc to interrupt/i,
+  /\btokens?\b.*\b(used|left|remaining)\b/i,
 ];
+
+/**
+ * A row that is picture, not text.
+ *
+ * Coding CLIs draw a mascot, a logo or a box frame out of block glyphs. Those
+ * rows survive into the transcript as runs of block and box-drawing
+ * characters, and rendered in a proportional font they are a smear of grey
+ * rectangles — which is exactly what they looked like. A line whose visible
+ * characters are mostly drawing glyphs is dropped, whatever it spells.
+ */
+const DRAWING = /[\u2500-\u259f\u25a0-\u25ff\u2b1b-\u2b1f]/gu;
+
+function isDrawing(line: string): boolean {
+  const visible = line.replace(/\s/g, "");
+  if (visible.length < 3) return false;
+  const marks = visible.match(DRAWING)?.length ?? 0;
+  return marks / visible.length > 0.4;
+}
 
 /** A line the user typed, as the CLI echoes it back. */
 const USER_ECHO = /^[\s]*[>›❯]\s?(.*)$/;
@@ -97,6 +125,7 @@ function labelOf(text: string): string {
 export function readTranscript(lines: readonly string[]): ChatEvent[] {
   const events: ChatEvent[] = [];
   let current: ChatEvent | null = null;
+  let pending: string | null = null;
 
   const push = (kind: ChatEventKind, text: string, label?: string) => {
     if (current && current.kind === kind && kind !== "user" && kind !== "step") {
@@ -115,7 +144,7 @@ export function readTranscript(lines: readonly string[]): ChatEvent[] {
       current = null;
       continue;
     }
-    if (isBanner(line)) continue;
+    if (isBanner(line) || isDrawing(line)) continue;
 
     const echoed = USER_ECHO.exec(line);
     if (echoed) {
@@ -127,7 +156,11 @@ export function readTranscript(lines: readonly string[]): ChatEvent[] {
     }
 
     if (STATUS.test(line)) {
-      push("status", line.trim());
+      // Kept as ONE trailing marker rather than as history: a CLI repaints its
+      // spinner hundreds of times per turn, and every repaint that survived
+      // became another line between two sentences.
+      current = null;
+      pending = line.trim();
       continue;
     }
 
@@ -143,7 +176,11 @@ export function readTranscript(lines: readonly string[]): ChatEvent[] {
     push("assistant", line.trim());
   }
 
-  return events.filter((event) => event.text.trim().length > 0);
+  const kept = events.filter((event) => event.text.trim().length > 0);
+  // The live spinner belongs at the END, where it means "still working", and
+  // nowhere else.
+  if (pending) kept.push({ kind: "status", text: pending });
+  return kept;
 }
 
 /** Sub-agents seen in a conversation, newest last — the right-hand panel's list. */
