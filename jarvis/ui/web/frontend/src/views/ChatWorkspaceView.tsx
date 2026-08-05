@@ -31,6 +31,7 @@ import {
   startIdeSession,
 } from "@/lib/agenticIdeApi";
 import { AgenticTerminal } from "@/components/agentic/AgenticTerminal";
+import { ChatStream } from "@/components/chat/ChatStream";
 import { VoiceBubble } from "@/components/agentic/VoiceBubble";
 import { getWSClient } from "@/hooks/useWebSocket";
 import {
@@ -433,17 +434,34 @@ export function ChatWorkspaceView() {
              * starts the agent AND shows what it is doing, and it brings the
              * years of replay, scroll and resize fixes with it.
              */
-            <div className="min-h-0 flex-1 px-4 pb-2">
-              <AgenticTerminal
-                key={open.chat.terminal}
-                name={open.chat.terminal}
-                workspaceId={workspaceId ?? undefined}
-                displayName={open.chat.agent || "Agent"}
-                appearance="dark"
-                fontSize={13}
-                active
-                focused
-              />
+            <div className="relative flex min-h-0 flex-1 flex-col">
+              {/*
+                The pane runs, and is not shown.
+
+                A coding agent lives only while something is attached to its
+                pseudo-terminal, so the terminal cannot go away — but nobody
+                should have to READ one to follow their own agent. It is kept
+                mounted underneath at full size (xterm needs real geometry to
+                pick its columns; a display:none pane reports zero and the CLI
+                wraps its output at nothing) and covered by the conversation.
+                Hidden from assistive technology too: the same words are right
+                there in the stream, in a better order.
+              */}
+              <div
+                className="pointer-events-none absolute inset-0 -z-10 overflow-hidden opacity-0"
+                aria-hidden
+              >
+                <AgenticTerminal
+                  key={open.chat.terminal}
+                  name={open.chat.terminal}
+                  workspaceId={workspaceId ?? undefined}
+                  displayName={open.chat.agent || "Agent"}
+                  appearance="dark"
+                  fontSize={13}
+                  active
+                />
+              </div>
+              <ChatStream terminal={open.chat.terminal} />
             </div>
           ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto scrollbar-jarvis px-6">
