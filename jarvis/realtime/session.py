@@ -4637,7 +4637,19 @@ class RealtimeVoiceSession:
 
     async def _begin_user_speech_turn(self) -> None:
         """Close an interrupted reply before the next transcript opens a turn."""
-        self._drop_provider_output_until_new_response = True
+        # Withhold ONLY when there is a reply to interrupt. Arming this on
+        # every speech edge silently swallowed the HEAD of any answer the
+        # server began before the local transcript landed — on a transport
+        # whose local recognizer needs a network round trip that beheaded
+        # the first reply of a call into a mid-sentence entry and re-added
+        # seconds of perceived latency (live 2026-08-05 20:12: 105 audio
+        # events dropped between the speech edge and the final transcript;
+        # the user heard the answer only from "…ich bin ganz entspannt").
+        # The rare late continuation of an already-closed turn playing into
+        # the user's new utterance is the accepted trade: it becomes an
+        # audible barge-in (output active) and is cut on the next edge.
+        if self._output_active or self._response_requested_for_turn:
+            self._drop_provider_output_until_new_response = True
         if self._turn_id and self._turn_has_activity():
             self._mark_latency_named(
                 "REALTIME_CANCEL",

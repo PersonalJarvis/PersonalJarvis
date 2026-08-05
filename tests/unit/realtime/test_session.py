@@ -6928,3 +6928,39 @@ async def test_silent_provider_audio_does_not_advance_liveness_or_echo_horizon()
     assert sess._last_output_audio_at >= stamped_at
     assert sess._echo_playback_horizon > horizon
     await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_speech_edge_without_a_playing_reply_does_not_withhold_audio():
+    """A fresh utterance must not swallow the head of the answer it earns.
+
+    The speech edge armed the barge-in withhold unconditionally; on a
+    transport whose local recognizer needs a network round trip, the server's
+    answer regularly BEGINS before the final transcript lands, so its first
+    seconds were dropped and playback entered mid-sentence (live 2026-08-05
+    20:12: 105 withheld audio events, the reply audible only from its middle).
+    """
+    sess = RealtimeVoiceSession(
+        session_id="s-speech-edge",
+        send_binary=lambda _pcm: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=FakeProvider([]),
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess._begin_user_speech_turn()
+    assert sess._drop_provider_output_until_new_response is False
+
+    # With a reply audibly playing the same edge IS a barge-in: withhold.
+    sess._output_active = True
+    await sess._begin_user_speech_turn()
+    assert sess._drop_provider_output_until_new_response is True
+
+    # And a requested-but-not-yet-audible response counts the same way.
+    sess._output_active = False
+    sess._drop_provider_output_until_new_response = False
+    sess._response_requested_for_turn = True
+    await sess._begin_user_speech_turn()
+    assert sess._drop_provider_output_until_new_response is True
+    await sess.end(reason="test")
