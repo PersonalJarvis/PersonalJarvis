@@ -89,6 +89,13 @@ const ExtensionsView = lazyView(() =>
 const AgenticIdeView = lazyPropView<AgenticIdeViewProps>(() =>
   import("@/views/AgenticIdeView").then((m) => ({ default: m.AgenticIdeView })),
 );
+// The rebuilt chat surface. Lazy like every other section and NOT sticky: it
+// holds no live terminal of its own yet, so there is nothing to tear down by
+// unmounting it — that changes when the conversation view lands, and the
+// sticky treatment moves with it.
+const ChatWorkspaceView = lazyView(() =>
+  import("@/views/ChatWorkspaceView").then((m) => ({ default: m.ChatWorkspaceView })),
+);
 const TasksView = lazyView(() =>
   import("@/views/TasksView").then((m) => ({ default: m.TasksView })),
 );
@@ -306,6 +313,8 @@ export function MainView() {
 
 function SwitchOnActiveSection({ active }: { active: string }) {
   switch (active) {
+    case "chat-workspace":
+      return <ChatWorkspaceView />;
     case "chats":
       return <ChatsView />;
     case "agents":

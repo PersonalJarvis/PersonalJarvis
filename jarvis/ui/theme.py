@@ -79,6 +79,8 @@ def _detect_windows() -> Theme | None:
     try:
         import winreg  # type: ignore[import-not-found]
     except ImportError:
+        # Silent on purpose: no winreg means this is not Windows, which is the
+        # expected answer on macOS and Linux, not a fault worth logging.
         return None
     try:
         with winreg.OpenKey(

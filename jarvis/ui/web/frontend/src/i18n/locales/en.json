@@ -62,6 +62,7 @@
     "update_network_error": "network error"
   },
   "nav": {
+    "chat_workspace": "Chat",
     "chats": "Chats",
     "agents": "{name}-Agents",
     "extensions": "Skills, Plugins & MCPs",

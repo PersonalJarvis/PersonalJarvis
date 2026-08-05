@@ -62,6 +62,7 @@
     "update_network_error": "error de red"
   },
   "nav": {
+    "chat_workspace": "Chat",
     "chats": "Chats",
     "agents": "{name}-Agents",
     "extensions": "Skills, Plugins & MCPs",

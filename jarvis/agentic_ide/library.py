@@ -167,6 +167,8 @@ def _read_json(path: Path) -> Any:
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
+        # Silent on purpose: no library file yet is the normal first-run state,
+        # not a failure. Every other read error below is logged.
         return None
     except OSError as exc:
         logger.warning("Chat library: cannot read {}: {}", path.name, exc)
@@ -223,6 +225,9 @@ def project_id_for(path: str | Path) -> str:
     try:
         resolved = Path(path).expanduser().resolve()
     except (OSError, ValueError):
+        # Silent on purpose: an unresolvable path (gone, too long, a bad drive
+        # letter) still deserves a stable id, and the unresolved spelling is a
+        # perfectly good one. Nothing is lost, so there is nothing to report.
         resolved = Path(str(path))
     key = os.path.normcase(str(resolved))
     # Not a security boundary: this is a short, stable name for a local folder

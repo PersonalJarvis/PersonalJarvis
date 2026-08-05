@@ -70,7 +70,10 @@ export type SectionId =
   | "voice-shortcuts"
   | "voice-language"
   | "voice-api-keys"
-  | "agentic-ide";
+  | "agentic-ide"
+  // The rebuilt chat surface — projects, their chats, one conversation on
+  // screen. Lives alongside "agentic-ide" until its parity checklist is empty.
+  | "chat-workspace";
 
 export const SECTION_IDS = [
   "chats",
@@ -107,6 +110,7 @@ export const SECTION_IDS = [
   "voice-language",
   "voice-api-keys",
   "agentic-ide",
+  "chat-workspace",
 ] as const satisfies readonly SectionId[];
 
 export function isSectionId(value: unknown): value is SectionId {
@@ -152,6 +156,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   "voice-language": "Dictation Language",
   "voice-api-keys": "Voice Input Keys",
   "agentic-ide": "Agentic IDE",
+  "chat-workspace": "Chat",
 };
 
 export interface EventItem {

@@ -144,6 +144,9 @@ def _folder_exists(path: str) -> bool:
     try:
         return Path(path).is_dir()
     except OSError:
+        # Silent on purpose: this IS the answer, not a swallowed failure — the
+        # caller asked whether the folder is reachable and gets "no". It runs
+        # per project on every listing, so logging would be pure noise.
         return False
 
 

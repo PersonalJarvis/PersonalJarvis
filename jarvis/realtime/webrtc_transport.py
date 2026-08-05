@@ -250,10 +250,14 @@ def _build_sender_track(base: Any) -> Any:
                 self.queue.put_nowait(payload)
                 return 0
             except asyncio.QueueFull:
+                # Not swallowed: a full queue is the trigger for the elastic
+                # cap below, and the bytes it sheds ARE reported, as this
+                # method's return value. The caller logs them once per call.
                 while True:
                     try:
                         self._residue += self.queue.get_nowait()
                     except asyncio.QueueEmpty:
+                        # Drained — the loop's exit condition, not a failure.
                         break
                 self._residue += payload
                 shed = len(self._residue) - _ELASTIC_BACKLOG_MAX_BYTES
