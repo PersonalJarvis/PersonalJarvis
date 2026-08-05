@@ -73,7 +73,11 @@ export type SectionId =
   | "agentic-ide"
   // The rebuilt chat surface — projects, their chats, one conversation on
   // screen. Lives alongside "agentic-ide" until its parity checklist is empty.
-  | "chat-workspace";
+  | "chat-workspace"
+  // The OLD terminal grid. "agentic-ide" now opens the rebuilt chat surface,
+  // so the grid needs an id of its own — it still holds live panes and must
+  // stay reachable while the new surface grows into full parity.
+  | "agentic-ide-classic";
 
 export const SECTION_IDS = [
   "chats",
@@ -111,6 +115,7 @@ export const SECTION_IDS = [
   "voice-api-keys",
   "agentic-ide",
   "chat-workspace",
+  "agentic-ide-classic",
 ] as const satisfies readonly SectionId[];
 
 export function isSectionId(value: unknown): value is SectionId {
@@ -157,6 +162,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   "voice-api-keys": "Voice Input Keys",
   "agentic-ide": "Agentic IDE",
   "chat-workspace": "Chat",
+  "agentic-ide-classic": "Terminal grid",
 };
 
 export interface EventItem {

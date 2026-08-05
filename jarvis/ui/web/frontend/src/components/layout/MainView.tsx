@@ -226,8 +226,14 @@ function ViewLoadingFallback() {
   return <div className="h-full w-full" aria-busy="true" />;
 }
 
-/** The one section that is hidden rather than unmounted — see `MainView`. */
-const STICKY_SECTION = "agentic-ide";
+/**
+ * The one section that is hidden rather than unmounted — see `MainView`.
+ *
+ * It is the CLASSIC terminal grid, not the chat surface that took over the
+ * "agentic-ide" id: what makes a section too destructive to unmount is live
+ * panes, and the grid is where those live.
+ */
+const STICKY_SECTION = "agentic-ide-classic";
 
 /**
  * Main area to the right of the sidebar. Views are switched the classic way
@@ -313,6 +319,11 @@ export function MainView() {
 
 function SwitchOnActiveSection({ active }: { active: string }) {
   switch (active) {
+    // The rebuilt chat surface IS the coding section now. Both ids reach it:
+    // "agentic-ide" because that is where every existing entry point, deep
+    // link and voice command already goes, and "chat-workspace" because that
+    // is what it is called.
+    case "agentic-ide":
     case "chat-workspace":
       return <ChatWorkspaceView />;
     case "chats":

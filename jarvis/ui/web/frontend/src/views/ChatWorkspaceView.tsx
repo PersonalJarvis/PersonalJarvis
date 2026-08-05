@@ -18,6 +18,7 @@ import {
   Compass,
   FileCode2,
   FolderOpen,
+  LayoutGrid,
   ListChecks,
   PanelRight,
   Sparkles,
@@ -296,6 +297,16 @@ export function ChatWorkspaceView() {
               <X className="h-3.5 w-3.5" aria-hidden />
             </button>
           )}
+          <button
+            type="button"
+            data-testid="open-classic-grid"
+            onClick={() => setActiveSection("agentic-ide-classic")}
+            title="Open the classic terminal grid"
+            className="flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+          >
+            <LayoutGrid className="h-3.5 w-3.5" aria-hidden />
+            Terminal grid
+          </button>
           <button
             type="button"
             onClick={() => setTools((v) => !v)}

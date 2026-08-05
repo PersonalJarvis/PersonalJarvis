@@ -39,7 +39,12 @@ const CONFIRM_TIMEOUT_MS = 4000;
 
 export function TopBar() {
   const activeSection = useEventStore((s) => s.activeSection);
-  if (activeSection === "agentic-ide") return null;
+  // ONLY the classic terminal grid takes the actions into its own row. The
+  // rebuilt chat surface has no such row, so hiding the bar there would take
+  // Restart — the one control a frontend change is reached through — off the
+  // screen entirely. The rule is "the section carries the actions itself",
+  // never "the section is called agentic-ide".
+  if (activeSection === "agentic-ide-classic") return null;
 
   return (
     <div className="flex h-10 shrink-0 items-center justify-end gap-2 border-b border-border bg-background/70 px-4 backdrop-blur-sm">

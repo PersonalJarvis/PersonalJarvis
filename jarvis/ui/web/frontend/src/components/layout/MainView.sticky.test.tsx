@@ -70,7 +70,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("MainView — the Agentic IDE is sticky", () => {
+describe("MainView — the classic terminal grid is sticky", () => {
   it("does not mount the IDE for a user who never opens it", async () => {
     render(<MainView />);
     await screen.findByTestId("chats-stub");
@@ -83,7 +83,7 @@ describe("MainView — the Agentic IDE is sticky", () => {
 
   it("keeps the same instance mounted across a section change", async () => {
     render(<MainView />);
-    goTo("agentic-ide");
+    goTo("agentic-ide-classic");
     await screen.findByTestId("ide-stub");
     expect(ide.mounts).toBe(1);
 
@@ -95,7 +95,7 @@ describe("MainView — the Agentic IDE is sticky", () => {
     expect(screen.getByTestId("ide-stub")).toBeTruthy();
     expect(ide.mounts).toBe(1);
 
-    goTo("agentic-ide");
+    goTo("agentic-ide-classic");
     await waitFor(() =>
       expect(screen.queryByTestId("outputs-stub")).toBeNull(),
     );
@@ -104,7 +104,7 @@ describe("MainView — the Agentic IDE is sticky", () => {
 
   it("hides the IDE while another section is on screen", async () => {
     render(<MainView />);
-    goTo("agentic-ide");
+    goTo("agentic-ide-classic");
     await screen.findByTestId("ide-stub");
 
     const sticky = screen.getByTestId("sticky-agentic-ide");
@@ -120,7 +120,7 @@ describe("MainView — the Agentic IDE is sticky", () => {
 
   it("tells the IDE whether it is the section on screen", async () => {
     render(<MainView />);
-    goTo("agentic-ide");
+    goTo("agentic-ide-classic");
     await screen.findByTestId("ide-stub");
     expect(ide.lastOnScreen).toBe(true);
 
@@ -135,7 +135,7 @@ describe("MainView — the Agentic IDE is sticky", () => {
 
   it("shows only the IDE while it is the active section", async () => {
     render(<MainView />);
-    goTo("agentic-ide");
+    goTo("agentic-ide-classic");
     await screen.findByTestId("ide-stub");
 
     // Two live copies of a workspace would fight over every pane's output

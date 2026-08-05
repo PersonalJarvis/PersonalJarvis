@@ -121,9 +121,9 @@ describe("TopBar restart button", () => {
  * through that Restart button, so a refactor that quietly drops it from the IDE
  * would leave the section with no way to pick up its own rebuild.
  */
-describe("TopBar in the Agentic IDE", () => {
+describe("TopBar in the classic terminal grid", () => {
   it("renders no bar of its own there", () => {
-    useEventStore.setState({ activeSection: "agentic-ide" });
+    useEventStore.setState({ activeSection: "agentic-ide-classic" });
 
     const { container } = render(<TopBar />);
 
@@ -131,7 +131,7 @@ describe("TopBar in the Agentic IDE", () => {
   });
 
   it("still offers the restart through the actions the IDE carries", () => {
-    useEventStore.setState({ activeSection: "agentic-ide" });
+    useEventStore.setState({ activeSection: "agentic-ide-classic" });
 
     render(<TopBarActions />);
 

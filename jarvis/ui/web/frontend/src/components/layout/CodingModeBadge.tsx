@@ -62,7 +62,7 @@ export function CodingModeBadge() {
       // Not aria-pressed: this button navigates, it does not toggle the mode.
       // Claiming a pressed state for something it cannot change would be a lie
       // to exactly the users who depend on it most.
-      disabled={activeSection === "agentic-ide"}
+      disabled={activeSection === "agentic-ide" || activeSection === "agentic-ide-classic"}
       className={cn(
         "mr-auto inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1",
         "text-xs font-medium transition-colors disabled:cursor-default",
