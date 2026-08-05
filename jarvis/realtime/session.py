@@ -898,6 +898,26 @@ _TOOL_ROLE_DIRECTIVE = (
 )
 
 
+# One voice, one side, one reply. Lives in the SESSION instructions — the
+# channel every realtime transport provably delivers to its voice model —
+# because the equivalent rule in the Codex thread-start base instructions is
+# demonstrably inert there: three live calls in a row the voice performed
+# BOTH sides of a greeting exchange and hung itself up ("…Take care. Will do.
+# Catch you later. Later. Bye.", 2026-08-05 20:42) while rules delivered via
+# developer context (the ack ban, the language pin) were honored. Whatever
+# thread-start instructions configure, it is not the live voice.
+_ONE_SPEAKER_DIRECTIVE = (
+    "Live-call discipline: you are ONE voice in a two-party phone-style "
+    "conversation. Produce exactly one reply to the user's latest actual "
+    "spoken turn, then STOP and wait silently for the user's next real "
+    "utterance. Never speak both sides of the conversation, never invent, "
+    "quote, or role-play the user's answer, and never continue chatting with "
+    "yourself — a pause is the user thinking or acting, not an invitation to "
+    "fill it. Do not say goodbye, wrap up, or close the exchange unless the "
+    "user clearly did so first."
+)
+
+
 # Cap for the user agent-instructions content inside the realtime session
 # instructions. The block is re-sent with every per-turn session update, so a
 # pathologically large file must never bloat that hot path; typical files are
@@ -1045,6 +1065,7 @@ def _session_instructions(
         # for THIS user (tone, dialect, address, defaults) and must frame the
         # whole spoken output, while safety and tool rules below stay above them.
         preferences,
+        _ONE_SPEAKER_DIRECTIVE,
         tool_directive,
         # The live workspace roster sits with the tool directive because it is
         # a routing rule, not background colour: it names the one class of word

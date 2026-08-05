@@ -7005,3 +7005,21 @@ async def test_speech_edge_keeps_the_untranscribed_answer_head_buffered():
     await _drive_speech_edge(sess)
     assert sess._gate.pending_audio_ms == 0
     await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_session_instructions_carry_the_one_speaker_discipline():
+    """The one-speaker rule must travel on the channel the voice model reads.
+
+    The equivalent rule in the Codex thread-start base instructions is
+    demonstrably inert for the live voice: three calls in a row it performed
+    BOTH sides of a greeting exchange and hung itself up (2026-08-05 20:42),
+    while rules delivered via the session/developer-context channel (the ack
+    ban, the language pin) were honored.
+    """
+    from jarvis.realtime.session import _session_instructions
+
+    text = _session_instructions("de")
+    assert "ONE voice" in text
+    assert "Never speak both sides" in text
+    assert "Do not say goodbye" in text
