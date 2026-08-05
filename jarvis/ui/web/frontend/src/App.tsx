@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { useEventStore } from "@/store/events";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useBrainStatus } from "@/hooks/useBrainStatus";
 import { useVoiceStatus } from "@/hooks/useVoiceStatus";
@@ -27,6 +28,18 @@ import { SubscriptionRealtimeTransportBroker } from "@/components/voice/Subscrip
 
 /** Where the collapsed/expanded choice for the nav sidebar is remembered. */
 const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
+
+/**
+ * The sections that open WITHOUT the app's module rail — and without the
+ * decorative backdrop behind them.
+ *
+ * These screens are a workspace, not a page of the app: what is on them is the
+ * user's own project and a coding agent working in it. A column of twenty
+ * section icons beside that is the app talking about itself, and the grid and
+ * glow washing over it are decoration competing with content that changes every
+ * second. Both step aside here and stay exactly as they are everywhere else.
+ */
+const CODING_SECTIONS = new Set(["agentic-ide", "chat-workspace", "agentic-ide-classic"]);
 
 export default function App() {
   useWebSocket();
@@ -117,29 +130,50 @@ export default function App() {
     [navCollapsed, sidebar],
   );
 
+  /*
+   * On a coding surface the rail is gone until it is asked for.
+   *
+   * Not merely narrower — absent, along with the seam beside it. The button
+   * that brings it back sits inside the coding surface itself (see
+   * `NavRevealButton`), where the eye already is; parking it on the app chrome
+   * would mean looking away from the work to find the way back to it.
+   */
+  const activeSection = useEventStore((s) => s.activeSection);
+  const navRevealed = useEventStore((s) => s.navRevealed);
+  const codingSurface = CODING_SECTIONS.has(activeSection);
+  const railHidden = codingSurface && !navRevealed;
+
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-background text-foreground">
       <SubscriptionRealtimeTransportBroker />
-      <div className="pointer-events-none fixed inset-0 jarvis-grid opacity-40" aria-hidden />
-      <div
-        className="pointer-events-none fixed right-[-10%] top-[-20%] h-[600px] w-[600px] jarvis-glow"
-        aria-hidden
-      />
+      {!codingSurface && (
+        <>
+          <div className="pointer-events-none fixed inset-0 jarvis-grid opacity-40" aria-hidden />
+          <div
+            className="pointer-events-none fixed right-[-10%] top-[-20%] h-[600px] w-[600px] jarvis-glow"
+            aria-hidden
+          />
+        </>
+      )}
 
-      <Sidebar
-        width={sidebar.size}
-        collapsed={navCollapsed}
-        onToggleCollapsed={toggleNav}
-      />
+      {!railHidden && (
+        <>
+          <Sidebar
+            width={sidebar.size}
+            collapsed={navCollapsed}
+            onToggleCollapsed={toggleNav}
+          />
 
-      <PaneResizer
-        orientation="vertical"
-        onPointerDown={startSidebarResize}
-        onDoubleClick={sidebar.reset}
-        onNudge={sidebar.nudge}
-        active={sidebar.isResizing}
-        title="Drag to resize the sidebar — double-click to reset"
-      />
+          <PaneResizer
+            orientation="vertical"
+            onPointerDown={startSidebarResize}
+            onDoubleClick={sidebar.reset}
+            onNudge={sidebar.nudge}
+            active={sidebar.isResizing}
+            title="Drag to resize the sidebar — double-click to reset"
+          />
+        </>
+      )}
 
       <main className="relative z-10 flex min-w-0 flex-1 flex-col">
         {/* App-wide macOS permission alert — topmost so a missing grant is

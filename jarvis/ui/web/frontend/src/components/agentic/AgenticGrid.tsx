@@ -47,6 +47,7 @@ import { AgentMark } from "./AgentMark";
 import { PaneActivityPill } from "./PaneActivityPill";
 import { AgentPickerMenu, offersAgentChoice, type SplitAgentChoice } from "./AgentPicker";
 import type { TerminalAppearance } from "./terminalThemes";
+import { installZoomKeyBridge, type ZoomIntent } from "./terminalZoom";
 import {
   evenWeights,
   isEvenLayout,
@@ -62,6 +63,7 @@ import {
 } from "./paneLayout";
 import { loadStoredArrangement, saveStoredArrangement, usePaneWeights } from "./usePaneWeights";
 import { ContinueInterrupted } from "./ContinueInterrupted";
+import { NavRevealButton } from "@/components/layout/NavRevealButton";
 import { PaneNotifications } from "./PaneNotifications";
 import { isVoiceActive } from "./VoiceBubble";
 import { PromptPreview } from "./PromptPreview";
@@ -196,8 +198,21 @@ interface AgenticGridProps {
   onToggleVoice?: () => void;
 }
 
+/*
+ * Terminal text size, in pixels — the same three numbers as
+ * `jarvis/agentic_ide/ui_prefs.py`, which is what the backend clamps a saved
+ * size to. `FONT_DEFAULT` is also where Ctrl/Cmd+0 lands.
+ */
 const FONT_MIN = 10;
 const FONT_MAX = 20;
+const FONT_DEFAULT = 13;
+
+/** The size one zoom step away from `from`, kept inside the bounds. */
+export function zoomedFontSize(from: number, intent: ZoomIntent): number {
+  if (intent === "reset") return FONT_DEFAULT;
+  const next = from + (intent === "in" ? 1 : -1);
+  return Math.min(FONT_MAX, Math.max(FONT_MIN, next));
+}
 
 /*
  * The one button style of the workspace toolbar.
@@ -552,7 +567,7 @@ export function AgenticGrid({
   const [appearance, setAppearanceState] = useState<TerminalAppearance>(
     () => storedAppearance() ?? theme,
   );
-  const [fontSize, setFontSizeState] = useState(() => storedFontSize() ?? 13);
+  const [fontSize, setFontSizeState] = useState(() => storedFontSize() ?? FONT_DEFAULT);
 
   // Track the app theme while the user has expressed no preference of their own,
   // so flipping the whole app to light does not leave black panes behind.
@@ -575,6 +590,34 @@ export function AgenticGrid({
       console.warn("Agentic IDE: terminal text size not remembered:", err);
     });
   }, []);
+
+  /*
+   * Ctrl/Cmd + `+` / `-` / `0`, the chord every other application binds to
+   * "make this text bigger" — see ./terminalZoom for the chord table and for
+   * why this app has to claim the keystroke rather than let the WebView zoom
+   * the entire window.
+   *
+   * The listener is installed ONCE and reads the current size out of a ref: it
+   * captures keystrokes for every pane in the workspace, and re-registering it
+   * on each step would drop a chord held down to zoom repeatedly.
+   */
+  const zoomStateRef = useRef({ fontSize, onScreen });
+  zoomStateRef.current = { fontSize, onScreen };
+  useEffect(
+    () =>
+      installZoomKeyBridge(window, {
+        isMac: /mac|iphone|ipad/i.test(navigator.userAgent),
+        // Hidden rather than unmounted when another section is open, so the
+        // grid has to be asked whether anyone is looking at it.
+        enabled: () => zoomStateRef.current.onScreen,
+        apply: (intent) => {
+          const current = zoomStateRef.current.fontSize;
+          const next = zoomedFontSize(current, intent);
+          if (next !== current) setFontSize(next);
+        },
+      }),
+    [setFontSize],
+  );
 
   // Pick the remembered size back up. Runs once per mounted workspace: the size
   // is one person's reading preference, not a property of a project, so it is
@@ -1743,6 +1786,12 @@ export function AgenticGrid({
         data-testid="agentic-toolbar"
         className="flex shrink-0 flex-nowrap items-center gap-2 border-b border-border px-2 py-1"
       >
+        {/* This section hides the app's module rail (see `CODING_SECTIONS` in
+            App.tsx), so the way back has to be ON this row — otherwise the
+            workspace is a place you can enter and not leave. First in the line,
+            where every editor puts it. */}
+        <NavRevealButton />
+
         {workspaceBar ?? (
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <FolderGit2 className="h-4 w-4 shrink-0 text-primary" />
@@ -2849,13 +2898,21 @@ function TerminalFontSizeControl({
   const t = useT();
   const smaller = fontSize <= FONT_MIN;
   const larger = fontSize >= FONT_MAX;
+  // The keyboard is how this actually gets used (see ./terminalZoom); the
+  // stepper's job is to make the chord discoverable. Symbols rather than a
+  // translated sentence, because "⌘ + − 0" reads the same in every locale.
+  const isMac = /mac|iphone|ipad/i.test(navigator.userAgent);
+  const chordHint = isMac ? "⌘ + / − / 0" : "Ctrl + / − / 0";
 
   return (
     <div
       role="group"
       aria-label={t("agentic_grid.display.text_size")}
       data-testid="agentic-font-size-control"
-      title={t("agentic_grid.display.text_size")}
+      aria-keyshortcuts={
+        isMac ? "Meta+Plus Meta+Minus Meta+0" : "Control+Plus Control+Minus Control+0"
+      }
+      title={`${t("agentic_grid.display.text_size")} — ${chordHint}`}
       className="flex h-7 shrink-0 items-center rounded-md border border-border/70 bg-background/30"
     >
       <Type aria-hidden="true" className="mx-1 h-3.5 w-3.5 text-muted-foreground" />

@@ -283,6 +283,19 @@ interface EventStore {
   // first paint after a restart never flashes "OFFLINE".
   wsWarming: boolean;
   activeSection: SectionId;
+  /**
+   * Has the user pulled the app's module rail back out over a coding surface?
+   *
+   * The coding sections open WITHOUT it — a wall of agent output is what those
+   * screens are for, and a column of twenty section icons beside it is the app
+   * talking about itself. One button brings it back, and leaving the section
+   * puts it away again, so "open the chat and the rail is gone" stays true
+   * every time rather than only the first time.
+   *
+   * Shell state kept in the store rather than in `App` because the button that
+   * flips it lives inside the coding surface, several lazy boundaries down.
+   */
+  navRevealed: boolean;
   transcription: string;
   transcriptionFinal: boolean;
   toasts: Toast[];
@@ -352,6 +365,7 @@ interface EventStore {
   setWarming: (warming: boolean) => void;
   clearEvents: () => void;
   setActiveSection: (s: SectionId) => void;
+  setNavRevealed: (revealed: boolean) => void;
   setTranscription: (text: string, isFinal: boolean) => void;
   pushToast: (
     kind: Toast["kind"],
@@ -423,6 +437,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   activeSection: initialSectionFromSearch(
     typeof window === "undefined" ? "" : window.location.search,
   ),
+  navRevealed: false,
   transcription: "",
   transcriptionFinal: true,
   toasts: [],
@@ -458,7 +473,10 @@ export const useEventStore = create<EventStore>((set, get) => ({
   setConnected: (c) => set({ connected: c }),
   setWarming: (warming) => set({ wsWarming: warming }),
   clearEvents: () => set({ events: [] }),
-  setActiveSection: (s) => set({ activeSection: s }),
+  // Leaving a section puts the rail away again, so a coding surface is entered
+  // without it EVERY time rather than only the first time.
+  setActiveSection: (s) => set({ activeSection: s, navRevealed: false }),
+  setNavRevealed: (revealed) => set({ navRevealed: revealed }),
 
   setTranscription: (text, isFinal) =>
     set({ transcription: text, transcriptionFinal: isFinal }),
