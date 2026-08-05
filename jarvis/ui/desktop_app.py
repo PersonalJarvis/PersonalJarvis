@@ -3031,7 +3031,8 @@ class DesktopApp:
         # On-screen overlay in its own Tk daemon thread — the bus bridge reacts
         # to SystemStateChanged and drives whichever surface is selected.
         # Style is chosen by [ui].orb_style: "jarvis_bar" (slim default),
-        # "mascot" (ghost orb), or "none". Both real surfaces share OrbBusBridge.
+        # "mascot" / "voice_orb" (the two looks of the floating orb window), or
+        # "none". Every real surface shares OrbBusBridge.
         try:
             from loguru import logger
 
