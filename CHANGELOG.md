@@ -9,18 +9,9 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-
-- Added the voice orb as a fourth on-screen display style: the glowing sphere
-  from the Agentic IDE now also runs as a free-floating desktop window, so it
-  can be dragged onto any monitor instead of living inside the app. Switching
-  between the mascot and the voice orb applies immediately, without a restart.
-  On a Linux session without per-pixel transparency the orb window stays hidden
-  with one actionable log line rather than showing an opaque square.
-
 ---
 
-## [1.2.2] — 2026-08-04
+## [1.2.2] — 2026-08-05
 
 This release makes realtime subscription voice and the Agentic IDE more
 dependable while adding richer voice controls and knowledge-map views.
@@ -38,6 +29,16 @@ dependable while adding richer voice controls and knowledge-map views.
   voice side column and speaks status updates from wherever it sits.
 - Added UltraWiki word search over a meaning-neighbourhood of terms, so a
   query finds pages that use related words, not only the literal ones.
+- Added the voice orb as a fourth on-screen display style: the glowing sphere
+  from the Agentic IDE now also runs as a free-floating desktop window, so it
+  can be dragged onto any monitor instead of living inside the app. Switching
+  between the mascot and the voice orb applies immediately, without a restart.
+  On a Linux session without per-pixel transparency the orb window stays hidden
+  with one actionable log line rather than showing an opaque square.
+- Added a REST-mounted project and chat library behind the Agentic IDE chat
+  surface, so conversations and projects are reachable from the CLI too.
+- Added an icon-rail sidebar: the navigation collapses by default and has an
+  explicit toggle, giving the workspace more room.
 
 ### Fixed
 
@@ -67,6 +68,14 @@ dependable while adding richer voice controls and knowledge-map views.
   be activated from stacking a wall of identical warnings.
 - Made the onboarding local-brain button select the local brain instead of a
   cloud one, and stopped the sidebar painting rows at stale positions on macOS.
+- Delivered the opening words of a spoken sentence instead of the fragment that
+  survived the recognizer's warm-up, and let a delegated turn own its own answer
+  rather than losing it to the turn that handed off.
+
+### Changed
+
+- Labelled the Agentic IDE and the Codex subscription realtime route as Beta, so
+  their maturity is visible before you rely on them.
 
 ---
 
