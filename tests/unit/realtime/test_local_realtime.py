@@ -41,6 +41,13 @@ def _cfg(base_url: str = "", model: str = "") -> SimpleNamespace:
         # An already-complete API root must not double up to /v1/v1.
         ("http://localhost:8080/v1", "http://localhost:8080/v1"),
         ("localhost:8080", "http://localhost:8080/v1"),
+        # What a realtime server actually PRINTS on startup is its websocket
+        # endpoint, and that is what a user pastes. The SDK wants the HTTP API
+        # root and derives the socket itself, so the paste has to survive.
+        ("ws://localhost:8765/v1/realtime", "http://localhost:8765/v1"),
+        ("ws://localhost:8765", "http://localhost:8765/v1"),
+        ("wss://gpu.lan:8443/v1/realtime", "https://gpu.lan:8443/v1"),
+        ("http://localhost:8765/v1/realtime", "http://localhost:8765/v1"),
         # 0.0.0.0 is a server BIND address; as a client target it fails.
         ("0.0.0.0:8080", "http://localhost:8080/v1"),
         ("https://gpu.lan:8443", "https://gpu.lan:8443/v1"),

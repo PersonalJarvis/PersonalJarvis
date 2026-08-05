@@ -1201,18 +1201,31 @@ _LOCAL_PROBE_TIMEOUT_S = 3.0
 def _normalize_local_root(url: str) -> str:
     """Normalize a user-entered server address to an ``…/v1`` API root.
 
-    Accepts ``host:port``, a full URL, a trailing slash, or an already-complete
-    ``…/v1``. ``0.0.0.0`` is a server BIND address and unusable as a client
-    target on Windows, so it maps to localhost — the same normalization the
-    local brain cards apply, kept local to this module because a plugin does
-    not reach into the rest of the tree.
+    Whatever the user pastes has to work, because what they paste is whatever
+    their server's README printed. Realtime servers advertise a WEBSOCKET
+    endpoint — ``ws://localhost:8765/v1/realtime`` is the address the common
+    self-hosted stack prints on startup — while the SDK wants the HTTP API root
+    and derives the socket URL itself. Handing it the pasted ws:// address
+    would fail on a copy-paste the user had every reason to trust.
+
+    So: ``ws``/``wss`` map to ``http``/``https``, a trailing ``/realtime`` is
+    dropped, a bare ``host:port`` gains a scheme, and ``0.0.0.0`` (a server
+    BIND address, unusable as a client target) maps to localhost — the same
+    normalization the local brain cards apply, kept local to this module
+    because a plugin does not reach into the rest of the tree.
     """
     root = (url or "").strip().rstrip("/")
     if not root:
         return ""
     if "://" not in root:
         root = f"http://{root}"
+    if root.startswith("ws://"):
+        root = f"http://{root[len('ws://'):]}"
+    elif root.startswith("wss://"):
+        root = f"https://{root[len('wss://'):]}"
     root = root.replace("://0.0.0.0", "://localhost")
+    if root.endswith("/realtime"):
+        root = root[: -len("/realtime")].rstrip("/")
     if root.endswith("/v1"):
         return root
     return f"{root}/v1"

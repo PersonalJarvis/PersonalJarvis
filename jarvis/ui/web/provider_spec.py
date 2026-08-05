@@ -811,9 +811,9 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         supports_base_url=True,
         credential_help=(
             "Any server on your own machine or network that speaks the OpenAI "
-            "Realtime WebSocket protocol. Enter its address (for example "
-            "http://localhost:8080) — no cloud account, nothing leaves your "
-            "network. The model and voice come from the server itself; leave "
+            "Realtime WebSocket protocol. Paste the address it prints on "
+            "startup (ws://… works, so does http://localhost:8765) — no cloud "
+            "account, nothing leaves your network. The model and voice come from the server itself; leave "
             "them on 'auto' unless it serves several. This card is only used "
             "when you select it and set an address. If your server requires a "
             "token, export JARVIS_LOCAL_REALTIME_API_KEY — most need none."
