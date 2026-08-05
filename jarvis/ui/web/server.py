@@ -320,6 +320,7 @@ class WebServer:
         from .board_routes import (
             router as board_router,
         )
+        from .chat_library_routes import router as chat_library_router
         from .chats_routes import router as chats_router
         from .claude_routes import router as claude_router
         from .cli_routes import router as cli_router
@@ -455,6 +456,10 @@ class WebServer:
         # workspace above; adds the folder picker, call-signs, transcripts, and
         # the focused coding mode.
         app.include_router(agentic_ide_router)
+        # The project/chat library behind the chat surface's sidebar. Pure file
+        # store, no Brain and no session dependency — it lists on a fresh
+        # install with no keys and answers headless.
+        app.include_router(chat_library_router)
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
         app.include_router(dictionary_router)
