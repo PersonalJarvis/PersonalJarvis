@@ -39,6 +39,8 @@ dependable while adding richer voice controls and knowledge-map views.
   surface, so conversations and projects are reachable from the CLI too.
 - Added an icon-rail sidebar: the navigation collapses by default and has an
   explicit toggle, giving the workspace more room.
+- Added in-app downloading of local brain models, so the Ollama card fetches
+  what it needs itself instead of sending you to a terminal.
 
 ### Fixed
 
@@ -71,6 +73,13 @@ dependable while adding richer voice controls and knowledge-map views.
 - Delivered the opening words of a spoken sentence instead of the fragment that
   survived the recognizer's warm-up, and let a delegated turn own its own answer
   rather than losing it to the turn that handed off.
+- Stopped a local model that is still loading from being reported as broken, and
+  stopped a text-only local model from advertising vision it does not have.
+- Stopped the realtime transport from re-sending the whole instruction block on
+  every turn, leaving a finished turn unclosed, or honouring a direct-speech
+  clearance after its audio must have ended.
+- Made the pre-push secret guard scan with built-in patterns when the privacy
+  gate is unavailable, instead of loading nothing and reporting a clean push.
 
 ### Changed
 

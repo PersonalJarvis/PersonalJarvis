@@ -1,26 +1,31 @@
 /**
- * Projects, and the chats inside them.
+ * Projects, their chats, and the few things you reach for constantly.
  *
- * The column follows one rule the old workspace bar could not: **a project's
- * chats are fetched when the project is opened, never before.** Somebody with
- * forty repositories and a thousand conversations gets a sidebar that arrives
- * at once, and pays for exactly the list they clicked on. Each project keeps
- * whatever it has already loaded, so collapsing and reopening is free — but a
- * project that was never opened has never cost a request.
+ * The column is a reading list, not a file tree. It shows, in this order: what
+ * you pinned, your projects with their conversations underneath, and what you
+ * touched last. Each project shows its first few chats and says how to see the
+ * rest — a repository with two hundred conversations must not be able to push
+ * the project below it off the screen.
  *
- * Rows carry the coding agent's own mark rather than a generic icon, because
- * "which agent was this" is the question people actually scan the list for.
+ * **Chats are fetched per project, never all at once.** The first few projects
+ * load with the column because they are the ones on screen; the rest load when
+ * they are opened, and stay loaded afterwards. There is no request that
+ * returns everything, which is what keeps a sidebar of forty repositories the
+ * same cost as a sidebar of four.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
+  ChevronDown,
   ChevronRight,
-  FolderOpen,
+  Folder,
   Loader2,
   MoreHorizontal,
   Pencil,
+  Pin,
   Plus,
   Search,
+  SquarePen,
   Trash2,
   TriangleAlert,
 } from "lucide-react";
@@ -39,31 +44,34 @@ import {
   projectColor,
 } from "@/lib/chatLibraryApi";
 
-/** What one project's chat list is doing right now. */
 type ChatsState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "ready"; chats: ChatRow[] }
   | { status: "error"; message: string };
 
+/**
+ * How many projects load their chats with the column.
+ *
+ * The list is ordered pinned-then-recent, so the top few are the ones a person
+ * is about to click. Loading them eagerly is what makes the sidebar feel
+ * finished on arrival instead of unfolding under the cursor; everything below
+ * loads on demand and the cost stays flat as the library grows.
+ */
+const EAGER_PROJECTS = 4;
+
+/** Chats shown per project before "Show more". */
+const CHATS_PREVIEW = 5;
+
 export interface ChatLibrarySidebarProps {
-  /** The chat currently on screen, so its row can say so. */
   activeChatId?: string | null;
-  /** Open a chat. The shell owns what "open" means. */
   onOpenChat?: (project: ChatProject, chat: ChatRow) => void;
-  /** Start a new chat in a project — the shell asks the questions. */
   onNewChat?: (project: ChatProject) => void;
-  /** Add a folder as a project. */
   onAddProject?: () => void;
+  /** Bumped by the shell when something out there changed the library. */
+  refreshToken?: number;
 }
 
-/**
- * How long ago, in a form that fits a sidebar row.
- *
- * Deliberately coarse and locale-free: this sits under a title that already
- * competes for the row's width, and a full timestamp there reads as noise. The
- * exact time is on the chat itself.
- */
 function shortAge(seconds: number): string {
   if (!seconds) return "";
   const delta = Math.max(0, Date.now() / 1000 - seconds);
@@ -79,20 +87,21 @@ export function ChatLibrarySidebar({
   onOpenChat,
   onNewChat,
   onAddProject,
+  refreshToken = 0,
 }: ChatLibrarySidebarProps) {
   const [projects, setProjects] = useState<ChatProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [showAll, setShowAll] = useState<Set<string>>(() => new Set());
   const [chats, setChats] = useState<Record<string, ChatsState>>({});
   const [filter, setFilter] = useState("");
   const [menuFor, setMenuFor] = useState<string | null>(null);
+
   /*
-   * A late response from a project the user has already collapsed (or a whole
-   * sidebar that unmounted) must not write into state. Without this the
-   * "loading" spinner of a reopened project is replaced by the PREVIOUS
-   * request's list, which is the same class of bug as a stale terminal viewer
-   * painting over a fresh pane.
+   * A response that arrives after the column is gone must not write state. The
+   * same class of bug as a stale terminal viewer painting over a fresh pane:
+   * the write succeeds, and what lands on screen is the OLD answer.
    */
   const alive = useRef(true);
   useEffect(() => {
@@ -102,33 +111,16 @@ export function ChatLibrarySidebar({
     };
   }, []);
 
-  const reloadProjects = useCallback(async () => {
-    try {
-      const next = await fetchProjects();
-      if (!alive.current) return;
-      setProjects(next);
-      setLoadError(null);
-    } catch (error) {
-      if (!alive.current) return;
-      setLoadError(error instanceof Error ? error.message : "Could not load projects");
-    } finally {
-      if (alive.current) setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void reloadProjects();
-  }, [reloadProjects]);
-
   const loadChats = useCallback(async (projectId: string) => {
-    setChats((current) => ({ ...current, [projectId]: { status: "loading" } }));
+    setChats((current) =>
+      current[projectId]?.status === "ready"
+        ? current
+        : { ...current, [projectId]: { status: "loading" } },
+    );
     try {
       const rows = await fetchChats(projectId);
       if (!alive.current) return;
-      setChats((current) => ({
-        ...current,
-        [projectId]: { status: "ready", chats: rows },
-      }));
+      setChats((current) => ({ ...current, [projectId]: { status: "ready", chats: rows } }));
     } catch (error) {
       if (!alive.current) return;
       setChats((current) => ({
@@ -141,18 +133,37 @@ export function ChatLibrarySidebar({
     }
   }, []);
 
-  const toggleProject = useCallback(
+  const reload = useCallback(async () => {
+    try {
+      const next = await fetchProjects();
+      if (!alive.current) return;
+      setProjects(next);
+      setLoadError(null);
+      // The top of the list is what the user is about to click; everything
+      // below waits to be opened.
+      for (const project of next.slice(0, EAGER_PROJECTS)) void loadChats(project.id);
+    } catch (error) {
+      if (!alive.current) return;
+      setLoadError(error instanceof Error ? error.message : "Could not load projects");
+    } finally {
+      if (alive.current) setLoading(false);
+    }
+  }, [loadChats]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload, refreshToken]);
+
+  const toggle = useCallback(
     (project: ChatProject) => {
-      setExpanded((current) => {
+      setCollapsed((current) => {
         const next = new Set(current);
         if (next.has(project.id)) {
           next.delete(project.id);
-          return next;
+          if (!chats[project.id]) void loadChats(project.id);
+        } else {
+          next.add(project.id);
         }
-        next.add(project.id);
-        // Fetch only the first time. A project that is reopened shows what it
-        // already had, instantly, and refreshes only when something changes it.
-        if (!chats[project.id]) void loadChats(project.id);
         return next;
       });
     },
@@ -173,304 +184,379 @@ export function ChatLibrarySidebar({
     async (projectId: string, chat: ChatRow) => {
       await patchChat(projectId, chat.id, { archived: true });
       void loadChats(projectId);
-      void reloadProjects();
+      void reload();
     },
-    [loadChats, reloadProjects],
+    [loadChats, reload],
   );
 
   const removeChat = useCallback(
     async (projectId: string, chat: ChatRow) => {
-      const label = chat.title || "this chat";
-      if (!window.confirm(`Delete ${label}? The agent's own history is kept.`)) return;
-      await deleteChat(projectId, chat.id);
-      void loadChats(projectId);
-      void reloadProjects();
-    },
-    [loadChats, reloadProjects],
-  );
-
-  const renameProject = useCallback(
-    async (project: ChatProject) => {
-      const next = window.prompt("Rename this project", project.name);
-      if (next === null) return;
-      await patchProject(project.id, { name: next });
-      void reloadProjects();
-    },
-    [reloadProjects],
-  );
-
-  const removeProject = useCallback(
-    async (project: ChatProject) => {
       if (
         !window.confirm(
-          `Remove ${project.name} and its ${project.chats} chat(s)? The folder itself is untouched.`,
+          `Delete "${chat.title || "this chat"}"? The agent's own history on disk is kept.`,
         )
       ) {
         return;
       }
-      await deleteProject(project.id);
-      void reloadProjects();
+      await deleteChat(projectId, chat.id);
+      void loadChats(projectId);
+      void reload();
     },
-    [reloadProjects],
+    [loadChats, reload],
   );
 
-  /*
-   * The filter matches on what the user can SEE — a project's name and the
-   * titles of the chats already loaded under it. It deliberately does not go
-   * to the server for the chats of collapsed projects: typing a letter must
-   * not fire forty requests, which is the exact cost this column exists to
-   * avoid.
-   */
+  /** Every loaded chat, newest first — the "Recent" band across all projects. */
+  const recent = useMemo(() => {
+    const rows: { project: ChatProject; chat: ChatRow }[] = [];
+    for (const project of projects) {
+      const state = chats[project.id];
+      if (state?.status !== "ready") continue;
+      for (const chat of state.chats) rows.push({ project, chat });
+    }
+    rows.sort((a, b) => b.chat.updated_at - a.chat.updated_at);
+    return rows.slice(0, 6);
+  }, [chats, projects]);
+
+  /** Pinned projects float to their own band, like the reference client. */
+  const pinned = useMemo(() => projects.filter((p) => p.pinned), [projects]);
+
   const visible = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     if (!needle) return projects;
+    // Filters what is already on screen. Typing a letter must not fire one
+    // request per project — that is the exact cost this column exists to avoid.
     return projects.filter((project) => {
       if (project.name.toLowerCase().includes(needle)) return true;
       const state = chats[project.id];
-      if (state?.status !== "ready") return false;
-      return state.chats.some((chat) => chat.title.toLowerCase().includes(needle));
+      return (
+        state?.status === "ready" &&
+        state.chats.some((chat) => chat.title.toLowerCase().includes(needle))
+      );
     });
   }, [chats, filter, projects]);
+
+  const chatsOf = (project: ChatProject): ChatRow[] => {
+    const state = chats[project.id];
+    if (state?.status !== "ready") return [];
+    const needle = filter.trim().toLowerCase();
+    const rows = needle
+      ? state.chats.filter((c) => c.title.toLowerCase().includes(needle))
+      : state.chats;
+    return showAll.has(project.id) ? rows : rows.slice(0, CHATS_PREVIEW);
+  };
 
   return (
     <div
       data-testid="chat-library-sidebar"
-      className="flex h-full min-h-0 w-full flex-col border-r border-border bg-card/30"
+      className="flex h-full min-h-0 w-full flex-col border-r border-border bg-card/25"
     >
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
-        <div className="relative flex min-w-0 flex-1 items-center">
+      <div className="flex items-center gap-1 px-3 pb-2 pt-3">
+        <span className="flex-1 truncate text-sm font-semibold tracking-tight">Chat</span>
+        <IconButton
+          icon={Plus}
+          label="Add a project folder"
+          onClick={() => onAddProject?.()}
+        />
+      </div>
+
+      <div className="px-3 pb-2">
+        <div className="relative flex items-center">
           <Search className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-muted-foreground" />
           <input
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
-            placeholder="Search projects and chats"
+            placeholder="Search"
             aria-label="Search projects and chats"
-            className="h-8 w-full rounded-md border border-border bg-background/60 pl-7 pr-2 text-xs outline-none placeholder:text-muted-foreground/70 focus-visible:ring-1 focus-visible:ring-ring"
+            className="h-8 w-full rounded-md border border-border bg-background/50 pl-7 pr-2 text-xs outline-none placeholder:text-muted-foreground/60 focus-visible:ring-1 focus-visible:ring-ring"
           />
         </div>
-        <button
-          type="button"
-          onClick={onAddProject}
-          title="Add a project folder"
-          aria-label="Add a project folder"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
-        >
-          <Plus className="h-4 w-4" aria-hidden />
-        </button>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis p-1.5">
-        {loading ? (
-          <div className="flex items-center gap-2 px-2 py-6 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-            Loading projects…
-          </div>
-        ) : loadError ? (
-          <div className="px-2 py-6 text-xs text-destructive">{loadError}</div>
-        ) : visible.length === 0 ? (
-          <div className="px-2 py-6 text-xs text-muted-foreground">
-            {filter
-              ? "Nothing matches that."
-              : "No projects yet. Add a folder to start your first chat."}
-          </div>
-        ) : (
-          visible.map((project) => {
-            const open = expanded.has(project.id);
-            const state = chats[project.id] ?? { status: "idle" as const };
-            return (
-              <div key={project.id} className="mb-0.5">
-                <div
-                  className={cn(
-                    "group flex items-center gap-1.5 rounded-md px-1.5 py-1.5",
-                    "transition-colors hover:bg-accent/40",
-                  )}
-                >
-                  <button
-                    type="button"
-                    data-testid={`project-row-${project.id}`}
-                    onClick={() => toggleProject(project)}
-                    aria-expanded={open}
-                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                  >
-                    <ChevronRight
-                      className={cn(
-                        "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
-                        open && "rotate-90",
-                      )}
-                      aria-hidden
-                    />
-                    <span
-                      className="h-2 w-2 shrink-0 rounded-full"
-                      style={{ background: projectColor(project) }}
-                      aria-hidden
-                    />
-                    <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                      {project.name}
-                    </span>
-                    {!project.exists && (
-                      <TriangleAlert
-                        className="h-3.5 w-3.5 shrink-0 text-amber-400"
-                        aria-label="Folder not reachable right now"
-                      />
-                    )}
-                    <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                      {project.chats}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onNewChat?.(project)}
-                    title={`New chat in ${project.name}`}
-                    aria-label={`New chat in ${project.name}`}
-                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-accent/60 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
-                  >
-                    <Plus className="h-3.5 w-3.5" aria-hidden />
-                  </button>
-                  <div className="relative shrink-0">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setMenuFor((current) => (current === project.id ? null : project.id))
-                      }
-                      title={`More for ${project.name}`}
-                      aria-label={`More for ${project.name}`}
-                      className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-accent/60 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
-                    >
-                      <MoreHorizontal className="h-3.5 w-3.5" aria-hidden />
-                    </button>
-                    {menuFor === project.id && (
-                      <div
-                        className="absolute right-0 top-7 z-20 w-40 rounded-md border border-border bg-popover py-1 shadow-lg"
-                        onMouseLeave={() => setMenuFor(null)}
-                      >
-                        <MenuItem
-                          icon={Pencil}
-                          label="Rename"
-                          onClick={() => {
-                            setMenuFor(null);
-                            void renameProject(project);
-                          }}
-                        />
-                        <MenuItem
-                          icon={Archive}
-                          label={project.pinned ? "Unpin" : "Pin to top"}
-                          onClick={() => {
-                            setMenuFor(null);
-                            void patchProject(project.id, { pinned: !project.pinned }).then(
-                              reloadProjects,
-                            );
-                          }}
-                        />
-                        <MenuItem
-                          icon={Trash2}
-                          label="Remove project"
-                          destructive
-                          onClick={() => {
-                            setMenuFor(null);
-                            void removeProject(project);
-                          }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {open && (
-                  <div className="ml-4 border-l border-border/60 pl-1.5">
-                    {state.status === "loading" && (
-                      <div className="flex items-center gap-2 px-2 py-2 text-[11px] text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-                        Loading chats…
-                      </div>
-                    )}
-                    {state.status === "error" && (
-                      <div className="px-2 py-2 text-[11px] text-destructive">
-                        {state.message}
-                      </div>
-                    )}
-                    {state.status === "ready" && state.chats.length === 0 && (
-                      <button
-                        type="button"
-                        onClick={() => onNewChat?.(project)}
-                        className="w-full rounded px-2 py-2 text-left text-[11px] text-muted-foreground hover:bg-accent/40 hover:text-foreground"
-                      >
-                        No chats yet — start one
-                      </button>
-                    )}
-                    {state.status === "ready" &&
-                      state.chats.map((chat) => (
-                        <div
-                          key={chat.id}
-                          className={cn(
-                            "group/chat flex items-center gap-1 rounded-md px-1 py-1",
-                            "transition-colors hover:bg-accent/40",
-                            activeChatId === chat.id && "bg-accent/60",
-                          )}
-                        >
-                          <button
-                            type="button"
-                            data-testid={`chat-row-${chat.id}`}
-                            onClick={() => onOpenChat?.(project, chat)}
-                            className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                          >
-                            <AgentMark agent={chat.agent} label={chat.agent} size="sm" />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[11px] font-medium">
-                                {chat.title || "New chat"}
-                              </span>
-                              {chat.preview && (
-                                <span className="block truncate text-[10px] text-muted-foreground">
-                                  {chat.preview}
-                                </span>
-                              )}
-                            </span>
-                            {chat.terminal && (
-                              <span
-                                className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400"
-                                title="Running"
-                                aria-label="Running"
-                              />
-                            )}
-                            <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                              {shortAge(chat.updated_at)}
-                            </span>
-                          </button>
-                          <div className="flex shrink-0 items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover/chat:opacity-100">
-                            <IconButton
-                              icon={Pencil}
-                              label={`Rename ${chat.title || "chat"}`}
-                              onClick={() => void renameChat(project.id, chat)}
-                            />
-                            <IconButton
-                              icon={Archive}
-                              label={`Archive ${chat.title || "chat"}`}
-                              onClick={() => void archiveChat(project.id, chat)}
-                            />
-                            <IconButton
-                              icon={Trash2}
-                              label={`Delete ${chat.title || "chat"}`}
-                              destructive
-                              onClick={() => void removeChat(project.id, chat)}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
       </div>
 
       <button
         type="button"
-        onClick={onAddProject}
-        className="flex items-center gap-2 border-t border-border px-3 py-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+        data-testid="sidebar-new-chat"
+        onClick={() => {
+          const target = pinned[0] ?? projects[0];
+          if (target) onNewChat?.(target);
+          else onAddProject?.();
+        }}
+        className="mx-2 mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors hover:bg-accent/50"
       >
-        <FolderOpen className="h-3.5 w-3.5" aria-hidden />
-        Add a project folder
+        <SquarePen className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+        New chat
       </button>
+
+      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-2 pb-2">
+        {loading ? (
+          <div className="flex items-center gap-2 px-2 py-6 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            Loading…
+          </div>
+        ) : loadError ? (
+          <div className="px-2 py-6 text-xs text-destructive">{loadError}</div>
+        ) : projects.length === 0 ? (
+          <div className="px-2 py-6 text-xs text-muted-foreground">
+            No projects yet. Add a folder to start your first chat.
+          </div>
+        ) : (
+          <>
+            {pinned.length > 0 && (
+              <>
+                <Band>Pinned</Band>
+                {pinned.map((project) => (
+                  <button
+                    key={`pin-${project.id}`}
+                    type="button"
+                    onClick={() => onNewChat?.(project)}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent/40"
+                  >
+                    <span
+                      className="h-1.5 w-1.5 shrink-0 rounded-full"
+                      style={{ background: projectColor(project) }}
+                      aria-hidden
+                    />
+                    <span className="truncate">{project.name}</span>
+                  </button>
+                ))}
+              </>
+            )}
+
+            <Band>Projects</Band>
+            {visible.length === 0 && (
+              <div className="px-2 py-3 text-xs text-muted-foreground">Nothing matches that.</div>
+            )}
+            {visible.map((project) => {
+              const open = !collapsed.has(project.id);
+              const state = chats[project.id] ?? { status: "idle" as const };
+              const rows = chatsOf(project);
+              const total =
+                state.status === "ready" ? state.chats.length : project.chats;
+              return (
+                <div key={project.id} className="mb-1">
+                  <div className="group flex items-center gap-1 rounded-md px-1 py-1 transition-colors hover:bg-accent/30">
+                    <button
+                      type="button"
+                      data-testid={`project-row-${project.id}`}
+                      onClick={() => toggle(project)}
+                      aria-expanded={open}
+                      className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                    >
+                      {open ? (
+                        <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+                      ) : (
+                        <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+                      )}
+                      <Folder
+                        className="h-3.5 w-3.5 shrink-0"
+                        style={{ color: projectColor(project) }}
+                        aria-hidden
+                      />
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                        {project.name}
+                      </span>
+                      {!project.exists && (
+                        <TriangleAlert
+                          className="h-3 w-3 shrink-0 text-amber-400"
+                          aria-label="Folder not reachable right now"
+                        />
+                      )}
+                    </button>
+                    <IconButton
+                      icon={Plus}
+                      label={`New chat in ${project.name}`}
+                      onClick={() => onNewChat?.(project)}
+                      hideUntilHover
+                    />
+                    <div className="relative shrink-0">
+                      <IconButton
+                        icon={MoreHorizontal}
+                        label={`More for ${project.name}`}
+                        onClick={() =>
+                          setMenuFor((c) => (c === project.id ? null : project.id))
+                        }
+                        hideUntilHover
+                      />
+                      {menuFor === project.id && (
+                        <div
+                          className="absolute right-0 top-7 z-30 w-44 rounded-md border border-border bg-popover py-1 shadow-xl"
+                          onMouseLeave={() => setMenuFor(null)}
+                        >
+                          <MenuItem
+                            icon={Pencil}
+                            label="Rename project"
+                            onClick={() => {
+                              setMenuFor(null);
+                              const next = window.prompt("Rename this project", project.name);
+                              if (next !== null) {
+                                void patchProject(project.id, { name: next }).then(reload);
+                              }
+                            }}
+                          />
+                          <MenuItem
+                            icon={Pin}
+                            label={project.pinned ? "Unpin" : "Pin to top"}
+                            onClick={() => {
+                              setMenuFor(null);
+                              void patchProject(project.id, {
+                                pinned: !project.pinned,
+                              }).then(reload);
+                            }}
+                          />
+                          <MenuItem
+                            icon={Trash2}
+                            label="Remove project"
+                            destructive
+                            onClick={() => {
+                              setMenuFor(null);
+                              if (
+                                window.confirm(
+                                  `Remove ${project.name} and its ${total} chat(s)? The folder itself is untouched.`,
+                                )
+                              ) {
+                                void deleteProject(project.id).then(reload);
+                              }
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {open && (
+                    <div className="ml-3.5 border-l border-border/50 pl-1">
+                      {state.status === "loading" && (
+                        <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+                          Loading chats…
+                        </div>
+                      )}
+                      {state.status === "error" && (
+                        <div className="px-2 py-1.5 text-[11px] text-destructive">
+                          {state.message}
+                        </div>
+                      )}
+                      {state.status === "ready" && rows.length === 0 && (
+                        <div className="px-2 py-1.5 text-[11px] text-muted-foreground/70">
+                          No chats
+                        </div>
+                      )}
+                      {rows.map((chat) => (
+                        <ChatRowItem
+                          key={chat.id}
+                          chat={chat}
+                          active={activeChatId === chat.id}
+                          onOpen={() => onOpenChat?.(project, chat)}
+                          onRename={() => void renameChat(project.id, chat)}
+                          onArchive={() => void archiveChat(project.id, chat)}
+                          onDelete={() => void removeChat(project.id, chat)}
+                        />
+                      ))}
+                      {state.status === "ready" &&
+                        !showAll.has(project.id) &&
+                        state.chats.length > CHATS_PREVIEW && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setShowAll((c) => new Set(c).add(project.id))
+                            }
+                            className="px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+                          >
+                            Show more
+                          </button>
+                        )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {recent.length > 0 && !filter && (
+              <>
+                <Band>Recent</Band>
+                {recent.map(({ project, chat }) => (
+                  <button
+                    key={`recent-${chat.id}`}
+                    type="button"
+                    onClick={() => onOpenChat?.(project, chat)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/40",
+                      activeChatId === chat.id && "bg-accent/50",
+                    )}
+                  >
+                    <AgentMark agent={chat.agent} label={chat.agent || "?"} size="sm" />
+                    <span className="min-w-0 flex-1 truncate text-[11px]">
+                      {chat.title || "New chat"}
+                    </span>
+                    <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                      {shortAge(chat.updated_at)}
+                    </span>
+                  </button>
+                ))}
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ChatRowItem({
+  chat,
+  active,
+  onOpen,
+  onRename,
+  onArchive,
+  onDelete,
+}: {
+  chat: ChatRow;
+  active: boolean;
+  onOpen: () => void;
+  onRename: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "group/chat flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors hover:bg-accent/40",
+        active && "bg-accent/60",
+      )}
+    >
+      <button
+        type="button"
+        data-testid={`chat-row-${chat.id}`}
+        onClick={onOpen}
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+      >
+        <AgentMark agent={chat.agent} label={chat.agent || "?"} size="sm" />
+        <span className="min-w-0 flex-1 truncate text-[11px]">
+          {chat.title || "New chat"}
+        </span>
+        {chat.terminal ? (
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400"
+            title="Running"
+            aria-label="Running"
+          />
+        ) : (
+          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground opacity-100 transition-opacity group-hover/chat:opacity-0">
+            {shortAge(chat.updated_at)}
+          </span>
+        )}
+      </button>
+      <div className="flex shrink-0 items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover/chat:opacity-100">
+        <IconButton icon={Pencil} label="Rename chat" onClick={onRename} tiny />
+        <IconButton icon={Archive} label="Archive chat" onClick={onArchive} tiny />
+        <IconButton icon={Trash2} label="Delete chat" onClick={onDelete} tiny destructive />
+      </div>
+    </div>
+  );
+}
+
+function Band({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-2 pb-1 pt-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+      {children}
     </div>
   );
 }
@@ -479,12 +565,16 @@ function IconButton({
   icon: Icon,
   label,
   onClick,
+  tiny,
   destructive,
+  hideUntilHover,
 }: {
   icon: typeof Pencil;
   label: string;
   onClick: () => void;
+  tiny?: boolean;
   destructive?: boolean;
+  hideUntilHover?: boolean;
 }) {
   return (
     <button
@@ -493,11 +583,13 @@ function IconButton({
       title={label}
       aria-label={label}
       className={cn(
-        "flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/60",
+        "flex shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/60",
+        tiny ? "h-5 w-5" : "h-6 w-6",
         destructive ? "hover:text-destructive" : "hover:text-foreground",
+        hideUntilHover && "opacity-0 focus-visible:opacity-100 group-hover:opacity-100",
       )}
     >
-      <Icon className="h-3 w-3" aria-hidden />
+      <Icon className={tiny ? "h-3 w-3" : "h-3.5 w-3.5"} aria-hidden />
     </button>
   );
 }
