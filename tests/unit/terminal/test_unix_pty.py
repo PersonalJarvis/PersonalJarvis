@@ -189,6 +189,63 @@ def test_unix_handle_setwinsize_terminate_exitstatus_pid():
     assert h.exitstatus == 0
 
 
+def test_unix_handle_reaps_a_lazy_exitstatus_like_ptyprocess():
+    """ptyprocess sets ``exitstatus`` only inside isalive()/wait(), never eagerly.
+
+    The reader loop leaves through EOFError on POSIX and then reads
+    ``exitstatus`` — without a reap in the handle, a clean /exit reported the
+    unknown ``-1`` and the resume self-healing restarted deliberately closed
+    agents. This fake mirrors the real laziness: the code appears only after
+    ``isalive()`` has run its waitpid.
+    """
+    from jarvis.terminal.backend import _UnixPtyHandle
+
+    class _LazyExitProc:
+        pid = 7
+
+        def __init__(self) -> None:
+            self.exitstatus = None
+            self.isalive_calls = 0
+
+        def isalive(self) -> bool:
+            # waitpid side effect: the first call reaps and stores the code.
+            self.isalive_calls += 1
+            self.exitstatus = 0
+            return False
+
+    proc = _LazyExitProc()
+    h = _UnixPtyHandle(proc)
+    assert h.exitstatus == 0
+    assert proc.isalive_calls == 1
+
+
+def test_unix_handle_exitstatus_is_none_while_child_lives():
+    from jarvis.terminal.backend import _UnixPtyHandle
+
+    class _LiveProc:
+        pid = 8
+        exitstatus = None
+
+        def isalive(self) -> bool:
+            return True
+
+    assert _UnixPtyHandle(_LiveProc()).exitstatus is None
+
+
+def test_unix_handle_exitstatus_survives_an_already_reaped_child():
+    """ECHILD inside isalive() (ptyprocess raises) must read as unknown, not throw."""
+    from jarvis.terminal.backend import _UnixPtyHandle
+
+    class _ReapedProc:
+        pid = 9
+        exitstatus = None
+
+        def isalive(self) -> bool:
+            raise RuntimeError("cannot wait: ECHILD")
+
+    assert _UnixPtyHandle(_ReapedProc()).exitstatus is None
+
+
 def test_winpty_handle_passes_str_through_unchanged():
     """winpty already deals in str — the handle must not double-decode."""
     from jarvis.terminal.backend import _WinptyHandle
