@@ -8578,3 +8578,95 @@ calibrated bounds remain exactly as measured then.
 LOSES the competition), `tests/unit/plugins/wake/test_vosk_kws_provider.py`
 (the fake's competitor grammar now models the measured decoder instead of
 answering "phrase" unconditionally).
+
+---
+
+## BUG-124: the self-dialogue guard counted the echo of its OWN cut — a rebuild storm on a call nobody was talking in (HIGH, FIXED 2026-08-06)
+
+**Symptom (maintainer screenshot + `data/jarvis_desktop.log`).** A toast on the
+API-Keys screen: the realtime connection is being rebuilt because a response
+without locally grounded microphone speech was detected. It fired twice in six
+seconds. The call before it had already gone silently dead and forced an app
+restart.
+
+**The run.** Two calls on `codex-subscription-realtime` (ChatGPT-Live v3).
+
+Call 1, session `51563c06`:
+
+| time | event |
+|---|---|
+| 17:39:55.584 | local transcript `'Was geht ab?'` — a real, grounded turn |
+| 17:39:57.515 | local transcript `'Thank you for watching!'` — Whisper silence boilerplate, accepted as a turn; the call language flips `de → en` |
+| 17:40:00.343 | the far end opens a response 15 ms after the last one → **refused**, `turn/interrupt` sent |
+| 17:40:00.444 | server user caption `'Hi! Schön'` — literally the first words of the answer just cut | <!-- i18n-allow: quoted German live caption, the evidence itself -->
+| 17:40:00 – 17:40:12 | 8 more refusals, roughly one every 2 s |
+| after 17:40:12 | nothing. No rebuild, no error, no message — a mute call, recovered only by restarting the app |
+
+Call 2, session `e814716a`: same opening, then 7 refusals in 3.2 s, ungrounded
+captions `'a.m.'`, `'a young woman a blurred gradient a young woman …'` →
+**rebuild 1/3** at 17:41:53, the same loop back at 17:41:56, `'this image is'`,
+**rebuild 2/3** at 17:41:59. A third would have hit
+`_TRANSPORT_REBUILD_MAX_PER_WINDOW` and ended the call `reason=error`. The user
+hung up at 17:42:07; the dictation handover that hangup was FOR then failed.
+
+**Root cause.** Refusing an ungrounded response is a LOCAL interrupt — it calls
+`_interrupt_active_codex_turn()` — and ChatGPT-Live answers a cut turn with a
+caption of its own truncated speech. `_POST_INTERRUPT_GRACE_S` existed for
+exactly that fallout, but it was armed only inside the `_interrupt_barrier_moved()`
+branch, and only the external `interrupt()` moves that barrier. So the refusal
+path produced the very evidence it then counted: two echo captions and the
+transport went. The 2026-08-04 fix for the same shape covered barge-in and
+delegation and missed the third source.
+
+Four further defects sat in the same 3 minutes:
+
+1. **The rebuild was never checked for effect.** Same cause, same loop,
+   seconds later — nothing noticed.
+2. **A refusal storm was invisible.** Call 1 never reached the caption
+   threshold, so 13 s of refusals produced `log.warning` lines and nothing the
+   user could see (AP-30).
+3. **Our reaction fed the loop.** Every refusal cut a turn; a cut turn makes
+   ChatGPT-Live start another one. The refused audio is dropped before it can
+   reach the user either way, so the interrupt bought nothing.
+4. **The local recognizer manufactured a turn.** `'Thank you for watching!'`
+   over a near-silent microphone grounded a response nobody asked for and
+   flipped the output language on its way through.
+
+**Fix.**
+
+* Arm `interrupt_grace_until` on the refusal path too
+  (`jarvis/plugins/realtime/codex_subscription.py`).
+* Detect the loop on consecutive REFUSALS
+  (`_REFUSALS_BEFORE_REBUILD` within `_REFUSAL_STORM_WINDOW_S`) — a signal the
+  far end's reaction cannot manufacture — and nudge the receive queue so the
+  verdict is reported even when the far end has gone quiet.
+* Interrupt only the FIRST refusal of a run; drop the rest silently.
+* `_ADVISED_REBUILD_RELAPSE_S`: the same advised-reconnect cause returning
+  within 15 s of a rebuild ends the call honestly instead of spending the
+  budget (`jarvis/realtime/session.py`). No cross-provider failover — a
+  subscription-backed provider must never fall through to metered voice.
+* Move the dictation lane's short-recording + whole-utterance silence-boilerplate
+  verdict down to `jarvis/speech/wake_constants.py::is_silence_hallucination`
+  and apply it to the realtime input recognizer as well (one definition,
+  BUG-008 rule). A hit becomes a FAILED transcript, so the far end's own
+  caption for the same audio can still stand in.
+* `_PROVIDER_CLOSE_BOUND_S = 1.5` (was 5.0, exactly the dictation handover's
+  own bound, which is why the key press that caused the hangup was refused).
+
+**Guards.** `tests/unit/realtime/test_codex_subscription.py`
+(`test_a_refusals_own_echo_captions_never_tear_the_transport_down`,
+`test_a_run_of_refusals_is_what_proves_the_self_dialogue_loop` — the first one
+reproduces the live failure exactly when the grace is removed),
+`tests/unit/realtime/test_session.py`
+(`test_the_same_advice_right_after_a_rebuild_ends_the_call_honestly`,
+`test_the_socket_courtesy_never_outlasts_what_waits_for_the_microphone` — the
+close bound is pinned as a RELATIONSHIP, because the bug was the two numbers
+being equal), `tests/unit/realtime/test_input_transcription.py`
+(boilerplate discarded, a real sentence that merely opens like it survives),
+`tests/unit/plugins/brain/test_codex_brain.py` (the Node PATH repair below).
+
+**Unrelated defect found in the same log, fixed alongside.** The Codex CLI
+brain died with `rc=1` and "node is not recognized": the app PATH carried the
+npm global directory but not the Node.js install directory, and the failure
+surfaced upstairs as "returned no answer". The child now gets the Node
+directory on its PATH, resolved the same way the mission workers already do.
