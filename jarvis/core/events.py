@@ -666,10 +666,11 @@ class AgenticIdeWorkspaceChanged(Event):
     no longer had, and the panes of that grid then knocked at a workspace that
     was not there. Nothing recovered by itself; the user had to reload.
 
-    ``reason`` is one of ``opened`` / ``restored`` / ``activated`` / ``closed``,
-    so a client can tell "your tab was switched" from "everything is gone"
-    without guessing from the payload. Clients re-read the authoritative state
-    on any of them — the event is a trigger, never the source of truth.
+    ``reason`` is one of ``opened`` / ``restored`` / ``activated`` / ``closed``
+    / ``renamed``, so a client can tell "your tab was switched" from
+    "everything is gone" without guessing from the payload. Clients re-read the
+    authoritative state on any of them — the event is a trigger, never the
+    source of truth.
     """
     session_id: str = ""
     reason: str = ""

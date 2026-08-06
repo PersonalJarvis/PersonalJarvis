@@ -1331,7 +1331,9 @@ async def activate_workspace(request: Request, req: ActivateWorkspaceRequest) ->
 
 
 @router.patch("/workspaces/{workspace_id}", summary="Rename a workspace")
-async def rename_workspace(workspace_id: str, req: RenameWorkspaceRequest) -> dict:
+async def rename_workspace(
+    request: Request, workspace_id: str, req: RenameWorkspaceRequest
+) -> dict:
     """Change only a workspace's tab label; its folder and agents keep running."""
     registry = get_registry()
     try:
@@ -1339,6 +1341,8 @@ async def rename_workspace(workspace_id: str, req: RenameWorkspaceRequest) -> di
     except SessionError as exc:
         status = 404 if registry.get(workspace_id) is None else 409
         raise HTTPException(status_code=status, detail=str(exc)) from exc
+    # Other windows keep showing the old tab label until they re-fetch.
+    await _announce_workspace(request, session, "renamed")
     return {
         "ok": True,
         "workspace": session.to_card(active=session.id == registry.active_id),
@@ -1695,13 +1699,25 @@ async def clear_notification(notification_id: str) -> NotificationsChangedRespon
     summary="Close several terminals",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def close_terminals(req: CloseTerminalsRequest) -> dict:
+async def close_terminals(request: Request, req: CloseTerminalsRequest) -> dict:
     """Stop selected coding agents in one locked batch and return canonical state."""
     registry = get_registry()
+    session = registry.session
     try:
         closed, failed = await registry.close_terminals(req.names)
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # Voice and the CLI land here too: without the event, every OTHER client
+    # keeps rendering panes whose agents are already gone (the same contract as
+    # DELETE /terminals/agent/{agent} below).
+    bus = getattr(request.app.state, "bus", None)
+    if bus is not None and closed and session is not None:
+        try:
+            await bus.publish(
+                terminals_closed_event(session, closed, source_layer="agentic_ide_routes")
+            )
+        except Exception as exc:  # noqa: BLE001 - the panes are already closed
+            log.debug("AgenticIdeTerminalsClosed publish failed: %s", exc)
     return {
         "ok": not failed,
         "closed": [term.name for term in closed],
@@ -2003,7 +2019,7 @@ async def close_terminals_by_agent(request: Request, agent: str) -> dict:
 
 
 @router.patch("/terminals/{terminal}", summary="Rename one terminal")
-async def rename_terminal(terminal: str, req: RenameTerminalRequest) -> dict:
+async def rename_terminal(request: Request, terminal: str, req: RenameTerminalRequest) -> dict:
     """Give the pane ``terminal`` another call-sign.
 
     Nothing is started, stopped or restarted: the agent in the pane keeps
@@ -2025,6 +2041,11 @@ async def rename_terminal(terminal: str, req: RenameTerminalRequest) -> dict:
         else:
             status = 422
         raise HTTPException(status_code=status, detail=message) from exc
+    # A rename made by voice or the CLI is invisible to every open view until
+    # it re-fetches — and a pane the UI addresses by its OLD call-sign routes
+    # prompts to a name the registry no longer answers to. Same trigger-only
+    # contract as the open/close announcements.
+    await _announce_workspace(request, session, "renamed")
     return {
         "ok": True,
         "renamed": term.name,
@@ -2040,13 +2061,23 @@ async def rename_terminal(terminal: str, req: RenameTerminalRequest) -> dict:
     summary="Close one terminal",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def close_terminal(name: str) -> dict:
+async def close_terminal(request: Request, name: str) -> dict:
     """Stop the agent in the terminal called ``name`` and remove its pane."""
+    registry = get_registry()
+    session = registry.session
     try:
-        term = await get_registry().close_terminal(name)
+        term = await registry.close_terminal(name)
     except SessionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"ok": True, "closed": term.name, "state": get_registry().state()}
+    bus = getattr(request.app.state, "bus", None)
+    if bus is not None and session is not None:
+        try:
+            await bus.publish(
+                terminals_closed_event(session, [term], source_layer="agentic_ide_routes")
+            )
+        except Exception as exc:  # noqa: BLE001 - the pane is already closed
+            log.debug("AgenticIdeTerminalsClosed publish failed: %s", exc)
+    return {"ok": True, "closed": term.name, "state": registry.state()}
 
 
 @router.get("/recaps", response_model=RecapsResponse, summary="What every terminal is doing")

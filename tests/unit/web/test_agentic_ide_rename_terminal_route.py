@@ -23,6 +23,19 @@ def _terminal(name: str) -> SimpleNamespace:
     return SimpleNamespace(name=name, to_dict=lambda: {"name": name, "key": "t1"})
 
 
+class FakeBus:
+    def __init__(self) -> None:
+        self.published: list[object] = []
+
+    async def publish(self, event: object) -> None:
+        self.published.append(event)
+
+
+def _request(bus: object | None) -> SimpleNamespace:
+    """The one thing the route needs from a Request: ``app.state.bus``."""
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(bus=bus)))
+
+
 class FakeRegistry:
     """Registry stand-in: records the call, returns or raises what was scripted."""
 
@@ -43,15 +56,21 @@ class FakeRegistry:
 
 async def test_a_rename_answers_with_both_names(monkeypatch: pytest.MonkeyPatch) -> None:
     """Both, because the caller has UI filed under the OLD one to move across."""
-    session = SimpleNamespace(id="ide_test")
+    session = SimpleNamespace(id="ide_test", folder="/tmp/ws", name="alpha")
     registry = FakeRegistry(result=(session, _terminal("Frontend")))
     monkeypatch.setattr(routes, "get_registry", lambda: registry)
+    bus = FakeBus()
 
     result = await routes.rename_terminal(
-        "T1", routes.RenameTerminalRequest(name="Frontend")
+        _request(bus), "T1", routes.RenameTerminalRequest(name="Frontend")
     )
 
     assert registry.calls == [("T1", "Frontend")]
+    # Every OTHER open view learns of the new call-sign through this trigger —
+    # without it a CLI/voice rename left the grid addressing a dead name.
+    assert len(bus.published) == 1
+    assert type(bus.published[0]).__name__ == "AgenticIdeWorkspaceChanged"
+    assert bus.published[0].reason == "renamed"
     assert result["ok"] is True
     assert result["renamed"] == "Frontend"
     assert result["previous"] == "T1"
@@ -71,7 +90,9 @@ async def test_a_name_another_pane_carries_is_a_conflict(
     monkeypatch.setattr(routes, "get_registry", lambda: registry)
 
     with pytest.raises(HTTPException) as caught:
-        await routes.rename_terminal("T2", routes.RenameTerminalRequest(name="Api"))
+        await routes.rename_terminal(
+            _request(None), "T2", routes.RenameTerminalRequest(name="Api")
+        )
 
     assert caught.value.status_code == 409
     assert "already called" in caught.value.detail
@@ -82,7 +103,9 @@ async def test_an_unknown_pane_is_a_not_found(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(routes, "get_registry", lambda: registry)
 
     with pytest.raises(HTTPException) as caught:
-        await routes.rename_terminal("T7", routes.RenameTerminalRequest(name="Api"))
+        await routes.rename_terminal(
+            _request(None), "T7", routes.RenameTerminalRequest(name="Api")
+        )
 
     assert caught.value.status_code == 404
     # The panes that DO exist travel with it — the answer to the question asked.
@@ -98,6 +121,8 @@ async def test_an_invalid_call_sign_is_unprocessable(
     monkeypatch.setattr(routes, "get_registry", lambda: registry)
 
     with pytest.raises(HTTPException) as caught:
-        await routes.rename_terminal("T1", routes.RenameTerminalRequest(name="---"))
+        await routes.rename_terminal(
+            _request(None), "T1", routes.RenameTerminalRequest(name="---")
+        )
 
     assert caught.value.status_code == 422
