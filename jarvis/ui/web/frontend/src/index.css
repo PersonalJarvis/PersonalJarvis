@@ -467,6 +467,32 @@
     );
   }
 
+  /*
+   * The Jarvis-Agents operations board sits on its own faint accent field — a
+   * spot glow in the top right plus a 72 px grid — so a board with nothing on
+   * it reads as an instrument on standby rather than a blank panel. Same
+   * construction as .jarvis-grid at the board's own spacing, and stronger on
+   * paper, where a 1.5 % line simply is not there.
+   */
+  .agents-board-stage {
+    background-color: hsl(var(--background));
+    background-image:
+      radial-gradient(circle at 78% 0%, rgb(var(--accent-rgb) / 0.08), transparent 30%),
+      linear-gradient(rgb(var(--accent-rgb) / 0.016) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--accent-rgb) / 0.012) 1px, transparent 1px);
+    background-size:
+      auto,
+      72px 72px,
+      72px 72px;
+  }
+
+  :root:not(.dark) .agents-board-stage {
+    background-image:
+      radial-gradient(circle at 78% 0%, rgb(var(--accent-rgb) / 0.07), transparent 30%),
+      linear-gradient(rgb(var(--accent-rgb) / 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--accent-rgb) / 0.04) 1px, transparent 1px);
+  }
+
   /* Button base — for CTAs */
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 font-medium

@@ -20,11 +20,15 @@ import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 import { failureLabel } from "./failureLabel";
 
+// Emerald and amber carry meaning the token set has no name for ("finished
+// cleanly" / "stopped on purpose"), so they stay literal — but each needs its
+// own value per theme: the 400 shades are tuned to glow on black and drop to
+// ~2:1 on paper, which is a status nobody can read.
 const STATUS_COLOR: Record<SubAgentNode["status"], string> = {
   running: "text-primary",
-  completed: "text-emerald-400",
+  completed: "text-emerald-600 dark:text-emerald-400",
   failed: "text-destructive",
-  cancelled: "text-amber-400",
+  cancelled: "text-amber-600 dark:text-amber-400",
 };
 
 const STATUS_LABEL: Record<SubAgentNode["status"], string> = {
@@ -135,8 +139,10 @@ export function DepartureBoard({ agents = [], snapshotError = null, health = nul
     });
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-[radial-gradient(circle_at_78%_0%,rgba(255,214,10,0.08),transparent_30%),linear-gradient(rgba(255,214,10,0.016)_1px,transparent_1px),linear-gradient(90deg,rgba(255,214,10,0.012)_1px,transparent_1px)] bg-[length:auto,72px_72px,72px_72px]">
-      <div className="grid grid-cols-2 gap-px border-b border-zinc-900 bg-zinc-900/70 md:grid-cols-5">
+    <div className="agents-board-stage flex h-full w-full flex-col overflow-hidden">
+      {/* `gap-px` on a bordered ground: the gaps between the metric cells ARE
+          the hairlines, so this background is the divider colour. */}
+      <div className="grid grid-cols-2 gap-px border-b border-border bg-border md:grid-cols-5">
         <Metric label={agentsBrand(assistantName)} value={agents.length.toString()} icon={Bot} />
         <Metric label="Active" value={activeCount.toString()} icon={Radio} tone="primary" />
         <Metric label="Done" value={doneCount.toString()} icon={CheckCircle2} tone="success" />
@@ -150,7 +156,7 @@ export function DepartureBoard({ agents = [], snapshotError = null, health = nul
             <div className="font-mono text-[11px] uppercase tracking-[0.32em] text-primary/80">
               {agentBrand(assistantName)} operations board
             </div>
-            <div className="mt-1 text-xs text-zinc-500">
+            <div className="mt-1 text-xs text-muted-foreground">
               Live table from the {agentBrand(assistantName)} backend registry and WebSocket events.
             </div>
           </div>
@@ -188,13 +194,13 @@ export function DepartureBoard({ agents = [], snapshotError = null, health = nul
           </div>
         )}
 
-        <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-800/80 bg-scrim/35 scrollbar-jarvis">
+        <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-card/70 scrollbar-jarvis">
           <div className="min-w-[1040px]">
             <BoardHeader />
             {sortedAgents.length === 0 ? (
               <EmptyState />
             ) : (
-              <div className="divide-y divide-zinc-900/80">
+              <div className="divide-y divide-border">
                 {sortedAgents.map((agent) => (
                   <AgentRow
                     key={agent.trace_id}
@@ -226,21 +232,21 @@ function Metric({
   tone?: "muted" | "primary" | "success" | "danger";
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-3 bg-zinc-950 px-4 py-3">
+    <div className="flex min-w-0 items-center gap-3 bg-background px-4 py-3">
       <Icon
         className={cn(
           "h-4 w-4 shrink-0",
           tone === "primary" && "text-primary",
-          tone === "success" && "text-emerald-400",
+          tone === "success" && "text-emerald-600 dark:text-emerald-400",
           tone === "danger" && "text-destructive",
-          tone === "muted" && "text-zinc-500",
+          tone === "muted" && "text-muted-foreground",
         )}
       />
       <div className="min-w-0">
-        <div className="truncate font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-600">
+        <div className="truncate font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
           {label}
         </div>
-        <div className="truncate text-sm font-semibold text-zinc-100">{value}</div>
+        <div className="truncate text-sm font-semibold text-foreground">{value}</div>
       </div>
     </div>
   );
@@ -249,7 +255,7 @@ function Metric({
 function BoardHeader() {
   const assistantName = useEventStore((s) => s.assistantName);
   return (
-    <div className="sticky top-0 z-10 grid grid-cols-[44px_1.4fr_3fr_0.85fr_0.7fr_0.8fr_1.4fr] gap-4 border-b border-zinc-800 bg-zinc-950/95 px-4 py-3 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500 backdrop-blur">
+    <div className="sticky top-0 z-10 grid grid-cols-[44px_1.4fr_3fr_0.85fr_0.7fr_0.8fr_1.4fr] gap-4 border-b border-border bg-card/95 px-4 py-3 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground backdrop-blur">
       <span />
       <span>{agentBrand(assistantName)}</span>
       <span>Task / Project</span>
@@ -265,11 +271,11 @@ function EmptyState() {
   const assistantName = useEventStore((s) => s.assistantName);
   return (
     <div className="flex min-h-[420px] flex-col items-center justify-center px-8 text-center">
-      <Bot className="mb-4 h-8 w-8 text-zinc-600" />
-      <div className="font-display text-base font-semibold text-zinc-200">
+      <Bot className="mb-4 h-8 w-8 text-muted-foreground/70" />
+      <div className="font-display text-base font-semibold text-foreground">
         No {agentsBrand(assistantName)} are running right now.
       </div>
-      <p className="mt-2 max-w-lg text-sm text-zinc-500">
+      <p className="mt-2 max-w-lg text-sm text-muted-foreground">
         When {assistantName} starts a real {agentBrand(assistantName)}, it will appear here with
         its task, status, tool calls, runtime and result.
       </p>
@@ -301,10 +307,10 @@ function AgentRow({
         onClick={hasDrilldown ? onToggle : undefined}
         className={cn(
           "grid w-full grid-cols-[44px_1.4fr_3fr_0.85fr_0.7fr_0.8fr_1.4fr] gap-4 px-4 py-3.5 text-left font-mono text-xs tabular-nums",
-          hasDrilldown && "transition-colors hover:bg-zinc-900/55",
+          hasDrilldown && "transition-colors hover:bg-sheen/[0.05]",
         )}
       >
-        <span className="flex items-center text-zinc-600">
+        <span className="flex items-center text-muted-foreground">
           {hasDrilldown ? (
             expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />
           ) : (
@@ -312,51 +318,53 @@ function AgentRow({
           )}
         </span>
         <span className="min-w-0">
-          <span className="block truncate text-zinc-100">
+          <span className="block truncate text-foreground">
             {displayAgentName(agent, assistantName)}
           </span>
-          <span className="block truncate text-[10px] uppercase tracking-[0.16em] text-zinc-600">
+          <span className="block truncate text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
             {agent.kind === "harness" ? "worker" : agentBrand(assistantName).toLowerCase()}
           </span>
         </span>
-        <span className="truncate text-zinc-400" title={taskLabel(agent)}>
+        <span className="truncate text-muted-foreground" title={taskLabel(agent)}>
           {taskLabel(agent)}
         </span>
         <span className={cn("flex items-center gap-2", STATUS_COLOR[agent.status])}>
           {agent.status === "running" && <span className="h-1.5 w-1.5 rounded-full bg-primary animate-jarvis-pulse" />}
           {STATUS_LABEL[agent.status]}
         </span>
-        <span className="text-zinc-400">{agent.tool_calls.length}</span>
-        <span className="text-zinc-400">{runtimeLabel(agent, nowMs)}</span>
-        <span className="truncate text-zinc-400" title={resultLabel(agent, t)}>
+        <span className="text-muted-foreground">{agent.tool_calls.length}</span>
+        <span className="text-muted-foreground">{runtimeLabel(agent, nowMs)}</span>
+        <span className="truncate text-muted-foreground" title={resultLabel(agent, t)}>
           {resultLabel(agent, t)}
         </span>
       </button>
 
       {expanded && hasDrilldown && (
-        <div className="border-t border-zinc-900/80 bg-zinc-950/55 px-4 pb-4 pt-3">
+        <div className="border-t border-border bg-sheen/[0.03] px-4 pb-4 pt-3">
           <div className="grid grid-cols-[1.35fr_1fr] gap-4">
-            <div className="min-w-0 rounded-md border border-zinc-800/70 bg-scrim/30">
-              <div className="flex items-center gap-2 border-b border-zinc-900 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+            <div className="min-w-0 rounded-md border border-border bg-card/60">
+              <div className="flex items-center gap-2 border-b border-border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                 <TerminalSquare className="h-3.5 w-3.5 text-primary" />
                 Tool calls
               </div>
               {agent.tool_calls.length > 0 ? (
-                <div className="divide-y divide-zinc-900/80">
+                <div className="divide-y divide-border">
                   {agent.tool_calls.map((call, idx) => (
                     <ToolCallRow key={`${agent.trace_id}-${idx}`} call={call} />
                   ))}
                 </div>
               ) : (
-                <div className="px-3 py-3 font-mono text-xs text-zinc-600">No tool calls recorded.</div>
+                <div className="px-3 py-3 font-mono text-xs text-muted-foreground">
+                  No tool calls recorded.
+                </div>
               )}
             </div>
 
-            <div className="min-w-0 rounded-md border border-zinc-800/70 bg-scrim/30">
-              <div className="border-b border-zinc-900 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+            <div className="min-w-0 rounded-md border border-border bg-card/60">
+              <div className="border-b border-border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                 {agentBrand(assistantName)} details
               </div>
-              <div className="space-y-2 px-3 py-3 font-mono text-xs text-zinc-500">
+              <div className="space-y-2 px-3 py-3 font-mono text-xs text-muted-foreground">
                 <div className="line-clamp-4">{taskLabel(agent)}</div>
                 {agent.context_hints.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
@@ -370,7 +378,7 @@ function AgentRow({
                 {failureLabel(agent, t) && (
                   <div className="text-destructive">{failureLabel(agent, t)}</div>
                 )}
-                <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-700">
+                <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/70">
                   trace {agent.trace_id.slice(0, 10)}
                 </div>
               </div>
@@ -386,19 +394,19 @@ function ToolCallRow({ call }: { call: ToolCallEntry }) {
   return (
     <div className="grid grid-cols-[1fr_110px_90px] gap-3 px-3 py-2.5 font-mono text-xs tabular-nums">
       <div className="min-w-0">
-        <div className="truncate text-zinc-300">{call.tool_name || "tool"}</div>
-        <div className="truncate text-[11px] text-zinc-600" title={call.args_preview}>
+        <div className="truncate text-foreground">{call.tool_name || "tool"}</div>
+        <div className="truncate text-[11px] text-muted-foreground" title={call.args_preview}>
           {call.args_preview || call.output_preview || "-"}
         </div>
       </div>
-      <div className="text-zinc-500">
+      <div className="text-muted-foreground">
         {call.duration_ms != null ? formatRelative(call.duration_ms) : "-"}
       </div>
       <div
         className={cn(
           "text-right",
           call.status === "running" && "text-primary",
-          call.status === "completed" && "text-emerald-400",
+          call.status === "completed" && "text-emerald-600 dark:text-emerald-400",
           call.status === "failed" && "text-destructive",
         )}
       >

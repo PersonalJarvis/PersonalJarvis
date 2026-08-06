@@ -89,20 +89,20 @@ export function JarvisAgentsView() {
   const activeCount = nodesList.filter((n) => n.status === "running").length;
 
   return (
-    <div className="relative h-full w-full flex flex-col bg-zinc-950">
-      <header className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between shrink-0 z-10 bg-zinc-950/80 backdrop-blur">
+    <div className="relative h-full w-full flex flex-col bg-background">
+      <header className="px-4 py-3 border-b border-border flex items-center justify-between shrink-0 z-10 bg-background/80 backdrop-blur">
         <div className="flex items-center gap-3">
-          <Users className="h-5 w-5 text-sky-400" />
+          <Users className="h-5 w-5 text-sky-600 dark:text-sky-400" />
           <div>
-            <div className="text-sm font-semibold text-zinc-100">{t("subagents_view.title")}</div>
-            <div className="text-[11px] text-zinc-500">
+            <div className="text-sm font-semibold text-foreground">{t("subagents_view.title")}</div>
+            <div className="text-[11px] text-muted-foreground">
               {activeCount} {t("subagents_view.stat_active")} · {nodesList.length} {t("subagents_view.stat_total")}
             </div>
           </div>
         </div>
         <button
           onClick={() => clear()}
-          className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-1.5"
+          className="text-xs px-2 py-1 rounded border border-border bg-secondary text-secondary-foreground hover:bg-sheen/[0.08] flex items-center gap-1.5"
           title={t("subagents_view.clear_tooltip")}
         >
           <Trash2 className="h-3 w-3" />
@@ -110,7 +110,7 @@ export function JarvisAgentsView() {
         </button>
       </header>
 
-      <ExplicitSpawnHint className="shrink-0 border-b border-zinc-800 bg-zinc-900/40 text-zinc-500" />
+      <ExplicitSpawnHint className="shrink-0 border-b border-border bg-sheen/[0.03]" />
 
       <div className="flex-1 relative overflow-hidden">
         <DepartureBoard
