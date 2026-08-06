@@ -78,7 +78,7 @@ _DELEGATION_MARKER_RE: re.Pattern[str] = re.compile(
 # subject ("spawn an agent that …", "Alex should spawn sub-agents" both
 # stay markers).
 _REPORTED_VEHICLE_RE: re.Pattern[str] = re.compile(
-    r"\b(?:it|that|this|which|one|es|das|der|die)\s+"  # i18n-allow: spoken-input vocabulary, de/en subjects
+    r"\b(?:it|that|this|which|one|es|das|der|die)\s+"  # i18n-allow: spoken input
     r"(?:just\s+|gerade\s+)?"  # i18n-allow: spoken-input vocabulary
     r"(?:spawned|delegated)\b",
     re.IGNORECASE,
