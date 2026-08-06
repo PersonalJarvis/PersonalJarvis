@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -111,32 +112,65 @@ def mission_case(label: str, prompt: str, wait_s: float = 200.0) -> dict:
 
 
 def _calc_pids() -> int:
+    """Count running calculator processes, per platform. -1 when unknowable."""
     try:
-        cp = subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             "(Get-Process CalculatorApp,Calculator,ApplicationFrameHost "
-             "-ErrorAction SilentlyContinue | Measure-Object).Count"],
-            capture_output=True, text=True, timeout=20,
+        if sys.platform == "win32":
+            cp = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "(Get-Process CalculatorApp,Calculator,ApplicationFrameHost "
+                 "-ErrorAction SilentlyContinue | Measure-Object).Count"],
+                capture_output=True, text=True, timeout=20,
+            )
+            return int((cp.stdout or "0").strip() or 0)
+        # POSIX: pgrep exits 1 with no output when nothing matches — that is a
+        # normal zero, not an error. macOS runs "Calculator"; Linux desktops
+        # ship one of several calculator binaries.
+        names = (
+            ["Calculator"]
+            if sys.platform == "darwin"
+            else ["gnome-calculator", "kcalc", "galculator"]
         )
-        return int((cp.stdout or "0").strip() or 0)
+        count = 0
+        for proc_name in names:
+            cp = subprocess.run(
+                ["pgrep", "-x", proc_name],
+                capture_output=True, text=True, timeout=20,
+            )
+            count += len((cp.stdout or "").split())
+        return count
     except Exception:  # noqa: BLE001
         return -1
 
 
 def _screenshot(name: str) -> str:
+    """Full-screen capture to screenshots/<name>, per platform. Best-effort."""
     out = f"screenshots/{name}"
-    ps = (
-        "Add-Type -AssemblyName System.Windows.Forms,System.Drawing;"
-        "$b=[System.Windows.Forms.SystemInformation]::VirtualScreen;"
-        "$bmp=New-Object System.Drawing.Bitmap $b.Width,$b.Height;"
-        "$g=[System.Drawing.Graphics]::FromImage($bmp);"
-        "$g.CopyFromScreen($b.X,$b.Y,0,0,$bmp.Size);"
-        f"$bmp.Save('{out}',[System.Drawing.Imaging.ImageFormat]::Png);"
-        "$g.Dispose();$bmp.Dispose()"
-    )
+    Path("screenshots").mkdir(exist_ok=True)
     try:
-        subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                       capture_output=True, text=True, timeout=30)
+        if sys.platform == "win32":
+            ps = (
+                "Add-Type -AssemblyName System.Windows.Forms,System.Drawing;"
+                "$b=[System.Windows.Forms.SystemInformation]::VirtualScreen;"
+                "$bmp=New-Object System.Drawing.Bitmap $b.Width,$b.Height;"
+                "$g=[System.Drawing.Graphics]::FromImage($bmp);"
+                "$g.CopyFromScreen($b.X,$b.Y,0,0,$bmp.Size);"
+                f"$bmp.Save('{out}',[System.Drawing.Imaging.ImageFormat]::Png);"
+                "$g.Dispose();$bmp.Dispose()"
+            )
+            subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                           capture_output=True, text=True, timeout=30)
+        elif sys.platform == "darwin":
+            # -x: no shutter sound. Needs the Screen-Recording permission;
+            # without it macOS writes the desktop wallpaper only — still a file,
+            # never an exception.
+            subprocess.run(["screencapture", "-x", out],
+                           capture_output=True, text=True, timeout=30)
+        elif shutil.which("gnome-screenshot"):
+            subprocess.run(["gnome-screenshot", "-f", out],
+                           capture_output=True, text=True, timeout=30)
+        elif shutil.which("import"):  # ImageMagick, X11
+            subprocess.run(["import", "-window", "root", out],
+                           capture_output=True, text=True, timeout=30)
     except Exception:  # noqa: BLE001
         pass
     return out
