@@ -67,6 +67,7 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from jarvis.agentic_ide import (
+    agent_transcript,
     drop_analysis,
     drops,
     interrupted,
@@ -2292,6 +2293,53 @@ async def terminal_report(name: str, lines: int = 40) -> dict:
         return get_registry().report(name, lines)
     except SessionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/terminals/{name}/conversation",
+    summary="One terminal's conversation, as the CLI itself recorded it",
+)
+async def terminal_conversation(name: str) -> dict:
+    """The turns of a pane's conversation — roles, prose and the steps between.
+
+    Read from the coding CLI's OWN record rather than from the pane's screen. A
+    TUI is a picture: it repaints in place, wraps to whatever width it had, and
+    prints banners and spinners that mean nothing afterwards, so anything that
+    reconstructs a conversation from it is guessing. The file the CLI writes to
+    resume itself has none of those problems — roles are declared and tool calls
+    carry their arguments (see :mod:`jarvis.agentic_ide.agent_transcript`).
+
+    ``available: false`` is a normal answer, not an error: a CLI that keeps no
+    readable record, or a pane whose conversation has not been written yet.
+    The surface shows the live pane in that case, which is never wrong and never
+    empty.
+    """
+    found = get_registry().find_terminal(name)
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"No terminal called {name}")
+    _session, term = found
+    handle = term.resume
+    if handle is None or not agent_transcript.can_read(term.agent):
+        return {"terminal": term.name, "agent": term.agent, "available": False, "turns": []}
+    # Off the event loop: this opens a file that can be megabytes, and the loop
+    # it would otherwise block is the one carrying every pane's output.
+    turns = await asyncio.to_thread(
+        agent_transcript.read,
+        term.agent,
+        handle.id,
+        # The history to ask is the PANE's account: each subscription of the
+        # same CLI keeps its conversations in its own directory, and the machine
+        # default would hand back a different account's chat.
+        home=account_home(term.agent, term.account),
+    )
+    if turns is None:
+        return {"terminal": term.name, "agent": term.agent, "available": False, "turns": []}
+    return {
+        "terminal": term.name,
+        "agent": term.agent,
+        "available": True,
+        "turns": [t.to_dict() for t in turns],
+    }
 
 
 @router.get(
