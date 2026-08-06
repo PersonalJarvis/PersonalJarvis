@@ -60,12 +60,18 @@ def test_the_mascot_still_gets_both_bubble_variants() -> None:
 
 
 def test_the_sphere_is_half_again_the_mascots_size() -> None:
+    from ui.orb.voice_orb import _BASE_SCALE
+
     assert overlay.window_size_for_style("voice_orb") == (
         overlay.VOICE_ORB_WIN_W,
         overlay.VOICE_ORB_WIN_H,
     )
     assert overlay.window_size_for_style("mascot") == (overlay.WIN_W, overlay.WIN_H)
-    assert overlay.VOICE_ORB_WIN_W == round(overlay.WIN_W * 1.5)
+    # The SPHERE is 1.5x the mascot; the window is larger still because the
+    # aura has to be drawn inside it.
+    sphere = overlay.VOICE_ORB_WIN_W * _BASE_SCALE
+    assert sphere == pytest.approx(overlay.WIN_W * 1.5, abs=6)
+    assert overlay.VOICE_ORB_WIN_W > sphere
 
 
 def test_a_new_orb_adopts_its_styles_window_size() -> None:
