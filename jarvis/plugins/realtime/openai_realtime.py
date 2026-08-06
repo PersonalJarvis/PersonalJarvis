@@ -334,6 +334,12 @@ class _OpenAIRealtimeSession:
         # every idle-gated deaf-wedge defense at once.
         self._last_response_activity = time.monotonic()
         self._last_item_id = ""
+        # Whether THIS response's transcript arrived as a delta stream. Servers
+        # split here: OpenAI streams it token by token, a self-hosted stack that
+        # already holds the finished line sends only the closing ``.done``.
+        # Reset per response so one streaming turn cannot mute the next
+        # whole-line one.
+        self._output_transcript_streamed = False
         self._response_had_tool_calls = False
         self._tool_response_done_seen = False
         self._pending_tool_call_ids: set[str] = set()
@@ -459,10 +465,26 @@ class _OpenAIRealtimeSession:
                 ),
             )
         elif event_type == "response.output_audio_transcript.delta":
+            self._output_transcript_streamed = True
             yield _ProviderEvent(
                 type="output_transcript_delta",
                 text=str(getattr(event, "delta", "") or ""),
             )
+        elif event_type == "response.output_audio_transcript.done":
+            # A server that has the whole line at once sends ONLY this, with no
+            # preceding deltas — the self-hosted stack does, because its TTS is
+            # handed finished text rather than a token stream. Without it the
+            # turn reached the scrub gate carrying audio and no transcript, and
+            # the gate correctly refuses to let unvetted speech out (ADR-0010):
+            # a complete, audible answer was cancelled at the turn boundary
+            # every single time (field report 2026-08-06).
+            #
+            # Guarded on the streaming flag so a provider that sends BOTH does
+            # not deliver its line twice, once in pieces and once whole.
+            if not self._output_transcript_streamed:
+                text = str(getattr(event, "transcript", "") or "")
+                if text:
+                    yield _ProviderEvent(type="output_transcript_delta", text=text)
         elif event_type == "conversation.item.input_audio_transcription.completed":
             self._note_input_transcript()
             yield _ProviderEvent(
@@ -859,6 +881,9 @@ class _OpenAIRealtimeSession:
             return
         self._accepted_response_ids.add(response_id)
         self._last_response_activity = time.monotonic()
+        # A fresh lifecycle carries a fresh transcript, whichever shape it
+        # arrives in — so the whole-line fallback is armed again for this one.
+        self._output_transcript_streamed = False
         # This lifecycle now answers the pending user turn; only NEW speech
         # evidence may qualify a later unsolicited response for adoption.
         self._server_heard_user_since_response = False
