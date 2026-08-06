@@ -169,6 +169,15 @@ class RealtimeSession(Protocol):
         # same text is already embedded in ``instructions``. The session
         # retries without it on TypeError for third-party adapters.
         turn_directive: str | None = None,
+        # Session-constant discipline the adapter must RE-ASSERT on its
+        # working channel every turn (the one-speaker rule with its
+        # speak-request exception). Live finding 2026-08-05/06: a rule
+        # stated once at open does not hold on ChatGPT-Live — the language
+        # pin survives because it is repeated every turn, and this directive
+        # needs the same treatment. Wholesale-replace adapters ``del`` it
+        # (their full instructions already re-carry it); the session retries
+        # without it on TypeError for third-party adapters.
+        standing_directive: str | None = None,
     ) -> None: ...
 
     async def request_response(self, *, required_tool: str | None = None) -> None: ...

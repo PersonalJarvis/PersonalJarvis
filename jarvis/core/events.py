@@ -1600,6 +1600,10 @@ class RealtimeSessionPostmortem(Event):
     terminal_item_turns: int = 0
     #: Back-to-back responses that spliced into one playback stream (<1.5 s).
     response_splices: int = 0
+    #: Splices converted into clean local boundaries by the sequencing drain.
+    sequenced_boundaries: int = 0
+    #: Opening responses cut at the cap because no user question existed yet.
+    opening_responses_bounded: int = 0
     #: Self-dialogue verdicts that forced a transport replacement (BUG-124).
     self_dialogue_rebuilds: int = 0
     #: Half-duplex mutes released by the emergency timer, not a turn boundary.

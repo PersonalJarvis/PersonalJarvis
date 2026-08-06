@@ -2793,6 +2793,13 @@ class RealtimeVoiceSession:
                             # leaving contradictory "this current turn" texts
                             # standing in the thread.
                             "turn_directive": turn_tool_directive,
+                            # Re-asserted every turn on the adapter's working
+                            # channel: the one-speaker rule delivered once at
+                            # open demonstrably fades on ChatGPT-Live while
+                            # the per-turn language pin holds — this is the
+                            # exact constant (BOTH halves: silence rule and
+                            # its speak-request exception, b181d92f).
+                            "standing_directive": _ONE_SPEAKER_DIRECTIVE,
                         }
                         if tools_changed:
                             update_kwargs["tools"] = self._declared_tools()
@@ -2817,16 +2824,22 @@ class RealtimeVoiceSession:
                             # older update-session protocols: retire the
                             # NEWEST field first so an adapter that already
                             # understands tools keeps receiving them.
-                            update_kwargs.pop("turn_directive", None)
+                            update_kwargs.pop("standing_directive", None)
                             try:
                                 await self._session.update_session(
                                     **update_kwargs
                                 )
-                            except TypeError:  # predates the tools field too
-                                update_kwargs.pop("tools", None)
-                                await self._session.update_session(
-                                    **update_kwargs
-                                )
+                            except TypeError:
+                                update_kwargs.pop("turn_directive", None)
+                                try:
+                                    await self._session.update_session(
+                                        **update_kwargs
+                                    )
+                                except TypeError:  # predates tools too
+                                    update_kwargs.pop("tools", None)
+                                    await self._session.update_session(
+                                        **update_kwargs
+                                    )
                     if self._tool_bridge is not None and event.is_final and transcript:
                         await self._tool_bridge.handle_user_transcript(
                             self._last_user_text
@@ -6878,6 +6891,8 @@ class RealtimeVoiceSession:
             quiescence_boundary_turns=diag.get("quiescence_boundary_turns", 0),
             terminal_item_turns=diag.get("terminal_item_turns", 0),
             response_splices=diag.get("response_splices", 0),
+            sequenced_boundaries=diag.get("sequenced_boundaries", 0),
+            opening_responses_bounded=diag.get("opening_responses_bounded", 0),
             self_dialogue_rebuilds=diag.get("self_dialogue_rebuilds", 0),
             mute_emergency_releases=self._mute_emergency_releases,
             sender_pacing_resyncs=diag.get("sender_pacing_resyncs", 0),

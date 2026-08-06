@@ -3049,3 +3049,167 @@ async def test_a_barge_splice_is_sequenced_behind_a_local_boundary() -> None:
     )
     assert session.diagnostics().get("sequenced_boundaries", 0) == 1
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_the_standing_directive_is_reasserted_on_every_delivery() -> None:
+    """A rule stated once at open does not hold on this channel (three live
+    calls, 2026-08-05; probe round 1, 2026-08-06), while the per-turn
+    language pin demonstrably does - repetition is what makes a rule real
+    here. The standing directive must therefore ride EVERY delivery, exactly
+    once per payload, even when nothing else changed."""
+    client = _Client()
+    session = await _provider(client).open_session(RealtimeSessionConfig())
+    baseline = len(client.text_appends)
+
+    rule = "SPEAK AS ONE VOICE ONLY."
+    await session.update_session(
+        instructions="PERSONA BLOCK", standing_directive=rule
+    )
+    await session.update_session(
+        instructions="PERSONA BLOCK", standing_directive=rule
+    )
+
+    payloads = [text for _, text, _ in client.text_appends[baseline:]]
+    assert len(payloads) == 2, "an unchanged turn still delivers the rule"
+    for payload in payloads:
+        assert payload.count(rule) == 1, payload
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_a_rambling_opening_is_cut_and_the_real_answer_still_flows(
+    monkeypatch,
+) -> None:
+    """Probe round 1: a 16 s greeting monologue rode over the user's first
+    question. The opening response is now cut at the cap, its remainder is
+    refused frame by frame, and the answer the question earns still flows
+    through the continuation window afterwards."""
+    monkeypatch.setattr(codex_subscription_mod, "_OPENING_RESPONSE_MAX_S", 0.2)
+    loud = (1000).to_bytes(2, "little", signed=True) * 480
+    transcriber = _ScheduledInputTranscriber(
+        [
+            (0.02, InputTranscriptEvent(kind="speech_started")),
+            (
+                0.55,
+                InputTranscriptEvent(
+                    kind="transcript", text="What is up?", is_final=True
+                ),
+            ),
+        ]
+    )
+    endpoint = _FakeAudioEndpoint(
+        output_schedule=[
+            (0.05, loud),
+            (0.10, loud),
+            (0.10, loud),
+            (0.15, loud),  # ~0.40 s in: past the 0.2 s cap -> cut here
+            (0.05, loud),  # the remainder the far end streams anyway
+            (0.05, loud),
+        ]
+    )
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.8,
+                _Notification(
+                    "thread/realtime/transcript/delta",
+                    {
+                        "threadId": "thread-1",
+                        "role": "assistant",
+                        "delta": "The real answer.",
+                    },
+                ),
+            ),
+        ]
+    )
+    session = await _provider(
+        client,
+        endpoint=endpoint,
+        input_transcriber_factory=lambda: transcriber,
+    ).open_session(RealtimeSessionConfig())
+
+    events = []
+    async with asyncio.timeout(5.0):
+        async for event in session.receive():
+            events.append(event)
+            if event.type == "output_transcript_delta" and "real answer" in (
+                event.text or ""
+            ):
+                break
+
+    assert session.diagnostics().get("opening_responses_bounded", 0) == 1
+    boundary_positions = [
+        i for i, e in enumerate(events) if e.type == "turn_complete"
+    ]
+    assert boundary_positions, "the cut must close the opening turn"
+    answer_position = next(
+        i
+        for i, e in enumerate(events)
+        if e.type == "output_transcript_delta"
+        and "real answer" in (e.text or "")
+    )
+    assert boundary_positions[0] < answer_position
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_a_final_landing_mid_opening_adopts_the_response(
+    monkeypatch,
+) -> None:
+    """A genuinely fast answer must never be cut: when the user's final lands
+    while the opening response still speaks, the response is ADOPTED as the
+    answer and the bound lifts."""
+    monkeypatch.setattr(codex_subscription_mod, "_OPENING_RESPONSE_MAX_S", 0.3)
+    loud = (1000).to_bytes(2, "little", signed=True) * 480
+    transcriber = _ScheduledInputTranscriber(
+        [
+            (0.02, InputTranscriptEvent(kind="speech_started")),
+            (
+                0.10,
+                InputTranscriptEvent(
+                    kind="transcript", text="Quick one?", is_final=True
+                ),
+            ),
+        ]
+    )
+    endpoint = _FakeAudioEndpoint(
+        output_schedule=[
+            (0.05, loud),
+            (0.15, loud),
+            (0.20, loud),  # ~0.40 s in: past the cap, but adopted by then
+            (0.10, loud),
+        ]
+    )
+    client = _Client()
+    # Keep the notification stream OPEN past the collection window: an
+    # exhausted subscription ends the stream and takes the receive loop
+    # with it.
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                5.0,
+                _Notification(
+                    "thread/realtime/transcript/delta",
+                    {"threadId": "thread-1", "role": "assistant", "delta": "."},
+                ),
+            ),
+        ]
+    )
+    session = await _provider(
+        client,
+        endpoint=endpoint,
+        input_transcriber_factory=lambda: transcriber,
+    ).open_session(RealtimeSessionConfig())
+
+    events = await _collect_until(
+        session, stop_after=1, kind="never", timeout_s=1.2
+    )
+
+    assert session.diagnostics().get("opening_responses_bounded", 0) == 0, (
+        "an adopted opening response is the answer and must not be cut"
+    )
+    audio_events = [e for e in events if e.type == "audio_delta"]
+    assert len(audio_events) == 4, "all audio flowed, none was refused"
+    await session.close()
