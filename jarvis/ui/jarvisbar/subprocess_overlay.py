@@ -132,6 +132,7 @@ class SubprocessBarOverlay:
         self._on_hangup: Callable[[], None] | None = None
         self._feedback_publisher: Callable[[str, dict], None] | None = None
         self._on_show_window: Callable[[], None] | None = None
+        self._on_speaker_toggle: Callable[[], None] | None = None
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
@@ -327,6 +328,9 @@ class SubprocessBarOverlay:
     def set_on_show_window(self, callback: Callable[[], None] | None) -> None:
         self._on_show_window = callback
 
+    def set_on_speaker_toggle(self, callback: Callable[[], None] | None) -> None:
+        self._on_speaker_toggle = callback
+
     def _on_reset_double_click(self, _event: Any = None) -> None:
         self._send({"op": "reset_position"})
 
@@ -517,6 +521,8 @@ class SubprocessBarOverlay:
                 cb_show = self._on_show_window
                 if cb_show is not None:
                     cb_show()
+            elif event == "speaker_toggle":
+                self._dispatch_speaker_toggle()
             elif event == "drop":
                 self._dispatch_drop_event(msg)
         except Exception:  # noqa: BLE001 — a bad callback must not kill the pump
@@ -549,6 +555,22 @@ class SubprocessBarOverlay:
     def _send_drop_result(self, accepted: bool) -> None:
         """Send a drop verdict down to the hosted bar (never raises)."""
         self._send({"op": "drop_result", "accepted": bool(accepted)})
+
+    def _dispatch_speaker_toggle(self) -> None:
+        """Mute / unmute the assistant's voice, here in the parent.
+
+        The orb's speaker disc is drawn in the child, but the TTS volume it
+        changes belongs to the SpeechPipeline, which only ever exists in this
+        process. An explicitly installed callback wins for embedders and tests.
+        """
+        callback = self._on_speaker_toggle
+        if callback is not None:
+            callback()
+            return
+        from ui.orb.controls import toggle_speaker_mute
+
+        if toggle_speaker_mute() is None:
+            log.debug("orb speaker toggle had no live pipeline in the parent")
 
     def _dispatch_talk_action(self) -> None:
         """Start a voice session in the parent process.

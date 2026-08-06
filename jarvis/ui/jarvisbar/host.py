@@ -224,6 +224,7 @@ class _EchoBar:
     def set_on_hangup(self, cb: Any) -> None: ...
     def set_feedback_publisher(self, cb: Any) -> None: ...
     def set_on_show_window(self, cb: Any) -> None: ...
+    def set_on_speaker_toggle(self, cb: Any) -> None: ...
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("__"):
@@ -379,6 +380,10 @@ def _wire_surface_events(surface: Any) -> None:
     _call(surface, "set_on_talk", lambda: emit("talk"))
     _call(surface, "set_on_hangup", lambda: emit("hangup"))
     _call(surface, "set_on_mute_toggle", lambda: emit("mute_toggle"))
+    # The orb's control row adds one action the bar never had: muting the
+    # ASSISTANT's voice. Like talk/hang-up it needs the parent, because the
+    # SpeechPipeline whose TTS volume it changes lives there.
+    _call(surface, "set_on_speaker_toggle", lambda: emit("speaker_toggle"))
     _call(
         surface,
         "set_feedback_publisher",

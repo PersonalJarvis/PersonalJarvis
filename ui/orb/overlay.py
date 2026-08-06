@@ -47,6 +47,7 @@ Standalone test:
 from __future__ import annotations
 
 import argparse
+import logging
 import math
 import os
 import queue
@@ -67,6 +68,7 @@ from jarvis.core.config import DEFAULT_CONFIG_FILE as JARVIS_TOML_PATH
 from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness
 from jarvis.ui.jarvisbar.modes import MODES
 from jarvis.ui.overlay_styles import LEGACY_STYLE_ALIASES, ORB_STYLES
+from ui.orb import controls as orb_controls
 from ui.orb.animations import (
     ANIMATION_REGISTRY,
     Animation,
@@ -164,6 +166,64 @@ TRANSCRIPT_BUBBLE_FONT_SIZE = 12
 TRANSCRIPT_MAX_VISIBLE_LINES = 4
 # Min on-screen time so fast LISTENING→THINKING bounces are still readable.
 BUBBLE_MIN_SHOW_S = 1.1
+
+
+@dataclass(frozen=True)
+class BubbleTheme:
+    """How the speech bubble is painted for one orb style.
+
+    The bubble used to be the mascot's bubble, full stop: black body, thick
+    yellow border, bold yellow text — the comic look that belongs to the Gigi
+    ghost. Beside the procedural sphere that reads as a different program's
+    window sitting on the same desktop, which is exactly what the maintainer
+    reported (2026-08-06). So the look travels with the style instead of being
+    baked into the widget: the ghost keeps its bubble, the orb gets the app's
+    own quiet surface (``bg-background/85`` + ``border-border/50`` +
+    ``text-muted-foreground``, flattened — a layered Tk window has no partial
+    alpha), and neither one has to compromise for the other.
+    """
+
+    bg: str
+    border: str
+    text: str
+    border_width: int
+    #: Bold is the mascot's voice. The orb's transcript is read, not shouted.
+    bold: bool
+    #: A tail points at a character that is speaking. The orb is not a mouth,
+    #: and the in-app bubble it copies has no tail either.
+    tail: bool
+    corner_radius: int
+
+
+#: The Gigi bubble, unchanged — the ghost's own voice.
+MASCOT_BUBBLE_THEME = BubbleTheme(
+    bg=BUBBLE_BG_HEX,
+    border=BUBBLE_BORDER_HEX,
+    text=BUBBLE_TEXT_HEX,
+    border_width=BUBBLE_BORDER_WIDTH,
+    bold=True,
+    tail=True,
+    corner_radius=BUBBLE_CORNER_RADIUS,
+)
+
+#: The app's surface, so the desktop orb and the in-app orb read as one thing.
+#: The border is a shade above the app's ``--border``: in the app a shadow
+#: separates the bubble from what is behind it, and a colour-keyed window
+#: cannot cast one without fringing.
+ORB_BUBBLE_THEME = BubbleTheme(
+    bg="#121212",
+    border="#333333",
+    text="#B4B4B4",
+    border_width=1,
+    bold=False,
+    tail=False,
+    corner_radius=16,
+)
+
+
+def bubble_theme_for_style(style: str) -> BubbleTheme:
+    """The bubble look one orb style wears."""
+    return ORB_BUBBLE_THEME if style == "voice_orb" else MASCOT_BUBBLE_THEME
 
 # Magenta color key — Tkinter renders this color pixel-perfect transparent
 COLOR_KEY_HEX = "#FF00FF"
@@ -1062,12 +1122,21 @@ class OrbCommentBubble:
     LWA_COLORKEY transparency as the main orb.
     """
 
-    def __init__(self, parent: tk.Tk, orb_x: int, orb_y: int, orb_w: int, screen_w: int) -> None:
+    def __init__(
+        self,
+        parent: tk.Tk,
+        orb_x: int,
+        orb_y: int,
+        orb_w: int,
+        screen_w: int,
+        theme: BubbleTheme = MASCOT_BUBBLE_THEME,
+    ) -> None:
         self._parent = parent
         self._orb_x = orb_x
         self._orb_y = orb_y
         self._orb_w = orb_w
         self._screen_w = screen_w
+        self._theme = theme
         self._top: tk.Toplevel | None = None
         self._canvas: tk.Canvas | None = None
         self._dismiss_after_id: str | None = None
@@ -1135,18 +1204,38 @@ class OrbCommentBubble:
         # the mascot root; relying on tkinter's process-global default root
         # would create the fonts in the wrong interpreter and make the bubble
         # fail as soon as it tries to draw text.
+        weight = "bold" if self._theme.bold else "normal"
         self._font = tkfont.Font(
             root=top,
             family=BUBBLE_FONT_FAMILY,
             size=BUBBLE_FONT_SIZE,
-            weight="bold",
+            weight=weight,
         )
         self._transcript_font = tkfont.Font(
             root=top,
             family=BUBBLE_FONT_FAMILY,
             size=TRANSCRIPT_BUBBLE_FONT_SIZE,
-            weight="bold",
+            weight=weight,
         )
+
+    def set_theme(self, theme: BubbleTheme) -> None:
+        """Repaint in another style's colours from the next show() onwards.
+
+        Called on a live style swap (mascot <-> voice orb). The bubble on
+        screen right now is hidden rather than converted: a half-second of the
+        old colours is nothing, a half-drawn bubble is a bug.
+        """
+        if theme == self._theme:
+            return
+        self._theme = theme
+        weight = "bold" if theme.bold else "normal"
+        for font in (self._font, self._transcript_font):
+            if font is not None:
+                try:
+                    font.configure(weight=weight)
+                except tk.TclError:
+                    pass
+        self.hide()
 
     def show(
         self,
@@ -1181,6 +1270,7 @@ class OrbCommentBubble:
                 pass
             self._dismiss_after_id = None
 
+        theme = self._theme
         # Probe text size by creating a throwaway text item and reading bbox.
         probe_id = self._canvas.create_text(
             0,
@@ -1189,7 +1279,7 @@ class OrbCommentBubble:
             font=self._font,
             anchor="nw",
             width=BUBBLE_MAX_WIDTH,
-            fill=BUBBLE_TEXT_HEX,
+            fill=theme.text,
         )
         bbox = self._canvas.bbox(probe_id)
         self._canvas.delete(probe_id)
@@ -1199,7 +1289,8 @@ class OrbCommentBubble:
         text_h = bbox[3] - bbox[1]
         bubble_w = text_w + 2 * BUBBLE_PADDING_X
         body_h = text_h + 2 * BUBBLE_PADDING_Y
-        total_h = body_h + BUBBLE_TAIL_H
+        tail_h = BUBBLE_TAIL_H if theme.tail else 0
+        total_h = body_h + tail_h
 
         bubble_x = self._orb_x + self._orb_w // 2 - bubble_w // 2
         bubble_x = max(8, min(bubble_x, self._screen_w - bubble_w - 8))
@@ -1225,36 +1316,37 @@ class OrbCommentBubble:
             1,
             bubble_w - 1,
             body_h - 1,
-            BUBBLE_CORNER_RADIUS,
-            fill=BUBBLE_BG_HEX,
-            outline=BUBBLE_BORDER_HEX,
-            width=BUBBLE_BORDER_WIDTH,
+            theme.corner_radius,
+            fill=theme.bg,
+            outline=theme.border,
+            width=theme.border_width,
         )
 
-        tail_base_y = body_h - 1
-        tail_points = [
-            tail_tip_x - tail_half,
-            tail_base_y,
-            tail_tip_x + tail_half,
-            tail_base_y,
-            tail_tip_x,
-            tail_base_y + BUBBLE_TAIL_H,
-        ]
-        self._canvas.create_polygon(
-            tail_points,
-            fill=BUBBLE_BG_HEX,
-            outline=BUBBLE_BORDER_HEX,
-            width=BUBBLE_BORDER_WIDTH,
-        )
-        # Hide the seam between body bottom and tail base.
-        self._canvas.create_line(
-            tail_tip_x - tail_half + 1,
-            tail_base_y,
-            tail_tip_x + tail_half - 1,
-            tail_base_y,
-            fill=BUBBLE_BG_HEX,
-            width=BUBBLE_BORDER_WIDTH + 1,
-        )
+        if theme.tail:
+            tail_base_y = body_h - 1
+            tail_points = [
+                tail_tip_x - tail_half,
+                tail_base_y,
+                tail_tip_x + tail_half,
+                tail_base_y,
+                tail_tip_x,
+                tail_base_y + BUBBLE_TAIL_H,
+            ]
+            self._canvas.create_polygon(
+                tail_points,
+                fill=theme.bg,
+                outline=theme.border,
+                width=theme.border_width,
+            )
+            # Hide the seam between body bottom and tail base.
+            self._canvas.create_line(
+                tail_tip_x - tail_half + 1,
+                tail_base_y,
+                tail_tip_x + tail_half - 1,
+                tail_base_y,
+                fill=theme.bg,
+                width=theme.border_width + 1,
+            )
 
         self._canvas.create_text(
             BUBBLE_PADDING_X,
@@ -1263,7 +1355,7 @@ class OrbCommentBubble:
             font=self._font,
             anchor="nw",
             width=BUBBLE_MAX_WIDTH,
-            fill=BUBBLE_TEXT_HEX,
+            fill=theme.text,
         )
 
         self._top.deiconify()
@@ -1293,6 +1385,7 @@ class OrbCommentBubble:
             self._queue_after_id = None
         self._queued_text = None
 
+        theme = self._theme
         display_text = text.strip() or "..."
         bubble_w = min(TRANSCRIPT_BUBBLE_WIDTH, max(220, self._screen_w - 16))
         text_width = min(
@@ -1307,17 +1400,23 @@ class OrbCommentBubble:
             font=self._transcript_font,
             anchor="nw",
             width=text_width,
-            fill=BUBBLE_TEXT_HEX,
+            fill=theme.text,
         )
         bbox = self._canvas.bbox(probe_id)
         self._canvas.delete(probe_id)
         text_h = line_height if bbox is None else max(line_height, bbox[3] - bbox[1])
         visible_lines = _transcript_visible_line_count(text_h, line_height)
         body_h = _transcript_body_height(visible_lines, line_height)
-        total_h = body_h + BUBBLE_TAIL_H
+        tail_h = BUBBLE_TAIL_H if theme.tail else 0
+        total_h = body_h + tail_h
 
         mascot_center_x = self._orb_x + self._orb_w // 2
-        bubble_x = mascot_center_x - bubble_w + 30
+        # With a tail the bubble hangs off to one side so the pointer can aim at
+        # the mascot's head; without one there is nothing to aim, and anything
+        # but centred reads as a misplaced window.
+        bubble_x = (
+            mascot_center_x - bubble_w + 30 if theme.tail else mascot_center_x - bubble_w // 2
+        )
         bubble_x = max(8, min(bubble_x, self._screen_w - bubble_w - 8))
         bubble_y = max(8, self._orb_y - total_h - BUBBLE_GAP_FROM_ORB)
 
@@ -1339,35 +1438,36 @@ class OrbCommentBubble:
             1,
             bubble_w - 1,
             body_h - 1,
-            BUBBLE_CORNER_RADIUS,
-            fill=BUBBLE_BG_HEX,
-            outline=BUBBLE_BORDER_HEX,
-            width=BUBBLE_BORDER_WIDTH,
+            theme.corner_radius,
+            fill=theme.bg,
+            outline=theme.border,
+            width=theme.border_width,
         )
 
-        tail_base_y = body_h - 1
-        tail_points = [
-            tail_tip_x - tail_half,
-            tail_base_y,
-            tail_tip_x + tail_half,
-            tail_base_y,
-            tail_tip_x,
-            tail_base_y + BUBBLE_TAIL_H,
-        ]
-        self._canvas.create_polygon(
-            tail_points,
-            fill=BUBBLE_BG_HEX,
-            outline=BUBBLE_BORDER_HEX,
-            width=BUBBLE_BORDER_WIDTH,
-        )
-        self._canvas.create_line(
-            tail_tip_x - tail_half + 1,
-            tail_base_y,
-            tail_tip_x + tail_half - 1,
-            tail_base_y,
-            fill=BUBBLE_BG_HEX,
-            width=BUBBLE_BORDER_WIDTH + 1,
-        )
+        if theme.tail:
+            tail_base_y = body_h - 1
+            tail_points = [
+                tail_tip_x - tail_half,
+                tail_base_y,
+                tail_tip_x + tail_half,
+                tail_base_y,
+                tail_tip_x,
+                tail_base_y + BUBBLE_TAIL_H,
+            ]
+            self._canvas.create_polygon(
+                tail_points,
+                fill=theme.bg,
+                outline=theme.border,
+                width=theme.border_width,
+            )
+            self._canvas.create_line(
+                tail_tip_x - tail_half + 1,
+                tail_base_y,
+                tail_tip_x + tail_half - 1,
+                tail_base_y,
+                fill=theme.bg,
+                width=theme.border_width + 1,
+            )
 
         self._canvas.create_text(
             BUBBLE_PADDING_X,
@@ -1376,7 +1476,7 @@ class OrbCommentBubble:
             font=self._transcript_font,
             anchor="sw",
             width=text_width,
-            fill=BUBBLE_TEXT_HEX,
+            fill=theme.text,
         )
 
         self._top.deiconify()
@@ -1466,6 +1566,301 @@ class OrbCommentBubble:
         return self._canvas.create_polygon(points, smooth=True, **kwargs)
 
 
+class OrbControlRow:
+    """The four round controls under the voice orb — see :mod:`ui.orb.controls`.
+
+    Its own frameless, always-on-top Toplevel rather than extra pixels on the
+    orb's window, for three reasons that all point the same way: the orb window
+    is exactly the sphere (a taller window would put an invisible click-eating
+    rectangle over whatever is underneath), the row has to appear and disappear
+    on its own schedule, and the orb's frame loop must not repaint four static
+    discs sixty times a second.
+
+    Visibility is deliberately conditional (maintainer decision 2026-08-06): at
+    rest the desktop shows a sphere and nothing else. The row arrives when the
+    pointer does, or when a conversation is running — the two moments where a
+    control is something the user is reaching for rather than clutter they did
+    not ask for.
+    """
+
+    #: Grace period between losing the pointer and hiding, in ms. The row is a
+    #: separate window a few pixels below the orb, so travelling from one to
+    #: the other means genuinely leaving both — without this the row would
+    #: vanish under the pointer on its way to being clicked.
+    HOVER_GRACE_MS = 260
+
+    #: After a hang-up, ignore clicks for this long. Same guard as the Jarvis
+    #: Bar's close-X: the optimistic state flip must not let a second click
+    #: land as "start a new session" (the request_hangup storm, 2026-06-19).
+    CLICK_GUARD_S = 0.6
+
+    def __init__(self, parent: tk.Tk, orb_x: int, orb_y: int, orb_w: int, orb_h: int) -> None:
+        self._parent = parent
+        self._orb_x = orb_x
+        self._orb_y = orb_y
+        self._orb_w = orb_w
+        self._orb_h = orb_h
+        self._top: tk.Toplevel | None = None
+        self._canvas: tk.Canvas | None = None
+        self._photo: ImageTk.PhotoImage | None = None
+        self._image_id: int | None = None
+        self._state = orb_controls.ControlState()
+        self._visible = False
+        self._pointer_inside = False
+        self._hide_after_id: str | None = None
+        self._pressed_action: str | None = None
+        self._click_block_until = 0.0
+        self._on_action: Callable[[str], None] | None = None
+        self._width, self._height = orb_controls.row_size()
+        self._build()
+
+    # -- wiring ---------------------------------------------------------
+
+    def set_on_action(self, callback: Callable[[str], None] | None) -> None:
+        """Route a resolved button press ("attach"/"mic"/"close"/"speaker")."""
+        self._on_action = callback
+
+    def _build(self) -> None:
+        top = tk.Toplevel(self._parent)
+        top.overrideredirect(True)
+        top.wm_attributes("-topmost", True)
+        self._mac_transparent = False
+        if sys.platform == "darwin":
+            try:
+                top.wm_attributes("-transparent", True)
+                top.configure(bg="systemTransparent")
+                self._mac_transparent = True
+            except tk.TclError:
+                logging.getLogger("jarvis.orb").warning(
+                    "macOS -transparent unsupported — the orb controls render opaque"
+                )
+                top.configure(bg=COLOR_KEY_HEX)
+        else:
+            top.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
+            top.configure(bg=COLOR_KEY_HEX)
+        _hide_tk_window_from_task_switcher(top)
+        top.withdraw()
+
+        canvas = tk.Canvas(
+            top,
+            width=self._width,
+            height=self._height,
+            bg="systemTransparent" if self._mac_transparent else COLOR_KEY_HEX,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        canvas.pack(fill="both", expand=True)
+        if self._mac_transparent:
+            top.update_idletasks()
+            apply_macos_clear_backing()
+
+        canvas.bind("<Motion>", self._on_motion)
+        canvas.bind("<Enter>", self._on_enter)
+        canvas.bind("<Leave>", self._on_leave)
+        canvas.bind("<ButtonPress-1>", self._on_press)
+        canvas.bind("<ButtonRelease-1>", self._on_release)
+
+        self._top = top
+        self._canvas = canvas
+        self._repaint()
+
+    # -- geometry -------------------------------------------------------
+
+    def update_anchor(self, orb_x: int, orb_y: int) -> None:
+        """Follow the orb after a drag / monitor change."""
+        self._orb_x = orb_x
+        self._orb_y = orb_y
+        if self._visible:
+            self._place()
+
+    def _place(self) -> None:
+        if self._top is None:
+            return
+        x = self._orb_x + self._orb_w // 2 - self._width // 2
+        y = self._orb_y + self._orb_h + orb_controls.ROW_GAP_FROM_ORB
+        try:
+            self._top.geometry(f"{self._width}x{self._height}+{x}+{y}")
+        except tk.TclError:
+            pass
+
+    # -- state ----------------------------------------------------------
+
+    def set_state(
+        self,
+        *,
+        active: bool | None = None,
+        speaker_muted: bool | None = None,
+        can_attach: bool | None = None,
+    ) -> None:
+        """Update what the discs say, repainting only on a real change."""
+        state = orb_controls.ControlState(
+            active=self._state.active if active is None else bool(active),
+            speaker_muted=(
+                self._state.speaker_muted if speaker_muted is None else bool(speaker_muted)
+            ),
+            hovered=self._state.hovered,
+            can_attach=self._state.can_attach if can_attach is None else bool(can_attach),
+        )
+        if state == self._state:
+            return
+        self._state = state
+        self._repaint()
+
+    def _repaint(self) -> None:
+        if self._canvas is None:
+            return
+        try:
+            frame = orb_controls.render_row(self._state, color_key=tuple(COLOR_KEY_RGB.tolist()))
+            image = key_to_alpha(frame) if self._mac_transparent else frame
+            self._photo = ImageTk.PhotoImage(image, master=self._canvas)
+            if self._image_id is None:
+                self._image_id = self._canvas.create_image(0, 0, anchor="nw", image=self._photo)
+            else:
+                self._canvas.itemconfigure(self._image_id, image=self._photo)
+        except tk.TclError:
+            pass
+
+    # -- visibility -----------------------------------------------------
+
+    def show(self) -> None:
+        if self._top is None or self._visible:
+            return
+        self._cancel_pending_hide()
+        self._place()
+        try:
+            self._top.deiconify()
+            if self._mac_transparent:
+                apply_macos_clear_backing()
+            self._top.lift()
+        except tk.TclError:
+            return
+        self._visible = True
+
+    def hide(self) -> None:
+        self._cancel_pending_hide()
+        self._pointer_inside = False
+        if self._state.hovered is not None:
+            self._state = orb_controls.ControlState(
+                active=self._state.active,
+                speaker_muted=self._state.speaker_muted,
+                hovered=None,
+                can_attach=self._state.can_attach,
+            )
+            self._repaint()
+        if self._top is None or not self._visible:
+            return
+        try:
+            self._top.withdraw()
+        except tk.TclError:
+            pass
+        self._visible = False
+
+    def hide_after_grace(self) -> None:
+        """Hide unless the pointer comes back within :attr:`HOVER_GRACE_MS`."""
+        if self._top is None or not self._visible:
+            return
+        self._cancel_pending_hide()
+        try:
+            self._hide_after_id = self._top.after(self.HOVER_GRACE_MS, self._grace_elapsed)
+        except tk.TclError:
+            self.hide()
+
+    def _grace_elapsed(self) -> None:
+        self._hide_after_id = None
+        if self._pointer_inside:
+            return
+        self.hide()
+
+    def _cancel_pending_hide(self) -> None:
+        if self._hide_after_id is None or self._top is None:
+            self._hide_after_id = None
+            return
+        try:
+            self._top.after_cancel(self._hide_after_id)
+        except tk.TclError:
+            pass
+        self._hide_after_id = None
+
+    @property
+    def pointer_inside(self) -> bool:
+        return self._pointer_inside
+
+    @property
+    def visible(self) -> bool:
+        return self._visible
+
+    def destroy(self) -> None:
+        self._cancel_pending_hide()
+        top = self._top
+        self._top = None
+        self._canvas = None
+        self._photo = None
+        if top is None:
+            return
+        try:
+            top.destroy()
+        except tk.TclError:
+            pass
+
+    # -- pointer --------------------------------------------------------
+
+    def _on_enter(self, event: tk.Event) -> None:
+        self._pointer_inside = True
+        self._cancel_pending_hide()
+        self._on_motion(event)
+
+    def _on_leave(self, _event: tk.Event) -> None:
+        self._pointer_inside = False
+        self._set_hovered(None)
+        self.hide_after_grace()
+
+    def _on_motion(self, event: tk.Event) -> None:
+        self._set_hovered(orb_controls.hit_test(event.x, event.y))
+
+    def _set_hovered(self, action: str | None) -> None:
+        if action == self._state.hovered:
+            return
+        self._state = orb_controls.ControlState(
+            active=self._state.active,
+            speaker_muted=self._state.speaker_muted,
+            hovered=action,
+            can_attach=self._state.can_attach,
+        )
+        self._repaint()
+        if self._canvas is not None:
+            try:
+                self._canvas.configure(cursor="hand2" if action else "")
+            except tk.TclError:
+                pass
+
+    def _on_press(self, event: tk.Event) -> None:
+        self._pressed_action = orb_controls.hit_test(event.x, event.y)
+
+    def _on_release(self, event: tk.Event) -> None:
+        pressed = self._pressed_action
+        self._pressed_action = None
+        if pressed is None:
+            return
+        # Press and release must agree: a pointer that slid off the disc did
+        # not click it, and every action here is one the user would rather not
+        # trigger by accident.
+        if orb_controls.hit_test(event.x, event.y) != pressed:
+            return
+        if time.monotonic() < self._click_block_until:
+            return
+        if pressed in ("mic", "close") and self._state.active:
+            self._click_block_until = time.monotonic() + self.CLICK_GUARD_S
+        callback = self._on_action
+        if callback is None:
+            return
+        try:
+            callback(pressed)
+        except Exception:  # noqa: BLE001 — a bad action must not kill the Tk loop
+            logging.getLogger("jarvis.orb").debug(
+                "orb control action %r failed", pressed, exc_info=True
+            )
+
+
 class OrbOverlay:
     """Public facade — Tkinter-based, thread-safe via root.after(0, ...).
 
@@ -1513,6 +1908,20 @@ class OrbOverlay:
         # injects a callable that publishes ``ShowWindowRequested``; the orb
         # itself stays bus-agnostic (same contract as the mute toggle).
         self._on_show_window: Callable[[], None] | None = None
+        # The control row's actions. Each is optional: wired, the callback
+        # decides (the macOS host forwards it to the parent process, which is
+        # the only place a SpeechPipeline exists); unwired, the row falls back
+        # to the live pipeline in THIS process — the same two-step the Jarvis
+        # Bar uses for its own talk / hang-up buttons.
+        self._on_talk: Callable[[], None] | None = None
+        self._on_hangup: Callable[[], None] | None = None
+        self._on_speaker_toggle: Callable[[], None] | None = None
+        #: The four round controls under the sphere. Only the voice orb wears
+        #: them — the mascot has its own arms and expressions, and a row of
+        #: discs under the ghost would read as a toolbar bolted to a cartoon.
+        self._controls: OrbControlRow | None = None
+        self._pointer_over_orb = False
+        self._speaker_muted = False
         # Counter + Tk timer-id for the two-double-click gesture. The
         # earlier single-double-click implementation muted Jarvis as soon
         # as the user clicked twice on the popup logo, which fired
@@ -1736,6 +2145,10 @@ class OrbOverlay:
         self._canvas.bind("<Double-Button-1>", self._on_mute_double_click)
         self._canvas.bind("<Button-3>", self._on_right_click)
         self._canvas.bind("<Button-2>", self._on_reset_double_click)
+        # Pointer presence drives the control row (see OrbControlRow): reaching
+        # for the orb is the moment its controls become useful.
+        self._canvas.bind("<Enter>", self._on_orb_pointer_enter)
+        self._canvas.bind("<Leave>", self._on_orb_pointer_leave)
 
         # Drag-drop onto the mascot (desktop extra, cross-platform via tkdnd).
         # Pure addition, fully guarded: a no-op when tkinterdnd2 is absent
@@ -1758,7 +2171,9 @@ class OrbOverlay:
             orb_y=anchor.y,
             orb_w=WIN_W,
             screen_w=screen_w,
+            theme=bubble_theme_for_style(self._style),
         )
+        self._ensure_controls()
 
         self._renderer = self._build_renderer(self._style)
         self._t0 = time.perf_counter()
@@ -1839,6 +2254,8 @@ class OrbOverlay:
                     self._root.geometry(f"{WIN_W}x{WIN_H}+{clamped_x}+{clamped_y}")
                     if self._comment_bubble is not None:
                         self._comment_bubble.update_anchor(clamped_x, clamped_y, screen_w)
+                    if self._controls is not None:
+                        self._controls.update_anchor(clamped_x, clamped_y)
                     try:
                         save_position_to_toml(
                             JARVIS_TOML_PATH,
@@ -1858,6 +2275,8 @@ class OrbOverlay:
                     self._root.geometry(f"{WIN_W}x{WIN_H}+{anchor.x}+{anchor.y}")
                     if self._comment_bubble is not None:
                         self._comment_bubble.update_anchor(anchor.x, anchor.y, screen_w)
+                    if self._controls is not None:
+                        self._controls.update_anchor(anchor.x, anchor.y)
         except (tk.TclError, OSError):
             pass
         if self._root is not None:
@@ -1901,6 +2320,8 @@ class OrbOverlay:
         if self._comment_bubble is not None:
             screen_w = self._root.winfo_screenwidth()
             self._comment_bubble.update_anchor(new_x, new_y, screen_w)
+        if self._controls is not None:
+            self._controls.update_anchor(new_x, new_y)
 
     def _on_drag_release(self, _event: tk.Event) -> None:
         if self._root is not None:
@@ -1925,6 +2346,8 @@ class OrbOverlay:
                 self._root.geometry(f"{WIN_W}x{WIN_H}+{clamped_x}+{clamped_y}")
             except tk.TclError:
                 pass
+        if self._controls is not None:
+            self._controls.update_anchor(self._mascot_x, self._mascot_y)
 
         self._manual_pinned = True
         try:
@@ -1954,6 +2377,212 @@ class OrbOverlay:
         the upper layer is the one that publishes events.
         """
         self._mute_toggle_callback = callback
+
+    # ------------------------------------------------------------------
+    # Control row (voice-orb style only)
+    # ------------------------------------------------------------------
+
+    def _controls_wanted(self) -> bool:
+        """Does this style show the control row at all?"""
+        return self._style == "voice_orb"
+
+    def _ensure_controls(self) -> None:
+        """Create or tear down the row so it matches the current style."""
+        if self._root is None:
+            return
+        if not self._controls_wanted():
+            if self._controls is not None:
+                self._controls.destroy()
+                self._controls = None
+            return
+        if self._controls is not None:
+            return
+        try:
+            row = OrbControlRow(
+                parent=self._root,
+                orb_x=self._mascot_x,
+                orb_y=self._mascot_y,
+                orb_w=WIN_W,
+                orb_h=WIN_H,
+            )
+        except tk.TclError:
+            logging.getLogger("jarvis.orb").debug("orb control row unavailable", exc_info=True)
+            return
+        row.set_on_action(self._on_control_action)
+        row.set_state(
+            active=self._mode in ("listen", "think", "speak"),
+            speaker_muted=self._speaker_muted,
+        )
+        self._controls = row
+
+    def _on_orb_pointer_enter(self, _event: tk.Event | None = None) -> None:
+        self._pointer_over_orb = True
+        row = self._controls
+        if row is not None:
+            row.show()
+
+    def _on_orb_pointer_leave(self, _event: tk.Event | None = None) -> None:
+        self._pointer_over_orb = False
+        row = self._controls
+        if row is None:
+            return
+        # A live conversation keeps the controls out: hanging up is the one
+        # thing the user reaches for mid-call, and hunting for a row that hides
+        # itself is worse than a row that stays.
+        if self._mode in ("listen", "think", "speak"):
+            return
+        row.hide_after_grace()
+
+    def _sync_controls_visibility(self) -> None:
+        """Reconcile the row with mode + pointer after a state change."""
+        row = self._controls
+        if row is None:
+            return
+        active = self._mode in ("listen", "think", "speak")
+        row.set_state(active=active)
+        # Never on its own: the row is the orb's controls, so a mode change
+        # arriving while the sphere is withdrawn must not float four buttons
+        # over an empty desktop.
+        if not self._orb_is_visible():
+            row.hide()
+            return
+        if active or self._pointer_over_orb or row.pointer_inside:
+            row.show()
+        else:
+            row.hide_after_grace()
+
+    def _reveal_controls(self) -> None:
+        """Post-deiconify pass: refresh the speaker disc, then place the row."""
+        if self._controls is None:
+            return
+        self._refresh_speaker_state()
+        self._sync_controls_visibility()
+
+    def _orb_is_visible(self) -> bool:
+        if self._root is None:
+            return False
+        try:
+            return bool(self._root.winfo_viewable())
+        except tk.TclError:
+            return False
+
+    def _on_control_action(self, action: str) -> None:
+        """Run one control-row button. Always on the Tk thread."""
+        if action == "attach":
+            self._do_attach()
+        elif action == "mic":
+            self._do_talk_or_hangup()
+        elif action == "close":
+            self._do_close()
+        elif action == "speaker":
+            self._do_speaker_toggle()
+
+    def _do_attach(self) -> None:
+        """Pick files and hand them to the conversation (same path as a drop)."""
+        log = logging.getLogger("jarvis.orb")
+        count = orb_controls.pick_and_dispatch_files(
+            self._root, on_error=lambda message: log.warning("orb attach: %s", message)
+        )
+        if count:
+            log.info("orb attach: handed %d file(s) to the conversation", count)
+
+    def _do_talk_or_hangup(self) -> None:
+        """The mic disc: start a conversation, or end the running one."""
+        if self._mode in ("listen", "think", "speak"):
+            self._do_hangup()
+            return
+        callback = self._on_talk
+        if callback is not None:
+            callback()
+            return
+        pipeline = self._speech_pipeline()
+        starter = getattr(pipeline, "request_voice_session", None)
+        if callable(starter):
+            starter()
+
+    def _do_hangup(self) -> None:
+        callback = self._on_hangup
+        if callback is not None:
+            callback()
+        else:
+            pipeline = self._speech_pipeline()
+            hangup = getattr(pipeline, "request_hangup", None)
+            if callable(hangup):
+                hangup()
+        # Local feedback now instead of waiting for microphone teardown plus
+        # the EventBus round-trip; the authoritative state reconciles it.
+        self._set_mode("idle")
+        self._sync_controls_visibility()
+
+    def _do_close(self) -> None:
+        """X: end the conversation and put the orb away, like the in-app X."""
+        if self._mode in ("listen", "think", "speak"):
+            self._do_hangup()
+        row = self._controls
+        if row is not None:
+            row.hide()
+        self._pointer_over_orb = False
+        self._show_until_t = 0.0
+        self._actually_hide()
+
+    def _do_speaker_toggle(self) -> None:
+        """Silence / restore the assistant's voice for this session only."""
+        callback = self._on_speaker_toggle
+        if callback is not None:
+            callback()
+            # The host process cannot see the pipeline, so it cannot report the
+            # resulting state either. Mirror optimistically — the next reveal
+            # re-reads the truth via _refresh_speaker_state.
+            self._speaker_muted = not self._speaker_muted
+        else:
+            result = orb_controls.toggle_speaker_mute()
+            if result is None:
+                logging.getLogger("jarvis.orb").info(
+                    "orb speaker toggle ignored — no live speech pipeline"
+                )
+                return
+            self._speaker_muted = result
+        row = self._controls
+        if row is not None:
+            row.set_state(speaker_muted=self._speaker_muted)
+
+    def _refresh_speaker_state(self) -> None:
+        """Re-read the real TTS mute so the disc cannot drift out of sync."""
+        if self._on_speaker_toggle is not None:
+            return  # hosted: this process has no pipeline to ask
+        muted = orb_controls.speaker_is_muted()
+        if muted == self._speaker_muted:
+            return
+        self._speaker_muted = muted
+        row = self._controls
+        if row is not None:
+            row.set_state(speaker_muted=muted)
+
+    @staticmethod
+    def _speech_pipeline():
+        """The live pipeline, or ``None`` off the desktop process."""
+        try:
+            from jarvis.core.runtime_refs import get_speech_pipeline
+        except Exception:  # noqa: BLE001 — importable in practice; never fatal
+            return None
+        return get_speech_pipeline()
+
+    def set_on_talk(self, callback: Callable[[], None] | None) -> None:
+        """Inject "start a voice session" (the mic disc while idle).
+
+        Wired by ``jarvis.ui.jarvisbar.host`` when the orb runs in the macOS
+        companion process, where no SpeechPipeline exists; the parent applies
+        it. In-process the orb calls the pipeline itself.
+        """
+        self._on_talk = callback
+
+    def set_on_hangup(self, callback: Callable[[], None] | None) -> None:
+        """Inject "end the running session" (the mic disc while active, and X)."""
+        self._on_hangup = callback
+
+    def set_on_speaker_toggle(self, callback: Callable[[], None] | None) -> None:
+        """Inject the assistant-voice mute toggle (the speaker disc)."""
+        self._on_speaker_toggle = callback
 
     def set_on_show_window(self, callback: Callable[[], None] | None) -> None:
         """Inject the right-click → raise-main-window action.
@@ -2091,6 +2720,8 @@ class OrbOverlay:
             return
         if self._comment_bubble is not None:
             self._comment_bubble.update_anchor(anchor.x, anchor.y, screen_w)
+        if self._controls is not None:
+            self._controls.update_anchor(anchor.x, anchor.y)
 
     def _monitor_at_orb_center(self, screens: list) -> tuple[tuple[int, int, int, int], str]:
         """Return (geometry, device_name) of the monitor containing the orb center."""
@@ -2151,6 +2782,12 @@ class OrbOverlay:
                 # We must NOT block the deiconify path — publish is fire-
                 # and-forget; failures are swallowed by the publisher.
                 self._root.after(50, self._publish_visibility_feedback, mode)
+                # Same 50 ms reason: the row asks whether the orb is mapped,
+                # and right after deiconify Tk still says it is not. The
+                # speaker disc re-reads the real TTS mute here too, so a mute
+                # set elsewhere (settings slider, voice command) is reflected
+                # rather than remembered wrong.
+                self._root.after(50, self._reveal_controls)
             now = time.perf_counter() - self._t0
             self._show_until_t = max(self._show_until_t, now + self.SHOW_MIN_DURATION_S)
 
@@ -2253,6 +2890,13 @@ class OrbOverlay:
 
     def _actually_hide(self) -> None:
         self._pending_hide_after_id = None
+        # The controls belong to the orb, not to the desktop: a row of buttons
+        # left floating where the sphere used to be is a widget with nothing
+        # behind it.
+        row = self._controls
+        if row is not None:
+            row.hide()
+        self._pointer_over_orb = False
         if self._root is not None:
             try:
                 self._root.withdraw()
@@ -2281,6 +2925,15 @@ class OrbOverlay:
                     bubble.hide()
             except Exception:  # noqa: BLE001
                 pass
+            try:
+                row = self._controls
+                self._controls = None
+                if row is not None:
+                    row.destroy()
+            except Exception:  # noqa: BLE001 — teardown must reach root.destroy
+                logging.getLogger("jarvis.orb").debug(
+                    "orb control row teardown failed", exc_info=True
+                )
             try:
                 root.destroy()
             except Exception:  # noqa: BLE001
@@ -2445,6 +3098,13 @@ class OrbOverlay:
             return  # The fallback case was already logged in _build_renderer
         self._renderer = new_renderer
         self._style = style
+        # The bubble's look and the control row both belong to the style, so a
+        # live swap has to carry them across or the new sphere inherits the
+        # ghost's yellow bubble (and vice versa).
+        if self._comment_bubble is not None:
+            self._comment_bubble.set_theme(bubble_theme_for_style(style))
+        self._ensure_controls()
+        self._sync_controls_visibility()
 
     def _build_renderer(self, style: str) -> MascotRenderer | VoiceOrbRenderer | None:
         if style == "voice_orb":
@@ -2493,7 +3153,10 @@ class OrbOverlay:
         validated it; this stays a guard for the internal call sites."""
         if mode not in MODES:
             raise ValueError(f"Unknown mode: {mode!r} (allowed: {', '.join(MODES)})")
+        changed = mode != self._mode
         self._mode = mode
+        if changed:
+            self._sync_controls_visibility()
 
     def _enqueue_ui(self, fn) -> None:
         """Queue UI work for the Tk thread.
