@@ -267,6 +267,78 @@ async def test_jitter_buffer_wait_is_bounded_by_its_timeout() -> None:
     await playback.finish_turn()
 
 
+@pytest.mark.asyncio
+async def test_quick_resume_after_a_boundary_skips_the_jitter_buffer() -> None:
+    """ChatGPT-Live announces no terminal item (probe-confirmed 2026-08-06),
+    so any generation pause beyond the 1.2 s quiescence backstop closes the
+    stream MID-ANSWER. Reopening within the resume grace must not rebuild the
+    reserve — that rebuilt reserve WAS the audible seam."""
+    player = FakePlayer()
+    playback = DesktopRealtimePlayback(
+        player, prebuffer_ms=5_000, prebuffer_timeout_ms=10_000
+    )
+
+    await playback.send_binary(b"\x01\x00" * 8)
+    await playback.finish_turn()  # a natural boundary stamps the resume clock
+
+    await playback.send_binary(b"\x02\x00" * 8)  # far below the 5 s reserve
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert [chunk.pcm for chunk in player.chunks] == [
+        b"\x01\x00" * 8,
+        b"\x02\x00" * 8,
+    ], "the same-answer resume must play immediately, reserve skipped"
+    await playback.finish_turn()
+
+
+@pytest.mark.asyncio
+async def test_resume_past_the_grace_rebuilds_the_reserve() -> None:
+    player = FakePlayer()
+    playback = DesktopRealtimePlayback(
+        player,
+        prebuffer_ms=5_000,
+        prebuffer_timeout_ms=10_000,
+        resume_without_prebuffer_s=0.0,  # grace disabled = every turn banks
+    )
+
+    await playback.send_binary(b"\x01\x00" * 8)
+    await playback.finish_turn()
+
+    await playback.send_binary(b"\x02\x00" * 8)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert all(chunk.pcm != b"\x02\x00" * 8 for chunk in player.chunks), (
+        "past the grace the reserve applies again"
+    )
+    await playback.finish_turn()  # the sentinel releases the banked chunk
+    assert player.chunks[-1].pcm == b"\x02\x00" * 8
+
+
+@pytest.mark.asyncio
+async def test_barge_in_cancel_does_not_arm_the_resume_grace() -> None:
+    """After a barge-in the next reply is a genuinely NEW answer: it deserves
+    its jitter reserve, so cancel() must not stamp the resume clock."""
+    player = FakePlayer()
+    playback = DesktopRealtimePlayback(
+        player, prebuffer_ms=5_000, prebuffer_timeout_ms=10_000
+    )
+
+    await playback.send_binary(b"\x01\x00" * 8)
+    await playback.cancel()
+
+    await playback.send_binary(b"\x02\x00" * 8)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert all(chunk.pcm != b"\x02\x00" * 8 for chunk in player.chunks), (
+        "a post-barge-in reply rebuilds its reserve"
+    )
+    await playback.finish_turn()
+
+
 def test_energy_pre_gate_skips_onnx_for_quiet_frames() -> None:
     # BUG-062: quiet frames (silence / hiss / moderate speaker echo) must
     # never reach the Silero model — that is both the loop-load fix (stutter

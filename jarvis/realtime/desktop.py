@@ -463,6 +463,16 @@ class DesktopRealtimePlayback:
     ``DEFAULT_PREBUFFER_MS``).
     """
 
+    #: Reopening within this window after a natural turn boundary skips the
+    #: jitter prebuffer. ChatGPT-Live announces no terminal response item
+    #: (probe-confirmed 2026-08-06: the notification vocabulary is
+    #: sdp/started/transcript only), so every generation pause longer than the
+    #: adapter's 1.2 s quiescence backstop ends the turn locally - and the
+    #: next delta used to reopen with a fresh 180 ms reserve, which made every
+    #: such pause an audible seam MID-REPLY. Matches the adapter's
+    #: continuation grace (same "still the same answer" semantic).
+    RESUME_WITHOUT_PREBUFFER_S = 4.0
+
     def __init__(
         self,
         player: Any,
@@ -472,6 +482,7 @@ class DesktopRealtimePlayback:
         finish_timeout_s: float = 120.0,
         prebuffer_ms: int = DEFAULT_PREBUFFER_MS,
         prebuffer_timeout_ms: int = DEFAULT_PREBUFFER_TIMEOUT_MS,
+        resume_without_prebuffer_s: float = RESUME_WITHOUT_PREBUFFER_S,
     ) -> None:
         self._player = player
         self._sample_rate = int(sample_rate)
@@ -479,17 +490,42 @@ class DesktopRealtimePlayback:
         self._finish_timeout_s = max(1.0, float(finish_timeout_s))
         self._prebuffer_s = max(0.0, float(prebuffer_ms) / 1000.0)
         self._prebuffer_timeout_s = max(0.0, float(prebuffer_timeout_ms) / 1000.0)
+        self._resume_without_prebuffer_s = max(
+            0.0, float(resume_without_prebuffer_s)
+        )
         self._queue: asyncio.Queue[AudioChunk | None] | None = None
         self._task: asyncio.Task[None] | None = None
         self._closed = False
+        self._last_finish_at = 0.0
 
     async def send_binary(self, pcm: bytes) -> None:
         if not pcm or self._closed:
             return
         if self._task is None or self._task.done():
+            prebuffer_s = self._prebuffer_s
+            since_finish = time.monotonic() - self._last_finish_at
+            # Strict comparison: a grace of 0.0 means "never" even on
+            # Windows' coarse monotonic clock, where since_finish can be
+            # exactly 0.0 right after the boundary.
+            if (
+                self._last_finish_at > 0.0
+                and since_finish < self._resume_without_prebuffer_s
+            ):
+                # Same-answer resume: the boundary we just crossed was the
+                # local silence backstop, not the provider ending its answer.
+                # Nothing is dropped or reordered - the reserve simply is not
+                # rebuilt, so the seam costs ~0 ms instead of 180 ms.
+                prebuffer_s = 0.0
+                log.debug(
+                    "reopened realtime playback %d ms after the last boundary"
+                    " - skipping the jitter prebuffer (same-answer resume)",
+                    int(since_finish * 1000.0),
+                )
             self._queue = asyncio.Queue(maxsize=self._max_queue_chunks)
             self._task = asyncio.create_task(
-                self._player.play_chunks(self._chunks(self._queue)),
+                self._player.play_chunks(
+                    self._chunks(self._queue, prebuffer_s)
+                ),
                 name="realtime-desktop-playback",
             )
             # A terminal surface cancellation can race a provider callback
@@ -550,6 +586,10 @@ class DesktopRealtimePlayback:
             if self._task is task:
                 self._queue = None
                 self._task = None
+                # Natural boundary only: a barge-in cancel() deliberately does
+                # NOT stamp this, so the next (genuinely new) reply rebuilds
+                # its jitter reserve.
+                self._last_finish_at = time.monotonic()
 
     async def cancel(self) -> None:
         queue, task = self._detach()
@@ -610,6 +650,7 @@ class DesktopRealtimePlayback:
     async def _chunks(
         self,
         queue: asyncio.Queue[AudioChunk | None],
+        prebuffer_s: float | None = None,
     ) -> AsyncIterator[AudioChunk]:
         """Yield the turn's audio, opening with the jitter buffer.
 
@@ -617,11 +658,15 @@ class DesktopRealtimePlayback:
         arrival order, the reserve simply starts playback that much later so a
         provider pause has something to eat. The wait is bounded twice over —
         by ``prebuffer_timeout_ms`` and by the end-of-turn sentinel — so a reply
-        shorter than the reserve still plays immediately.
+        shorter than the reserve still plays immediately. ``prebuffer_s``
+        overrides the configured reserve for THIS task (0.0 on a same-answer
+        resume).
         """
         banked: list[AudioChunk] = []
         ended = False
-        target_bytes = int(self._sample_rate * 2 * self._prebuffer_s)
+        if prebuffer_s is None:
+            prebuffer_s = self._prebuffer_s
+        target_bytes = int(self._sample_rate * 2 * prebuffer_s)
         if target_bytes > 0:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + self._prebuffer_timeout_s

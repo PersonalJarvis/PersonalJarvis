@@ -22,8 +22,6 @@ Fix:
 """
 from __future__ import annotations
 
-import pytest
-
 from jarvis.audio.player import AudioPlayer
 
 
@@ -40,6 +38,7 @@ def _make_player(device: int | str | None = None) -> AudioPlayer:
     p._active_source_rate = None
     p._active_device_rate = None
     p._device_rate_cache = {}
+    p._device_rate_failed = set()
     return p
 
 
@@ -97,11 +96,12 @@ def test_invalidate_device_cache_drops_active_stream_and_cache() -> None:
     """invalidate_device_cache() must:
     - close the active stream (if any),
     - reset _active_source_rate / _active_device_rate,
-    - empty _device_rate_cache.
+    - empty _device_rate_cache (and its negative sibling).
     """
     p = _make_player(device=3)
     p._device_rate_cache[(3, 24000)] = 48000
     p._device_rate_cache[(7, 22050)] = 44100
+    p._device_rate_failed.add((3, 22050))
 
     close_calls: list = []
 
@@ -120,9 +120,93 @@ def test_invalidate_device_cache_drops_active_stream_and_cache() -> None:
     assert p._active_source_rate is None
     assert p._active_device_rate is None
     assert p._device_rate_cache == {}
+    assert p._device_rate_failed == set(), (
+        "a swapped device invalidates remembered refusals too"
+    )
     assert close_calls == ["stop", "close"], (
         f"expected _close_output_stream to call stop+close; got {close_calls}"
     )
+
+
+def test_a_remembered_refusal_is_skipped_on_the_next_walk(monkeypatch) -> None:
+    """Live 2026-08-06: realtime playback retried 24000 first on every fresh
+    cascade walk and PortAudio refused it with -9997 each time — one warning
+    per walk and the open-latency of a doomed attempt. A remembered refusal
+    is skipped outright."""
+    import jarvis.audio.player as player_mod
+
+    open_log: list[tuple] = []
+
+    class FakeStream:
+        latency = 0.2
+
+        def start(self):
+            pass
+
+    def fake_outputstream(*, samplerate, device, **kw):
+        open_log.append((device, samplerate))
+        if samplerate == 48000:
+            return FakeStream()
+        raise player_mod.sd.PortAudioError(
+            f"Error opening OutputStream: Invalid sample rate "
+            f"[PaErrorCode -9997] (device={device}, rate={samplerate})"
+        )
+
+    monkeypatch.setattr(player_mod.sd, "OutputStream", fake_outputstream)
+    monkeypatch.setattr(
+        player_mod.sd, "query_devices", lambda d: {"default_samplerate": 48000}
+    )
+
+    # First walk records the refusal (source-first order is deliberate).
+    p = _make_player(device=3)
+    _, rate = p._open_output_stream(24000)
+    assert rate == 48000
+    assert open_log[0] == (3, 24000)
+    assert (3, 24000) in p._device_rate_failed
+
+    # A later walk that misses the positive cache must skip the refused rate.
+    p._device_rate_cache.clear()
+    open_log.clear()
+    _, rate2 = p._open_output_stream(24000)
+    assert rate2 == 48000
+    assert open_log == [(3, 48000)], "the refused 24000 was never retried"
+
+
+def test_all_rates_refused_before_still_walks_everything(monkeypatch) -> None:
+    """The filter must never starve the cascade: a device whose remembered
+    refusals cover every candidate gets the full walk again (hot-swap edge —
+    the same index can come back as a different physical device)."""
+    import jarvis.audio.player as player_mod
+
+    open_log: list[tuple] = []
+
+    class FakeStream:
+        latency = 0.2
+
+        def start(self):
+            pass
+
+    def fake_outputstream(*, samplerate, device, **kw):
+        open_log.append((device, samplerate))
+        if samplerate == 48000:
+            return FakeStream()
+        raise player_mod.sd.PortAudioError(
+            f"[PaErrorCode -9997] (device={device}, rate={samplerate})"
+        )
+
+    monkeypatch.setattr(player_mod.sd, "OutputStream", fake_outputstream)
+    monkeypatch.setattr(
+        player_mod.sd, "query_devices", lambda d: {"default_samplerate": 44100}
+    )
+
+    p = _make_player(device=3)
+    p._device_rate_failed = {
+        (3, rate) for rate in (24000, 48000, 44100)
+    }
+
+    _, rate = p._open_output_stream(24000)
+    assert rate == 48000
+    assert open_log, "an all-refused device still deserves the full cascade"
 
 
 def test_set_device_to_same_device_is_noop() -> None:

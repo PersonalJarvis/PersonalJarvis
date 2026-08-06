@@ -67,12 +67,17 @@ _TURN_INTERRUPT_TIMEOUT_S = 1.5
 # that the quiescence backstop is not held open forever by a track that keeps
 # sending silence between turns. Energy only, never transcript content (AP-27).
 _OUTPUT_AUDIBLE_PEAK = 200
-# The v3 item vocabulary is OpenAI-Realtime family — the two items already
-# handled here (``input_audio_buffer.speech_started``, ``response.cancelled``)
-# are its members, and that family ends a response with ``response.done``; the
-# repo's own OpenAI adapter maps it exactly that way. The precise v3 spelling is
-# not yet confirmed live, so both plausible names are accepted AND the
-# quiescence backstop still terminates every turn if neither ever arrives.
+# CONFIRMED LIVE (notification-dump probe, 2026-08-06,
+# scripts/codex_live_probe.py --dump): ChatGPT-Live v3 announces NO items at
+# all — the complete notification vocabulary observed on a real answered call
+# was ``thread/realtime/{started,sdp,transcript/delta,transcript/done}``. No
+# ``response.*``, no ``input_audio_buffer.*``; responses exist only as audio
+# and transcripts. The quiescence backstop is therefore not a fallback but
+# THE turn boundary of this transport, and the playback path treats
+# backstop-derived boundaries as first-class (prebuffer-free resume,
+# sequenced back-to-back responses). This frozenset stays as dead-cheap
+# future-proofing: should the server ever start announcing a terminal item,
+# it is consumed correctly on arrival.
 _TERMINAL_RESPONSE_ITEMS = frozenset({"response.done", "response.completed"})
 _RESPONSE_OPENED_ITEMS = frozenset({"response.created", "response.in_progress"})
 # Bound on the one-line-per-type unknown-item log, so a chatty protocol cannot
@@ -714,6 +719,15 @@ class _CodexSubscriptionRealtimeSession:
         completion_task: asyncio.Task[None] | None = None
         completion_generation = 0
         completion_emitted = False
+        # Armed by ``_begin_response`` when a NEW response opens over a
+        # previous one whose audio played but never got a boundary (closed
+        # silently by an invented caption or a stale-refusal cleanup). Without
+        # this the two responses splice RAW into one playback stream - the
+        # 15/140 ms seams measured live 2026-08-06. The receive loop drains it
+        # into a local turn boundary BEFORE the new response's audio flows;
+        # the playback side then resumes prebuffer-free, so the sequenced
+        # boundary costs ~0 ms.
+        sequence_boundary_pending = False
         stream_ended = False
         local_transcript_failed = False
         user_final_emitted = False
@@ -934,6 +948,7 @@ class _CodexSubscriptionRealtimeSession:
             nonlocal entitled_generation, entitlement_spent
             nonlocal interrupt_grace_until, refusal_run, refusal_run_started_at
             nonlocal refusal_storm_noted, self_dialogue_detected
+            nonlocal sequence_boundary_pending
             if response_open:
                 if response_allowed or not _rejected_response_is_stale():
                     return response_allowed
@@ -947,20 +962,29 @@ class _CodexSubscriptionRealtimeSession:
             if last_output_activity > 0.0:
                 splice_gap_ms = (response_opened_at - last_output_activity) * 1000.0
                 if splice_gap_ms < 1_500.0:
-                    # Two responses splice into ONE playback stream here with
-                    # no marker the session could sequence on. A user-reported
-                    # ~2 s garble (2026-08-05 20:12) has exactly this shape as
-                    # its one plausible client-side mechanism; this line
-                    # timestamps the seam so the next incident is attributable
-                    # to the seam or to the server's own audio.
+                    # Two responses would splice into ONE playback stream here
+                    # with no marker between them. A user-reported ~2 s garble
+                    # (2026-08-05 20:12) has exactly this shape; seams of 15
+                    # and 140 ms were then measured live 2026-08-06. When the
+                    # previous response's audio PLAYED and never got a
+                    # boundary, arm the sequencing drain: the receive loop
+                    # emits a local turn boundary before this response's audio
+                    # flows, converting the raw splice into a clean seam the
+                    # prebuffer-free playback resume makes inaudible.
                     self._diag["response_splices"] += 1
+                    if not completion_emitted:
+                        sequence_boundary_pending = True
                     log.info(
                         "Codex subscription realtime opened a new response "
                         "%d ms after the previous response's audio "
-                        "(source=%s) — back-to-back responses splice in one "
-                        "playback stream",
+                        "(source=%s)%s",
                         int(splice_gap_ms),
                         source,
+                        (
+                            " — sequencing a local turn boundary between them"
+                            if not completion_emitted
+                            else " — previous response already closed cleanly"
+                        ),
                     )
             response_rejected_at = 0.0
             active_response_generation = 0
@@ -1096,6 +1120,40 @@ class _CodexSubscriptionRealtimeSession:
         def _finish_response() -> None:
             """Local turn boundary: closes the response, keeps the entitlement."""
             _close_response(spent=False)
+
+        async def _drain_sequence_boundary() -> list[_ProviderEvent]:
+            """Events that close a spliced-over response behind a boundary.
+
+            Runs right after ``_begin_response`` armed the pending flag for a
+            back-to-back open: recovers whatever the OLD response left (its
+            missing input boundary, its transcript head) and closes it with a
+            ``turn_complete`` BEFORE the new response's audio flows. The
+            caller yields these in order; the capture reset makes the new
+            response start clean.
+            """
+            nonlocal sequence_boundary_pending, completion_emitted
+            if not sequence_boundary_pending:
+                return []
+            sequence_boundary_pending = False
+            events: list[_ProviderEvent] = []
+            missing_input = _missing_input_boundary()
+            if missing_input is not None:
+                events.append(missing_input)
+            recovered = await _recover_output_transcript()
+            if recovered is not None:
+                events.append(recovered)
+            self._diag["sequenced_boundaries"] += 1
+            log.info(
+                "Codex subscription realtime sequenced a back-to-back "
+                "response behind a local turn boundary"
+            )
+            events.append(_ProviderEvent(type="turn_complete"))
+            _reset_assistant_capture()
+            self._assistant_delta_text = ""
+            # The boundary belongs to the OLD response; the one just opened
+            # is live, so the completion flag stays clear for it.
+            completion_emitted = False
+            return events
 
         def _note_output_activity() -> None:
             nonlocal last_output_activity
@@ -1502,6 +1560,8 @@ class _CodexSubscriptionRealtimeSession:
                     if audible:
                         if not await _begin_response("media audio"):
                             continue
+                        for boundary_event in await _drain_sequence_boundary():
+                            yield boundary_event
                         # Energy only, never transcript content (AP-27): this
                         # stamp is what tells a pause inside one answer apart
                         # from a quiet stretch between responses.
@@ -1523,6 +1583,8 @@ class _CodexSubscriptionRealtimeSession:
                             continue
                         if not await _begin_response("media prelude"):
                             continue
+                        for boundary_event in await _drain_sequence_boundary():
+                            yield boundary_event
                     elif not response_allowed:
                         continue
                     if (
@@ -1737,6 +1799,8 @@ class _CodexSubscriptionRealtimeSession:
                     elif role == "assistant":
                         if not await _begin_response("assistant transcript"):
                             continue
+                        for boundary_event in await _drain_sequence_boundary():
+                            yield boundary_event
                         # Text arriving proves the same answer is still being
                         # produced, even while its audio pauses.
                         _note_output_activity()
@@ -1867,6 +1931,8 @@ class _CodexSubscriptionRealtimeSession:
                     elif role == "assistant":
                         if not await _begin_response("assistant transcript"):
                             continue
+                        for boundary_event in await _drain_sequence_boundary():
+                            yield boundary_event
                         _note_output_activity()
                         assistant_transcript_seen = True
                         assistant_audio.clear()

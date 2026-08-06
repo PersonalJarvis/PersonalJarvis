@@ -2956,3 +2956,96 @@ async def test_the_language_pin_never_authorizes_a_response() -> None:
         event.text for event in events if event.type == "output_transcript_delta"
     ] == []
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_a_barge_splice_is_sequenced_behind_a_local_boundary() -> None:
+    """Live 2026-08-06 17:39/17:41: a cut answer's replacement opened 15-140 ms
+    after the previous response's audio and spliced RAW into the one playback
+    stream (no boundary between them - the barge closes silently). The
+    adapter now closes the spliced-over response with a local turn boundary
+    BEFORE the new response's text/audio flows, and counts the sequencing so
+    the postmortem can prove it happened.
+    """
+    transcriber = _ScheduledInputTranscriber(
+        [
+            (0.02, InputTranscriptEvent(kind="speech_started")),
+            (
+                0.0,
+                InputTranscriptEvent(kind="transcript", text="Hello", is_final=True),
+            ),
+            # The interrupting user's own follow-up grounds response 2.
+            (0.25, InputTranscriptEvent(kind="speech_started")),
+            (
+                0.0,
+                InputTranscriptEvent(
+                    kind="transcript", text="And again", is_final=True
+                ),
+            ),
+        ]
+    )
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.1,
+                _Notification(
+                    "thread/realtime/transcript/delta",
+                    {
+                        "threadId": "thread-1",
+                        "role": "assistant",
+                        "delta": "First answer",
+                    },
+                ),
+            ),
+            (
+                0.5,
+                _Notification(
+                    "thread/realtime/transcript/delta",
+                    {
+                        "threadId": "thread-1",
+                        "role": "assistant",
+                        "delta": "Second answer",
+                    },
+                ),
+            ),
+        ]
+    )
+    session = await _provider(
+        client, input_transcriber_factory=lambda: transcriber
+    ).open_session(RealtimeSessionConfig())
+
+    events = []
+    async with asyncio.timeout(5.0):
+        async for event in session.receive():
+            events.append(event)
+            text = event.text or ""
+            if event.type == "output_transcript_delta" and "First" in text:
+                # The user talks over the answer: the barge-in cuts response 1
+                # WITHOUT any boundary event of its own.
+                await session.interrupt()
+            if event.type == "output_transcript_delta" and "Second" in text:
+                break
+
+    deltas = [
+        i
+        for i, event in enumerate(events)
+        if event.type == "output_transcript_delta"
+    ]
+    first_idx = next(
+        i
+        for i, event in enumerate(events)
+        if event.type == "output_transcript_delta" and "First" in (event.text or "")
+    )
+    second_idx = next(
+        i
+        for i, event in enumerate(events)
+        if event.type == "output_transcript_delta" and "Second" in (event.text or "")
+    )
+    between = [event.type for event in events[first_idx:second_idx]]
+    assert "turn_complete" in between, (
+        "the spliced-over response must close behind a local boundary before "
+        f"the new one speaks; saw {between} (deltas at {deltas})"
+    )
+    assert session.diagnostics().get("sequenced_boundaries", 0) == 1
+    await session.close()

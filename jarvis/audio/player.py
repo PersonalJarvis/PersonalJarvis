@@ -550,6 +550,12 @@ class AudioPlayer:
         # makes the lookup miss for the new device and walk the cascade
         # fresh.
         self._device_rate_cache: dict[tuple[Any, int], int] = {}
+        # Negative sibling of the cache above: (device, rate) pairs PortAudio
+        # refused with -9997. Without it, every fresh walk retried the same
+        # refused rate first (live 2026-08-06: "@ 24000Hz failed" on every
+        # realtime turn, because the source rate leads the candidate order on
+        # purpose). Cleared together with the positive cache on device swap.
+        self._device_rate_failed: set[tuple[Any, int]] = set()
         # Playback-progress telemetry for the pipeline stall watchdog (Wave-1
         # latency fix). ``last_write_ns`` is bumped after every successful
         # ``stream.write`` sub-block; the watchdog reads it to tell a healthy
@@ -684,6 +690,7 @@ class AudioPlayer:
         if stream is not None:
             self._close_output_stream(stream)
         self._device_rate_cache.clear()
+        self._device_rate_failed.clear()
         # A swapped device also invalidates the played-envelope record: echo
         # correlation against a vanished device's output is meaningless.
         echo_reference.reset()
@@ -926,6 +933,29 @@ class AudioPlayer:
             candidates = [cached_rate]
         else:
             candidates = _candidate_output_rates(source_rate, dev_default)
+            # Skip rates this device already refused with -9997 — but never
+            # filter down to nothing: a device whose refusals covered every
+            # candidate still deserves the full walk (hot-swap edge).
+            known_bad = getattr(self, "_device_rate_failed", set())
+            filtered = [
+                rate
+                for rate in candidates
+                if (self._device, rate) not in known_bad
+            ]
+            if filtered:
+                if len(filtered) != len(candidates):
+                    log.debug(
+                        "output rate cascade skips %d rate(s) this device "
+                        "already refused",
+                        len(candidates) - len(filtered),
+                    )
+                candidates = filtered
+            log.debug(
+                "output rate cache miss (device=%r, source=%d) - walking %s",
+                self._device,
+                source_rate,
+                candidates,
+            )
 
         last_exc: BaseException | None = None
         for target_rate in candidates:
@@ -968,8 +998,14 @@ class AudioPlayer:
                 last_exc = exc
                 if "-9997" not in str(exc) and "Invalid sample rate" not in str(exc):
                     raise
+                # Remember the refusal so no later walk in this player's life
+                # retries it (the per-turn "@ 24000Hz failed" log storm).
+                getattr(self, "_device_rate_failed", set()).add(
+                    (self._device, target_rate)
+                )
                 log.warning(
-                    "OutputStream @ %dHz failed (%s) — trying next rate …",
+                    "OutputStream @ %dHz failed (%s) — trying next rate "
+                    "(this device+rate is now skipped for this session)",
                     target_rate, exc,
                 )
 
