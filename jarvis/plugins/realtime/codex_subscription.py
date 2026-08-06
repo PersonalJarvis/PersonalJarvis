@@ -803,12 +803,20 @@ class _CodexSubscriptionRealtimeSession:
         def _reset_assistant_capture() -> None:
             nonlocal assistant_audio_active, assistant_transcript_seen
             nonlocal first_audible_at, early_recovery_at, early_shadow_done
+            nonlocal shadow_task
             assistant_audio.clear()
             assistant_audio_active = False
             assistant_transcript_seen = False
             first_audible_at = 0.0
             early_recovery_at = 0.0
             early_shadow_done = False
+            # A still-running attempt belongs to the response that just
+            # ended; letting it run would only suppress the NEXT response's
+            # attempt through the single-flight handle until it delivered a
+            # result the anchor check discards anyway.
+            if shadow_task is not None and not shadow_task.done():
+                shadow_task.cancel()
+            shadow_task = None
 
         def _fresh_local_input_exists() -> bool:
             return bool(
@@ -1226,6 +1234,11 @@ class _CodexSubscriptionRealtimeSession:
                     if not self._local_grounding_ok:
                         continue
                     self._local_grounding_ok = False
+                    # No stream, no open utterance — and the shadow recovery
+                    # gate must not stay locked on a state the dead stream
+                    # can never close (one-shot transcribe_audio may still
+                    # work even when the event stream died).
+                    user_utterance_open = False
                     _close_response(spent=False)
                     log.warning(
                         "Local input transcription stream failed; the Codex "
