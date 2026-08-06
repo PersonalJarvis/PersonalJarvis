@@ -112,6 +112,11 @@ _POST_INTERRUPT_GRACE_S = 3.0
 # non-blocking lock makes a busy engine a skip, never a wedge).
 _OUTPUT_EARLY_RECOVERY_AFTER_S = 1.2
 _OUTPUT_EARLY_RECOVERY_RETRY_S = 1.0
+# The shadow attempt transcribes only this much of the response head: the
+# gate needs SOME clean text, not the whole reply, and the recognizer's own
+# time bound scales with the audio handed in — an uncapped, still-growing
+# capture buffer let a retry legally take tens of seconds.
+_SHADOW_RECOVERY_MAX_BYTES = _OUTPUT_RATE * 2 * 4
 # How long a trusted injection's permit may wait for the response it provokes.
 # Generous relative to the far end's latency, and bounded so an injection that
 # was never answered cannot authorize an unrelated response later in the call.
@@ -685,11 +690,21 @@ class _CodexSubscriptionRealtimeSession:
         assistant_audio_active = False
         assistant_transcript_seen = False
         # Early shadow recovery (see _OUTPUT_EARLY_RECOVERY_AFTER_S): when the
-        # response's first audible frame arrived, when recovery last ran, and
-        # whether this response already produced its one shadow delta.
+        # response's first audible frame arrived, when recovery last finished,
+        # and whether this response already produced its one shadow delta.
+        # The recognizer runs as a background task delivering through the
+        # queue — an inline await here blocked the whole receive pump for the
+        # recognizer's own time bound, stalling audio and delaying the user's
+        # speech edge by seconds (independent review R1, measured).
         first_audible_at = 0.0
         early_recovery_at = 0.0
         early_shadow_done = False
+        shadow_task: asyncio.Task[None] | None = None
+        # True between the local endpointer's speech-start and its final (or
+        # failed/discarded) transcript: while the user is mid-utterance the
+        # shared recognizer belongs to the MICROPHONE — a shadow attempt that
+        # steals it turns the user's turn into a lost transcript (review R2).
+        user_utterance_open = False
         # ChatGPT-Live's server VAD can start a response to silence or to its
         # own speaker echo.  Local input is the authority for whether a NEW
         # automatic response has a user behind it.  A generation is consumed
@@ -1033,7 +1048,7 @@ class _CodexSubscriptionRealtimeSession:
                 is_final=True,
             )
 
-        async def _recover_shadow_transcript() -> str:
+        async def _recover_shadow_transcript(head: bytes) -> str:
             """Locally transcribe the captured head for gate vetting only.
 
             Unlike ``_recover_output_transcript`` this neither latches
@@ -1041,14 +1056,18 @@ class _CodexSubscriptionRealtimeSession:
             provider's own (late) transcript stays the one the user sees.
             AP-24: ``transcribe_audio`` bounds itself and skips when the
             shared engine is busy — a raised skip is an ordinary retry.
+            Accepted residual risk (review R3): a local MIStranscription that
+            happens to look like a hard leak can cancel a correct answer; the
+            cancel reason names shadow recovery, so the incident is
+            diagnosable, and the odds are far below the daily cost of a 7 s
+            opening hold.
             """
             recover = getattr(self._input_transcriber, "transcribe_audio", None)
             if not callable(recover):
                 return ""
             try:
                 return str(
-                    await recover(bytes(assistant_audio), sample_rate=_OUTPUT_RATE)
-                    or ""
+                    await recover(head, sample_rate=_OUTPUT_RATE) or ""
                 ).strip()
             except Exception:  # noqa: BLE001 - the fail-closed hold simply continues
                 log.debug(
@@ -1056,6 +1075,16 @@ class _CodexSubscriptionRealtimeSession:
                     exc_info=True,
                 )
                 return ""
+
+        async def _run_shadow_recovery(anchor: float, head: bytes) -> None:
+            """Background shadow attempt; the result rides the ordinary queue.
+
+            The anchor is the response's ``first_audible_at`` at task start:
+            a result whose anchor no longer matches belongs to a response
+            that has since closed and must never vet a different one's audio.
+            """
+            text = await _recover_shadow_transcript(head)
+            await queue.put(("shadow_transcript", (anchor, text)))
 
         def _missing_input_boundary() -> _ProviderEvent | None:
             """One placeholder per turn when neither source produced text.
@@ -1158,6 +1187,36 @@ class _CodexSubscriptionRealtimeSession:
                     )
                     self._assistant_delta_text = ""
                     completion_emitted = True
+                if queue_kind == "shadow_transcript":
+                    shadow_task = None
+                    early_recovery_at = asyncio.get_running_loop().time()
+                    anchor, shadow_text = payload
+                    if (
+                        shadow_text
+                        and anchor == first_audible_at
+                        and not early_shadow_done
+                        and not assistant_transcript_seen
+                        and response_open
+                        and response_allowed
+                    ):
+                        early_shadow_done = True
+                        log.info(
+                            "Codex subscription realtime released the opening "
+                            "hold with a locally recovered shadow transcript "
+                            "%d ms after the response's first audible frame",
+                            int((early_recovery_at - first_audible_at) * 1000),
+                        )
+                        yield _ProviderEvent(
+                            type="output_transcript_delta",
+                            text=shadow_text,
+                            is_final=False,
+                            shadow=True,
+                        )
+                    elif shadow_text:
+                        log.debug(
+                            "Discarding a stale or superseded shadow transcript"
+                        )
+                    continue
                 if queue_kind == "local_input_failed":
                     # The ONLY grounding source died mid-call. Degrade to the
                     # same fail-open behaviour a host without any recognizer
@@ -1190,6 +1249,7 @@ class _CodexSubscriptionRealtimeSession:
                 if queue_kind == "local_input":
                     if payload.kind == _SPEECH_STARTED:
                         local_input_generation += 1
+                        user_utterance_open = True
                         local_transcript_failed = False
                         user_final_emitted = False
                         missing_boundary_emitted = False
@@ -1217,6 +1277,7 @@ class _CodexSubscriptionRealtimeSession:
                         # far end's preview either, which is the fallback for
                         # the REAL utterance around it, nor leave the turn that
                         # ``speech_started`` already announced hanging open.
+                        user_utterance_open = False
                         consumed_input_generation = max(
                             consumed_input_generation, local_input_generation
                         )
@@ -1233,6 +1294,7 @@ class _CodexSubscriptionRealtimeSession:
                         # vanish, so the far end's preview is promoted — it
                         # covers the same audio and the endpointer already
                         # vouched for it. Silence here would strand the turn.
+                        user_utterance_open = False
                         preview = self._server_user_preview
                         self._server_user_preview = ""
                         local_transcript_failed = True
@@ -1251,6 +1313,7 @@ class _CodexSubscriptionRealtimeSession:
                     else:
                         self._server_user_preview = ""
                         if payload.is_final:
+                            user_utterance_open = False
                             local_transcript_failed = False
                             user_final_emitted = True
                         yield _ProviderEvent(
@@ -1316,35 +1379,31 @@ class _CodexSubscriptionRealtimeSession:
                         and not early_shadow_done
                         and first_audible_at
                         and assistant_audio
+                        and shadow_task is None
+                        and not user_utterance_open
                     ):
                         # The session's scrub gate is holding every one of
                         # these chunks fail-closed until SOME transcript
                         # arrives, and the far end's own can lag by seconds.
                         # Recover a shadow transcript locally so the gate can
-                        # judge real text now (see the constants above).
+                        # judge real text now (see the constants above) — in a
+                        # background task, so this loop keeps pumping audio
+                        # and the user's speech edge on time (review R1), and
+                        # only while the microphone has no open utterance of
+                        # its own on the shared recognizer (review R2).
                         now = asyncio.get_running_loop().time()
                         if (
                             now - first_audible_at >= _OUTPUT_EARLY_RECOVERY_AFTER_S
                             and now - early_recovery_at
                             >= _OUTPUT_EARLY_RECOVERY_RETRY_S
                         ):
-                            early_recovery_at = now
-                            shadow_text = await _recover_shadow_transcript()
-                            if shadow_text:
-                                early_shadow_done = True
-                                log.info(
-                                    "Codex subscription realtime released the "
-                                    "opening hold with a locally recovered "
-                                    "shadow transcript %d ms after the "
-                                    "response's first audible frame",
-                                    int((now - first_audible_at) * 1000),
-                                )
-                                yield _ProviderEvent(
-                                    type="output_transcript_delta",
-                                    text=shadow_text,
-                                    is_final=False,
-                                    shadow=True,
-                                )
+                            head = bytes(
+                                assistant_audio[:_SHADOW_RECOVERY_MAX_BYTES]
+                            )
+                            shadow_task = asyncio.create_task(
+                                _run_shadow_recovery(first_audible_at, head),
+                                name=f"codex-shadow-recovery-{self._thread_id}",
+                            )
                     yield _ProviderEvent(
                         type="audio_delta",
                         audio=_PcmChunk(
@@ -1878,10 +1937,13 @@ class _CodexSubscriptionRealtimeSession:
             for task in tuple(timer_tasks):
                 if not task.done():
                     task.cancel()
+            if shadow_task is not None and not shadow_task.done():
+                shadow_task.cancel()
             await asyncio.gather(
                 pump_task,
                 media_task,
                 input_task,
+                *((shadow_task,) if shadow_task is not None else ()),
                 *tuple(timer_tasks),
                 return_exceptions=True,
             )

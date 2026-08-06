@@ -2407,9 +2407,15 @@ async def test_late_provider_transcript_is_shadow_recovered_for_the_gate(
             (0.05, speech),
             (0.05, speech),
             (0.05, speech),
+            (0.05, speech),
         )
     )
     transcriber = _RecoveringEndpointer("Here is the answer.")
+    # The user's utterance must CLOSE (final transcript) before the shadow
+    # attempt may borrow the shared recognizer (review R2).
+    transcriber._events.put_nowait(
+        InputTranscriptEvent(kind="transcript", text="Hi", is_final=True)
+    )
     client = _Client()
     client.subscription = _keeps_stream_open()
     session = await _provider(
@@ -2431,6 +2437,103 @@ async def test_late_provider_transcript_is_shadow_recovered_for_the_gate(
     assert shadow is not None
     assert shadow.text == "Here is the answer."
     assert transcriber.recovery_calls
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_slow_shadow_recovery_never_stalls_the_receive_pump(
+    monkeypatch,
+) -> None:
+    """A slow recognizer must not block audio delivery (review R1, measured).
+
+    The first inline implementation held the whole receive loop for the
+    recognizer's own time bound — audio stalled and the user's speech edge
+    arrived seconds late. The recovery now runs as a background task.
+    """
+    monkeypatch.setattr(
+        codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_AFTER_S", 0.05
+    )
+    monkeypatch.setattr(
+        codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_RETRY_S", 0.01
+    )
+
+    class _SlowRecoveringEndpointer(_RecoveringEndpointer):
+        async def transcribe_audio(self, pcm: bytes, *, sample_rate: int) -> str:
+            await asyncio.sleep(0.4)
+            return await super().transcribe_audio(pcm, sample_rate=sample_rate)
+
+    speech = (1000).to_bytes(2, "little", signed=True) * 480
+    endpoint = _FakeAudioEndpoint(
+        output_schedule=tuple((0.04, speech) for _ in range(14))
+    )
+    transcriber = _SlowRecoveringEndpointer("Here is the answer.")
+    transcriber._events.put_nowait(
+        InputTranscriptEvent(kind="transcript", text="Hi", is_final=True)
+    )
+    client = _Client()
+    client.subscription = _keeps_stream_open()
+    session = await _provider(
+        client,
+        endpoint=endpoint,
+        input_transcriber_factory=lambda: transcriber,
+    ).open_session(RealtimeSessionConfig())
+
+    audio_before_shadow = 0
+    shadow_seen = False
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(2.0):
+            async for event in session.receive():
+                if event.type == "audio_delta" and not shadow_seen:
+                    audio_before_shadow += 1
+                if event.type == "output_transcript_delta" and getattr(
+                    event, "shadow", False
+                ):
+                    shadow_seen = True
+                    break
+
+    assert shadow_seen
+    # While the recognizer slept 0.4 s, ~10 further 40 ms chunks were due;
+    # a blocking implementation delivers almost none of them before the
+    # shadow event.
+    assert audio_before_shadow >= 8
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_shadow_recovery_yields_to_an_open_user_utterance(
+    monkeypatch,
+) -> None:
+    """The microphone owns the shared recognizer mid-utterance (review R2)."""
+    monkeypatch.setattr(
+        codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_AFTER_S", 0.05
+    )
+    monkeypatch.setattr(
+        codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_RETRY_S", 0.01
+    )
+    speech = (1000).to_bytes(2, "little", signed=True) * 480
+    endpoint = _FakeAudioEndpoint(
+        output_schedule=tuple((0.04, speech) for _ in range(8))
+    )
+    # speech_started with no final: the utterance stays open for the whole
+    # window, so no shadow attempt may run.
+    transcriber = _RecoveringEndpointer("Must never be used.")
+    client = _Client()
+    client.subscription = _keeps_stream_open()
+    session = await _provider(
+        client,
+        endpoint=endpoint,
+        input_transcriber_factory=lambda: transcriber,
+    ).open_session(RealtimeSessionConfig())
+
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(0.8):
+            async for event in session.receive():
+                assert not (
+                    event.type == "output_transcript_delta"
+                    and getattr(event, "shadow", False)
+                )
+
+    assert transcriber.recovery_calls == []
     await session.close()
 
 
