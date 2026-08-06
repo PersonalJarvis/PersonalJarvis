@@ -231,3 +231,53 @@ def test_cli_timeout_accepts_a_caller_budget() -> None:
         CodexBrain(cli_timeout_s="nope")._cli_timeout_s
         == codex_module._CLI_TIMEOUT_S
     )
+
+
+# ---------------------------------------------------------------------------
+# The npm launcher's own interpreter lookup (live 2026-08-06 17:42: the shim
+# resolved, the spawn returned rc=1 "node is not recognized", and the failure
+# surfaced upstairs as "returned no answer").
+# ---------------------------------------------------------------------------
+
+
+def test_the_child_gets_a_path_the_npm_launcher_can_find_node_on(monkeypatch) -> None:
+    import jarvis.core.path_augment as path_augment
+
+    monkeypatch.setattr(
+        path_augment, "resolve_node_executable", lambda: "/opt/node/bin/node"
+    )
+    env = {"PATH": "/usr/local/npm-global"}
+    codex_module._ensure_node_reachable(env, "/usr/local/npm-global/codex")
+
+    assert "/opt/node/bin" in env["PATH"]
+    # The existing entries survive: this repairs a PATH, never replaces one.
+    assert "/usr/local/npm-global" in env["PATH"]
+
+
+def test_a_path_that_already_has_node_is_left_alone(monkeypatch) -> None:
+    import jarvis.core.path_augment as path_augment
+
+    monkeypatch.setattr(
+        path_augment, "resolve_node_executable", lambda: "/opt/node/bin/node"
+    )
+    env = {"PATH": "/opt/node/bin"}
+    codex_module._ensure_node_reachable(env, "/usr/local/npm-global/codex")
+
+    assert env["PATH"] == "/opt/node/bin"
+
+
+def test_a_launcher_that_cannot_run_without_node_fails_by_name(monkeypatch) -> None:
+    """"Returned no answer" hid the real cause; the error must name it."""
+    import jarvis.core.path_augment as path_augment
+
+    monkeypatch.setattr(path_augment, "resolve_node_executable", lambda: None)
+    with pytest.raises(RuntimeError, match="Node.js was not found"):
+        codex_module._ensure_node_reachable({"PATH": ""}, r"C:\npm\codex.cmd")
+
+
+def test_a_native_binary_never_fails_for_a_missing_interpreter(monkeypatch) -> None:
+    """Guessing wrong here would break a working install: only warn."""
+    import jarvis.core.path_augment as path_augment
+
+    monkeypatch.setattr(path_augment, "resolve_node_executable", lambda: None)
+    codex_module._ensure_node_reachable({"PATH": ""}, "/usr/local/bin/codex")

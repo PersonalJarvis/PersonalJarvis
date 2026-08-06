@@ -144,6 +144,57 @@ def _codex_oauth_connected() -> bool:
         return False
 
 
+#: Launcher extensions that are not programs at all but scripts whose FIRST act
+#: is to look up a bare ``node``. Resolving the shim itself therefore proves
+#: nothing about whether it can run.
+_NODE_DEPENDENT_SHIMS = (".cmd", ".bat", ".ps1")
+
+
+def _ensure_node_reachable(env: dict[str, str], binary: str) -> None:
+    """Give the npm shim a PATH its own bare ``node`` lookup can satisfy.
+
+    Live 2026-08-06 17:42: the shim resolved fine and the spawn returned rc=1
+    with "node is not recognized" on stderr — the app's PATH carried the npm
+    global dir but not the Node.js install dir. Upstairs that surfaced as
+    "returned no answer", which reads like a model that stayed silent rather
+    than a launcher that never started (AP-30).
+
+    The repair is the same one the mission workers already use: resolve Node
+    out-of-PATH and put its directory on the child's PATH. Only when that
+    fails too, and only for a launcher that cannot run without it, is this a
+    hard error — a native binary needs no interpreter, and guessing wrong
+    would break a working install.
+    """
+    from jarvis.core.path_augment import resolve_node_executable  # noqa: PLC0415
+
+    node = resolve_node_executable()
+    if node:
+        node_dir = os.path.dirname(node)
+        current = env.get("PATH", "")
+        known = {
+            os.path.normcase(os.path.normpath(part))
+            for part in current.split(os.pathsep)
+            if part
+        }
+        if os.path.normcase(os.path.normpath(node_dir)) not in known:
+            env["PATH"] = f"{current}{os.pathsep}{node_dir}" if current else node_dir
+            log.info(
+                "CodexBrain CLI: added the Node.js directory to the child PATH "
+                "so the npm launcher can find its interpreter (%s)", node_dir,
+            )
+        return
+    if binary.lower().endswith(_NODE_DEPENDENT_SHIMS):
+        raise RuntimeError(
+            "Node.js was not found, and the Codex CLI on this host is an npm "
+            "launcher that cannot start without it — install Node.js, or "
+            "reinstall the CLI with 'npm i -g @openai/codex'."
+        )
+    log.warning(
+        "CodexBrain CLI: Node.js is not resolvable on this host; %s must be a "
+        "native build or the spawn will fail", binary,
+    )
+
+
 def _build_cli_command(binary: str, model: str | None) -> list[str]:
     """Build the read-only subscription CLI command with an optional model."""
     cmd = [
@@ -332,6 +383,7 @@ class CodexBrain:
             for k, v in os.environ.items()
             if k not in ("OPENAI_API_KEY", "CODEX_HOME")
         }
+        _ensure_node_reachable(env, binary)
         cmd = _build_cli_command(binary, self._cli_model)
         creationflags = NO_WINDOW_CREATIONFLAGS if sys.platform == "win32" else 0
         log.info(
