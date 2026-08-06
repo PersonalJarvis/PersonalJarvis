@@ -47,6 +47,18 @@ INNOCENT = [
     # Spanish "todo" / "todos" are ordinary words.
     "todos los terminales están abiertos",  # i18n-allow: speech input under test
     "todo bien, gracias",  # i18n-allow: speech input under test
+    # The English infinitive "to do" is ordinary grammar, not a task list.
+    # Both sentences are the live 2026-08-06 transcripts that pulled the
+    # todoist skill into an Agentic-IDE turn at score 1.0.
+    (
+        "Can you please prompt terminal T1 to do a deep dive and find out "
+        "about bugs related with the new codex voice feature?"
+    ),
+    (
+        "Could you please prompt terminal t1 to do a deep dive and look for "
+        "bugs related on macOS?"
+    ),
+    "what do you want me to do",
 ]
 
 # The recall side, per skill: what must still fire after the boundaries land.
@@ -62,6 +74,9 @@ STILL_FIRES: list[tuple[str, str]] = [
     ("plugin-github", "welche repos habe ich"),  # i18n-allow: speech input under test
     ("plugin-todoist", "setz das auf meine To-do-Liste"),  # i18n-allow: speech input under test
     ("plugin-todoist", "add it to my todo list"),
+    ("plugin-todoist", "put milk on my to do list"),
+    ("plugin-todoist", "check my to-dos"),
+    ("plugin-todoist", "what is on my to dos for today"),
     ("plugin-todoist", "meine Einkaufsliste"),  # i18n-allow: speech input under test
 ]
 
