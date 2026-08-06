@@ -758,3 +758,202 @@ async def test_a_hanging_close_does_not_stall_the_transport_rebuild(
         assert provider.open_count == 2, "a second transport must have opened"
     finally:
         await _end(session)
+
+
+def _session_with_bus(
+    name: str,
+) -> tuple[RealtimeVoiceSession, _CodexShapedProvider, _Surface, list[Any]]:
+    """A desktop-shaped session whose VoiceTurnCompleted events are captured."""
+    from jarvis.core.events import VoiceTurnCompleted
+
+    surface = _Surface()
+    provider = _CodexShapedProvider()
+    bus = EventBus()
+    completed: list[Any] = []
+
+    async def _collect(event: VoiceTurnCompleted) -> None:
+        completed.append(event)
+
+    bus.subscribe(VoiceTurnCompleted, _collect)
+    session = RealtimeVoiceSession(
+        session_id=name,
+        send_binary=surface.send_binary,
+        send_json=surface.send_json,
+        providers=[provider],
+        config=_config(),
+        bus=bus,
+        surface="desktop",
+        half_duplex=True,
+        browser_sample_rate=INPUT_RATE,
+    )
+    return session, provider, surface, completed
+
+
+async def _wait_completed(completed: list[Any]) -> None:
+    for _ in range(50):
+        if completed:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("the turn never published VoiceTurnCompleted")
+
+
+@pytest.mark.asyncio
+async def test_a_partial_only_turn_promotes_its_preview_explicitly() -> None:
+    """A turn whose FINAL never arrives must not silently record a mid-word
+    partial as the user's utterance (the recorded "illst.") - the retained
+    live caption is promoted, with its own log line, instead."""
+    session, provider, surface, completed = _session_with_bus("preview-promote")
+    await asyncio.wait_for(
+        session.handle_control({"type": "audio_start", "sample_rate": INPUT_RATE}),
+        TIMEOUT_S,
+    )
+    try:
+        wire = provider.sessions[0]
+        since = surface.mark()
+        wire.push(
+            RealtimeEvent(type="speech_started"),
+            RealtimeEvent(
+                type="input_transcript",
+                text="what color is the vio",
+                is_final=False,
+            ),
+            RealtimeEvent(type="output_transcript_delta", text="Violet."),
+            RealtimeEvent(type="audio_delta", audio=_audio()),
+            RealtimeEvent(type="turn_complete"),
+        )
+        await surface.wait_json(
+            lambda m: m.get("type") == "turn_complete", since=since
+        )
+        await _wait_completed(completed)
+        assert completed[0].user_text == "what color is the vio", (
+            "the preview is promoted - explicitly - when no final arrived"
+        )
+    finally:
+        await _end(session)
+
+
+@pytest.mark.asyncio
+async def test_a_refinalized_item_replaces_instead_of_doubling() -> None:
+    """A provider re-finalizing the same input item (a correction) must not
+    concatenate the utterance into itself."""
+    session, provider, surface, completed = _session_with_bus("refinal-replace")
+    await asyncio.wait_for(
+        session.handle_control({"type": "audio_start", "sample_rate": INPUT_RATE}),
+        TIMEOUT_S,
+    )
+    try:
+        wire = provider.sessions[0]
+        since = surface.mark()
+        wire.push(
+            RealtimeEvent(type="speech_started"),
+            RealtimeEvent(
+                type="input_transcript",
+                text="what color is the giraffe",
+                is_final=True,
+                item_id="item-1",
+            ),
+            RealtimeEvent(
+                type="input_transcript",
+                text="what color is the violet giraffe",
+                is_final=True,
+                item_id="item-1",
+            ),
+            RealtimeEvent(type="output_transcript_delta", text="Violet."),
+            RealtimeEvent(type="audio_delta", audio=_audio()),
+            RealtimeEvent(type="turn_complete"),
+        )
+        await surface.wait_json(
+            lambda m: m.get("type") == "turn_complete", since=since
+        )
+        await _wait_completed(completed)
+        assert completed[0].user_text == "what color is the violet giraffe", (
+            "the re-final replaces its item instead of double-booking it"
+        )
+    finally:
+        await _end(session)
+
+
+@pytest.mark.asyncio
+async def test_a_partial_never_flips_the_call_language() -> None:
+    """Language resolution runs on FINALS only: a growing caption used to
+    flip the call language (and rebuild the scrub gate) mid-utterance."""
+    session, provider, surface, _completed = _session_with_bus("partial-lang")
+    await asyncio.wait_for(
+        session.handle_control({"type": "audio_start", "sample_rate": INPUT_RATE}),
+        TIMEOUT_S,
+    )
+    try:
+        wire = provider.sessions[0]
+        opening_language = session._language  # noqa: SLF001
+        wire.push(
+            RealtimeEvent(type="speech_started"),
+            RealtimeEvent(
+                type="input_transcript",
+                # A decidedly German partial on an English-opened call.
+                text="wie viele Raeder hat das erfundene Fahrrad denn nun",
+                is_final=False,
+            ),
+        )
+        await asyncio.sleep(0.15)
+        assert session._language == opening_language, (  # noqa: SLF001
+            "a partial flipped the call language"
+        )
+    finally:
+        await _end(session)
+
+
+@pytest.mark.asyncio
+async def test_a_thin_first_fragment_does_not_set_the_call_language() -> None:
+    """A misheard 328 ms fragment ("Mask it up!") flipped a German call to
+    English AND stuck. Before the conversation is established, a final under
+    the voiced-duration floor resolves without its unreliable words; the
+    first substantive final then establishes the language for real."""
+    session, provider, surface, _completed = _session_with_bus("thin-fragment")
+    await asyncio.wait_for(
+        session.handle_control({"type": "audio_start", "sample_rate": INPUT_RATE}),
+        TIMEOUT_S,
+    )
+    try:
+        wire = provider.sessions[0]
+        opening_language = session._language  # noqa: SLF001
+        since = surface.mark()
+        wire.push(
+            RealtimeEvent(type="speech_started"),
+            RealtimeEvent(
+                type="input_transcript",
+                text="Mask it up!",
+                is_final=True,
+                voiced_ms=328,
+            ),
+            RealtimeEvent(type="output_transcript_delta", text="Hey!"),
+            RealtimeEvent(type="audio_delta", audio=_audio()),
+            RealtimeEvent(type="turn_complete"),
+        )
+        await surface.wait_json(
+            lambda m: m.get("type") == "turn_complete", since=since
+        )
+        assert session._language == opening_language, (  # noqa: SLF001
+            "a 328 ms misheard fragment set the call language"
+        )
+        assert session._conversation_established is False  # noqa: SLF001
+
+        # The first SUBSTANTIVE final establishes the language for real.
+        since = surface.mark()
+        wire.push(
+            RealtimeEvent(type="speech_started"),
+            RealtimeEvent(
+                type="input_transcript",
+                text="Wie viele Raeder hat mein erfundenes Fahrrad? Bitte sag es mir.",
+                is_final=True,
+                voiced_ms=2100,
+            ),
+            RealtimeEvent(type="output_transcript_delta", text="Fuenf."),
+            RealtimeEvent(type="audio_delta", audio=_audio()),
+            RealtimeEvent(type="turn_complete"),
+        )
+        await surface.wait_json(
+            lambda m: m.get("type") == "turn_complete", since=since
+        )
+        assert session._conversation_established is True  # noqa: SLF001
+    finally:
+        await _end(session)

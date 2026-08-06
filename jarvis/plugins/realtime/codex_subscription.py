@@ -362,6 +362,11 @@ class _ProviderEvent:
     # output_transcript_delta only: locally recovered vetting material — see
     # RealtimeEvent.shadow in jarvis/realtime/protocol.py.
     shadow: bool = False
+    # input_transcript finals only: how much VOICED audio the local endpointer
+    # measured for this utterance. Feeds the session's first-turn language
+    # duration gate (a sub-half-second misheard fragment must not set the
+    # call language). 0 = unknown; other adapters never set it.
+    voiced_ms: int = 0
 
 
 def _notification_parts(notification: Any) -> tuple[str, dict[str, Any]]:
@@ -1672,6 +1677,9 @@ class _CodexSubscriptionRealtimeSession:
                             type="input_transcript",
                             text=payload.text,
                             is_final=payload.is_final,
+                            voiced_ms=int(
+                                getattr(payload, "voiced_ms", 0) or 0
+                            ),
                         )
                     continue
                 if queue_kind == "media_audio":
@@ -2413,6 +2421,44 @@ class _CodexSubscriptionRealtimeSession:
         if pin_text:
             self._language = normalized_pin
 
+    async def _append_opening_language_hint(self, default_language: object) -> None:
+        """One soft language line at open when NOTHING is pinned.
+
+        Unpinned sessions used to rely only on the thread-start base
+        instructions ("mirror the user's language") — the channel proven
+        unreliable — so every call opened in whatever the far end preferred
+        (live: German sessions booked ``language=en`` throughout). This is a
+        HINT on the working channel, deliberately not a pin: it names the
+        configured default only for the moment before anyone spoke, defers to
+        the user's actual language, and never latches this session's own
+        language state — the ONE resolver keeps deciding per turn (§1).
+        """
+        locale = _normalized_locale(default_language)
+        name = _LANGUAGE_ENDONYMS.get(locale)
+        if name:
+            fallback = f"{name} ({locale})"
+        elif locale:
+            fallback = f"the language with IETF language tag {locale!r}"
+        else:
+            return
+        text = (
+            "Reply in the language the user actually speaks. If nobody has "
+            f"spoken yet, or the first utterance is too short to tell, use "
+            f"{fallback}. Apply this silently — never acknowledge it."
+        )
+        try:
+            await self._append_trusted(
+                lambda: self._client.realtime_append_text(
+                    self._thread_id, text, role="developer"
+                ),
+                arms_response=False,
+            )
+        except Exception:  # noqa: BLE001 — a missing hint must not kill the open
+            log.debug(
+                "Codex subscription opening language hint not delivered",
+                exc_info=True,
+            )
+
     async def _pin_language(self, language: object) -> None:
         """Deliver the resolved output language as the turn's authoritative pin.
 
@@ -2990,6 +3036,14 @@ class CodexSubscriptionRealtimeProvider:
             # the latest actual user audio.
             if getattr(cfg, "language_is_pinned", False):
                 await session._pin_language(getattr(cfg, "language", ""))
+            else:
+                # Unpinned: a soft opening hint on the WORKING channel — the
+                # thread-start "mirror the user" rule alone is the channel
+                # live calls proved unreliable, and every unpinned session
+                # opened in the far end's preferred language.
+                await session._append_opening_language_hint(
+                    getattr(cfg, "language", "")
+                )
             return session
         except BaseException:
             try:

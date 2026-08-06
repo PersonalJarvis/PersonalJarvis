@@ -38,7 +38,11 @@ from jarvis.brain.provider_test import (
 from jarvis.brain.turn_planner import TurnPath, TurnPlan, TurnReason, plan_turn
 from jarvis.core.protocols import AudioChunk, BrainMessage
 from jarvis.core.redact import safe_preview
-from jarvis.core.turn_language import normalize_language_tag, resolve_output_language
+from jarvis.core.turn_language import (
+    is_substantive_turn,
+    normalize_language_tag,
+    resolve_output_language,
+)
 from jarvis.realtime.audio import StreamingPcm16Resampler
 from jarvis.realtime.protocol import RealtimeSessionConfig
 from jarvis.realtime.scrub_gate import ScrubHoldGate
@@ -79,6 +83,11 @@ _HALF_DUPLEX_MUTE_REPEAT_S = 10.0
 # reply that is merely pausing keeps its mute, and far below the alert. No
 # audio playing means no echo risk — reopening matches barge-in semantics.
 _HALF_DUPLEX_SILENT_RELEASE_S = 2.0
+# Before the conversation's language is ESTABLISHED, a final this short is
+# too little audio to trust its words for the language decision ("Was geht
+# ab?" misheard as "Vaskit up" flipped a whole German call to English).
+# Duration, never spelling (the AP-27 class rule).
+_CONVERSATION_LANGUAGE_MIN_VOICED_MS = 500
 # Per-turn stall backstop. A provider can stop emitting ENTIRELY — no audio, no
 # transcript, no boundary, no error — and the receive iterator then simply never
 # yields again. Nothing else in this module bounds that: the pump awaits the
@@ -1279,6 +1288,15 @@ class RealtimeVoiceSession:
         self._initial_conversation_language = str(
             getattr(brain, "conversation_language", "") or ""
         ).strip().lower()
+        # False until a SUBSTANTIVE final (>= the voiced-duration floor)
+        # resolves the call language once. Until then the resolver must not
+        # be fed the session's own opening default as "the conversation's
+        # language" — that masquerade made a misheard 300 ms first fragment
+        # both answer in English AND stick. A real handed-over conversation
+        # counts as established from the start.
+        self._conversation_established = bool(
+            self._initial_conversation_language
+        )
         self._stt_language = getattr(
             getattr(self._config, "stt", None), "language", "unknown"
         )
@@ -1421,7 +1439,14 @@ class RealtimeVoiceSession:
         self._turn_index = 0
         self._current_turn_index = -1
         self._last_user_text = ""
-        self._user_transcript_parts: list[str] = []
+        # Live caption of the CURRENT unfinished utterance. Surfaces render
+        # it; persistence never does unless the promotion path says so
+        # explicitly (a mid-word partial silently recorded as the turn's
+        # user_text is how "illst." became an utterance, 2026-08-06 17:03).
+        self._last_user_text_preview = ""
+        #: (item_id, text) finals of the current turn; a re-final of a known
+        #: item REPLACES its entry instead of double-booking the utterance.
+        self._user_transcript_parts: list[tuple[str, str]] = []
         self._input_turn_observed = False
         self._output_transcript: list[str] = []
         # BUG-089: text-level self-echo backstop. The realtime path's acoustic
@@ -1495,17 +1520,61 @@ class RealtimeVoiceSession:
         # never sees the rejection, so repeated rapid deaths retry seedless.
         self._suppress_history_seed = False
 
-    def _resolve_lang(self, *, text: str) -> str:
+    def _note_user_final(self, item_id: str, text: str) -> None:
+        """Record a FINAL user transcript part for the current turn.
+
+        Item-keyed: a provider that re-finalizes the same input item (a
+        correction, a local/server double-book of one utterance) REPLACES its
+        earlier entry instead of concatenating the utterance into itself.
+        Finals without an id keep appending — multi-part turns stay intact.
+        """
+        if item_id:
+            for index, (known_id, _) in enumerate(self._user_transcript_parts):
+                if known_id == item_id:
+                    self._user_transcript_parts[index] = (item_id, text)
+                    break
+            else:
+                self._user_transcript_parts.append((item_id, text))
+        else:
+            self._user_transcript_parts.append(("", text))
+        self._last_user_text = " ".join(
+            t for _, t in self._user_transcript_parts
+        ).strip()
+        # The turn has real text now; the live caption served its purpose.
+        self._last_user_text_preview = ""
+
+    def _resolve_lang(self, *, text: str, voiced_ms: int = 0) -> str:
         brain = getattr(self._config, "brain", None)
         pin = getattr(brain, "reply_language", "auto")
+        established = bool(getattr(self, "_conversation_established", False))
+        # The resolver's stickiness input must be an ESTABLISHED conversation
+        # language, never the session's own opening default wearing that hat
+        # (the input lied; the resolver itself is correct and stays untouched
+        # — §1 doctrine).
+        if established:
+            conversation = getattr(self, "_language", "")
+        else:
+            conversation = self._initial_conversation_language
+        if (
+            text
+            and not established
+            and 0 < voiced_ms < _CONVERSATION_LANGUAGE_MIN_VOICED_MS
+        ):
+            # Duration gate, never spelling (AP-27 class): a sub-half-second
+            # first fragment carries too little audio to trust its words for
+            # the call language ("Vaskit up"). Resolve from STT tag/default.
+            log.debug(
+                "realtime[%s] first fragment (%d ms voiced) is too short to "
+                "set the call language",
+                self.session_id,
+                voiced_ms,
+            )
+            text = ""
         return resolve_output_language(
             pin,
             self._stt_language,
             text,
-            conversation_language=(
-                getattr(self, "_language", "")
-                or self._initial_conversation_language
-            ),
+            conversation_language=conversation,
         )
 
     def _plan_turn(self, text: str) -> TurnPlan:
@@ -2602,7 +2671,10 @@ class RealtimeVoiceSession:
                         # the acoustic gates — dropping it here means no
                         # response is ever generated for it.
                         echo_probe = " ".join(
-                            (*self._user_transcript_parts, transcript)
+                            (
+                                *(t for _, t in self._user_transcript_parts),
+                                transcript,
+                            )
                         ).strip()
                         judge_short = (
                             time.monotonic() < self._local_barge_short_echo_until
@@ -2656,6 +2728,19 @@ class RealtimeVoiceSession:
                         and input_item_id in self._response_requested_input_ids
                     )
                     if event.is_final and input_already_answered:
+                        if transcript:
+                            # A re-final of an answered item is a CORRECTION:
+                            # record the better text (item-keyed REPLACE, so
+                            # the utterance never concatenates into itself)
+                            # without re-running any turn machinery for it.
+                            self._note_user_final(input_item_id, transcript)
+                            log.info(
+                                "realtime[%s] recorded a corrected transcript "
+                                "for an already-answered item (item=%s)",
+                                self.session_id,
+                                input_item_id,
+                            )
+                            continue
                         # A swallowed user utterance is never a debug-level
                         # event: if the id space ever collides, this is the
                         # only trace that turn 2 vanished (AP-30).
@@ -2719,8 +2804,28 @@ class RealtimeVoiceSession:
                                 await self._publish_turn_started()
                         await self._ensure_turn_started()
                     new_language = self._language
-                    if transcript:
-                        new_language = self._resolve_lang(text=transcript)
+                    if transcript and event.is_final:
+                        # FINALS ONLY (H3): a partial used to flip the call
+                        # language mid-utterance, rebuild the scrub gate and
+                        # announce — churn a growing caption re-triggered
+                        # several times per sentence, and the en/en bookings
+                        # on German turns came from exactly these flips.
+                        voiced_ms = int(getattr(event, "voiced_ms", 0) or 0)
+                        new_language = self._resolve_lang(
+                            text=transcript, voiced_ms=voiced_ms
+                        )
+                        if not self._conversation_established and (
+                            is_substantive_turn(transcript)
+                            and (
+                                voiced_ms == 0
+                                or voiced_ms
+                                >= _CONVERSATION_LANGUAGE_MIN_VOICED_MS
+                            )
+                        ):
+                            # From here on the call language sticks; a later
+                            # thin interjection cannot flip it (the resolver's
+                            # own stickiness takes over).
+                            self._conversation_established = True
                         if new_language != self._language:
                             self._language_flips += 1
                             self._language = new_language
@@ -2742,12 +2847,18 @@ class RealtimeVoiceSession:
                         )
                     if transcript:
                         if event.is_final:
-                            self._user_transcript_parts.append(transcript)
-                            self._last_user_text = " ".join(
-                                self._user_transcript_parts
+                            self._note_user_final(input_item_id, transcript)
+                        else:
+                            # Live caption only — never the persisted text.
+                            self._last_user_text_preview = " ".join(
+                                (
+                                    *(
+                                        t
+                                        for _, t in self._user_transcript_parts
+                                    ),
+                                    transcript,
+                                )
                             ).strip()
-                        elif not self._user_transcript_parts:
-                            self._last_user_text = transcript
                     if event.is_final and input_observed:
                         turn_plan = self._plan_turn(self._last_user_text)
                         reasons = ",".join(
@@ -2880,9 +2991,7 @@ class RealtimeVoiceSession:
                         if event.is_final:
                             snapshot = self._last_user_text or transcript
                         else:
-                            snapshot = " ".join(
-                                (*self._user_transcript_parts, transcript)
-                            ).strip()
+                            snapshot = self._last_user_text_preview or transcript
                         await self._publish_transcription(
                             snapshot, bool(event.is_final)
                         )
@@ -4730,6 +4839,24 @@ class RealtimeVoiceSession:
         ):
             return False
 
+        if (
+            not self._last_user_text
+            and self._input_turn_observed
+            and self._last_user_text_preview
+        ):
+            # The user audibly spoke this turn and no FINAL ever arrived; the
+            # retained live caption is promoted EXPLICITLY - with its own log
+            # line - instead of a partial silently posing as the final (the
+            # recorded "illst.", 2026-08-06 17:03).
+            log.info(
+                "realtime[%s] persisting a non-final preview as user_text "
+                "for turn %s - no final transcript arrived",
+                self.session_id,
+                turn_id,
+            )
+            self._last_user_text = self._last_user_text_preview
+            self._last_user_text_preview = ""
+
         if not self._last_user_text:
             if self._input_turn_observed:
                 if self._outage_notice_allowed():
@@ -4911,6 +5038,23 @@ class RealtimeVoiceSession:
         if not self._turn_id:
             self._reset_turn_tracking()
             return
+        if (
+            not self._last_user_text
+            and self._input_turn_observed
+            and self._last_user_text_preview
+        ):
+            # The user audibly spoke this turn and no FINAL ever arrived; the
+            # retained live caption is promoted EXPLICITLY - with its own log
+            # line - instead of a partial silently posing as the final (the
+            # recorded "illst.", 2026-08-06 17:03).
+            log.info(
+                "realtime[%s] persisting a non-final preview as user_text "
+                "for turn %s - no final transcript arrived",
+                self.session_id,
+                self._turn_id,
+            )
+            self._last_user_text = self._last_user_text_preview
+            self._last_user_text_preview = ""
         answer = "".join(self._output_transcript).strip()
         delegate_state = self._delegate_turns.pop(self._turn_id, None)
         external_update = self._external_update
@@ -5155,6 +5299,7 @@ class RealtimeVoiceSession:
         self._latency_tracker = None
         self._current_turn_index = -1
         self._last_user_text = ""
+        self._last_user_text_preview = ""
         self._user_transcript_parts.clear()
         self._input_turn_observed = False
         self._output_transcript.clear()

@@ -41,6 +41,10 @@ class RealtimeEvent:
     # it like any transcript, but it must never reach the surface or the turn
     # transcript — the provider's own text follows and would double up.
     shadow: bool = False
+    # input_transcript finals only: voiced audio duration the local endpointer
+    # measured for the utterance. Feeds the session's first-turn language
+    # duration gate; 0 means unknown and disables the gate for that final.
+    voiced_ms: int = 0
     ms_played: int | None = None             # speech_started: ms of our audio already heard
     error: str | None = None
     # A recoverable provider event reports a rejected operation while the

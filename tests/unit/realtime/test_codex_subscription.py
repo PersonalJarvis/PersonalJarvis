@@ -275,13 +275,16 @@ async def test_direct_sdp_open_uses_safe_experimental_transport_contract() -> No
 
     # Jarvis's own persona/context reaches the model as developer context —
     # ChatGPT-Live has no client-settable session-instructions field. With no
-    # explicit reply-language preference there is NO opening pin: nobody has
-    # spoken yet, so the "resolved" language is only DEFAULT_LOCALE, and
-    # hard-pinning it nailed every call's first reply to English. The base
-    # instructions tell the model to mirror the latest actual user audio.
-    assert client.text_appends == [
-        ("thread-1", "Speak concise English.", "developer"),
-    ]
+    # explicit reply-language preference there is NO opening pin (hard-pinning
+    # the default nailed every call's first reply to English), but there IS a
+    # soft opening HINT on the working channel: the thread-start mirror rule
+    # alone is the channel live calls proved unreliable, and unpinned German
+    # sessions opened in English throughout.
+    appended = [text for _thread, text, _role in client.text_appends]
+    assert appended[0] == "Speak concise English."
+    assert len(appended) == 2
+    assert "Reply in the language the user actually speaks" in appended[1]
+    assert "reply only in" not in appended[1], "a hint is not a pin"
     _thread_id, start = client.realtime_starts[0]
     assert start == {
         "output_modality": "audio",
@@ -318,15 +321,19 @@ async def test_reopened_session_restores_bounded_same_call_history() -> None:
         )
     )
 
-    # Persona, then the restored history. No opening language pin: this
-    # session carries no explicit reply-language preference.
-    assert len(client.text_appends) == 2
+    # Persona, then the restored history, then the soft opening language
+    # hint (no PIN: this session carries no explicit preference).
+    assert len(client.text_appends) == 3
     thread_id, restored, role = client.text_appends[1]
     assert thread_id == "thread-1"
     assert role == "developer"
     assert "conversation_history" in restored
     assert "Which language were we discussing?" in restored
     assert "We were discussing Malbolge." in restored
+    assert (
+        "Reply in the language the user actually speaks"
+        in client.text_appends[2][1]
+    )
     await session.close()
 
 
@@ -409,15 +416,12 @@ async def test_language_update_is_developer_context_and_speech_is_authoritative(
     await session.update_session(language="es")
     await session.send_speech("Trusted answer")
 
-    assert client.text_appends == [
-        # No opening pin without an explicit reply-language preference — the
-        # first pin is the one this turn actually resolved to.
-        (
-            "thread-1",
-            codex_subscription_mod._language_pin_text("es"),
-            "developer",
-        ),
-    ]
+    appended = [text for _thread, text, _role in client.text_appends]
+    # The soft opening hint (no pin without an explicit preference), then the
+    # first REAL pin — the one this turn actually resolved to.
+    assert len(appended) == 2
+    assert "Reply in the language the user actually speaks" in appended[0]
+    assert appended[1] == codex_subscription_mod._language_pin_text("es")
     assert client.speech_appends == [("thread-1", "Trusted answer")]
     await session.close()
 
@@ -507,16 +511,19 @@ async def test_turn_directive_supersedes_instead_of_accumulating() -> None:
 
     appends = [text for _thread, text, _role in client.text_appends]
     assert appends[0] == "Persona line.\nDirective A."
+    # The soft opening language hint rides between the persona and the first
+    # per-turn update on every unpinned open.
+    assert "Reply in the language the user actually speaks" in appends[1]
     # Turn 2: the directive travels ONLY in its superseding section, never
     # additionally as a diffed context line.
-    assert "REPLACE every earlier instruction" in appends[1]
-    assert "Directive B." in appends[1]
-    assert appends[1].count("Directive B.") == 1
+    assert "REPLACE every earlier instruction" in appends[2]
+    assert "Directive B." in appends[2]
+    assert appends[2].count("Directive B.") == 1
     # Turn 3: reverting re-issues the directive as a full replacement even
     # though an identical copy already sits in the thread's opening block.
-    assert "REPLACE every earlier instruction" in appends[2]
-    assert "Directive A." in appends[2]
-    assert "Directive B." not in appends[2]
+    assert "REPLACE every earlier instruction" in appends[3]
+    assert "Directive A." in appends[3]
+    assert "Directive B." not in appends[3]
     await session.close()
 
 
