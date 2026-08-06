@@ -3217,14 +3217,27 @@ class SpeechPipeline:
     # ------------------------------------------------------------------
 
     async def _transition(self, new_state: str) -> None:
-        if self._supervisor is not None:
+        # This only DISPLAYS state, so nothing in it may end a call. A pipeline
+        # assembled without a supervisor (headless, and every unit test that
+        # builds one field by field) must still run the call to completion —
+        # before this was defensive, adding one status update to the realtime
+        # path aborted the whole session loop on a missing attribute.
+        supervisor = getattr(self, "_supervisor", None)
+        if supervisor is not None:
             try:
-                await self._supervisor.set_state(new_state)
+                await supervisor.set_state(new_state)
             except Exception as exc:  # noqa: BLE001
                 log.warning("Supervisor-Transition zu %s fehlgeschlagen: %s", new_state, exc)
         # Permanent-Vision Privacy-Hook (Wave-2 B7): bei IDLE pausieren,
         # bei ACTIVE-Familie (LISTENING/THINKING/SPEAKING) resumen.
-        self._maybe_toggle_vision_on_state(new_state)
+        try:
+            self._maybe_toggle_vision_on_state(new_state)
+        except Exception:  # noqa: BLE001
+            log.debug(
+                "Vision toggle for state %s skipped (pipeline without vision)",
+                new_state,
+                exc_info=True,
+            )
 
     async def _set_turn_state(
         self,
@@ -7986,6 +7999,13 @@ class SpeechPipeline:
                     message.get("input_sample_rate", "unknown"),
                     message.get("output_sample_rate", "unknown"),
                 )
+                # The handshake put the machine into CONNECTING; nothing took it
+                # back out. On a hosted provider that gap is under a second and
+                # the next event papers over it, but a self-hosted server needs
+                # seconds, and the bar sat on "connecting" for a call that was
+                # already listening (field report 2026-08-06). Say the true
+                # state now: from here the session hears the user.
+                await self._transition("LISTENING")
             elif kind == "transcript":
                 role = str(message.get("role", ""))
                 if role == "user" and bool(message.get("is_final", False)):

@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 // here fails the TypeScript build instead of rendering an undefined swatch.
 const STATE_STYLE: Record<VoiceState, { color: string; ring: string }> = {
   idle:      { color: "bg-blue-500",    ring: "ring-blue-500/40" },
+  connecting: { color: "bg-amber-400",  ring: "ring-amber-400/50 animate-pulse" },
   listening: { color: "bg-emerald-500", ring: "ring-emerald-500/50 animate-pulse" },
   thinking:  { color: "bg-yellow-500",  ring: "ring-yellow-500/50 animate-pulse" },
   speaking:  { color: "bg-pink-500",    ring: "ring-pink-500/50 animate-pulse" },
