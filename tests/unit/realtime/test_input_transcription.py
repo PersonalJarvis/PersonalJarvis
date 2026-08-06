@@ -328,6 +328,40 @@ async def test_an_empty_result_also_announces_itself() -> None:
     await transcriber.close()
 
 
+@pytest.mark.asyncio
+async def test_silence_boilerplate_never_becomes_a_grounded_turn() -> None:
+    """Live 2026-08-06 17:39:57: a subtitle outro became a real user turn.
+
+    The endpointer only ever vouches for ENERGY, and a speaker leak has energy
+    too — so a Whisper-family model produced its end-card boilerplate over
+    that leak, the far end answered a question nobody asked, and the call's
+    output language flipped to English on the way through. It must land as a
+    FAILED transcript, so the far end's own caption for the same audio can
+    still stand in for the turn.
+    """
+    stt = _FakeSTT("Thank you for watching!")
+    transcriber = LocalInputTranscriber(sample_rate=RATE, stt_factory=lambda: stt)
+    _speak(transcriber)
+
+    events = await _drain(transcriber, 2)
+    assert events[0].kind == module.SPEECH_STARTED
+    assert events[1].kind == module.TRANSCRIPT_FAILED
+    await transcriber.close()
+
+
+@pytest.mark.asyncio
+async def test_a_real_sentence_that_merely_starts_like_boilerplate_survives() -> None:
+    """The other half: a keyword ban would delete what the user really said."""
+    stt = _FakeSTT("Thank you very much for the update on the wiki.")
+    transcriber = LocalInputTranscriber(sample_rate=RATE, stt_factory=lambda: stt)
+    _speak(transcriber)
+
+    events = await _drain(transcriber, 2)
+    assert events[1].kind == module.TRANSCRIPT
+    assert events[1].text == "Thank you very much for the update on the wiki."
+    await transcriber.close()
+
+
 # -- sample rate ------------------------------------------------------------
 
 

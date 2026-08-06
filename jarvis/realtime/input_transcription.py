@@ -34,6 +34,11 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
+# Leaf module, stdlib-only — importing it here drags in neither the speech
+# pipeline nor any recognizer runtime. It owns the ONE silence-boilerplate
+# verdict the dictation delivery gate uses as well (BUG-008 drift rule).
+from jarvis.speech.wake_constants import is_silence_hallucination
+
 log = logging.getLogger(__name__)
 
 # Endpointing: deliberately simple and dependency-free. The far end runs its
@@ -657,6 +662,26 @@ class LocalInputTranscriber:
         if not text:
             # Real speech that produced no words: the far end's own transcript
             # of the same audio is now the best thing Jarvis has.
+            self._emit(
+                InputTranscriptEvent(kind=TRANSCRIPT_FAILED, voiced_ms=voiced_ms)
+            )
+            return
+        if is_silence_hallucination(text, voiced_ms / 1000.0):
+            # Whisper-family boilerplate over near-silence, whole-utterance and
+            # inside the short window (the shared dictation verdict — never a
+            # keyword ban on real speech). Live 2026-08-06 17:39:57 the
+            # recognizer delivered a subtitle outro as a genuine turn: it
+            # grounded a response the user never asked for AND flipped the
+            # call's output language on its way through. Treated as a failed
+            # transcript, so the far end's own caption for the same audio can
+            # still stand in — the endpointer only vouched for ENERGY, and
+            # energy is what a speaker leak has too.
+            log.info(
+                "Discarding a %d ms local input transcript as silence "
+                "boilerplate: %r",
+                voiced_ms,
+                text[:80],
+            )
             self._emit(
                 InputTranscriptEvent(kind=TRANSCRIPT_FAILED, voiced_ms=voiced_ms)
             )

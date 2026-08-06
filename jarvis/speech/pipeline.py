@@ -1383,62 +1383,15 @@ WAKE_ONLY_RE = re.compile(
 # Whisper emits on an empty mic / speaker leak). Blocked before the brain
 # call. Single definition lives in wake_constants (the rolling wake's
 # bias-echo confirm consumes the same list — BUG-008 drift rule).
+# The short-recording + whole-utterance verdict itself lives beside the pattern
+# in that same leaf module, because the realtime input recognizer needs exactly
+# this judgement too and a second copy would drift (BUG-008).
 from jarvis.speech.wake_constants import (  # noqa: E402
     STT_HALLUCINATION_RE as _STT_HALLUCINATION_RE,
 )
-
-# Longest recording the silence-hallucination filter is allowed to judge. Above
-# it the filter stands down entirely: a person who spoke for three seconds said
-# something, and "thank you very much for the update" is a real sentence that
-# happens to open with the same words as the boilerplate. Below it there is
-# barely room for a real utterance, which is exactly the window in which a
-# near-silent microphone makes a Whisper-family model produce its subtitle
-# credits.
-_DICTATION_HALLUCINATION_MAX_S = 2.5
-
-# Words that occur in the hallucination markers themselves, DERIVED from the one
-# shared pattern rather than written out a second time — a second list would
-# stop agreeing with the first the day either is touched (BUG-008). Regex
-# metacharacters contribute the odd single letter, so anything shorter than two
-# characters is dropped; digits never enter, which is what lets a boilerplate
-# year ("copyright 2020") count as covered.
-_HALLUCINATION_WORD_RE = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
-_HALLUCINATION_VOCABULARY: frozenset[str] = frozenset(
-    _HALLUCINATION_WORD_RE.findall(_STT_HALLUCINATION_RE.pattern.lower())
+from jarvis.speech.wake_constants import (  # noqa: E402
+    is_silence_hallucination as _is_silence_hallucination,
 )
-
-
-def _is_silence_hallucination(text: str, duration_s: float) -> bool:
-    """Is *text* boilerplate a silent microphone produced, not speech?
-
-    Two independent conditions, and BOTH are needed — either one alone gets a
-    real dictation deleted:
-
-    * **The recording is short.** Whisper hallucinates on near-silence, so the
-      filter only judges recordings too short to hold much else. The audio
-      length is the honest measure here (see the caller), not the wall clock.
-    * **The boilerplate is the WHOLE utterance.** ``_STT_HALLUCINATION_RE``
-      matches a substring, which is the right shape for the voice lane — there
-      the question is "may this reach the brain". On a transcript the question
-      is different: "thank you very much for the update" contains a marker and
-      is a sentence the user dictated. So a match is necessary but not
-      sufficient; every word of the transcript must also come from the markers'
-      own vocabulary. "Thank you for watching!" passes that test (the shared
-      pattern spells the outro "thanks for watching", and the vocabulary covers
-      the other spelling for free); "vielen Dank für das Update" does not,
-      because "update" is nobody's boilerplate.
-
-    Digits are ignored on purpose: the markers carry years, and a year is not
-    what distinguishes a hallucination from a sentence.
-    """
-    if duration_s >= _DICTATION_HALLUCINATION_MAX_S:
-        return False
-    body = (text or "").strip()
-    if not body or _STT_HALLUCINATION_RE.search(body) is None:
-        return False
-    words = _HALLUCINATION_WORD_RE.findall(body.lower())
-    return bool(words) and all(word in _HALLUCINATION_VOCABULARY for word in words)
-
 
 # Paraphrase prefixes Gemini/Claude put in front of an answer when unsure.
 # Cut off as post-processing before the TTS call.

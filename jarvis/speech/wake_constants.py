@@ -73,6 +73,64 @@ STT_HALLUCINATION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Longest recording the silence-hallucination filter is allowed to judge. Above
+# it the filter stands down entirely: a person who spoke for three seconds said
+# something, and "thank you very much for the update" is a real sentence that
+# happens to open with the same words as the boilerplate. Below it there is
+# barely room for a real utterance, which is exactly the window in which a
+# near-silent microphone makes a Whisper-family model produce its subtitle
+# credits.
+SILENCE_HALLUCINATION_MAX_S = 2.5
+
+# Words that occur in the hallucination markers themselves, DERIVED from the one
+# shared pattern rather than written out a second time — a second list would
+# stop agreeing with the first the day either is touched (BUG-008). Regex
+# metacharacters contribute the odd single letter, so anything shorter than two
+# characters is dropped; digits never enter, which is what lets a boilerplate
+# year ("copyright 2020") count as covered.
+_HALLUCINATION_WORD_RE = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
+_HALLUCINATION_VOCABULARY: frozenset[str] = frozenset(
+    _HALLUCINATION_WORD_RE.findall(STT_HALLUCINATION_RE.pattern.lower())
+)
+
+
+def is_silence_hallucination(text: str, duration_s: float) -> bool:
+    """Is *text* boilerplate a silent microphone produced, not speech?
+
+    Two independent conditions, and BOTH are needed — either one alone gets a
+    real utterance deleted:
+
+    * **The recording is short.** Whisper hallucinates on near-silence, so the
+      filter only judges recordings too short to hold much else. The audio
+      length is the honest measure here (see the callers), not the wall clock.
+    * **The boilerplate is the WHOLE utterance.** ``STT_HALLUCINATION_RE``
+      matches a substring, which is the right shape for the voice lane — there
+      the question is "may this reach the brain". On a transcript the question
+      is different: "thank you very much for the update" contains a marker and
+      is a sentence the user dictated. So a match is necessary but not
+      sufficient; every word of the transcript must also come from the markers'
+      own vocabulary. "Thank you for watching!" passes that test (the shared
+      pattern spells the outro "thanks for watching", and the vocabulary covers
+      the other spelling for free); the German sentence
+      "vielen Dank für das Update" does not, because "update" is nobody's  # i18n-allow: the pattern lists "vielen dank", so the sentence that must SURVIVE it is shown in that same language
+      boilerplate.
+
+    Digits are ignored on purpose: the markers carry years, and a year is not
+    what distinguishes a hallucination from a sentence.
+
+    Lives here, in the leaf module beside the pattern itself, because BOTH the
+    dictation delivery gate and the realtime input recognizer need the same
+    verdict — a second copy would stop agreeing with the first (BUG-008).
+    """
+    if duration_s >= SILENCE_HALLUCINATION_MAX_S:
+        return False
+    body = (text or "").strip()
+    if not body or STT_HALLUCINATION_RE.search(body) is None:
+        return False
+    words = _HALLUCINATION_WORD_RE.findall(body.lower())
+    return bool(words) and all(word in _HALLUCINATION_VOCABULARY for word in words)
+
+
 # Common wake prefixes stripped when deriving the phrase *core* for model
 # lookup and canonical keyword names. The matcher may still keep an explicit
 # prefix when the configured phrase includes one.
