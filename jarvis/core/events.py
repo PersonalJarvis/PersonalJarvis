@@ -1559,6 +1559,68 @@ class VoiceSessionEnded(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class RealtimeSessionPostmortem(Event):
+    """Health counters of one finished realtime session, for forensics.
+
+    Published by ``RealtimeVoiceSession.end()`` on every teardown and picked
+    up by the wildcard flight recorder — the one place a live call's transport
+    health survives the call. Counters only, never transcript text: telemetry
+    must stay content-free. This event never crosses to the UI, so the
+    five-layer enum-parity rule does not apply to its fields.
+
+    All counters are zero in a healthy call except ``turns_completed`` (and,
+    until the real v3 terminal item is confirmed live,
+    ``quiescence_boundary_turns`` — every ChatGPT-Live turn currently ends on
+    the local silence backstop).
+    """
+
+    session_id: str = ""
+    provider: str = ""
+    surface: str = ""
+    hangup_reason: str = ""
+    duration_ms: int = 0
+    #: audio_start → provider handshake complete (RealtimeSessionReady).
+    ready_ms: int = 0
+    #: audio_start → first provider audio frame emitted to the surface.
+    first_audio_ms: int = 0
+    turns_completed: int = 0
+    #: In-place transport rebuilds this session survived (BUG-071 machinery).
+    rebuilds: int = 0
+    #: Full open() retries over a STUN server after host candidates failed.
+    stun_retries: int = 0
+    #: Server user captions dropped for lacking local microphone energy.
+    ungrounded_captions_dropped: int = 0
+    #: Automatic provider responses refused by the grounding gate.
+    ungrounded_responses_refused: int = 0
+    #: Responses authorized by a trusted injection (announcement/readback).
+    trusted_permit_responses: int = 0
+    #: Turns closed by the local quiescence backstop (no protocol boundary).
+    quiescence_boundary_turns: int = 0
+    #: Turns closed by a confirmed terminal response item.
+    terminal_item_turns: int = 0
+    #: Back-to-back responses that spliced into one playback stream (<1.5 s).
+    response_splices: int = 0
+    #: Self-dialogue verdicts that forced a transport replacement (BUG-124).
+    self_dialogue_rebuilds: int = 0
+    #: Half-duplex mutes released by the emergency timer, not a turn boundary.
+    mute_emergency_releases: int = 0
+    #: Microphone sender wall-clock resyncs (mic audio lost to a stall).
+    sender_pacing_resyncs: int = 0
+    #: Stale outgoing microphone frames shed by the elastic backlog cap.
+    sender_shed_frames: int = 0
+    #: Silent frames skipped while the sender drained its backlog.
+    sender_catchup_dropped_frames: int = 0
+    #: Provider audio frames dropped on a full receive queue.
+    recv_dropped_frames: int = 0
+    #: Worst event-loop scheduling stall observed during the session.
+    max_loop_stall_ms: int = 0
+    #: Output-language changes after the first resolution.
+    language_flips: int = 0
+    #: False when teardown abandoned a provider socket or the stream failed.
+    close_clean: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class ToolCallStarted(Event):
     parent_trace_id: UUID | None = None
     tool_name: str = ""

@@ -2152,6 +2152,20 @@ class CodexAppServerClient:
             # give-up path would turn executor saturation into a permanent
             # claim leak, because the worker would still claim later with
             # nobody left to release.
+            # RT-SPAWN sub-spans: the cold bundle is the biggest single chunk
+            # of a session open, and without per-step numbers "the handshake
+            # is slow" is unattributable. Local stamps only; one summary INFO
+            # on success.
+            spans: dict[str, int] = {}
+            bundle_started = time.monotonic()
+            last_stamp = bundle_started
+
+            def _stamp(name: str) -> None:
+                nonlocal last_stamp
+                now = time.monotonic()
+                spans[name] = int((now - last_stamp) * 1000.0)
+                last_stamp = now
+
             decision_lock = threading.Lock()
             abandoned = threading.Event()
             published_epoch: list[int] = []
@@ -2200,6 +2214,8 @@ class CodexAppServerClient:
                         _release_subscription_transport(self, epoch)
                 raise
 
+            _stamp("reserve")
+
             async def _release_after_failure() -> None:
                 epoch = self._profile_transport_epoch
                 self._profile_transport_epoch = None
@@ -2215,6 +2231,7 @@ class CodexAppServerClient:
             except BaseException:
                 await _release_after_failure()
                 raise
+            _stamp("capability_probe")
             if not capability.available:
                 await _release_after_failure()
                 raise CodexSubscriptionUnavailable(capability.reason)
@@ -2238,12 +2255,17 @@ class CodexAppServerClient:
                     self._workspace,
                 )
                 await self._ensure_sink_started()
+                _stamp("home_workspace_sink")
                 await asyncio.to_thread(
                     _verify_spawn_binary, capability.binary_path
                 )
+                _stamp("binary_verify")
                 await self._spawn(capability.binary_path)
+                _stamp("spawn")
                 await self._initialize_live_process()
+                _stamp("initialize")
                 await self._verify_live_chatgpt_account()
+                _stamp("account_verify")
                 self._audit_config_requirements(
                     await self._read_config_requirements()
                 )
@@ -2255,7 +2277,13 @@ class CodexAppServerClient:
                     require_marker=True,
                     trusted_binary_path=self._trusted_binary_path,
                 )
+                _stamp("config_audit")
                 self._ready = True
+                log.info(
+                    "RT-SPAWN span=ensure_started ms=%d detail=%s",
+                    int((time.monotonic() - bundle_started) * 1000.0),
+                    ",".join(f"{name}={ms}" for name, ms in spans.items()),
+                )
                 # The audit that just passed is byte-for-byte the one
                 # ``thread_start`` performs. Record which process it covers so
                 # the very next thread start rides it instead of repeating

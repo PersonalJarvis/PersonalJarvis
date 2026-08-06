@@ -15,7 +15,7 @@ import logging
 import random
 import re
 import time
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -287,6 +287,9 @@ class _LoopLagProbe:
         self._samples: deque[tuple[float, float]] = deque()
         self._task: asyncio.Task[None] | None = None
         self._last_warn_at = float("-inf")
+        # Session-lifetime worst case, for the end-of-session postmortem —
+        # the windowed samples above forget a stall after _WINDOW_S.
+        self.max_lag_ever_ms = 0.0
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -311,6 +314,8 @@ class _LoopLagProbe:
     def _note_sample(self, now: float, lag_ms: float) -> None:
         """Record one lag sample; warn on a stall-grade gap (rate-limited)."""
         self._samples.append((now, lag_ms))
+        if lag_ms > self.max_lag_ever_ms:
+            self.max_lag_ever_ms = lag_ms
         cutoff = now - self._WINDOW_S
         while self._samples and self._samples[0][0] < cutoff:
             self._samples.popleft()
@@ -1242,6 +1247,20 @@ class RealtimeVoiceSession:
         # Frames discarded because a transport rebuild is pending. Reported so a
         # stuck marker cannot silently swallow the microphone (AP-30).
         self._rebuild_drop_reported = 0.0
+        # ---- Postmortem bookkeeping (RealtimeSessionPostmortem) ----------
+        # Stamps and counters read exactly once at end(); they never gate
+        # behavior. The adapter accumulator exists because a transport rebuild
+        # replaces the provider session OBJECT and its counters die with it —
+        # rebuild-heavy calls are precisely the ones the postmortem is for.
+        self._created_monotonic = time.monotonic()
+        self._audio_start_monotonic = 0.0
+        self._ready_monotonic = 0.0
+        self._first_audio_emit_monotonic = 0.0
+        self._rebuild_count = 0
+        self._mute_emergency_releases = 0
+        self._language_flips = 0
+        self._close_timed_out = False
+        self._adapter_diag_accum: Counter[str] = Counter()
 
         brain_config = getattr(self._config, "brain", None)
         reply_language = str(
@@ -1751,6 +1770,8 @@ class RealtimeVoiceSession:
     async def handle_control(self, msg: dict[str, Any]) -> None:
         kind = str(msg.get("type", ""))
         if kind == "audio_start":
+            if not self._audio_start_monotonic:
+                self._audio_start_monotonic = time.monotonic()
             rate = int(msg.get("sample_rate", self.browser_sample_rate) or self.browser_sample_rate)
             if rate != self.browser_sample_rate:
                 self.browser_sample_rate = rate
@@ -1801,6 +1822,17 @@ class RealtimeVoiceSession:
             if answer_sdp:
                 ready["webrtc_answer_sdp"] = answer_sdp
             await self._send_json(ready)
+            if not self._ready_monotonic:
+                self._ready_monotonic = time.monotonic()
+                log.info(
+                    "RT-SPAWN span=total_ready ms=%d session=%s provider=%s",
+                    int(
+                        (self._ready_monotonic - self._audio_start_monotonic)
+                        * 1000.0
+                    ),
+                    self.session_id,
+                    self.active_provider,
+                )
             await self._announce_language()
             if self._surface == "browser" and not self._browser_session_started:
                 await self._publish_browser_session_started()
@@ -2146,6 +2178,7 @@ class RealtimeVoiceSession:
         silent_since = self._last_output_audio_at or self._half_duplex_muted_since
         silent_s = now - silent_since
         if silent_s >= _HALF_DUPLEX_MUTE_ALERT_S:
+            self._mute_emergency_releases += 1
             log.warning(
                 "realtime[%s] releasing a half-duplex mute held %.1fs with no "
                 "provider audio for %.1fs - the turn ended without a boundary, "
@@ -2665,6 +2698,7 @@ class RealtimeVoiceSession:
                     if transcript:
                         new_language = self._resolve_lang(text=transcript)
                         if new_language != self._language:
+                            self._language_flips += 1
                             self._language = new_language
                             self._gate = ScrubHoldGate(new_language)
                             if self._tool_bridge is not None:
@@ -3847,6 +3881,9 @@ class RealtimeVoiceSession:
                 f"{_TRANSPORT_REBUILD_WINDOW_S:.0f} s); giving up: {detail}"
             )
             return False
+        # Postmortem counter: monotone for the session, unlike the windowed
+        # stamp list above, which forgets rebuilds after the rate window.
+        self._rebuild_count += 1
         self._transport_rebuild_times.append(now)
         # Second-or-later rebuild inside the window: the previous rebuilt
         # transport died again almost immediately. The dominant cause is a
@@ -3868,6 +3905,7 @@ class RealtimeVoiceSession:
         if self._transport_rebuild_pending is old_session:
             self._transport_rebuild_pending = None
         if old_session is not None:
+            self._harvest_adapter_diagnostics(old_session)
             try:
                 await old_session.close()
             except Exception:  # noqa: BLE001, S110 — the transport is already dead
@@ -6638,6 +6676,15 @@ class RealtimeVoiceSession:
         pcm = bytes(getattr(chunk, "pcm", b"") or b"")
         if not pcm:
             return
+        if not self._first_audio_emit_monotonic:
+            self._first_audio_emit_monotonic = time.monotonic()
+            start = self._audio_start_monotonic or self._created_monotonic
+            log.info(
+                "RT-SPAWN span=first_audio ms=%d session=%s provider=%s",
+                int((self._first_audio_emit_monotonic - start) * 1000.0),
+                self.session_id,
+                self.active_provider,
+            )
         if self._output_samples_sent == 0 and self._bus is not None:
             from jarvis.core.events import AudioOutFirst
 
@@ -6775,6 +6822,75 @@ class RealtimeVoiceSession:
         except Exception:  # noqa: BLE001, S110
             pass
 
+    def _harvest_adapter_diagnostics(self, session: Any) -> None:
+        """Accumulate a provider session's postmortem counters.
+
+        Called on every transport swap and once more at teardown: a rebuild
+        replaces the provider session OBJECT, so without the harvest a
+        rebuild-heavy call — exactly the kind the postmortem exists for —
+        would report only its last transport's numbers.
+        """
+        diag = getattr(session, "diagnostics", None)
+        if not callable(diag):
+            return
+        try:
+            for key, value in diag().items():
+                self._adapter_diag_accum[str(key)] += int(value)
+        except Exception:  # noqa: BLE001 — diagnostics never break teardown
+            log.debug(
+                "realtime[%s] adapter diagnostics harvest failed",
+                self.session_id,
+                exc_info=True,
+            )
+
+    def _build_postmortem(self, reason: str) -> Any:
+        """Assemble the RealtimeSessionPostmortem event from all counters."""
+        from jarvis.core.events import RealtimeSessionPostmortem
+
+        now = time.monotonic()
+        start = self._audio_start_monotonic or self._created_monotonic
+        diag = self._adapter_diag_accum
+
+        def _since_start_ms(stamp: float) -> int:
+            if stamp <= 0.0 or stamp < start:
+                return 0
+            return int((stamp - start) * 1000.0)
+
+        return RealtimeSessionPostmortem(
+            source_layer=f"realtime.{self.active_provider}",
+            session_id=self.session_id,
+            provider=self.active_provider,
+            surface=self._surface,
+            hangup_reason=reason,
+            duration_ms=int((now - start) * 1000.0),
+            ready_ms=_since_start_ms(self._ready_monotonic),
+            first_audio_ms=_since_start_ms(self._first_audio_emit_monotonic),
+            turns_completed=self._turn_index,
+            rebuilds=self._rebuild_count,
+            stun_retries=diag.get("stun_retries", 0),
+            ungrounded_captions_dropped=diag.get(
+                "ungrounded_captions_dropped", 0
+            ),
+            ungrounded_responses_refused=diag.get(
+                "ungrounded_responses_refused", 0
+            ),
+            trusted_permit_responses=diag.get("trusted_permit_responses", 0),
+            quiescence_boundary_turns=diag.get("quiescence_boundary_turns", 0),
+            terminal_item_turns=diag.get("terminal_item_turns", 0),
+            response_splices=diag.get("response_splices", 0),
+            self_dialogue_rebuilds=diag.get("self_dialogue_rebuilds", 0),
+            mute_emergency_releases=self._mute_emergency_releases,
+            sender_pacing_resyncs=diag.get("sender_pacing_resyncs", 0),
+            sender_shed_frames=diag.get("sender_shed_frames", 0),
+            sender_catchup_dropped_frames=diag.get(
+                "sender_catchup_dropped_frames", 0
+            ),
+            recv_dropped_frames=diag.get("recv_dropped_frames", 0),
+            max_loop_stall_ms=int(self._loop_lag.max_lag_ever_ms),
+            language_flips=self._language_flips,
+            close_clean=not (self._close_timed_out or self._failed.is_set()),
+        )
+
     async def end(self, *, reason: str = "") -> None:
         if self._ended:
             return
@@ -6884,6 +7000,7 @@ class RealtimeVoiceSession:
                     self._session.close(), timeout=_PROVIDER_CLOSE_BOUND_S
                 )
             except TimeoutError:
+                self._close_timed_out = True
                 log.warning(
                     "realtime[%s] provider close timed out during end(); "
                     "abandoning the socket so hangup can complete",
@@ -6895,6 +7012,19 @@ class RealtimeVoiceSession:
             try:
                 await self._tool_bridge.close()
             except Exception:  # noqa: BLE001, S110 — teardown is best-effort
+                pass
+        # Transport-health postmortem, unconditionally — including handovers
+        # and browser sessions: it describes THIS realtime transport's life,
+        # not the logical call, so no session-boundary subscriber reacts to
+        # it. The flight recorder is its consumer.
+        if self._session is not None:
+            self._harvest_adapter_diagnostics(self._session)
+        if self._bus is not None:
+            try:
+                await self._bus.publish(
+                    self._build_postmortem(reason or HANGUP_CLIENT_STOP)
+                )
+            except Exception:  # noqa: BLE001, S110 — telemetry never blocks teardown
                 pass
         # Every surface publishes the logical session end. The browser
         # surface has no other publisher (it bypasses the speech pipeline),

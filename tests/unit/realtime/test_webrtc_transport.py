@@ -93,6 +93,8 @@ class _Endpoint(webrtc_transport.RealtimeWebRtcAudioEndpoint):
         self._closed = False
         self._ended = False
         self._outgoing_drops = 0
+        self._recv_dropped = 0
+        self._sender = None
         self._remote_track_seen = asyncio.Event()
         self._connection_changed = asyncio.Event()
 
@@ -345,6 +347,27 @@ async def test_close_is_idempotent_and_closes_the_peer_once() -> None:
     await endpoint.close()
 
     assert endpoint._pc.closed == 1
+
+
+def test_diagnostics_reports_all_transport_counters() -> None:
+    """``diagnostics()`` is the one public seam for the postmortem counters.
+
+    All zero on a healthy endpoint; the sender-less test double stands for an
+    endpoint whose sender never came up — still all zero, never an error.
+    """
+    endpoint = _Endpoint()
+    assert endpoint.diagnostics() == {
+        "sender_pacing_resyncs": 0,
+        "sender_catchup_dropped_frames": 0,
+        "sender_shed_frames": 0,
+        "recv_dropped_frames": 0,
+    }
+
+    endpoint._outgoing_drops = 7
+    endpoint._recv_dropped = 3
+    diag = endpoint.diagnostics()
+    assert diag["sender_shed_frames"] == 7
+    assert diag["recv_dropped_frames"] == 3
 
 
 # --------------------------------------------------------------------------

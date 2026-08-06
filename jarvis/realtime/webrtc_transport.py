@@ -434,6 +434,7 @@ class RealtimeWebRtcAudioEndpoint:
         self._reader_task: asyncio.Task[None] | None = None
         self._mic_resampler = _MicResampler()
         self._outgoing_drops = 0
+        self._recv_dropped = 0
         self._first_audio_timeout_s = max(0.1, float(first_audio_timeout_s))
         self._closed = False
         # The output stream is terminated exactly once, and that fact outlives
@@ -536,6 +537,7 @@ class RealtimeWebRtcAudioEndpoint:
                         with_suppress_get(self._recv_queue)
                         self._recv_queue.put_nowait(pcm)
                         dropped += 1
+                        self._recv_dropped += 1
                         if dropped == 1 or dropped % _DROP_LOG_EVERY == 0:
                             log.warning(
                                 "Realtime WebRTC receive queue is full; dropped "
@@ -570,6 +572,23 @@ class RealtimeWebRtcAudioEndpoint:
             # the peer open past it leaves the outgoing sender transmitting
             # silence for the life of the process.
             await self.close()
+
+    def diagnostics(self) -> dict[str, int]:
+        """Transport counters for the end-of-session postmortem event.
+
+        All zero in a healthy call. This method is the one public seam for
+        them — reading the sender's private fields here keeps every other
+        consumer (session postmortem, probe, forensics) off the internals.
+        """
+        sender = getattr(self._sender, "_impl", None)
+        return {
+            "sender_pacing_resyncs": int(getattr(sender, "_pacing_resyncs", 0)),
+            "sender_catchup_dropped_frames": int(
+                getattr(sender, "_catchup_dropped", 0)
+            ),
+            "sender_shed_frames": int(self._outgoing_drops),
+            "recv_dropped_frames": int(self._recv_dropped),
+        }
 
     def _end_stream(self) -> None:
         """Terminate the output stream exactly once, without fail.

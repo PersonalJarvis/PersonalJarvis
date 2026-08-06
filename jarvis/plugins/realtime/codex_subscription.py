@@ -17,6 +17,8 @@ import importlib
 import inspect
 import json
 import logging
+import time
+from collections import Counter
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass
@@ -583,10 +585,33 @@ class _CodexSubscriptionRealtimeSession:
         # fail-open behaviour as a host that never had one — otherwise the gate
         # refuses and interrupts every remaining answer of the call.
         self._local_grounding_ok = True
+        # Session-lifetime counters for the end-of-session postmortem event.
+        # Bumped at the same sites that already log the condition; the session
+        # layer reads them once at teardown via ``diagnostics()``. Counters,
+        # never text — transcripts have no business in telemetry.
+        self._diag: Counter[str] = Counter()
 
     def _local_grounding_active(self) -> bool:
         """Whether locally grounded input is available AND still trustworthy."""
         return self._input_transcriber is not None and self._local_grounding_ok
+
+    def diagnostics(self) -> dict[str, int]:
+        """Postmortem counters, merged with the media endpoint's own.
+
+        Read once by ``RealtimeVoiceSession.end()``; every key is a plain int
+        so the frozen bus event can carry it. Best-effort by contract — a
+        broken endpoint must never break teardown.
+        """
+        merged: dict[str, int] = {k: int(v) for k, v in self._diag.items()}
+        endpoint_diag = getattr(self._audio_endpoint, "diagnostics", None)
+        if callable(endpoint_diag):
+            try:
+                merged.update(
+                    {k: int(v) for k, v in endpoint_diag().items()}
+                )
+            except Exception:  # noqa: BLE001 — diagnostics never break teardown
+                log.debug("audio endpoint diagnostics unavailable", exc_info=True)
+        return merged
 
     async def _append_trusted(self, write: Any, *, arms_response: bool) -> Any:
         """Run one provider write through the single trusted-write path.
@@ -928,6 +953,7 @@ class _CodexSubscriptionRealtimeSession:
                     # its one plausible client-side mechanism; this line
                     # timestamps the seam so the next incident is attributable
                     # to the seam or to the server's own audio.
+                    self._diag["response_splices"] += 1
                     log.info(
                         "Codex subscription realtime opened a new response "
                         "%d ms after the previous response's audio "
@@ -947,6 +973,7 @@ class _CodexSubscriptionRealtimeSession:
                 response_allowed = True
             elif _trusted_permit_available():
                 self._trusted_output_permits -= 1
+                self._diag["trusted_permit_responses"] += 1
                 response_allowed = True
             elif _entitled_turn_continues():
                 active_response_generation = entitled_generation
@@ -969,6 +996,7 @@ class _CodexSubscriptionRealtimeSession:
                     refusal_run_started_at = now
                     refusal_storm_noted = False
                 refusal_run += 1
+                self._diag["ungrounded_responses_refused"] += 1
                 if post_interrupt:
                     # Expected fallout of OUR own cut: the far end streams the
                     # remainder of the retired answer for a while. Dropping it
@@ -1010,6 +1038,7 @@ class _CodexSubscriptionRealtimeSession:
                     and not self_dialogue_detected
                 ):
                     self_dialogue_detected = True
+                    self._diag["self_dialogue_rebuilds"] += 1
                     log.warning(
                         "Codex subscription refused %d automatic responses "
                         "within %.0f s with no locally grounded speech in "
@@ -1558,6 +1587,7 @@ class _CodexSubscriptionRealtimeSession:
                         if recovered is not None:
                             yield recovered
                         completion_emitted = True
+                        self._diag["quiescence_boundary_turns"] += 1
                         yield _ProviderEvent(type="turn_complete")
                         _reset_assistant_capture()
                         _finish_response()
@@ -1800,6 +1830,7 @@ class _CodexSubscriptionRealtimeSession:
                                 )
                                 yield _ProviderEvent(type="turn_complete")
                                 return
+                            self._diag["ungrounded_captions_dropped"] += 1
                             log.info(
                                 "Ignoring a server user transcript with no "
                                 "microphone energy and no fresh local utterance "
@@ -1994,6 +2025,7 @@ class _CodexSubscriptionRealtimeSession:
                             if recovered is not None:
                                 yield recovered
                             completion_emitted = True
+                            self._diag["terminal_item_turns"] += 1
                             log.info(
                                 "Codex subscription realtime turn ended on item %r (protocol %s)",
                                 item_type,
@@ -2496,9 +2528,15 @@ class CodexSubscriptionRealtimeProvider:
         last_error: BaseException | None = None
         for index, ice_factory in enumerate(attempts):
             try:
-                return await self._open_session_once(
+                session = await self._open_session_once(
                     cfg, None if ice_factory is None else ice_factory()
                 )
+                if index > 0:
+                    # Postmortem marker: this call paid the full re-open (a
+                    # second thread_start bundle included) to reach STUN.
+                    session._diag["stun_retries"] = index
+                    log.info("RT-SPAWN stun_retry=%d", index)
+                return session
             except transport_module.WebRtcMediaPathUnavailable as exc:
                 last_error = exc
                 if index + 1 < len(attempts):
@@ -2558,6 +2596,19 @@ class CodexSubscriptionRealtimeProvider:
         # Jarvis owns the media path in-process. The UI could only ever broker
         # a signalling-shaped offer (no microphone), which ChatGPT-Live cannot
         # use: on v3 the audio IS the WebRTC track.
+        # RT-SPAWN spans: every step of this open is sequential today, so the
+        # per-step numbers are what makes the latency budget (and any future
+        # overlap) measurable instead of anecdotal.
+        last_stamp = time.monotonic()
+
+        def _stamp(name: str) -> None:
+            nonlocal last_stamp
+            now = time.monotonic()
+            log.info(
+                "RT-SPAWN span=%s ms=%d", name, int((now - last_stamp) * 1000.0)
+            )
+            last_stamp = now
+
         audio_endpoint: Any = None
         if self._audio_endpoint_factory is not None:
             audio_endpoint = self._audio_endpoint_factory(ice_servers)
@@ -2565,6 +2616,7 @@ class CodexSubscriptionRealtimeProvider:
             transport_module = importlib.import_module("jarvis.realtime.webrtc_transport")
             audio_endpoint = transport_module.RealtimeWebRtcAudioEndpoint(ice_servers)
         offer_sdp = await audio_endpoint.create_offer()
+        _stamp("offer_create")
 
         client = self._client
         if client is None:
@@ -2585,6 +2637,7 @@ class CodexSubscriptionRealtimeProvider:
             thread_id = _thread_id_from_result(thread_result)
             if not thread_id:
                 raise RuntimeError("Codex app-server did not return a thread id")
+            _stamp("thread_start")
             subscription = client.subscribe(thread_id)
 
             configured_model = str(getattr(cfg, "model", "") or "").strip()
@@ -2622,10 +2675,12 @@ class CodexSubscriptionRealtimeProvider:
             answer_sdp = str(getattr(start, "answer_sdp", "") or "").strip()
             if not answer_sdp:
                 raise RuntimeError("Codex app-server did not return a WebRTC answer SDP")
+            _stamp("realtime_start_sdp")
             await audio_endpoint.apply_answer(answer_sdp)
             # Fail here rather than mid-call: without a live media path the
             # session would look connected and stay mute in both directions.
             await audio_endpoint.wait_connected()
+            _stamp("media_connect")
             session = _CodexSubscriptionRealtimeSession(
                 client=client,
                 subscription=subscription,
@@ -2643,10 +2698,13 @@ class CodexSubscriptionRealtimeProvider:
             warm = getattr(session._input_transcriber, "warm", None)
             if callable(warm):
                 await warm()
+            _stamp("transcriber_warm")
             # Identity FIRST: the model must know who it is and what this
             # project is before the user's first word arrives.
             await session._deliver_context(getattr(cfg, "instructions", ""))
+            _stamp("context_deliver")
             await session._deliver_history(getattr(cfg, "history", ()))
+            _stamp("history_deliver")
             # Then the language — but ONLY when the user explicitly pinned one
             # (brain.reply_language). At open nobody has spoken yet, so the
             # resolved value is just DEFAULT_LOCALE; hard-pinning it nailed

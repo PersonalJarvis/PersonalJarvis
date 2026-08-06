@@ -14,13 +14,23 @@ confirmed in the 2026-07-13 realtime forensics (BUG-047..BUG-050):
   returned no text at all (outside the legitimate suppress paths).
 - ``silent-turn`` — a user turn completed without any assistant text.
 
+Plus every realtime transport-health class from the ``RealtimeSessionPostmortem``
+event (splice seams, ungrounded caption/refusal storms, event-loop stalls,
+sender-behind-wall-clock, rebuild loops, mute emergency releases, language
+flips, spawn budget) — the verdict logic is shared with the codex live-call
+probe via ``jarvis.diagnostics.realtime_forensics`` so the two can never
+disagree.
+
 Usage::
 
     python scripts/diag_voice_sessions.py            # today's sessions
     python scripts/diag_voice_sessions.py --date 2026-07-13
     python scripts/diag_voice_sessions.py --last 3   # newest N sessions only
+    python scripts/diag_voice_sessions.py --harness data/diagnostics/codex_live/<ts>/round.jsonl
 
-Read-only developer diagnostic: no app, network, or config access.
+Read-only developer diagnostic: no app, network, or config access. The
+``--harness`` mode exits 1 when any HIGH finding survives, so probe rounds
+can gate on it.
 """
 from __future__ import annotations
 
@@ -37,6 +47,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from jarvis.brain.action_honesty import has_deferred_action_claim  # noqa: E402
+from jarvis.diagnostics.realtime_forensics import (  # noqa: E402
+    evaluate_postmortem,
+    extract_postmortems,
+)
 
 _MAX_PREVIEW_CHARS = 90
 _RETRY_LOOP_THRESHOLD = 3
@@ -210,12 +224,26 @@ def _check_silent_turns(session: Session) -> None:
         )
 
 
+def _check_realtime_postmortem(session: Session) -> None:
+    """Fold the shared transport-health verdicts into this session's findings."""
+    for payload in extract_postmortems(session.events):
+        for verdict in evaluate_postmortem(payload):
+            session.findings.append(
+                Finding(
+                    severity=verdict.severity,
+                    kind=verdict.kind,
+                    detail=verdict.detail,
+                )
+            )
+
+
 _CHECKS = (
     _check_promise_without_action,
     _check_voice_identity,
     _check_tool_retry_loops,
     _check_exhausted_brain_turns,
     _check_silent_turns,
+    _check_realtime_postmortem,
 )
 
 
@@ -257,6 +285,36 @@ def _format_report(sessions: list[Session]) -> str:
     return "\n".join(lines)
 
 
+def audit_harness_capture(rows: list[dict[str, Any]]) -> tuple[str, int]:
+    """Verdict table for a probe round capture; exit 1 on any HIGH finding.
+
+    A probe round is one session (occasionally more after a rebuild), so the
+    report is per postmortem rather than per reconstructed session timeline.
+    """
+    postmortems = extract_postmortems(rows)
+    if not postmortems:
+        return "no RealtimeSessionPostmortem in the capture", 2
+    lines: list[str] = []
+    worst_is_high = False
+    for payload in postmortems:
+        findings = evaluate_postmortem(payload)
+        verdict = "PASS"
+        if any(f.severity == "high" for f in findings):
+            verdict, worst_is_high = "FAIL", True
+        elif findings:
+            verdict = "WARN"
+        lines.append(
+            f"postmortem {str(payload.get('session_id', '?'))[:12]}  "
+            f"provider={payload.get('provider', '?')}  "
+            f"turns={payload.get('turns_completed', 0)}  "
+            f"ready={payload.get('ready_ms', 0)}ms  "
+            f"first_audio={payload.get('first_audio_ms', 0)}ms  -> {verdict}"
+        )
+        for finding in findings:
+            lines.append(f"  [{finding.severity:4}] {finding.kind}: {finding.detail}")
+    return "\n".join(lines), (1 if worst_is_high else 0)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -270,7 +328,24 @@ def main(argv: list[str] | None = None) -> int:
         default=0,
         help="audit only the newest N sessions (default: all)",
     )
+    parser.add_argument(
+        "--harness",
+        type=Path,
+        default=None,
+        help=(
+            "audit a codex live-probe round capture (round.jsonl) instead of "
+            "the flight recorder; exits 1 on any HIGH finding"
+        ),
+    )
     args = parser.parse_args(argv)
+
+    if args.harness is not None:
+        if not args.harness.exists():
+            print(f"no harness capture at {args.harness}")
+            return 2
+        report, code = audit_harness_capture(_load_events(args.harness))
+        print(report)
+        return code
 
     recorder_path = REPO_ROOT / "data" / "flight_recorder" / f"{args.date}.jsonl"
     if not recorder_path.exists():
