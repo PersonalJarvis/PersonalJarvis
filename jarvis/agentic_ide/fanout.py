@@ -183,6 +183,83 @@ async def _finish_prompt_attachments_shielded(
         raise
 
 
+#: Fan-outs whose caller was cancelled mid-delivery (voice hangup, dropped
+#: HTTP client). The strong reference is what keeps a detached fan-out alive
+#: until every pane has its verdict; the done-callback below is what makes
+#: that verdict diagnosable from the log once nobody is left to speak it
+#: (AP-30: a swallowed outcome reads as "the feature does nothing").
+_DETACHED_DELIVERIES: set[asyncio.Future[Any]] = set()
+
+
+def _finish_detached(work: asyncio.Future[Any], names: tuple[str, ...]) -> None:
+    """Log how a detached fan-out ended — its caller can no longer report it."""
+    _DETACHED_DELIVERIES.discard(work)
+    if work.cancelled():
+        log.warning(
+            "Agentic IDE fan-out (detached): delivery for %s was cancelled "
+            "before it could finish — those panes received nothing",
+            ", ".join(names),
+        )
+        return
+    exc = work.exception()
+    if exc is not None:
+        log.warning(
+            "Agentic IDE fan-out (detached): delivery for %s failed: %r",
+            ", ".join(names),
+            exc,
+        )
+        return
+    for name, result in zip(names, work.result(), strict=False):
+        if isinstance(result, Delivery):
+            log.info(
+                "Agentic IDE fan-out (detached): %s → %s",
+                result.terminal,
+                "delivered" if result.delivered else (result.reason_code or "failed"),
+            )
+        else:
+            log.warning(
+                "Agentic IDE fan-out (detached): %s failed unexpectedly: %r",
+                name,
+                result,
+            )
+
+
+def note_detached_delivery(work: asyncio.Future[Any], *, describe: str) -> None:
+    """Keep a caller-cancelled delivery alive and log how it ends.
+
+    For delivery paths OUTSIDE this module's fan-out (the single-pane REST
+    prompt route) that need the same survival property: the caller re-raises
+    its cancellation, the work keeps the strong reference it needs to finish,
+    and its outcome lands in the log because nobody is left to speak it
+    (AP-30).
+    """
+    _DETACHED_DELIVERIES.add(work)
+
+    def _done(task: asyncio.Future[Any]) -> None:
+        _DETACHED_DELIVERIES.discard(task)
+        if task.cancelled():
+            log.warning(
+                "Agentic IDE (detached): %s was cancelled before it finished — "
+                "nothing was typed",
+                describe,
+            )
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.warning("Agentic IDE (detached): %s failed: %r", describe, exc)
+            return
+        log.info(
+            "Agentic IDE (detached): %s finished after its caller went away",
+            describe,
+        )
+
+    work.add_done_callback(_done)
+    log.warning(
+        "Agentic IDE: caller cancelled mid-delivery — finishing %s detached",
+        describe,
+    )
+
+
 async def _default_compose(utterance: str, **kwargs: Any) -> Any:
     from .prompt_composer import compose as compose_prompt
 
@@ -231,6 +308,11 @@ async def deliver(
     Never raises for a single pane. A pane that is missing, not running, whose
     prompt could not be written, or whose PTY write failed comes back as an
     undelivered ``Delivery`` carrying the reason.
+
+    Survives its caller. Once the fleet is composing, cancelling this call —
+    a voice hangup, a disconnected client — re-raises for the caller but lets
+    the briefs finish detached: hanging up ends the conversation, not the
+    order the user already gave. The detached outcome is logged per pane.
     """
     wanted = _unique(terminals)
     if not wanted:
@@ -389,9 +471,32 @@ async def deliver(
     # return_exceptions is deliberate belt-and-braces: `one` already contains
     # every failure it can foresee, and an unforeseen one must still not cancel
     # the siblings mid-write.
-    results = await asyncio.gather(
-        *(one(name) for name in wanted), return_exceptions=True
+    work = asyncio.ensure_future(
+        asyncio.gather(*(one(name) for name in wanted), return_exceptions=True)
     )
+    try:
+        results = await asyncio.shield(work)
+    except asyncio.CancelledError:
+        if work.cancelled():
+            raise
+        # The CALLER died mid-delivery — a voice hangup, a disconnected HTTP
+        # client — not the fleet. The order was accepted before the composer
+        # started, and cancelling here is how "prompt T1 …" ended as a pane
+        # that never received anything while the user believed it had (live
+        # 2026-08-06 18:49/18:52: both turns were cancelled inside a 15-20 s
+        # subscription-CLI composition and nothing was ever typed). Hanging up
+        # ends the CONVERSATION — the spoken verdict is dropped — but the
+        # briefs still land; the receipt (`last_prompt_at`) stays the proof.
+        _DETACHED_DELIVERIES.add(work)
+        work.add_done_callback(
+            lambda task, names=tuple(wanted): _finish_detached(task, names)
+        )
+        log.warning(
+            "Agentic IDE fan-out: caller cancelled mid-delivery — finishing "
+            "the briefs for %s detached",
+            ", ".join(wanted),
+        )
+        raise
     deliveries: list[Delivery] = []
     for name, result in zip(wanted, results, strict=True):
         if isinstance(result, Delivery):

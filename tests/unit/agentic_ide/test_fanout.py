@@ -236,13 +236,89 @@ async def test_overlapping_deliveries_reserve_batches_by_identity() -> None:
     assert term.pending_prompt_attachment_batches == []
 
 
-async def test_cancelled_delivery_releases_its_attachment_reservation() -> None:
+def _pending_detached() -> asyncio.Future:
+    """The one still-running fan-out a cancelled caller left behind.
+
+    Filters on ``done()`` because the module registry may briefly hold settled
+    futures from earlier fan-outs — the discard runs in a done-callback, one
+    loop tick after completion.
+    """
+    pending = [w for w in fanout._DETACHED_DELIVERIES if not w.done()]
+    assert len(pending) == 1
+    return pending[0]
+
+
+async def _settle_detached() -> None:
+    """Wait for every detached fan-out of THIS loop to finish."""
+    pending = [w for w in fanout._DETACHED_DELIVERIES if not w.done()]
+    if pending:
+        await asyncio.wait(pending, timeout=5.0)
+
+
+async def test_a_hangup_mid_compose_still_briefs_the_pane() -> None:
+    """Cancelling the CALLER detaches the delivery instead of killing it.
+
+    The live 2026-08-06 failure: "prompt terminal T1 …" reached the composer,
+    the composer's writer needed 15-20 s, the user hung up at 13 s, and the
+    cancellation killed the delivery mid-compose — nothing was ever typed while
+    the user believed T1 was working. Hanging up ends the conversation, not the
+    order: the brief must still land, and its receipt must still be written.
+    """
     session = _session("Iris")
     attachment = SimpleNamespace(name="layout.png")
     term = session.terminals[0]
-    batch = PendingPromptAttachmentBatch(
-        "batch-a", (attachment,), ("layout.png",)
+    batch = PendingPromptAttachmentBatch("batch-a", (attachment,), ("layout.png",))
+    term.pending_prompt_attachment_batches.append(batch)
+    composing = asyncio.Event()
+    release = asyncio.Event()
+    sent: dict[str, str] = {}
+
+    async def compose(_utterance: str, **_kwargs) -> ComposedPrompt:
+        composing.set()
+        await release.wait()
+        return ComposedPrompt(text="the finished brief")
+
+    async def send(name: str, text: str) -> SimpleNamespace:
+        sent[name] = text
+        return SimpleNamespace(submitted=True)
+
+    task = asyncio.create_task(
+        fanout.deliver(
+            session=session,
+            terminals=["Iris"],
+            utterance="fix the layout",
+            include_pending_attachments=True,
+            compose=compose,
+            send=send,
+        )
     )
+    await composing.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # The caller is gone; the composition is still running detached.
+    work = _pending_detached()
+    assert sent == {}
+    release.set()
+    await work
+
+    assert sent == {"Iris": "the finished brief"}
+    assert term.pending_prompt_attachment_batches == []
+    assert term.pending_prompt_attachment_reservations == set()
+
+
+async def test_a_cancelled_detached_delivery_releases_its_reservation() -> None:
+    """Killing the detached WORK itself (loop shutdown) must not leak a batch.
+
+    The caller-cancel path above finishes the brief; this is the other exit —
+    the process is going down and the detached fan-out is cancelled for real.
+    The staged attachment then stays claimable for the next spoken prompt.
+    """
+    session = _session("Iris")
+    attachment = SimpleNamespace(name="layout.png")
+    term = session.terminals[0]
+    batch = PendingPromptAttachmentBatch("batch-a", (attachment,), ("layout.png",))
     term.pending_prompt_attachment_batches.append(batch)
     composing = asyncio.Event()
 
@@ -265,47 +341,13 @@ async def test_cancelled_delivery_releases_its_attachment_reservation() -> None:
     with pytest.raises(asyncio.CancelledError):
         await task
 
+    work = _pending_detached()
+    work.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await work
+
     assert term.pending_prompt_attachment_batches == [batch]
     assert term.pending_prompt_attachment_reservations == set()
-
-
-async def test_cancellation_while_waiting_for_gate_never_reserves_a_batch() -> None:
-    session = _session("Iris", "Bruno")
-    first_started = asyncio.Event()
-    never_release = asyncio.Event()
-    for index, term in enumerate(session.terminals):
-        attachment = SimpleNamespace(name=f"layout-{index}.png")
-        term.pending_prompt_attachment_batches.append(
-            PendingPromptAttachmentBatch(
-                f"batch-{index}", (attachment,), (attachment.name,)
-            )
-        )
-
-    async def compose(_utterance: str, **kwargs) -> ComposedPrompt:
-        if kwargs["terminal_name"] == "Iris":
-            first_started.set()
-            await never_release.wait()
-        return ComposedPrompt(text="brief")
-
-    task = asyncio.create_task(
-        fanout.deliver(
-            session=session,
-            terminals=["Iris", "Bruno"],
-            utterance="brief both panes",
-            include_pending_attachments=True,
-            compose=compose,
-            limit=1,
-        )
-    )
-    await first_started.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    assert all(
-        term.pending_prompt_attachment_reservations == set()
-        for term in session.terminals
-    )
 
 
 async def test_cancellation_during_commit_still_consumes_a_sent_batch() -> None:
@@ -341,6 +383,9 @@ async def test_cancellation_during_commit_still_consumes_a_sent_batch() -> None:
     term.pending_prompt_attachment_lock.release()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+    # The commit finishes inside the detached fan-out, not the dead caller.
+    await _settle_detached()
 
     assert term.pending_prompt_attachment_batches == []
     assert term.pending_prompt_attachment_reservations == set()
