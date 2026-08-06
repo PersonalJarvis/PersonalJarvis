@@ -75,14 +75,67 @@ def test_modes_look_different() -> None:
     assert np.abs(left - right).mean() > 1.0
 
 
-def test_only_listening_modes_react_to_the_live_level() -> None:
+def test_only_modes_with_a_live_feed_react_to_the_level() -> None:
     assert VoiceOrbRenderer._input_level("listen", 0.7) == pytest.approx(0.7)
+    # Speaking rides the REAL TTS loudness the bridge forwards, so the sphere
+    # swells on Jarvis's actual voice instead of a synthetic cadence.
+    assert VoiceOrbRenderer._input_level("speak", 0.7) == pytest.approx(0.7)
     # Recording keeps a floor so a quiet moment never reads as a dead orb.
     assert VoiceOrbRenderer._input_level("dictate", 0.0) > 0.0
     # Transcribing has no live feed; a stale sample must not animate the orb.
     assert VoiceOrbRenderer._input_level("dictate_transcribing", 0.9) == 0.0
     assert VoiceOrbRenderer._input_level("think", 0.9) == 0.0
     assert VoiceOrbRenderer._input_level("listen", None) == 0.0
+
+
+def _lit_radius(frame: np.ndarray) -> float:
+    """Half the width of the painted sphere in a rendered frame."""
+    lit = np.any(frame != np.asarray(KEY, dtype=np.int16), axis=-1)
+    columns = np.nonzero(lit.any(axis=0))[0]
+    return 0.0 if columns.size == 0 else (columns.max() - columns.min() + 1) / 2.0
+
+
+def test_a_loud_voice_visibly_swells_the_sphere() -> None:
+    """The whole point of dropping the speech bubble: the orb IS the indicator.
+
+    A swell that only exists in the arithmetic — because the resting sphere
+    already fills its window and the growth clips away — is the bug this pins.
+    """
+    quiet = VoiceOrbRenderer(size=108, color_key=KEY)
+    loud = VoiceOrbRenderer(size=108, color_key=KEY)
+    for step in range(40):
+        t = step / 30.0
+        quiet_frame = _frame(quiet, t, "speak", 0.0)
+        loud_frame = _frame(loud, t, "speak", 1.0)
+    assert _lit_radius(loud_frame) - _lit_radius(quiet_frame) >= 4.0
+
+
+def test_the_resting_sphere_leaves_room_to_grow() -> None:
+    idle = VoiceOrbRenderer(size=108, color_key=KEY)
+    for step in range(30):
+        frame = _frame(idle, step / 30.0, "idle", None)
+    assert _lit_radius(frame) < 54.0  # strictly inside the window
+
+
+def test_thinking_churns_the_palette_harder_than_resting() -> None:
+    """Thinking has nothing to hear, so it says so with colour, not with text."""
+    assert MOTIONS["think"].color_churn > MOTIONS["idle"].color_churn * 2
+
+    def banding(mode: str) -> float:
+        """How tightly colour still tracks HEIGHT (1 = perfect ramp, 0 = mixed).
+
+        This is the honest measure of "the colours mix": a resting orb is a
+        vertical ivory→amber ramp, so its colour is almost a function of y.
+        Churning breaks that link — the cloud decides the colour, not the row.
+        """
+        renderer = VoiceOrbRenderer(size=108, color_key=KEY)
+        for step in range(45):
+            frame = _frame(renderer, step / 30.0, mode, None)
+        lit = np.any(frame != np.asarray(KEY, dtype=np.int16), axis=-1)
+        rows = np.repeat(np.arange(frame.shape[0])[:, None], frame.shape[1], axis=1)
+        return abs(float(np.corrcoef(rows[lit], frame[..., 2][lit])[0, 1]))
+
+    assert banding("think") < banding("idle")
 
 
 def test_field_is_recomputed_at_a_capped_rate() -> None:

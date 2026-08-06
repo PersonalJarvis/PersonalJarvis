@@ -32,6 +32,13 @@ interface Motion {
   energy: number;
   /** Strength of the assistant-speech envelope. */
   voiceImpact: number;
+  /**
+   * How far the cloud field may drag the COLOUR ramp out of its vertical
+   * order. At rest it only softens the horizon; while thinking it is what
+   * makes ivory, gold and amber visibly churn through each other instead of
+   * sitting in bands. Kept in step with the desktop twin (`ui/orb/voice_orb.py`).
+   */
+  colorChurn: number;
 }
 
 const MOTIONS: Record<VoiceState, Motion> = {
@@ -43,6 +50,7 @@ const MOTIONS: Record<VoiceState, Motion> = {
     turbulence: 0.8,
     energy: 0.86,
     voiceImpact: 0,
+    colorChurn: 0.28,
   },
   listening: {
     flowX: 0.11,
@@ -52,24 +60,29 @@ const MOTIONS: Record<VoiceState, Motion> = {
     turbulence: 1.02,
     energy: 0.98,
     voiceImpact: 0,
+    colorChurn: 0.34,
   },
   thinking: {
-    flowX: 0.42,
-    flowY: -0.19,
-    breathAmp: 0.009,
-    breathHz: 0.32,
-    turbulence: 1.28,
-    energy: 1.02,
+    // The one state with nothing to hear, so it has to be the most visibly
+    // busy: the field races and the palette churns through itself.
+    flowX: 0.95,
+    flowY: -0.44,
+    breathAmp: 0.01,
+    breathHz: 0.34,
+    turbulence: 1.85,
+    energy: 1.08,
     voiceImpact: 0,
+    colorChurn: 1.45,
   },
   speaking: {
     flowX: 0.34,
     flowY: 0.085,
-    breathAmp: 0.016,
+    breathAmp: 0.014,
     breathHz: 0.82,
-    turbulence: 1.02,
+    turbulence: 1.06,
     energy: 1,
-    voiceImpact: 0.045,
+    voiceImpact: 0.11,
+    colorChurn: 0.45,
   },
   paused: {
     // Stiller than idle: the session is held, not gone — the weather keeps
@@ -81,6 +94,7 @@ const MOTIONS: Record<VoiceState, Motion> = {
     turbulence: 0.75,
     energy: 0.78,
     voiceImpact: 0,
+    colorChurn: 0.28,
   },
   error: {
     flowX: 0.012,
@@ -90,8 +104,20 @@ const MOTIONS: Record<VoiceState, Motion> = {
     turbulence: 0.7,
     energy: 0.72,
     voiceImpact: 0,
+    colorChurn: 0.28,
   },
 };
+
+/**
+ * Resting size as a fraction of the canvas. Below 1 ON PURPOSE: the swell has
+ * to have somewhere to go. At the old value the sphere already filled its box
+ * at rest, every beat hit the `Math.min(1, …)` ceiling, and the result was a
+ * pulse nobody could see.
+ */
+const BASE_SCALE = 0.86;
+
+/** How much of the remaining headroom a full-volume moment claims. */
+const LEVEL_SWELL = 0.12;
 
 type Rgb = readonly [number, number, number];
 
@@ -182,6 +208,10 @@ function paintWeather(
   impact: number,
 ): void {
   const data = image.data;
+  // Slow drift keeps the colour mixing in motion, so a thinking orb never
+  // settles into a still picture.
+  const churn = motion.colorChurn;
+  const drift = Math.sin(phaseX * 2.4 + phaseY * 1.7) * churn * 0.2;
 
   for (let y = 0; y < TEXTURE_SIZE; y += 1) {
     const ny = (y / (TEXTURE_SIZE - 1)) * 2 - 1;
@@ -205,8 +235,10 @@ function paintWeather(
       );
       const weather = cloudField * 0.76 + detail * 0.24;
 
-      // Warping the vertical color position removes the synthetic horizon band.
-      const vertical = clamp((ny + 1) * 0.5 + (weather - 0.5) * 0.28);
+      // Where a pixel sits on the ivory→amber ramp. Warping it by the cloud
+      // field removes the synthetic horizon band at rest; opening the warp up
+      // makes the palette visibly MIX rather than sit in stripes.
+      const vertical = clamp((ny + 1) * 0.5 + (weather - 0.5) * churn + drift);
       let start: Rgb;
       let end: Rgb;
       let paletteMix: number;
@@ -364,10 +396,10 @@ export function VoiceOrb({
       const inputTarget = activeState === "listening" ? readVoiceInputLevel(now) : 0;
       const inputEase = 1 - Math.exp(-dt * (inputTarget > liveInput ? 24 : 9));
       liveInput = mix(liveInput, inputTarget, inputEase);
-      const visualImpact = liveImpact + liveInput * 0.055;
+      const visualImpact = liveImpact + liveInput * LEVEL_SWELL;
 
       const breath =
-        0.965 -
+        BASE_SCALE -
         live.breathAmp * 0.65 +
         live.breathAmp * 0.52 * Math.sin(breathPhase) +
         live.breathAmp * 0.13 * Math.sin(breathPhase * 2.05 + 1.4) +

@@ -118,6 +118,23 @@ class _DragState:
 # 108x108 — roughly 1/3 smaller than the old 160-px size
 WIN_W = 108
 WIN_H = 108
+
+#: The voice orb's window, 50 % larger than the mascot's (maintainer, 2026-08-06).
+#: The sphere now carries the whole conversation state on its own — no speech
+#: bubble, no text — so it has to be big enough to read a swell and a colour
+#: churn at a glance. The mascot keeps 108: its artwork, taskbar anchor and
+#: animations are all drawn for that size.
+VOICE_ORB_WIN_W = 162
+VOICE_ORB_WIN_H = 162
+
+
+def window_size_for_style(style: str) -> tuple[int, int]:
+    """Window edge length for one orb style."""
+    if style == "voice_orb":
+        return VOICE_ORB_WIN_W, VOICE_ORB_WIN_H
+    return WIN_W, WIN_H
+
+
 MARGIN_RIGHT = 24
 MARGIN_TOP = 28
 
@@ -224,6 +241,7 @@ ORB_BUBBLE_THEME = BubbleTheme(
 def bubble_theme_for_style(style: str) -> BubbleTheme:
     """The bubble look one orb style wears."""
     return ORB_BUBBLE_THEME if style == "voice_orb" else MASCOT_BUBBLE_THEME
+
 
 # Magenta color key — Tkinter renders this color pixel-perfect transparent
 COLOR_KEY_HEX = "#FF00FF"
@@ -1158,6 +1176,10 @@ class OrbCommentBubble:
         self._screen_w = screen_w
         self.hide()
 
+    def set_orb_width(self, orb_w: int) -> None:
+        """Re-centre over an orb that changed size (a live style swap)."""
+        self._orb_w = orb_w
+
     def _build(self) -> None:
         top = tk.Toplevel(self._parent)
         top.overrideredirect(True)
@@ -1673,6 +1695,13 @@ class OrbControlRow:
         if self._visible:
             self._place()
 
+    def set_orb_size(self, orb_w: int, orb_h: int) -> None:
+        """Re-centre under an orb that changed size (a live style swap)."""
+        self._orb_w = orb_w
+        self._orb_h = orb_h
+        if self._visible:
+            self._place()
+
     def _place(self) -> None:
         if self._top is None:
             return
@@ -1955,6 +1984,9 @@ class OrbOverlay:
         requested_style = env_style or (style or DEFAULT_ORB_STYLE).lower()
         self._style = _coerce_style(requested_style)
         self._mascot_path_hint = str(mascot_path) if mascot_path else None
+        # Window size belongs to the style, not to the module: the voice orb is
+        # half again as large as the mascot (see VOICE_ORB_WIN_W).
+        self._win_w, self._win_h = window_size_for_style(self._style)
 
     # --- Public API ----------------------------------------------------
 
@@ -2061,7 +2093,7 @@ class OrbOverlay:
             placement = resolve_placement(
                 persisted,
                 screens,
-                mascot_size_px=WIN_W,
+                mascot_size_px=self._win_w,
                 require_primary=not allow_secondary,
             )
             if not placement.recovered:
@@ -2090,9 +2122,13 @@ class OrbOverlay:
                         placement.abs_x,
                         placement.abs_y,
                     )
-                    self._root.geometry(f"{WIN_W}x{WIN_H}+{primary_anchor.x}+{primary_anchor.y}")
+                    self._root.geometry(
+                        f"{self._win_w}x{self._win_h}+{primary_anchor.x}+{primary_anchor.y}"
+                    )
                 else:
-                    self._root.geometry(f"{WIN_W}x{WIN_H}+{placement.abs_x}+{placement.abs_y}")
+                    self._root.geometry(
+                        f"{self._win_w}x{self._win_h}+{placement.abs_x}+{placement.abs_y}"
+                    )
             else:
                 # Monitor gone, no screens, or pin on non-primary monitor
                 # while require_primary is set — fall back to default and
@@ -2104,17 +2140,17 @@ class OrbOverlay:
                 anchor = self._resolve_anchor(screen_w, screen_h)
                 self._mascot_x = anchor.x
                 self._mascot_y = anchor.y
-                self._root.geometry(f"{WIN_W}x{WIN_H}+{anchor.x}+{anchor.y}")
+                self._root.geometry(f"{self._win_w}x{self._win_h}+{anchor.x}+{anchor.y}")
         else:
             anchor = self._resolve_anchor(screen_w, screen_h)
             self._mascot_x = anchor.x
             self._mascot_y = anchor.y
-            self._root.geometry(f"{WIN_W}x{WIN_H}+{anchor.x}+{anchor.y}")
+            self._root.geometry(f"{self._win_w}x{self._win_h}+{anchor.x}+{anchor.y}")
 
         self._canvas = tk.Canvas(
             self._root,
-            width=WIN_W,
-            height=WIN_H,
+            width=self._win_w,
+            height=self._win_h,
             bg="systemTransparent" if self._mac_transparent else COLOR_KEY_HEX,
             highlightthickness=0,
             borderwidth=0,
@@ -2169,7 +2205,7 @@ class OrbOverlay:
             parent=self._root,
             orb_x=anchor.x,
             orb_y=anchor.y,
-            orb_w=WIN_W,
+            orb_w=self._win_w,
             screen_w=screen_w,
             theme=bubble_theme_for_style(self._style),
         )
@@ -2219,7 +2255,7 @@ class OrbOverlay:
         return compute_mascot_position(
             screen_w,
             screen_h,
-            mascot_size=WIN_W,
+            mascot_size=self._win_w,
             taskbar=taskbar,
             tray_rect=tray_rect,
             tray_safe_margin_px=TRAY_SAFE_MARGIN_PX,
@@ -2246,12 +2282,12 @@ class OrbOverlay:
                 screens = screens_from_tk(self._root)
                 monitor_geo, monitor_name = self._monitor_at_orb_center(screens)
                 clamped_x, clamped_y = clamp_to_work_area(
-                    self._mascot_x, self._mascot_y, monitor_geo, mascot_size_px=WIN_W
+                    self._mascot_x, self._mascot_y, monitor_geo, mascot_size_px=self._win_w
                 )
                 if (clamped_x, clamped_y) != (self._mascot_x, self._mascot_y):
                     self._mascot_x = clamped_x
                     self._mascot_y = clamped_y
-                    self._root.geometry(f"{WIN_W}x{WIN_H}+{clamped_x}+{clamped_y}")
+                    self._root.geometry(f"{self._win_w}x{self._win_h}+{clamped_x}+{clamped_y}")
                     if self._comment_bubble is not None:
                         self._comment_bubble.update_anchor(clamped_x, clamped_y, screen_w)
                     if self._controls is not None:
@@ -2272,7 +2308,7 @@ class OrbOverlay:
                 if (anchor.x, anchor.y) != (self._mascot_x, self._mascot_y):
                     self._mascot_x = anchor.x
                     self._mascot_y = anchor.y
-                    self._root.geometry(f"{WIN_W}x{WIN_H}+{anchor.x}+{anchor.y}")
+                    self._root.geometry(f"{self._win_w}x{self._win_h}+{anchor.x}+{anchor.y}")
                     if self._comment_bubble is not None:
                         self._comment_bubble.update_anchor(anchor.x, anchor.y, screen_w)
                     if self._controls is not None:
@@ -2314,7 +2350,7 @@ class OrbOverlay:
         self._mascot_x = new_x
         self._mascot_y = new_y
         try:
-            self._root.geometry(f"{WIN_W}x{WIN_H}+{new_x}+{new_y}")
+            self._root.geometry(f"{self._win_w}x{self._win_h}+{new_x}+{new_y}")
         except tk.TclError:
             return
         if self._comment_bubble is not None:
@@ -2337,13 +2373,13 @@ class OrbOverlay:
         screens = screens_from_tk(self._root)
         monitor_geo, monitor_name = self._monitor_at_orb_center(screens)
         clamped_x, clamped_y = clamp_to_work_area(
-            self._mascot_x, self._mascot_y, monitor_geo, mascot_size_px=WIN_W
+            self._mascot_x, self._mascot_y, monitor_geo, mascot_size_px=self._win_w
         )
         if (clamped_x, clamped_y) != (self._mascot_x, self._mascot_y):
             self._mascot_x = clamped_x
             self._mascot_y = clamped_y
             try:
-                self._root.geometry(f"{WIN_W}x{WIN_H}+{clamped_x}+{clamped_y}")
+                self._root.geometry(f"{self._win_w}x{self._win_h}+{clamped_x}+{clamped_y}")
             except tk.TclError:
                 pass
         if self._controls is not None:
@@ -2402,8 +2438,8 @@ class OrbOverlay:
                 parent=self._root,
                 orb_x=self._mascot_x,
                 orb_y=self._mascot_y,
-                orb_w=WIN_W,
-                orb_h=WIN_H,
+                orb_w=self._win_w,
+                orb_h=self._win_h,
             )
         except tk.TclError:
             logging.getLogger("jarvis.orb").debug("orb control row unavailable", exc_info=True)
@@ -2715,7 +2751,7 @@ class OrbOverlay:
         self._mascot_x = anchor.x
         self._mascot_y = anchor.y
         try:
-            self._root.geometry(f"{WIN_W}x{WIN_H}+{anchor.x}+{anchor.y}")
+            self._root.geometry(f"{self._win_w}x{self._win_h}+{anchor.x}+{anchor.y}")
         except tk.TclError:
             return
         if self._comment_bubble is not None:
@@ -2725,8 +2761,8 @@ class OrbOverlay:
 
     def _monitor_at_orb_center(self, screens: list) -> tuple[tuple[int, int, int, int], str]:
         """Return (geometry, device_name) of the monitor containing the orb center."""
-        cx = self._mascot_x + WIN_W // 2
-        cy = self._mascot_y + WIN_H // 2
+        cx = self._mascot_x + self._win_w // 2
+        cy = self._mascot_y + self._win_h // 2
         for s in screens:
             sx, sy, sw, sh = s.geometry
             if sx <= cx < sx + sw and sy <= cy < sy + sh:
@@ -2809,7 +2845,7 @@ class OrbOverlay:
         self._mascot_x = target_x
         self._mascot_y = target_y
         try:
-            self._root.geometry(f"{WIN_W}x{WIN_H}+{target_x}+{target_y}")
+            self._root.geometry(f"{self._win_w}x{self._win_h}+{target_x}+{target_y}")
         except tk.TclError:
             return
         # Only withdraw if no active LISTENING/THINKING/SPEAKING state has
@@ -2849,7 +2885,7 @@ class OrbOverlay:
             viewable = int(self._root.winfo_viewable())
             x = int(self._root.winfo_x())
             y = int(self._root.winfo_y())
-            geometry = f"{WIN_W}x{WIN_H}+{x}+{y}"
+            geometry = f"{self._win_w}x{self._win_h}+{x}+{y}"
         except tk.TclError:
             return
         observed = {
@@ -2952,6 +2988,18 @@ class OrbOverlay:
                 pass
             self._pending_hide_after_id = None
 
+    def _bubble_wanted(self) -> bool:
+        """Does this style speak through a bubble at all?
+
+        The mascot does — a character with a face says things in a bubble. The
+        voice orb does NOT (maintainer, 2026-08-06): the sphere carries the
+        whole state itself, and a panel of text floating over the desktop was
+        the part that read as clutter. Everything the bubble used to say is now
+        in how the orb moves — it swells on the voice, and its colours churn
+        while it thinks.
+        """
+        return self._style != "voice_orb"
+
     def show_comment(self, text: str, duration_ms: int = 3500) -> None:
         """Pop a speech bubble above the orb. Thread-safe.
 
@@ -2959,14 +3007,14 @@ class OrbOverlay:
         separately so the mouth only moves while audio is actually playing.
         """
         bubble = self._comment_bubble
-        if bubble is None or not text:
+        if bubble is None or not text or not self._bubble_wanted():
             return
         self._enqueue_ui(lambda: bubble.show(text, duration_ms))
 
     def show_listening_transcript(self, text: str = "", duration_ms: int = 30000) -> None:
         """Show the larger live transcript bubble used while the user speaks."""
         bubble = self._comment_bubble
-        if bubble is None:
+        if bubble is None or not self._bubble_wanted():
             return
         self._enqueue_ui(lambda: bubble.show(text, duration_ms, variant="transcript"))
 
@@ -3093,11 +3141,17 @@ class OrbOverlay:
         self._enqueue_ui(lambda: self._apply_style(style))
 
     def _apply_style(self, style: str) -> None:
+        # Size first: _build_renderer paints at the window's edge length, so a
+        # renderer built before the resize would be drawn at the old scale.
+        self._win_w, self._win_h = window_size_for_style(style)
         new_renderer = self._build_renderer(style)
         if new_renderer is None:
+            # Undo the resize — the old renderer is still the one painting.
+            self._win_w, self._win_h = window_size_for_style(self._style)
             return  # The fallback case was already logged in _build_renderer
         self._renderer = new_renderer
         self._style = style
+        self._resize_window()
         # The bubble's look and the control row both belong to the style, so a
         # live swap has to carry them across or the new sphere inherits the
         # ghost's yellow bubble (and vice versa).
@@ -3106,12 +3160,34 @@ class OrbOverlay:
         self._ensure_controls()
         self._sync_controls_visibility()
 
+    def _resize_window(self) -> None:
+        """Re-fit root, canvas and the attached surfaces after a style swap."""
+        if self._root is None:
+            return
+        try:
+            self._root.geometry(f"{self._win_w}x{self._win_h}+{self._mascot_x}+{self._mascot_y}")
+            if self._canvas is not None:
+                self._canvas.configure(width=self._win_w, height=self._win_h)
+        except tk.TclError:
+            logging.getLogger("jarvis.orb").debug("orb resize failed", exc_info=True)
+            return
+        if self._comment_bubble is not None:
+            try:
+                screen_w = self._root.winfo_screenwidth()
+            except tk.TclError:
+                screen_w = self._win_w
+            self._comment_bubble.update_anchor(self._mascot_x, self._mascot_y, screen_w)
+            self._comment_bubble.set_orb_width(self._win_w)
+        if self._controls is not None:
+            self._controls.set_orb_size(self._win_w, self._win_h)
+            self._controls.update_anchor(self._mascot_x, self._mascot_y)
+
     def _build_renderer(self, style: str) -> MascotRenderer | VoiceOrbRenderer | None:
         if style == "voice_orb":
             try:
                 return VoiceOrbRenderer(
-                    size=WIN_W, color_key=(int(COLOR_KEY_RGB[0]), int(COLOR_KEY_RGB[1]),
-                                           int(COLOR_KEY_RGB[2]))
+                    size=self._win_w,
+                    color_key=(int(COLOR_KEY_RGB[0]), int(COLOR_KEY_RGB[1]), int(COLOR_KEY_RGB[2])),
                 )
             except Exception as exc:  # noqa: BLE001
                 import logging

@@ -16,6 +16,65 @@ import pytest
 
 from ui.orb import overlay
 
+# --- no bubble at all on the sphere -----------------------------------------
+
+
+def test_the_sphere_speaks_through_no_bubble_at_all() -> None:
+    """Maintainer, 2026-08-06: "that speech bubble up there can go".
+
+    Everything it used to say now lives in how the orb moves — it swells on the
+    voice and churns its colours while thinking. The mascot keeps its bubble:
+    a character with a face says things in one.
+    """
+    assert overlay.OrbOverlay(style="voice_orb")._bubble_wanted() is False
+    assert overlay.OrbOverlay(style="mascot")._bubble_wanted() is True
+
+
+def test_neither_bubble_variant_reaches_the_sphere() -> None:
+    """Both entry points must be closed — the "..." placeholder came through
+    the transcript one while the comment one was already quiet."""
+    orb = overlay.OrbOverlay(style="voice_orb")
+    shown: list[str] = []
+    orb._enqueue_ui = lambda fn: shown.append("queued")  # type: ignore[method-assign]
+
+    orb.show_comment("a reply", 3000)
+    orb.show_listening_transcript("what I said", 30000)
+    orb.show_listening_transcript("", 30000)
+
+    assert shown == []
+
+
+def test_the_mascot_still_gets_both_bubble_variants() -> None:
+    orb = overlay.OrbOverlay(style="mascot")
+    shown: list[str] = []
+    orb._comment_bubble = object()  # only presence is checked before queueing
+    orb._enqueue_ui = lambda fn: shown.append("queued")  # type: ignore[method-assign]
+
+    orb.show_comment("a reply", 3000)
+    orb.show_listening_transcript("what I said", 30000)
+
+    assert len(shown) == 2
+
+
+# --- window size ------------------------------------------------------------
+
+
+def test_the_sphere_is_half_again_the_mascots_size() -> None:
+    assert overlay.window_size_for_style("voice_orb") == (
+        overlay.VOICE_ORB_WIN_W,
+        overlay.VOICE_ORB_WIN_H,
+    )
+    assert overlay.window_size_for_style("mascot") == (overlay.WIN_W, overlay.WIN_H)
+    assert overlay.VOICE_ORB_WIN_W == round(overlay.WIN_W * 1.5)
+
+
+def test_a_new_orb_adopts_its_styles_window_size() -> None:
+    sphere = overlay.OrbOverlay(style="voice_orb")
+    ghost = overlay.OrbOverlay(style="mascot")
+    assert (sphere._win_w, sphere._win_h) == (overlay.VOICE_ORB_WIN_W, overlay.VOICE_ORB_WIN_H)
+    assert (ghost._win_w, ghost._win_h) == (overlay.WIN_W, overlay.WIN_H)
+
+
 # --- the bubble -------------------------------------------------------------
 
 

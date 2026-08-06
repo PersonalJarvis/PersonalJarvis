@@ -66,6 +66,7 @@ class Motion:
         "turbulence",
         "energy",
         "voice_impact",
+        "color_churn",
     )
 
     def __init__(
@@ -77,6 +78,7 @@ class Motion:
         turbulence: float,
         energy: float,
         voice_impact: float,
+        color_churn: float = 0.28,
     ) -> None:
         self.flow_x = flow_x
         self.flow_y = flow_y
@@ -85,6 +87,11 @@ class Motion:
         self.turbulence = turbulence
         self.energy = energy
         self.voice_impact = voice_impact
+        #: How far the cloud field is allowed to drag the COLOUR ramp out of
+        #: its vertical order. At rest it only softens the horizon; while
+        #: thinking it is what makes the ivory, gold and amber visibly churn
+        #: through each other instead of sitting in bands.
+        self.color_churn = color_churn
 
     def copy(self) -> Motion:
         return Motion(
@@ -95,6 +102,7 @@ class Motion:
             self.turbulence,
             self.energy,
             self.voice_impact,
+            self.color_churn,
         )
 
 
@@ -110,23 +118,39 @@ class Motion:
 #: * ``notice`` — something the user asked for did not happen. Quiet and dim,
 #:   clearly awake but clearly not listening.
 MOTIONS: dict[str, Motion] = {
-    "idle": Motion(0.025, 0.008, 0.004, 0.14, 0.8, 0.86, 0.0),
-    "listen": Motion(0.11, 0.035, 0.016, 0.72, 1.02, 0.98, 0.0),
-    "think": Motion(0.42, -0.19, 0.009, 0.32, 1.28, 1.02, 0.0),
-    "speak": Motion(0.34, 0.085, 0.016, 0.82, 1.02, 1.0, 0.045),
-    "dictate": Motion(0.11, 0.035, 0.016, 0.72, 1.02, 0.98, 0.0),
-    "dictate_transcribing": Motion(0.42, -0.19, 0.009, 0.32, 1.28, 1.02, 0.0),
-    "notice": Motion(0.012, 0.0, 0.003, 0.12, 0.7, 0.72, 0.0),
+    "idle": Motion(0.025, 0.008, 0.004, 0.14, 0.8, 0.86, 0.0, 0.28),
+    "listen": Motion(0.11, 0.035, 0.016, 0.72, 1.02, 0.98, 0.0, 0.34),
+    # Thinking is the one state with nothing to hear, so it has to be the most
+    # visibly BUSY: the field races, and the colour ramp churns hard enough
+    # that ivory, gold and amber run through each other (maintainer, 2026-08-06
+    # — "the colours mix and that is how it shows it is thinking").
+    "think": Motion(0.95, -0.44, 0.010, 0.34, 1.85, 1.08, 0.0, 1.45),
+    "speak": Motion(0.34, 0.085, 0.014, 0.82, 1.06, 1.0, 0.11, 0.45),
+    "dictate": Motion(0.11, 0.035, 0.016, 0.72, 1.02, 0.98, 0.0, 0.34),
+    "dictate_transcribing": Motion(0.95, -0.44, 0.010, 0.34, 1.85, 1.08, 0.0, 1.45),
+    "notice": Motion(0.012, 0.0, 0.003, 0.12, 0.7, 0.72, 0.0, 0.28),
 }
 
-#: Modes that react to the live microphone / output level. Everything else
-#: ignores ``ext_level`` outright, so a stale sample cannot animate the orb
-#: while nothing is being heard.
-_LEVEL_REACTIVE = frozenset({"listen", "dictate"})
+#: Modes that react to a live level. ``speak`` is here because the bridge
+#: forwards the REAL TTS loudness through ``set_level`` while Jarvis talks
+#: (``OrbBridge._note_tts_level``); using it means the orb swells on the actual
+#: voice instead of a synthetic cadence that only looks like speech. Every
+#: other mode ignores ``ext_level`` outright, so a stale sample cannot animate
+#: the orb while nothing is being heard.
+_LEVEL_REACTIVE = frozenset({"listen", "dictate", "speak"})
 
 #: Floor under the dictation level: a quiet moment while recording must still
 #: read as "I am listening", never as a dead orb.
 _DICTATE_LEVEL_FLOOR = 0.18
+
+#: Resting size as a fraction of the window. Below 1.0 ON PURPOSE: the swell
+#: has to have somewhere to go. With the old value the sphere already filled
+#: its window at rest, every beat hit the ``min(1.0, ...)`` ceiling, and the
+#: result was a bump nobody could see.
+_BASE_SCALE = 0.86
+
+#: How much of the remaining headroom a full-volume moment claims.
+_LEVEL_SWELL = 0.12
 
 
 def _mix(a, b, amount):
@@ -229,9 +253,7 @@ class VoiceOrbRenderer:
         self._ny, self._nx = np.meshgrid(axis, axis, indexing="ij")
         self._radius_field = np.sqrt(self._nx * self._nx + self._ny * self._ny)
         # Deterministic sub-LSB dither prevents broad 8-bit colour contours.
-        xs, ys = np.meshgrid(
-            np.arange(TEXTURE_SIZE), np.arange(TEXTURE_SIZE), indexing="xy"
-        )
+        xs, ys = np.meshgrid(np.arange(TEXTURE_SIZE), np.arange(TEXTURE_SIZE), indexing="xy")
         self._dither = ((((xs * 73 + ys * 151) & 255) / 255.0) - 0.5) * 0.8
 
         self._live = MOTIONS["idle"].copy()
@@ -268,6 +290,7 @@ class VoiceOrbRenderer:
         live.turbulence = _mix(live.turbulence, motion.turbulence, ease)
         live.energy = _mix(live.energy, motion.energy, ease)
         live.voice_impact = _mix(live.voice_impact, motion.voice_impact, ease)
+        live.color_churn = _mix(live.color_churn, motion.color_churn, ease)
 
         self._phase_x += dt * live.flow_x
         self._phase_y += dt * live.flow_y
@@ -276,10 +299,15 @@ class VoiceOrbRenderer:
         if math.isfinite(self._speaking_age):
             self._speaking_age += dt
 
-        # The surface receives lifecycle modes on every platform but no reliable
-        # normalized TTS output level, so speech choreography reacts to the
-        # truthful speaking mode instead of masquerading as a measured waveform.
-        speech = speech_envelope(self._activity_elapsed) if mode == "speak" else 0.0
+        # Speech choreography. When the host forwards a REAL output level the
+        # sphere follows that; the synthetic cadence is only the fallback for a
+        # host that cannot measure its own playback, so the orb never stands
+        # still while Jarvis is audibly talking.
+        input_target = self._input_level(mode, ext_level)
+        has_live_voice = mode == "speak" and ext_level is not None
+        speech = (
+            0.0 if (mode != "speak" or has_live_voice) else speech_envelope(self._activity_elapsed)
+        )
         onset = speaking_onset(self._speaking_age) if mode == "speak" else 0.0
         impact_target = live.voice_impact * speech + 0.032 * onset
         impact_ease = 1.0 - math.exp(-dt * (22.0 if impact_target > self._live_impact else 8.0))
@@ -287,17 +315,16 @@ class VoiceOrbRenderer:
 
         # A quick attack makes consonants feel immediate; the softer release
         # prevents a nervous flicker between syllables.
-        input_target = self._input_level(mode, ext_level)
         input_ease = 1.0 - math.exp(-dt * (24.0 if input_target > self._live_input else 9.0))
         self._live_input = _mix(self._live_input, input_target, input_ease)
-        visual_impact = self._live_impact + self._live_input * 0.055
+        visual_impact = self._live_impact + self._live_input * _LEVEL_SWELL
 
         if t >= self._field_due_t or self._texture is None:
             self._texture = self._paint_weather(visual_impact)
             self._field_due_t = t + FIELD_INTERVAL_S
 
         breath = (
-            0.965
+            _BASE_SCALE
             - live.breath_amp * 0.65
             + live.breath_amp * 0.52 * math.sin(self._breath_phase)
             + live.breath_amp * 0.13 * math.sin(self._breath_phase * 2.05 + 1.4)
@@ -352,8 +379,14 @@ class VoiceOrbRenderer:
         )
         weather = cloud_field * 0.76 + detail * 0.24
 
-        # Warping the vertical colour position removes the synthetic horizon band.
-        vertical = _clamp((self._ny + 1.0) * 0.5 + (weather - 0.5) * 0.28)
+        # Where a pixel sits on the ivory→amber ramp. Warping it by the cloud
+        # field removes the synthetic horizon band at rest; opening the warp up
+        # (``color_churn``) is what makes the palette visibly MIX rather than
+        # sit in stripes, and the slow drift keeps that mixing in motion so a
+        # thinking orb never settles into a still picture.
+        churn = motion.color_churn
+        drift = math.sin(self._phase_x * 2.4 + self._phase_y * 1.7) * churn * 0.20
+        vertical = _clamp((self._ny + 1.0) * 0.5 + (weather - 0.5) * churn + drift)
         red, green, blue = self._palette(vertical)
 
         shadow = _smoothstep(0.48, 0.66, 1.0 - weather) * _smoothstep(0.28, 0.95, vertical) * 0.18
