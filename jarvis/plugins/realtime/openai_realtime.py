@@ -1494,12 +1494,23 @@ class LocalRealtimeProvider:
                 import shlex
 
                 command = shlex.split(self._launch_command)
+            child_env = dict(os.environ)
+            # The 2026-08-06 19:57 crash left NO trace: the server process
+            # died without a Python traceback, which means the fault was
+            # native (torch/onnx/ctranslate2 C code). faulthandler prints
+            # the low-level stack to stderr on such deaths — and stderr goes
+            # into the server log below — so the NEXT native crash finally
+            # names its faulting module. Unbuffered output keeps the final
+            # lines from dying in a lost buffer.
+            child_env.setdefault("PYTHONFAULTHANDLER", "1")
+            child_env.setdefault("PYTHONUNBUFFERED", "1")
             subprocess.Popen(  # noqa: S603 — the maintainer configured this command
                 command,
                 stdin=subprocess.DEVNULL,
                 stdout=server_log or subprocess.DEVNULL,
                 stderr=subprocess.STDOUT,
                 creationflags=NO_WINDOW_CREATIONFLAGS,
+                env=child_env,
             )
         except Exception as exc:  # noqa: BLE001 — a bad command must not kill the call
             log.warning(
