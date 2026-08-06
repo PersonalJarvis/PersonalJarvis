@@ -168,6 +168,11 @@ _EMBEDDED_SILENCE_PEAK = 200
 # of reconnect-storming.
 _TRANSPORT_REBUILD_WINDOW_S = 120.0
 _TRANSPORT_REBUILD_MAX_PER_WINDOW = 3
+# How soon a repeat of the SAME advised-reconnect cause proves the rebuild it
+# followed did not fix anything. Longer than a rebuild's own handshake (a few
+# seconds) so the fresh transport gets a fair chance to work, short enough that
+# a genuinely healed call never trips it (BUG-124).
+_ADVISED_REBUILD_RELAPSE_S = 15.0
 _CREDENTIAL_TERMINAL_STATUSES = frozenset(
     {BAD_KEY, NO_CREDITS, NOT_CONFIGURED}
 )
@@ -319,7 +324,9 @@ _DELEGATE_DECLARATION: dict[str, Any] = {
         "(click, type, and navigate inside any application window until the "
         "task is finished), manage files, start a background research or "
         "coding mission the user explicitly asked to run, read or write the "
-        "user's private Wiki memory, and inspect the current MCP, CLI, tool, "
+        "user's private Wiki memory — including recalling anything from the "
+        "user's own past (what they did, said, visited, planned, or once "
+        "told Jarvis) — and inspect the current MCP, CLI, tool, "
         "integration, configuration, or system state. Also call this to "
         "relay the user's answer to a pending confirmation question. Never "
         "call it just to look up general world knowledge, public facts or "
@@ -349,7 +356,12 @@ _DELEGATE_ROLE_DIRECTIVE = (
     "Wiki or personal memory, their people, their projects, their files, their "
     "apps, their settings, their system state, or any action on their computer "
     "— including a vague, elliptical, or garbled follow-up that refers back to "
-    "such a turn ('and what else is in there?', 'what does it say?'). You "
+    "such a turn ('and what else is in there?', 'what does it say?'). The "
+    "user's own PAST is part of that world: any 'do you remember', 'what was "
+    "that again', 'when did I / were we', 'how was X called' question about "
+    "something they did, said, visited, planned, or once told you MUST be "
+    "delegated — the answer lives in the Wiki memory, and answering it from "
+    "conversation guesswork invents the user's own life. You "
     "cannot see any of it yourself, so guessing is always wrong. "
     "General world knowledge is YOURS: public facts and figures, well-known "
     "people and companies, definitions, explanations, recommendations, "
@@ -406,7 +418,8 @@ _DELEGATE_DISCOURAGED_DIRECTIVE = (
     "conversation. Answer it directly from your own knowledge now, without "
     "calling any function. Call jarvis_action on this turn ONLY if the "
     "request actually needs the user's own world (their Wiki or personal "
-    "memory, their files, apps, settings, or system state), performs a "
+    "memory, their own past — 'do you remember', 'when did I' — their "
+    "files, apps, settings, or system state), performs a "
     "real action on their computer, or explicitly asks you to look up, "
     "check, or verify current information you may only know in an "
     "outdated state."
@@ -1408,6 +1421,10 @@ class RealtimeVoiceSession:
         # the pump rebuilds proactively instead of waiting for the forced
         # close (which can race the recovery chain and end the call).
         self._advised_reconnect_detail: str | None = None
+        # The cause of the most recently REQUESTED advised rebuild, kept so
+        # the same cause coming back moments later can be recognized as a
+        # rebuild that did not help (BUG-124).
+        self._last_advised_reconnect_detail: str | None = None
         # Monotonic timestamps of in-place transport rebuilds (BUG-071),
         # pruned to the rolling _TRANSPORT_REBUILD_WINDOW_S budget window.
         self._transport_rebuild_times: list[float] = []
@@ -3480,7 +3497,7 @@ class RealtimeVoiceSession:
                             {"type": "provider_warning", "error": message}
                         )
                         if getattr(event, "reconnect_advised", False):
-                            self._schedule_advised_reconnect(message)
+                            await self._schedule_advised_reconnect(message)
                         continue
                     # A terminal provider failure can strike while the tail of
                     # the current reply is still held by the scrub gate.
@@ -3665,7 +3682,7 @@ class RealtimeVoiceSession:
                 pass
         return None
 
-    def _schedule_advised_reconnect(self, detail: str) -> None:
+    async def _schedule_advised_reconnect(self, detail: str) -> None:
         """React to a provider's pre-disconnect notice (GoAway).
 
         The transport still works, but the server will force-close it when
@@ -3681,6 +3698,21 @@ class RealtimeVoiceSession:
             return
         if self._session is self._transport_rebuild_pending:
             return  # a rebuild is already queued or running
+        if self._advised_rebuild_relapsed(detail):
+            # A rebuild that has to be repeated for the SAME cause seconds
+            # after the last one is not a recovery — it is a loop the fresh
+            # transport walks straight back into (live 2026-08-06 17:41:
+            # rebuild 1/3 at :53, the identical advice back at :56, rebuild
+            # 2/3 at :59). Burning the remaining budget only delays the same
+            # ending by a worse route, so stop here and say why. Deliberately
+            # NOT a cross-provider failover: a subscription-backed provider
+            # forbids falling through to metered voice, and the ChatGPT card
+            # promises the call stops instead.
+            await self._fail_terminally(
+                "the realtime provider keeps producing the same fault "
+                f"immediately after a transport rebuild; ending the call: {detail}"
+            )
+            return
         self._advised_reconnect_detail = detail
         if (
             self._output_active
@@ -3696,12 +3728,30 @@ class RealtimeVoiceSession:
             return
         self._request_advised_rebuild()
 
+    def _advised_rebuild_relapsed(self, detail: str) -> bool:
+        """Did the LAST rebuild already fail to fix this exact fault?
+
+        Rebuild timestamps alone cannot answer this: a long call may
+        legitimately rebuild for unrelated reasons. The cause has to match
+        too, and it has to come back fast — a fault that stays away for
+        longer than the window was genuinely cleared by the rebuild.
+        """
+        if not self._transport_rebuild_times:
+            return False
+        if detail != self._last_advised_reconnect_detail:
+            return False
+        elapsed = time.monotonic() - self._transport_rebuild_times[-1]
+        return elapsed < _ADVISED_REBUILD_RELAPSE_S
+
     def _request_advised_rebuild(self) -> None:
         """Queue the advised in-place rebuild through the pump arbitration."""
         detail = self._advised_reconnect_detail
         self._advised_reconnect_detail = None
         if detail is None or not self._transport_death_is_rebuildable():
             return
+        # Remembered for the relapse check above: the next advice carrying
+        # this same cause within the window proves the rebuild did not help.
+        self._last_advised_reconnect_detail = detail
         target_session = self._session
         if target_session is None or (
             target_session is self._transport_rebuild_pending

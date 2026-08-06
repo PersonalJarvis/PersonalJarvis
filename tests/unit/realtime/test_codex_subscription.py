@@ -2729,6 +2729,115 @@ async def test_post_interrupt_captions_do_not_feed_the_rebuild_counter(
     await session.close()
 
 
+def _self_echo_client(rounds: int) -> _Client:
+    """A far end answering itself: each refused turn captions its own words.
+
+    One ungrounded user caption closes the open response, the assistant text
+    that follows opens a new one with nothing local behind it — a refusal —
+    and the caption after that is the far end transcribing the very words we
+    just cut. That is the shape of the live 17:41 loop.
+    """
+    events = [
+        _Notification(
+            "thread/realtime/transcript/delta",
+            {"threadId": "thread-1", "role": "assistant", "delta": "Hi."},
+        )
+    ]
+    for index in range(rounds):
+        events.append(
+            _Notification(
+                "thread/realtime/transcript/done",
+                {"threadId": "thread-1", "role": "user", "text": f"echo {index}"},
+            )
+        )
+        events.append(
+            _Notification(
+                "thread/realtime/transcript/delta",
+                {
+                    "threadId": "thread-1",
+                    "role": "assistant",
+                    "delta": f"invented turn {index}",
+                },
+            )
+        )
+    return _Client(events)
+
+
+async def _drain(session) -> list:
+    events = []
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(2.0):
+            async for event in session.receive():
+                events.append(event)
+    return events
+
+
+@pytest.mark.asyncio
+async def test_a_refusals_own_echo_captions_never_tear_the_transport_down(
+    monkeypatch,
+) -> None:
+    """BUG-124: refusing a turn is a LOCAL interrupt and must arm the grace.
+
+    Live 2026-08-06 17:41: every refusal cut the far end, the far end
+    captioned its own truncated words back as a user turn — the caption was
+    the first words of the answer just cut — and two of those captions
+    rebuilt the transport. Twice in six seconds, with the loop back each time.
+    """
+    monkeypatch.setattr(codex_subscription_mod, "_UNGROUNDED_RESPONSE_GRACE_S", 0.0)
+    # High enough that only the caption counter could fire here: three rounds
+    # deliver three ungrounded final captions against a threshold of two, so
+    # this test fails outright unless the refusals arm the grace window.
+    monkeypatch.setattr(codex_subscription_mod, "_REFUSALS_BEFORE_REBUILD", 99)
+    session = await _provider(
+        _self_echo_client(rounds=3),
+        input_transcriber_factory=_GroundedThenQuietTranscriber,
+    ).open_session(RealtimeSessionConfig())
+
+    events = await _drain(session)
+
+    assert [
+        event
+        for event in events
+        if event.type == "error" and getattr(event, "reconnect_advised", False)
+    ] == []
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_a_run_of_refusals_is_what_proves_the_self_dialogue_loop(
+    monkeypatch,
+) -> None:
+    """The honest signal: refusals, which our own reaction cannot manufacture.
+
+    With the post-interrupt grace now covering refusals, the caption counter
+    can no longer see a storm at all — so the storm needs its own detector, or
+    a call would refuse every answer forever in silence (the 17:39 call died
+    exactly that way, and only an app restart recovered it).
+    """
+    monkeypatch.setattr(codex_subscription_mod, "_UNGROUNDED_RESPONSE_GRACE_S", 0.0)
+    monkeypatch.setattr(codex_subscription_mod, "_REFUSALS_BEFORE_REBUILD", 3)
+    client = _self_echo_client(rounds=6)
+    session = await _provider(
+        client,
+        input_transcriber_factory=_GroundedThenQuietTranscriber,
+    ).open_session(RealtimeSessionConfig())
+
+    events = await _drain(session)
+
+    rebuild_errors = [
+        event
+        for event in events
+        if event.type == "error" and getattr(event, "reconnect_advised", False)
+    ]
+    assert len(rebuild_errors) == 1
+    assert rebuild_errors[0].recoverable is True
+    assert events[-1].type == "turn_complete"
+    # Only the FIRST refusal of the run interrupts: cutting a turn is what
+    # makes ChatGPT-Live start the next one, so a storm is left to run out.
+    assert len(client.interrupts) <= 1
+    await session.close()
+
+
 @pytest.mark.asyncio
 async def test_truncate_reports_the_played_position_to_the_model() -> None:
     """AD-3: the model must learn how much of its answer was actually heard.

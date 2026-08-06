@@ -6161,6 +6161,52 @@ async def test_advised_reconnect_defers_to_the_turn_boundary_mid_turn():
 
 
 @pytest.mark.asyncio
+async def test_the_same_advice_right_after_a_rebuild_ends_the_call_honestly():
+    """BUG-124: a rebuild that has to be repeated for the same cause failed.
+
+    Live 2026-08-06 17:41: the self-dialogue advice rebuilt the transport at
+    :53, came straight back at :56, rebuilt again at :59. A third would have
+    exhausted the budget and ended the call as reason=error anyway — by a
+    worse route, after two pointless handshakes. Stop at the relapse and say
+    why. Deliberately no cross-provider failover: a subscription-backed
+    provider must never fall through to metered voice.
+    """
+    advice = RealtimeEvent(
+        type="error",
+        error="the far end is answering itself",
+        recoverable=True,
+        reconnect_advised=True,
+    )
+    provider = RebuildingProvider(
+        [
+            lambda: StayOpenSession([advice]),
+            # The fresh transport walks straight back into the same fault.
+            lambda: StayOpenSession([advice]),
+            lambda: StayOpenSession([]),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="relapsed-rebuild",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await _wait_until(lambda: sess.failed)
+
+    # Exactly one rebuild was attempted; the relapse ended the call instead of
+    # spending the rest of the budget on transports that cannot help.
+    assert provider.open_calls == 2
+    errors = [m for m in jsons if m.get("type") == "provider_error"]
+    assert errors, "a call that stops must say so"
+    assert "after a transport rebuild" in str(errors[-1].get("error"))
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_provider_cannot_re_run_the_order_already_being_executed():
     """One spoken order must reach the world exactly once.
 

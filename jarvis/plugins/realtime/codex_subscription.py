@@ -93,13 +93,30 @@ _UNGROUNDED_RESPONSE_GRACE_S = 3.0
 # it for other providers — so rebuilding on the first one ended a healthy call
 # every time the far end transcribed slowly. A run of them is the loop.
 _UNGROUNDED_CAPTIONS_BEFORE_REBUILD = 2
-# After a LOCAL interrupt (barge-in or a delegation retiring the competing
-# native answer), the far end predictably reacts with echo captions of its own
-# truncated speech and continuation fragments. Inside this window those are
-# consequences of OUR cut, not evidence of a self-dialogue loop — counting
+# After a LOCAL interrupt, the far end predictably reacts with echo captions of
+# its own truncated speech and continuation fragments. Inside this window those
+# are consequences of OUR cut, not evidence of a self-dialogue loop — counting
 # them toward the rebuild threshold turned every delegation into a transport
 # rebuild storm (live 2026-08-04: 11 rejections, 3 rebuilds in 43 s).
+#
+# There are THREE local interrupt sources, and the window must cover all of
+# them: a barge-in, a delegation retiring the competing native answer, and the
+# grounding gate REFUSING an automatic response. The refusal was missing, and
+# it is the one that fires in a storm: each refusal cut a turn, the far end
+# captioned its own truncated words back as a user turn, and two of those
+# tore the transport down — the rebuild storm of 2026-08-06 17:41, where the
+# invented "user" line was literally the first words of the answer we had just
+# cut ("Hi! Schön").  # i18n-allow: quoted German live caption, the evidence
+# See BUG-124.
 _POST_INTERRUPT_GRACE_S = 3.0
+# A refusal storm is the honest self-dialogue signal: captions are polluted by
+# the far end's reaction to our own cuts, refusals are not. This many refused
+# responses with no grounded utterance in between, inside the window below,
+# means the far end is talking to itself and the transport needs replacing.
+# The window makes it a RATE: a long call may legitimately refuse the odd
+# stray response without ever being in a loop.
+_REFUSALS_BEFORE_REBUILD = 5
+_REFUSAL_STORM_WINDOW_S = 10.0
 # When a response's audible audio flows while the far end's own transcript is
 # still absent, the session's scrub gate holds ALL of it fail-closed — and
 # ChatGPT-Live's transcripts lag their audio by SECONDS (measured live
@@ -685,6 +702,18 @@ class _CodexSubscriptionRealtimeSession:
         # nor a fresh local utterance behind them. One is normal on a laggy
         # link; a run of them is the self-dialogue loop.
         ungrounded_final_captions = 0
+        # Consecutive REFUSED responses and when that run started. Unlike the
+        # caption counter above this signal is not polluted by the far end's
+        # reaction to our own cuts, so it — not the captions — is what decides
+        # a self-dialogue loop (BUG-124).
+        refusal_run = 0
+        refusal_run_started_at = 0.0
+        # Whether this run already logged that it stopped interrupting.
+        refusal_storm_noted = False
+        # Set by the refusal path once the run proves a loop; the receive loop
+        # turns it into the user-facing reconnect advice on its next pass
+        # (``_begin_response`` is not a generator and cannot yield).
+        self_dialogue_detected = False
         grounding_loss_reported = False
         assistant_audio = bytearray()
         assistant_audio_active = False
@@ -878,6 +907,8 @@ class _CodexSubscriptionRealtimeSession:
             nonlocal active_response_generation, response_allowed, response_open
             nonlocal response_opened_at, response_rejected_at
             nonlocal entitled_generation, entitlement_spent
+            nonlocal interrupt_grace_until, refusal_run, refusal_run_started_at
+            nonlocal refusal_storm_noted, self_dialogue_detected
             if response_open:
                 if response_allowed or not _rejected_response_is_stale():
                     return response_allowed
@@ -929,7 +960,16 @@ class _CodexSubscriptionRealtimeSession:
             else:
                 response_allowed = False
                 response_rejected_at = response_opened_at
-                if _within_interrupt_grace():
+                # Evaluate the window BEFORE this refusal arms its own, or the
+                # log would call every refusal a post-interrupt continuation.
+                post_interrupt = _within_interrupt_grace()
+                now = response_opened_at
+                if now - refusal_run_started_at > _REFUSAL_STORM_WINDOW_S:
+                    refusal_run = 0
+                    refusal_run_started_at = now
+                    refusal_storm_noted = False
+                refusal_run += 1
+                if post_interrupt:
                     # Expected fallout of OUR own cut: the far end streams the
                     # remainder of the retired answer for a while. Dropping it
                     # is routine, not an anomaly.
@@ -941,11 +981,58 @@ class _CodexSubscriptionRealtimeSession:
                 else:
                     log.warning(
                         "Codex subscription realtime rejected an automatic response "
-                        "without a fresh local user utterance (%s); interrupting a "
-                        "probable self-echo turn",
+                        "without a fresh local user utterance (%s); refusal %d of "
+                        "the current run",
                         source,
+                        refusal_run,
                     )
-                await self._interrupt_active_codex_turn()
+                # A refusal IS a local interrupt, and the far end answers one
+                # with echo captions of its own truncated speech. Without this
+                # window those captions counted as invented user turns and two
+                # of them tore the transport down (BUG-124).
+                interrupt_grace_until = now + _POST_INTERRUPT_GRACE_S
+                if refusal_run <= 1:
+                    await self._interrupt_active_codex_turn()
+                elif not refusal_storm_noted:
+                    # Cutting a turn makes ChatGPT-Live start a new one, which
+                    # is refused, which is cut: the interrupt is what keeps the
+                    # cycle spinning. The refused audio is dropped before it can
+                    # ever reach the user either way, so past the first refusal
+                    # the far end is simply left to run out.
+                    refusal_storm_noted = True
+                    log.info(
+                        "Codex subscription realtime is in a refusal run — "
+                        "dropping the far end's automatic responses without "
+                        "interrupting, so a cut cannot provoke the next one"
+                    )
+                if (
+                    refusal_run >= _REFUSALS_BEFORE_REBUILD
+                    and not self_dialogue_detected
+                ):
+                    self_dialogue_detected = True
+                    log.warning(
+                        "Codex subscription refused %d automatic responses "
+                        "within %.0f s with no locally grounded speech in "
+                        "between; the far end is talking to itself and the "
+                        "realtime transport needs replacing",
+                        refusal_run,
+                        _REFUSAL_STORM_WINDOW_S,
+                    )
+                    try:
+                        # Wake the receive loop NOW: it owns the yield, and a
+                        # loop that has gone quiet would otherwise leave the
+                        # verdict unreported until the far end happens to send
+                        # again — the silent-mute failure this detector exists
+                        # to end. A full queue already guarantees that wake-up,
+                        # so dropping the nudge there changes nothing.
+                        queue.put_nowait(("self_dialogue", None))
+                    except asyncio.QueueFull:
+                        pass
+            if response_allowed:
+                # An authorized response proves there is no loop: whatever the
+                # run was counting ended here.
+                refusal_run = 0
+                refusal_storm_noted = False
             return response_allowed
 
         def _close_response(*, spent: bool) -> None:
@@ -1141,6 +1228,20 @@ class _CodexSubscriptionRealtimeSession:
             timer_tasks.add(completion_task)
             completion_task.add_done_callback(timer_tasks.discard)
 
+        async def _retire_self_dialogue_turn() -> None:
+            """Silence the looping far end before the transport is replaced.
+
+            Shared by both detectors — the refusal run and the caption run —
+            so a rebuild always leaves the same state behind whichever proved
+            the loop.
+            """
+            nonlocal completion_emitted
+            _cancel_completion()
+            completion_emitted = True
+            _reset_assistant_capture()
+            await self._interrupt_active_codex_turn()
+            _close_response(spent=True)
+
         # Start local input first. A user may finish speaking while the
         # handshake is still draining already-buffered server notifications;
         # scheduling the network pump first could otherwise reject the valid
@@ -1160,6 +1261,20 @@ class _CodexSubscriptionRealtimeSession:
         try:
             while True:
                 queue_kind, payload = await queue.get()
+                if self_dialogue_detected:
+                    # Raised by ``_begin_response``, which cannot yield. The
+                    # far end is answering itself; a clean transport is the
+                    # only recovery, and saying so is what keeps a mute call
+                    # from looking healthy (AP-30).
+                    await _retire_self_dialogue_turn()
+                    yield _ProviderEvent(
+                        type="error",
+                        error=_ungrounded_turn_message(self._language),
+                        recoverable=True,
+                        reconnect_advised=True,
+                    )
+                    yield _ProviderEvent(type="turn_complete")
+                    return
                 if _interrupt_barrier_moved():
                     # Barge-in. ChatGPT-Live keeps streaming the rest of the
                     # answer the user talked over, so retire the cut response
@@ -1267,6 +1382,11 @@ class _CodexSubscriptionRealtimeSession:
                         user_final_emitted = False
                         missing_boundary_emitted = False
                         ungrounded_final_captions = 0
+                        # Somebody really spoke into this host's microphone —
+                        # the one signal the far end cannot fake. Whatever the
+                        # refusal run was counting, it was not a loop.
+                        refusal_run = 0
+                        refusal_storm_noted = False
                         _cancel_completion()
                         completion_emitted = False
                         self._assistant_delta_text = ""
@@ -1671,11 +1791,7 @@ class _CodexSubscriptionRealtimeSession:
                                     ungrounded_final_captions,
                                     text[:80],
                                 )
-                                _cancel_completion()
-                                completion_emitted = True
-                                _reset_assistant_capture()
-                                await self._interrupt_active_codex_turn()
-                                _close_response(spent=True)
+                                await _retire_self_dialogue_turn()
                                 yield _ProviderEvent(
                                     type="error",
                                     error=_ungrounded_turn_message(self._language),
