@@ -89,13 +89,6 @@ const ExtensionsView = lazyView(() =>
 const AgenticIdeView = lazyPropView<AgenticIdeViewProps>(() =>
   import("@/views/AgenticIdeView").then((m) => ({ default: m.AgenticIdeView })),
 );
-// The rebuilt chat surface. Lazy like every other section and NOT sticky: it
-// holds no live terminal of its own yet, so there is nothing to tear down by
-// unmounting it — that changes when the conversation view lands, and the
-// sticky treatment moves with it.
-const ChatWorkspaceView = lazyView(() =>
-  import("@/views/ChatWorkspaceView").then((m) => ({ default: m.ChatWorkspaceView })),
-);
 const TasksView = lazyView(() =>
   import("@/views/TasksView").then((m) => ({ default: m.TasksView })),
 );
@@ -227,13 +220,25 @@ function ViewLoadingFallback() {
 }
 
 /**
+ * The section ids that all mean "the coding workspace".
+ *
+ * There is ONE coding surface again: the terminal workspace. A separate chat
+ * surface was tried in front of it and taken back out — it rendered a picture of
+ * the agent while the agent itself ran behind it, which is one thing too many
+ * for a screen whose whole job is showing what the agent is doing. The extra
+ * ids stay valid because deep links, voice commands and stored preferences
+ * already point at them, and an id that stops resolving is a dead end for
+ * somebody who never chose either name.
+ */
+const CODING_SECTION_IDS = ["agentic-ide", "agentic-ide-classic", "chat-workspace"] as const;
+
+/**
  * The one section that is hidden rather than unmounted — see `MainView`.
  *
- * It is the CLASSIC terminal grid, not the chat surface that took over the
- * "agentic-ide" id: what makes a section too destructive to unmount is live
- * panes, and the grid is where those live.
+ * What makes a section too destructive to unmount is LIVE PANES, and this is
+ * where those live.
  */
-const STICKY_SECTION = "agentic-ide-classic";
+const STICKY_SECTION = "agentic-ide";
 
 /**
  * Main area to the right of the sidebar. Views are switched the classic way
@@ -265,7 +270,7 @@ export function MainView() {
 
   useIdleViewPrefetch();
 
-  const stickyActive = active === STICKY_SECTION;
+  const stickyActive = (CODING_SECTION_IDS as readonly string[]).includes(active);
   const [stickyMounted, setStickyMounted] = useState(stickyActive);
   useEffect(() => {
     if (stickyActive) setStickyMounted(true);
@@ -319,13 +324,6 @@ export function MainView() {
 
 function SwitchOnActiveSection({ active }: { active: string }) {
   switch (active) {
-    // The rebuilt chat surface IS the coding section now. Both ids reach it:
-    // "agentic-ide" because that is where every existing entry point, deep
-    // link and voice command already goes, and "chat-workspace" because that
-    // is what it is called.
-    case "agentic-ide":
-    case "chat-workspace":
-      return <ChatWorkspaceView />;
     case "chats":
       return <ChatsView />;
     case "agents":
@@ -395,12 +393,15 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <FeedbackView />;
     case "agent-instructions":
       return <AgentInstructionsView />;
-    // Deliberately nothing: the Agentic IDE is rendered by the STICKY branch in
-    // `MainView` above, which keeps it mounted across section changes. This
-    // switch is not rendered at all while that section is active, so reaching
-    // here would mean two live copies of a workspace's terminals — the second
-    // of which would steal every pane's output stream from the first.
-    case STICKY_SECTION:
+    // Deliberately nothing: the coding workspace is rendered by the STICKY
+    // branch in `MainView` above, which keeps it mounted across section
+    // changes. This switch is not rendered at all while one of those ids is
+    // active, so reaching here would mean two live copies of a workspace's
+    // terminals — the second of which would steal every pane's output stream
+    // from the first.
+    case "agentic-ide":
+    case "agentic-ide-classic":
+    case "chat-workspace":
       return null;
     default:
       return <ChatsView />;
