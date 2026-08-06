@@ -2383,6 +2383,58 @@ async def test_interrupt_drops_the_remainder_without_any_codex_turn_id(
 
 
 @pytest.mark.asyncio
+async def test_late_provider_transcript_is_shadow_recovered_for_the_gate(
+    monkeypatch,
+) -> None:
+    """Audible audio with no provider transcript earns a SHADOW delta.
+
+    ChatGPT-Live's transcripts can lag their audio by seconds; the session's
+    scrub gate holds all of it fail-closed until SOME transcript arrives
+    (live 2026-08-05 20:42: the reply's first audio sat 7.4 s in the opening
+    hold). The local recognizer recovers vetting text early; the shadow flag
+    keeps it out of the user-visible transcript.
+    """
+    monkeypatch.setattr(
+        codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_AFTER_S", 0.05
+    )
+    monkeypatch.setattr(
+        codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_RETRY_S", 0.01
+    )
+    speech = (1000).to_bytes(2, "little", signed=True) * 480
+    endpoint = _FakeAudioEndpoint(
+        output_schedule=(
+            (0.02, speech),
+            (0.05, speech),
+            (0.05, speech),
+            (0.05, speech),
+        )
+    )
+    transcriber = _RecoveringEndpointer("Here is the answer.")
+    client = _Client()
+    client.subscription = _keeps_stream_open()
+    session = await _provider(
+        client,
+        endpoint=endpoint,
+        input_transcriber_factory=lambda: transcriber,
+    ).open_session(RealtimeSessionConfig())
+
+    shadow = None
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(1.5):
+            async for event in session.receive():
+                if event.type == "output_transcript_delta" and getattr(
+                    event, "shadow", False
+                ):
+                    shadow = event
+                    break
+
+    assert shadow is not None
+    assert shadow.text == "Here is the answer."
+    assert transcriber.recovery_calls
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_interrupt_retires_an_entitlement_the_response_never_used(
     monkeypatch,
 ) -> None:

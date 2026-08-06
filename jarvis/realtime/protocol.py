@@ -36,6 +36,11 @@ class RealtimeEvent:
     audio: AudioChunk | None = None          # audio_delta
     text: str | None = None                  # output_transcript_delta / input_transcript
     is_final: bool = False
+    # output_transcript_delta only: locally recovered vetting material for a
+    # response whose provider transcript lags its audio. The scrub gate judges
+    # it like any transcript, but it must never reach the surface or the turn
+    # transcript — the provider's own text follows and would double up.
+    shadow: bool = False
     ms_played: int | None = None             # speech_started: ms of our audio already heard
     error: str | None = None
     # A recoverable provider event reports a rejected operation while the

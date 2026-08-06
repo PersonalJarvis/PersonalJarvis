@@ -100,6 +100,18 @@ _UNGROUNDED_CAPTIONS_BEFORE_REBUILD = 2
 # them toward the rebuild threshold turned every delegation into a transport
 # rebuild storm (live 2026-08-04: 11 rejections, 3 rebuilds in 43 s).
 _POST_INTERRUPT_GRACE_S = 3.0
+# When a response's audible audio flows while the far end's own transcript is
+# still absent, the session's scrub gate holds ALL of it fail-closed — and
+# ChatGPT-Live's transcripts lag their audio by SECONDS (measured live
+# 2026-08-05 20:42: the first audio sat 7.4 s in the gate). After this much
+# audible audio with no transcript, the LOCAL recognizer transcribes the
+# captured head and the text goes out as a SHADOW delta: the scrub gate
+# judges real text, the audio releases, and the provider's own transcript
+# stays the only one the user sees. The retry interval spaces attempts when
+# the shared recognizer is busy with the microphone stream (AP-24: its own
+# non-blocking lock makes a busy engine a skip, never a wedge).
+_OUTPUT_EARLY_RECOVERY_AFTER_S = 1.2
+_OUTPUT_EARLY_RECOVERY_RETRY_S = 1.0
 # How long a trusted injection's permit may wait for the response it provokes.
 # Generous relative to the far end's latency, and bounded so an injection that
 # was never answered cannot authorize an unrelated response later in the call.
@@ -297,6 +309,9 @@ class _ProviderEvent:
     tool_args: dict[str, Any] | None = None
     handoff_id: str | None = None
     provider_turn_id: str | None = None
+    # output_transcript_delta only: locally recovered vetting material — see
+    # RealtimeEvent.shadow in jarvis/realtime/protocol.py.
+    shadow: bool = False
 
 
 def _notification_parts(notification: Any) -> tuple[str, dict[str, Any]]:
@@ -669,6 +684,12 @@ class _CodexSubscriptionRealtimeSession:
         assistant_audio = bytearray()
         assistant_audio_active = False
         assistant_transcript_seen = False
+        # Early shadow recovery (see _OUTPUT_EARLY_RECOVERY_AFTER_S): when the
+        # response's first audible frame arrived, when recovery last ran, and
+        # whether this response already produced its one shadow delta.
+        first_audible_at = 0.0
+        early_recovery_at = 0.0
+        early_shadow_done = False
         # ChatGPT-Live's server VAD can start a response to silence or to its
         # own speaker echo.  Local input is the authority for whether a NEW
         # automatic response has a user behind it.  A generation is consumed
@@ -766,9 +787,13 @@ class _CodexSubscriptionRealtimeSession:
 
         def _reset_assistant_capture() -> None:
             nonlocal assistant_audio_active, assistant_transcript_seen
+            nonlocal first_audible_at, early_recovery_at, early_shadow_done
             assistant_audio.clear()
             assistant_audio_active = False
             assistant_transcript_seen = False
+            first_audible_at = 0.0
+            early_recovery_at = 0.0
+            early_shadow_done = False
 
         def _fresh_local_input_exists() -> bool:
             return bool(
@@ -1007,6 +1032,30 @@ class _CodexSubscriptionRealtimeSession:
                 text=text,
                 is_final=True,
             )
+
+        async def _recover_shadow_transcript() -> str:
+            """Locally transcribe the captured head for gate vetting only.
+
+            Unlike ``_recover_output_transcript`` this neither latches
+            ``assistant_transcript_seen`` nor produces display text: the
+            provider's own (late) transcript stays the one the user sees.
+            AP-24: ``transcribe_audio`` bounds itself and skips when the
+            shared engine is busy — a raised skip is an ordinary retry.
+            """
+            recover = getattr(self._input_transcriber, "transcribe_audio", None)
+            if not callable(recover):
+                return ""
+            try:
+                return str(
+                    await recover(bytes(assistant_audio), sample_rate=_OUTPUT_RATE)
+                    or ""
+                ).strip()
+            except Exception:  # noqa: BLE001 - the fail-closed hold simply continues
+                log.debug(
+                    "Codex subscription early shadow recovery skipped",
+                    exc_info=True,
+                )
+                return ""
 
         def _missing_input_boundary() -> _ProviderEvent | None:
             """One placeholder per turn when neither source produced text.
@@ -1258,6 +1307,44 @@ class _CodexSubscriptionRealtimeSession:
                     ):
                         remaining = _OUTPUT_TRANSCRIPT_RECOVERY_MAX_BYTES - len(assistant_audio)
                         assistant_audio.extend(pcm[:remaining])
+                    if audible and assistant_audio_active and not first_audible_at:
+                        first_audible_at = asyncio.get_running_loop().time()
+                    if (
+                        audible
+                        and assistant_audio_active
+                        and not assistant_transcript_seen
+                        and not early_shadow_done
+                        and first_audible_at
+                        and assistant_audio
+                    ):
+                        # The session's scrub gate is holding every one of
+                        # these chunks fail-closed until SOME transcript
+                        # arrives, and the far end's own can lag by seconds.
+                        # Recover a shadow transcript locally so the gate can
+                        # judge real text now (see the constants above).
+                        now = asyncio.get_running_loop().time()
+                        if (
+                            now - first_audible_at >= _OUTPUT_EARLY_RECOVERY_AFTER_S
+                            and now - early_recovery_at
+                            >= _OUTPUT_EARLY_RECOVERY_RETRY_S
+                        ):
+                            early_recovery_at = now
+                            shadow_text = await _recover_shadow_transcript()
+                            if shadow_text:
+                                early_shadow_done = True
+                                log.info(
+                                    "Codex subscription realtime released the "
+                                    "opening hold with a locally recovered "
+                                    "shadow transcript %d ms after the "
+                                    "response's first audible frame",
+                                    int((now - first_audible_at) * 1000),
+                                )
+                                yield _ProviderEvent(
+                                    type="output_transcript_delta",
+                                    text=shadow_text,
+                                    is_final=False,
+                                    shadow=True,
+                                )
                     yield _ProviderEvent(
                         type="audio_delta",
                         audio=_PcmChunk(

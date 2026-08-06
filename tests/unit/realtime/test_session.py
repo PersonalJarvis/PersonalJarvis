@@ -7023,3 +7023,47 @@ async def test_session_instructions_carry_the_one_speaker_discipline():
     assert "ONE voice" in text
     assert "Never speak both sides" in text
     assert "Do not say goodbye" in text
+
+
+@pytest.mark.asyncio
+async def test_shadow_transcript_clears_the_gate_without_reaching_the_surface():
+    """A shadow delta is vetting material: audio releases, no transcript shows.
+
+    The provider's own text follows later and would double up if the locally
+    recovered shadow text were surfaced.
+    """
+    jsons = []
+    binaries = []
+    events = [
+        RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(
+                pcm=b"\x00\x01" * 2_400, sample_rate=24_000, timestamp_ns=0
+            ),
+        ),
+        RealtimeEvent(
+            type="output_transcript_delta",
+            text="Here is the answer.",
+            shadow=True,
+        ),
+    ]
+    sess = RealtimeVoiceSession(
+        session_id="s-shadow",
+        send_binary=lambda pcm: binaries.append(pcm) or asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=FakeProvider(events),
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.sleep(0.1)
+
+    assert binaries, "shadow-cleared audio must reach playback"
+    surfaced = [
+        message
+        for message in jsons
+        if message.get("type") == "transcript"
+        and "Here is the answer." in str(message.get("text", ""))
+    ]
+    assert surfaced == [], "shadow text must never reach the surface"
+    await sess.end(reason="test")

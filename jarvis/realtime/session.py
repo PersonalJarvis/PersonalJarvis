@@ -2928,6 +2928,35 @@ class RealtimeVoiceSession:
                         ),
                     )
                     self._start_deterministic_delegate(self._last_user_text)
+                elif (
+                    event.type == "output_transcript_delta"
+                    and event.text
+                    and getattr(event, "shadow", False)
+                ):
+                    # Locally recovered SHADOW text: vetting material only.
+                    # It lets the scrub gate judge real text when the
+                    # provider's own transcript lags its audio by seconds
+                    # (live 2026-08-05 20:42: the reply's first audio sat
+                    # 7.4 s in the opening hold), but it must never reach
+                    # the surface or the turn transcript — the provider's
+                    # real text follows and would double up.
+                    if self._must_withhold_provider_output():
+                        self._note_output_withheld("transcript")
+                        continue
+                    await self._ensure_turn_started()
+                    await self._gate.feed_transcript(event.text)
+                    if self._gate.hard_leak_pending():
+                        _actions = ", ".join(self._gate.hard_leak_actions())
+                        await self._cancel_unsafe_output(
+                            reason=(
+                                "unsafe output transcript (shadow recovery; "
+                                f"detectors: {_actions or 'unknown'})"
+                            )
+                        )
+                        self._gate.drain()
+                        continue
+                    for chunk in self._gate.release_available():
+                        await self._emit_audio(chunk)
                 elif event.type == "output_transcript_delta" and event.text:
                     delegate_state = self._delegate_turns.get(self._turn_id)
                     if (
