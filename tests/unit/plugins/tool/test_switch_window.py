@@ -33,7 +33,14 @@ def _ctx() -> ExecutionContext:
 # --- macOS (Quartz/AppKit/AX) ----------------------------------------------
 
 
-def _install_fake_macos_apis(monkeypatch, *, trusted=True, minimized=False):
+def _install_fake_macos_apis(
+    monkeypatch,
+    *,
+    trusted=True,
+    minimized=False,
+    activate_result=True,
+    set_attr_error=None,
+):
     from jarvis.platform.permissions import PermissionState
 
     ax_window = object()
@@ -43,7 +50,7 @@ def _install_fake_macos_apis(monkeypatch, *, trusted=True, minimized=False):
     class _App:
         def activateWithOptions_(self, options):
             calls.append(("activate", options))
-            return True
+            return activate_result
 
     appkit = types.SimpleNamespace(
         NSApplicationActivateAllWindows=1,
@@ -71,7 +78,7 @@ def _install_fake_macos_apis(monkeypatch, *, trusted=True, minimized=False):
         ) or 0,
         AXUIElementSetAttributeValue=lambda element, attr, value: calls.append(
             ("set", attr)
-        ) or 0,
+        ) or (set_attr_error or {}).get(attr, 0),
     )
     monkeypatch.setitem(sys.modules, "AppKit", appkit)
     monkeypatch.setitem(sys.modules, "ApplicationServices", services)
@@ -110,8 +117,13 @@ def test_macos_focus_success(monkeypatch):
     found, msg = _find_and_focus_macos("Editor")
     assert found is True
     assert msg == "My Editor"
-    assert ("set", "AXFocusedWindow") in calls
+    assert ("set", "AXMain") in calls
+    assert ("set", "AXFrontmost") in calls
     assert ("perform", "AXRaise") in calls
+    # AXFocusedWindow on the app element is read-only in AppKit — setting it
+    # returned attribute-unsupported for every Cocoa app and failed the whole
+    # focus. The settable spelling is AXMain on the window (see the fix).
+    assert ("set", "AXFocusedWindow") not in calls
 
 
 def test_macos_focus_restores_minimized_window_from_all_window_catalog(monkeypatch):
@@ -134,7 +146,47 @@ def test_macos_focus_restores_minimized_window_from_all_window_catalog(monkeypat
     assert ("set", "AXMinimized") in calls
     assert ("perform", "AXRaise") in calls
     assert calls.index(("set", "AXMinimized")) < calls.index(("perform", "AXRaise"))
-    assert calls.index(("perform", "AXRaise")) < calls.index(("set", "AXFocusedWindow"))
+    assert calls.index(("perform", "AXRaise")) < calls.index(("set", "AXMain"))
+
+
+def test_macos_focus_survives_cooperative_activation_refusal(monkeypatch):
+    """macOS 14+ refuses activation from a background app; AX must still raise."""
+    calls = _install_fake_macos_apis(monkeypatch, activate_result=False)
+    monkeypatch.setattr(
+        "jarvis.platform.window_state._quartz_window_list",
+        lambda **_kwargs: [_mac_window()],
+    )
+    found, msg = _find_and_focus_macos("Editor")
+    assert found is True
+    assert msg == "My Editor"
+    assert ("perform", "AXRaise") in calls
+
+
+def test_macos_focus_tolerates_a_read_only_main_attribute(monkeypatch):
+    """An advisory AXMain refusal must not fail a raise that succeeded."""
+    _install_fake_macos_apis(monkeypatch, set_attr_error={"AXMain": -25205})
+    monkeypatch.setattr(
+        "jarvis.platform.window_state._quartz_window_list",
+        lambda **_kwargs: [_mac_window()],
+    )
+    found, msg = _find_and_focus_macos("Editor")
+    assert found is True
+    assert msg == "My Editor"
+
+
+def test_macos_focus_fails_when_raise_and_frontmost_both_fail(monkeypatch):
+    _install_fake_macos_apis(
+        monkeypatch, set_attr_error={"AXFrontmost": -25204, "AXMain": -25204}
+    )
+    services = sys.modules["ApplicationServices"]
+    services.AXUIElementPerformAction = lambda element, action: -25204
+    monkeypatch.setattr(
+        "jarvis.platform.window_state._quartz_window_list",
+        lambda **_kwargs: [_mac_window()],
+    )
+    found, msg = _find_and_focus_macos("Editor")
+    assert found is False
+    assert "refused to focus" in msg
 
 
 def test_macos_accessibility_denied_message(monkeypatch):
