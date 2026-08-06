@@ -41,7 +41,9 @@ from jarvis.screen_context.models import VisualIntent
         "inspect the current window",
         # -- German (the two phrasings the feature is specified around)
         "Kannst du mal sehen?",
+        "Kannst du mal schauen?",
         "Schau dir das an",
+        "Schau dir das mal an",
         "schau mal",
         "guck dir das mal an",
         "siehst du das?",
@@ -152,6 +154,7 @@ def test_window_scope_is_detected(utterance: str) -> None:
         "why is this?",
         "can you check that?",
         "was ist das?",  # i18n-allow: DE input
+        "Was ist das denn?",  # i18n-allow: DE input
         "warum ist das?",  # i18n-allow: DE input
         "kannst du das mal prüfen?",  # i18n-allow: DE input
         "que es esto?",
@@ -174,6 +177,36 @@ def test_weak_signals_ask_instead_of_capturing(utterance: str) -> None:
         "explain recursion to me again",
         "wie spät ist es?",  # i18n-allow: DE input
         "remind me to call the dentist tomorrow",
+        # A deictic followed by a content word is a DETERMINER: the sentence
+        # is about that word, not the screen. "Was ist das  # i18n-allow: quoted DE input
+        # Beliebteste?" continued a boxing conversation and  # i18n-allow: quoted DE input
+        # Jarvis derailed it twice with its clarifying question
+        # (voice session 2026-08-06 18:33).
+        "Was ist das Beliebteste?",  # i18n-allow: DE input — the live nag
+        "Was waren die zehn besten Boxer der Geschichte?",  # i18n-allow
+        "Warum ist das Wetter heute so schlecht?",  # i18n-allow: DE input
+        "Stimmt das Gerücht über die neuen Preise?",  # i18n-allow: DE input
+        "Was bedeutet das Wort Serendipität?",  # i18n-allow: DE input
+        "Was kostet das Programm?",  # i18n-allow: DE input
+        "Das Menü im Restaurant war fantastisch",  # i18n-allow: DE input
+        "what is that movie about?",
+        "why is that happening so often?",
+        "what about that restaurant we discussed?",
+        # A look-verb or check-verb WITH a content object is a lookup/research
+        # request — the screen answers nothing about it.
+        "Schau mal, was kosten die Flüge nach Rom?",  # i18n-allow: DE input
+        "Kannst du mal schauen, ob es morgen regnet?",  # i18n-allow: DE input
+        "Kannst du mir die Nachrichten vorlesen?",  # i18n-allow: DE input
+        "Lies mir das Buch vor",  # i18n-allow: DE input
+        "can you check the weather for tomorrow?",
+        "have a look at the flight prices",
+        "take a look at the hotel reviews",
+        "what does the contract say about cancellation?",
+        "read the news to me",
+        "did you get that message from Anna?",
+        "puedes revisar el precio del bitcoin?",
+        "échale un vistazo a los precios de los vuelos",
+        "mira esta receta de pasta",
         # Idioms that merely CONTAIN a look/see verb.
         "that looks like a good plan",
         "let's see what happens",

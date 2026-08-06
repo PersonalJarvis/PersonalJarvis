@@ -216,6 +216,20 @@ new locale is a data entry, not code):
   directions, so they get a question instead of a guess.
 - Everything else → `NONE`.
 
+**A deictic only counts as a pronoun, never as a determiner.**
+"Was ist das?" points at something; <!-- i18n-allow: quoted German matcher phrase -->
+"Was ist das Beliebteste?" is *about* the <!-- i18n-allow: quoted German matcher phrase -->
+word after "das", and a screenshot answers nothing about it. Every deictic
+branch therefore requires the pronoun to end its clause (spoken filler
+particles allowed), and the bare look-verb openers ("schau mal, …",
+"have a look, …", "kannst du mal schauen, ob …") count only when nothing
+follows them — with content they open a statement or a lookup request. This
+rule exists because a mid-conversation topical follow-up
+("Was ist das Beliebteste?", boxing <!-- i18n-allow: quoted German matcher phrase -->
+conversation, voice session 2026-08-06 18:33) derailed the topic twice with
+the German clarifying question. When extending the vocabulary, never match a
+deictic followed by an open noun slot.
+
 Negative guards matter as much as the vocabulary. Product how-to questions
 such as "How can you look at my screen?" are explicitly not capture consent.
 The existing `cu_gate` learned

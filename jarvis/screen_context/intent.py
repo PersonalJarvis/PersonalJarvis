@@ -141,7 +141,11 @@ _WINDOW_SCOPE_RE: re.Pattern[str] = re.compile(
     r"|\bin\s+(?:this|that)\s+(?:window|tab|dialog|app|document|page)\b"
     r"|\bthe\s+(?:window|tab|dialog|app)\s+(?:i(?:'|)m|i\s+am)\s+(?:in|on)\b"
     # --- German --- i18n-allow: German speech-input matching data
-    r"|\b(?:diese[srmn]?|das|der|die)\s+"  # i18n-allow: DE input
+    # Demonstrative ONLY — a plain article is not a pointer: "Was kostet das
+    # Programm?" and "die Seite gefaellt mir" are ordinary topic  # i18n-allow
+    # nouns, and counting them made every mention of a program or  # i18n-allow
+    # page nag the clarify question via the weak-signal tier.
+    r"|\bdiese[srmn]?\s+"  # i18n-allow: DE input
     r"(?:fenster|tab|reiter|dialog|dialogfeld|anwendung|programm|dokument|seite)\b"
     r"(?=\s|$|[.,!?])"
     r"|\bim\s+(?:aktiven|aktuellen|offenen|vorderen)\s+fenster\b"
@@ -179,13 +183,39 @@ _WINDOW_SCOPE_RE: re.Pattern[str] = re.compile(
 # next. Same shape the German ``pruef``/``bildschirm`` rule below already uses.
 _NEAR = r"[^.?!]{0,24}?"
 
+# Clause end WITHOUT the comma. A deictic pronoun only points at the screen
+# when it ends its clause ("was ist das?"); followed by a  # i18n-allow: quoted DE input
+# determiner-bound content word the sentence is about that word, not the
+# screen ("was ist das Beliebteste?" — live nag, voice  # i18n-allow: quoted DE input
+# session 2026-08-06 18:33). The comma is excluded on purpose:
+# "schau mal, ..." continues into a clause that owns the  # i18n-allow: quoted DE input
+# real topic.
+_END = r"\s*(?:$|[.?!;:])"
+
+# Filler particles a spoken deictic may trail before the clause ends. These are
+# the only tokens allowed between the pronoun and the end — anything else makes
+# it a determiner. Matching data, not prose (CLAUDE.md §1 category 3).
+_EN_TAIL = r"(?:\s+(?:then|exactly|now|again|here|there|really))*"
+_DE_TAIL = (  # i18n-allow: German speech-input matching data
+    r"(?:\s+(?:denn|eigentlich|jetzt|gerade|genau|nochmal|noch\s+mal"
+    r"|ueberhaupt|hier|da))*"
+)
+_ES_TAIL = r"(?:\s+(?:exactamente|ahora|aqui|ahi|entonces))*"
+
 _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"(?:"
     # ---------------- English ----------------
     # look/see verb bound to a deictic or to the screen itself
     r"\b(?:look|looking)\s+at\s+(?:this|that|it|the\s+screen|my\s+screen|the\s+error)\b"
-    r"|\btake\s+a\s+look\s+at\s+(?:this|that|it|the|my)\b"
-    r"|\bhave\s+a\s+look\b|\bcheck\s+(?:this|that|it)\s+out\b"
+    # "take/have a look" binds to a deictic or a screen surface. A generic
+    # object ("take a look at the flight prices") is a research request, and
+    # the objectless form only counts clause-final — "have a look, the prices
+    # dropped" opens a statement, it does not order a look.
+    r"|\b(?:take|have)\s+a\s+(?:quick\s+)?look\s+at\s+"
+    r"(?:this|that|it|my\s+(?:screen|monitor)"
+    r"|the\s+(?:screen|monitor|error|message|window|dialog|popup))\b"
+    rf"|\bhave\s+a\s+(?:quick\s+)?look{_END}"
+    r"|\bcheck\s+(?:this|that|it)\s+out\b"
     r"|\bcan\s+you\s+see\s+(?:this|that|it|my\s+screen|the\s+screen)\b"
     r"|\bdo\s+you\s+see\s+(?:this|that|it)\b"
     r"|\bsee\s+(?:this|that)\s+(?:here|error|message|window|screen)\b"
@@ -207,27 +237,49 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"\bscreen(?:shot|\s+capture)\b"
     r"|\bscreen(?:shot|\s+capture)\s+(?:this|that|my\s+screen|the\s+screen)\b"
     r"|\bscreen(?:shot|\s+capture)\s+(?:please|for\s+me)\b"
-    r"|\b(?:this|that)\s+(?:error|error\s+message|message|button|menu|popup)\b"
-    # read-out requests
-    r"|\bwhat\s+does\s+(?:it|this|that|the\s+\w+)\s+say\b"
-    r"|\bread\s+(?:this|that|it|the\s+\w+)\s*(?:out|aloud|to\s+me)?\b"
+    # UI nouns need the demonstrative; bare "message" dropped — "did you get
+    # that message from Anna?" is about mail, not pixels.
+    r"|\b(?:this|that)\s+(?:error|error\s+message|button|menu|popup)\b"
+    # read-out requests: the object is a deictic or an on-screen artefact. A
+    # generic "the <noun>" ("what does the contract say", "read the news to
+    # me") asks for content Jarvis should fetch, not for the screen.
+    r"|\bwhat\s+does\s+(?:it|this|that"
+    r"|the\s+(?:screen|error|message|dialog|popup|notification|window|page|button)"
+    r")\s+say\b"
+    rf"|\bread\s+(?:this|that|it)(?:\s+out)?(?:\s+aloud)?(?:\s+to\s+me)?{_END}"
+    r"|\bread\s+(?:the|this|that)\s+"
+    r"(?:screen|error|message|dialog|popup|notification)\b"
     r"|\bwhat\s+does\s+(?:this|that)\s+mean\s+(?:here|on\s+screen)\b"
 
     # ---------------- German ---------------- i18n-allow: German speech-input matching data
-    # The two phrasings the feature is specified around, plus their variants.
-    # ``dies\w*`` on purpose: "schau dir DIESES Fenster an" is the natural
-    # phrasing, and a bare ``dies\b`` would only match the rarer "schau dir
-    # dies an" — costing the common case to save nothing.
-    r"|\bschau(?:e|st)?\s+(?:dir\s+)?(?:das|dies\w*|es|mal\s+das|hier)\b"
-    r"|\b(?:schau|schaue|sieh|guck)\s+(?:dir\s+)?(?:bitte\s+)?"
-    r"(?:meinen|den|diesen)\s+(?:bildschirm|monitor)\s+an\b"
-    r"|\bschau\s+mal\b|\bschau\s+her\b|\bguck\s+mal\b|\bguck\s+(?:dir\s+)?das\b"
-    r"|\bsieh\s+(?:dir\s+)?(?:das|dies\w*)\b|\bsieh\s+mal\b"
-    r"|\bkannst\s+du\s+(?:mal\s+)?(?:kurz\s+)?(?:sehen|schauen|gucken|draufschauen)\b"
+    # A look-verb takes a DEICTIC object ("schau dir das an"), never a
+    # determiner phrase: in "schau dir das Video an" the sentence is about the
+    # noun after "das", and a screenshot answers nothing about it. The deictic
+    # therefore ends its clause (fillers allowed) or binds to the closing
+    # "an"; a demonstrative may instead name a screen surface noun ("schau dir
+    # dieses Fenster an"). Bare "schau mal" / "guck mal" count  # i18n-allow: quoted DE input
+    # only clause-final — followed by content ("Schau mal, was  # i18n-allow: quoted DE input
+    # kosten Fluege nach Rom?") they open a statement, they do  # i18n-allow: quoted DE input
+    # not order a look (live over-trigger class, voice session
+    # 2026-08-06 18:33).
+    r"|\b(?:schau(?:e|st)?|guck(?:e|st)?|sieh(?:st)?)"
+    r"(?:\s+(?:du|dir|mir|mal|bitte|kurz|eben|doch|noch))*\s+"
+    r"(?:das|dies\w*|es)(?:\s+(?:mal|bitte|kurz|eben|doch|noch|dir|mir))*"  # i18n-allow
+    rf"(?:\s+an\b|{_END})"
+    r"|\b(?:schau(?:e|st)?|guck(?:e|st)?|sieh(?:st)?)"
+    r"(?:\s+(?:du|dir|mir|mal|bitte|kurz|eben|doch|noch))*\s+"
+    r"(?:auf\s+)?(?:das|den|dieses|diesen|meinen|deinen)\s+"  # i18n-allow: DE input
+    r"(?:bildschirm|monitor|fenster|tab|reiter|dialog|fehlermeldung|fehler"  # i18n-allow
+    r"|meldung|popup|seite|dokument)\b"  # i18n-allow: DE input
+    rf"|\b(?:schau|guck)\s+(?:mal\s+)?hier{_END}"
+    rf"|\b(?:schau|guck|sieh)\s+(?:mal|her){_END}"
+    rf"|\bkannst\s+du\s+(?:mal\s+)?(?:kurz\s+)?"
+    rf"(?:sehen|schauen|gucken|draufschauen){_END}"
     r"|\bkannst\s+du\s+(?:das|dies|es|meinen\s+bildschirm)\s+sehen\b"
     r"|\bkannst\s+du\s+(?:bitte\s+)?meinen\s+(?:bildschirm|monitor)\s+"
     r"(?:anschauen|ansehen|pruefen)\b"
-    r"|\bsiehst\s+du\s+(?:das|dies|meinen\s+bildschirm|den\s+fehler)\b"  # i18n-allow: DE input
+    rf"|\bsiehst\s+du\s+(?:das|dies)(?:\s+(?:hier|da|auch|gerade))*{_END}"  # i18n-allow
+    r"|\bsiehst\s+du\s+(?:meinen\s+bildschirm|den\s+fehler)\b"  # i18n-allow: DE input
     r"|\bwas\s+siehst\s+du\b"
     # Screen nouns in every case German inflects them into. The earlier list
     # spelled out the dative only, so the natural spoken accusative ("schau mal
@@ -247,12 +299,21 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"|\bauf\s+dem\s+schirm\b|\bhier\s+auf\s+dem\b"  # i18n-allow: DE input
     r"|\b(?:diese|die)\s+fehlermeldung\b"  # i18n-allow: DE input
     r"|\b(?:dieser|der)\s+fehler\s+(?:hier|da)\b"  # i18n-allow: DE input
-    r"|\b(?:dieser|der)\s+knopf\b|\b(?:dieses|das)\s+menue\b"  # i18n-allow: DE input
+    # Demonstrative only: "der Knopf an meiner Jacke" and "das  # i18n-allow: quoted DE input
+    # Menue im Restaurant" are ordinary nouns; only the pointing  # i18n-allow
+    # form names the screen.
+    r"|\bdieser\s+knopf\b|\bdieses\s+menue\b"  # i18n-allow: DE input
     # read-out requests
     r"|\bwas\s+steht\s+(?:da|hier|dort|drin)\b|\bda\s+steht\b"
     r"|\bwas\s+steht\s+(?:in|auf)\s+dies\w*\s+"
     r"(?:fenster|dialog|tab|dokument)\b"
-    r"|\blies\s+(?:mir\s+)?(?:das|dies|es|die\s+\w+)\b|\bvorlesen\b"  # i18n-allow: DE input
+    # The read-out object is a deictic or an on-screen artefact. "Lies mir
+    # das Buch vor" / "lies die Nachrichten vor" ask for CONTENT  # i18n-allow: quoted DE input
+    # (a book, the news), and bare "vorlesen" without a deictic  # i18n-allow: quoted DE input
+    # belongs to them too.
+    rf"|\blies\s+(?:mir\s+)?(?:bitte\s+)?(?:das|dies|es)"
+    rf"(?:\s+(?:mal|bitte|kurz))*(?:\s+vor\b|{_END})"  # i18n-allow: DE input
+    r"|\b(?:das|dies|es)\s+(?:bitte\s+)?(?:mal\s+)?vorlesen\b"  # i18n-allow: DE input
     r"|\blies\s+(?:mir\s+)?(?:bitte\s+)?(?:dies\w*|das)\s+"
     r"(?:fenster|dialog|tab|dokument)\b"  # i18n-allow: DE input
     r"|\bpruef\w*\s+(?:bitte\s+)?[^.?!]{0,72}\b"
@@ -260,8 +321,14 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"|\bwas\s+ist\s+das\s+(?:hier|da\s+auf)\b"  # i18n-allow: DE input
 
     # ---------------- Spanish ---------------- i18n-allow: Spanish speech-input matching data
-    r"|\bmira\s+(?:esto|eso|esta|la\s+pantalla|mi\s+pantalla|el\s+error)\b"
-    r"|\bmirar\s+(?:esto|eso)\b|\becha(?:le)?\s+un\s+vistazo\b"
+    # "mira esta" alone is a determiner waiting for its noun ("mira esta
+    # receta") — the demonstrative must name a screen surface to count, and
+    # "echa un vistazo" with a generic object ("a los precios") is research.
+    r"|\bmira\s+(?:esto|eso|la\s+pantalla|mi\s+pantalla|el\s+error)\b"
+    r"|\bmira\s+(?:esta|esa)\s+(?:ventana|pestana|pagina|aplicacion|pantalla)\b"
+    r"|\bmirar\s+(?:esto|eso)\b"
+    r"|\becha(?:le)?\s+un\s+vistazo"
+    rf"(?:\s+a\s+(?:esto|eso|la\s+pantalla|mi\s+pantalla))?{_END}"
     r"|\bpuedes\s+ver\s+(?:esto|eso|mi\s+pantalla|la\s+pantalla)\b"
     r"|\bves\s+(?:esto|eso|mi\s+pantalla)\b|\bque\s+ves\b"
     r"|\bque\s+ves\s+en\s+mi\s+(?:pantalla|monitor)\b"
@@ -270,7 +337,8 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"\bcaptura\s+de\s+pantalla\b"
     r"|\banaliza\s+(?:esta\s+|esa\s+|la\s+)?captura\s+de\s+pantalla\b"
     r"|\bque\s+dice\s+(?:ahi|aqui|esto|eso)\b"
-    r"|\blee\s+(?:esto|eso|el\s+\w+)\b"
+    rf"|\blee\s+(?:esto|eso){_END}"
+    r"|\blee\s+(?:el|este|ese)\s+(?:error|mensaje|dialogo|aviso)\b"
     r"|\beste\s+error\b|\besta\s+ventana\s+de\s+error\b"
     r")",
     re.IGNORECASE,
@@ -392,25 +460,42 @@ def requests_screen_operation(text: str) -> bool:
 # A bare deictic with no visual anchor, or an objectless look-verb. These are
 # the sentences a capture-happy heuristic gets wrong in BOTH directions, so
 # they earn a question rather than a guess.
+#
+# The deictic must be a PRONOUN, which in speech means it ends its clause
+# (filler particles allowed). Followed by a content word it is a determiner
+# and the sentence is about that word: "Was ist das  # i18n-allow: quoted DE input
+# Beliebteste?" continued a boxing conversation, classified as  # i18n-allow: quoted DE input
+# a screen question, and Jarvis derailed the topic twice with
+# its clarifying question (live nag, voice session 2026-08-06
+# 18:33). The same shape applies to every branch —
+# and to objectless "can you check", which with an object ("can you check the
+# weather?") is a lookup request, not a look request.
 _AMBIGUOUS_RE: re.Pattern[str] = re.compile(
     r"(?:"
     # --- English ---
-    r"\bwhat\s+(?:is|'s)\s+(?:this|that)\b(?!\s+(?:mean|word|called))"
-    r"|\bwhat\s+about\s+(?:this|that)\b|\band\s+(?:this|that)\s+one\b"
-    r"|\bwhy\s+is\s+(?:this|that)\b|\bis\s+(?:this|that)\s+(?:right|correct|ok|okay)\b"
-    r"|\bcan\s+you\s+(?:check|have\s+a\s+look)\b|\bcheck\s+(?:this|that)\b"
-    r"|\bwhat\s+does\s+(?:this|that)\s+mean\b"
+    rf"\bwhat\s+(?:is|'s)\s+(?:this|that){_EN_TAIL}{_END}"
+    rf"|\bwhat\s+about\s+(?:this|that){_EN_TAIL}{_END}"
+    rf"|\band\s+(?:this|that)\s+one{_EN_TAIL}{_END}"
+    rf"|\bwhy\s+is\s+(?:this|that){_EN_TAIL}{_END}"
+    rf"|\bis\s+(?:this|that)\s+(?:right|correct|ok|okay){_EN_TAIL}{_END}"
+    rf"|\bcan\s+you\s+(?:check|have\s+a\s+look){_END}"
+    rf"|\bcheck\s+(?:this|that){_EN_TAIL}{_END}"
+    rf"|\bwhat\s+does\s+(?:this|that)\s+mean{_EN_TAIL}{_END}"
     # --- German --- i18n-allow: German speech-input matching data
-    r"|\bwas\s+ist\s+(?:das|dies)\b(?!\s+(?:fuer\s+ein|denn\s+fuer))"  # i18n-allow: DE input
+    rf"|\bwas\s+ist\s+(?:das|dies){_DE_TAIL}{_END}"  # i18n-allow: DE input
     r"|\bund\s+(?:das|dies)\s*(?:da|hier)?\s*[.?!]?\s*$"
-    r"|\bwarum\s+ist\s+(?:das|dies)\b|\bstimmt\s+(?:das|dies)\b"  # i18n-allow: DE input
+    rf"|\bwarum\s+ist\s+(?:das|dies){_DE_TAIL}{_END}"  # i18n-allow: DE input
+    rf"|\bstimmt\s+(?:das|dies){_DE_TAIL}{_END}"  # i18n-allow: DE input
     r"|\bkannst\s+du\s+(?:das|dies)\s+(?:mal\s+)?(?:pruefen|checken|kontrollieren)\b"
-    r"|\bwas\s+(?:bedeutet|heisst)\s+(?:das|dies)\b"
+    rf"|\bwas\s+(?:bedeutet|heisst)\s+(?:das|dies){_DE_TAIL}{_END}"
     r"|\bschau\s+(?:da\s+)?(?:mal\s+)?drauf\b"
     # --- Spanish --- i18n-allow: Spanish speech-input matching data
-    r"|\bque\s+es\s+(?:esto|eso)\b|\by\s+(?:esto|eso)\b"
-    r"|\bpor\s+que\s+es\s+(?:esto|eso)\b|\besta\s+bien\s+(?:esto|eso)\b"
-    r"|\bpuedes\s+(?:revisar|comprobar)\b|\bque\s+significa\s+(?:esto|eso)\b"
+    rf"|\bque\s+es\s+(?:esto|eso){_ES_TAIL}{_END}"
+    rf"|\by\s+(?:esto|eso){_ES_TAIL}{_END}"
+    rf"|\bpor\s+que\s+es\s+(?:esto|eso){_ES_TAIL}{_END}"
+    rf"|\besta\s+bien\s+(?:esto|eso){_ES_TAIL}{_END}"
+    rf"|\bpuedes\s+(?:revisar|comprobar)(?:\s+(?:esto|eso))?{_END}"
+    rf"|\bque\s+significa\s+(?:esto|eso){_ES_TAIL}{_END}"
     r")",
     re.IGNORECASE,
 )
