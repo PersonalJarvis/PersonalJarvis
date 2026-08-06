@@ -173,6 +173,15 @@ _TRANSPORT_REBUILD_MAX_PER_WINDOW = 3
 # seconds) so the fresh transport gets a fair chance to work, short enough that
 # a genuinely healed call never trips it (BUG-124).
 _ADVISED_REBUILD_RELAPSE_S = 15.0
+# How long the teardown waits for the provider socket to close politely before
+# abandoning it. This is a CEILING on a best-effort courtesy, not a duration
+# anything needs: a socket that has not closed by now is not about to. It used
+# to be 5 s — exactly the dictation handover's own bound
+# (``pipeline._DICTATION_HANDOVER_TIMEOUT_S``), so a hangup made to free the
+# microphone held it for the full window and the key press that asked for it
+# was refused (live 2026-08-06 17:42:07 → 17:42:12, "nothing was recorded").
+# Whatever waits for the microphone must have room to outlast this.
+_PROVIDER_CLOSE_BOUND_S = 1.5
 _CREDENTIAL_TERMINAL_STATUSES = frozenset(
     {BAD_KEY, NO_CREDITS, NOT_CONFIGURED}
 )
@@ -6846,7 +6855,9 @@ class RealtimeVoiceSession:
             # deaf until the socket eventually gives up (~20 s live 2026-07-23).
             # Bound it: abandon the socket so the hangup always completes.
             try:
-                await asyncio.wait_for(self._session.close(), timeout=5.0)
+                await asyncio.wait_for(
+                    self._session.close(), timeout=_PROVIDER_CLOSE_BOUND_S
+                )
             except TimeoutError:
                 log.warning(
                     "realtime[%s] provider close timed out during end(); "

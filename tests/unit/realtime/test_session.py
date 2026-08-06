@@ -6160,6 +6160,22 @@ async def test_advised_reconnect_defers_to_the_turn_boundary_mid_turn():
     await sess.end(reason="test")
 
 
+def test_the_socket_courtesy_never_outlasts_what_waits_for_the_microphone():
+    """A hangup made to free the microphone must not hold it for the wait.
+
+    Live 2026-08-06 17:42: the dictation key hung the call up, the provider
+    socket took its full 5 s bound to give up — the same 5 s the handover was
+    willing to wait — and the press was refused with "nothing was recorded".
+    The close is a best-effort courtesy; the person reaching for the key is
+    not. Pinned as a RELATIONSHIP, because the bug was the two numbers being
+    equal, not either number itself.
+    """
+    from jarvis.realtime.session import _PROVIDER_CLOSE_BOUND_S
+    from jarvis.speech.pipeline import _DICTATION_HANDOVER_TIMEOUT_S
+
+    assert _PROVIDER_CLOSE_BOUND_S * 2 <= _DICTATION_HANDOVER_TIMEOUT_S
+
+
 @pytest.mark.asyncio
 async def test_the_same_advice_right_after_a_rebuild_ends_the_call_honestly():
     """BUG-124: a rebuild that has to be repeated for the same cause failed.
