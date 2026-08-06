@@ -80,11 +80,15 @@ export function ChatStream({ terminal, active = true, onUnavailable }: ChatStrea
       try {
         const body = await fetchConversation(terminal);
         if (!alive) return;
-        if (!body.available) {
+        // Settled "this CLI keeps no readable record" — hand over to the pane.
+        // NOT the same as "no conversation yet": one CLI only reveals its
+        // session id after its first turn, and giving up on that would mean a
+        // conversation seconds away was never shown.
+        if (!body.readable) {
           notifyUnavailable();
           return;
         }
-        setTurns(body.turns);
+        setTurns(body.available ? body.turns : []);
         setError(null);
       } catch {
         if (!alive) return;

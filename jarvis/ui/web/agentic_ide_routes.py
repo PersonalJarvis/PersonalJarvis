@@ -2309,18 +2309,33 @@ async def terminal_conversation(name: str) -> dict:
     resume itself has none of those problems — roles are declared and tool calls
     carry their arguments (see :mod:`jarvis.agentic_ide.agent_transcript`).
 
-    ``available: false`` is a normal answer, not an error: a CLI that keeps no
-    readable record, or a pane whose conversation has not been written yet.
-    The surface shows the live pane in that case, which is never wrong and never
-    empty.
+    Two different "no", deliberately kept apart:
+
+    * ``readable: false`` — this CLI keeps no record anyone can read. A settled
+      fact about the product, so the surface can switch to the live pane and
+      stay there.
+    * ``readable: true, available: false`` — it does, but not yet: the file
+      appears when the conversation starts, and one CLI only reveals its session
+      id after the fact. Transient, so the surface WAITS rather than giving up.
+
+    Collapsing the two is a real bug: a pane whose id has not been discovered
+    yet would be treated as a CLI that can never be read, and a conversation
+    that was seconds away would never be shown.
     """
     found = get_registry().find_terminal(name)
     if found is None:
         raise HTTPException(status_code=404, detail=f"No terminal called {name}")
     _session, term = found
+    readable = agent_transcript.can_read(term.agent)
     handle = term.resume
-    if handle is None or not agent_transcript.can_read(term.agent):
-        return {"terminal": term.name, "agent": term.agent, "available": False, "turns": []}
+    if handle is None or not readable:
+        return {
+            "terminal": term.name,
+            "agent": term.agent,
+            "readable": readable,
+            "available": False,
+            "turns": [],
+        }
     # Off the event loop: this opens a file that can be megabytes, and the loop
     # it would otherwise block is the one carrying every pane's output.
     turns = await asyncio.to_thread(
@@ -2333,10 +2348,19 @@ async def terminal_conversation(name: str) -> dict:
         home=account_home(term.agent, term.account),
     )
     if turns is None:
-        return {"terminal": term.name, "agent": term.agent, "available": False, "turns": []}
+        # The reader exists and the pane has an id; the file simply is not there
+        # yet. Still transient — `readable` stays true and the surface waits.
+        return {
+            "terminal": term.name,
+            "agent": term.agent,
+            "readable": True,
+            "available": False,
+            "turns": [],
+        }
     return {
         "terminal": term.name,
         "agent": term.agent,
+        "readable": True,
         "available": True,
         "turns": [t.to_dict() for t in turns],
     }
