@@ -604,7 +604,12 @@ class _OpenAIRealtimeSession:
         """
         for message in self._history_seed:
             role = message["role"]
-            content_type = "input_text" if role == "user" else "text"
+            # GA literals: user content is "input_text", assistant content is
+            # "output_text". The hosted endpoint tolerates the legacy "text",
+            # but a strictly-validating self-hosted server rejects the whole
+            # item with it — every rebuild seed died as "Unknown or invalid
+            # event" on the local stack (live 2026-08-06 20:29).
+            content_type = "input_text" if role == "user" else "output_text"
             try:
                 await connection.conversation.item.create(
                     item={

@@ -236,7 +236,7 @@ async def test_open_session_seeds_prior_call_history(
         {
             "type": "message",
             "role": "assistant",
-            "content": [{"type": "text", "text": "Sure — which one?"}],
+            "content": [{"type": "output_text", "text": "Sure — which one?"}],
         },
     ]
     await session.close()
@@ -296,7 +296,7 @@ async def test_transport_rebuild_replays_the_current_history_snapshot(
         {
             "type": "message",
             "role": "assistant",
-            "content": [{"type": "text", "text": "Sure — which one?"}],
+            "content": [{"type": "output_text", "text": "Sure — which one?"}],
         },
     ]
     await session.close()
