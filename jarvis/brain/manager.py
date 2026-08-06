@@ -11589,6 +11589,11 @@ def _is_invalid_model_exc(msg: str) -> bool:
         "model_not_found", "model not found", "model does not exist",
         "unknown model", "invalid model", "invalid_model",
         "not a valid model", "unsupported model",
+        # OpenAI's 404 for a Responses-API-only model called over
+        # Chat-Completions ("This is not a chat model and thus not supported
+        # in the v1/chat/completions endpoint"). Live 2026-08-06: spoken as
+        # "network or provider issue", which sent the user hunting API keys.
+        "not a chat model",
     ))
 
 

@@ -242,6 +242,237 @@ def _tools_openai_format(
     return out
 
 
+# ---------------------------------------------------------------------------
+# Responses-API compatibility (rejection-driven, like the param retries below)
+# ---------------------------------------------------------------------------
+
+# OpenAI serves its "pro" deep-reasoning class (gpt-5.5-pro, ...) ONLY via the
+# Responses API: a Chat-Completions call returns 404 "This is not a chat
+# model...". Live 2026-08-06 20:19: the screen-context vision turn crossed
+# families onto openai(gpt-5.5-pro), took that 404, and the user heard the
+# dishonest "network or provider issue" apology. Detection is by the server's
+# EXPLICIT rejection, never by model-name pinning (AP-21), and the verdict is
+# cached per (base_url, model) so later turns skip the failed round-trip.
+_RESPONSES_ONLY_MARKERS = (
+    "not a chat model",
+    "not supported in the v1/chat/completions",
+    "only supported in v1/responses",
+    "use the responses api",
+)
+
+#: (base_url, model) pairs the server has declared Responses-only.
+_RESPONSES_ONLY_CACHE: set[tuple[str, str]] = set()
+
+
+def _is_responses_only_rejection(exc: Exception) -> bool:
+    """Whether the server explicitly refused the model on Chat-Completions."""
+    message = str(exc).lower()
+    return any(marker in message for marker in _RESPONSES_ONLY_MARKERS)
+
+
+def _client_supports_responses(client: Any) -> bool:
+    """Whether the installed SDK exposes the Responses API at all."""
+    return callable(getattr(getattr(client, "responses", None), "create", None))
+
+
+def _chat_messages_to_responses_input(
+    messages: list[dict[str, Any]],
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Translate an already-built Chat-Completions array to Responses input.
+
+    system → ``instructions``; user text/image blocks → ``input_text`` /
+    ``input_image``; assistant ``tool_calls`` → ``function_call`` items; tool
+    results → ``function_call_output`` items. Translating the FINISHED chat
+    array (not the BrainMessages) keeps one message builder as the single
+    source of truth for history reconstruction and name sanitizing.
+    """
+    instruction_parts: list[str] = []
+    items: list[dict[str, Any]] = []
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content")
+        if role == "system":
+            if isinstance(content, str) and content:
+                instruction_parts.append(content)
+            continue
+        if role == "tool":
+            items.append({
+                "type": "function_call_output",
+                "call_id": m.get("tool_call_id") or "",
+                "output": (
+                    content
+                    if isinstance(content, str)
+                    else json.dumps(content, default=str)
+                ),
+            })
+            continue
+        if role == "assistant":
+            if isinstance(content, str) and content:
+                items.append({
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": content}],
+                })
+            for tc in m.get("tool_calls") or ():
+                fn = tc.get("function") or {}
+                items.append({
+                    "type": "function_call",
+                    "call_id": tc.get("id") or "",
+                    "name": fn.get("name") or "",
+                    "arguments": fn.get("arguments") or "{}",
+                })
+            continue
+        # user
+        if isinstance(content, list):
+            blocks: list[dict[str, Any]] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "text":
+                    blocks.append({
+                        "type": "input_text", "text": block.get("text", "")
+                    })
+                elif btype == "image_url":
+                    url = (block.get("image_url") or {}).get("url") or ""
+                    if url:
+                        blocks.append({"type": "input_image", "image_url": url})
+            items.append({"role": "user", "content": blocks})
+        else:
+            items.append({
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": (
+                        content
+                        if isinstance(content, str)
+                        else json.dumps(content, default=str)
+                    ),
+                }],
+            })
+    return ("\n\n".join(instruction_parts) or None), items
+
+
+def _tools_responses_format(
+    chat_tools: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Chat-Completions nested function tools → flat Responses function tools."""
+    out: list[dict[str, Any]] = []
+    for t in chat_tools:
+        fn = t.get("function") or {}
+        out.append({
+            "type": "function",
+            "name": fn.get("name", ""),
+            "description": fn.get("description", ""),
+            "parameters": fn.get("parameters")
+            or {"type": "object", "properties": {}},
+        })
+    return out
+
+
+# Reasoning tokens count against ``max_output_tokens`` on the Responses API,
+# and the models that land on this transport reason MANDATORILY. A small
+# chat-era budget (the CU tool step sends 256) would be consumed by hidden
+# thought before the first visible token, returning an empty "incomplete"
+# answer — so the budget is floored here.
+_RESPONSES_MIN_OUTPUT_TOKENS = 4096
+
+
+def _responses_kwargs_from_chat(chat_kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Build ``responses.create`` kwargs from prepared Chat-Completions kwargs.
+
+    Deliberately NOT carried over: ``temperature`` and ``reasoning_effort``
+    (the deep-reasoning models this transport exists for reject sampling
+    knobs and refuse to switch reasoning off) and ``stream_options`` (usage
+    arrives on the terminal ``response.completed`` event instead).
+    """
+    instructions, input_items = _chat_messages_to_responses_input(
+        list(chat_kwargs.get("messages") or ())
+    )
+    out: dict[str, Any] = {
+        "model": chat_kwargs.get("model"),
+        "input": input_items,
+        "stream": True,
+    }
+    if instructions:
+        out["instructions"] = instructions
+    max_out = chat_kwargs.get("max_completion_tokens") or chat_kwargs.get(
+        "max_tokens"
+    )
+    if max_out:
+        out["max_output_tokens"] = max(int(max_out), _RESPONSES_MIN_OUTPUT_TOKENS)
+    if chat_kwargs.get("tools"):
+        out["tools"] = _tools_responses_format(list(chat_kwargs["tools"]))
+    return out
+
+
+async def _stream_via_responses(
+    client: Any,
+    chat_kwargs: dict[str, Any],
+    reverse_name_map: dict[str, str],
+) -> AsyncIterator[BrainDelta]:
+    """Stream one turn over the Responses API, emitting the same BrainDeltas.
+
+    Delta parity with the chat path: text deltas while streaming, tool calls
+    finalized before the ``finish_reason``, usage last.
+    """
+    stream = await client.responses.create(
+        **_responses_kwargs_from_chat(chat_kwargs)
+    )
+    tool_calls: list[dict[str, Any]] = []
+    usage_payload: dict[str, int] | None = None
+    failure: str | None = None
+    async for event in stream:
+        etype = str(getattr(event, "type", "") or "")
+        if etype == "response.output_text.delta":
+            delta = getattr(event, "delta", None)
+            if delta:
+                yield BrainDelta(content=delta)
+        elif etype == "response.output_item.done":
+            item = getattr(event, "item", None)
+            if str(getattr(item, "type", "") or "") == "function_call":
+                name = getattr(item, "name", "") or ""
+                try:
+                    parsed = json.loads(getattr(item, "arguments", "") or "{}")
+                except json.JSONDecodeError:
+                    parsed = {}
+                tool_calls.append({
+                    "id": (
+                        getattr(item, "call_id", None)
+                        or getattr(item, "id", None)
+                        or f"call_{len(tool_calls)}"
+                    ),
+                    "name": reverse_name_map.get(name, name),
+                    "input": parsed,
+                })
+        elif etype in ("response.completed", "response.incomplete"):
+            usage = getattr(getattr(event, "response", None), "usage", None)
+            if usage is not None:
+                usage_payload = {
+                    "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+                    "output_tokens": int(
+                        getattr(usage, "output_tokens", 0) or 0
+                    ),
+                }
+                details = getattr(usage, "input_tokens_details", None)
+                cached = int(getattr(details, "cached_tokens", 0) or 0)
+                if cached > 0:
+                    usage_payload["cache_hit_tokens"] = cached
+        elif etype in ("response.failed", "error"):
+            err = getattr(getattr(event, "response", None), "error", None)
+            if err is None:
+                err = getattr(event, "error", None)
+            failure = str(
+                getattr(err, "message", None) or err or "response failed"
+            )
+    if failure:
+        raise RuntimeError(f"Responses API stream failed: {failure}")
+    for tc in tool_calls:
+        yield BrainDelta(tool_call=tc)
+    yield BrainDelta(finish_reason="tool_calls" if tool_calls else "stop")
+    if usage_payload is not None:
+        yield BrainDelta(usage=usage_payload)
+
+
 async def stream_complete(
     client: Any,
     model: str,
@@ -255,6 +486,10 @@ async def stream_complete(
 
     `supports_vision` is passed through to the message builder — when `False`,
     `BrainMessage.images` are dropped and a WARN is logged.
+
+    Models the server declares Responses-only (404 "not a chat model") are
+    transparently served over the Responses API — see
+    ``_is_responses_only_rejection``.
     """
     # The same map must sanitize both declarations and reconstructed assistant
     # tool history. Otherwise an MCP name such as ``github/search`` succeeds in
@@ -308,12 +543,23 @@ async def stream_complete(
     # Accumulator for tool-call partials (OpenAI streams per tool_call index)
     tool_buffer: dict[int, dict[str, Any]] = {}
 
+    # A model the server already declared Responses-only skips the doomed
+    # Chat-Completions round-trip for the rest of the process lifetime.
+    responses_cache_key = (str(getattr(client, "base_url", "") or ""), model)
+    if responses_cache_key in _RESPONSES_ONLY_CACHE and _client_supports_responses(
+        client
+    ):
+        async for delta in _stream_via_responses(client, kwargs, reverse_name_map):
+            yield delta
+        return
+
     # Belt-and-suspenders for SDK-level kwarg gaps: old SDKs know neither
     # ``stream_options`` (added ~1.30) nor ``reasoning_effort`` (added ~1.58)
     # and raise TypeError before any request is sent. Strip exactly the kwarg
     # the SDK named and retry — an ancient SDK may need both stripped.
     _sdk_optional_kwargs = ("stream_options", "reasoning_effort")
     stream = None
+    use_responses = False
     for _ in range(len(_sdk_optional_kwargs) + 1):
         try:
             stream = await _create_with_token_param_retry(client, kwargs)
@@ -331,6 +577,23 @@ async def stream_complete(
                 exc,
             )
             kwargs.pop(offender, None)
+        except Exception as exc:  # noqa: BLE001 — inspect for the transport verdict
+            if _is_responses_only_rejection(exc) and _client_supports_responses(
+                client
+            ):
+                _RESPONSES_ONLY_CACHE.add(responses_cache_key)
+                log.info(
+                    "model %s is Responses-API-only per the server's rejection "
+                    "— switching transport (cached for this endpoint).",
+                    model,
+                )
+                use_responses = True
+                break
+            raise
+    if use_responses:
+        async for delta in _stream_via_responses(client, kwargs, reverse_name_map):
+            yield delta
+        return
     if stream is None:  # pragma: no cover -- loop always breaks or raises
         raise RuntimeError("openai stream creation retry loop exhausted")
     async for chunk in stream:
