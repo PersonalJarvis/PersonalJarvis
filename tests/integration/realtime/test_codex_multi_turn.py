@@ -496,7 +496,7 @@ async def test_a_turn_without_any_terminal_item_does_not_wedge_the_next_one(
     out the production value - and a reply still streaming audio keeps its
     microphone shut, which the sibling tests cover.
     """
-    monkeypatch.setattr(session_mod, "_HALF_DUPLEX_MUTE_ALERT_S", 0.05)
+    monkeypatch.setattr(session_mod, "_HALF_DUPLEX_SILENT_RELEASE_S", 0.05)
     session, _provider, wire, surface = await _open_call()
     try:
         wire.push(
@@ -539,7 +539,7 @@ async def test_a_provider_error_closing_a_turn_still_releases_the_microphone(
     microphone there, MT-1 is narrow; if it does not, half duplex has no
     unmute path at all except a well-behaved provider.
     """
-    monkeypatch.setattr(session_mod, "_HALF_DUPLEX_MUTE_ALERT_S", 0.05)
+    monkeypatch.setattr(session_mod, "_HALF_DUPLEX_SILENT_RELEASE_S", 0.05)
     session, _provider, wire, surface = await _open_call()
     try:
         since = surface.mark()
