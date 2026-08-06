@@ -70,6 +70,15 @@ _AUDIO_SEND_TIMEOUT_S = 2.0
 # call that went deaf is visible for its whole duration, not only at onset.
 _HALF_DUPLEX_MUTE_ALERT_S = 6.0
 _HALF_DUPLEX_MUTE_REPEAT_S = 10.0
+# The RELEASE is far faster than the alert: ChatGPT-Live announces no
+# terminal item (probe-confirmed 2026-08-06), so a turn that ends without a
+# boundary used to hold the microphone shut a full six seconds — live logs
+# showed "mute held 6.0 s ... 14.2 s" of deafness per stuck turn. Release
+# once the mute AND the provider's audio have both been silent this long:
+# above the adapter's 1.2 s quiescence backstop plus playback drain, so a
+# reply that is merely pausing keeps its mute, and far below the alert. No
+# audio playing means no echo risk — reopening matches barge-in semantics.
+_HALF_DUPLEX_SILENT_RELEASE_S = 2.0
 # Per-turn stall backstop. A provider can stop emitting ENTIRELY — no audio, no
 # transcript, no boundary, no error — and the receive iterator then simply never
 # yields again. Nothing else in this module bounds that: the pump awaits the
@@ -2173,13 +2182,20 @@ class RealtimeVoiceSession:
             self._half_duplex_muted_since = now
             return
         muted_s = now - self._half_duplex_muted_since
-        if muted_s < _HALF_DUPLEX_MUTE_ALERT_S:
+        if muted_s < _HALF_DUPLEX_SILENT_RELEASE_S:
             return
         silent_since = self._last_output_audio_at or self._half_duplex_muted_since
         silent_s = now - silent_since
-        if silent_s >= _HALF_DUPLEX_MUTE_ALERT_S:
+        if silent_s >= _HALF_DUPLEX_SILENT_RELEASE_S:
             self._mute_emergency_releases += 1
-            log.warning(
+            log.log(
+                # The fast release is the DESIGNED boundary-of-last-resort on
+                # a transport with no terminal item; only a mute that somehow
+                # survived past the alert threshold is pathological enough
+                # for a WARNING.
+                logging.WARNING
+                if muted_s >= _HALF_DUPLEX_MUTE_ALERT_S
+                else logging.INFO,
                 "realtime[%s] releasing a half-duplex mute held %.1fs with no "
                 "provider audio for %.1fs - the turn ended without a boundary, "
                 "so the microphone is reopened rather than left deaf",

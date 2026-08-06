@@ -7129,3 +7129,44 @@ async def test_shadow_transcript_clears_the_gate_without_reaching_the_surface():
     ]
     assert surfaced == [], "shadow text must never reach the surface"
     await sess.end(reason="test")
+
+
+async def test_a_turn_without_a_boundary_releases_the_microphone_fast() -> None:
+    """ChatGPT-Live announces no terminal item (probe-confirmed 2026-08-06):
+    a turn whose backstop never fires used to hold the half-duplex mute six
+    full seconds. The release now needs only ~2 s of provider silence - and a
+    reply that is still streaming keeps its mute."""
+    provider = SubscriptionLikeProvider([])
+    sess = _half_duplex_session(provider)
+    await sess.handle_control({"type": "audio_start", "sample_rate": 24_000})
+    wire = provider.session
+
+    # Assistant audio opens the output: the microphone mutes.
+    wire.queue.put_nowait(RealtimeEvent(type="audio_delta", audio=_pcm_chunk()))
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if sess._output_active:  # noqa: SLF001
+            break
+    assert sess._output_active is True  # noqa: SLF001
+
+    # The provider goes silent WITHOUT any boundary. Keep feeding microphone
+    # frames like the live pipeline does.
+    mic_frame = b"\x11\x22" * 480
+    released_after = None
+    start = asyncio.get_event_loop().time()
+    while asyncio.get_event_loop().time() - start < 4.0:
+        await sess.handle_audio_frame(mic_frame)
+        await asyncio.sleep(0.05)
+        if wire.sent_audio:
+            released_after = asyncio.get_event_loop().time() - start
+            break
+    assert released_after is not None, "the microphone stayed deaf"
+    assert released_after >= 1.5, (
+        f"released after {released_after:.2f}s - a streaming reply must keep "
+        "its mute for the full silent-release window"
+    )
+    assert released_after < 3.5, (
+        f"released only after {released_after:.2f}s - the fast release "
+        "should fire at ~2 s of provider silence"
+    )
+    await sess.end(reason="test")

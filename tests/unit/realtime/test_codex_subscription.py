@@ -3086,6 +3086,7 @@ async def test_a_rambling_opening_is_cut_and_the_real_answer_still_flows(
     refused frame by frame, and the answer the question earns still flows
     through the continuation window afterwards."""
     monkeypatch.setattr(codex_subscription_mod, "_OPENING_RESPONSE_MAX_S", 0.2)
+    monkeypatch.setattr(codex_subscription_mod, "_OPENING_OVERLAP_MAX_S", 0.2)
     loud = (1000).to_bytes(2, "little", signed=True) * 480
     transcriber = _ScheduledInputTranscriber(
         [

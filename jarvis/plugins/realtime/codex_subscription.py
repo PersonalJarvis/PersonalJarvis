@@ -42,6 +42,12 @@ _OUTPUT_QUIESCENCE_S = 1.2
 # final arriving mid-greeting ADOPTS the response instead (see the local
 # input branch), so a genuinely fast answer is never cut.
 _OPENING_RESPONSE_MAX_S = 6.0
+# Much tighter cap while the user is MID-UTTERANCE: under half-duplex the
+# greeting's own playback mutes the microphone, so every second of overlap
+# eats a second of the user's first question (live probe 2026-08-06: only
+# 2.4 s of the question survived and the server answered a fragment). The
+# model may say "hey", not a paragraph, over a speaking user.
+_OPENING_OVERLAP_MAX_S = 2.0
 # How long after the last audible provider frame a further frame still counts
 # as the REST of the same answer rather than a new response.
 #
@@ -757,6 +763,12 @@ class _CodexSubscriptionRealtimeSession:
         refusal_run_started_at = 0.0
         # Whether this run already logged that it stopped interrupting.
         refusal_storm_noted = False
+        # One-shot marker for the silent-line variant of a refusal storm:
+        # every response was refused before a frame ever played, so the
+        # transport is fine and the gate is winning - a rebuild would only
+        # buy a fresh greeting to refuse (and, via the relapse rule, could
+        # end a call whose user is simply quiet; the no-idle-hangup mandate).
+        silent_line_noted = False
         # Set by the refusal path once the run proves a loop; the receive loop
         # turns it into the user-facing reconnect advice on its next pass
         # (``_begin_response`` is not a generator and cannot yield).
@@ -974,6 +986,7 @@ class _CodexSubscriptionRealtimeSession:
             nonlocal refusal_storm_noted, self_dialogue_detected
             nonlocal sequence_boundary_pending
             nonlocal response_grant, call_response_index
+            nonlocal silent_line_noted
             if response_open:
                 if response_allowed or not _rejected_response_is_stale():
                     return response_allowed
@@ -1105,7 +1118,13 @@ class _CodexSubscriptionRealtimeSession:
                 if (
                     refusal_run >= _REFUSALS_BEFORE_REBUILD
                     and not self_dialogue_detected
+                    and local_input_generation > 0
                 ):
+                    # The discriminator: somebody REALLY spoke on this
+                    # transport, so a storm now means the call went mute-broken
+                    # (BUG-124's 17:39 death) and a fresh transport is the way
+                    # out. A storm on a line nobody ever spoke into is just
+                    # the far end talking AT silence - handled below.
                     self_dialogue_detected = True
                     self._diag["self_dialogue_rebuilds"] += 1
                     log.warning(
@@ -1126,6 +1145,20 @@ class _CodexSubscriptionRealtimeSession:
                         queue.put_nowait(("self_dialogue", None))
                     except asyncio.QueueFull:
                         pass
+                elif (
+                    refusal_run >= _REFUSALS_BEFORE_REBUILD
+                    and not self_dialogue_detected
+                    and not silent_line_noted
+                ):
+                    silent_line_noted = True
+                    log.info(
+                        "Codex subscription keeps refusing the far end's "
+                        "automatic responses on a silent line (%d so far); "
+                        "no refused frame was ever played, so the transport "
+                        "stays - a rebuild would only buy a fresh greeting "
+                        "to refuse",
+                        refusal_run,
+                    )
             if response_allowed:
                 # An authorized response proves there is no loop: whatever the
                 # run was counting ended here.
@@ -1675,7 +1708,12 @@ class _CodexSubscriptionRealtimeSession:
                         opening_age = (
                             asyncio.get_running_loop().time() - first_audible_at
                         )
-                        if opening_age > _OPENING_RESPONSE_MAX_S:
+                        opening_cap = (
+                            _OPENING_OVERLAP_MAX_S
+                            if user_utterance_open
+                            else _OPENING_RESPONSE_MAX_S
+                        )
+                        if opening_age > opening_cap:
                             # No user question exists yet and the opener is
                             # still going: this is the 13.9 s / 16 s demo
                             # monologue class, cut at the cap. A greeting
