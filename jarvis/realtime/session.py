@@ -2575,8 +2575,16 @@ class RealtimeVoiceSession:
         Returns ``None`` for a deliberate or terminal end, or a short detail
         string when the transport died and an in-place rebuild may proceed.
         """
+        # Snapshot the session: a transport rebuild nulls self._session and
+        # then AWAITS the corpse's bounded close, which yields to the loop -
+        # this pump can wake exactly in that window (the old receive()
+        # returning on close is what wakes it) and must never dereference the
+        # None. The rebuild machinery restarts pumping on the fresh session.
+        session = self._session
+        if session is None:
+            return None
         try:
-            async for event in self._session.receive():
+            async for event in session.receive():
                 # Any event at all proves the transport is still producing, so
                 # the per-turn stall watchdog measures exactly one thing: total
                 # provider silence inside an open turn.
