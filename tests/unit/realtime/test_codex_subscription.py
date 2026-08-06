@@ -3214,3 +3214,102 @@ async def test_a_final_landing_mid_opening_adopts_the_response(
     audio_events = [e for e in events if e.type == "audio_delta"]
     assert len(audio_events) == 4, "all audio flowed, none was refused"
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_a_discarded_utterance_keeps_its_response_window(
+    monkeypatch,
+) -> None:
+    """The far end hears a 200 ms "hm?" whatever the local endpointer decides,
+    and it answers. Consuming the generation at the discard instant refused
+    that answer and cut it (the BUG-124 amplifier); within the grace it now
+    plays - and after the grace an unanswered window retires."""
+    transcriber = _ScheduledInputTranscriber(
+        [
+            (0.02, InputTranscriptEvent(kind="speech_started")),
+            (
+                0.03,
+                InputTranscriptEvent(kind="speech_discarded", voiced_ms=200),
+            ),
+        ]
+    )
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.2,
+                _Notification(
+                    "thread/realtime/transcript/delta",
+                    {
+                        "threadId": "thread-1",
+                        "role": "assistant",
+                        "delta": "Did you say something?",
+                    },
+                ),
+            ),
+        ]
+    )
+    session = await _provider(
+        client, input_transcriber_factory=lambda: transcriber
+    ).open_session(RealtimeSessionConfig())
+
+    events = await _collect_until(
+        session, stop_after=1, kind="output_transcript_delta", timeout_s=2.0
+    )
+    delivered = [
+        event.text
+        for event in events
+        if event.type == "output_transcript_delta"
+    ]
+    assert delivered == ["Did you say something?"], (
+        "the answer to a heard-but-discarded sound must play inside the grace"
+    )
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_an_unanswered_discard_window_expires(monkeypatch) -> None:
+    monkeypatch.setattr(
+        codex_subscription_mod, "_DISCARDED_UTTERANCE_GRACE_S", 0.05
+    )
+    transcriber = _ScheduledInputTranscriber(
+        [
+            (0.02, InputTranscriptEvent(kind="speech_started")),
+            (
+                0.03,
+                InputTranscriptEvent(kind="speech_discarded", voiced_ms=200),
+            ),
+        ]
+    )
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.4,
+                _Notification(
+                    "thread/realtime/transcript/delta",
+                    {
+                        "threadId": "thread-1",
+                        "role": "assistant",
+                        "delta": "A late invented answer.",
+                    },
+                ),
+            ),
+        ]
+    )
+    session = await _provider(
+        client, input_transcriber_factory=lambda: transcriber
+    ).open_session(RealtimeSessionConfig())
+
+    events = await _collect_until(
+        session, stop_after=1, kind="output_transcript_delta", timeout_s=1.5
+    )
+    delivered = [
+        event.text
+        for event in events
+        if event.type == "output_transcript_delta"
+    ]
+    assert delivered == [], (
+        "past the grace a discarded utterance grounds nothing"
+    )
+    await session.close()

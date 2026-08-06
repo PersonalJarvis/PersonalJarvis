@@ -48,6 +48,13 @@ _OPENING_RESPONSE_MAX_S = 6.0
 # 2.4 s of the question survived and the server answered a fragment). The
 # model may say "hey", not a paragraph, over a speaking user.
 _OPENING_OVERLAP_MAX_S = 2.0
+# A locally DISCARDED utterance (under the endpointer's minimum voiced
+# length) keeps its response window this long. The far end heard the sound
+# regardless of the local verdict and often answers it; consuming the
+# generation at the discard instant refused that answer as ungrounded and
+# cut it (the BUG-124 amplifier). Expired lazily - a window nobody answers
+# retires on the next authorization check.
+_DISCARDED_UTTERANCE_GRACE_S = 4.0
 # How long after the last audible provider frame a further frame still counts
 # as the REST of the same answer rather than a new response.
 #
@@ -820,6 +827,11 @@ class _CodexSubscriptionRealtimeSession:
         # keeps its entitlement, but nothing speaks on it until a FINAL
         # exists (or the user audibly starts over).
         opening_bound_cut = False
+        # A discarded utterance's still-open response window (see
+        # _DISCARDED_UTTERANCE_GRACE_S): the generation it covers and when
+        # the discard happened.
+        discarded_generation = 0
+        discarded_at = 0.0
         # The grounded utterance whose answer may still be streaming, and
         # whether the far end has since proven that answer ended. Together
         # with the last audible frame they decide whether a frame arriving
@@ -922,7 +934,24 @@ class _CodexSubscriptionRealtimeSession:
                 shadow_task.cancel()
             shadow_task = None
 
+        def _expire_discarded_grace() -> None:
+            """Retire a discarded utterance's window once nobody answered it."""
+            nonlocal consumed_input_generation, discarded_generation
+            if discarded_generation and discarded_generation <= consumed_input_generation:
+                discarded_generation = 0
+                return
+            if (
+                discarded_generation
+                and asyncio.get_running_loop().time() - discarded_at
+                > _DISCARDED_UTTERANCE_GRACE_S
+            ):
+                consumed_input_generation = max(
+                    consumed_input_generation, discarded_generation
+                )
+                discarded_generation = 0
+
         def _fresh_local_input_exists() -> bool:
+            _expire_discarded_grace()
             return bool(
                 not self._local_grounding_active()
                 or local_input_generation > consumed_input_generation
@@ -987,6 +1016,7 @@ class _CodexSubscriptionRealtimeSession:
             nonlocal sequence_boundary_pending
             nonlocal response_grant, call_response_index
             nonlocal silent_line_noted
+            _expire_discarded_grace()
             if response_open:
                 if response_allowed or not _rejected_response_is_stale():
                     return response_allowed
@@ -1576,13 +1606,18 @@ class _CodexSubscriptionRealtimeSession:
                         # far end's preview either, which is the fallback for
                         # the REAL utterance around it, nor leave the turn that
                         # ``speech_started`` already announced hanging open.
+                        # The far end HEARD the sound whatever the local
+                        # verdict says, so its answer keeps a bounded window
+                        # instead of being refused on the spot (the BUG-124
+                        # amplifier: a 200 ms "hm?" got its real answer cut).
                         user_utterance_open = False
-                        consumed_input_generation = max(
-                            consumed_input_generation, local_input_generation
-                        )
+                        discarded_generation = local_input_generation
+                        discarded_at = asyncio.get_running_loop().time()
                         log.debug(
-                            "Local endpointer discarded a %d ms utterance; it grounds no response",
+                            "Local endpointer discarded a %d ms utterance; "
+                            "its response window stays open %.1f s",
                             int(getattr(payload, "voiced_ms", 0) or 0),
+                            _DISCARDED_UTTERANCE_GRACE_S,
                         )
                         if not response_open and not completion_emitted:
                             completion_emitted = True

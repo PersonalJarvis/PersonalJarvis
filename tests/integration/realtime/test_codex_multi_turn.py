@@ -688,3 +688,73 @@ async def test_a_dead_local_recognizer_still_lets_the_assistant_answer() -> None
         await _assert_at_rest(session, wire, note="after the turn following a failure")
     finally:
         await _end(session)
+
+
+@pytest.mark.asyncio
+async def test_a_hanging_close_does_not_stall_the_transport_rebuild(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The dead transport's socket close took its full window live
+    (2026-08-06 17:42) - and the rebuild the call was waiting on stalled
+    behind it. The close is a courtesy to a corpse: bounded, then abandoned.
+    """
+    monkeypatch.setattr(session_mod, "_PROVIDER_CLOSE_BOUND_S", 0.2)
+
+    class _HangingCloseWire(_CodexShapedWire):
+        async def close(self) -> None:
+            await asyncio.sleep(30.0)
+
+    class _RebuildingProvider(_CodexShapedProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.open_count = 0
+
+        async def open_session(self, config: Any) -> _CodexShapedWire:
+            self.opened_with = config
+            self.open_count += 1
+            wire = (
+                _HangingCloseWire() if self.open_count == 1 else _CodexShapedWire()
+            )
+            self.sessions.append(wire)
+            return wire
+
+    surface = _Surface()
+    provider = _RebuildingProvider()
+    session = RealtimeVoiceSession(
+        session_id="rebuild-close-bound",
+        send_binary=surface.send_binary,
+        send_json=surface.send_json,
+        providers=[provider],
+        config=_config(),
+        bus=EventBus(),
+        surface="desktop",
+        half_duplex=True,
+        browser_sample_rate=INPUT_RATE,
+    )
+    await asyncio.wait_for(
+        session.handle_control({"type": "audio_start", "sample_rate": INPUT_RATE}),
+        TIMEOUT_S,
+    )
+    try:
+        first_wire = provider.sessions[0]
+        since = surface.mark()
+        first_wire.push(
+            RealtimeEvent(
+                type="error",
+                error="transport died",
+                recoverable=True,
+                reconnect_advised=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        )
+        # The rebuild must complete despite the corpse's 30 s close: a fresh
+        # audio_ready proves the new transport opened.
+        ready = await surface.wait_json(
+            lambda m: m.get("type") == "audio_ready",
+            since=since,
+            timeout_s=TIMEOUT_S,
+        )
+        assert ready is not None
+        assert provider.open_count == 2, "a second transport must have opened"
+    finally:
+        await _end(session)

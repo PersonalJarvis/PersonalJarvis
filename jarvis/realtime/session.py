@@ -3936,7 +3936,19 @@ class RealtimeVoiceSession:
         if old_session is not None:
             self._harvest_adapter_diagnostics(old_session)
             try:
-                await old_session.close()
+                # Bounded like end()'s close: a dead codex socket took the
+                # full close window live (2026-08-06 17:42, "provider close
+                # timed out") and an unbounded await here stalls the WHOLE
+                # rebuild the call is waiting on.
+                await asyncio.wait_for(
+                    old_session.close(), timeout=_PROVIDER_CLOSE_BOUND_S
+                )
+            except TimeoutError:
+                log.warning(
+                    "realtime[%s] provider close timed out during the "
+                    "transport rebuild; abandoning the dead socket",
+                    self.session_id,
+                )
             except Exception:  # noqa: BLE001, S110 — the transport is already dead
                 pass
         # Freeze whatever the dead transport left of the open turn into the

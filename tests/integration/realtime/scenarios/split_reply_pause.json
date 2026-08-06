@@ -2,11 +2,31 @@
   "name": "split_reply_pause",
   "description": "A prompt that invites a longer, pause-bearing answer: generation pauses beyond the 1.2s backstop must not produce audible seams or splices (Fix E's live guard).",
   "steps": [
-    {"speak": "en_zebrastorm"},
-    {"wait_reply": {"timeout_s": 25}},
-    {"speak": "de_fahrrad"},
-    {"wait_reply": {"timeout_s": 25}},
-    {"end": {}}
+    {
+      "silence_s": 1.0
+    },
+    {
+      "speak": "en_zebrastorm"
+    },
+    {
+      "wait_reply": {
+        "timeout_s": 25
+      }
+    },
+    {
+      "silence_s": 0.75
+    },
+    {
+      "speak": "de_fahrrad"
+    },
+    {
+      "wait_reply": {
+        "timeout_s": 25
+      }
+    },
+    {
+      "end": {}
+    }
   ],
   "asserts": [
     "turns>=2",
