@@ -298,10 +298,21 @@ class _OpenAIRealtimeSession:
         session_payload: dict[str, Any] | None = None,
         connect_model: str = "",
         history_seed: tuple[dict[str, str], ...] = (),
+        rebuild_on_transport_death: bool = False,
     ) -> None:
         self._conn = connection
         self._connection_cm = connection_cm
         self._client = client
+        # Capability consumed by the session pump (BUG-071): may a transport
+        # that died mid-call be reopened in place? Hosted cards keep today's
+        # deliberate terminal semantics (the BUG-064 stack self-heals
+        # internally and a credential/quota death must not loop). A
+        # SELF-HOSTED server is different: its process can crash and come
+        # back seconds later (live 2026-08-06 19:57 — the local server died
+        # silently mid-turn and the whole call ended reason=error although
+        # the server was healthy again within a minute), so its sessions
+        # opt in and the existing budgeted rebuild machinery does the rest.
+        self.rebuild_on_transport_death = bool(rebuild_on_transport_death)
         self._events = connection.__aiter__()
         self.session_id = session_id
         # Model the transport was opened with — required to rebuild the
@@ -1123,6 +1134,7 @@ async def _open_realtime_session(
     *,
     model: str,
     transcription_model: str | None = "gpt-4o-mini-transcribe",
+    rebuild_on_transport_death: bool = False,
 ) -> _OpenAIRealtimeSession:
     """Open, configure and hand back a live session on ``client``.
 
@@ -1166,6 +1178,7 @@ async def _open_realtime_session(
         session_payload=payload,
         connect_model=model,
         history_seed=tuple(getattr(cfg, "history", ()) or ()),
+        rebuild_on_transport_death=rebuild_on_transport_death,
     )
     try:
         await connection.session.update(session=payload)
@@ -1221,6 +1234,23 @@ class OpenAIRealtimeProvider:
 #: purpose: a server that is not there must not delay the fallback to whatever
 #: else the install has.
 _LOCAL_PROBE_TIMEOUT_S = 3.0
+
+#: How long a connect to the self-hosted server keeps retrying when Jarvis
+#: itself can revive the server (a ``launch_command`` is configured). A local
+#: stack needs real time to come back — the reference server loads its STT,
+#: LLM proxy and TTS models for ~25 s after a crash — and the mid-call
+#: transport rebuild (BUG-071) lands here, so giving up early turns every
+#: server crash into a dead call.
+_LOCAL_CONNECT_PATIENT_WINDOW_S = 45.0
+#: The window when NOBODY revives the server (no launch command): nothing is
+#: going to change, so only ride out a brief hiccup instead of holding the
+#: call hostage.
+_LOCAL_CONNECT_SHORT_WINDOW_S = 8.0
+_LOCAL_CONNECT_RETRY_STEP_S = 2.0
+#: Never respawn the server more often than this — a crash-looping server
+#: must not be hammered back up in a tight loop (AP-24 doctrine: mark it bad,
+#: do not thrash).
+_LOCAL_LAUNCH_MIN_INTERVAL_S = 60.0
 
 
 def _normalize_local_root(url: str) -> str:
@@ -1292,12 +1322,23 @@ class LocalRealtimeProvider:
     # nothing ever reaching the server.
     credential_candidates: tuple[tuple[str, str | None], ...] = ()
 
+    # Last server spawn across ALL provider instances: the factory rebuilds
+    # providers freely, and a per-instance stamp would let every rebuild spawn
+    # another server.
+    _last_launch_at: float = float("-inf")
+
     def __init__(
-        self, *, base_url: str = "", api_key: str = "", model: str = ""
+        self,
+        *,
+        base_url: str = "",
+        api_key: str = "",
+        model: str = "",
+        launch_command: str = "",
     ) -> None:
         self._base_url = _normalize_local_root(base_url)
         self._api_key = (api_key or "").strip()
         self._model = (model or "").strip()
+        self._launch_command = (launch_command or "").strip()
 
     # -- factory wiring ----------------------------------------------------
 
@@ -1335,6 +1376,7 @@ class LocalRealtimeProvider:
             # behind a proxy or started vLLM with --api-key exports it once.
             api_key=os.environ.get("JARVIS_LOCAL_REALTIME_API_KEY", ""),
             model=str(getattr(provider_cfg, "model", "") or ""),
+            launch_command=str(getattr(provider_cfg, "launch_command", "") or ""),
         )
 
     # -- session -----------------------------------------------------------
@@ -1379,12 +1421,137 @@ class LocalRealtimeProvider:
                 return name
         return _MODEL
 
+    def _connect_retry_window_s(self) -> float:
+        """How long a failing connect keeps retrying before giving up.
+
+        Patient only when patience can pay off: with a ``launch_command``
+        Jarvis revives a crashed server itself and the retries bridge its
+        warm-up. Without one nothing will change on the other end, so a
+        short window rides out a hiccup and then reports honestly.
+        """
+        if self._launch_command:
+            return _LOCAL_CONNECT_PATIENT_WINDOW_S
+        return _LOCAL_CONNECT_SHORT_WINDOW_S
+
+    @property
+    def handshake_budget_s(self) -> float:
+        """Declared handshake need (capability read by the session opener).
+
+        The shared 12 s handshake ceiling would behead the patient reconnect
+        that bridges a revived server's ~25 s model warm-up (the same
+        mechanism the Codex transport uses for its cold start, AP-21: a
+        declared capability, never a provider-name check). The margin on top
+        of the retry window covers the actual protocol handshake once the
+        server answers.
+        """
+        return self._connect_retry_window_s() + 15.0
+
+    def _server_is_local_process(self) -> bool:
+        """Whether the configured endpoint runs on THIS machine.
+
+        Only a loopback server may be spawned here — launching a process
+        because a LAN box went down would start a second server on the wrong
+        host.
+        """
+        host = self._base_url.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+        return host.lower() in {"localhost", "127.0.0.1", "::1"}
+
+    def _maybe_launch_server(self) -> bool:
+        """Revive the self-hosted server, rate-limited. True if spawned.
+
+        The reference stack's whole process dies silently under load (live
+        2026-08-06 19:57: its log ends mid-request, the call died with it,
+        and nothing owned bringing it back). With a configured
+        ``launch_command`` Jarvis owns that: spawn detached, window-less
+        (AP-1), stderr into a log under the data dir so the NEXT crash
+        finally leaves forensics. Rate-limited so a crash-looping server is
+        not hammered (AP-24 doctrine).
+        """
+        if not self._launch_command or not self._server_is_local_process():
+            return False
+        now = time.monotonic()
+        if now - LocalRealtimeProvider._last_launch_at < _LOCAL_LAUNCH_MIN_INTERVAL_S:
+            return False
+        LocalRealtimeProvider._last_launch_at = now
+        import subprocess  # lazy (AP-26)
+        from pathlib import Path
+
+        from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # lazy
+
+        log_dir = Path(os.environ.get("JARVIS_DATA_DIR") or "data")
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            server_log = open(  # noqa: SIM115 — handed to the child for its lifetime
+                log_dir / "local_realtime_server.log", "ab"
+            )
+        except OSError:
+            server_log = None
+        try:
+            if os.name == "nt":
+                command: str | list[str] = self._launch_command
+            else:
+                import shlex
+
+                command = shlex.split(self._launch_command)
+            subprocess.Popen(  # noqa: S603 — the maintainer configured this command
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=server_log or subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+        except Exception as exc:  # noqa: BLE001 — a bad command must not kill the call
+            log.warning(
+                "local-realtime: reviving the server failed (%s: %s) — "
+                "check [brain.providers.local-realtime].launch_command",
+                type(exc).__name__,
+                exc,
+            )
+            return False
+        finally:
+            if server_log is not None:
+                server_log.close()
+        log.info(
+            "local-realtime: server unreachable — launched the configured "
+            "server command; waiting for it to come up"
+        )
+        return True
+
     async def open_session(self, cfg: Any) -> _OpenAIRealtimeSession:
         if not self._base_url:
             raise RuntimeError(
                 "No server URL configured for the self-hosted realtime provider "
                 "— set it on the provider card first (e.g. http://localhost:8080)."
             )
+        deadline = time.monotonic() + self._connect_retry_window_s()
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                return await self._open_session_once(cfg)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — bounded retry, last error re-raised
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                # First failure: the server may simply be gone — revive it if
+                # this install owns it, then keep knocking. A server that is
+                # merely warming up needs the same patience either way.
+                launched = self._maybe_launch_server()
+                log.info(
+                    "local-realtime: connect attempt %d failed (%s)%s — "
+                    "retrying for up to another %.0f s",
+                    attempt,
+                    type(exc).__name__,
+                    " after relaunching the server" if launched else "",
+                    remaining,
+                )
+                await asyncio.sleep(
+                    min(_LOCAL_CONNECT_RETRY_STEP_S, max(remaining, 0.0))
+                )
+
+    async def _open_session_once(self, cfg: Any) -> _OpenAIRealtimeSession:
         from openai import AsyncOpenAI  # lazy (AP-26)
 
         client = AsyncOpenAI(
@@ -1400,5 +1567,12 @@ class LocalRealtimeProvider:
             # placeholder the server would reject.
             connect_model = await self._resolve_model()
         return await _open_realtime_session(
-            client, cfg, model=connect_model, transcription_model=None
+            client,
+            cfg,
+            model=connect_model,
+            transcription_model=None,
+            # A self-hosted process can crash and be revived seconds later —
+            # a dead transport is worth rebuilding in place (BUG-071 path)
+            # instead of ending the call.
+            rebuild_on_transport_death=True,
         )

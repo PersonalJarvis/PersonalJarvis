@@ -235,3 +235,194 @@ async def test_a_server_without_a_model_list_still_connects(fake_models) -> None
     fake_models.fail = True
     provider = LocalRealtimeProvider(base_url="http://localhost:8080")
     assert await provider._resolve_model()
+
+
+# ── A dead local server must not mean a dead call ────────────────────────
+#
+# Live 2026-08-06 19:57: the self-hosted server's process died silently
+# mid-turn and the whole call ended reason=error, although the server was
+# healthy again within the minute. Three properties fix that class of
+# failure: local sessions opt into the in-place transport rebuild, a failing
+# connect is retried long enough for a restarting server to warm up, and —
+# when a launch command is configured — Jarvis revives the server itself.
+
+
+class _FakeConnection:
+    def __aiter__(self):
+        return self
+
+
+def _session_kwargs(**overrides: Any) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "connection": _FakeConnection(),
+        "connection_cm": SimpleNamespace(),
+        "client": SimpleNamespace(),
+        "session_id": "s-1",
+    }
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_transport_rebuild_is_opt_in_and_off_by_default() -> None:
+    """Hosted OpenAI-protocol cards keep their deliberate terminal semantics
+    (BUG-064): a session that was not asked to rebuild must not."""
+    from jarvis.plugins.realtime.openai_realtime import _OpenAIRealtimeSession
+
+    session = _OpenAIRealtimeSession(**_session_kwargs())
+    assert session.rebuild_on_transport_death is False
+    opted_in = _OpenAIRealtimeSession(
+        **_session_kwargs(rebuild_on_transport_death=True)
+    )
+    assert opted_in.rebuild_on_transport_death is True
+
+
+async def test_local_sessions_opt_into_transport_rebuild(monkeypatch) -> None:
+    """The self-hosted card asks for the in-place rebuild: its server can
+    crash and come back, and the call must survive that."""
+    from jarvis.plugins.realtime import openai_realtime as module
+
+    captured: dict[str, Any] = {}
+
+    async def fake_open(client: Any, cfg: Any, **kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "session"
+
+    monkeypatch.setattr(module, "_open_realtime_session", fake_open)
+    provider = LocalRealtimeProvider(
+        base_url="http://localhost:8080", model="my-model"
+    )
+    assert await provider.open_session(SimpleNamespace(model="my-model")) == "session"
+    assert captured["rebuild_on_transport_death"] is True
+
+
+async def test_connect_retries_until_the_server_is_back(monkeypatch) -> None:
+    """A restarting local server needs seconds to warm up; the first refused
+    connects are its warm-up, not its verdict."""
+    from jarvis.plugins.realtime import openai_realtime as module
+
+    monkeypatch.setattr(module, "_LOCAL_CONNECT_RETRY_STEP_S", 0.0)
+    provider = LocalRealtimeProvider(
+        base_url="http://localhost:8080", model="m", launch_command="serve"
+    )
+    launches: list[bool] = []
+    monkeypatch.setattr(
+        provider, "_maybe_launch_server", lambda: launches.append(True) or False
+    )
+    attempts = 0
+
+    async def flaky(cfg: Any) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise ConnectionError("refused")
+        return "session"
+
+    monkeypatch.setattr(provider, "_open_session_once", flaky)
+    assert await provider.open_session(SimpleNamespace(model="m")) == "session"
+    assert attempts == 3
+    assert launches  # the revive path was consulted while the server was down
+
+
+async def test_connect_gives_up_honestly_after_the_window(monkeypatch) -> None:
+    from jarvis.plugins.realtime import openai_realtime as module
+
+    monkeypatch.setattr(module, "_LOCAL_CONNECT_RETRY_STEP_S", 0.01)
+    provider = LocalRealtimeProvider(base_url="http://localhost:8080", model="m")
+    monkeypatch.setattr(provider, "_connect_retry_window_s", lambda: 0.03)
+
+    async def always_down(cfg: Any) -> str:
+        raise ConnectionError("refused")
+
+    monkeypatch.setattr(provider, "_open_session_once", always_down)
+    with pytest.raises(ConnectionError):
+        await provider.open_session(SimpleNamespace(model="m"))
+
+
+async def test_cancellation_is_never_retried(monkeypatch) -> None:
+    """The desktop's startup budget cancels a slow connect; holding the
+    cancellation hostage to a retry loop would freeze the call teardown."""
+    import asyncio
+
+    provider = LocalRealtimeProvider(
+        base_url="http://localhost:8080", model="m", launch_command="serve"
+    )
+    attempts = 0
+
+    async def cancelled(cfg: Any) -> str:
+        nonlocal attempts
+        attempts += 1
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(provider, "_open_session_once", cancelled)
+    with pytest.raises(asyncio.CancelledError):
+        await provider.open_session(SimpleNamespace(model="m"))
+    assert attempts == 1
+
+
+def test_patience_is_earned_by_a_launch_command() -> None:
+    """Without a launch command nobody revives the server — a long silent
+    wait would hold the call hostage for nothing."""
+    from jarvis.plugins.realtime import openai_realtime as module
+
+    patient = LocalRealtimeProvider(
+        base_url="http://localhost:8080", launch_command="serve"
+    )
+    unattended = LocalRealtimeProvider(base_url="http://localhost:8080")
+    assert patient._connect_retry_window_s() == module._LOCAL_CONNECT_PATIENT_WINDOW_S
+    assert unattended._connect_retry_window_s() == module._LOCAL_CONNECT_SHORT_WINDOW_S
+
+
+def _fresh_launch_state(monkeypatch) -> list[dict[str, Any]]:
+    """Reset the class-level spawn stamp and capture Popen calls."""
+    import subprocess
+
+    monkeypatch.setattr(LocalRealtimeProvider, "_last_launch_at", float("-inf"))
+    spawned: list[dict[str, Any]] = []
+
+    def fake_popen(command: Any, **kwargs: Any) -> SimpleNamespace:
+        spawned.append({"command": command, **kwargs})
+        return SimpleNamespace(pid=4711)
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    return spawned
+
+
+def test_revive_spawns_windowless_and_rate_limited(monkeypatch, tmp_path) -> None:
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    spawned = _fresh_launch_state(monkeypatch)
+    provider = LocalRealtimeProvider(
+        base_url="http://localhost:8765", launch_command="serve --flag"
+    )
+    assert provider._maybe_launch_server() is True
+    # Immediately again: rate-limited, a crash-looping server is not hammered.
+    assert provider._maybe_launch_server() is False
+    assert len(spawned) == 1
+    assert spawned[0]["creationflags"] == NO_WINDOW_CREATIONFLAGS  # AP-1
+
+
+def test_revive_refuses_remote_servers(monkeypatch) -> None:
+    """A LAN endpoint going down must not start a second server HERE."""
+    spawned = _fresh_launch_state(monkeypatch)
+    provider = LocalRealtimeProvider(
+        base_url="http://gpu.lan:8443", launch_command="serve"
+    )
+    assert provider._maybe_launch_server() is False
+    assert spawned == []
+
+
+def test_no_launch_command_means_no_spawn(monkeypatch) -> None:
+    spawned = _fresh_launch_state(monkeypatch)
+    provider = LocalRealtimeProvider(base_url="http://localhost:8765")
+    assert provider._maybe_launch_server() is False
+    assert spawned == []
+
+
+def test_declared_handshake_budget_covers_the_patient_window() -> None:
+    """The shared 12 s handshake ceiling would behead the patient reconnect
+    mid-warm-up; the declared budget must clear the retry window."""
+    patient = LocalRealtimeProvider(
+        base_url="http://localhost:8765", launch_command="serve"
+    )
+    assert patient.handshake_budget_s > patient._connect_retry_window_s()

@@ -609,6 +609,10 @@ class BrainProviderConfig(BaseModel):
     voice: str = ""
     auth_mode: str | None = None       # "oauth" | "api_key"
     base_url: str | None = None
+    # Self-hosted cards only (today: local-realtime): the command Jarvis runs
+    # to start/revive the server behind ``base_url`` when it is unreachable.
+    # Empty = Jarvis never spawns anything; the user runs the server manually.
+    launch_command: str = ""
     # Latency sprint 1 (2026-04-30): Gemini thinking budget per provider tier.
     # Value is forwarded to ``types.ThinkingConfig.thinking_budget``.
     # ``None``  → SDK default (auto-budget, highest latency footprint).
