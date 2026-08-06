@@ -14,7 +14,14 @@
  * two states, never a menu of things to click instead.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FolderOpen, LayoutGrid, Loader2, SquareTerminal, X } from "lucide-react";
+import {
+  FolderOpen,
+  LayoutGrid,
+  Loader2,
+  MessagesSquare,
+  SquareTerminal,
+  X,
+} from "lucide-react";
 
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { ChatComposer, type ComposerAgent } from "@/components/chat/ChatComposer";
@@ -81,6 +88,15 @@ export function ChatWorkspaceView() {
   // a bubble mounted inside a component that re-renders per keystroke would
   // reset the orb mid-sentence.
   const [talking, setTalking] = useState(false);
+  /*
+   * Show the raw pane instead of the conversation.
+   *
+   * Set by the reader who wants the terminal, and set for them when this CLI
+   * keeps no record a conversation can be read from. Reset per chat: it answers
+   * "how am I looking at THIS agent", and a CLI without a transcript must not
+   * decide how the next one is shown.
+   */
+  const [rawPane, setRawPane] = useState(false);
 
   const [agents, setAgents] = useState<ComposerAgent[]>([]);
   const [agentId, setAgentId] = useState("");
@@ -122,6 +138,13 @@ export function ChatWorkspaceView() {
       alive = false;
     };
   }, []);
+
+  // A different chat is a different agent, possibly a different CLI. Whether
+  // the LAST one had a readable transcript says nothing about this one.
+  const openChatId = open?.chat.id ?? null;
+  useEffect(() => {
+    setRawPane(false);
+  }, [openChatId]);
 
   const activeProject = open?.project ?? lastProject;
 
@@ -435,13 +458,32 @@ export function ChatWorkspaceView() {
             </span>
           )}
           <div className="flex-1" />
+          {/* Which of the two views of the same running agent is on screen.
+              The pane is always there and always running; this only decides
+              whether you read its conversation or watch it work. */}
+          {open?.chat.terminal && (
+            <button
+              type="button"
+              data-testid="toggle-raw-pane"
+              onClick={() => setRawPane((v) => !v)}
+              title={rawPane ? "Read the conversation" : "Watch the terminal"}
+              className="flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+            >
+              {rawPane ? (
+                <MessagesSquare className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <SquareTerminal className="h-3.5 w-3.5" aria-hidden />
+              )}
+              {rawPane ? "Conversation" : "Terminal"}
+            </button>
+          )}
           {open && (
             <button
               type="button"
               onClick={() => setOpen(null)}
               title="Close this chat"
               aria-label="Close this chat"
-              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
             >
               <X className="h-3.5 w-3.5" aria-hidden />
             </button>
@@ -485,8 +527,12 @@ export function ChatWorkspaceView() {
                 there in the stream, in a better order.
               */}
               <div
-                className="pointer-events-none absolute inset-0 -z-10 overflow-hidden opacity-0"
-                aria-hidden
+                className={
+                  rawPane
+                    ? "absolute inset-0 overflow-hidden px-4 pb-2"
+                    : "pointer-events-none absolute inset-0 -z-10 overflow-hidden opacity-0"
+                }
+                aria-hidden={!rawPane}
               >
                 <AgenticTerminal
                   key={open.chat.terminal}
@@ -496,9 +542,21 @@ export function ChatWorkspaceView() {
                   appearance="dark"
                   fontSize={13}
                   active
+                  focused={rawPane}
                 />
               </div>
-              <ChatStream terminal={open.chat.terminal} />
+              {!rawPane && (
+                <ChatStream
+                  terminal={open.chat.terminal}
+                  /*
+                   * Not every CLI keeps a conversation anyone can read. When
+                   * this one does not, the pane it is already running becomes
+                   * the view — which is the honest answer, and never an empty
+                   * column with an apology in it (CLAUDE.md §3).
+                   */
+                  onUnavailable={() => setRawPane(true)}
+                />
+              )}
             </div>
           ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto scrollbar-jarvis px-6">
