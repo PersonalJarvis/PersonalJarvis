@@ -386,3 +386,16 @@ wiki/obsidian-vault/90-attachments/*
 /wiki/ultrawiki-vault/
 /ultrawiki-vault/
 .ultrawiki-manifest.json
+
+# ============================================================
+# Marketing material — LOCAL ONLY, never distributed (maintainer directive
+# 2026-08-06). Personal Jarvis ships a product, not a marketing project: launch
+# drafts, campaign copy and readiness audits are the maintainer's own working
+# notes, carry no value for anyone downloading the repo, and publishing a launch
+# plan before the launch is itself the leak. The paths stay on disk and keep
+# being worked on; git simply never sees them again. Belt and braces: the same
+# subtree is withheld by scripts/ci/privacy_gate/references/distribution-denylist.txt,
+# which check_denylist_not_tracked.py enforces on every commit.
+# ============================================================
+/marketing/
+docs/reports/*marketing-readiness*

@@ -267,6 +267,13 @@ reporttutorialpickupprompt*
 # own marketing. Withhold the whole subtree.
 marketing/**
 
+# --- Marketing-readiness audit (2026-08-06) ----------------------------------
+# docs/reports/personal-jarvis-marketing-readiness-* is a pre-launch readiness
+# audit of the maintainer's own go-to-market plan, not product documentation.
+# Same category as marketing/** above and withheld for the same reason, plus it
+# is ~490 KB of generated report artifact every clone would have to carry.
+docs/reports/*marketing-readiness*
+
 # --- Unfinished TTS-eval harness (2026-07-08) --------------------------------
 # jarvis/speech/tts_eval/* is an internal, in-progress TTS quality-eval tool
 # (corpus + metrics + harness), committed by a parallel session's auto-save. It
