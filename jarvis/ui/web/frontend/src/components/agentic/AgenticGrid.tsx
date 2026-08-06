@@ -19,6 +19,7 @@ import {
   ChevronUp,
   FileText,
   FolderGit2,
+  FolderPlus,
   GripVertical,
   Image as ImageIcon,
   LayoutGrid,
@@ -29,11 +30,14 @@ import {
   Moon,
   Plus,
   Power,
+  Search,
   SlidersHorizontal,
+  SquarePen,
   Sun,
   Trash2,
   Type,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -160,6 +164,22 @@ interface AgenticGridProps {
    * a frontend change reaches the user through that Restart button.
    */
   appActions?: React.ReactNode;
+  /**
+   * Open another workspace, choosing its folder — the rail's "Add project".
+   *
+   * Absent = the row is not offered. Owned by the view above this one, because
+   * opening a workspace is a thing that happens BESIDE this one rather than
+   * inside it.
+   */
+  onAddProject?: () => void;
+  /**
+   * Start a workspace with no project folder chosen — the rail's "New session".
+   *
+   * A question, a quick script, "what is in this file" are all worth asking
+   * without first naming a repository to ask them in. The agent still runs
+   * somewhere (the home folder); what the user is spared is the decision.
+   */
+  onNewSession?: () => void;
   /**
    * Take the user to a pane in ANOTHER workspace, on behalf of the header bell.
    *
@@ -553,6 +573,8 @@ export function AgenticGrid({
   onStateChanged,
   workspaceBar,
   appActions,
+  onAddProject,
+  onNewSession,
   onJumpToWorkspace,
   jumpTo = null,
   onScreen = true,
@@ -1222,6 +1244,24 @@ export function AgenticGrid({
     () => orderChatTerminals(session.terminals, stableChatKeys),
     [session.terminals, stableChatKeys],
   );
+  /*
+   * The rail's own filter over those panes.
+   *
+   * Matched against what the row SHOWS — its headline, the prompt behind it,
+   * the CLI's name — rather than against the internal call-sign, because
+   * "T7" is not what anybody is looking for when they type into a search box.
+   * Purely local: no request fires, so it stays instant with a dozen panes.
+   */
+  const [railFilter, setRailFilter] = useState("");
+  const railTerminals = useMemo(() => {
+    const needle = railFilter.trim().toLowerCase();
+    if (!needle) return chatTerminals;
+    return chatTerminals.filter((term) =>
+      [term.recap, term.last_prompt, term.display_name, term.agent, term.name]
+        .filter(Boolean)
+        .some((field) => String(field).toLowerCase().includes(needle)),
+    );
+  }, [chatTerminals, railFilter]);
   useEffect(() => {
     rememberChatOrder(session.id, stableChatKeys);
     if (chatOrder.workspaceId === session.id && chatOrder.keys === stableChatKeys) {
@@ -2073,23 +2113,66 @@ export function AgenticGrid({
             chatView ? "flex" : "hidden",
           )}
         >
-          {/* `relative` so the CLI picker hangs under the plus button. */}
-          <div className="relative flex h-11 shrink-0 items-center justify-between border-b border-border/60 px-3">
-            <span className="truncate text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              Agents
+          {/*
+            The column's own head: the way back to the app, and its name.
+
+            Not "AGENTS" in small caps any more. This column lists the
+            conversations you are having, grouped by the folder they are in —
+            "Chat" is what that is, and the panel glyph beside it is where the
+            app's navigation went (this section hides it, see App.tsx).
+          */}
+          <div className="flex h-11 shrink-0 items-center gap-1 px-2">
+            <NavRevealButton />
+            <span className="flex-1 truncate px-1 text-sm font-semibold tracking-tight">
+              Chat
             </span>
-            <button
-              type="button"
-              data-testid="chat-rail-new-terminal"
-              className={TOOLBAR_BTN}
+          </div>
+
+          <div className="px-2 pb-2">
+            <div className="relative flex items-center">
+              <Search className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-muted-foreground/70" />
+              <input
+                value={railFilter}
+                onChange={(event) => setRailFilter(event.target.value)}
+                placeholder="Search"
+                aria-label="Search chats"
+                className="h-8 w-full rounded-md border border-transparent bg-foreground/[0.045] pl-7 pr-2 text-xs outline-none placeholder:text-muted-foreground/60 focus-visible:border-border focus-visible:bg-transparent"
+              />
+            </div>
+          </div>
+
+          {/*
+            The three things a person arrives wanting to do, as rows with words
+            on them. They used to be one bare "+" in the header, which cannot
+            say which of the three it is.
+          */}
+          <div className="relative px-1.5 pb-1">
+            <RailAction
+              icon={SquarePen}
+              label="New chat"
+              testId="chat-rail-new-terminal"
               disabled={atLimit || busy || working}
-              aria-expanded={offersChoice ? picking === "rail" : undefined}
               onClick={() => openTerminal("rail")}
-              title="Open another terminal"
-              aria-label="Open another terminal"
-            >
-              <Plus className="h-4 w-4" />
-            </button>
+            />
+            {onNewSession && (
+              <RailAction
+                icon={Plus}
+                label="New session"
+                hint="A workspace with no project folder"
+                testId="chat-rail-new-session"
+                disabled={busy || working}
+                onClick={onNewSession}
+              />
+            )}
+            {onAddProject && (
+              <RailAction
+                icon={FolderPlus}
+                label="Add project"
+                testId="chat-rail-add-project"
+                disabled={busy || working}
+                onClick={onAddProject}
+              />
+            )}
             {picking === "rail" && (
               <AgentPickerMenu
                 title="Open a terminal — what?"
@@ -2097,7 +2180,7 @@ export function AgenticGrid({
                 agents={agents ?? []}
                 testId="chat-rail-agent-menu"
                 itemTestId={(agent) => `chat-rail-new-${agent}`}
-                className="right-2 top-full"
+                className="left-2 top-full"
                 onDismiss={() => setPicking(null)}
                 onPick={(agent) => {
                   setPicking(null);
@@ -2106,11 +2189,31 @@ export function AgenticGrid({
               />
             )}
           </div>
+
           <div
             ref={chatRailRef}
-            className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-2 pb-2"
+            className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-1.5 pb-2"
           >
-            {chatTerminals.map((term) => {
+            <RailBand>Projects</RailBand>
+            {/*
+              The folder these panes are in, named and coloured like the
+              project it is. Every row under it belongs to it — which is the
+              whole reason this band exists: with two workspaces open, a flat
+              list of eleven conversations says nothing about which repository
+              any of them is touching.
+            */}
+            <div className="flex items-center gap-1.5 rounded-md px-2 py-1.5">
+              <span
+                className="h-1.5 w-1.5 shrink-0 rounded-full"
+                style={{ background: folderColor(project.path || project.name) }}
+                aria-hidden
+              />
+              <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                {project.name}
+              </span>
+            </div>
+
+            {railTerminals.map((term) => {
               const state = statuses[term.name];
               const headline = recaps[term.name]?.recap ?? term.recap;
               const title =
@@ -2125,7 +2228,7 @@ export function AgenticGrid({
                  * button inside a button is invalid HTML, and browsers resolve
                  * it by dropping one of them — usually the one you wanted.
                  */
-                <div key={term.key} className="group relative mb-1">
+                <div key={term.key} className="group relative ml-3 mb-0.5">
                   <button
                     type="button"
                     data-testid={`chat-rail-${term.name}`}
@@ -2140,20 +2243,20 @@ export function AgenticGrid({
                         : selectChatPane(term.name, takesPrompts(term))
                     }
                     /*
-                     * A selected row is marked by a rule down its left edge and
-                     * a raised background — not by a yellow border wrapped
-                     * around a yellow fill. Eleven rows of tinted boxes is what
-                     * turns a list into a heat map, and it left the accent with
-                     * nothing distinct to say when a row actually wanted
-                     * attention.
+                     * Selection is a barely-there lift of the surface — no hue,
+                     * no border, no fill. Eleven rows of tinted boxes turn a
+                     * list into a heat map and leave the accent with nothing
+                     * distinct to say when a row actually wants attention. The
+                     * one exception is a MARKED row in selection mode, which is
+                     * a deliberate armed state and should look like one.
                      */
                     className={cn(
-                      "w-full rounded-control border-l-2 px-2.5 py-2 text-left transition-colors",
+                      "w-full rounded-md px-2 py-[5px] text-left transition-colors",
                       selectionMode && marked
-                        ? "border-primary bg-secondary"
+                        ? "bg-primary/15"
                         : active && !selectionMode
-                          ? "border-primary bg-secondary"
-                          : "border-transparent hover:bg-secondary/60",
+                          ? "bg-foreground/[0.09]"
+                          : "hover:bg-foreground/[0.055]",
                     )}
                   >
                     {/* The right padding is permanent, not applied on hover:
@@ -2169,20 +2272,26 @@ export function AgenticGrid({
                           )}
                         />
                       )}
-                      <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                        <span
-                          data-testid={`chat-rail-title-${term.name}`}
-                          className="min-w-0 truncate text-xs font-semibold"
-                          title={title}
-                        >
-                          {title}
-                        </span>
+                      <span className="flex min-w-0 flex-1 items-center gap-2">
+                        {/* The mark leads, at the weight of the text beside it
+                            — it says which CLI this is, it is not the subject
+                            of the row. The title is. */}
                         <AgentMark
                           agent={term.agent}
                           label={term.display_name || term.agent}
                           size="sm"
-                          className="h-5 w-5 rounded-[4px]"
+                          variant="plain"
                         />
+                        <span
+                          data-testid={`chat-rail-title-${term.name}`}
+                          className={cn(
+                            "min-w-0 flex-1 truncate text-[12px]",
+                            active ? "text-foreground" : "text-foreground/75",
+                          )}
+                          title={title}
+                        >
+                          {title}
+                        </span>
                       </span>
                       {/* Not "live". Every pane in this list is live, all day —
                           what the user is scanning for is which of them still
@@ -3212,4 +3321,78 @@ function ConfirmClose({
       </div>
     </div>
   );
+}
+
+/**
+ * One of the rail's standing actions — a word, an icon, a whole row to hit.
+ *
+ * Rows rather than a toolbar of glyphs: these are the three things a person
+ * arrives wanting to do, and each has to be able to say which one it is
+ * without being hovered first.
+ */
+function RailAction({
+  icon: Icon,
+  label,
+  hint,
+  onClick,
+  disabled,
+  testId,
+}: {
+  icon: LucideIcon;
+  label: string;
+  hint?: string;
+  onClick: () => void;
+  disabled?: boolean;
+  testId?: string;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      onClick={onClick}
+      disabled={disabled}
+      title={hint ?? label}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium",
+        "text-foreground/85 transition-colors hover:bg-foreground/[0.055]",
+        "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
+      )}
+    >
+      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+      {label}
+    </button>
+  );
+}
+
+/** A section heading in the rail. Quiet enough to be scanned past. */
+function RailBand({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-2 pb-1 pt-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+      {children}
+    </div>
+  );
+}
+
+/**
+ * A stable colour for a folder, so the same project reads the same everywhere.
+ *
+ * Derived from the path rather than stored, which means it needs no setting and
+ * survives a lost store. The palette is fixed rather than a free hue rotation:
+ * arbitrary HSL produces colours that vanish against one of the two themes.
+ */
+const FOLDER_COLORS = [
+  "#e7c46e",
+  "#7dd3fc",
+  "#a5b4fc",
+  "#86efac",
+  "#fca5a5",
+  "#f0abfc",
+  "#fdba74",
+  "#5eead4",
+] as const;
+
+function folderColor(key: string): string {
+  let sum = 0;
+  for (const char of key) sum = (sum + char.charCodeAt(0)) % 4096;
+  return FOLDER_COLORS[sum % FOLDER_COLORS.length];
 }

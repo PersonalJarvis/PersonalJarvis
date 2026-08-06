@@ -2488,7 +2488,7 @@ describe("chat view", () => {
     }
   });
 
-  it("uses the live task recap as the rail title and follows it with the agent logo", async () => {
+  it("uses the live task recap as the rail title, behind the agent's mark", async () => {
     const mixed = sessionWith([
       ["Mika", 0],
       ["Nova", 1],
@@ -2516,7 +2516,10 @@ describe("chat view", () => {
 
     const title = await screen.findByTestId("chat-rail-title-Nova");
     expect(title.textContent).toBe("Fix provider selection priority");
-    const mark = title.nextElementSibling;
+    // The mark LEADS the row and the title follows it, the way a list of
+    // conversations reads: the title is the subject, the mark says which CLI
+    // is having it.
+    const mark = title.previousElementSibling;
     expect(mark?.getAttribute("data-testid")).toBe("agent-mark-codex");
     expect(mark?.querySelector("img")?.getAttribute("src")).toBe(
       "/provider-logos/openai.svg",
@@ -2822,6 +2825,74 @@ describe("terminal text size", () => {
     fireEvent.click(screen.getByLabelText("Smaller terminal text"));
     expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("12");
     warn.mockRestore();
+  });
+
+  it("resizes on Ctrl+plus, Ctrl+minus and back to the default on Ctrl+0", async () => {
+    // The chord is how this feature is actually reached — nobody looks up at a
+    // toolbar to enlarge the text they are reading.
+    renderGrid();
+    await waitFor(() => expect(api.fetchTerminalUiPreferences).toHaveBeenCalled());
+    const pane = () => screen.getByTestId("pane-Mika").getAttribute("data-font-size");
+
+    fireEvent.keyDown(window, { key: "+", ctrlKey: true });
+    await waitFor(() => expect(pane()).toBe("14"));
+    fireEvent.keyDown(window, { key: "+", ctrlKey: true });
+    expect(pane()).toBe("15");
+    expect(screen.getByTestId("agentic-font-size-value").textContent).toBe("15");
+
+    fireEvent.keyDown(window, { key: "-", ctrlKey: true });
+    expect(pane()).toBe("14");
+
+    fireEvent.keyDown(window, { key: "0", ctrlKey: true });
+    expect(pane()).toBe("13");
+    await waitFor(() => expect(api.saveTerminalFontSize).toHaveBeenLastCalledWith(13));
+  });
+
+  it("claims the chord so the WebView does not zoom the whole window as well", async () => {
+    renderGrid();
+    await waitFor(() => expect(api.fetchTerminalUiPreferences).toHaveBeenCalled());
+
+    expect(fireEvent.keyDown(window, { key: "+", ctrlKey: true })).toBe(false);
+  });
+
+  it("ignores AltGr+plus — a German layout types the tilde with it", async () => {
+    renderGrid();
+    await waitFor(() => expect(api.fetchTerminalUiPreferences).toHaveBeenCalled());
+
+    // AltGr arrives as Ctrl+Alt, and the character has to reach the agent.
+    expect(fireEvent.keyDown(window, { key: "+", ctrlKey: true, altKey: true })).toBe(true);
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("13");
+  });
+
+  it("leaves the chord alone while another section is on screen", async () => {
+    // The Agentic IDE is hidden rather than unmounted, so a parked grid would
+    // otherwise resize its panes while the user zooms something else.
+    renderGrid(BASE, { onScreen: false });
+    await waitFor(() => expect(api.fetchTerminalUiPreferences).toHaveBeenCalled());
+
+    fireEvent.keyDown(window, { key: "+", ctrlKey: true });
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("13");
+  });
+
+  it("stops at the supported bounds instead of stepping past them", async () => {
+    vi.mocked(api.fetchTerminalUiPreferences).mockResolvedValue({
+      terminal_font_size: 20,
+      stored: true,
+      min: 10,
+      max: 20,
+      default: 13,
+    });
+    renderGrid();
+    await waitFor(() =>
+      expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("20"),
+    );
+    vi.mocked(api.saveTerminalFontSize).mockClear();
+
+    fireEvent.keyDown(window, { key: "+", ctrlKey: true });
+    expect(screen.getByTestId("pane-Mika").getAttribute("data-font-size")).toBe("20");
+    // Nothing changed, so nothing is written — a held-down chord at the ceiling
+    // must not turn into a request per repeat.
+    expect(api.saveTerminalFontSize).not.toHaveBeenCalled();
   });
 
   it("disables the visible control at the supported maximum", async () => {

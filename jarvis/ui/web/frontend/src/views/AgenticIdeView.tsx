@@ -41,6 +41,7 @@ import {
   groupFor,
 } from "@/lib/agentAccountsApi";
 import { NavRevealButton } from "@/components/layout/NavRevealButton";
+import { openScratchProject } from "@/lib/chatLibraryApi";
 import { TopBarActions } from "@/components/layout/TopBar";
 import { WorkspaceBar } from "@/components/agentic/WorkspaceBar";
 import {
@@ -593,6 +594,33 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     }
   };
 
+  /**
+   * Open a workspace without asking which folder.
+   *
+   * A question, a quick script, "what is in this file" are all worth asking
+   * without first naming a repository to ask them in. The agent still runs
+   * somewhere — a coding CLI is a process with a working directory and there is
+   * no such thing as nowhere — so it runs in the home folder, which exists on
+   * every account on every OS. The backend owns that choice (it is the same
+   * folder the chat library calls a session), so nothing here has to guess a
+   * path or spell one out per platform.
+   */
+  const startSession = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const home = await openScratchProject();
+      const next = await startIdeSession(home.path, [{ agent: defaultAgent }]);
+      applyState(next);
+      setAddingNew(false);
+      setFolder(null);
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const startAdding = async () => {
     if (busy) return;
     setBusy(true);
@@ -761,6 +789,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
             session={session}
             workspaceBar={renderBar(true)}
             appActions={<TopBarActions />}
+            onAddProject={() => void startAdding()}
+            onNewSession={() => void startSession()}
             onJumpToWorkspace={(id, pane) => void jumpToPane(id, pane)}
             jumpTo={jumpTo}
             focusMode={focusMode}
