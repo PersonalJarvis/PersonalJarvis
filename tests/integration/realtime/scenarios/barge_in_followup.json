@@ -1,0 +1,20 @@
+{
+  "name": "barge_in_followup",
+  "description": "Reviewer checklist item 1: interrupt a running answer, ask a follow-up, and the follow-up must be answered (the speech-edge/entitlement regression class).",
+  "steps": [
+    {"speak": "en_zebrastorm"},
+    {"barge_in": {"after_reply_ms": 700, "then_speak": "en_giraffe"}},
+    {"wait_reply": {"timeout_s": 20}},
+    {"speak": "en_glimmerpond"},
+    {"wait_reply": {"timeout_s": 20}},
+    {"end": {}}
+  ],
+  "asserts": [
+    "turns>=2",
+    "no_ungrounded",
+    "no_roleplay",
+    "no_rebuilds",
+    "mic_wall_clock",
+    "clean_close"
+  ]
+}

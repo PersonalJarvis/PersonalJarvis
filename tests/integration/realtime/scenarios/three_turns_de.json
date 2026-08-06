@@ -1,0 +1,23 @@
+{
+  "name": "three_turns_de",
+  "description": "The headline multi-turn guard: two German turns, then one English turn, each answered. Pins the 50% one-turn death rate at zero.",
+  "steps": [
+    {"speak": "de_giraffe"},
+    {"wait_reply": {"timeout_s": 20}},
+    {"speak": "de_tandelbrook"},
+    {"wait_reply": {"timeout_s": 20}},
+    {"speak": "en_bicycle"},
+    {"wait_reply": {"timeout_s": 20}},
+    {"end": {}}
+  ],
+  "asserts": [
+    "turns>=3",
+    "no_ungrounded",
+    "no_roleplay",
+    "audio_continuity",
+    "no_rebuilds",
+    "mic_wall_clock",
+    "spawn_budget",
+    "clean_close"
+  ]
+}

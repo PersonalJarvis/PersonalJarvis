@@ -56,6 +56,13 @@ jarvis/plugins/tool/navigate.py
 jarvis/plugins/tool/inspect_pointer.py
 jarvis/plugins/tool/contact_lookup.py
 
+# --- Codex live-probe speech fixtures: the German nonce sentences the
+#     headless realtime harness SPEAKS at ChatGPT-Live (speech-input data for
+#     a bilingual voice product, category 3; committed as WAV + manifest so
+#     the probe needs no TTS key) ---
+scripts/gen_realtime_speech_fixtures.py
+tests/fixtures/audio/realtime/manifest.json
+
 # --- Tests for the above: German fixture utterances are required to exercise
 #     the bilingual recognizers (same rationale as the gate's own tests) ---
 tests/unit/pointer/*
