@@ -29,8 +29,8 @@ import pytest
 
 from jarvis.core.bus import EventBus
 from jarvis.core.protocols import AudioChunk
-from jarvis.realtime.protocol import RealtimeEvent
 from jarvis.realtime import session as session_mod
+from jarvis.realtime.protocol import RealtimeEvent
 from jarvis.realtime.session import RealtimeVoiceSession
 
 # Every await in this module is bounded by this. A regression must report as a
