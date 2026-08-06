@@ -56,7 +56,7 @@ class FakeRegistry:
 
 async def test_a_rename_answers_with_both_names(monkeypatch: pytest.MonkeyPatch) -> None:
     """Both, because the caller has UI filed under the OLD one to move across."""
-    session = SimpleNamespace(id="ide_test", folder="/tmp/ws", name="alpha")
+    session = SimpleNamespace(id="ide_test", folder="ws-folder", name="alpha")
     registry = FakeRegistry(result=(session, _terminal("Frontend")))
     monkeypatch.setattr(routes, "get_registry", lambda: registry)
     bus = FakeBus()

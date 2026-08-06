@@ -142,7 +142,7 @@ async def test_no_bus_still_opens_the_panes(
 class FakeClosingRegistry:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
-        self.session = SimpleNamespace(id="ide_test", folder="/tmp/ws")
+        self.session = SimpleNamespace(id="ide_test", folder="ws-folder")
 
     async def close_terminals(self, names: list[str]):
         self.calls.append(names)
