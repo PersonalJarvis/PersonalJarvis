@@ -1258,9 +1258,14 @@ class LocalRealtimeProvider:
     implicit_usage_fallback_allowed = False
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
-    # No credential_candidates: this is the keyless path, so the factory builds
-    # it through ``external_login_ready`` + ``from_runtime_config`` rather than
-    # handing it a key.
+    # EMPTY, not absent. The keyless path is chosen by this tuple being empty
+    # (the factory then builds the provider through ``external_login_ready`` +
+    # ``from_runtime_config`` instead of handing it a key), but the RealtimeProvider
+    # protocol requires the attribute to EXIST. Leaving it off made the class fail
+    # the runtime protocol check, so the loader rejected it, the factory produced no
+    # candidate at all, and a call on this card sat on "connecting" forever with
+    # nothing ever reaching the server.
+    credential_candidates: tuple[tuple[str, str | None], ...] = ()
 
     def __init__(
         self, *, base_url: str = "", api_key: str = "", model: str = ""

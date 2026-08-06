@@ -79,6 +79,53 @@ def test_never_an_implicit_fallback() -> None:
     assert LocalRealtimeProvider.implicit_usage_fallback_allowed is False
 
 
+def test_the_class_satisfies_the_provider_protocol() -> None:
+    """Live failure 2026-08-06: leaving ``credential_candidates`` off the class
+    (it is empty for a keyless card, so it felt redundant) made the runtime
+    protocol check fail. The loader then rejected the plugin, the factory
+    produced no candidate, and a call sat on "connecting" forever while nothing
+    ever reached the server. Declaring the attribute empty is what selects the
+    keyless path; omitting it removes the provider from the product.
+    """
+    from jarvis.realtime.protocol import RealtimeProvider
+
+    assert isinstance(LocalRealtimeProvider(), RealtimeProvider)
+    assert LocalRealtimeProvider.credential_candidates == ()
+
+
+def test_the_factory_actually_builds_it_when_selected() -> None:
+    """The contract that matters is not "the class looks right", it is "a call
+    that selects this card gets a provider object". The protocol failure above
+    was invisible to every check that stopped at the class."""
+    from jarvis.core.config import BrainConfig, BrainProviderConfig, BrainTierConfig, JarvisConfig
+    from jarvis.realtime import factory
+
+    cfg = JarvisConfig(
+        brain=BrainConfig(
+            providers={
+                "local-realtime": BrainProviderConfig(base_url="http://localhost:8765")
+            },
+            realtime=BrainTierConfig(provider="local-realtime"),
+        )
+    )
+
+    candidates = factory._provider_candidates(cfg)
+
+    assert [type(c).__name__ for c in candidates] == ["LocalRealtimeProvider"]
+
+
+def test_an_unconfigured_card_yields_no_candidate() -> None:
+    """The other half: without a server address it must stay out of the chain."""
+    from jarvis.core.config import BrainConfig, BrainTierConfig, JarvisConfig
+    from jarvis.realtime import factory
+
+    cfg = JarvisConfig(
+        brain=BrainConfig(realtime=BrainTierConfig(provider="local-realtime"))
+    )
+
+    assert factory._provider_candidates(cfg) == []
+
+
 async def test_open_session_without_an_address_says_what_to_do() -> None:
     with pytest.raises(RuntimeError) as err:
         await LocalRealtimeProvider().open_session(SimpleNamespace())
