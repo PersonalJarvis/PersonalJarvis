@@ -273,10 +273,20 @@ class _LoopLagProbe:
 
     _INTERVAL_S = 0.25
     _WINDOW_S = 30.0
+    # A scheduling gap this long on the loop that pumps realtime audio means a
+    # blocking call ran ON the loop (live 2026-08-06 17:40: a pywebview
+    # ``evaluate_js`` probe held it ~15 s twice and the WebRTC mic sender fell
+    # 40 s behind wall clock — the provider then reset the call). The probe is
+    # the one task positioned to name that class of culprit while it is
+    # happening, so it warns — bounded by a cooldown so a stall storm cannot
+    # flood the log.
+    _LOOP_STALL_WARN_MS = 500.0
+    _WARN_COOLDOWN_S = 30.0
 
     def __init__(self) -> None:
         self._samples: deque[tuple[float, float]] = deque()
         self._task: asyncio.Task[None] | None = None
+        self._last_warn_at = float("-inf")
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -296,10 +306,25 @@ class _LoopLagProbe:
             await asyncio.sleep(self._INTERVAL_S)
             now = time.monotonic()
             lag_ms = max(0.0, (now - before - self._INTERVAL_S) * 1_000.0)
-            self._samples.append((now, lag_ms))
-            cutoff = now - self._WINDOW_S
-            while self._samples and self._samples[0][0] < cutoff:
-                self._samples.popleft()
+            self._note_sample(now, lag_ms)
+
+    def _note_sample(self, now: float, lag_ms: float) -> None:
+        """Record one lag sample; warn on a stall-grade gap (rate-limited)."""
+        self._samples.append((now, lag_ms))
+        cutoff = now - self._WINDOW_S
+        while self._samples and self._samples[0][0] < cutoff:
+            self._samples.popleft()
+        if (
+            lag_ms >= self._LOOP_STALL_WARN_MS
+            and now - self._last_warn_at >= self._WARN_COOLDOWN_S
+        ):
+            self._last_warn_at = now
+            log.warning(
+                "realtime event loop stalled %.0f ms during a live voice "
+                "session — a blocking call ran on the loop; microphone "
+                "pacing, barge-in and the provider socket all waited it out",
+                lag_ms,
+            )
 
     def max_lag_ms(self, window_s: float) -> float:
         """Worst scheduling lag observed within the last ``window_s``."""

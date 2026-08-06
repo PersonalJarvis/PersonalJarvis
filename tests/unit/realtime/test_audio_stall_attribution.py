@@ -104,3 +104,39 @@ async def test_loop_lag_probe_stays_quiet_on_a_healthy_loop() -> None:
         assert probe.max_lag_ms(window_s=5.0) < 200.0
     finally:
         probe.stop()
+
+
+def _stall_warns(caplog) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.WARNING
+        and "event loop stalled" in record.getMessage()
+    ]
+
+
+def test_loop_stall_warns_loudly_and_rate_limited(caplog) -> None:
+    """A stall-grade gap names the on-loop-blocker class WHILE it happens.
+
+    Live 2026-08-06 17:40: an on-loop pywebview ``evaluate_js`` held the loop
+    ~15 s twice, the WebRTC mic sender fell 40 s behind wall clock and the
+    provider reset the call — the only trace was indirect. The probe now says
+    it outright, bounded by a cooldown so a stall storm cannot flood the log.
+    """
+    probe = _LoopLagProbe()
+    with caplog.at_level(logging.WARNING, logger="jarvis.realtime.session"):
+        probe._note_sample(now=100.0, lag_ms=15_000.0)  # noqa: SLF001
+        probe._note_sample(now=101.0, lag_ms=900.0)  # noqa: SLF001 — cooldown
+        probe._note_sample(now=131.0, lag_ms=800.0)  # noqa: SLF001 — past it
+
+    warns = _stall_warns(caplog)
+    assert len(warns) == 2, "one warn per cooldown window, storms stay bounded"
+    assert "15000 ms" in warns[0]
+
+
+def test_loop_stall_warn_ignores_ordinary_scheduling_jitter(caplog) -> None:
+    probe = _LoopLagProbe()
+    with caplog.at_level(logging.WARNING, logger="jarvis.realtime.session"):
+        probe._note_sample(now=100.0, lag_ms=350.0)  # noqa: SLF001
+
+    assert _stall_warns(caplog) == []

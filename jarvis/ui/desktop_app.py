@@ -1890,7 +1890,8 @@ class DesktopApp:
 
         # Overlay right-click (bar OR mascot) → raise the main desktop window.
         # OrbBusBridge publishes ShowWindowRequested from the Tk thread; the
-        # handler runs on the asyncio loop and pywebview.show() is thread-safe.
+        # handler runs on the asyncio loop and immediately thread-hops, because
+        # pywebview calls block their calling thread (see _on_show_window_requested).
         server.bus.subscribe(ShowWindowRequested, self._on_show_window_requested)
         self._install_focus_route(server)
 
@@ -3791,25 +3792,36 @@ class DesktopApp:
             if desktop is None or desktop._window is None:
                 return {"ok": False, "reason": "no_window"}
             try:
-                # pywebview window methods are thread-safe — they dispatch
-                # internally to the GUI thread.
-                desktop._window.show()
-                desktop._window.restore()
-                desktop._window_visible = True
-                focused = _bring_window_to_front_by_title(WINDOW_TITLE)
-                # Restore the persistent bar if a prior minimise cleared it.
-                desktop._restore_overlay_for_visible_window()
-                if focused:
-                    return {"ok": True, "focused": True}
-                return {
-                    "ok": False,
-                    "focused": False,
-                    "reason": "foreground_lock",
-                }
+                # Off the event loop: pywebview window methods are thread-safe
+                # (they dispatch internally to the GUI thread) but they BLOCK
+                # the calling thread while the GUI thread services them — the
+                # same class of on-loop stall that starved the realtime mic
+                # sender on 2026-08-06. The route thread-hops instead.
+                return await asyncio.to_thread(desktop._focus_window_now)
             except Exception as exc:  # noqa: BLE001
                 # Not swallowed: the reason travels back to the caller in the
                 # response body and surfaces in the focus API result.
                 return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+
+    def _focus_window_now(self) -> dict[str, Any]:
+        """Show + raise the desktop window, synchronously, on the CALLING thread.
+
+        Blocking by design — callers on the asyncio loop must thread-hop
+        (``asyncio.to_thread``); the tray bridge and worker threads may call it
+        directly. Split out of the ``/api/window/focus`` route so tests can pin
+        the off-loop contract without a running server.
+        """
+        if self._window is None:
+            return {"ok": False, "reason": "no_window"}
+        self._window.show()
+        self._window.restore()
+        self._window_visible = True
+        focused = _bring_window_to_front_by_title(WINDOW_TITLE)
+        # Restore the persistent bar if a prior minimise cleared it.
+        self._restore_overlay_for_visible_window()
+        if focused:
+            return {"ok": True, "focused": True}
+        return {"ok": False, "focused": False, "reason": "foreground_lock"}
 
     # ---- WebView hooks -------------------------------------------------------
 
@@ -4336,11 +4348,19 @@ class DesktopApp:
 
         Coroutine because ``EventBus._safe_dispatch`` does ``await handler(event)``
         — a plain ``def`` would still run but trip ``await None`` → a swallowed
-        TypeError on every click. Raises the main desktop window;
-        ``_safe_window_show`` is null-safe, so on a headless / VPS runtime (no
-        window) this is a no-op.
+        TypeError on every click. Raises the main desktop window.
+
+        The whole show path runs in a worker thread: pywebview window calls
+        BLOCK the calling thread while the GUI thread services them, and
+        ``_reload_window_if_stale``'s ``evaluate_js`` probe waits up to ~20 s
+        (pywebview ``event.wait(20)``). Run on the asyncio loop, that probe
+        starved the realtime WebRTC mic sender 40 s behind wall clock and the
+        provider reset the call (live 2026-08-06 17:40). The tray bridge
+        already runs this same function on a plain thread, so off-loop is its
+        proven habitat. ``_safe_window_show`` is null-safe, so on a headless /
+        VPS runtime (no window) this is a no-op.
         """
-        self._safe_window_show()
+        await asyncio.to_thread(self._safe_window_show)
 
     def _safe_window_show(self) -> None:
         if self._window is None:
