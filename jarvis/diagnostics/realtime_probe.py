@@ -555,12 +555,15 @@ def evaluate_scenario(
     ready_rows = [r for r in rows if r["src"] == "probe" and r["kind"] == "ready"]
     ready_mono = ready_rows[0]["mono"] if ready_rows else 0.0
 
-    # Reconstruct exchanges: a turn_complete "earns" a turn when a non-empty
-    # final user transcript arrived since the previous boundary.
-    exchanges = 0
-    ungrounded_turns: list[float] = []
-    user_final_pending = False
+    # Timeline primitives. Live round 1 (2026-08-06) taught the judge two
+    # realities: user FINALS can trail their own turn's boundary by seconds
+    # (the recognizer round trip), and a greeting's boundary can arrive long
+    # after ready even though its speech STARTED immediately - so exchanges
+    # are counted question->answer, and the greeting allowance anchors on
+    # when the boundary's speech began, not on when it ended.
+    user_finals: list[float] = []
     assistant_text_rows: list[tuple[float, str]] = []
+    boundaries: list[float] = []
     for row in surface:
         data = row["data"]
         if row["kind"] != "json":
@@ -568,16 +571,56 @@ def evaluate_scenario(
         if data.get("type") == "transcript":
             text = str(data.get("text", "")).strip()
             if data.get("role") == "user" and data.get("is_final") and text:
-                user_final_pending = True
+                user_finals.append(row["mono"])
             elif data.get("role") == "assistant" and text:
                 assistant_text_rows.append((row["mono"], text))
         elif data.get("type") == "turn_complete":
-            if user_final_pending:
-                exchanges += 1
-                user_final_pending = False
-            else:
-                # A boundary with no grounded user final: greeting or self-talk.
-                ungrounded_turns.append(row["mono"])
+            boundaries.append(row["mono"])
+
+    # A grounded exchange: a user final that is ANSWERED - assistant output
+    # begins after it and before the next user final.
+    exchanges = 0
+    for index, final_mono in enumerate(user_finals):
+        next_final = (
+            user_finals[index + 1] if index + 1 < len(user_finals) else float("inf")
+        )
+        if any(final_mono < mono < next_final for mono, _ in assistant_text_rows):
+            exchanges += 1
+
+    # Ungrounded boundaries. A user final may TRAIL its own turn's boundary
+    # by the recognizer's round trip, but a bare trailing final could equally
+    # belong to the NEXT turn - so a final only grounds a boundary when
+    # assistant output sits between the final and that boundary(+slack): the
+    # answer is the tie-breaker. Each final grounds at most one boundary.
+    _FINAL_TRAIL_SLACK_S = 2.5
+    ungrounded_turns: list[float] = []
+    ungrounded_speech_start: dict[float, float] = {}
+    unconsumed_finals = list(user_finals)
+    previous_boundary = float("-inf")
+    for boundary in boundaries:
+        horizon = boundary + _FINAL_TRAIL_SLACK_S
+        grounding_final: float | None = None
+        for final in unconsumed_finals:
+            if not (previous_boundary < final <= horizon):
+                continue
+            if any(final < mono <= horizon for mono, _ in assistant_text_rows):
+                grounding_final = final
+                break
+        if grounding_final is not None:
+            unconsumed_finals.remove(grounding_final)
+        else:
+            # When did this boundary's speech begin? (greeting anchor)
+            speech_start = next(
+                (
+                    mono
+                    for mono, _ in assistant_text_rows
+                    if mono > previous_boundary
+                ),
+                boundary,
+            )
+            ungrounded_speech_start[boundary] = speech_start
+            ungrounded_turns.append(boundary)
+        previous_boundary = boundary
 
     def _verdict(name: str, status: str, detail: str) -> None:
         verdicts[name] = {"status": status, "detail": detail}
@@ -594,7 +637,9 @@ def evaluate_scenario(
             allowed = [
                 mono
                 for mono in ungrounded_turns
-                if ready_mono and mono - ready_mono <= GREETING_WINDOW_S
+                if ready_mono
+                and ungrounded_speech_start.get(mono, mono) - ready_mono
+                <= GREETING_WINDOW_S
             ][:1]
             extra = [m for m in ungrounded_turns if m not in allowed]
             _verdict(

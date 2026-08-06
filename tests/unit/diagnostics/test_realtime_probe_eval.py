@@ -54,6 +54,21 @@ def _happy_rows() -> list[dict[str, Any]]:
     return rows
 
 
+def test_a_final_that_trails_its_boundary_still_grounds_it() -> None:
+    """Live round 1: the recognizer's round trip regularly lands the user
+    FINAL seconds after the turn's boundary. Grounding must tolerate the
+    trail, or every healthy call reads as self-talk."""
+    rows = [
+        _row(1.0, "probe", "ready", {"type": "audio_ready"}),
+        _transcript(4.0, "assistant", "It is violet."),
+        _row(5.0, "surface", "json", {"type": "turn_complete"}),
+        _transcript(6.5, "user", "what color is the violet giraffe"),
+        _transcript(7.0, "assistant", "Still violet."),
+    ]
+    verdict = _judge(rows, _pm(), ["no_ungrounded"])["no_ungrounded"]
+    assert verdict["status"] == "pass", verdict
+
+
 def _pm(**overrides: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
         "turns_completed": 1,
@@ -112,13 +127,26 @@ def test_missing_turn_fails_the_count() -> None:
     assert verdicts["turns>=2"]["status"] == "fail"
 
 
-def test_ungrounded_boundary_is_allowed_once_as_greeting_then_fails() -> None:
-    rows = _happy_rows()
-    # A greeting boundary 3 s after ready (inside the window) - allowed.
-    rows.insert(3, _row(3.0, "surface", "json", {"type": "turn_complete"}))
+def test_ungrounded_greeting_is_allowed_even_when_its_boundary_lands_late() -> None:
+    """Live round 1: the greeting monologue STARTED right at ready but ran
+    16+ s, so its boundary fell far outside any window anchored on ready.
+    The allowance keys on when the boundary's speech began."""
+    rows = [
+        _row(1.0, "probe", "ready", {"type": "audio_ready"}),
+        _transcript(2.0, "assistant", "Hey there, ready when you are."),
+        # ... it rambles; the boundary only lands 17 s after ready ...
+        _row(18.0, "surface", "json", {"type": "turn_complete"}),
+        _transcript(20.0, "user", "what color is the violet giraffe"),
+        _transcript(21.0, "assistant", "Violet."),
+        _row(22.0, "surface", "json", {"type": "turn_complete"}),
+    ]
     assert _judge(rows, _pm(), ["no_ungrounded"])["no_ungrounded"]["status"] == "pass"
-    # A second ungrounded boundary long after the window - self-talk.
-    rows.append(_row(30.0, "surface", "json", {"type": "turn_complete"}))
+
+    # A SECOND ungrounded turn, speech starting long past the window: fails.
+    rows += [
+        _transcript(29.0, "assistant", "Anyway, as I was saying to myself."),
+        _row(31.0, "surface", "json", {"type": "turn_complete"}),
+    ]
     assert _judge(rows, _pm(), ["no_ungrounded"])["no_ungrounded"]["status"] == "fail"
 
 
