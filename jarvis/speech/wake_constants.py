@@ -111,9 +111,10 @@ def is_silence_hallucination(text: str, duration_s: float) -> bool:
       sufficient; every word of the transcript must also come from the markers'
       own vocabulary. "Thank you for watching!" passes that test (the shared
       pattern spells the outro "thanks for watching", and the vocabulary covers
-      the other spelling for free); the German sentence
-      "vielen Dank für das Update" does not, because "update" is nobody's  # i18n-allow: the pattern lists "vielen dank", so the sentence that must SURVIVE it is shown in that same language
-      boilerplate.
+      the other spelling for free). The same holds in every language the
+      pattern carries markers for: a real sentence that merely opens with a
+      polite formula survives, because the words after it — "update", a file
+      name, a question — are nobody's boilerplate.
 
     Digits are ignored on purpose: the markers carry years, and a year is not
     what distinguishes a hallucination from a sentence.
