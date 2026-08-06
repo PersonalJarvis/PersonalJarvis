@@ -1237,11 +1237,12 @@ _LOCAL_PROBE_TIMEOUT_S = 3.0
 
 #: How long a connect to the self-hosted server keeps retrying when Jarvis
 #: itself can revive the server (a ``launch_command`` is configured). A local
-#: stack needs real time to come back — the reference server loads its STT,
-#: LLM proxy and TTS models for ~25 s after a crash — and the mid-call
+#: stack needs real time to come back — a measured cold revive of the
+#: reference server (kill -9, respawn, models loaded, session ready) took
+#: 52 s on the dev box (2026-08-06 crash drill) — and the mid-call
 #: transport rebuild (BUG-071) lands here, so giving up early turns every
 #: server crash into a dead call.
-_LOCAL_CONNECT_PATIENT_WINDOW_S = 45.0
+_LOCAL_CONNECT_PATIENT_WINDOW_S = 75.0
 #: The window when NOBODY revives the server (no launch command): nothing is
 #: going to change, so only ride out a brief hiccup instead of holding the
 #: call hostage.
