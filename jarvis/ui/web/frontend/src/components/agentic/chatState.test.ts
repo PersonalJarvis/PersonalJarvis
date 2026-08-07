@@ -5,7 +5,7 @@ import {
   initialChatOrder,
   orderChatTerminals,
   reconcileChatOrder,
-  sameRecaps,
+  sameRows,
 } from "./chatState";
 
 function terminal(
@@ -107,16 +107,16 @@ describe("chat session ordering", () => {
 describe("recap poll equality", () => {
   it("recognizes a repeated response", () => {
     const current = { T1: recap("T1") };
-    expect(sameRecaps(current, { T1: { ...current.T1 } })).toBe(true);
+    expect(sameRows(current, { T1: { ...current.T1 } })).toBe(true);
   });
 
   it("detects an activity transition", () => {
-    expect(sameRecaps({ T1: recap("T1") }, { T1: recap("T1", "working") })).toBe(false);
+    expect(sameRows({ T1: recap("T1") }, { T1: recap("T1", "working") })).toBe(false);
   });
 
   it("detects a changed optional field even when both values are undefined", () => {
-    const before = { T1: { ...recap("T1"), note: undefined } };
-    const after = { T1: { ...recap("T1"), writer: undefined } };
-    expect(sameRecaps(before, after)).toBe(false);
+    const before: Record<string, TerminalRecap> = { T1: { ...recap("T1"), note: undefined } };
+    const after: Record<string, TerminalRecap> = { T1: { ...recap("T1"), writer: undefined } };
+    expect(sameRows(before, after)).toBe(false);
   });
 });

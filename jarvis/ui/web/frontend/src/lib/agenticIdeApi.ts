@@ -199,25 +199,25 @@ export type RecapReason =
   | "unavailable"
   | "";
 
-/** One pane's live recap, as `/recaps` reports it. */
-export interface TerminalRecap {
+/**
+ * What one pane is DOING, and nothing about what it is doing it about.
+ *
+ * The skinny base of `TerminalRecap`, and the whole answer of the fast poll
+ * behind the status badge: the recap poll also schedules a summarizer pass
+ * per pane, so it runs on a relaxed clock — and a badge that only learns
+ * "working" on that clock trails the pane it describes by several seconds.
+ * This row is one stamped word per pane and is cheap enough to poll fast.
+ * One declaration for both rows, so the two polls cannot drift apart about
+ * what these fields mean.
+ */
+export interface TerminalActivityRow {
   key: string;
   name: string;
+  /** The pane's process status: `pending`, `live`, `exited` or `error`. */
   status: string;
-  recap: string;
-  recap_detail: string;
-  source?: RecapSource;
-  reason?: RecapReason;
-  /** The model that wrote it, when one did. */
-  writer?: string;
-  /** What went wrong the last time this pane was summarized. */
-  note?: string;
-  /** When the model wrote it, or when the user did. 0 for the derived one. */
-  generated_at?: number;
   /**
-   * Is its agent still on the job, or has it stopped? This poll is what keeps
-   * the pane list current, so it carries what the pane is DOING as well as what
-   * it is doing it about.
+   * Is its agent still on the job, or has it stopped? What keeps the pane
+   * list current: what the pane is DOING, beside what it is doing it about.
    */
   activity?: PaneActivity;
   /** When it entered that state (epoch seconds); 0 when unknown. */
@@ -232,31 +232,24 @@ export interface TerminalRecap {
   worked?: boolean;
 }
 
+/** One pane's live recap, as `/recaps` reports it: the activity row plus words. */
+export interface TerminalRecap extends TerminalActivityRow {
+  recap: string;
+  recap_detail: string;
+  source?: RecapSource;
+  reason?: RecapReason;
+  /** The model that wrote it, when one did. */
+  writer?: string;
+  /** What went wrong the last time this pane was summarized. */
+  note?: string;
+  /** When the model wrote it, or when the user did. 0 for the derived one. */
+  generated_at?: number;
+}
+
 export interface RecapsResponse {
   /** Which workspace answered; null when none is on screen. */
   workspace_id: string | null;
   terminals: TerminalRecap[];
-}
-
-/**
- * What one pane is DOING, and nothing about what it is doing it about.
- *
- * The skinny sibling of `TerminalRecap`, for the poll behind the status badge:
- * the recap poll also schedules a summarizer pass per pane, so it runs on a
- * relaxed clock — and a badge that only learns "working" on that clock trails
- * the pane it describes by several seconds. This row is one stamped word per
- * pane and is cheap enough to poll fast.
- */
-export interface TerminalActivityRow {
-  key: string;
-  name: string;
-  /** The pane's process status: `pending`, `live`, `exited` or `error`. */
-  status: string;
-  activity?: PaneActivity;
-  /** When it entered that state (epoch seconds); 0 when unknown. */
-  activity_since?: number;
-  /** Has anything ever been asked of this pane? */
-  worked?: boolean;
 }
 
 export interface ActivityResponse {

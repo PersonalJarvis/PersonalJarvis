@@ -218,16 +218,16 @@ export function durationLabel(since: number, now: number): string {
   return hours === 1 ? "1 hour" : `${hours} hours`;
 }
 
+/** The soft self-coloured halo a dot that holds something for you wears. */
+const GLOW = "shadow-[0_0_5px_currentColor]";
+
 function Icon({ look }: { look: Look }) {
   if (look.icon === "spinner")
     return <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />;
   if (look.icon === "dot")
     return (
       <span
-        className={cn(
-          "h-2 w-2 rounded-full bg-current",
-          look.glow && "shadow-[0_0_5px_currentColor]",
-        )}
+        className={cn("h-2 w-2 rounded-full bg-current", look.glow && GLOW)}
         aria-hidden="true"
       />
     );
@@ -237,7 +237,7 @@ function Icon({ look }: { look: Look }) {
         {/* The halo — a slow ping, hidden for anyone who asked their OS for
             less motion; the still dot underneath carries the state alone. */}
         <span className="absolute inset-0 animate-ping rounded-full bg-current opacity-60 [animation-duration:1.8s] motion-reduce:hidden" />
-        <span className="relative h-2 w-2 rounded-full bg-current shadow-[0_0_5px_currentColor]" />
+        <span className={cn("relative h-2 w-2 rounded-full bg-current", GLOW)} />
       </span>
     );
   if (look.icon === "ring")

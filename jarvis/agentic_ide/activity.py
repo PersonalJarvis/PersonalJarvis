@@ -347,7 +347,13 @@ def _has_current_instruction(term: Any) -> bool:
 def read_activity(
     term: Any, *, now: float | None = None, still_since: float | None = None
 ) -> Activity:
-    """What ``term`` is doing at this instant.
+    """What ``term`` is doing at this instant — the RAW movement reading.
+
+    Raw means: no submit grace, no burst confirmation. This is the word for
+    callers that want the movement rule itself (the bell, a caller deciding
+    whether it is safe to type into the pane); the word the badge SHOWS is
+    :func:`observed`'s, and a caller reaching here for display will spin on a
+    lone printout.
 
     ``still_since`` is the moment this pane's screen last changed, which the
     caller tracks across sweeps (see :func:`screen_digest`). Duck-typed on
@@ -504,8 +510,14 @@ def observed(term: Any, *, now: float | None = None) -> Reading:
     at = float(getattr(term, "activity_at", 0.0) or 0.0)
     if word and 0 <= moment - at <= STAMP_FRESH_S:
         since = float(getattr(term, "activity_since", 0.0) or 0.0)
-        return _submit_graced(term, Reading(word, since), moment)  # type: ignore[arg-type]
-    return _submit_graced(term, Reading(read_activity(term, now=moment), 0.0), moment)
+        reading = Reading(word, since)  # type: ignore[arg-type]
+    else:
+        # The stampless fallback is the RAW single look: with no sweep history
+        # it cannot demand that movement outlast a burst, so a lone printout
+        # can read as working here. Rare by construction — the sweep runs for
+        # as long as any workspace is open.
+        reading = Reading(read_activity(term, now=moment), 0.0)
+    return _submit_graced(term, reading, moment)
 
 
 def has_work_behind_it(term: Any) -> bool:

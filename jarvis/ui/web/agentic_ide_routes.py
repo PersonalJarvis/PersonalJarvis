@@ -876,12 +876,56 @@ class ContinueInterruptedResponse(BaseModel):
     )
 
 
-class TerminalRecap(BaseModel):
-    """What one pane is doing, in the two lengths its header renders."""
+class TerminalActivity(BaseModel):
+    """What one pane is DOING, and nothing about what it is doing it about.
+
+    The skinny base of :class:`TerminalRecap`, and the whole answer of the
+    badge's fast poll: the recap poll also schedules a summarizer pass over
+    every pane's transcript, which is why it runs on a relaxed clock — and why
+    the status badge that rode on it always lagged the pane by several
+    seconds. This row costs one look at the pane's stamped reading, so it can
+    be polled fast enough for the badge to feel live. One declaration for both
+    rows, so the two polls cannot drift apart about what these fields mean.
+    """
 
     key: str
     name: str
-    status: str
+    status: str = Field(
+        description="The pane's process status: 'pending', 'live', 'exited' or 'error'."
+    )
+    activity: str = Field(
+        default="",
+        description=(
+            "Whether this pane's agent is still on the job: 'working' (its "
+            "screen is moving), 'waiting' (alive and standing still), 'asking' "
+            "(standing still with a question on screen), 'starting', 'exited' "
+            "or 'failed'. Read from the terminal itself rather than from "
+            "anything a particular CLI prints, so it holds for every coding CLI "
+            "a pane can run, including ones added later. Empty for a plain "
+            "terminal, which runs no agent."
+        ),
+    )
+    activity_since: float = Field(
+        default=0.0,
+        description=(
+            "When the pane entered that state (epoch seconds), so 'waiting' can "
+            "be shown with how long it has been waiting. 0 when unknown."
+        ),
+    )
+    worked: bool = Field(
+        default=False,
+        description=(
+            "Has anything ever been asked of this pane — an instruction sent to "
+            "it, or the conversation it resumed? It is what separates an agent "
+            "that FINISHED from a terminal nobody has asked for anything: the "
+            "same still screen, and not the same news."
+        ),
+    )
+
+
+class TerminalRecap(TerminalActivity):
+    """What one pane is doing, in the two lengths its header renders."""
+
     recap: str = Field(description="One clause for the pane header; the pane's width clips it.")
     recap_detail: str = Field(description="The several-sentence version, shown in the recap card.")
     source: str = Field(
@@ -920,75 +964,11 @@ class TerminalRecap(BaseModel):
             "transcript-derived recap, which is recomputed on every read."
         ),
     )
-    activity: str = Field(
-        default="",
-        description=(
-            "Whether this pane's agent is still on the job: 'working' (its "
-            "screen is moving), 'waiting' (alive and standing still), 'asking' "
-            "(standing still with a question on screen), 'starting', 'exited' "
-            "or 'failed'. Read from the terminal itself rather than from "
-            "anything a particular CLI prints, so it holds for every coding CLI "
-            "a pane can run, including ones added later. Empty for a plain "
-            "terminal, which runs no agent."
-        ),
-    )
-    activity_since: float = Field(
-        default=0.0,
-        description=(
-            "When the pane entered that state (epoch seconds), so 'waiting' can "
-            "be shown with how long it has been waiting. 0 when unknown."
-        ),
-    )
-    worked: bool = Field(
-        default=False,
-        description=(
-            "Has anything ever been asked of this pane — an instruction sent to "
-            "it, or the conversation it resumed? It is what separates an agent "
-            "that FINISHED from a terminal nobody has asked for anything: the "
-            "same still screen, and not the same news."
-        ),
-    )
 
 
 class RecapsResponse(BaseModel):
     workspace_id: str | None = None
     terminals: list[TerminalRecap] = Field(default_factory=list)
-
-
-class TerminalActivity(BaseModel):
-    """What one pane is DOING, and nothing about what it is doing it about.
-
-    The skinny sibling of :class:`TerminalRecap`: the recap poll also schedules
-    a summarizer pass over every pane's transcript, which is why it runs on a
-    relaxed clock — and why the status badge that rode on it always lagged the
-    pane by several seconds. This row costs one look at the pane's stamped
-    reading, so it can be polled fast enough for the badge to feel live.
-    """
-
-    key: str
-    name: str
-    status: str = Field(
-        description="The pane's process status: 'pending', 'live', 'exited' or 'error'."
-    )
-    activity: str = Field(
-        default="",
-        description=(
-            "Whether this pane's agent is still on the job: 'working', "
-            "'waiting', 'asking', 'starting', 'exited' or 'failed'. Empty for "
-            "a plain terminal, which runs no agent. Same reading as /recaps."
-        ),
-    )
-    activity_since: float = Field(
-        default=0.0,
-        description="When the pane entered that state (epoch seconds). 0 when unknown.",
-    )
-    worked: bool = Field(
-        default=False,
-        description=(
-            "Has anything ever been asked of this pane — an instruction sent "
-            "to it, or the conversation it resumed?"
-        ),
-    )
 
 
 class ActivityResponse(BaseModel):
@@ -2172,22 +2152,28 @@ async def get_activity(workspace_id: str | None = None) -> ActivityResponse:
     session = get_registry().get(workspace_id)
     if session is None:
         return ActivityResponse(workspace_id=None, terminals=[])
-    rows: list[TerminalActivity] = []
-    for term in session.terminals:
-        # The pane's own stamped reading — the same source /recaps reports, so
-        # the fast poll and the slow one can never disagree about a pane.
-        reading = term.reading()
-        rows.append(
-            TerminalActivity(
-                key=term.key,
-                name=term.name,
-                status=term.status,
-                activity=reading.activity,
-                activity_since=reading.since,
-                worked=has_work_behind_it(term),
-            )
-        )
-    return ActivityResponse(workspace_id=session.id, terminals=rows)
+    return ActivityResponse(
+        workspace_id=session.id,
+        terminals=[TerminalActivity(**_activity_fields(term)) for term in session.terminals],
+    )
+
+
+def _activity_fields(term: Terminal) -> dict[str, object]:
+    """The activity half of a pane row, from the pane's own stamped reading.
+
+    One builder for the fast poll and the recap poll both, so "the two polls
+    report the same reading" is a property of the code rather than a promise
+    kept by two call sites staying in step.
+    """
+    reading = term.reading()
+    return {
+        "key": term.key,
+        "name": term.name,
+        "status": term.status,
+        "activity": reading.activity,
+        "activity_since": reading.since,
+        "worked": has_work_behind_it(term),
+    }
 
 
 def _recap_row(term: Terminal, summary: recap_engine.SmartRecap) -> TerminalRecap:
@@ -2195,13 +2181,11 @@ def _recap_row(term: Terminal, summary: recap_engine.SmartRecap) -> TerminalReca
 
     One builder for all four, so the poll and the three actions can never drift
     into describing the same pane differently — the drift class §5 calls out,
-    on a payload that is read four times a minute.
+    on a payload that is read four times a minute. The activity half rides in
+    from `_activity_fields`, the same builder the fast poll answers with.
     """
-    reading = term.reading()
     return TerminalRecap(
-        key=term.key,
-        name=term.name,
-        status=term.status,
+        **_activity_fields(term),
         recap=summary.headline,
         recap_detail=summary.detail,
         source=summary.source,
@@ -2209,12 +2193,6 @@ def _recap_row(term: Terminal, summary: recap_engine.SmartRecap) -> TerminalReca
         writer=summary.writer,
         note=summary.note,
         generated_at=summary.generated_at,
-        # This poll is what keeps the pane list current, so it carries what the
-        # pane is DOING as well as what it is doing it about. Both come from the
-        # pane itself; neither is recomputed here, or the two would drift.
-        activity=reading.activity,
-        activity_since=reading.since,
-        worked=has_work_behind_it(term),
     )
 
 

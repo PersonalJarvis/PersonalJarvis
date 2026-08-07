@@ -74,7 +74,7 @@ import { PromptPreview } from "./PromptPreview";
 import { PromptEditor } from "./PromptEditor";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { usePaneFileDrag } from "./paneFileDrag";
-import { initialChatOrder, orderChatTerminals, reconcileChatOrder, sameRecaps } from "./chatState";
+import { initialChatOrder, orderChatTerminals, reconcileChatOrder, sameRows } from "./chatState";
 import {
   extractPaneDrop,
   extractPasteFiles,
@@ -305,15 +305,17 @@ const ACTIVITY_POLL_MS = 1500;
 /**
  * How long a just-sent prompt is allowed to claim "working" on its own.
  *
- * The backend only reports `working` once the pane's screen MOVES, and an
- * agent can sit for a few seconds between receiving a prompt and painting
- * anything. Without this bridge the badge stays on "done" after Send, which
- * reads as a send that did not happen. Long enough to cover a slow first
- * paint, short enough that a prompt the agent truly swallowed goes back to
- * telling the truth. The backend's own reading takes over the moment it says
- * `working` — see `activityOf`.
+ * Only until the backend can answer for itself: the submit grace over there
+ * (`SUBMIT_GRACE_S` in `jarvis/agentic_ide/activity.py`) reports a freshly
+ * submitted pane as working on the very next poll, so all this bridge covers
+ * is the send-to-next-poll gap this window alone can see. Two poll beats
+ * rather than one, so a poll already in flight when Send lands cannot carry
+ * the answer away. Deliberately NOT longer: past this window the backend's
+ * word is the truer one, including its 10-second verdict on a prompt the
+ * agent swallowed — a second, longer client policy on top of that would just
+ * disagree at the edges.
  */
-const SENT_BRIDGE_MS = 12_000;
+const SENT_BRIDGE_MS = 2 * ACTIVITY_POLL_MS;
 
 /*
  * How tall the prompt bar is — dragged by its top edge, and remembered.
@@ -856,7 +858,7 @@ export function AgenticGrid({
         const next = Object.fromEntries(answer.terminals.map((term) => [term.name, term]));
         setRecapCache((current) => {
           const currentRows = current.workspaceId === session.id ? current.rows : {};
-          return sameRecaps(currentRows, next) ? current : { workspaceId: session.id, rows: next };
+          return sameRows(currentRows, next) ? current : { workspaceId: session.id, rows: next };
         });
         warned = false;
       } catch (error) {
@@ -901,10 +903,11 @@ export function AgenticGrid({
    *
    * The optimistic half of the badge: the moment Send succeeds the pane is
    * shown as working, because the user just watched themselves put work in
-   * front of it — waiting for the screen-movement proof to round-trip made
-   * every send look ignored for several seconds. The backend's reading takes
-   * over as soon as it confirms (the entry is dropped), and the entry expires
-   * after `SENT_BRIDGE_MS` so a prompt that truly went nowhere stops lying.
+   * front of it. The backend knows about the submit too (its own grace covers
+   * the seconds before the first paint) — what it cannot cover is the beat
+   * until the next poll fetches that answer, and that beat is all this
+   * carries. An entry is dropped the moment the backend confirms, and expires
+   * after `SENT_BRIDGE_MS` either way.
    */
   const [sentAt, setSentAt] = useState<Record<string, number>>({});
 
@@ -919,12 +922,23 @@ export function AgenticGrid({
         const answer = await fetchTerminalActivity(session.id);
         if (cancelled) return;
         const next = Object.fromEntries(answer.terminals.map((row) => [row.name, row]));
-        setActivityCache({ workspaceId: session.id, rows: next });
-        // The backend has seen these panes working: its reading is now the
-        // truer one, so the optimistic bridge behind it is finished.
+        // Same keep-identity guard as the recap poll above: most ticks change
+        // nothing, and a fresh-but-equal object every 1.5 seconds would
+        // re-render this very large component forty times a minute for it.
+        setActivityCache((current) => {
+          const currentRows = current.workspaceId === session.id ? current.rows : {};
+          return sameRows(currentRows, next)
+            ? current
+            : { workspaceId: session.id, rows: next };
+        });
+        // The bridge ends here: dropped once the backend confirms the pane
+        // working, and expired past its window — inside the poll, not at
+        // render time, so an expired entry does not linger until something
+        // else happens to redraw the grid.
+        const cutoff = Date.now() - SENT_BRIDGE_MS;
         setSentAt((current) => {
           const keep = Object.entries(current).filter(
-            ([name]) => next[name]?.activity !== "working",
+            ([name, at]) => next[name]?.activity !== "working" && at > cutoff,
           );
           return keep.length === Object.keys(current).length
             ? current
@@ -951,12 +965,15 @@ export function AgenticGrid({
    * Three sources, freshest first: the fast `/activity` poll, the recap poll,
    * and the opening value the workspace state carried — so a pane never
    * renders a blank badge, and never renders a stale one for longer than the
-   * fast poll's beat. All three come straight from the pane; nothing is
-   * derived here, or two views of one terminal would disagree.
+   * fast poll's beat. The middle leg looks redundant beside the fast one and
+   * is not: `/activity` is the newer route, and against an older backend that
+   * does not serve it the fast cache stays empty forever — the recap poll's
+   * rows are then what keeps the badges alive, at their old five-second
+   * cadence instead of not at all. All three come straight from the pane;
+   * nothing is derived here, or two views of one terminal would disagree.
    *
    * On top of that sits the one honest local claim: a prompt THIS window just
-   * delivered. The backend cannot know about it until the pane's screen moves,
-   * and the user cannot un-know it — see `sentAt`.
+   * delivered and the polls have not fetched back yet — see `sentAt`.
    */
   const activityOf = (term: TerminalState) => {
     const live = liveActivity[term.name];
@@ -985,14 +1002,17 @@ export function AgenticGrid({
    * the pane has mounted and connected — so on the first seconds of a
    * workspace (and for panes a view keeps off screen) the rail showed a grey
    * "connecting" spinner for terminals the backend already reported live. The
-   * backend's word is the truthful fallback; "connecting" stays only for a
-   * pane nobody knows anything about yet.
+   * backend's word is the truthful fallback, and one of the two backend
+   * sources always has one — every pane in the workspace state carries a
+   * status — so this never comes back empty.
    */
   const statusOf = (term: TerminalState) => {
     const socket = statuses[term.name];
     if (socket) return socket;
-    const backend = liveActivity[term.name]?.status ?? term.status;
-    return backend ? { status: backend as PaneStatus, detail: undefined } : undefined;
+    return {
+      status: (liveActivity[term.name]?.status ?? term.status) as PaneStatus,
+      detail: undefined,
+    };
   };
 
   /*
@@ -2476,8 +2496,8 @@ export function AgenticGrid({
                           what the user is scanning for is which of them still
                           owes them something. See ./PaneActivityPill. */}
                       <PaneActivityPill
-                        status={state?.status ?? "connecting"}
-                        detail={state?.detail}
+                        status={state.status}
+                        detail={state.detail}
                         {...activityOf(term)}
                       />
                     </span>
@@ -2968,8 +2988,8 @@ export function AgenticGrid({
                 >
                   <span>{term.name}</span>
                   <PaneActivityPill
-                    status={state?.status ?? "connecting"}
-                    detail={state?.detail}
+                    status={state.status}
+                    detail={state.detail}
                     {...activityOf(term)}
                   />
                 </button>
