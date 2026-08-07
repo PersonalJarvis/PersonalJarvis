@@ -1,0 +1,145 @@
+"""Brain endpoint resolution for the managed local realtime server (AD-7).
+
+The speech-to-speech server does not think; it forwards each turn to an
+OpenAI-Responses-compatible endpoint. Resolution order, capability-gated and
+never provider-pinned (AP-21/22):
+
+1. A local Ollama that is actually running and holds a usable model —
+   the fully-local path.
+2. A configured OpenAI key — honest partial locality ("audio stays on this
+   machine, reasoning uses your OpenAI key"). Other cloud families are not
+   offered here because the server speaks the Responses API; they join once
+   the server (or a proxy) supports their protocols.
+3. Neither → a blocker naming the exact fixing actions.
+
+Every probe is short-timeout and read-only; nothing here downloads models.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
+
+log = logging.getLogger(__name__)
+
+#: Models preferred as the server brain, best first. Only ever chosen from
+#: what is ALREADY present in Ollama — the resolver never pulls.
+_PREFERRED_MODELS: tuple[str, ...] = ("qwen2.5:7b", "qwen3-coder:30b", "llama3.1:8b")
+
+#: Tag substrings that mark non-chat models a voice brain must never use.
+_UNUSABLE_MARKERS: tuple[str, ...] = ("embed", "whisper", "rerank")
+
+_OLLAMA_DEFAULT = "http://127.0.0.1:11434"
+
+
+@dataclass(frozen=True, slots=True)
+class BrainResolution:
+    kind: str  # "ollama" | "cloud-openai" | "blocked"
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    #: One honest sentence for the card / preflight summary.
+    note: str = ""
+    #: For "blocked": the concrete actions that would fix it, best first.
+    actions: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def ok(self) -> bool:
+        return self.kind != "blocked"
+
+
+def _ollama_base() -> str:
+    host = (os.environ.get("OLLAMA_HOST") or "").strip()
+    if not host:
+        return _OLLAMA_DEFAULT
+    if not host.startswith(("http://", "https://")):
+        host = f"http://{host}"
+    return host.rstrip("/")
+
+
+def _ollama_tags(base: str, timeout: float) -> list[str] | None:
+    """Model tags of a running Ollama, or ``None`` when it is unreachable."""
+    url = f"{base}/api/tags"
+    if not url.startswith(("http://", "https://")):  # scheme is normalized above
+        return None
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 — http(s) only
+            payload = json.load(resp)
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    models = payload.get("models") or []
+    return [str(m.get("name", "")) for m in models if m.get("name")]
+
+
+def _pick_model(tags: list[str]) -> str:
+    for preferred in _PREFERRED_MODELS:
+        if preferred in tags:
+            return preferred
+    for tag in tags:
+        lowered = tag.lower()
+        if not any(marker in lowered for marker in _UNUSABLE_MARKERS):
+            return tag
+    return ""
+
+
+def _openai_key() -> str:
+    try:
+        from jarvis.core.config import get_secret
+
+        return (get_secret("openai_api_key", env_fallback="OPENAI_API_KEY") or "").strip()
+    except Exception:  # pragma: no cover — config not importable in odd contexts
+        log.debug("brain resolution: secret lookup failed", exc_info=True)
+        return ""
+
+
+def resolve_brain(*, timeout: float = 2.5) -> BrainResolution:
+    """Resolve the best brain endpoint available on THIS machine right now."""
+    base = _ollama_base()
+    tags = _ollama_tags(base, timeout)
+    if tags is not None:
+        model = _pick_model(tags)
+        if model:
+            return BrainResolution(
+                kind="ollama",
+                base_url=f"{base}/v1",
+                api_key="ollama",
+                model=model,
+                note=f"Fully local: reasoning runs on your Ollama ({model}).",
+            )
+        return BrainResolution(
+            kind="blocked",
+            note=(
+                "Ollama is running but holds no usable chat model, so the "
+                "local server would have no brain."
+            ),
+            actions=(
+                f"Run: ollama pull {_PREFERRED_MODELS[0]}",
+                "Or add an OpenAI API key in Settings for cloud reasoning.",
+            ),
+        )
+    key = _openai_key()
+    if key:
+        return BrainResolution(
+            kind="cloud-openai",
+            # base_url stays empty on purpose: the server's OpenAI client
+            # defaults to api.openai.com and reads OPENAI_API_KEY from its
+            # spawn environment, so no secret ever enters a command line.
+            api_key=key,
+            model="gpt-5.4-mini",
+            note=(
+                "Audio stays on this machine; reasoning uses your OpenAI "
+                "key (no local brain found)."
+            ),
+        )
+    return BrainResolution(
+        kind="blocked",
+        note="No brain available: neither a running Ollama nor an OpenAI key.",
+        actions=(
+            f"Install Ollama (ollama.com) and run: ollama pull {_PREFERRED_MODELS[0]}",
+            "Or add an OpenAI API key in Settings.",
+        ),
+    )

@@ -2010,6 +2010,50 @@ def set_provider_base_url(
         )
 
 
+def set_local_realtime_launch_command(
+    launch_command: str, *, path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Persist the managed server's derived launch command (AD-4).
+
+    Written by the one-click install engine
+    (``jarvis/realtime/local_server/install.py``) after a successful smoke
+    boot; the realtime adapter reads it to start/revive the server. The
+    command is DERIVED from probed hardware + resolved brain and never
+    carries a secret. Also pins ``base_url`` to the served port so a fresh
+    install activates without a manual URL paste.
+    """
+    path = _ensure_writable_config_path(path)
+    cleaned = (launch_command or "").strip()
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+
+        brain = doc.get("brain")
+        if brain is None:
+            brain = tomlkit.table()
+            doc["brain"] = brain
+        providers = brain.get("providers")
+        if providers is None:
+            providers = tomlkit.table(True)
+            brain["providers"] = providers
+        block = providers.get("local-realtime")
+        if block is None:
+            block = tomlkit.table()
+            providers["local-realtime"] = block
+        block["launch_command"] = cleaned
+        if not str(block.get("base_url", "") or "").strip():
+            block["base_url"] = "http://localhost:8765"
+
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
 def set_telephony_config(values: dict[str, object], *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Patch ``[integrations.twilio]`` with the given non-secret fields.
 

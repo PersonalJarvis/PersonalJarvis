@@ -19,3 +19,7 @@ __all__ = [
     "apply_create_response_patch",
     "patch_state",
 ]
+
+# The heavier surfaces (preflight, install engine, tier ladder, brain
+# resolution) are imported from their own modules on purpose — routes and
+# CLI import them lazily so nothing here rides the boot critical path.
