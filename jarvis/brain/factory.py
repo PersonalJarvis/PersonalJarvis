@@ -1353,6 +1353,16 @@ def _phase2_full_brain(
                 # fallback only (see _resolve_wiki_vault_root).
                 vault_path = _resolve_wiki_vault_root(config)
                 search = VaultSearch(vault_path)
+                # Warm the lazy SQLite connection off the critical path
+                # (AP-26): the first per-turn search otherwise pays the
+                # open+schema check against its own latency budget.
+                import threading
+
+                threading.Thread(
+                    target=search.warm_up,
+                    name="wiki-vault-warmup",
+                    daemon=True,
+                ).start()
                 from jarvis.brain.wiki_context import (  # noqa: PLC0415 — sibling import, kept local like the class import above
                     DEFAULT_ULTRA_LATENCY_BUDGET_MS,
                 )
@@ -1360,10 +1370,13 @@ def _phase2_full_brain(
                 manager._wiki_injector = WikiContextInjector(
                     search=search,
                     max_chars=getattr(wiki_cfg, "max_chars", 1500),
-                    latency_budget_ms=getattr(wiki_cfg, "latency_budget_ms", 80),
+                    latency_budget_ms=getattr(wiki_cfg, "latency_budget_ms", 150),
                     min_keyword_length=getattr(wiki_cfg, "min_keyword_length", 4),
                     relevance_gate=bool(getattr(wiki_cfg, "relevance_gate", True)),
                     min_coverage=float(getattr(wiki_cfg, "min_coverage", 0.5)),
+                    strict_min_coverage=float(
+                        getattr(wiki_cfg, "strict_min_coverage", 0.75)
+                    ),
                     min_relative_score=float(
                         getattr(wiki_cfg, "min_relative_score", 0.35)
                     ),
@@ -1378,7 +1391,7 @@ def _phase2_full_brain(
                 log.info(
                     "WikiContextInjector active (vault=%s, budget=%dms, gate=%s)",
                     vault_path,
-                    getattr(wiki_cfg, "latency_budget_ms", 80),
+                    getattr(wiki_cfg, "latency_budget_ms", 150),
                     "on" if getattr(wiki_cfg, "relevance_gate", True) else "off",
                 )
             except ImportError:

@@ -48,8 +48,10 @@ CAR_NOTE = FakeHit(
 
 
 @pytest.mark.asyncio
-async def test_general_knowledge_question_never_searches_the_vault() -> None:
-    """The reported case: no search, no context, no personalized answer."""
+async def test_general_knowledge_question_never_injects_unrelated_notes() -> None:
+    """The reported case. Retrieval-first: the vault IS searched now (a
+    world-shaped question can name a vault person), but an unrelated note
+    must still never reach the prompt — the strict bar carries the defense."""
     search = FakeVaultSearch([CAR_NOTE])
     injector = WikiContextInjector(search=search, latency_budget_ms=500)
 
@@ -59,7 +61,7 @@ async def test_general_knowledge_question_never_searches_the_vault() -> None:
     )
 
     assert result == BASE_PROMPT, "an unrelated question must not be given context"
-    assert search.queries == [], "the vault must not even be searched"
+    assert search.queries, "retrieval-first: the vault is searched"
     assert "Bugatti" not in result
 
 
@@ -74,7 +76,55 @@ async def test_english_general_knowledge_question_is_also_clean() -> None:
     )
 
     assert result == BASE_PROMPT
-    assert search.queries == []
+    assert search.queries, "retrieval-first: the vault is searched"
+    assert "Bugatti" not in result
+
+
+@pytest.mark.asyncio
+async def test_world_shaped_question_about_a_vault_person_gets_its_page() -> None:
+    """ "Who is X?" has a general-knowledge shape and used to be dropped
+    unsearched — the exact class of miss the recall audit found. When X is a
+    vault entity, the page covers the question fully and clears the strict bar."""
+    bruno = FakeHit(
+        title="Bruno",
+        snippet="Bruno is the user's climbing partner from Hamburg.",
+        score=0.9,
+    )
+    search = FakeVaultSearch([bruno])
+    injector = WikiContextInjector(search=search, latency_budget_ms=500)
+
+    result = await injector.maybe_inject(
+        user_text="Wer ist eigentlich Bruno?",  # i18n-allow: German user input under test
+        system_prompt=BASE_PROMPT,
+    )
+
+    assert "climbing partner" in result
+    assert search.queries, "the vault is searched for the strict probe"
+
+
+@pytest.mark.asyncio
+async def test_umlaut_spelling_reaches_the_vault() -> None:
+    """Real STT output carries umlauts. Regression for the fold defect that
+    made every umlaut phrase ("Wofür", "Worüber") invisible to the gate and
+    kept umlaut stopwords ("für") alive as junk keywords."""
+    project = FakeHit(
+        title="Zweitrechner",  # i18n-allow: German vault page title under test
+        snippet="Der Zweitrechner dient als Render-Knoten.",  # i18n-allow: German vault content
+        score=0.9,
+    )
+    search = FakeVaultSearch([project])
+    injector = WikiContextInjector(search=search, latency_budget_ms=500)
+
+    result = await injector.maybe_inject(
+        user_text="Wofür brauche ich meinen Zweitrechner?",  # i18n-allow: German input
+        system_prompt=BASE_PROMPT,
+    )
+
+    assert "Render-Knoten" in result
+    assert search.queries == ["Zweitrechner"], (
+        "the umlaut question word and the possessive must be filtered, "
+        f"got {search.queries}"
+    )
 
 
 @pytest.mark.asyncio

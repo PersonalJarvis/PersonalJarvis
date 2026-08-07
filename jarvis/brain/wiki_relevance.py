@@ -18,28 +18,31 @@ answer arrives welded to the user's belongings.
 
 Three independent layers, each useful on its own:
 
-1. :func:`should_consult_memory` — BEFORE retrieval. General-knowledge and
-   definitional questions with no personal marker never search at all. Saves
-   the search latency and removes the failure mode at its root. Three turn
-   classes DO earn a look: explicit recollection, a personal lookup, and —
-   since the ambient-knowledge pass — planning/recommendation/decision turns,
-   where the right answer depends on who is asking. Widening this gate is
-   safe precisely because gates 2 and 3 are unchanged: more turns get to ask
-   the memory, none of them get to inject an irrelevant answer.
+1. :func:`should_consult_memory` — BEFORE retrieval. Retrieval-first since the
+   2026-08-04 recall audit (a whole two-day live log without a single injected
+   turn): the local FTS search costs single-digit milliseconds, so refusing to
+   even LOOK was pure loss. Only sub-``_MIN_TOKENS`` fragments still skip.
+   Every other turn searches; what the verdict now decides is HOW STRICT the
+   post-retrieval filter is. Explicit recollection, planning and personal
+   lookups keep the standard coverage bar; world-knowledge-shaped and
+   anchor-less turns get a STRICT bar (``strict=True`` →
+   :data:`DEFAULT_STRICT_MIN_COVERAGE`), so the tallest-tower case stays
+   uninjected not because nobody looked but because nothing retrieved covers
+   the question.
 2. :func:`relevant_hits` — AFTER retrieval. Coverage of the question's content
    terms plus a within-call relative floor. Deliberately NOT an absolute score
    threshold: ``SearchHit.score`` is documented as comparable only within a
-   single call, so a fixed cutoff would be noise.
+   single call, so a fixed cutoff would be noise. Coverage counts only
+   non-stopword terms — a generic question verb ("heisst", "called") in the
+   denominator once made the bar unreachable for real German questions.
 3. :func:`frame_context_block` — AT injection. The block states what it is and
    grants explicit permission to ignore it, instead of arriving as bare text
    the model reads as an instruction.
 
-Policy note — the default is to NOT inject. When the gate is unsure, the turn
-proceeds without memory context, because the router brain holds the
-``wiki-recall`` tool and can look something up deliberately when it notices it
-needs to. A miss therefore degrades to "the model asks the memory itself",
-not to "the knowledge is unreachable" — while a false injection degrades every
-answer it touches. Recall the tool can recover; relevance it cannot.
+Policy note — a WRONG injection is still the worse failure, but the defense
+is the strict coverage bar plus the framing contract, no longer a refusal to
+search. The router brain additionally holds the ``wiki-recall`` tool and can
+look something up deliberately when the injected context is not enough.
 
 Languages: the matcher carries de/en/es tokens as equal peers (CLAUDE.md §1
 closed-list item 3 — speech-recognition input vocabulary, matching data rather
@@ -61,6 +64,7 @@ from jarvis.brain.wiki_relevance_vocab import (
     PERSONAL_MARKERS,
     PLANNING_PHRASES,
     RECOLLECTION_PHRASES,
+    STOPWORDS,
 )
 
 __all__ = [
@@ -69,6 +73,7 @@ __all__ = [
     "relevant_hits",
     "frame_context_block",
     "content_terms",
+    "fold_text",
 ]
 
 
@@ -76,17 +81,35 @@ __all__ = [
 # Folding
 # ---------------------------------------------------------------------------
 
+# German umlauts must become their transliterated digraphs (ä -> ae, ö -> oe,  # i18n-allow: quoted umlaut fold forms
+# ü -> ue) because every German vocabulary entry is written in that form  # i18n-allow: quoted umlaut fold forms
+# ("wofuer", "erzaehl", "vorschlaege"). A plain NFKD combining-strip produces
+# the OTHER ascii form ("wofur", "erzahl") and silently disabled every
+# umlaut-carrying German phrase against real STT output — the exact defect
+# ``turn_planner._normalize`` documents and fixed for the delegation
+# vocabulary; the memory gate never received the same fix.
+_UMLAUT_TRANSLITERATION = str.maketrans(
+    {"ä": "ae", "ö": "oe", "ü": "ue"}  # i18n-allow: umlaut mapping data
+)
 
-def _fold(text: str) -> str:
-    """Lower-case and strip umlauts/accents so one pattern matches all spellings.
 
-    The German sharp-s is expanded to a double s before the accent strip,
-    because NFKD decomposition leaves that character untouched; without the
-    expansion the folded patterns below could never match it.
+def fold_text(text: str) -> str:
+    """Lower-case and fold umlauts/accents so one pattern matches all spellings.
+
+    The German sharp-s is expanded to a double s and the umlauts to their
+    digraphs BEFORE the NFKD accent strip (which handles the remaining
+    diacritics, e.g. Spanish accents). Public because keyword extraction in
+    ``wiki_context`` must fold with exactly these rules to hit the same
+    pre-folded :data:`~jarvis.brain.wiki_relevance_vocab.STOPWORDS`.
     """
     lowered = text.lower().replace("ß", "ss")  # i18n-allow: sharp-s input folding
+    lowered = lowered.translate(_UMLAUT_TRANSLITERATION)
     decomposed = unicodedata.normalize("NFKD", lowered)
     return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
+# Internal shorthand kept for readability of the matchers below.
+_fold = fold_text
 
 
 # ---------------------------------------------------------------------------
@@ -137,45 +160,52 @@ _WORD_RE = re.compile(r"\w+", re.UNICODE)
 class MemoryVerdict:
     """Outcome of the pre-retrieval gate.
 
-    ``consult`` is the decision; ``reason`` is a short machine-stable slug for
-    logging and telemetry, never user-facing prose.
+    ``consult`` is the decision to search; ``strict`` asks the caller to apply
+    the strict coverage bar (:data:`DEFAULT_STRICT_MIN_COVERAGE`) to whatever
+    comes back — the retrieval-first stand-in for the old refusal to search.
+    ``reason`` is a short machine-stable slug for logging and telemetry,
+    never user-facing prose.
     """
 
     consult: bool
     reason: str
+    strict: bool = False
 
 
 _SKIP_TOO_SHORT = MemoryVerdict(False, "too_short")
-_SKIP_GENERAL_KNOWLEDGE = MemoryVerdict(False, "general_knowledge")
-_SKIP_NO_PERSONAL_ANCHOR = MemoryVerdict(False, "no_personal_anchor")
 _CONSULT_RECOLLECTION = MemoryVerdict(True, "recollection_phrase")
 _CONSULT_PLANNING = MemoryVerdict(True, "planning_advice")
 _CONSULT_PERSONAL_LOOKUP = MemoryVerdict(True, "personal_lookup")
+_PROBE_WORLD_SHAPE = MemoryVerdict(True, "world_shape_probe", strict=True)
+_PROBE_NO_ANCHOR = MemoryVerdict(True, "no_anchor_probe", strict=True)
 
 
 def should_consult_memory(user_text: str) -> MemoryVerdict:
-    """Decide whether this turn should search the personal memory at all.
+    """Decide how this turn consults the personal memory.
 
-    Order matters:
+    Retrieval-first: the only turns that skip the (single-digit-millisecond,
+    local) search are fragments too short to mean anything. Everything else
+    searches, and the verdict grades the injection bar instead:
 
     1. Too short / no words -> skip (greetings, "ok", "danke").
-    2. Explicit recollection phrasing -> consult, even without a possessive
-       ("do you remember where we were?").
-    3. Planning / recommendation / decision phrasing -> consult, also without a
-       possessive ("what should I do", "what is the fastest way to X", "any
-       ideas for the weekend"). Advice is where knowing the person changes the
-       answer, so this turn class earns a look. Checked BEFORE step 4 because
+    2. Explicit recollection phrasing -> consult, standard bar, even without a
+       possessive ("do you remember where we were?").
+    3. Planning / recommendation / decision phrasing -> consult, standard bar
+       ("what should I do", "any ideas for the weekend"): advice is where
+       knowing the person changes the answer. Checked before step 5 because
        the two shapes overlap and the advice reading is the useful one.
-    4. General-knowledge shape WITHOUT a personal marker -> skip. This is the
-       tallest-tower case and the whole reason the gate exists.
-    5. Personal marker AND a lookup shape -> consult.
-    6. Anything else -> skip, and let the brain reach for ``wiki-recall`` if it
-       decides it needs the memory (see the policy note in the module docstring).
+    4. Personal marker AND a lookup shape -> consult, standard bar.
+    5. General-knowledge shape without a personal marker -> consult with the
+       STRICT bar. The tallest-tower case: a weather question finds nothing
+       that covers it and stays clean, while "who is <person in the vault>?"
+       — the same grammatical shape — finally gets its page.
+    6. Anything else -> consult with the STRICT bar. Statements ("Bruno hat
+       morgen Geburtstag") used to be dropped unsearched; now the vault gets
+       to offer a page that genuinely covers them.  # i18n-allow: quoted German utterance
 
     Opening the gate is not injecting: every consult verdict still has to pass
-    :func:`relevant_hits` and arrives wrapped by :func:`frame_context_block`,
-    so a planning turn with nothing relevant in the vault produces exactly the
-    same silence it produced before this class existed.
+    :func:`relevant_hits` (strict verdicts against the strict coverage bar)
+    and arrives wrapped by :func:`frame_context_block`.
 
     Never raises: an unusable input degrades to a skip verdict.
     """
@@ -189,11 +219,11 @@ def should_consult_memory(user_text: str) -> MemoryVerdict:
     if _PLANNING_RE.search(folded):
         return _CONSULT_PLANNING
     personal = bool(_PERSONAL_RE.search(folded))
-    if _WORLD_KNOWLEDGE_RE.search(folded) and not personal:
-        return _SKIP_GENERAL_KNOWLEDGE
     if personal and _LOOKUP_RE.search(folded):
         return _CONSULT_PERSONAL_LOOKUP
-    return _SKIP_NO_PERSONAL_ANCHOR
+    if _WORLD_KNOWLEDGE_RE.search(folded) and not personal:
+        return _PROBE_WORLD_SHAPE
+    return _PROBE_NO_ANCHOR
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +235,12 @@ def should_consult_memory(user_text: str) -> MemoryVerdict:
 #: four is what produces an unrelated page that merely shares a common word.
 DEFAULT_MIN_COVERAGE = 0.5
 
+#: The coverage bar for STRICT verdicts (world-shaped or anchor-less turns
+#: that only search because retrieval is cheap). A page must cover nearly the
+#: whole question before it may ride along uninvited — "Berlin weather
+#: tomorrow" must not inject the Berlin travel page on one shared word.
+DEFAULT_STRICT_MIN_COVERAGE = 0.75
+
 #: A hit must also score at least this share of the best hit in the SAME call.
 #: Within one call the scores are documented as monotonic, so a relative floor
 #: is meaningful where an absolute cutoff would not be.
@@ -212,11 +248,17 @@ DEFAULT_MIN_RELATIVE_SCORE = 0.35
 
 
 def content_terms(query: str, *, min_length: int = 3) -> tuple[str, ...]:
-    """Folded, deduplicated content words of a query, order preserved."""
+    """Folded, deduplicated content words of a query, order preserved.
+
+    Stopwords (function words plus generic question verbs, shared with the
+    keyword extractor) are excluded: they inflate the coverage denominator
+    without pointing at any page — "wie hiess mein Zahnarzt nochmal" must be
+    judged on "zahnarzt", not on "hiess"/"nochmal".  # i18n-allow: quoted German utterance
+    """
     seen: set[str] = set()
     terms: list[str] = []
     for token in _WORD_RE.findall(_fold(query)):
-        if len(token) < min_length or token in seen:
+        if len(token) < min_length or token in seen or token in STOPWORDS:
             continue
         seen.add(token)
         terms.append(token)

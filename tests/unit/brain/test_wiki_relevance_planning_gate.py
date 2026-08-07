@@ -67,7 +67,7 @@ def test_planning_beats_the_general_knowledge_skip() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Stays shut: general knowledge, smalltalk, quiz superlatives
+# Stays strict: general knowledge, smalltalk, quiz superlatives
 # ---------------------------------------------------------------------------
 
 
@@ -88,10 +88,26 @@ def test_planning_beats_the_general_knowledge_skip() -> None:
         "Wie funktioniert ein Dieselmotor?",  # i18n-allow: German speech input under test
     ],
 )
-def test_general_knowledge_still_never_consults_memory(utterance: str) -> None:
+def test_general_knowledge_gets_only_the_strict_probe(utterance: str) -> None:
+    """Retrieval-first: these turns may search, but never with the standard
+    bar — a vault page must cover nearly the whole question to ride along."""
     verdict = should_consult_memory(utterance)
-    assert verdict.consult is False, utterance
-    assert verdict.reason == "general_knowledge", utterance
+    assert verdict.consult is True, utterance
+    assert verdict.strict is True, utterance
+    assert verdict.reason == "world_shape_probe", utterance
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "ok",
+        "",
+        "   ",
+        "danke dir",  # i18n-allow: German smalltalk under test
+    ],
+)
+def test_fragments_skip_entirely(utterance: str) -> None:
+    assert should_consult_memory(utterance).consult is False, utterance
 
 
 @pytest.mark.parametrize(
@@ -103,13 +119,15 @@ def test_general_knowledge_still_never_consults_memory(utterance: str) -> None:
         "Alles klar bei dir?",  # i18n-allow: German smalltalk under test
         "Hey there, good morning",
         "thanks a lot for that",
-        "ok",
-        "",
-        "   ",
     ],
 )
-def test_smalltalk_never_consults_memory(utterance: str) -> None:
-    assert should_consult_memory(utterance).consult is False, utterance
+def test_smalltalk_gets_at_most_the_strict_probe(utterance: str) -> None:
+    """Retrieval-first: sentence-length smalltalk may search the (free,
+    local) vault, but only behind the strict bar — no greeting shares enough
+    content terms with a page to inject anything."""
+    verdict = should_consult_memory(utterance)
+    assert verdict.consult is True, utterance
+    assert verdict.strict is True, utterance
 
 
 def test_the_older_turn_classes_are_untouched() -> None:
@@ -120,9 +138,9 @@ def test_the_older_turn_classes_are_untouched() -> None:
     assert should_consult_memory("What are my billing rules?").reason == (
         "personal_lookup"
     )
-    assert should_consult_memory("Turn on the kitchen light").reason == (
-        "no_personal_anchor"
-    )
+    anchorless = should_consult_memory("Turn on the kitchen light")
+    assert anchorless.reason == "no_anchor_probe"
+    assert anchorless.strict is True
 
 
 def test_widened_gate_never_raises_on_odd_input() -> None:

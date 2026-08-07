@@ -561,3 +561,40 @@ def test_no_open_workspace_changes_nothing() -> None:
     assert plan_turn("Was hat Dana gemacht?", workspace_names=()).path is (
         TurnPath.NATIVE_REALTIME
     )
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # No possessive anywhere — the ownership+lookup rule never saw these,
+        # so they were answered natively by a model that cannot know the
+        # answer (recall audit 2026-08-04). Real umlaut spellings on purpose.
+        "Wann war ich zuletzt beim Zahnarzt?",  # i18n-allow: German speech-input fixture
+        "Weißt du noch, wo wir letztes Jahr im Urlaub waren?",  # i18n-allow: German fixture
+        "Wie hieß das Restaurant nochmal?",  # i18n-allow: German speech-input fixture
+        "Was ist nochmal bei dem Serverumzug passiert?",  # i18n-allow: German fixture
+        "Do you remember what I told you about the boat?",
+        "When was I last in Berlin?",
+    ],
+)
+def test_recall_of_the_users_past_delegates_as_private_data(utterance: str) -> None:
+    """Explicit recall of the user's own past is strong evidence: only the
+    orchestrator (Wiki memory / awareness episodes) can answer it."""
+    plan = plan_turn(utterance)
+    assert plan.path is TurnPath.ORCHESTRATOR
+    assert TurnReason.PRIVATE_DATA in plan.reasons
+    assert plan.requires_evidence is True
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # First-person past forms that are NOT unambiguous recall — they occur
+        # in ordinary storytelling and must not pay a delegation round trip.
+        "Ich habe gestern einen tollen Film gesehen.",  # i18n-allow: German speech-input fixture
+        "Gestern war ich im Kino und es war super.",  # i18n-allow: German speech-input fixture
+        "I have been thinking about that a lot.",
+    ],
+)
+def test_storytelling_past_tense_stays_native(utterance: str) -> None:
+    assert plan_turn(utterance).path is TurnPath.NATIVE_REALTIME

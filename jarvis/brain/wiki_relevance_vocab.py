@@ -7,8 +7,8 @@ navigation-intent and wake-trigger vocabularies (CLAUDE.md §1, closed-list
 item 3). Translating these tokens would make the gate deaf in that language.
 
 All tokens are written PRE-FOLDED: lower-case, no umlauts, no accents, sharp-s
-expanded. ``jarvis.brain.wiki_relevance._fold`` applies the same folding to
-incoming text, so "Wofür" and "wofuer" both reach the "wofuer" token here.
+expanded. ``jarvis.brain.wiki_relevance.fold_text`` applies the same folding
+to incoming text, so "Wofür" and "wofuer" both reach the "wofuer" token here.
 
 de / en / es are equal peers. Adding a language means adding its tokens to
 every tuple below — never a new branch in the logic module.
@@ -19,9 +19,11 @@ from __future__ import annotations
 __all__ = [
     "PERSONAL_MARKERS",
     "RECOLLECTION_PHRASES",
+    "STRONG_RECALL_PHRASES",
     "PLANNING_PHRASES",
     "GENERAL_KNOWLEDGE_PHRASES",
     "LOOKUP_MARKERS",
+    "STOPWORDS",
 ]
 
 
@@ -51,6 +53,35 @@ RECOLLECTION_PHRASES: tuple[str, ...] = (
     "were we", "did we", "what did i", "when did i", "when was i",
     # es
     "te acuerdas", "recuerdas", "cuando fui", "cuando estuve",
+    # "again"-shaped re-ask, all languages: the user once knew the answer and
+    # is asking the memory to restore it ("wie hiess das nochmal", "what was
+    # that called again", "como se llamaba"). The bare adverb is enough as a
+    # RECALL signal because gates 2+3 still decide what may be injected.
+    "nochmal", "nochmals", "noch mal", "noch gleich",
+    "was that again", "called again", "name again",
+    "como se llamaba", "otra vez como",
+)
+
+#: The UNAMBIGUOUS subset of the recollection phrasing, for callers where a
+#: false positive is expensive (the realtime turn planner: a delegation costs
+#: the user many seconds of silence, so broad members of
+#: :data:`RECOLLECTION_PHRASES` like "habe ich" must not force one). Every
+#: token here is a shape that practically only occurs when the user asks the
+#: assistant to bring back something from their own past.
+STRONG_RECALL_PHRASES: tuple[str, ...] = (
+    # de
+    "weisst du noch", "erinnerst du dich", "erinnerst du",
+    "wann war ich", "wann waren wir", "wann hatte ich", "wann hatten wir",
+    "wie hiess", "wie hiess nochmal", "was war nochmal", "wer war nochmal",
+    "wie heisst nochmal", "wie war nochmal", "was ist nochmal",
+    "was habe ich dir", "was hatte ich",
+    # en
+    "do you remember", "remember when", "when did i", "when was i",
+    "when were we", "what was that again", "what was it again",
+    "called again", "what did i tell you",
+    # es
+    "te acuerdas", "recuerdas cuando", "cuando fui", "cuando estuve",
+    "como se llamaba",
 )
 
 #: Planning / recommendation / decision shape — the second turn class that is
@@ -140,3 +171,82 @@ LOOKUP_MARKERS: tuple[str, ...] = (
     "como", "por que", "cuanto", "cuanta", "cuantas",
     "dime", "muestrame",
 )
+
+#: Function words and generic question verbs, PRE-FOLDED like everything in
+#: this module. Shared by keyword extraction (``wiki_context``) and coverage
+#: counting (``wiki_relevance.content_terms``): a term that appears in every
+#: second sentence carries no evidence about WHICH page answers the question,
+#: so keeping it in a query or a coverage denominator only dilutes both.
+#: Lived in ``wiki_context`` before, where it was compared against UNFOLDED
+#: input — real umlaut spellings sailed straight past entries like "fuer" and
+#: "ueber" and became junk keywords (root cause of the injector's
+#: ``no_relevant_hits`` misses on German turns).
+STOPWORDS: frozenset[str] = frozenset({
+    # German
+    "aber", "alle", "allem", "allen", "aller", "alles", "also", "ander",
+    "andere", "anderem", "anderen", "anderer", "anderes", "anderm", "andern",
+    "anderr", "anders", "auch", "auf", "aus", "bald", "beime", "beim",
+    "bereits", "bin", "bist", "bitte", "bzw", "dabei", "dadurch", "damit",
+    "dann", "dass", "dein", "deine", "deinem", "deinen", "deiner", "deines",
+    "denen", "denn", "derer", "dessen", "dies", "diese", "diesem", "diesen",
+    "dieser", "dieses", "doch", "durch", "ein", "eine", "einem", "einen",
+    "einer", "eines", "einig", "einige", "einigem", "einigen", "einiger",
+    "einiges", "einmal", "erst", "etwa", "euch", "euer", "eure", "eurem",
+    "euren", "eurer", "eures", "falls", "fast", "fuer", "ganz", "gemacht",
+    "gibt", "hatte", "haben", "habe", "habt", "hier", "hinter", "ihnen",
+    "ihrer", "ihrem", "ihres", "ihren", "indem", "irgend", "ist", "jede",
+    "jedem", "jeden", "jeder", "jedes", "jetzt", "kein", "keine", "keinem",
+    "keinen", "keiner", "keines", "kann", "kannst", "konnte", "koennen",
+    "macht", "manche", "manchem", "manchen", "mancher", "manches", "mein",
+    "meine", "meinem", "meinen", "meiner", "meines", "mehr", "mich", "muss",
+    "nach", "nicht", "noch", "oder", "ohne", "sehr", "sein", "seine",
+    "seinem", "seinen", "seiner", "seines", "seit", "selbst", "sich", "sie",
+    "sind", "soll", "sollen", "sollte", "sondern", "sonst", "ueber", "und",
+    "unser", "unsere", "unserem", "unseren", "unserer", "unseres", "unter",
+    "viel", "viele", "vielem", "vielen", "vieler", "vieles", "vom", "von",
+    "vor", "wann", "ward", "warum", "was", "weg", "weil", "welche", "welchem",
+    "welchen", "welcher", "welches", "wenn", "wer", "werden", "wie", "wieder",
+    "will", "wird", "wirst", "wohl", "worden", "wurden", "wurde",
+    "zwar", "zwischen",
+    # Generic German question/event verbs — "wie hiess X nochmal", "was ist
+    # bei Y passiert": the verb names the QUESTION SHAPE, never the page.
+    "heisst", "heissen", "hiess", "hiessen", "genannt", "nochmal",
+    "nochmals", "passiert", "passierte", "gewesen", "geworden", "gehabt",
+    "brauche", "brauchst", "brauchen", "gebraucht",
+    # German pronominal question adverbs and discourse fillers — pure
+    # question shape ("Wofür brauche ich X?" is about X, never about
+    # "wofuer").  # i18n-allow: quoted German utterance
+    "wofuer", "worueber", "woran", "worauf", "womit", "wovon", "wobei",
+    "wonach", "worin", "woher", "wohin", "wieso", "weshalb",
+    "eigentlich", "zuletzt", "uebrigens", "vielleicht",
+    # English
+    "about", "above", "after", "again", "against", "among", "any",
+    "are", "because", "been", "before", "being", "between", "both", "but",
+    "came", "can", "come", "could", "did", "does", "doing", "done", "down",
+    "during", "each", "few", "for", "from", "further", "gave", "get", "give",
+    "goes", "going", "gone", "got", "had", "has", "have", "having", "here",
+    "him", "his", "how", "into", "its", "just", "know", "like", "long",
+    "look", "make", "many", "more", "most", "much", "must", "need", "new",
+    "next", "not", "now", "old", "once", "only", "other", "our", "out",
+    "over", "same", "say", "should", "since", "some", "still", "such",
+    "tell", "than", "that", "the", "their", "them", "then", "there", "these",
+    "they", "this", "those", "though", "through", "time", "told", "too",
+    "under", "until", "upon", "use", "used", "using", "very", "want", "well",
+    "were", "what", "when", "where", "which", "while", "who", "whom",
+    "why", "with", "would", "you", "your",
+    # Generic English question/event verbs and fillers (mirror of the German
+    # block above)
+    "called", "named", "happened", "happen", "actually", "really",
+    "basically", "anyway", "maybe",
+    # Short German articles and pronouns
+    "das", "dem", "den", "der", "des", "die", "dir", "du",
+    "hat", "ich", "ihm", "ihn", "ihr", "ins", "man", "mir", "mit",
+    "nun", "nur", "pro", "sei", "uns", "war", "wir", "wen",
+    "zum", "zur",
+    # Spanish function words and generic question verbs — es is an equal peer
+    "para", "pero", "porque", "como", "cuando", "donde", "quien", "cual",
+    "esta", "este", "esto", "estas", "estos", "son", "una", "uno", "unos",
+    "unas", "los", "las", "del", "con", "sin", "sobre", "entre", "desde",
+    "hasta", "muy", "mas", "menos", "tambien", "llama", "llamaba", "paso",
+    "pasado", "realmente", "necesito", "necesitas", "quizas",
+})

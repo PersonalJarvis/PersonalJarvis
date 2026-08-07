@@ -171,6 +171,28 @@ class VaultSearch:
             log.warning("VaultSearch: unexpected error during search: %s", exc)
             return []
 
+    def warm_up(self) -> None:
+        """Open the connection and run one throwaway FTS query.
+
+        The lazy ``_get_conn`` (open + ``ensure_schema``) otherwise runs
+        INSIDE the injector's per-turn latency budget, and losing that race
+        on the first qualifying turn of a process cost the turn its context
+        (logged ``reason=timeout``). Meant to be called once from a
+        background thread at boot — never on the startup critical path
+        (AP-26). Failures are non-fatal: the next ``search`` simply pays the
+        cold open itself.
+        """
+        try:
+            conn = self._get_conn()
+            conn.execute(
+                "SELECT rowid FROM wiki_fts WHERE wiki_fts MATCH ? LIMIT 1",
+                ('"warmup"',),
+            ).fetchall()
+        except Exception as exc:  # noqa: BLE001
+            # Missing table = index not built yet; anything else is the same
+            # degraded-but-working state search() already tolerates.
+            log.debug("VaultSearch warm_up skipped: %s", exc)
+
     def close(self) -> None:
         """Close the owned DB connection, if any."""
         if self._owns_conn and self._conn is not None:
@@ -336,17 +358,20 @@ def _leading_text(body: str | None, limit: int = _PREVIEW_CHARS) -> str:
 
 
 def _normalise_bm25(raw: float) -> float:
-    """Normalise FTS5 BM25 to [0.0, 1.0] higher-is-better.
+    """Normalise FTS5 BM25 to [0.0, 1.0) higher-is-better.
 
-    FTS5 BM25 returns lower (more negative) values for better matches.
-    Formula: ``1.0 / (1.0 + max(0.0, raw))``.
+    FTS5 BM25 returns NEGATIVE values for real matches, more negative =
+    better. Formula: ``m / (1.0 + m)`` with ``m = max(0.0, -raw)``, a
+    monotonic map of match strength onto [0.0, 1.0).
 
-    - raw <= 0  (good match): score → close to 1.0
-    - raw == 0  (exact):      score == 1.0
-    - raw > 0   (impossible in practice for a real match, but clamped):
-                              score < 1.0
+    The previous formula (``1.0 / (1.0 + max(0.0, raw))``) clamped every
+    negative raw value to the SAME score 1.0 — believable at a glance
+    because "good match → close to 1.0" held, but with zero spread the
+    relative-score floor in ``wiki_relevance.relevant_hits`` compared
+    every hit against ``1.0 * factor`` and could never drop anything.
     """
-    return 1.0 / (1.0 + max(0.0, float(raw)))
+    strength = max(0.0, -float(raw))
+    return strength / (1.0 + strength)
 
 
 def _default_db_path() -> Path:

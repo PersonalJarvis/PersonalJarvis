@@ -88,6 +88,29 @@ _OWNERSHIP_RE = re.compile(
     r"mein\w*|unser\w*|mir|wir|ueber mich|uber mich|erinner\w* mich|"  # i18n-allow: speech input
     r"mi|mis|mio|nuestr\w*|sobre mi|recuerd\w* de mi)\b"  # i18n-allow: speech input
 )
+# Explicit recall of the user's own past ("weisst du noch", "wann war ich",
+# "was war nochmal ...") — the one personal-data shape that carries NO
+# possessive, so the ownership+lookup rule above never saw it and the turn
+# was answered natively by a model that cannot know the answer (recall audit
+# 2026-08-04). Built from the curated STRONG subset of the memory gate's
+# recollection vocabulary: those phrases are unambiguous enough to be worth a
+# delegation round trip, while broad members of the full recollection set
+# ("habe ich") are not. The vocabulary is pre-folded in the same ae/oe/ue
+# convention `_normalize` produces.  # i18n-allow: names quoted German recall idioms
+_RECALL_RE: re.Pattern[str] | None
+try:
+    from jarvis.brain.wiki_relevance_vocab import STRONG_RECALL_PHRASES
+
+    _RECALL_RE = re.compile(
+        r"\b(?:"
+        + "|".join(
+            re.escape(phrase)
+            for phrase in sorted(set(STRONG_RECALL_PHRASES), key=len, reverse=True)
+        )
+        + r")\b"
+    )
+except Exception:  # noqa: BLE001 — planner must import even if the vocab moves
+    _RECALL_RE = None
 # Colloquial temporal particles (German "gerade", "eben", "vorhin",
 # "soeben") are deliberately NOT in this vocabulary: in spoken language they
 # are discourse fillers, not freshness claims, and treating them as
@@ -613,6 +636,13 @@ def plan_turn(
         and (lookup or action_intent)
         and not (deliberative or opinion or why_question)
     ):
+        reasons.add(TurnReason.PRIVATE_DATA)
+    # Recall of the user's own past is STRONG evidence, deliberately outside
+    # the suppressors: "wann war ich zuletzt beim Zahnarzt?" reads as
+    # first-person smalltalk to every weak heuristic, yet only the
+    # orchestrator (Wiki memory / awareness episodes) can answer
+    # it.  # i18n-allow: quoted German recall utterance
+    if _RECALL_RE is not None and _RECALL_RE.search(normalized):
         reasons.add(TurnReason.PRIVATE_DATA)
     if _LOCAL_STATE_RE.search(normalized) and not definition:
         reasons.add(TurnReason.LOCAL_STATE)

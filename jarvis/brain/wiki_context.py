@@ -13,17 +13,21 @@ Relevance contract (``jarvis.brain.wiki_relevance``):
     back is what welds unrelated personal facts onto general-knowledge answers.
     Three gates, in order:
 
-    1. BEFORE searching, ``should_consult_memory`` skips turns that neither ask
-       about the user's own life nor ask for a course of action for them
-       (planning / recommendation / decision turns, where the right answer
-       depends on who is asking).  A general-knowledge question never touches
-       the vault at all — no latency, no context, no non-sequitur.
+    1. BEFORE searching, ``should_consult_memory`` skips only fragments too
+       short to mean anything. Every other turn searches (retrieval-first —
+       the vault query is local and single-digit milliseconds); the verdict
+       instead grades HOW STRICT gate 2 must be: recollection / planning /
+       personal turns keep the standard coverage bar, world-shaped and
+       anchor-less turns must clear the strict bar before anything rides
+       along. The 2026-08-04 recall audit found the old refuse-to-search
+       default produced two full live days without one injected turn.
     2. AFTER searching, ``relevant_hits`` drops hits that merely share a common
-       word with the question.
+       word with the question (strict verdicts: hits must cover nearly the
+       whole question).
     3. AT injection, ``frame_context_block`` states that the notes may be
        irrelevant and that the model must ignore them if so.
 
-    When the gate declines a turn the knowledge is not lost: the router brain
+    When the gates decline a turn the knowledge is not lost: the router brain
     holds the ``wiki-recall`` tool and can look something up deliberately.
 
 UltraWiki mode (decision D-5, either-or):
@@ -85,65 +89,16 @@ if TYPE_CHECKING:
 from jarvis.brain.wiki_relevance import (
     DEFAULT_MIN_COVERAGE,
     DEFAULT_MIN_RELATIVE_SCORE,
+    DEFAULT_STRICT_MIN_COVERAGE,
+    fold_text,
     frame_context_block,
     relevant_hits,
     should_consult_memory,
 )
+from jarvis.brain.wiki_relevance_vocab import STOPWORDS
 from jarvis.memory.wiki.telemetry import telemetry
 
 log = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Stopword set (German + English, inlined — no nltk dependency)
-# ---------------------------------------------------------------------------
-
-_STOPWORDS: frozenset[str] = frozenset({
-    # German
-    "aber", "alle", "allem", "allen", "aller", "alles", "also", "ander",
-    "andere", "anderem", "anderen", "anderer", "anderes", "anderm", "andern",
-    "anderr", "anders", "auch", "auf", "aus", "bald", "beime", "beim",  # i18n-allow: German stopword list, matched against user text for wiki relevance scoring
-    "bereits", "bin", "bist", "bitte", "bzw", "dabei", "dadurch", "damit",
-    "dann", "dass", "dein", "deine", "deinem", "deinen", "deiner", "deines",
-    "denen", "denn", "derer", "dessen", "dies", "diese", "diesem", "diesen",
-    "dieser", "dieses", "doch", "durch", "ein", "eine", "einem", "einen",  # i18n-allow: same German stopword list
-    "einer", "eines", "einig", "einige", "einigem", "einigen", "einiger",
-    "einiges", "einmal", "erst", "etwa", "euch", "euer", "eure", "eurem",
-    "euren", "eurer", "eures", "falls", "fast", "fuer", "ganz", "gemacht",  # i18n-allow: same German stopword list
-    "gibt", "hatte", "haben", "habe", "habt", "hier", "hinter", "ihnen",  # i18n-allow: same German stopword list
-    "ihrer", "ihrem", "ihres", "ihren", "indem", "irgend", "ist", "jede",
-    "jedem", "jeden", "jeder", "jedes", "jetzt", "kein", "keine", "keinem",  # i18n-allow: same German stopword list
-    "keinen", "keiner", "keines", "kann", "kannst", "konnte", "koennen",  # i18n-allow: same German stopword list
-    "macht", "manche", "manchem", "manchen", "mancher", "manches", "mein",
-    "meine", "meinem", "meinen", "meiner", "meines", "mehr", "mich", "muss",  # i18n-allow: same German stopword list
-    "nach", "nicht", "noch", "oder", "ohne", "sehr", "sein", "seine",  # i18n-allow: same German stopword list
-    "seinem", "seinen", "seiner", "seines", "seit", "selbst", "sich", "sie",
-    "sind", "soll", "sollen", "sollte", "sondern", "sonst", "ueber", "und",  # i18n-allow: same German stopword list
-    "unser", "unsere", "unserem", "unseren", "unserer", "unseres", "unter",
-    "viel", "viele", "vielem", "vielen", "vieler", "vieles", "vom", "von",  # i18n-allow: same German stopword list
-    "vor", "wann", "ward", "warum", "was", "weg", "weil", "welche", "welchem",
-    "welchen", "welcher", "welches", "wenn", "wer", "werden", "wie", "wieder",  # i18n-allow: same German stopword list
-    "will", "wird", "wirst", "wohl", "worden", "wurden", "wurde", "wird",  # i18n-allow: same German stopword list
-    "zwar", "zwischen",
-    # English
-    "about", "above", "after", "again", "against", "among", "any",
-    "are", "because", "been", "before", "being", "between", "both", "but",
-    "came", "can", "come", "could", "did", "does", "doing", "done", "down",
-    "during", "each", "few", "for", "from", "further", "gave", "get", "give",
-    "goes", "going", "gone", "got", "had", "has", "have", "having", "here",
-    "him", "his", "how", "into", "its", "just", "know", "like", "long",
-    "look", "make", "many", "more", "most", "much", "must", "need", "new",
-    "next", "not", "now", "old", "once", "only", "other", "our", "out",
-    "over", "same", "say", "should", "since", "some", "still", "such",
-    "tell", "than", "that", "the", "their", "them", "then", "there", "these",
-    "they", "this", "those", "though", "through", "time", "told", "too",
-    "under", "until", "upon", "use", "used", "using", "very", "want", "well", "were", "what", "when", "where", "which", "while", "who", "whom",
-    "why", "with", "would", "you", "your",
-    # Short German articles and pronouns
-    "das", "dem", "den", "der", "des", "die", "dir", "du", "ein",  # i18n-allow: same German stopword list
-    "hat", "ich", "ihm", "ihn", "ihr", "ins", "man", "mir", "mit",
-    "nun", "nur", "pro", "sei", "uns", "war", "wir", "wen",
-    "zum", "zur",  # i18n-allow: same German stopword list
-})
 
 # Tokenize on whitespace and common punctuation
 _TOKEN_RE = re.compile(r"[^\w\s]|\s+", re.UNICODE)
@@ -189,12 +144,15 @@ def _extract_keywords(
     """
     raw_tokens = _TOKEN_RE.sub(" ", text).split()
 
-    # Filter by length and stopwords
+    # Filter by length and stopwords. The stopword register is PRE-FOLDED
+    # ("fuer", "ueber"), so the token must be folded the same way before the  # i18n-allow: folded stopword forms
+    # lookup — comparing ``tok.lower()`` let every real umlaut
+    # spelling through as a junk keyword.  # i18n-allow: folded stopword forms
     candidates: list[str] = []
-    for i, tok in enumerate(raw_tokens):
+    for tok in raw_tokens:
         if len(tok) < min_length:
             continue
-        if tok.lower() in _STOPWORDS:
+        if fold_text(tok) in STOPWORDS:
             continue
         # Skip leading token of the sentence (likely a greeting/verb, not a noun)
         # unless the whole utterance is very short (fewer than 4 tokens total)
@@ -248,14 +206,21 @@ class WikiContextInjector:
         *,
         search: VaultSearch | None,
         max_chars: int = 1500,
-        latency_budget_ms: int = 80,
+        latency_budget_ms: int = 150,
         min_keyword_length: int = 4,
         relevance_gate: bool = True,
         min_coverage: float = DEFAULT_MIN_COVERAGE,
+        strict_min_coverage: float = DEFAULT_STRICT_MIN_COVERAGE,
         min_relative_score: float = DEFAULT_MIN_RELATIVE_SCORE,
         ultra_latency_budget_ms: int = DEFAULT_ULTRA_LATENCY_BUDGET_MS,
         ultra_k: int = DEFAULT_ULTRA_K,
     ) -> None:
+        # 150 ms (was 80): the vault leg opens its SQLite connection lazily
+        # INSIDE the budget, so the first qualifying turn of a process paid
+        # the open+schema check against 80 ms and logged reason=timeout.
+        # The factory warms the connection in the background at boot; the
+        # wider budget covers the cold path when that race is lost, and is
+        # far below anything audible next to a multi-second brain call.
         self._search = search
         self._max_chars = max_chars
         self._latency_budget_ms = latency_budget_ms
@@ -268,6 +233,7 @@ class WikiContextInjector:
         # by patching code — the defaults stay on.
         self._relevance_gate = relevance_gate
         self._min_coverage = min_coverage
+        self._strict_min_coverage = strict_min_coverage
         self._min_relative_score = min_relative_score
 
     def _miss(self, t0: float, reason: str) -> None:
@@ -316,14 +282,26 @@ class WikiContextInjector:
             self._miss(t0, "no_search")
             return system_prompt
 
-        # Gate 1 (pre-retrieval): is this a question about the user's own life
-        # at all? A general-knowledge question must never reach the vault —
-        # that is what produces personalized non-sequiturs. Regex-only, so the
-        # skip path costs microseconds and SAVES the search latency.
+        # Gate 1 (pre-retrieval): retrieval-first — only fragments too short
+        # to mean anything skip the search. The verdict's job is grading gate
+        # 2: a recollection/planning/personal turn keeps the standard
+        # coverage bar, a world-shaped or anchor-less turn must clear the
+        # strict one. Regex-only either way (AP-9).
+        strict = False
+        verdict_reason = "gate_off"
         if self._relevance_gate:
             verdict = should_consult_memory(user_text)
             if not verdict.consult:
                 self._miss(t0, verdict.reason)
+                return system_prompt
+            strict = verdict.strict
+            verdict_reason = verdict.reason
+            # The strict probe is a retrieval-first bet that only pays where
+            # looking is free — the local FTS vault. The UltraWiki leg may
+            # embed the query through a cloud provider on every search, and
+            # an unanchored turn is not worth that spend per turn.
+            if strict and ultra_service is not None:
+                self._miss(t0, "ultra_probe_skipped")
                 return system_prompt
 
         # Extract keywords
@@ -342,16 +320,21 @@ class WikiContextInjector:
         budget_ms = self._ultra_latency_budget_ms if ultra else self._latency_budget_ms
         stage_timings: dict[str, float] = {}
         try:
-            hits = await asyncio.wait_for(
-                _run_ultra_search(
+            if ultra:
+                retrieval = _run_ultra_search(
                     ultra_service,
                     query,
                     self._ultra_k,
                     budget_s=budget_ms / 1000.0,
                     timings=stage_timings,
                 )
-                if ultra
-                else _run_search(self._search, query),
+            elif self._search is not None:
+                retrieval = _run_search(self._search, query)
+            else:  # unreachable: the no-memory fast path returned above
+                self._miss(t0, "no_search")
+                return system_prompt
+            hits = await asyncio.wait_for(
+                retrieval,
                 timeout=budget_ms / 1000.0,
             )
         except TimeoutError:
@@ -393,11 +376,16 @@ class WikiContextInjector:
             hits = relevant_hits(
                 hits,
                 query,
-                min_coverage=self._min_coverage,
+                min_coverage=self._strict_min_coverage
+                if strict
+                else self._min_coverage,
                 min_relative_score=0.0 if ultra else self._min_relative_score,
             )
             if not hits:
-                self._miss(t0, "no_relevant_hits")
+                self._miss(
+                    t0,
+                    "no_relevant_hits_strict" if strict else "no_relevant_hits",
+                )
                 return system_prompt
 
         latency_ms = int((time.monotonic() - t0) * 1000)
@@ -440,10 +428,13 @@ class WikiContextInjector:
 
         telemetry.inc("wiki_context_hits")
         log.info(
-            "WikiContextInjector injected=True hits=%d latency_ms=%d source=%s%s",
+            "WikiContextInjector injected=True hits=%d latency_ms=%d source=%s "
+            "verdict=%s mode=%s%s",
             hits_included,
             latency_ms,
             "ultrawiki" if ultra else "vault",
+            verdict_reason,
+            "strict" if strict else "standard",
             f" stages={_stage_summary(stage_timings)}" if stage_timings else "",
         )
         return augmented

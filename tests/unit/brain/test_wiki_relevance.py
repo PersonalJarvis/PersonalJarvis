@@ -4,6 +4,11 @@ The headline case ("the Bugatti case", maintainer report 2026-07-25): a
 general-knowledge question must never drag an unrelated personal fact into the
 answer. Asking for the tallest tower in the world must not produce advice about
 what the user owns.
+
+Since the 2026-08-04 recall audit the gate is retrieval-first: the defense
+against the Bugatti case is no longer a refusal to search but the STRICT
+coverage bar (``MemoryVerdict.strict``) — world-shaped turns search too, and
+only a page covering nearly the whole question may be injected.
 """
 
 from __future__ import annotations
@@ -13,7 +18,9 @@ from dataclasses import dataclass
 import pytest
 
 from jarvis.brain.wiki_relevance import (
+    DEFAULT_STRICT_MIN_COVERAGE,
     content_terms,
+    fold_text,
     frame_context_block,
     relevant_hits,
     should_consult_memory,
@@ -30,7 +37,7 @@ class FakeHit:
 
 
 # ---------------------------------------------------------------------------
-# Pre-retrieval gate — general knowledge never consults the memory
+# Pre-retrieval gate — general knowledge searches, but only behind the strict bar
 # ---------------------------------------------------------------------------
 
 
@@ -49,16 +56,21 @@ class FakeHit:
         "Explain reciprocal rank fusion.",
     ],
 )
-def test_general_knowledge_never_consults_memory(utterance: str) -> None:
+def test_general_knowledge_probes_only_behind_the_strict_bar(utterance: str) -> None:
+    """Retrieval-first: the turn may search ("who is X" can be a vault
+    person), but anything found must clear the strict coverage bar."""
     verdict = should_consult_memory(utterance)
-    assert verdict.consult is False
-    assert verdict.reason == "general_knowledge"
+    assert verdict.consult is True
+    assert verdict.strict is True
+    assert verdict.reason == "world_shape_probe"
 
 
-def test_possessive_turns_a_definitional_question_into_a_memory_question() -> None:
-    """ "What are the rules" is world knowledge; "my rules" is personal."""
-    assert should_consult_memory("What are the billing rules?").consult is False
-    assert should_consult_memory("What are my billing rules?").consult is True
+def test_possessive_relaxes_the_bar_of_a_definitional_question() -> None:
+    """ "What are the rules" is world-shaped (strict); "my rules" is personal."""
+    world = should_consult_memory("What are the billing rules?")
+    assert (world.consult, world.strict) == (True, True)
+    personal = should_consult_memory("What are my billing rules?")
+    assert (personal.consult, personal.strict) == (True, False)
 
 
 @pytest.mark.parametrize(
@@ -70,10 +82,31 @@ def test_possessive_turns_a_definitional_question_into_a_memory_question() -> No
         "Do you remember where we stayed?",
         "Wie heisst mein Zahnarzt?",  # i18n-allow: German user input under test
         "¿Te acuerdas de mi vuelo?",  # i18n-allow: Spanish user input under test
+        # REAL umlaut spellings, exactly as STT produces them. Regression for
+        # the fold defect: NFKD alone turned "wofür" into "wofur", which the
+        # pre-folded vocabulary ("wofuer") could never match — every
+        # umlaut-carrying German phrase was dead against real speech.
+        "Wofür brauche ich meinen Zweitrechner?",  # i18n-allow: German user input under test
+        "Worüber haben wir gestern gesprochen?",  # i18n-allow: German user input under test
+        "Was würdest du mir für den Umzug empfehlen?",  # i18n-allow: German user input under test
+        # The "again"-shaped re-ask the maintainer quoted in the recall audit.
+        "Wie hieß das Restaurant nochmal?",  # i18n-allow: German user input under test
+        "Was ist nochmal bei dem Projekt passiert?",  # i18n-allow: German user input under test
     ],
 )
-def test_personal_questions_do_consult_memory(utterance: str) -> None:
-    assert should_consult_memory(utterance).consult is True
+def test_personal_questions_consult_with_the_standard_bar(utterance: str) -> None:
+    verdict = should_consult_memory(utterance)
+    assert verdict.consult is True
+    assert verdict.strict is False
+
+
+def test_fold_text_matches_the_prefolded_vocabulary_convention() -> None:
+    """Umlauts become digraphs (ae/oe/ue), sharp-s becomes ss, Spanish
+    accents strip — the same convention ``turn_planner._normalize`` uses."""
+    assert fold_text("Wofür") == "wofuer"  # i18n-allow: German input under test
+    assert fold_text("erzähl") == "erzaehl"  # i18n-allow: German input under test
+    assert fold_text("heißt") == "heisst"  # i18n-allow: German input under test
+    assert fold_text("¿Qué?") == "¿que?"  # i18n-allow: Spanish input under test
 
 
 @pytest.mark.parametrize(
@@ -100,11 +133,24 @@ def test_smalltalk_and_fragments_skip(utterance: str) -> None:
     assert should_consult_memory(utterance).consult is False
 
 
-def test_action_requests_skip() -> None:
-    """An imperative is not a lookup — no memory search, no injected context."""
+def test_action_requests_probe_only_behind_the_strict_bar() -> None:
+    """An imperative may search (retrieval is cheap) but never injects
+    loosely — nothing in the vault covers "turn on the light" strongly."""
     turn_on_the_light_de = "Mach das Licht an"  # i18n-allow: German input under test
-    assert should_consult_memory(turn_on_the_light_de).consult is False
-    assert should_consult_memory("Turn on the kitchen light").consult is False
+    for utterance in (turn_on_the_light_de, "Turn on the kitchen light"):
+        verdict = should_consult_memory(utterance)
+        assert verdict.consult is True
+        assert verdict.strict is True
+        assert verdict.reason == "no_anchor_probe"
+
+
+def test_statements_probe_with_the_strict_bar() -> None:
+    """A statement mentioning a vault entity earns a strict-bar look — the
+    old gate dropped it unsearched ("no_personal_anchor")."""
+    bruno_birthday_de = "Bruno hat morgen Geburtstag"  # i18n-allow: German input under test
+    verdict = should_consult_memory(bruno_birthday_de)
+    assert verdict.consult is True
+    assert verdict.strict is True
 
 
 def test_gate_never_raises_on_odd_input() -> None:
@@ -161,10 +207,38 @@ def test_filter_tolerates_hits_missing_attributes() -> None:
     assert relevant_hits([Bare()], "dinner Example Contact") == []
 
 
-def test_content_terms_folds_and_deduplicates() -> None:
+def test_content_terms_folds_deduplicates_and_drops_stopwords() -> None:
+    """Function words and generic question verbs leave the coverage
+    denominator; only page-pointing terms remain."""
     mixed_case_de = "Über über ÜBER Reise"  # i18n-allow: German input under test
-    assert content_terms(mixed_case_de) == ("uber", "reise")
+    assert content_terms(mixed_case_de) == ("reise",)
     assert "?" not in "".join(content_terms("Wann? Wo?"))  # i18n-allow: German input
+    # "wie hiess mein Zahnarzt nochmal" must be judged on "zahnarzt" alone.
+    dentist_de = "Wie hieß mein Zahnarzt nochmal?"  # i18n-allow: German input under test
+    assert content_terms(dentist_de) == ("zahnarzt",)
+    assert content_terms("What was the dentist called again?") == ("dentist",)
+
+
+def test_strict_coverage_bar_requires_near_full_coverage() -> None:
+    """The retrieval-first replacement for refusing to search: a page sharing
+    one word with a three-term world question stays out under the strict bar,
+    while a page that genuinely covers the question gets in."""
+    berlin_travel = FakeHit(
+        title="Berlin travel notes",
+        snippet="Ideas for the next Berlin trip",
+        score=0.9,
+    )
+    query = "Berlin Wetter morgen"  # i18n-allow: German query under test
+    assert (
+        relevant_hits([berlin_travel], query, min_coverage=DEFAULT_STRICT_MIN_COVERAGE)
+        == []
+    )
+    bruno_page = FakeHit(
+        title="Bruno", snippet="Bruno is the user's climbing partner.", score=0.9
+    )
+    assert relevant_hits(
+        [bruno_page], "Bruno", min_coverage=DEFAULT_STRICT_MIN_COVERAGE
+    ) == [bruno_page]
 
 
 # ---------------------------------------------------------------------------
