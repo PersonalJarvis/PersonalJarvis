@@ -217,6 +217,55 @@ describe("PaneScrollRail", () => {
     ).toBe("terminal-Aria");
   });
 
+  it("pages the application from the visible arrow caps", () => {
+    const harness = fakeTerminal({ owner: "mouse-app" });
+    render(<RailHarness name="Odo" term={harness.term} />);
+    giveTrackGeometry("Odo");
+    const deltas: number[] = [];
+    screen
+      .getByTestId("xterm-screen-Odo")
+      .addEventListener("wheel", (event) =>
+        deltas.push((event as WheelEvent).deltaY),
+      );
+
+    fireEvent.click(screen.getByRole("button", { name: "Scroll older in Odo" }));
+    expect(deltas.length).toBeGreaterThan(0);
+    expect(deltas.every((delta) => delta < 0)).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Scroll newer in Odo" }));
+    expect(deltas.some((delta) => delta > 0)).toBe(true);
+  });
+
+  it("notices a mouse-tracking flip that arrives without any buffer event", () => {
+    vi.useFakeTimers({
+      toFake: [
+        "setInterval",
+        "clearInterval",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+      ],
+    });
+    try {
+      const harness = fakeTerminal({ owner: "terminal" });
+      render(<RailHarness name="Vera" term={harness.term} />);
+      const rail = screen.getByTestId("pane-scroll-rail-Vera");
+      expect(rail.dataset.scrollMode).toBe("terminal");
+
+      // A replayed session consumes the TUI's DECSET before the rail
+      // subscribes, so the flip reaches xterm without any later event.
+      (
+        harness.term.modes as { mouseTrackingMode: string }
+      ).mouseTrackingMode = "any";
+      act(() => {
+        vi.advanceTimersByTime(1600);
+      });
+
+      expect(rail.dataset.scrollMode).toBe("application");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("restores the current owner geometry when a TUI starts during a drag", () => {
     const harness = fakeTerminal({ owner: "terminal", line: 50 });
     render(<RailHarness name="Iris" term={harness.term} />);

@@ -2,10 +2,12 @@
  * One honest scroll rail for one Agentic-IDE terminal pane.
  *
  * Normal terminal history gets a conventional absolute thumb. Full-screen
- * coding TUIs keep their history inside the application, so their thumb is a
- * centred controller: drag it up or down and the application receives its own
- * standard wheel protocol. It springs back on release because claiming an
- * absolute position there would be a guess.
+ * coding TUIs keep their history inside the application, so no absolute
+ * position exists to draw; instead of a thumb pretending to be one, the rail
+ * becomes a visible controller — arrow caps that page the application and a
+ * grip that relays drags as the application's own wheel protocol. The grip
+ * springs back to centre on release because claiming a position would be a
+ * guess.
  */
 import {
   useCallback,
@@ -120,6 +122,16 @@ export function PaneScrollRail({
       for (const subscription of subscriptions) subscription?.dispose();
     };
   }, [epoch, scheduleSync, sync, terminalRef]);
+
+  useEffect(() => {
+    // A replayed session can hand this rail a terminal whose mouse-tracking
+    // DECSET was parsed before the subscriptions above existed, and a TUI can
+    // flip tracking without emitting anything else afterwards. Observed live:
+    // panes stuck on "no history" while the application was already scrolling.
+    // A slow poll is the safety net; sameView keeps it render-free.
+    const timer = window.setInterval(scheduleSync, 750);
+    return () => window.clearInterval(timer);
+  }, [scheduleSync]);
 
   useEffect(() => {
     const region = regionRef.current;
@@ -423,18 +435,34 @@ export function PaneScrollRail({
         <>
           <button
             type="button"
-            className="sr-only"
             aria-label={`Scroll older in ${name}`}
             aria-controls={controlsId}
+            onPointerDown={(event) => event.stopPropagation()}
             onClick={() => scrollApplicationPage(-1)}
-          />
+            className={cn(
+              "absolute inset-x-0 top-0 flex h-4 items-start justify-center rounded-t-full pt-1",
+              "text-[#e7c46e]/70 outline-none hover:text-[#e7c46e] focus-visible:text-[#e7c46e]",
+            )}
+          >
+            <svg viewBox="0 0 8 5" className="h-[5px] w-2 fill-current" aria-hidden="true">
+              <path d="M4 0 8 5H0Z" />
+            </svg>
+          </button>
           <button
             type="button"
-            className="sr-only"
             aria-label={`Scroll newer in ${name}`}
             aria-controls={controlsId}
+            onPointerDown={(event) => event.stopPropagation()}
             onClick={() => scrollApplicationPage(1)}
-          />
+            className={cn(
+              "absolute inset-x-0 bottom-0 flex h-4 items-end justify-center rounded-b-full pb-1",
+              "text-[#e7c46e]/70 outline-none hover:text-[#e7c46e] focus-visible:text-[#e7c46e]",
+            )}
+          >
+            <svg viewBox="0 0 8 5" className="h-[5px] w-2 fill-current" aria-hidden="true">
+              <path d="M4 5 0 0h8Z" />
+            </svg>
+          </button>
         </>
       )}
       <div
@@ -442,13 +470,25 @@ export function PaneScrollRail({
         data-pane-scroll-thumb="true"
         data-testid={`pane-scroll-thumb-${name}`}
         className={cn(
-          "absolute right-[3px] w-1.5 rounded-full bg-[#e7c46e]/65",
+          "absolute rounded-full bg-[#e7c46e]/65",
+          exact ? "right-[3px] w-1.5" : "right-[2px] w-2",
           "shadow-[0_0_0_1px_rgba(0,0,0,0.18)] transition-[background-color,top]",
           "group-hover:bg-[#e7c46e]/90 group-focus-visible:bg-[#e7c46e]/90",
           dragging && "bg-[#e7c46e] transition-none",
         )}
         style={{ top: geometry.top, height: geometry.height }}
-      />
+      >
+        {!exact && (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 top-1/2 flex -translate-y-1/2 flex-col items-center gap-[3px]"
+          >
+            <span className="h-[2px] w-[2px] rounded-full bg-[#141414]/70" />
+            <span className="h-[2px] w-[2px] rounded-full bg-[#141414]/70" />
+            <span className="h-[2px] w-[2px] rounded-full bg-[#141414]/70" />
+          </span>
+        )}
+      </div>
     </div>
   );
 }
