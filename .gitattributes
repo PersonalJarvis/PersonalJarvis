@@ -41,3 +41,8 @@ docs/supply-chain/*.md       text eol=lf
 install/in-toto/*.json       text eol=lf
 install/keys/*.pub           text eol=lf
 install/tuf/*.json           text eol=lf
+
+# Vendored upstream patches are applied byte-exactly under a SHA-256 gate
+# (jarvis/realtime/local_server/patching.py): a CRLF checkout would change
+# every inserted line and fail the result hash. Pin them to LF everywhere.
+*.patch                      text eol=lf
