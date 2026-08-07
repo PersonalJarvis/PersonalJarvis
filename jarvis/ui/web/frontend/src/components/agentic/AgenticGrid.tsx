@@ -1484,6 +1484,27 @@ export function AgenticGrid({
   };
 
   /*
+   * A pane that MOVED has to be seen landing.
+   *
+   * Reported 2026-08-07 as "dragging terminals just doesn't work": every drop
+   * had in fact been committed and persisted, but among a wall of
+   * near-identical panes a column swap repaints in one frame with nothing
+   * marking the pane that travelled — indistinguishable from nothing having
+   * happened. The panes now glide to their new boxes (see the cell's
+   * transition class) and the one that was carried wears the arrival ring.
+   * A nonce rather than the bare name, so dropping the same pane twice in a
+   * row re-arms the ring instead of the second drop landing unannounced.
+   */
+  const [justMoved, setJustMoved] = useState<{ name: string; nonce: number } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (justMoved === null) return;
+    const timer = window.setTimeout(() => setJustMoved(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [justMoved]);
+
+  /*
    * A pane was dragged onto another one.
    *
    * The move is asked of the backend rather than applied here first. An
@@ -1497,6 +1518,24 @@ export function AgenticGrid({
       setWorking(true);
       try {
         const next = await moveTerminal(moved, target, zone);
+        /*
+         * A drop that changes nothing must SAY so. "Right of T4" is a legal
+         * drop for the pane already sitting right of T4, and the backend
+         * answers it with the unchanged workspace — correct, and exactly what
+         * a user reads as "dragging is broken" when the grid just sits there
+         * (they repeat the identical gesture, observed 2026-08-07). Saying
+         * "already there" turns a silent nothing into an answer.
+         */
+        const placement = (
+          terms: readonly { name: string; column: number; slot: number }[],
+        ) => terms.map((pane) => `${pane.name}:${pane.column}.${pane.slot}`).join(" ");
+        if (placement(next.terminals) === placement(session.terminals)) {
+          pushToast(
+            "info",
+            t("agentic_grid.arrange.already_there").replace("{0}", moved),
+          );
+          return;
+        }
         // Column widths follow the panes that carried them, so a pane dropped
         // into a wide column does not drag that column's width away with it.
         sizes.setWeights((current) =>
@@ -1504,13 +1543,14 @@ export function AgenticGrid({
         );
         rebaseWeights(next.terminals);
         onSessionChanged?.(next);
+        setJustMoved({ name: moved, nonce: Date.now() });
       } catch (error) {
         pushToast("error", (error as Error).message);
       } finally {
         setWorking(false);
       }
     },
-    [onSessionChanged, pushToast, rebaseWeights, session.terminals, sizes.setWeights],
+    [onSessionChanged, pushToast, rebaseWeights, session.terminals, sizes.setWeights, t],
   );
 
   const arrange = usePaneArrange(
@@ -2521,12 +2561,27 @@ export function AgenticGrid({
               data-testid={`pane-cell-${term.name}`}
               className={cn(
                 "absolute min-h-0 min-w-0 rounded-lg",
+                // Rearranging has to be SEEN: boxes glide to their new places
+                // instead of teleporting in one repaint (see `justMoved`). Off
+                // while a seam is being dragged — those frames are written
+                // imperatively (`paintDraggedLayout`) and must track the
+                // pointer, not ease after it — and off for the stage/maximize
+                // style, which swaps to `inset` and cannot tween from here.
+                !chatView &&
+                  !isMaximized &&
+                  !layoutBusy &&
+                  "transition-[left,top,width,height] duration-300 ease-out motion-reduce:transition-none",
                 selectedTerminals.has(term.name) &&
                   "ring-2 ring-primary ring-offset-2 ring-offset-background",
                 // Just arrived — see `justOpened`. Second to the selection ring
                 // deliberately: selection is a thing the user is DOING, and it
                 // must keep its own answer while panes come and go.
                 justOpened.has(term.name) &&
+                  !selectedTerminals.has(term.name) &&
+                  "ring-2 ring-primary/70 ring-offset-2 ring-offset-background",
+                // Just landed after a drag — same ring, same reasoning: the
+                // move happened, and the grid says WHERE.
+                justMoved?.name === term.name &&
                   !selectedTerminals.has(term.name) &&
                   "ring-2 ring-primary/70 ring-offset-2 ring-offset-background",
                 chatView

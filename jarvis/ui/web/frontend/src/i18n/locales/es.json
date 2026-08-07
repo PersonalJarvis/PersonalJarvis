@@ -3759,7 +3759,8 @@
       "right": "A la derecha de {0}",
       "above": "Encima de {0}",
       "below": "Debajo de {0}",
-      "swap_hint": "· Mayús para intercambiar"
+      "swap_hint": "· Mayús para intercambiar",
+      "already_there": "{0} ya está exactamente ahí — nada se movió."
     },
     "history": {
       "open": "Ver el historial de prompts de {0}",

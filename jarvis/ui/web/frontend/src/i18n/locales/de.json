@@ -3759,7 +3759,8 @@
       "right": "Rechts von {0}",
       "above": "Über {0}",
       "below": "Unter {0}",
-      "swap_hint": "· Umschalt zum Tauschen"
+      "swap_hint": "· Umschalt zum Tauschen",
+      "already_there": "{0} ist schon genau dort — nichts verschoben."
     },
     "history": {
       "open": "Prompt-Verlauf für {0} öffnen",

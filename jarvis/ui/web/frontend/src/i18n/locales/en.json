@@ -3759,7 +3759,8 @@
       "right": "Right of {0}",
       "above": "Above {0}",
       "below": "Below {0}",
-      "swap_hint": "· Shift to swap"
+      "swap_hint": "· Shift to swap",
+      "already_there": "{0} is already exactly there — nothing moved."
     },
     "history": {
       "open": "View prompt history for {0}",

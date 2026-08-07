@@ -2275,6 +2275,46 @@ describe("rearranging panes", () => {
     expect(api.moveTerminal).not.toHaveBeenCalled();
   });
 
+  it("marks the pane that landed, so the move is SEEN", async () => {
+    // A committed move used to repaint in one frame with nothing pointing at
+    // the pane that travelled — among near-identical panes that read as
+    // "dragging is broken" (reported 2026-08-07). The carried pane wears the
+    // arrival ring for a moment after the drop.
+    const moved = sessionWith([
+      ["Nova", 0],
+      ["Mika", 1],
+    ]);
+    vi.mocked(api.moveTerminal).mockResolvedValue(moved);
+    twoPlacedPanes();
+
+    press("Mika", 100, 50);
+    move(380, 50);
+    await release();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("pane-cell-Mika").className).toContain("ring-2"),
+    );
+  });
+
+  it("says so when a drop changes nothing", async () => {
+    // "Right of Nova" is a legal drop for the pane already sitting right of
+    // Nova. The backend answers with the unchanged workspace — and the grid
+    // used to answer with silence, indistinguishable from a broken drag. Now
+    // the silence is replaced by a plain answer, and no ring pretends a move.
+    vi.mocked(api.moveTerminal).mockResolvedValue(BASE);
+    const { onSessionChanged } = twoPlacedPanes();
+
+    press("Mika", 100, 50);
+    move(380, 50);
+    await release();
+
+    await waitFor(() =>
+      expect(pushToast).toHaveBeenCalledWith("info", expect.stringContaining("already")),
+    );
+    expect(onSessionChanged).not.toHaveBeenCalled();
+    expect(screen.getByTestId("pane-cell-Mika").className).not.toContain("ring-2");
+  });
+
   it("offers no drag while a pane is maximized", () => {
     // Every other pane is hidden, so there is nothing on screen to drop onto.
     renderGrid();
