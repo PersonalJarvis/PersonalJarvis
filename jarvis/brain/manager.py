@@ -5502,6 +5502,36 @@ class BrainManager:
             return tools
         return {n: t for n, t in tools.items() if n != "screenshot"}
 
+    @staticmethod
+    def _hide_screenshot_for_blind_brain(
+        tools: dict[str, Tool],
+        brain: Any,
+        *,
+        prov_name: str = "",
+        model: str | None = "",
+    ) -> dict[str, Tool]:
+        """Drop the ``screenshot`` tool when the answering brain has no vision.
+
+        A blind model that calls the tool is a guaranteed dead end: the
+        capture succeeds, its own protocol layer drops the image ("Provider
+        without vision support"), and the model honestly tells the user the
+        picture came back unusable (live 2026-08-06 20:52, grok-4.5 tool
+        loop). Gated on the runtime capability, never the provider name
+        (AP-21); the chain-level vision skip only covers images attached
+        BEFORE the turn, not ones a mid-loop tool call produces.
+        """
+        if not isinstance(tools, dict) or "screenshot" not in tools:
+            return tools
+        if getattr(brain, "supports_vision", False) is True:
+            return tools
+        log.info(
+            "Hiding the screenshot tool from %s(%s): the model cannot "
+            "inspect images, so a capture could only dead-end.",
+            prov_name,
+            model,
+        )
+        return {n: t for n, t in tools.items() if n != "screenshot"}
+
     def _hide_spawn_on_knowledge_question(
         self, tools: dict[str, Tool], user_text: str
     ) -> dict[str, Tool]:
@@ -10242,6 +10272,12 @@ class BrainManager:
                     has_image=bool(images),
                     pointing_turn=pointing_turn,
                 )
+            # A brain that cannot inspect pixels must never be OFFERED the
+            # screenshot tool — see _hide_screenshot_for_blind_brain.
+            if isinstance(_turn_tools, dict):
+                _turn_tools = self._hide_screenshot_for_blind_brain(
+                    _turn_tools, brain, prov_name=prov_name, model=model
+                )
             # Active-model self-awareness: stamp the provider/model that is about
             # to answer so _build_system_prompt injects the correct, specific
             # self-identity (anti-"I'm Gemini" hallucination, forensic 2026-06-20).
@@ -11589,6 +11625,11 @@ def _is_invalid_model_exc(msg: str) -> bool:
         "model_not_found", "model not found", "model does not exist",
         "unknown model", "invalid model", "invalid_model",
         "not a valid model", "unsupported model",
+        # OpenAI's 404 for a Responses-API-only model called over
+        # Chat-Completions ("This is not a chat model and thus not supported
+        # in the v1/chat/completions endpoint"). Live 2026-08-06: spoken as
+        # "network or provider issue", which sent the user hunting API keys.
+        "not a chat model",
     ))
 
 

@@ -236,7 +236,7 @@ async def test_open_session_seeds_prior_call_history(
         {
             "type": "message",
             "role": "assistant",
-            "content": [{"type": "text", "text": "Sure — which one?"}],
+            "content": [{"type": "output_text", "text": "Sure — which one?"}],
         },
     ]
     await session.close()
@@ -296,7 +296,7 @@ async def test_transport_rebuild_replays_the_current_history_snapshot(
         {
             "type": "message",
             "role": "assistant",
-            "content": [{"type": "text", "text": "Sure — which one?"}],
+            "content": [{"type": "output_text", "text": "Sure — which one?"}],
         },
     ]
     await session.close()
@@ -1603,4 +1603,111 @@ async def test_unsolicited_stray_does_not_feed_the_stall_watchdog(
     assert session._last_response_activity == sentinel
     assert session._rebuild_task is None
     assert conn.response_cancels == ["resp-stray"]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_whole_line_output_transcript_is_delivered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A server that sends only the closing transcript must still be heard.
+
+    Field report 2026-08-06: against a self-hosted realtime server every answer
+    was audibly generated and then cancelled at the turn boundary with "output
+    transcript missing". Jarvis refuses to speak text it has not vetted
+    (ADR-0010), and this adapter only listened for the delta STREAM that OpenAI
+    sends. A stack whose TTS receives a finished line has nothing to stream, so
+    it sends the complete transcript once, in the closing event — and the
+    answer was thrown away every time.
+    """
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+
+    await session.request_response()
+    marker = conn.response_create_payloads[0]["response"]["metadata"]["jarvis_request_id"]
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(
+                    id="resp-1", metadata={"jarvis_request_id": marker}
+                ),
+            ),
+            SimpleNamespace(
+                type="response.output_audio.delta",
+                response_id="resp-1",
+                item_id="item-1",
+                delta=base64.b64encode(b"\x01\x00").decode("ascii"),
+            ),
+            SimpleNamespace(
+                type="response.output_audio_transcript.done",
+                response_id="resp-1",
+                item_id="item-1",
+                transcript="2 plus 2 ist 4.",
+            ),
+            SimpleNamespace(
+                type="response.done", response=SimpleNamespace(id="resp-1")
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "audio_delta",
+        "output_transcript_delta",
+        "turn_complete",
+    ]
+    assert events[1].text == "2 plus 2 ist 4."
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_a_streamed_transcript_is_not_repeated_by_its_done_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenAI sends both shapes. Taking both would say the line twice."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+
+    await session.request_response()
+    marker = conn.response_create_payloads[0]["response"]["metadata"]["jarvis_request_id"]
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(
+                    id="resp-1", metadata={"jarvis_request_id": marker}
+                ),
+            ),
+            SimpleNamespace(
+                type="response.output_audio_transcript.delta",
+                response_id="resp-1",
+                delta="Four",
+            ),
+            SimpleNamespace(
+                type="response.output_audio_transcript.done",
+                response_id="resp-1",
+                transcript="Four",
+            ),
+            SimpleNamespace(
+                type="response.done", response=SimpleNamespace(id="resp-1")
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "output_transcript_delta",
+        "turn_complete",
+    ]
     await session.close()

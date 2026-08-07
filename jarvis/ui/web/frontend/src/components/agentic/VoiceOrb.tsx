@@ -42,6 +42,19 @@ interface Motion {
 }
 
 const MOTIONS: Record<VoiceState, Motion> = {
+  connecting: {
+    // Waiting on a transport, not on the user: busier than idle so the wait is
+    // visible, calmer than thinking so it does not claim work is happening.
+    // Nothing is being heard yet, hence no voice impact.
+    flowX: 0.42,
+    flowY: -0.12,
+    breathAmp: 0.012,
+    breathHz: 0.5,
+    turbulence: 1.2,
+    energy: 0.94,
+    voiceImpact: 0,
+    colorChurn: 0.7,
+  },
   idle: {
     flowX: 0.025,
     flowY: 0.008,
@@ -51,18 +64,6 @@ const MOTIONS: Record<VoiceState, Motion> = {
     energy: 0.86,
     voiceImpact: 0,
     colorChurn: 0.28,
-  },
-  connecting: {
-    // The handshake: alive and clearly in motion, but calmer than thinking —
-    // a steady expectant swirl while the transport comes up.
-    flowX: 0.2,
-    flowY: 0.05,
-    breathAmp: 0.012,
-    breathHz: 0.5,
-    turbulence: 1.1,
-    energy: 0.92,
-    voiceImpact: 0,
-    colorChurn: 0.6,
   },
   listening: {
     flowX: 0.11,

@@ -179,6 +179,23 @@ class _UnixPtyHandle:
     @property
     def exitstatus(self) -> int | None:
         status = getattr(self._proc, "exitstatus", None)
+        if status is None:
+            # ptyprocess fills ``exitstatus`` only as a side effect of
+            # ``isalive()``/``wait()`` (both call waitpid) — it is never set
+            # eagerly the way pywinpty sets it. The reader loop leaves through
+            # EOFError on POSIX, so without this reap every pane whose agent
+            # ended BY ITSELF reported the unknown-exit ``-1``: a clean /exit
+            # showed as a crash and the resume self-healing restarted agents
+            # the user had deliberately closed (the exact bug the manager's
+            # ``normalize_exit_code`` docstring fixed on Windows). After EOF
+            # ptyprocess's waitpid is blocking, so this returns the real code
+            # rather than racing the child's exit.
+            try:
+                if self._proc.isalive():  # type: ignore[attr-defined]
+                    return None
+            except Exception:  # noqa: BLE001 - already-reaped/ECHILD reads as unknown
+                return None
+            status = getattr(self._proc, "exitstatus", None)
         return None if status is None else int(status)
 
     def write(self, data: str) -> None:

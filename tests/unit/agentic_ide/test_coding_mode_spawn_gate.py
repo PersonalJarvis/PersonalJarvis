@@ -148,6 +148,27 @@ def test_pane_told_to_fan_out_keeps_the_turn_in_english() -> None:
     assert spawn_vehicle_outranks_workspace(text, names=PANES) is False
 
 
+def test_a_report_about_a_spawned_window_does_not_outrank_the_pane() -> None:
+    """The live 2026-08-06 18:51 turn: 'spawned' reports, it does not request.
+
+    "It spawned on my other screen" comments on the window that had just
+    opened; the instruction addresses t1. The word-order tie-breaker cannot
+    save this shape — the past-tense report stands BEFORE the call-sign — so
+    the reported mention must not count as naming the vehicle at all.
+    Reading it as one made the deterministic fast path refuse to type into
+    the very pane the sentence addressed, and the turn took a 5 s router
+    detour it never came back from.
+    """
+    text = (
+        "It spawned on my other screen, but no problem. Could you please "
+        "prompt terminal t1 to do a deep dive and look for bugs related "
+        "on macOS?"
+    )
+    panes = ["T1", "T2", "T3"]
+    assert spawn_vehicle_outranks_workspace(text, names=panes) is False
+    assert owns_turn(text, names=panes) is True
+
+
 async def test_addressed_pane_blocks_the_llm_spawn(
     wired: Registry, tmp_path: Path
 ) -> None:

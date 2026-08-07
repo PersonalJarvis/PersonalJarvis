@@ -282,6 +282,7 @@ async def test_renaming_a_workspace_changes_only_its_tab(
     pty_id = pane.pty_id
 
     result = await routes.rename_workspace(
+        _request(),
         workspace_id,
         routes.RenameWorkspaceRequest(name="Backend review"),
     )

@@ -1331,7 +1331,9 @@ async def activate_workspace(request: Request, req: ActivateWorkspaceRequest) ->
 
 
 @router.patch("/workspaces/{workspace_id}", summary="Rename a workspace")
-async def rename_workspace(workspace_id: str, req: RenameWorkspaceRequest) -> dict:
+async def rename_workspace(
+    request: Request, workspace_id: str, req: RenameWorkspaceRequest
+) -> dict:
     """Change only a workspace's tab label; its folder and agents keep running."""
     registry = get_registry()
     try:
@@ -1339,6 +1341,8 @@ async def rename_workspace(workspace_id: str, req: RenameWorkspaceRequest) -> di
     except SessionError as exc:
         status = 404 if registry.get(workspace_id) is None else 409
         raise HTTPException(status_code=status, detail=str(exc)) from exc
+    # Other windows keep showing the old tab label until they re-fetch.
+    await _announce_workspace(request, session, "renamed")
     return {
         "ok": True,
         "workspace": session.to_card(active=session.id == registry.active_id),
@@ -1695,13 +1699,25 @@ async def clear_notification(notification_id: str) -> NotificationsChangedRespon
     summary="Close several terminals",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def close_terminals(req: CloseTerminalsRequest) -> dict:
+async def close_terminals(request: Request, req: CloseTerminalsRequest) -> dict:
     """Stop selected coding agents in one locked batch and return canonical state."""
     registry = get_registry()
+    session = registry.session
     try:
         closed, failed = await registry.close_terminals(req.names)
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # Voice and the CLI land here too: without the event, every OTHER client
+    # keeps rendering panes whose agents are already gone (the same contract as
+    # DELETE /terminals/agent/{agent} below).
+    bus = getattr(request.app.state, "bus", None)
+    if bus is not None and closed and session is not None:
+        try:
+            await bus.publish(
+                terminals_closed_event(session, closed, source_layer="agentic_ide_routes")
+            )
+        except Exception as exc:  # noqa: BLE001 - the panes are already closed
+            log.debug("AgenticIdeTerminalsClosed publish failed: %s", exc)
     return {
         "ok": not failed,
         "closed": [term.name for term in closed],
@@ -2003,7 +2019,7 @@ async def close_terminals_by_agent(request: Request, agent: str) -> dict:
 
 
 @router.patch("/terminals/{terminal}", summary="Rename one terminal")
-async def rename_terminal(terminal: str, req: RenameTerminalRequest) -> dict:
+async def rename_terminal(request: Request, terminal: str, req: RenameTerminalRequest) -> dict:
     """Give the pane ``terminal`` another call-sign.
 
     Nothing is started, stopped or restarted: the agent in the pane keeps
@@ -2025,6 +2041,11 @@ async def rename_terminal(terminal: str, req: RenameTerminalRequest) -> dict:
         else:
             status = 422
         raise HTTPException(status_code=status, detail=message) from exc
+    # A rename made by voice or the CLI is invisible to every open view until
+    # it re-fetches — and a pane the UI addresses by its OLD call-sign routes
+    # prompts to a name the registry no longer answers to. Same trigger-only
+    # contract as the open/close announcements.
+    await _announce_workspace(request, session, "renamed")
     return {
         "ok": True,
         "renamed": term.name,
@@ -2040,13 +2061,23 @@ async def rename_terminal(terminal: str, req: RenameTerminalRequest) -> dict:
     summary="Close one terminal",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def close_terminal(name: str) -> dict:
+async def close_terminal(request: Request, name: str) -> dict:
     """Stop the agent in the terminal called ``name`` and remove its pane."""
+    registry = get_registry()
+    session = registry.session
     try:
-        term = await get_registry().close_terminal(name)
+        term = await registry.close_terminal(name)
     except SessionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"ok": True, "closed": term.name, "state": get_registry().state()}
+    bus = getattr(request.app.state, "bus", None)
+    if bus is not None and session is not None:
+        try:
+            await bus.publish(
+                terminals_closed_event(session, [term], source_layer="agentic_ide_routes")
+            )
+        except Exception as exc:  # noqa: BLE001 - the pane is already closed
+            log.debug("AgenticIdeTerminalsClosed publish failed: %s", exc)
+    return {"ok": True, "closed": term.name, "state": registry.state()}
 
 
 @router.get("/recaps", response_model=RecapsResponse, summary="What every terminal is doing")
@@ -2917,110 +2948,135 @@ async def terminal_prompt(request: Request, name: str, req: PromptRequest) -> di
             status_code=404, detail=_unknown_terminal_detail(registry, name)
         )
 
-    text = req.prompt
-    composed_by = "raw"
-    files: list[str] = []
-    attachments = [
-        drop_analysis.DropAnalysis.from_dict(a.model_dump()) for a in req.attachments
-    ]
-    if req.compose:
-        from jarvis.agentic_ide.prompt_composer import compose as compose_prompt
+    async def _compose_and_send() -> dict:
+        text = req.prompt
+        composed_by = "raw"
+        files: list[str] = []
+        attachments = [
+            drop_analysis.DropAnalysis.from_dict(a.model_dump())
+            for a in req.attachments
+        ]
+        if req.compose:
+            from jarvis.agentic_ide.prompt_composer import compose as compose_prompt
 
-        # The pane decides which workspace composes the prompt. Composition
-        # reads the codebase to attach `@file` references, and taking those
-        # from the front workspace while sending to a pane in another one would
-        # point the agent at files that are not in its tree.
-        session, term_for_compose = found
-        result = await compose_prompt(
-            req.prompt,
-            session=session,
-            terminal_name=term_for_compose.name,
-            agent_display=AGENT_DISPLAY.get(term_for_compose.agent, term_for_compose.agent),
-            attachments=attachments,
-        )
-        text, composed_by, files = result.text, result.composed_by, result.files
-        if not text:
-            raise HTTPException(status_code=422, detail="The prompt was empty after composition.")
-    elif attachments:
-        # Attachments without composition still have to reach the agent. Silently
-        # dropping them would be the worst reading of this request: the caller
-        # said "here is what the user dropped" and the agent would receive a
-        # sentence about a screenshot nobody described. The deterministic
-        # renderer is the same one the no-provider path uses.
-        from jarvis.agentic_ide import prompt_blueprint
+            # The pane decides which workspace composes the prompt. Composition
+            # reads the codebase to attach `@file` references, and taking those
+            # from the front workspace while sending to a pane in another one would
+            # point the agent at files that are not in its tree.
+            session, term_for_compose = found
+            result = await compose_prompt(
+                req.prompt,
+                session=session,
+                terminal_name=term_for_compose.name,
+                agent_display=AGENT_DISPLAY.get(
+                    term_for_compose.agent, term_for_compose.agent
+                ),
+                attachments=attachments,
+            )
+            text, composed_by, files = result.text, result.composed_by, result.files
+            if not text:
+                raise HTTPException(
+                    status_code=422, detail="The prompt was empty after composition."
+                )
+        elif attachments:
+            # Attachments without composition still have to reach the agent. Silently
+            # dropping them would be the worst reading of this request: the caller
+            # said "here is what the user dropped" and the agent would receive a
+            # sentence about a screenshot nobody described. The deterministic
+            # renderer is the same one the no-provider path uses.
+            from jarvis.agentic_ide import prompt_blueprint
 
-        text = sanitize_prompt(
-            prompt_blueprint.render_fallback(text, [], attachments), keep_newlines=True
-        )[:MAX_PROMPT_CHARS]
-        composed_by = "fallback"
+            text = sanitize_prompt(
+                prompt_blueprint.render_fallback(text, [], attachments),
+                keep_newlines=True,
+            )[:MAX_PROMPT_CHARS]
+            composed_by = "fallback"
 
-    if req.dry_run:
+        if req.dry_run:
+            return {
+                "ok": True,
+                "terminal": name,
+                "sent": "",
+                "composed": text,
+                "composed_by": composed_by,
+                "files": files,
+                "attachments": [a.to_dict() for a in attachments],
+                "dry_run": True,
+            }
+
+        try:
+            term = await registry.send_prompt(name, text)
+        except SessionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        # Say out loud that a prompt went in.
+        #
+        # Until now the ONLY sign was the agent echoing it back down that pane's own
+        # terminal socket — one path, with no second opinion anywhere in the app. So
+        # whenever that path was interrupted (a viewer that had lost its pane, a
+        # window that was not looking, a socket in the middle of a slow reconnect)
+        # the user was told the prompt had been sent and watched a screen where
+        # nothing whatsoever happened, which reads as "it did nothing" (reported
+        # 2026-07-28). This event is independent of the pane: it arrives on the app
+        # socket every client already holds.
+        bus = getattr(request.app.state, "bus", None)
+        if bus is not None:
+            try:
+                await bus.publish(
+                    prompt_sent_event(found[0], term, source_layer="agentic_ide_routes")
+                )
+            except Exception as exc:  # noqa: BLE001 - notification is not the work
+                log.debug("AgenticIdePromptSent publish failed: %s", exc)
+
+        # `submitted` is the honest part of this answer, and it has THREE states:
+        # True the agent accepted the prompt and started, False the text is provably
+        # still in its input box, null the pane never visibly took it and no claim
+        # can be made either way. Collapsing null into False used to report "the
+        # text is sitting in its input box" about a pane where it demonstrably was
+        # not — a confident answer nobody had. A caller that reports "sent to Mika"
+        # on anything but True is lying to the user.
         return {
             "ok": True,
-            "terminal": name,
-            "sent": "",
-            "composed": text,
+            "terminal": term.name,
+            "agent": AGENT_DISPLAY.get(term.agent, term.agent),
+            "sent": term.last_prompt,
             "composed_by": composed_by,
             "files": files,
-            "attachments": [a.to_dict() for a in attachments],
-            "dry_run": True,
+            "prompts_sent": term.prompts_sent,
+            "submitted": term.submitted,
+            "detail": (
+                ""
+                if term.submitted is True
+                else (
+                    f"{term.name} did not accept the prompt — the text is sitting in "
+                    "its input box. Tell the user, and let them press Enter there."
+                )
+                if term.submitted is False
+                else (
+                    f"{term.name} never showed the prompt arriving, so it may have "
+                    "started or may have missed it entirely. Tell the user to check "
+                    "that pane."
+                )
+            ),
         }
 
+    # The delivery must survive its caller. This is the route a spoken "prompt
+    # T1 …" executes through, and composition holds it for up to
+    # COMPOSE_TIMEOUT_S — a voice hangup (or a dropped client) used to cancel
+    # the handler mid-compose, so nothing was ever typed while the user
+    # believed the pane was working (live 2026-08-06 18:52). A dry run has no
+    # side effect worth protecting, and skipping the extra task keeps it cheap.
+    if req.dry_run:
+        return await _compose_and_send()
+    work = asyncio.ensure_future(_compose_and_send())
     try:
-        term = await registry.send_prompt(name, text)
-    except SessionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return await asyncio.shield(work)
+    except asyncio.CancelledError:
+        if not work.cancelled():
+            from jarvis.agentic_ide.fanout import note_detached_delivery
 
-    # Say out loud that a prompt went in.
-    #
-    # Until now the ONLY sign was the agent echoing it back down that pane's own
-    # terminal socket — one path, with no second opinion anywhere in the app. So
-    # whenever that path was interrupted (a viewer that had lost its pane, a
-    # window that was not looking, a socket in the middle of a slow reconnect)
-    # the user was told the prompt had been sent and watched a screen where
-    # nothing whatsoever happened, which reads as "it did nothing" (reported
-    # 2026-07-28). This event is independent of the pane: it arrives on the app
-    # socket every client already holds.
-    bus = getattr(request.app.state, "bus", None)
-    if bus is not None:
-        try:
-            await bus.publish(
-                prompt_sent_event(found[0], term, source_layer="agentic_ide_routes")
-            )
-        except Exception as exc:  # noqa: BLE001 - notification is not the work
-            log.debug("AgenticIdePromptSent publish failed: %s", exc)
-
-    # `submitted` is the honest part of this answer, and it has THREE states:
-    # True the agent accepted the prompt and started, False the text is provably
-    # still in its input box, null the pane never visibly took it and no claim
-    # can be made either way. Collapsing null into False used to report "the
-    # text is sitting in its input box" about a pane where it demonstrably was
-    # not — a confident answer nobody had. A caller that reports "sent to Mika"
-    # on anything but True is lying to the user.
-    return {
-        "ok": True,
-        "terminal": term.name,
-        "agent": AGENT_DISPLAY.get(term.agent, term.agent),
-        "sent": term.last_prompt,
-        "composed_by": composed_by,
-        "files": files,
-        "prompts_sent": term.prompts_sent,
-        "submitted": term.submitted,
-        "detail": (
-            ""
-            if term.submitted is True
-            else (
-                f"{term.name} did not accept the prompt — the text is sitting in "
-                "its input box. Tell the user, and let them press Enter there."
-            )
-            if term.submitted is False
-            else (
-                f"{term.name} never showed the prompt arriving, so it may have "
-                "started or may have missed it entirely. Tell the user to check "
-                "that pane."
-            )
-        ),
-    }
+            note_detached_delivery(work, describe=f"the prompt for {name}")
+        raise
 
 
 # --------------------------------------------------------------------------- #

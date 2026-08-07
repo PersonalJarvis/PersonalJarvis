@@ -124,6 +124,48 @@ def test_gate_is_noop_without_screenshot_tool() -> None:
     )
 
 
+class _BlindBrain:
+    supports_vision = False
+
+
+class _SightedBrain:
+    supports_vision = True
+
+
+def test_blind_brain_never_gets_the_screenshot_tool() -> None:
+    """Live 2026-08-06 20:52: grok-4.5 (no vision) called ``screenshot``,
+
+    its protocol layer dropped the returned image, and the user heard "the
+    picture came back unusable". A blind brain must not be offered the tool.
+    """
+    m = _mgr({})
+    gated = m._hide_screenshot_for_blind_brain(
+        {"screenshot": object(), "search_web": object()},
+        _BlindBrain(),
+        prov_name="grok",
+        model="grok-4.5",
+    )
+    assert "screenshot" not in gated
+    assert "search_web" in gated
+
+
+def test_sighted_brain_keeps_the_screenshot_tool() -> None:
+    m = _mgr({})
+    tools = {"screenshot": object()}
+    assert (
+        m._hide_screenshot_for_blind_brain(tools, _SightedBrain()) == tools
+    )
+
+
+def test_missing_capability_attribute_counts_as_blind() -> None:
+    """An adapter without the flag cannot prove sight — fail closed."""
+    m = _mgr({})
+    gated = m._hide_screenshot_for_blind_brain(
+        {"screenshot": object()}, object()
+    )
+    assert "screenshot" not in gated
+
+
 def test_router_prompt_forbids_screen_claims_without_image() -> None:
     # Honest no-image rule present.
     assert "hast du den Bildschirm NICHT gesehen" in SYSTEM_PROMPT

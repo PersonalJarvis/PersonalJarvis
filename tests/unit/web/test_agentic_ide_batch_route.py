@@ -142,6 +142,7 @@ async def test_no_bus_still_opens_the_panes(
 class FakeClosingRegistry:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
+        self.session = SimpleNamespace(id="ide_test", folder="ws-folder")
 
     async def close_terminals(self, names: list[str]):
         self.calls.append(names)
@@ -159,9 +160,10 @@ async def test_close_batch_returns_closed_failed_and_canonical_state(
 ) -> None:
     registry = FakeClosingRegistry()
     monkeypatch.setattr(routes, "get_registry", lambda: registry)
+    bus = FakeBus()
 
     result = await routes.close_terminals(
-        routes.CloseTerminalsRequest(names=["Juno", "Missing"])
+        _request(bus), routes.CloseTerminalsRequest(names=["Juno", "Missing"])
     )
 
     assert registry.calls == [["Juno", "Missing"]]
@@ -171,6 +173,23 @@ async def test_close_batch_returns_closed_failed_and_canonical_state(
         "failed": [{"name": "Missing", "detail": "No terminal called 'Missing'."}],
         "state": {"active": True, "session": {"terminals": [{"name": "Milo"}]}},
     }
+    # A close made by voice or the CLI must reach every OTHER open view — the
+    # grid refetches on this event, exactly like the add-terminals batch above.
+    assert len(bus.published) == 1
+    assert type(bus.published[0]).__name__ == "AgenticIdeTerminalsClosed"
+    assert bus.published[0].names == ("Juno",)
+
+
+async def test_close_batch_without_a_bus_still_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = FakeClosingRegistry()
+    monkeypatch.setattr(routes, "get_registry", lambda: registry)
+
+    result = await routes.close_terminals(
+        _request(None), routes.CloseTerminalsRequest(names=["Juno", "Missing"])
+    )
+    assert result["closed"] == ["Juno"]
 
 
 def test_close_batch_route_is_marked_dangerous() -> None:

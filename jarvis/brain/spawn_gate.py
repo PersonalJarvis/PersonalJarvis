@@ -67,6 +67,33 @@ _DELEGATION_MARKER_RE: re.Pattern[str] = re.compile(
     re.IGNORECASE,
 )
 
+# A vehicle word that REPORTS what already happened is not a delegation
+# request. "It spawned on my other screen, but no problem — could you please
+# prompt terminal t1 …" (live 2026-08-06 18:51) carried 'spawned' three words
+# in, so the workspace stand-down read a comment about the window that had
+# just opened as an order for a background agent, and the deterministic
+# fast path refused to type into the very pane the sentence addressed. The
+# shape is deliberately narrow — a subject pronoun directly in front of the
+# simple past — because a genuine request is imperative and has no such
+# subject ("spawn an agent that …", "Alex should spawn sub-agents" both
+# stay markers).
+_REPORTED_VEHICLE_RE: re.Pattern[str] = re.compile(
+    r"\b(?:it|that|this|which|one|es|das|der|die)\s+"  # i18n-allow: spoken input
+    r"(?:just\s+|gerade\s+)?"  # i18n-allow: spoken-input vocabulary
+    r"(?:spawned|delegated)\b",
+    re.IGNORECASE,
+)
+
+
+def _marker_spans(text: str) -> list[tuple[int, int]]:
+    """Delegation-marker spans, with reported (past-tense) mentions dropped."""
+    reported = [m.span() for m in _REPORTED_VEHICLE_RE.finditer(text)]
+    return [
+        match.span()
+        for match in _DELEGATION_MARKER_RE.finditer(text)
+        if not any(start <= match.start() < end for start, end in reported)
+    ]
+
 
 # A delegation offer's confirmation is a SHORT stand-alone yes ("Ja, mach
 # das", "yes go ahead"). ``classify_response`` substring-matches, so a long
@@ -182,7 +209,7 @@ def names_spawn_vehicle(user_text: str) -> bool:
     for a background agent. Sharing the one pattern keeps "spawn an agent that
     helps Kai" a spawn while "let Kai do it" reaches Kai.
     """
-    return bool(_DELEGATION_MARKER_RE.search((user_text or "").strip()))
+    return bool(_marker_spans((user_text or "").strip()))
 
 
 def spawn_vehicle_spans(user_text: str) -> list[tuple[int, int]]:
@@ -195,10 +222,7 @@ def spawn_vehicle_spans(user_text: str) -> list[tuple[int, int]]:
     sub-agents" (a description of Alex's work, vehicle word behind the
     call-sign). Both share this ONE pattern so the two answers cannot drift.
     """
-    return [
-        (match.start(), match.end())
-        for match in _DELEGATION_MARKER_RE.finditer((user_text or "").strip())
-    ]
+    return _marker_spans((user_text or "").strip())
 
 
 def addressed_pane_blocks_spawn(user_text: str) -> bool:
@@ -259,7 +283,7 @@ def llm_spawn_allowed(user_text: str) -> bool:
             "the workspace handles this turn, no background agent"
         )
         return False
-    if _DELEGATION_MARKER_RE.search(text):
+    if _marker_spans(text):
         OFFER_WINDOW.disarm()
         return True
     if OFFER_WINDOW.consume_confirm(text):

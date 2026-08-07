@@ -143,14 +143,42 @@ _LEVEL_REACTIVE = frozenset({"listen", "dictate", "speak"})
 #: read as "I am listening", never as a dead orb.
 _DICTATE_LEVEL_FLOOR = 0.18
 
-#: Resting size as a fraction of the window. Below 1.0 ON PURPOSE: the swell
-#: has to have somewhere to go. With the old value the sphere already filled
-#: its window at rest, every beat hit the ``min(1.0, ...)`` ceiling, and the
-#: result was a bump nobody could see.
-_BASE_SCALE = 0.86
+#: Resting size as a fraction of the window. Well below 1.0 ON PURPOSE, for two
+#: reasons: the swell has to have somewhere to go (at 1.0 every beat hit the
+#: ``min(1.0, ...)`` ceiling and the bump was invisible), and the aura needs the
+#: margin outside the sphere to live in.
+_BASE_SCALE = 0.75
 
 #: How much of the remaining headroom a full-volume moment claims.
-_LEVEL_SWELL = 0.12
+_LEVEL_SWELL = 0.10
+
+# --- Aura -------------------------------------------------------------------
+# The energy the sphere throws off: a warm corona that widens with loudness,
+# plus waves that leave it and fade outward. What the in-app orb does with two
+# CSS rings and an opacity animation — but the desktop window keys ONE exact
+# colour out to become transparent, so a partly-transparent pixel is impossible.
+#
+# So the falloff is carried by DENSITY, not by alpha: each pixel is tested
+# against a fine ordered-dither pattern, and the fraction that survives is the
+# intensity. Half-strength paints half the pixels; from a step back the eye
+# integrates that into a soft glow. A solid band with only its colour dimming
+# was tried first and read as a machined brass ring around the sphere — the
+# eye needs the AIR between the pixels to see gas rather than metal.
+
+#: Widest the corona reaches, as a fraction of the half-window.
+_AURA_REACH = 0.99
+#: How quickly the corona thins with distance. Higher = tighter to the sphere.
+_AURA_FALLOFF = 4.2
+#: Corona density right at the sphere's edge, at full energy.
+_AURA_MAX = 1.05
+#: A wave leaves the sphere this often (seconds) and travels for this long.
+_WAVE_PERIOD_S = 1.35
+_WAVE_TRAVEL_S = 1.05
+#: Wave ring thickness, as a fraction of the half-window.
+_WAVE_WIDTH = 0.055
+#: Ordered-dither cell. 8x8 is fine enough that the pattern reads as texture
+#: rather than as a grid, and cheap enough to tile across a 216² window.
+_DITHER_N = 8
 
 
 def _mix(a, b, amount):
@@ -183,6 +211,38 @@ def speaking_onset(age: float) -> float:
     if age < 0 or age >= 0.24:
         return 0.0
     return math.sin((age / 0.24) * math.pi) * math.exp(-age * 2.4)
+
+
+def _dither_tile(size: int) -> np.ndarray:
+    """The aura's threshold field (values 0..1) — its stand-in for alpha.
+
+    A pixel is painted when its strength beats the threshold under it, so
+    strength becomes DENSITY. The field is FIXED, never regenerated per frame:
+    a field that changed every frame would make the corona boil.
+
+    Ordered dither alone (a plain Bayer matrix) laid visible diagonals across
+    the glow — the eye finds the grid instantly. Mixing it with a fixed random
+    field breaks the lattice while keeping the even coverage a pure random
+    field lacks, and the result reads as embers instead of as a screen door.
+    """
+    base = np.array(
+        [
+            [0, 32, 8, 40, 2, 34, 10, 42],
+            [48, 16, 56, 24, 50, 18, 58, 26],
+            [12, 44, 4, 36, 14, 46, 6, 38],
+            [60, 28, 52, 20, 62, 30, 54, 22],
+            [3, 35, 11, 43, 1, 33, 9, 41],
+            [51, 19, 59, 27, 49, 17, 57, 25],
+            [15, 47, 7, 39, 13, 45, 5, 37],
+            [63, 31, 55, 23, 61, 29, 53, 21],
+        ],
+        dtype=np.float32,
+    )
+    normalized = (base + 0.5) / 64.0
+    repeats = int(np.ceil(size / _DITHER_N))
+    ordered = np.tile(normalized, (repeats, repeats))[:size, :size]
+    scatter = np.random.default_rng(0x0A11A).random((size, size)).astype(np.float32)
+    return np.clip(ordered * 0.45 + scatter * 0.55, 0.0, 1.0)
 
 
 def _build_noise_grid() -> np.ndarray:
@@ -270,6 +330,19 @@ class VoiceOrbRenderer:
         self._texture: Image.Image | None = None
         self._masks: dict[int, Image.Image] = {}
 
+        # Distance of every window pixel from the centre, in half-window units
+        # (1.0 = the window edge). Built once; the aura is a handful of numpy
+        # comparisons against it per frame.
+        half = max(1.0, self._size / 2.0)
+        span = (np.arange(self._size, dtype=np.float32) + 0.5) - half
+        yy, xx = np.meshgrid(span, span, indexing="ij")
+        self._pixel_radius = np.sqrt(xx * xx + yy * yy) / half
+        # Angle of every pixel, so the corona can breathe unevenly instead of
+        # sitting around the sphere as a perfect ring.
+        self._pixel_angle = np.arctan2(yy, xx).astype(np.float32)
+        self._dither_field = _dither_tile(self._size)
+        self._aura_elapsed = 0.0
+
     # -- public seam ---------------------------------------------------
 
     def render(self, t: float, mode: str, ext_level: float | None) -> Image.Image:
@@ -332,7 +405,18 @@ class VoiceOrbRenderer:
         )
         half = self._size / 2.0
         radius = (half - 1.0) * min(1.0, breath)
-        return self._compose(self._texture, radius)
+
+        # How much energy the orb is throwing off right now (0..1). The live
+        # level dominates when there is one — that is the honest signal — and
+        # thinking keeps a steady work pulse of its own, because it has no
+        # sound to ride and still has to look busy.
+        self._aura_elapsed += dt
+        energy = self._live_input
+        if mode in ("think", "dictate_transcribing"):
+            energy = max(energy, 0.42 + 0.30 * math.sin(self._aura_elapsed * 3.1))
+        elif mode == "speak":
+            energy = max(energy, self._live_impact * 6.0)
+        return self._compose(self._texture, radius, min(1.0, max(0.0, energy)))
 
     # Compatibility no-ops: the overlay drives mascot-only expressions through
     # these. Answering them here (instead of leaving them to fail) keeps the
@@ -461,9 +545,77 @@ class VoiceOrbRenderer:
             self._masks[diameter] = mask
         return mask
 
-    def _compose(self, texture: Image.Image, radius: float) -> Image.Image:
+    def _aura_layer(self, radius: float, energy: float) -> np.ndarray | None:
+        """The corona + travelling waves, as an RGB array over the key colour.
+
+        Returns ``None`` when there is nothing to draw, so an idle orb costs
+        exactly what it did before this existed.
+
+        Every pixel returned is FULLY opaque — the falloff lives in the colour,
+        not in an alpha channel the window cannot carry. See the module notes
+        on ``_AURA_REACH``.
+        """
+        if energy <= 0.01:
+            return None
+        half = max(1.0, self._size / 2.0)
+        inner = radius / half
+        if inner >= _AURA_REACH:
+            return None
+
+        field = self._pixel_radius
+        band = (field > inner) & (field <= _AURA_REACH)
+        if not band.any():
+            return None
+
+        # Corona: densest against the sphere, thinning outward. An exponential
+        # falloff, so it reads as gas leaving a surface rather than as a band
+        # with an edge.
+        distance_out = np.clip((field - inner) / max(1e-6, _AURA_REACH - inner), 0.0, 1.0)
+        strength = np.exp(-distance_out * _AURA_FALLOFF) * _AURA_MAX * energy
+        # Three slow lobes turning around the sphere: without this the corona is
+        # a geometrically perfect annulus, which reads as a drawn ring rather
+        # than as something the sphere is giving off.
+        lobes = 1.0 + 0.34 * np.sin(self._pixel_angle * 3.0 - self._aura_elapsed * 1.15) * np.sin(
+            self._pixel_angle * 2.0 + self._aura_elapsed * 0.7
+        )
+        strength = strength * lobes
+
+        # Waves: rings that leave the sphere and thin as they travel, which is
+        # what the in-app orb animates with two expanding CSS circles.
+        phase = (self._aura_elapsed % _WAVE_PERIOD_S) / _WAVE_TRAVEL_S
+        for offset in (0.0, 0.5):
+            travel = phase - offset
+            if not 0.0 <= travel <= 1.0:
+                continue
+            ring_r = inner + (_AURA_REACH - inner) * travel
+            ring = np.clip(1.0 - np.abs(field - ring_r) / _WAVE_WIDTH, 0.0, 1.0)
+            strength = np.maximum(strength, ring * (1.0 - travel) * energy * 0.9)
+
+        # Density, not alpha: the dither decides which pixels survive, so a
+        # half-strength glow paints half of them and the eye fills in the rest.
+        visible = band & (strength > self._dither_field)
+        if not visible.any():
+            return None
+
+        layer = np.empty((self._size, self._size, 3), dtype=np.uint8)
+        layer[..., 0] = self._color_key[0]
+        layer[..., 1] = self._color_key[1]
+        layer[..., 2] = self._color_key[2]
+        # Surviving pixels still carry a little of the falloff in their colour,
+        # so the thin outer reaches read as embers rather than as gold confetti.
+        amount = np.clip(strength[visible] / max(_AURA_MAX, 1e-6), 0.35, 1.0)
+        layer[visible, 0] = (AMBER[0] + (SIGNAL_GOLD[0] - AMBER[0]) * amount).astype(np.uint8)
+        layer[visible, 1] = (AMBER[1] + (SIGNAL_GOLD[1] - AMBER[1]) * amount).astype(np.uint8)
+        layer[visible, 2] = (AMBER[2] + (SIGNAL_GOLD[2] - AMBER[2]) * amount).astype(np.uint8)
+        return layer
+
+    def _compose(self, texture: Image.Image, radius: float, energy: float = 0.0) -> Image.Image:
         diameter = max(2, int(round(radius * 2.0)))
-        frame = Image.new("RGB", (self._size, self._size), self._color_key)
+        aura = self._aura_layer(radius, energy)
+        if aura is None:
+            frame = Image.new("RGB", (self._size, self._size), self._color_key)
+        else:
+            frame = Image.fromarray(aura, "RGB")
         scaled = texture.resize((diameter, diameter), Image.Resampling.BICUBIC)
         offset = (self._size - diameter) // 2
         frame.paste(scaled, (offset, offset), self._circle_mask(diameter))

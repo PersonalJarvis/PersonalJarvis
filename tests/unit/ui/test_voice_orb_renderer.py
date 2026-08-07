@@ -89,10 +89,20 @@ def test_only_modes_with_a_live_feed_react_to_the_level() -> None:
 
 
 def _lit_radius(frame: np.ndarray) -> float:
-    """Half the width of the painted sphere in a rendered frame."""
+    """Half the width of the SPHERE — measured as the longest unbroken run of
+    painted pixels across the middle row.
+
+    Not "leftmost to rightmost painted pixel": the aura is painted too, and it
+    is deliberately full of gaps (its falloff is density, not alpha), so an
+    extent measure would report the corona instead of the sphere.
+    """
     lit = np.any(frame != np.asarray(KEY, dtype=np.int16), axis=-1)
-    columns = np.nonzero(lit.any(axis=0))[0]
-    return 0.0 if columns.size == 0 else (columns.max() - columns.min() + 1) / 2.0
+    row = lit[frame.shape[0] // 2]
+    best = run = 0
+    for painted in row:
+        run = run + 1 if painted else 0
+        best = max(best, run)
+    return best / 2.0
 
 
 def test_a_loud_voice_visibly_swells_the_sphere() -> None:
@@ -115,6 +125,55 @@ def test_the_resting_sphere_leaves_room_to_grow() -> None:
     for step in range(30):
         frame = _frame(idle, step / 30.0, "idle", None)
     assert _lit_radius(frame) < 54.0  # strictly inside the window
+
+
+def _outside_sphere(frame: np.ndarray, renderer: VoiceOrbRenderer) -> np.ndarray:
+    """Mask of pixels beyond the sphere but inside the window."""
+    radius = renderer._pixel_radius
+    sphere_edge = _lit_radius(frame) / (frame.shape[0] / 2.0)
+    return (radius > sphere_edge + 0.04) & (radius < 0.95)
+
+
+def test_a_resting_orb_throws_off_no_aura() -> None:
+    """Idle has to stay exactly as calm as it was — no glow, no cost."""
+    renderer = VoiceOrbRenderer(size=108, color_key=KEY)
+    for step in range(30):
+        frame = _frame(renderer, step / 30.0, "idle", None)
+    outside = _outside_sphere(frame, renderer)
+    painted = np.any(frame != np.asarray(KEY, dtype=np.int16), axis=-1)
+    assert not (painted & outside).any()
+
+
+def test_a_loud_voice_lights_an_aura_around_the_sphere() -> None:
+    renderer = VoiceOrbRenderer(size=108, color_key=KEY)
+    for step in range(30):
+        frame = _frame(renderer, step / 30.0, "speak", 1.0)
+    outside = _outside_sphere(frame, renderer)
+    painted = np.any(frame != np.asarray(KEY, dtype=np.int16), axis=-1)
+    assert (painted & outside).sum() > 40
+
+
+def test_the_aura_is_density_not_a_solid_band() -> None:
+    """Its falloff has to come from GAPS: a colour-keyed window has no alpha,
+    and a solid ring read as machined brass rather than as energy."""
+    renderer = VoiceOrbRenderer(size=108, color_key=KEY)
+    for step in range(30):
+        frame = _frame(renderer, step / 30.0, "speak", 1.0)
+    outside = _outside_sphere(frame, renderer)
+    painted = np.any(frame != np.asarray(KEY, dtype=np.int16), axis=-1)
+    lit = (painted & outside).sum()
+    dark = (~painted & outside).sum()
+    assert lit > 0 and dark > 0, "the corona is either absent or completely solid"
+
+
+def test_the_aura_never_reaches_the_window_corners() -> None:
+    """A pixel in the corner would put a stray ember at the window edge, and
+    the surface's transparency contract expects the corners keyed out."""
+    renderer = VoiceOrbRenderer(size=108, color_key=KEY)
+    for step in range(30):
+        frame = _frame(renderer, step / 30.0, "speak", 1.0)
+    for y, x in ((0, 0), (0, 107), (107, 0), (107, 107)):
+        assert tuple(frame[y, x]) == KEY
 
 
 def test_thinking_churns_the_palette_harder_than_resting() -> None:

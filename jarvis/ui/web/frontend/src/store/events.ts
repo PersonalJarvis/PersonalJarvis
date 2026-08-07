@@ -19,6 +19,10 @@ import {
  */
 export type VoiceState =
   | "idle"
+  // A realtime transport is negotiating: the call is accepted, the provider
+  // has not taken an audio frame yet. Hosted providers pass through it in
+  // under a second; a self-hosted server takes seconds, which is when a
+  // missing state stops being cosmetic.
   | "connecting"
   | "listening"
   | "thinking"

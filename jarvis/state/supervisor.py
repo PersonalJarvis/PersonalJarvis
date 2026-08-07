@@ -16,11 +16,14 @@ if TYPE_CHECKING:
 
 class SupervisorState(str, Enum):
     IDLE = "IDLE"
-    # A voice session's transport handshake is in flight (a cold codex
-    # subscription bring-up legitimately spends seconds here). Before this
-    # state existed the pipeline transitioned to "CONNECTING", the supervisor
-    # silently dropped the unknown value, and orb/bar froze on their previous
-    # look for the whole handshake - dead air with no visible progress.
+    # A realtime transport is negotiating: the call has been accepted but the
+    # provider has not taken a single audio frame yet. Without this state the
+    # machine had nowhere to go during a handshake, ``set_state("CONNECTING")``
+    # was silently dropped, and the bar and orb kept claiming the user was
+    # being heard while nothing was listening. A hosted provider hides that in
+    # under a second; a self-hosted one takes seconds and made it obvious
+    # (field report 2026-08-06). The overlay surfaces and the web UI already
+    # rendered this state — only the state machine did not have it.
     CONNECTING = "CONNECTING"
     LISTENING = "LISTENING"
     THINKING = "THINKING"

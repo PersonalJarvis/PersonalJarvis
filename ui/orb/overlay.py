@@ -119,13 +119,15 @@ class _DragState:
 WIN_W = 108
 WIN_H = 108
 
-#: The voice orb's window, 50 % larger than the mascot's (maintainer, 2026-08-06).
-#: The sphere now carries the whole conversation state on its own — no speech
-#: bubble, no text — so it has to be big enough to read a swell and a colour
-#: churn at a glance. The mascot keeps 108: its artwork, taskbar anchor and
-#: animations are all drawn for that size.
-VOICE_ORB_WIN_W = 162
-VOICE_ORB_WIN_H = 162
+#: The voice orb's window. Twice the mascot's edge, which is NOT the same as
+#: twice the sphere: the sphere rests at 70 % of the window (162 px — the 50 %
+#: larger sphere the maintainer asked for on 2026-08-06), and the margin that
+#: leaves is where the aura lives. The corona and its outgoing waves have to be
+#: drawn INSIDE this window like everything else, so the window has to be
+#: bigger than the thing it draws. The mascot keeps 108: its artwork, taskbar
+#: anchor and animations are all drawn for that size.
+VOICE_ORB_WIN_W = 216
+VOICE_ORB_WIN_H = 216
 
 
 def window_size_for_style(style: str) -> tuple[int, int]:

@@ -581,7 +581,15 @@ def _find_and_focus_macos(title_contains: str) -> tuple[bool, str]:
         return False, "The matching macOS application exited before it could be focused."
     options = NSApplicationActivateIgnoringOtherApps | NSApplicationActivateAllWindows
     if not bool(app.activateWithOptions_(options)):
-        return False, "macOS refused to activate the matching application."
+        # macOS 14+ "cooperative activation" refuses a background app (which a
+        # tray-launched Jarvis always is during a voice command). The AX raise
+        # below works regardless with the Accessibility grant, so a refusal
+        # here is advisory — aborting turned every Sonoma focus into a failure
+        # for a window the AX calls would have raised anyway.
+        log.debug(
+            "NSRunningApplication activation refused (cooperative activation); "
+            "continuing via the AX raise path"
+        )
 
     root = AXUIElementCreateApplication(pid)
     _macos_bound_ax_messaging(root)
@@ -609,12 +617,19 @@ def _find_and_focus_macos(title_contains: str) -> tuple[bool, str]:
         else 0
     )
     raise_error = AXUIElementPerformAction(target, "AXRaise")
-    focus_error = AXUIElementSetAttributeValue(root, "AXFocusedWindow", target)
+    # AXFocusedWindow on the APPLICATION element is read-only in AppKit — the
+    # setter returned kAXErrorAttributeUnsupported for every Cocoa app, which
+    # the old all-must-be-zero rule turned into "refused to focus" for windows
+    # that were already standing in front. The settable spelling of the same
+    # intent is AXMain on the WINDOW element; it stays advisory.
+    main_error = AXUIElementSetAttributeValue(target, "AXMain", True)
     front_error = AXUIElementSetAttributeValue(root, "AXFrontmost", True)
-    if any(
-        error != 0
-        for error in (front_error, focus_error, restore_error, raise_error)
-    ):
+    if main_error != 0:
+        log.debug("AXMain could not be set on the target window: %s", main_error)
+    # Decisive: a window that stayed minimized, or an app that could neither
+    # raise the window nor come frontmost. One of raise/frontmost succeeding
+    # puts the window on top in practice; requiring both was the bug above.
+    if restore_error != 0 or (raise_error != 0 and front_error != 0):
         return False, "macOS Accessibility refused to focus the matching window."
     return True, target_title
 
