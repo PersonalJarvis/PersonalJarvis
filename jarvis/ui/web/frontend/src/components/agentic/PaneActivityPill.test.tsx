@@ -50,10 +50,13 @@ describe("what the badge shows", () => {
 
   it("keeps blue for the one state that wants something from you now", () => {
     // The only pane in the list that is neither busy nor simply finished, so
-    // it is the only one worth spending a second colour on.
+    // it is the only one worth spending a second colour on — and the only
+    // still state allowed to wave: a beacon is a still dot with a radiating
+    // halo, which reads as a notification rather than as the spinner's
+    // grinding.
     const badge = pill({ status: "live", activity: "asking" });
     expect(badge.textContent).toBe("");
-    expect(badge.getAttribute("data-icon")).toBe("dot");
+    expect(badge.getAttribute("data-icon")).toBe("beacon");
     expect(badge.className).toContain("text-sky-400");
   });
 

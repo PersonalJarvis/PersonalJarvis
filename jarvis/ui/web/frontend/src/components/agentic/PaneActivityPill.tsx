@@ -67,7 +67,13 @@ import type { PaneActivity } from "@/lib/agenticIdeApi";
 type Look = {
   label: string;
   className: string;
-  icon: "spinner" | "dot" | "ring" | "alert";
+  icon: "spinner" | "dot" | "ring" | "alert" | "beacon";
+  /**
+   * A soft halo of the dot's own colour. Spent on exactly one state — a
+   * finished job — so the one row holding something for you glows and the
+   * grey ones (exited, a plain shell) stay matte.
+   */
+  glow?: boolean;
   /** The sentence behind the badge, minus the timing clause. */
   hint: string;
 };
@@ -97,7 +103,14 @@ const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
   asking: {
     label: "needs you",
     className: "text-sky-400",
-    icon: "dot",
+    /*
+     * The one deliberate exception to "motion means busy": a slow radiating
+     * ring around a STILL dot. It does not share the spinner's silhouette —
+     * rotation reads as grinding, a ping reads as a notification — and this is
+     * the single state in the list that wants an action from the user right
+     * now, so it is the single one allowed to wave.
+     */
+    icon: "beacon",
     hint: "Stopped with a question on screen. It is waiting for your answer.",
   },
   exited: {
@@ -118,6 +131,7 @@ const DONE: Look = {
   label: "done",
   className: "text-amber-400",
   icon: "dot",
+  glow: true,
   hint: "Finished and waiting at its prompt. That it stopped, not that the work is right.",
 };
 
@@ -208,7 +222,24 @@ function Icon({ look }: { look: Look }) {
   if (look.icon === "spinner")
     return <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />;
   if (look.icon === "dot")
-    return <span className="h-2 w-2 rounded-full bg-current" aria-hidden="true" />;
+    return (
+      <span
+        className={cn(
+          "h-2 w-2 rounded-full bg-current",
+          look.glow && "shadow-[0_0_5px_currentColor]",
+        )}
+        aria-hidden="true"
+      />
+    );
+  if (look.icon === "beacon")
+    return (
+      <span className="relative flex h-2 w-2" aria-hidden="true">
+        {/* The halo — a slow ping, hidden for anyone who asked their OS for
+            less motion; the still dot underneath carries the state alone. */}
+        <span className="absolute inset-0 animate-ping rounded-full bg-current opacity-60 [animation-duration:1.8s] motion-reduce:hidden" />
+        <span className="relative h-2 w-2 rounded-full bg-current shadow-[0_0_5px_currentColor]" />
+      </span>
+    );
   if (look.icon === "ring")
     return (
       <span
@@ -254,13 +285,22 @@ export function PaneActivityPill({
       data-activity={activity || status}
       data-icon={look.icon}
       className={cn(
-        "flex h-4 w-4 shrink-0 items-center justify-center",
+        "flex h-4 w-4 shrink-0 items-center justify-center transition-colors duration-300",
         look.className,
       )}
       title={title}
       aria-label={`${look.label}. ${title}`}
     >
-      <Icon look={look} />
+      {/* Keyed by the shape it is changing TO, so a state change replaces the
+          icon and plays one short zoom-in — the flip from spinner to dot is
+          the news the whole badge exists for, and a 200 ms pop is what makes
+          it visible in the corner of the eye without adding standing motion. */}
+      <span
+        key={look.icon}
+        className="flex items-center justify-center animate-in fade-in zoom-in-50 duration-200 motion-reduce:animate-none"
+      >
+        <Icon look={look} />
+      </span>
     </span>
   );
 }

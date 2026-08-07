@@ -125,6 +125,7 @@ router = APIRouter(prefix="/api/agentic-ide", tags=["agentic-ide"])
 #: than waited for indefinitely.
 SPAWN_READY_TIMEOUT_S = 20.0
 
+
 async def _announce_coding_mode(request: Request) -> None:
     """Tell every connected client what the coding mode is NOW.
 
@@ -653,9 +654,7 @@ class ResumeWorkspace(BaseModel):
     session_id: str = ""
     folder: str = ""
     folder_name: str = ""
-    name: str = Field(
-        default="", description="The label the user gave this tab, if any."
-    )
+    name: str = Field(default="", description="The label the user gave this tab, if any.")
     folder_exists: bool = False
     available: bool = Field(
         description="False when the folder is gone or none of its CLIs are installed."
@@ -828,9 +827,7 @@ class InterruptedResponse(BaseModel):
     continuable_count: int = Field(
         default=0, description="How many of them can be continued right now."
     )
-    prompt: str = Field(
-        default="", description="The instruction the continue action would send."
-    )
+    prompt: str = Field(default="", description="The instruction the continue action would send.")
     panes: list[InterruptedPane] = Field(default_factory=list)
 
 
@@ -956,6 +953,47 @@ class TerminalRecap(BaseModel):
 class RecapsResponse(BaseModel):
     workspace_id: str | None = None
     terminals: list[TerminalRecap] = Field(default_factory=list)
+
+
+class TerminalActivity(BaseModel):
+    """What one pane is DOING, and nothing about what it is doing it about.
+
+    The skinny sibling of :class:`TerminalRecap`: the recap poll also schedules
+    a summarizer pass over every pane's transcript, which is why it runs on a
+    relaxed clock — and why the status badge that rode on it always lagged the
+    pane by several seconds. This row costs one look at the pane's stamped
+    reading, so it can be polled fast enough for the badge to feel live.
+    """
+
+    key: str
+    name: str
+    status: str = Field(
+        description="The pane's process status: 'pending', 'live', 'exited' or 'error'."
+    )
+    activity: str = Field(
+        default="",
+        description=(
+            "Whether this pane's agent is still on the job: 'working', "
+            "'waiting', 'asking', 'starting', 'exited' or 'failed'. Empty for "
+            "a plain terminal, which runs no agent. Same reading as /recaps."
+        ),
+    )
+    activity_since: float = Field(
+        default=0.0,
+        description="When the pane entered that state (epoch seconds). 0 when unknown.",
+    )
+    worked: bool = Field(
+        default=False,
+        description=(
+            "Has anything ever been asked of this pane — an instruction sent "
+            "to it, or the conversation it resumed?"
+        ),
+    )
+
+
+class ActivityResponse(BaseModel):
+    workspace_id: str | None = None
+    terminals: list[TerminalActivity] = Field(default_factory=list)
 
 
 class LastPrompt(BaseModel):
@@ -1957,9 +1995,7 @@ async def move_terminal(name: str, req: MoveTerminalRequest) -> dict:
     Dropping a pane onto itself succeeds and changes nothing.
     """
     try:
-        term = await get_registry().move_terminal(
-            name, target=req.target, position=req.position
-        )
+        term = await get_registry().move_terminal(name, target=req.target, position=req.position)
     except SessionError as exc:
         # Three different fixes on the caller's side, so three different codes:
         # a position this grid cannot express is a bad request, a workspace that
@@ -2111,6 +2147,47 @@ async def get_recaps(workspace_id: str | None = None) -> RecapsResponse:
         recap_engine.refresh_soon(term, lines=lines, folder=session.folder)
         rows.append(_recap_row(term, recap_engine.recap_for(term, lines=lines)))
     return RecapsResponse(workspace_id=session.id, terminals=rows)
+
+
+@router.get(
+    "/activity",
+    response_model=ActivityResponse,
+    summary="Whether each pane's agent is still working",
+)
+async def get_activity(workspace_id: str | None = None) -> ActivityResponse:
+    """The status badge's own read — every pane's activity, and nothing else.
+
+    Split from ``/recaps`` for the same reason ``/recaps`` is split from
+    ``/state``: the two change on different clocks and cost different amounts.
+    A recap is a sentence and scheduling one walks the transcript through the
+    summarizer, so that poll is deliberately relaxed — which left the badge
+    beside it reporting "working" seconds after a pane had visibly started.
+    This read is one stamped word per pane, cheap enough to poll every second
+    or two, so the badge can keep up with the pane it describes.
+
+    Same conventions as ``/recaps``: without ``workspace_id`` the workspace on
+    screen answers, and an unknown or closed one comes back empty rather than
+    as an error — a poll that outlives its workspace is normal.
+    """
+    session = get_registry().get(workspace_id)
+    if session is None:
+        return ActivityResponse(workspace_id=None, terminals=[])
+    rows: list[TerminalActivity] = []
+    for term in session.terminals:
+        # The pane's own stamped reading — the same source /recaps reports, so
+        # the fast poll and the slow one can never disagree about a pane.
+        reading = term.reading()
+        rows.append(
+            TerminalActivity(
+                key=term.key,
+                name=term.name,
+                status=term.status,
+                activity=reading.activity,
+                activity_since=reading.since,
+                worked=has_work_behind_it(term),
+            )
+        )
+    return ActivityResponse(workspace_id=session.id, terminals=rows)
 
 
 def _recap_row(term: Terminal, summary: recap_engine.SmartRecap) -> TerminalRecap:
@@ -2271,9 +2348,7 @@ async def get_last_prompt(name: str, workspace_id: str | None = None) -> LastPro
     response_model=PromptHistoryResponse,
     summary="Every prompt sent to one terminal",
 )
-async def get_prompt_history(
-    name: str, workspace_id: str | None = None
-) -> PromptHistoryResponse:
+async def get_prompt_history(name: str, workspace_id: str | None = None) -> PromptHistoryResponse:
     """Read every exact prompt handed to this pane, newest first.
 
     Prompt bodies live outside the workspace snapshot and are loaded only for
@@ -2312,9 +2387,7 @@ def _terminal_or_http_error(name: str) -> tuple[Session, Terminal]:
     if not registry.sessions:
         raise HTTPException(status_code=409, detail="No Agentic-IDE session is running.")
     known = ", ".join(t.name for s in registry.sessions for t in s.terminals) or "none"
-    raise HTTPException(
-        status_code=404, detail=f"No terminal called {name!r}. Running: {known}."
-    )
+    raise HTTPException(status_code=404, detail=f"No terminal called {name!r}. Running: {known}.")
 
 
 @router.get("/terminals/{name}/report", summary="What one terminal is doing")
@@ -2412,10 +2485,7 @@ async def all_terminal_voice_attachments() -> dict:
                         "terminal": term.name,
                         "batch_id": batch.batch_id,
                         "files": list(batch.files),
-                        "reserved": (
-                            batch.batch_id
-                            in term.pending_prompt_attachment_reservations
-                        ),
+                        "reserved": (batch.batch_id in term.pending_prompt_attachment_reservations),
                     }
                     for batch in term.pending_prompt_attachment_batches
                 )
@@ -2439,9 +2509,7 @@ async def terminal_voice_attachments(name: str) -> dict:
             {
                 "batch_id": batch.batch_id,
                 "files": list(batch.files),
-                "reserved": (
-                    batch.batch_id in term.pending_prompt_attachment_reservations
-                ),
+                "reserved": (batch.batch_id in term.pending_prompt_attachment_reservations),
             }
             for batch in term.pending_prompt_attachment_batches
         ]
@@ -2466,9 +2534,7 @@ async def remove_terminal_voice_attachments(name: str, batch_id: str) -> dict:
             )
         before = len(term.pending_prompt_attachment_batches)
         term.pending_prompt_attachment_batches[:] = [
-            batch
-            for batch in term.pending_prompt_attachment_batches
-            if batch.batch_id != batch_id
+            batch for batch in term.pending_prompt_attachment_batches if batch.batch_id != batch_id
         ]
         removed = len(term.pending_prompt_attachment_batches) != before
     return {"terminal": term.name, "batch_id": batch_id, "removed": removed}
@@ -2627,9 +2693,7 @@ async def terminal_attach(
     voice_batch: PendingPromptAttachmentBatch | None = None
     if stage_for_voice and analysis_items:
         try:
-            voice_batch = await prompt_attachments.enqueue(
-                term, analysis_items, stored_names
-            )
+            voice_batch = await prompt_attachments.enqueue(term, analysis_items, stored_names)
         except prompt_attachments.PromptAttachmentQueueFull as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -2766,9 +2830,7 @@ async def fanout(request: Request, req: FanOutRequest) -> dict:
                 from jarvis.core.events import NavigateSidebar
 
                 await bus.publish(
-                    NavigateSidebar(
-                        section="agentic-ide", source_layer="agentic_ide_routes"
-                    )
+                    NavigateSidebar(section="agentic-ide", source_layer="agentic_ide_routes")
                 )
             except Exception as exc:  # noqa: BLE001 - notification is not the work
                 log.debug("AgenticIdeTerminalsAdded publish failed: %s", exc)
@@ -2901,7 +2963,9 @@ def _unknown_terminal_detail(registry: object, wanted: str) -> str:
     call-sign it was actually given.
     """
     running = ", ".join(
-        t.name for s in registry.sessions for t in s.terminals  # type: ignore[attr-defined]
+        t.name
+        for s in registry.sessions
+        for t in s.terminals  # type: ignore[attr-defined]
     )
     return (
         f"No terminal called {wanted!r}. Running: {running or 'none'}. "
@@ -2910,7 +2974,7 @@ def _unknown_terminal_detail(registry: object, wanted: str) -> str:
         "produce this name and retrying this "
         "prompt after a spawn fails the same way. Either prompt one of the "
         "panes listed above, or open and brief a new one in ONE call: "
-        "POST /api/agentic-ide/fanout with spawn=[{\"count\": 1}] and the "
+        'POST /api/agentic-ide/fanout with spawn=[{"count": 1}] and the '
         "instruction."
     )
 
@@ -2944,17 +3008,14 @@ async def terminal_prompt(request: Request, name: str, req: PromptRequest) -> di
     # one cause — and neither of them said what to do about it.
     found = registry.find_terminal(name)
     if found is None:
-        raise HTTPException(
-            status_code=404, detail=_unknown_terminal_detail(registry, name)
-        )
+        raise HTTPException(status_code=404, detail=_unknown_terminal_detail(registry, name))
 
     async def _compose_and_send() -> dict:
         text = req.prompt
         composed_by = "raw"
         files: list[str] = []
         attachments = [
-            drop_analysis.DropAnalysis.from_dict(a.model_dump())
-            for a in req.attachments
+            drop_analysis.DropAnalysis.from_dict(a.model_dump()) for a in req.attachments
         ]
         if req.compose:
             from jarvis.agentic_ide.prompt_composer import compose as compose_prompt
@@ -2968,9 +3029,7 @@ async def terminal_prompt(request: Request, name: str, req: PromptRequest) -> di
                 req.prompt,
                 session=session,
                 terminal_name=term_for_compose.name,
-                agent_display=AGENT_DISPLAY.get(
-                    term_for_compose.agent, term_for_compose.agent
-                ),
+                agent_display=AGENT_DISPLAY.get(term_for_compose.agent, term_for_compose.agent),
                 attachments=attachments,
             )
             text, composed_by, files = result.text, result.composed_by, result.files
@@ -3409,8 +3468,7 @@ class PromptWriterState(BaseModel):
 class PromptWriterRequest(BaseModel):
     prompt_writer: str = Field(
         description=(
-            "'auto', 'subscription', 'api', or a specific brain provider id "
-            "from the options list."
+            "'auto', 'subscription', 'api', or a specific brain provider id from the options list."
         )
     )
 
@@ -3548,9 +3606,7 @@ def _writer_options() -> list[PromptWriterOption]:
     ]
     for provider, connected in candidates:
         options.append(
-            PromptWriterOption(
-                id=provider, label=_provider_label(provider), connected=connected
-            )
+            PromptWriterOption(id=provider, label=_provider_label(provider), connected=connected)
         )
     return options
 
@@ -3562,9 +3618,7 @@ def _writer_options() -> list[PromptWriterOption]:
 )
 async def prompt_writer_state() -> PromptWriterState:
     """Report the configured brief writer and every option, with live state."""
-    return PromptWriterState(
-        prompt_writer=_current_prompt_writer(), options=_writer_options()
-    )
+    return PromptWriterState(prompt_writer=_current_prompt_writer(), options=_writer_options())
 
 
 @router.put(

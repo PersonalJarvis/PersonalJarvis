@@ -91,6 +91,7 @@ import {
   composePrompt,
   moveTerminal,
   clearTerminalRecap,
+  fetchTerminalActivity,
   fetchTerminalRecaps,
   fetchTerminalUiPreferences,
   refreshTerminalRecap,
@@ -105,6 +106,7 @@ import {
   type IdeState,
   type PaneNotification,
   type SessionState,
+  type TerminalActivityRow,
   type TerminalRecap,
   type TerminalState,
 } from "@/lib/agenticIdeApi";
@@ -287,6 +289,31 @@ const ZONE_BOX: Record<DropZone, string> = {
  * nobody is glancing at a header they cannot see.
  */
 const RECAP_POLL_MS = 5000;
+
+/**
+ * How often the status badges re-read whether each agent is still working.
+ *
+ * Much faster than the recap poll, and that gap is the point: the recap is a
+ * SENTENCE and costs a transcript walk per pane, so five seconds is right for
+ * it — but the badge is one word, `/activity` answers it from a stamp without
+ * touching the transcript, and a badge that flips five-plus seconds after the
+ * pane visibly started reads as broken (maintainer report 2026-08-07). Shares
+ * the recap poll's visibility gate: hidden badges are not glanced at either.
+ */
+const ACTIVITY_POLL_MS = 1500;
+
+/**
+ * How long a just-sent prompt is allowed to claim "working" on its own.
+ *
+ * The backend only reports `working` once the pane's screen MOVES, and an
+ * agent can sit for a few seconds between receiving a prompt and painting
+ * anything. Without this bridge the badge stays on "done" after Send, which
+ * reads as a send that did not happen. Long enough to cover a slow first
+ * paint, short enough that a prompt the agent truly swallowed goes back to
+ * telling the truth. The backend's own reading takes over the moment it says
+ * `working` — see `activityOf`.
+ */
+const SENT_BRIDGE_MS = 12_000;
 
 /*
  * How tall the prompt bar is — dragged by its top edge, and remembered.
@@ -852,21 +879,117 @@ export function AgenticGrid({
   }, [session.id, pollRecaps]);
 
   /*
+   * The badges' own fast feed — whether each pane's agent is still working.
+   *
+   * Kept apart from the recap poll above for the same reason that one is kept
+   * apart from the workspace state: different clocks. `/activity` is one
+   * stamped word per pane, so it can run every second and a half and the badge
+   * flips within a beat of the pane — where the recap poll left it wrong for
+   * up to five seconds, which on a list of a dozen agents reads as a broken
+   * indicator rather than a slow one. Same workspace guard as the recap cache:
+   * call-signs repeat between workspaces.
+   */
+  const [activityCache, setActivityCache] = useState<{
+    workspaceId: string;
+    rows: Record<string, TerminalActivityRow>;
+  }>(() => ({ workspaceId: session.id, rows: {} }));
+  const liveActivity: Record<string, TerminalActivityRow> =
+    activityCache.workspaceId === session.id ? activityCache.rows : {};
+
+  /*
+   * When each pane was last handed a prompt from THIS window, epoch ms.
+   *
+   * The optimistic half of the badge: the moment Send succeeds the pane is
+   * shown as working, because the user just watched themselves put work in
+   * front of it — waiting for the screen-movement proof to round-trip made
+   * every send look ignored for several seconds. The backend's reading takes
+   * over as soon as it confirms (the entry is dropped), and the entry expires
+   * after `SENT_BRIDGE_MS` so a prompt that truly went nowhere stops lying.
+   */
+  const [sentAt, setSentAt] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (!pollRecaps) return;
+    let cancelled = false;
+    let pulling = false;
+    const pull = async () => {
+      if (pulling) return;
+      pulling = true;
+      try {
+        const answer = await fetchTerminalActivity(session.id);
+        if (cancelled) return;
+        const next = Object.fromEntries(answer.terminals.map((row) => [row.name, row]));
+        setActivityCache({ workspaceId: session.id, rows: next });
+        // The backend has seen these panes working: its reading is now the
+        // truer one, so the optimistic bridge behind it is finished.
+        setSentAt((current) => {
+          const keep = Object.entries(current).filter(
+            ([name]) => next[name]?.activity !== "working",
+          );
+          return keep.length === Object.keys(current).length
+            ? current
+            : Object.fromEntries(keep);
+        });
+      } catch {
+        // The recap poll warns for both feeds; a second warning per tick from
+        // the fast poll would only drown it.
+      } finally {
+        pulling = false;
+      }
+    };
+    void pull();
+    const timer = window.setInterval(() => void pull(), ACTIVITY_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [session.id, pollRecaps]);
+
+  /*
    * Is this pane's agent still working, or has it stopped?
    *
-   * The same two sources as the recap beside it, for the same reason: the
-   * workspace state carries an opening value so a pane never renders a blank
-   * badge, and the five-second poll keeps it true from then on. Both come
-   * straight from the pane — nothing is derived here, or two views of one
-   * terminal would disagree about whether it is busy.
+   * Three sources, freshest first: the fast `/activity` poll, the recap poll,
+   * and the opening value the workspace state carried — so a pane never
+   * renders a blank badge, and never renders a stale one for longer than the
+   * fast poll's beat. All three come straight from the pane; nothing is
+   * derived here, or two views of one terminal would disagree.
+   *
+   * On top of that sits the one honest local claim: a prompt THIS window just
+   * delivered. The backend cannot know about it until the pane's screen moves,
+   * and the user cannot un-know it — see `sentAt`.
    */
   const activityOf = (term: TerminalState) => {
+    const live = liveActivity[term.name];
     const row = recaps[term.name];
-    return {
-      activity: row?.activity ?? term.activity ?? "",
-      since: row?.activity_since ?? term.activity_since ?? 0,
-      worked: row?.worked ?? term.worked ?? false,
-    };
+    const activity = live?.activity ?? row?.activity ?? term.activity ?? "";
+    const since = live?.activity_since ?? row?.activity_since ?? term.activity_since ?? 0;
+    const worked = live?.worked ?? row?.worked ?? term.worked ?? false;
+    const sent = sentAt[term.name];
+    const bridging =
+      sent !== undefined &&
+      Date.now() - sent < SENT_BRIDGE_MS &&
+      (activity === "waiting" || activity === "asking" || activity === "");
+    if (bridging) {
+      return { activity: "working" as const, since: sent / 1000, worked: true };
+    }
+    return { activity, since, worked };
+  };
+
+  /*
+   * The status the badge leans on when this window has no socket view yet.
+   *
+   * `statuses` is written by each pane's own socket, which exists only after
+   * the pane has mounted and connected — so on the first seconds of a
+   * workspace (and for panes a view keeps off screen) the rail showed a grey
+   * "connecting" spinner for terminals the backend already reported live. The
+   * backend's word is the truthful fallback; "connecting" stays only for a
+   * pane nobody knows anything about yet.
+   */
+  const statusOf = (term: TerminalState) => {
+    const socket = statuses[term.name];
+    if (socket) return socket;
+    const backend = liveActivity[term.name]?.status ?? term.status;
+    return backend ? { status: backend as PaneStatus, detail: undefined } : undefined;
   };
 
   /*
@@ -1559,6 +1682,12 @@ export function AgenticGrid({
             ? { ...current, rows: rekey(current.rows, from, to) }
             : current,
         );
+        setActivityCache((current) =>
+          current.workspaceId === session.id
+            ? { ...current, rows: rekey(current.rows, from, to) }
+            : current,
+        );
+        setSentAt((current) => rekey(current, from, to));
         setRestartTokens((current) => rekey(current, from, to));
         // The pane's dragged height is keyed by call-sign too, and the basis
         // map is what stops the remap effect from reading a rename as "one
@@ -1755,6 +1884,13 @@ export function AgenticGrid({
       setPreviewSource("");
       replacePrompt("");
       setAttachments([]);
+      // The pane's badge flips to "working" NOW, not when the poll catches the
+      // screen moving: the user just watched this send succeed, and a badge
+      // still saying "done" for the next several seconds reads as a send that
+      // silently failed. See `sentAt` for how the backend takes back over.
+      if (!result || result.submitted !== false) {
+        setSentAt((current) => ({ ...current, [target]: Date.now() }));
+      }
       // The text is typed either way — but if the agent did not accept it, say
       // so instead of leaving the user to wonder why nothing happened.
       if (result && result.submitted === false) {
@@ -2214,7 +2350,7 @@ export function AgenticGrid({
             </div>
 
             {railTerminals.map((term) => {
-              const state = statuses[term.name];
+              const state = statusOf(term);
               const headline = recaps[term.name]?.recap ?? term.recap;
               const title =
                 headline?.trim() ||
@@ -2756,7 +2892,7 @@ export function AgenticGrid({
               busy enough to need them. */}
           <div className="flex shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-border/60 px-1.5 scrollbar-jarvis">
             {session.terminals.filter(takesPrompts).map((term) => {
-              const state = statuses[term.name];
+              const state = statusOf(term);
               const picked = target === term.name;
               return (
                 <button

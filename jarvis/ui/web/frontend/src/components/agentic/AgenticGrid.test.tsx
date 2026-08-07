@@ -46,6 +46,11 @@ vi.mock("@/lib/agenticIdeApi", () => ({
     workspace_id: "ide_test",
     terminals: [],
   })),
+  // The status badges' fast poll — one stamped word per pane, no recap.
+  fetchTerminalActivity: vi.fn(async () => ({
+    workspace_id: "ide_test",
+    terminals: [],
+  })),
   promptTerminal: vi.fn(),
   // Reached from the toolbar's settings panel, which the grid always renders.
   setIdeActiveAccount: vi.fn(),
@@ -2041,6 +2046,35 @@ describe("session recaps", () => {
         "Waiting for its first instruction.",
       ),
     );
+  });
+
+  it("asks the fast activity feed too, and wears its answer on the badge", async () => {
+    // The badge has its own poll beside the recap one — one stamped word per
+    // pane, quick enough that a pane that starts working is SEEN to start
+    // working rather than reported a recap-interval later.
+    vi.mocked(api.fetchTerminalActivity).mockResolvedValue({
+      workspace_id: "ide_test",
+      terminals: [
+        {
+          key: "mika",
+          name: "Mika",
+          status: "live",
+          activity: "working",
+          activity_since: 0,
+          worked: true,
+        },
+      ],
+    });
+
+    renderGrid();
+
+    await waitFor(() =>
+      expect(api.fetchTerminalActivity).toHaveBeenCalledWith("ide_test"),
+    );
+    await waitFor(() => {
+      const badges = screen.getAllByTestId("pane-activity");
+      expect(badges.some((badge) => badge.dataset.activity === "working")).toBe(true);
+    });
   });
 });
 

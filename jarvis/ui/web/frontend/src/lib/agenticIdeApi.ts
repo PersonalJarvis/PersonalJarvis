@@ -238,6 +238,33 @@ export interface RecapsResponse {
   terminals: TerminalRecap[];
 }
 
+/**
+ * What one pane is DOING, and nothing about what it is doing it about.
+ *
+ * The skinny sibling of `TerminalRecap`, for the poll behind the status badge:
+ * the recap poll also schedules a summarizer pass per pane, so it runs on a
+ * relaxed clock — and a badge that only learns "working" on that clock trails
+ * the pane it describes by several seconds. This row is one stamped word per
+ * pane and is cheap enough to poll fast.
+ */
+export interface TerminalActivityRow {
+  key: string;
+  name: string;
+  /** The pane's process status: `pending`, `live`, `exited` or `error`. */
+  status: string;
+  activity?: PaneActivity;
+  /** When it entered that state (epoch seconds); 0 when unknown. */
+  activity_since?: number;
+  /** Has anything ever been asked of this pane? */
+  worked?: boolean;
+}
+
+export interface ActivityResponse {
+  /** Which workspace answered; null when none is on screen. */
+  workspace_id: string | null;
+  terminals: TerminalActivityRow[];
+}
+
 export interface SessionState {
   id: string;
   folder: string;
@@ -484,6 +511,23 @@ export function fetchTerminalRecaps(
     ? `?workspace_id=${encodeURIComponent(workspaceId)}`
     : "";
   return getJson<RecapsResponse>(`/api/agentic-ide/recaps${query}`);
+}
+
+/**
+ * Whether each pane's agent is still working — the status badge's fast poll.
+ *
+ * Split from `fetchTerminalRecaps` the way that one is split from
+ * `fetchIdeState`: a recap costs a walk of the pane's transcript, this costs a
+ * look at one stamped word, so this one may run every second or two while the
+ * recaps keep their relaxed clock.
+ */
+export function fetchTerminalActivity(
+  workspaceId?: string,
+): Promise<ActivityResponse> {
+  const query = workspaceId
+    ? `?workspace_id=${encodeURIComponent(workspaceId)}`
+    : "";
+  return getJson<ActivityResponse>(`/api/agentic-ide/activity${query}`);
 }
 
 /** The exact prompt a pane was last sent, as `/terminals/{name}/prompt` reports it. */
