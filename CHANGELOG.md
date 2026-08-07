@@ -11,6 +11,69 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [1.2.3] — 2026-08-07
+
+This release makes live voice calls survive crashes and restarts, lets the
+assistant actually use its personal memory in conversation, and polishes the
+Agentic IDE and the desktop orb.
+
+### Added
+
+- Added a headless live-call probe and per-session postmortem forensics for
+  the realtime voice path, so a broken call can be diagnosed from its record
+  instead of reproduced by hand.
+- Added the connection handshake to the visible call state — and stopped
+  paying for it twice on the metered channel.
+- Added terminal zoom helpers to the Agentic IDE and let the voice bubble
+  headline wrap to two lines, so the sentence naming the agent stays readable.
+- Added a light mode to the agents board.
+- Added a self-hosted realtime option hardened for Windows machines without
+  the symlink privilege, whose model downloads previously died mid-fetch.
+
+### Changed
+
+- Personal memory now works retrieval-first: every substantive turn searches
+  the local knowledge vault (single-digit milliseconds) and a strictness
+  verdict decides what may ride along — after an audit found the old
+  refuse-to-search default produced two full live days without a single
+  injected memory. Questions about your own past ("when was I last…") are
+  now recognized and answered from memory instead of guessed at.
+- The desktop voice orb now carries the in-app bubble's look, controls, and
+  energy, and shows its state inside the sphere instead of a speech bubble.
+- The Agentic IDE workspace's chat rail became the project sidebar, and the
+  chat view now reads the agent's conversation from the CLI's own record
+  instead of transcribing the screen.
+
+### Fixed
+
+- A crashed self-hosted voice server no longer ends the call: the reconnect
+  window is sized from measured cold revives (including GPU TTS warm-up),
+  the transport pump survives waking mid-rebuild, and the server is revived
+  with fault diagnostics armed.
+- Live-call transcripts are honest again: hallucinated user turns, subtitle
+  outros, and the echo of the assistant's own barge-in cut are no longer
+  recorded as real speech, and a transcript that arrives whole instead of
+  streamed is accepted.
+- The microphone is freed fast after a call ends, a dying socket can no
+  longer hold it shut, and a silent line is no longer punished.
+- The one-speaker rule is re-asserted every turn, taming the opening
+  monologue on subscription voice calls.
+- OpenAI models that only speak the Responses API are served instead of
+  answering with a fake network apology.
+- An ordered pane delivery in the Agentic IDE survives the caller's hangup,
+  CLI renames and closes are announced to every open view, and "cannot be
+  read" is told apart from "not written yet".
+- On macOS, raising an app window via accessibility works again on Sonoma
+  and Cocoa apps; on Linux/macOS a cleanly exited terminal child no longer
+  reads as crashed.
+- Blocking desktop calls were moved off the async event loop, removing
+  UI freezes.
+- Saying "look at the screen" followed by a content word is no longer
+  mistaken for a screen-context request, and a reported "it spawned" is no
+  longer misread as a request to spawn an agent.
+
+---
+
 ## [1.2.2] — 2026-08-05
 
 This release makes realtime subscription voice and the Agentic IDE more
