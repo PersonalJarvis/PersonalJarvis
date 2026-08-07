@@ -57,6 +57,15 @@ from jarvis.screen_context.models import VisualIntent
         "Lies bitte dieses Fenster",  # i18n-allow: DE input
         "Kannst du meinen Bildschirm anschauen?",  # i18n-allow: DE input
         "Was steht in diesem Fenster?",  # i18n-allow: DE input
+        # Spoken German uses the anglicisms freely; the miss sent a live turn
+        # into a blind tool loop instead of the one-shot look (voice session
+        # 2026-08-06 20:51). i18n-allow: German speech-input fixtures
+        (
+            "Hallo, hallo, ich wollte mal wissen, irgendwas, "  # i18n-allow
+            "was du auf meinen Screen siehst."  # i18n-allow: DE input
+        ),
+        "Was ist auf meinem Display?",  # i18n-allow: DE input
+        "Was siehst du auf meinem Screen?",  # i18n-allow: DE input
         # -- Spanish
         "mira esto",
         "puedes ver esto?",

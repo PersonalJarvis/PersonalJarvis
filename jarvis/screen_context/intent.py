@@ -269,27 +269,31 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"|\b(?:schau(?:e|st)?|guck(?:e|st)?|sieh(?:st)?)"
     r"(?:\s+(?:du|dir|mir|mal|bitte|kurz|eben|doch|noch))*\s+"
     r"(?:auf\s+)?(?:das|den|dieses|diesen|meinen|deinen)\s+"  # i18n-allow: DE input
-    r"(?:bildschirm|monitor|fenster|tab|reiter|dialog|fehlermeldung|fehler"  # i18n-allow
-    r"|meldung|popup|seite|dokument)\b"  # i18n-allow: DE input
+    r"(?:bildschirm|monitor|screen|display|fenster|tab|reiter|dialog"  # i18n-allow
+    r"|fehlermeldung|fehler|meldung|popup|seite|dokument)\b"  # i18n-allow: DE input
     rf"|\b(?:schau|guck)\s+(?:mal\s+)?hier{_END}"
     rf"|\b(?:schau|guck|sieh)\s+(?:mal|her){_END}"
     rf"|\bkannst\s+du\s+(?:mal\s+)?(?:kurz\s+)?"
     rf"(?:sehen|schauen|gucken|draufschauen){_END}"
-    r"|\bkannst\s+du\s+(?:das|dies|es|meinen\s+bildschirm)\s+sehen\b"
-    r"|\bkannst\s+du\s+(?:bitte\s+)?meinen\s+(?:bildschirm|monitor)\s+"
-    r"(?:anschauen|ansehen|pruefen)\b"
+    r"|\bkannst\s+du\s+(?:das|dies|es"
+    r"|meinen\s+(?:bildschirm|screen|monitor))\s+sehen\b"  # i18n-allow: DE input
+    r"|\bkannst\s+du\s+(?:bitte\s+)?meinen\s+(?:bildschirm|monitor|screen|display)\s+"
+    r"(?:anschauen|ansehen|pruefen)\b"  # i18n-allow: DE input
     rf"|\bsiehst\s+du\s+(?:das|dies)(?:\s+(?:hier|da|auch|gerade))*{_END}"  # i18n-allow
-    r"|\bsiehst\s+du\s+(?:meinen\s+bildschirm|den\s+fehler)\b"  # i18n-allow: DE input
+    r"|\bsiehst\s+du\s+(?:meinen\s+(?:bildschirm|screen)|den\s+fehler)\b"  # i18n-allow
     r"|\bwas\s+siehst\s+du\b"
     # Screen nouns in every case German inflects them into. The earlier list
     # spelled out the dative only, so the natural spoken accusative ("schau mal
     # auf meinEN Bildschirm") classified as NONE and the turn fell through to
     # Computer-Use (BUG-124). Inflection is matching data, not prose.
+    # Anglicisms included: spoken German says "auf meinem Screen/Display" as
+    # readily as "Bildschirm" — the miss sent a live turn into a blind
+    # tool-loop instead of the one-shot look (voice session 2026-08-06 20:51).
     # i18n-allow: German speech-input matching data
     r"|\b(?:auf|an|in)\s+(?:dem|den|meinem|meinen|deinem|deinen|diesem|diesen)"  # i18n-allow: DE input
-    r"\s+(?:bildschirm|monitor)\b"
-    r"|\bam\s+(?:bildschirm|monitor)\b"
-    r"|\bmein(?:en|em)?\s+(?:bildschirm|monitor)\b"
+    r"\s+(?:bildschirm|monitor|screen|display)\b"  # i18n-allow: DE input
+    r"|\bam\s+(?:bildschirm|monitor|screen|display)\b"  # i18n-allow: DE input
+    r"|\bmein(?:en|em)?\s+(?:bildschirm|monitor|screen|display)\b"  # i18n-allow
     # i18n-allow: German speech-input matching data
     r"|\b(?:mach|mache|machst|erstell|erstelle|erstellst|nimm|schiess|schiesse)"
     rf"\b{_NEAR}"
