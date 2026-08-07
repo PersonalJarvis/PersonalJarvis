@@ -201,6 +201,8 @@ class ProbeSurface:
         try:
             return await asyncio.wait_for(_loop(), timeout_s)
         except TimeoutError:
+            # "No matching message within the window" IS this helper's answer;
+            # callers assert on None and report the miss themselves.
             return None
 
 

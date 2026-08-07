@@ -2965,6 +2965,8 @@ class RealtimeVoiceSession:
                                     **update_kwargs
                                 )
                             except TypeError:
+                                # Still too new for this adapter — retire the
+                                # next-youngest field and try again.
                                 update_kwargs.pop("turn_directive", None)
                                 try:
                                     await self._session.update_session(

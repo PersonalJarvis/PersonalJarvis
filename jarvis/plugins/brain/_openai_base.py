@@ -434,6 +434,11 @@ async def _stream_via_responses(
                 try:
                     parsed = json.loads(getattr(item, "arguments", "") or "{}")
                 except json.JSONDecodeError:
+                    log.warning(
+                        "Responses stream: tool call %r arrived with "
+                        "unparseable arguments; executing with empty input.",
+                        name,
+                    )
                     parsed = {}
                 tool_calls.append({
                     "id": (

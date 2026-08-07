@@ -1179,6 +1179,8 @@ class _CodexSubscriptionRealtimeSession:
                         # so dropping the nudge there changes nothing.
                         queue.put_nowait(("self_dialogue", None))
                     except asyncio.QueueFull:
+                        # A full queue already wakes the receive loop (see
+                        # above) — the nudge would be redundant, not lost.
                         pass
                 elif (
                     refusal_run >= _REFUSALS_BEFORE_REBUILD

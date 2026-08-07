@@ -163,6 +163,8 @@ def _rows(path: Path) -> list[dict[str, Any]]:
         try:
             payload = json.loads(stripped)
         except (ValueError, TypeError):
+            # Not a JSON line — transcripts interleave plain text with JSONL,
+            # so skipping is the parse contract, not a swallowed failure.
             continue
         if isinstance(payload, dict):
             out.append(payload)
@@ -208,6 +210,7 @@ def _headline(payload: Any) -> tuple[str, str]:
     try:
         detail = json.dumps(payload, indent=2, ensure_ascii=False)
     except (TypeError, ValueError):
+        # Unserializable args still get shown — str() is the honest fallback.
         detail = str(payload)
     return (target[:200], _clip(detail))
 
@@ -360,6 +363,7 @@ def _codex_turns(session_id: str, home: Path | None) -> list[Turn] | None:
                 try:
                     arguments = json.loads(arguments)
                 except (ValueError, TypeError):
+                    # Keep the raw string — _headline renders either shape.
                     pass
             target, detail = _headline(arguments)
             _step(

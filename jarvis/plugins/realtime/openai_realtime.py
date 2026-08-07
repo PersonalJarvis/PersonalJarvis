@@ -1497,7 +1497,13 @@ class LocalRealtimeProvider:
             server_log = open(  # noqa: SIM115 — handed to the child for its lifetime
                 log_dir / "local_realtime_server.log", "ab"
             )
-        except OSError:
+        except OSError as exc:
+            log.warning(
+                "Local realtime server: could not open %s (%s); the child "
+                "runs without a persisted server log.",
+                log_dir / "local_realtime_server.log",
+                exc,
+            )
             server_log = None
         try:
             if os.name == "nt":

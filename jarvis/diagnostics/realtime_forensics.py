@@ -40,6 +40,8 @@ def _count(pm: Mapping[str, Any], key: str) -> int:
     try:
         return int(pm.get(key, 0) or 0)
     except (TypeError, ValueError):
+        # A malformed postmortem field reads as zero — the findings below
+        # judge counts, and "unknown" must not fabricate a failure class.
         return 0
 
 
