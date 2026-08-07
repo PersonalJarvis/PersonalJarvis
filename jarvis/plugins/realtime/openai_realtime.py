@@ -1481,6 +1481,7 @@ class LocalRealtimeProvider:
         if now - LocalRealtimeProvider._last_launch_at < _LOCAL_LAUNCH_MIN_INTERVAL_S:
             return False
         LocalRealtimeProvider._last_launch_at = now
+        import importlib  # lazy (AP-26)
         import subprocess  # lazy (AP-26)
         from pathlib import Path
 
