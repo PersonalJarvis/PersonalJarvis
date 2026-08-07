@@ -129,7 +129,24 @@ export function isSectionId(value: unknown): value is SectionId {
 }
 
 export function initialSectionFromSearch(search: string): SectionId {
-  return new URLSearchParams(search).has("doc") ? "docs" : "chats";
+  const params = new URLSearchParams(search);
+  // ?view= is the general deep-link (drives detached solo windows); an invalid
+  // value falls through to the older ?doc shortcut, then the default.
+  const view = params.get("view");
+  if (isSectionId(view)) return view;
+  return params.has("doc") ? "docs" : "chats";
+}
+
+/**
+ * Is this document a detached solo window (`?solo=1`)?
+ *
+ * A solo window renders exactly one section chrome-less (no sidebar, no top
+ * bar) inside its own desktop window. The flag lives in the URL rather than in
+ * transient state so it survives the preload-recovery full reload after a
+ * frontend rebuild.
+ */
+export function soloWindowFromSearch(search: string): boolean {
+  return new URLSearchParams(search).get("solo") === "1";
 }
 
 export const SECTION_LABELS: Record<SectionId, string> = {
@@ -302,6 +319,22 @@ interface EventStore {
    * flips it lives inside the coding surface, several lazy boundaries down.
    */
   navRevealed: boolean;
+  /**
+   * True when this document is a detached solo window (`?solo=1`): it renders
+   * exactly one section with no app chrome and must ignore cross-window
+   * broadcasts that would switch its section (voice navigation targets the
+   * main window, not a window pinned to one view).
+   */
+  solo: boolean;
+  /**
+   * Sections currently living in their own detached desktop window, mirrored
+   * into EVERY connected window via the DetachedViewOpened/Closed WS events
+   * (plus a GET /api/window/detached resync on mount). Drives the single-
+   * IDE-instance rule: while a coding view is detached, the main window
+   * unmounts its sticky Agentic IDE and shows a placeholder instead — a second
+   * mounted instance would steal every pane's output stream.
+   */
+  detachedViews: SectionId[];
   transcription: string;
   transcriptionFinal: boolean;
   toasts: Toast[];
@@ -372,6 +405,7 @@ interface EventStore {
   clearEvents: () => void;
   setActiveSection: (s: SectionId) => void;
   setNavRevealed: (revealed: boolean) => void;
+  setDetachedViews: (views: SectionId[]) => void;
   setTranscription: (text: string, isFinal: boolean) => void;
   pushToast: (
     kind: Toast["kind"],
@@ -444,6 +478,10 @@ export const useEventStore = create<EventStore>((set, get) => ({
     typeof window === "undefined" ? "" : window.location.search,
   ),
   navRevealed: false,
+  solo: soloWindowFromSearch(
+    typeof window === "undefined" ? "" : window.location.search,
+  ),
+  detachedViews: [],
   transcription: "",
   transcriptionFinal: true,
   toasts: [],
@@ -483,6 +521,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   // without it EVERY time rather than only the first time.
   setActiveSection: (s) => set({ activeSection: s, navRevealed: false }),
   setNavRevealed: (revealed) => set({ navRevealed: revealed }),
+  setDetachedViews: (views) => set({ detachedViews: views }),
 
   setTranscription: (text, isFinal) =>
     set({ transcription: text, transcriptionFinal: isFinal }),

@@ -329,7 +329,10 @@ export function useWebSocket(): void {
 
         if (env.event_name === "NavigateSidebar") {
           const p = env.payload as { section?: string };
-          if (isSectionId(p.section)) {
+          // A detached solo window is pinned to its one section; the spoken
+          // "go to settings" targets the main window, and following it here
+          // would blank the very view the user split off to keep.
+          if (isSectionId(p.section) && !useEventStore.getState().solo) {
             setActiveSection(p.section);
             pushToast(
               "info",

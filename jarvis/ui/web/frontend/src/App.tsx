@@ -140,12 +140,49 @@ export default function App() {
    */
   const activeSection = useEventStore((s) => s.activeSection);
   const navRevealed = useEventStore((s) => s.navRevealed);
+  const solo = useEventStore((s) => s.solo);
+  const detachedViews = useEventStore((s) => s.detachedViews);
   const codingSurface = CODING_SECTIONS.has(activeSection);
   const railHidden = codingSurface && !navRevealed;
 
+  /*
+   * The realtime broker must exist exactly ONCE across all windows: it
+   * registers WebRTC offers for the native voice session, and two live brokers
+   * publish competing offers. Ownership follows the voice surface — a detached
+   * Voice window brings its own broker (the desktop shell injects the broker
+   * token only there), and the main window stands down while that window
+   * exists. Every other solo window never mounts one.
+   */
+  const brokerMounted = solo
+    ? activeSection === "chats"
+    : !detachedViews.includes("chats");
+
+  /*
+   * A detached solo window is one section in its own desktop window: the
+   * section IS the window, so the app chrome around it — nav, top bar,
+   * onboarding, dock — has no job here and is omitted rather than hidden.
+   * What stays is what any surface needs to function: toasts (many components
+   * report through them) and the right-click edit menu (the desktop WebView
+   * has no native context menu, so this is the only mouse-driven paste).
+   */
+  if (solo) {
+    return (
+      <div className="relative flex h-screen w-screen overflow-hidden bg-background text-foreground">
+        {brokerMounted && <SubscriptionRealtimeTransportBroker />}
+        <main className="relative z-10 flex min-w-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1">
+            <MainView />
+          </div>
+        </main>
+        <ToastLayer />
+        <EditContextMenu />
+      </div>
+    );
+  }
+
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-background text-foreground">
-      <SubscriptionRealtimeTransportBroker />
+      {brokerMounted && <SubscriptionRealtimeTransportBroker />}
       {!codingSurface && (
         <>
           <div className="pointer-events-none fixed inset-0 jarvis-grid opacity-40" aria-hidden />
