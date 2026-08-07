@@ -64,8 +64,19 @@ _PHASES = ("idle", "preflight", "venv", "deps", "patch", "smoke", "configure", "
 
 
 def install_root() -> Path:
-    """Permanent home of the managed server, under the Jarvis data dir."""
-    return Path(os.environ.get("JARVIS_DATA_DIR") or "data") / "local_realtime"
+    """Permanent home of the managed server, under the Jarvis data dir.
+
+    Absolute on purpose (review 2026-08-07): a CWD-relative ``data`` made
+    the persisted launch command break under any other working directory
+    (service starts, shortcuts, CLI) and made status probes read a
+    different tree than the installer wrote.
+    """
+    env_dir = os.environ.get("JARVIS_DATA_DIR")
+    if env_dir and env_dir.strip():
+        return Path(env_dir.strip()).resolve() / "local_realtime"
+    from jarvis.core.config import DATA_DIR  # absolute PROJECT_ROOT/data
+
+    return DATA_DIR / "local_realtime"
 
 
 def _venv_dir() -> Path:
@@ -203,7 +214,13 @@ def derive_launch_command(brain: BrainResolution, *, memory_source: str) -> str:
 
 
 def _run(cmd: list[str], *, timeout: int, cwd: Path | None = None) -> None:
-    """Run a build step, streaming its output into the progress tail."""
+    """Run a build step, streaming its output into the progress tail.
+
+    The deadline is enforced by ``wait(timeout=…)`` on the process itself,
+    never by the output stream: a step that stalls SILENTLY (a hung pip
+    download emits nothing) previously blocked forever in ``readline`` and
+    left the install "running" with no cancel path (review 2026-08-07).
+    """
     env = dict(os.environ)
     env.setdefault("PYTHONIOENCODING", "utf-8")
     proc = subprocess.Popen(
@@ -217,18 +234,24 @@ def _run(cmd: list[str], *, timeout: int, cwd: Path | None = None) -> None:
         env=env,
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
-    deadline = time.monotonic() + timeout
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        line = line.rstrip()
-        if line:
-            with _LOCK:
-                _STATE.detail = line[:200]
-                _STATE.log_tail.append(line[:200])
-        if time.monotonic() > deadline:
-            _kill_tree(proc)
-            raise TimeoutError(f"step timed out after {timeout}s: {' '.join(cmd[:3])}…")
-    code = proc.wait(timeout=60)
+
+    def _pump() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line:
+                with _LOCK:
+                    _STATE.detail = line[:200]
+                    _STATE.log_tail.append(line[:200])
+
+    pump = threading.Thread(target=_pump, name="local-realtime-install-pump", daemon=True)
+    pump.start()
+    try:
+        code = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        raise TimeoutError(f"step timed out after {timeout}s: {' '.join(cmd[:3])}…") from None
+    pump.join(timeout=10)
     if code != 0:
         raise RuntimeError(f"step failed (exit {code}): {' '.join(cmd[:3])}…")
 
@@ -265,7 +288,16 @@ def _smoke_boot(launch_command: str, brain: BrainResolution) -> None:
     the HF cache, port bind) before the install may call itself ready.
     Mirrors the adapter's revive spawn exactly: raw string on Windows,
     shlex on POSIX, and the same hardening environment.
+
+    The probe port must be FREE before the spawn: an unrelated listener on
+    it would answer the readiness poll and record a success the freshly
+    built server never earned (review 2026-08-07).
     """
+    if _port_open(_SMOKE_PORT):
+        raise RuntimeError(
+            f"smoke-boot port {_SMOKE_PORT} is already in use by another "
+            "process — close it and retry the install"
+        )
     with_port = f"{launch_command} --ws_port {_SMOKE_PORT}"
     cmd: str | list[str] = with_port if os.name == "nt" else shlex.split(with_port)
     smoke_log = install_root() / "smoke_boot.log"
@@ -295,6 +327,14 @@ def _smoke_boot(launch_command: str, brain: BrainResolution) -> None:
                     f"server exited during smoke boot (code {proc.returncode}); see {smoke_log}"
                 )
             if _port_open(_SMOKE_PORT):
+                # The port pre-check above makes this OUR server; still
+                # require the process to be alive at success so a crash
+                # racing the poll cannot slip through.
+                if proc.poll() is not None:
+                    raise RuntimeError(
+                        f"server exited right after binding (code {proc.returncode}); "
+                        f"see {smoke_log}"
+                    )
                 return
             elapsed = int(time.monotonic() - (deadline - _SMOKE_TIMEOUT_S))
             _set("smoke", 70 + min(25, elapsed // 30), "waiting for first boot (downloads models)")
@@ -304,8 +344,15 @@ def _smoke_boot(launch_command: str, brain: BrainResolution) -> None:
         _kill_tree(proc)
 
 
-def start_install() -> tuple[bool, str]:
-    """Kick off (or resume) the managed install. Returns immediately."""
+def start_install(*, confirmed_brain: str = "") -> tuple[bool, str]:
+    """Kick off (or resume) the managed install. Returns immediately.
+
+    ``confirmed_brain`` is the brain kind the user saw in the preflight
+    they confirmed ("ollama" / "cloud-openai"). The install re-resolves the
+    brain and must FAIL if the kind changed in between — silently swapping
+    a confirmed "fully local" setup for cloud reasoning would bypass the
+    exact honesty note this flow exists for (review 2026-08-07).
+    """
     with _LOCK:
         if _STATE.thread is not None and _STATE.thread.is_alive():
             return False, "an install is already running"
@@ -315,13 +362,18 @@ def start_install() -> tuple[bool, str]:
         _STATE.detail = ""
         _STATE.started_at = time.time()
         _STATE.finished_at = 0.0
-        thread = threading.Thread(target=_run_install, name="local-realtime-install", daemon=True)
+        thread = threading.Thread(
+            target=_run_install,
+            name="local-realtime-install",
+            args=(confirmed_brain.strip(),),
+            daemon=True,
+        )
         _STATE.thread = thread
     thread.start()
     return True, "install started"
 
 
-def _run_install() -> None:
+def _run_install(confirmed_brain: str = "") -> None:
     try:
         _set("preflight", 2, "checking hardware, disk, and brain")
         report: PreflightReport = run_preflight(install_root())
@@ -329,6 +381,14 @@ def _run_install() -> None:
             _fail(report.blocker)
             return
         assert report.brain is not None and report.tier is not None
+        if confirmed_brain and report.brain.kind != confirmed_brain:
+            _fail(
+                "the reasoning setup changed since your confirmation (was "
+                f"{confirmed_brain}, now {report.brain.kind}: "
+                f"{report.brain.note}) — run the check again and confirm "
+                "the new setup"
+            )
+            return
         install_root().mkdir(parents=True, exist_ok=True)
 
         if not _venv_python().exists():
@@ -385,20 +445,99 @@ def _run_install() -> None:
         _fail(str(exc))
 
 
+def _stop_managed_server(root: Path) -> None:
+    """Best-effort stop of any process running out of the install tree.
+
+    Deleting a venv under a LIVE server is exactly the mid-tree abort the
+    2026-08-07 screenshot showed (WinError 2 deep inside site-packages).
+    psutil is optional; without it the tolerant rmtree below still carries
+    the removal, just with more retries.
+    """
+    try:
+        import psutil  # type: ignore[import-untyped]
+    except ImportError:
+        log.debug("uninstall: psutil unavailable — skipping process stop")
+        return
+    needle = str(root).lower()
+    for proc in psutil.process_iter(["pid", "exe", "cmdline"]):
+        try:
+            exe = (proc.info.get("exe") or "").lower()
+            cmdline = " ".join(proc.info.get("cmdline") or ()).lower()
+            if needle in exe or needle in cmdline:
+                proc.kill()
+                proc.wait(timeout=10)
+        except (psutil.Error, OSError):  # pragma: no cover — best effort
+            continue
+
+
+def _rmtree_tolerant(root: Path) -> None:
+    """Remove a multi-gigabyte tree without dying on races or stale handles.
+
+    FileNotFoundError mid-walk (AV scanner, racing delete) is ignored;
+    read-only files get one chmod+retry; transient locks get three whole
+    attempts. Windows additionally takes the extended-length path prefix so
+    deep node_modules-style paths cannot fail on MAX_PATH.
+    """
+    import shutil
+    import stat
+
+    target = str(root)
+    if os.name == "nt" and not target.startswith("\\\\?\\"):
+        target = f"\\\\?\\{root.resolve()}"
+
+    def _onerror(func, path, exc_info) -> None:
+        exc = exc_info[1]
+        if isinstance(exc, FileNotFoundError):
+            return
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        except FileNotFoundError:
+            return
+
+    last_error: OSError | None = None
+    for attempt in range(3):
+        if not root.exists():
+            return
+        try:
+            shutil.rmtree(target, onerror=_onerror)
+            return
+        except OSError as exc:  # a still-held handle — give it a moment
+            last_error = exc
+            time.sleep(2 * (attempt + 1))
+    if root.exists() and last_error is not None:
+        raise last_error
+
+
+def _clear_managed_config(root: Path) -> None:
+    """Drop OUR launch command from jarvis.toml after a removal.
+
+    Only a command pointing into the deleted tree is cleared — a
+    bring-your-own launch command the user authored stays untouched.
+    Without this, every later call spawned a nonexistent entry point and
+    then sat out the full 120 s patient-reconnect window on a server the
+    user had just removed (review 2026-08-07).
+    """
+    from jarvis.core.config_writer import clear_local_realtime_launch_command
+
+    clear_local_realtime_launch_command(only_if_under=str(root))
+
+
 def uninstall() -> tuple[bool, str]:
-    """Delete the managed install tree and its readiness marker."""
+    """Stop the managed server, delete its tree, and clear its config."""
     with _LOCK:
         if _STATE.thread is not None and _STATE.thread.is_alive():
             return False, "an install is running; wait for it to finish first"
-    import shutil
-
     root = install_root()
     if not root.exists():
+        _clear_managed_config(root)
         return True, "nothing installed"
+    _stop_managed_server(root)
     try:
-        shutil.rmtree(root)
+        _rmtree_tolerant(root)
     except OSError as exc:
         return False, f"could not remove {root}: {exc}"
+    _clear_managed_config(root)
     with _LOCK:
         _STATE.phase = "idle"
         _STATE.percent = 0

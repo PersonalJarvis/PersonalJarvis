@@ -63,7 +63,11 @@ def _usable_accelerator_gb() -> tuple[float, str]:
     except Exception:  # pragma: no cover — nvidia-smi quirks must not crash preflight
         log.debug("preflight: NVIDIA probe failed", exc_info=True)
         gpus = []
-    vram_mb = sum(g.vram_mb for g in gpus)
+    # The LARGEST single device, never the fleet sum: the whole stack runs
+    # on one GPU (--num_pipelines 1, one TTS device), so two 8 GB cards are
+    # an 8 GB machine for this feature — summing them would defeat the
+    # 12 GB floor and OOM at first call (review 2026-08-07).
+    vram_mb = max((g.vram_mb for g in gpus), default=0)
     if vram_mb > 0:
         return vram_mb / 1024.0, "nvidia-smi"
     if sys.platform == "darwin" and platform.machine() == "arm64":

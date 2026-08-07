@@ -2681,17 +2681,30 @@ async def managed_server_preflight() -> dict[str, Any]:
 
 
 @router.post("/providers/local-realtime/managed-server/install")
-async def managed_server_install() -> dict[str, Any]:
+async def managed_server_install(request: Request) -> dict[str, Any]:
     """Start (or join) the one-click managed server install.
 
     Returns immediately with the poll-shaped progress snapshot; the heavy
     lifting (venv, pinned packages, vendored patch, first smoke boot that
     downloads the models) runs in a background thread. A second call while
     a run is in flight joins it instead of starting a duplicate.
+
+    The optional body ``{"confirmed_brain": "ollama"}`` carries the brain
+    kind the user saw in the preflight; the engine fails the install if the
+    re-resolved brain differs, so a confirmed "fully local" can never
+    silently become cloud reasoning.
     """
     from jarvis.realtime.local_server.install import snapshot, start_install
 
-    started, message = await asyncio.to_thread(start_install)
+    confirmed_brain = ""
+    try:
+        body = await request.json()
+        confirmed_brain = str((body or {}).get("confirmed_brain", "") or "")
+    except Exception:  # noqa: BLE001 — an empty/absent body is the normal case
+        confirmed_brain = ""
+    started, message = await asyncio.to_thread(
+        lambda: start_install(confirmed_brain=confirmed_brain)
+    )
     payload = snapshot()
     payload["started"] = started
     payload["message"] = message

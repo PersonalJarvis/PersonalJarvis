@@ -2054,6 +2054,48 @@ def set_local_realtime_launch_command(
         _atomic_write(path, out)
 
 
+def clear_local_realtime_launch_command(
+    *, only_if_under: str = "", path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Clear the managed server's launch command after an uninstall.
+
+    ``only_if_under`` guards user autonomy: when given, the command is only
+    cleared if it references that directory (the managed install tree) — a
+    hand-authored bring-your-own command stays untouched. The default
+    ``base_url`` this module pinned is cleared alongside, so a removed
+    server stops looking "configured" to the activation path; a custom URL
+    survives.
+    """
+    path = _ensure_writable_config_path(path)
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+
+        block = doc.get("brain", {}).get("providers", {}).get("local-realtime")
+        if block is None:
+            return
+        command = str(block.get("launch_command", "") or "")
+        if not command:
+            return
+        if only_if_under:
+            needle = only_if_under.replace("/", "\\").lower()
+            haystack = command.replace("/", "\\").lower()
+            if needle not in haystack:
+                return
+        block["launch_command"] = ""
+        if str(block.get("base_url", "") or "").strip() == "http://localhost:8765":
+            block["base_url"] = ""
+
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
 def set_telephony_config(values: dict[str, object], *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Patch ``[integrations.twilio]`` with the given non-secret fields.
 

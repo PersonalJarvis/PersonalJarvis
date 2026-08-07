@@ -1527,6 +1527,25 @@ class LocalRealtimeProvider:
             # (live 2026-08-07), which would brick the server's own model
             # fetches. Copies cost disk, not correctness.
             child_env.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
+            # The managed install's cloud-brain path deliberately keeps the
+            # OpenAI key OUT of the persisted launch command (secrets never
+            # enter jarvis.toml); the server's OpenAI client reads it from
+            # this spawn environment instead. Keyring-held keys are not in
+            # os.environ, so inject here — otherwise every turn of a
+            # cloud-brained managed server 401s although the install was
+            # green (review 2026-08-07). Ollama-brained and keyless servers
+            # simply never look at it.
+            if not child_env.get("OPENAI_API_KEY"):
+                try:
+                    get_secret = importlib.import_module("jarvis.core.config").get_secret  # AP-1
+                    key = get_secret("openai_api_key", env_fallback="OPENAI_API_KEY") or ""
+                    if key:
+                        child_env["OPENAI_API_KEY"] = key
+                except Exception:  # noqa: BLE001 — a secretless host is a valid host
+                    log.debug(
+                        "local-realtime: OpenAI key lookup for spawn env failed",
+                        exc_info=True,
+                    )
             subprocess.Popen(  # noqa: S603 — the maintainer configured this command
                 command,
                 stdin=subprocess.DEVNULL,

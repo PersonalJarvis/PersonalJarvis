@@ -187,5 +187,85 @@ class TestSnapshot:
         assert set(snap) == {"phase", "percent", "detail", "error", "running", "log_tail"}
 
 
+class TestReviewFixes:
+    """Contracts pinned by the 2026-08-07 code review."""
+
+    def test_install_root_is_absolute_without_env(self, monkeypatch) -> None:
+        monkeypatch.delenv("JARVIS_DATA_DIR", raising=False)
+        assert install.install_root().is_absolute()
+
+    def test_multi_gpu_uses_largest_device_not_the_sum(self, monkeypatch) -> None:
+        from jarvis.hardware import detection
+
+        monkeypatch.setattr(
+            detection,
+            "_detect_nvidia_gpus",
+            lambda: [detection.GPUInfo("A", 8192), detection.GPUInfo("B", 8192)],
+        )
+        usable, source = preflight._usable_accelerator_gb()
+        assert source == "nvidia-smi"
+        assert usable == pytest.approx(8.0)  # two 8 GB cards are an 8 GB machine
+
+    def test_brain_kind_change_fails_the_install(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        report = preflight.PreflightReport(
+            ok=True,
+            usable_gb=16.0,
+            memory_source="nvidia-smi",
+            disk_free_gb=100.0,
+            tier=tiers.TIERS[0],
+            stack_sentence="x",
+            brain=brain_link.BrainResolution(kind="cloud-openai", model="gpt-5.4-mini"),
+        )
+        monkeypatch.setattr(install, "run_preflight", lambda root: report)
+        install._run_install("ollama")
+        snap = install.snapshot()
+        assert snap["phase"] == "error"
+        assert "changed since your confirmation" in str(snap["error"])
+
+    def test_uninstall_clears_only_the_managed_launch_command(self, tmp_path) -> None:
+        from jarvis.core.config_writer import clear_local_realtime_launch_command
+
+        cfg = tmp_path / "jarvis.toml"
+        managed = tmp_path / "data" / "local_realtime"
+        entrypoint = (managed / "venv" / "s.exe").as_posix()
+        cfg.write_text(
+            "[brain.providers.local-realtime]\n"
+            f"launch_command = \"'{entrypoint}' --mode realtime\"\n"
+            'base_url = "http://localhost:8765"\n',
+            encoding="utf-8",
+        )
+        clear_local_realtime_launch_command(only_if_under=str(managed), path=cfg)
+        text = cfg.read_text(encoding="utf-8")
+        assert 'launch_command = ""' in text
+        assert 'base_url = ""' in text
+
+    def test_clear_spares_a_bring_your_own_command(self, tmp_path) -> None:
+        from jarvis.core.config_writer import clear_local_realtime_launch_command
+
+        cfg = tmp_path / "jarvis.toml"
+        cfg.write_text(
+            "[brain.providers.local-realtime]\n"
+            'launch_command = "/opt/myserver/run --mode realtime"\n'
+            'base_url = "http://192.168.1.5:9000"\n',
+            encoding="utf-8",
+        )
+        clear_local_realtime_launch_command(
+            only_if_under=str(tmp_path / "data" / "local_realtime"), path=cfg
+        )
+        text = cfg.read_text(encoding="utf-8")
+        assert "/opt/myserver/run" in text
+        assert "192.168.1.5:9000" in text
+
+    def test_tolerant_rmtree_survives_vanishing_files(self, tmp_path) -> None:
+        root = tmp_path / "tree"
+        (root / "sub").mkdir(parents=True)
+        (root / "sub" / "a.txt").write_text("x", encoding="utf-8")
+        install._rmtree_tolerant(root)
+        assert not root.exists()
+        # Idempotent on an already-gone tree.
+        install._rmtree_tolerant(root)
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))

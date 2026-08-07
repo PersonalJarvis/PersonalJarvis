@@ -862,9 +862,16 @@ export async function managedServerPreflight(): Promise<ManagedPreflight> {
   return body as ManagedPreflight;
 }
 
-export async function managedServerInstall(): Promise<ManagedInstallProgress> {
+export async function managedServerInstall(
+  confirmedBrain?: string,
+): Promise<ManagedInstallProgress> {
   const res = await fetch("/api/providers/local-realtime/managed-server/install", {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // The brain kind the user just confirmed in the preflight — the engine
+    // fails the install if it re-resolves differently (no silent
+    // local→cloud swap).
+    body: JSON.stringify({ confirmed_brain: confirmedBrain ?? "" }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);

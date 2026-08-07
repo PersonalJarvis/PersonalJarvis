@@ -1799,6 +1799,11 @@ function ManagedServerPanel({
 
   if (!status) return null;
 
+  // The Remove control must survive a PARTIAL state: after a failed
+  // uninstall (or interrupted install) `ready` is false but gigabytes are
+  // still on disk — gating removal on `ready` would strand them forever.
+  const anythingOnDisk = Object.values(status.components ?? {}).some(Boolean);
+
   const check = async () => {
     setError(null);
     setChecking(true);
@@ -1814,7 +1819,14 @@ function ManagedServerPanel({
   const startInstall = async () => {
     setError(null);
     try {
-      setProgress(await managedServerInstall());
+      const first = await managedServerInstall(preflight?.brain?.kind);
+      setProgress(first);
+      // A failure BEFORE the first poll tick (fast preflight error inside
+      // the engine thread) would otherwise never render: the polling
+      // effect only runs while `running` is true.
+      if (!first.running && first.phase === "error" && first.error) {
+        setError(first.error);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -1914,7 +1926,7 @@ function ManagedServerPanel({
         </div>
       )}
 
-      {status.ready && !running && (
+      {anythingOnDisk && !running && (
         <Button
           size="sm"
           variant="ghost"

@@ -63,17 +63,39 @@ def test_preflight_reports_tier_and_brain_when_ok(
     assert body["brain"]["kind"] == "ollama"
 
 
-def test_install_returns_immediately_with_snapshot(
+def test_install_returns_immediately_and_forwards_confirmed_brain(
     server: WebServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(install, "start_install", lambda: (True, "install started"))
+    seen: dict[str, str] = {}
+
+    def _fake_start(*, confirmed_brain: str = "") -> tuple[bool, str]:
+        seen["confirmed_brain"] = confirmed_brain
+        return True, "install started"
+
+    monkeypatch.setattr(install, "start_install", _fake_start)
     with TestClient(server.app) as client:
-        resp = client.post("/api/providers/local-realtime/managed-server/install")
+        resp = client.post(
+            "/api/providers/local-realtime/managed-server/install",
+            json={"confirmed_brain": "ollama"},
+        )
     body = resp.json()
     assert resp.status_code == 200
     assert body["started"] is True
     assert body["message"] == "install started"
     assert "phase" in body and "percent" in body
+    assert seen["confirmed_brain"] == "ollama"
+
+
+def test_install_accepts_an_empty_body(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        install, "start_install", lambda confirmed_brain="": (True, "install started")
+    )
+    with TestClient(server.app) as client:
+        resp = client.post("/api/providers/local-realtime/managed-server/install")
+    assert resp.status_code == 200
+    assert resp.json()["started"] is True
 
 
 def test_status_pairs_progress_with_failclosed_probe(server: WebServer) -> None:
