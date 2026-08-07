@@ -271,6 +271,17 @@ def test_the_headline_prompt_is_an_outcome_label_that_fits_the_real_header() -> 
     assert "Workspace setup — one clear screen" in system
 
 
+def test_the_headline_prompt_front_loads_the_first_two_words() -> None:
+    """The second screenshot's lesson: the rail truncates after ~2 words, so
+    those two must identify the session alone — and 'Code Review' does not."""
+    system = recap_engine._SYSTEM  # noqa: SLF001 - the contract under test
+
+    assert "FIRST TWO WORDS" in system
+    assert "about 5 words" in system
+    assert '"Code Review"' in system  # named as a banned opener
+    assert "Pane titles review — 6 findings" in system  # ...and its repair
+
+
 def test_a_pane_nobody_briefed_says_so_in_the_prompt() -> None:
     prompt = recap_engine.build_prompt(_pane(), _rows(10))
 

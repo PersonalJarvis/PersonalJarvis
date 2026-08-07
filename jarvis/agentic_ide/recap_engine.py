@@ -246,23 +246,32 @@ past all of that to the work itself.
 
 Answer with exactly two physical lines and nothing else:
 
-HEADLINE: <3-7 words, HARD MAXIMUM 48 characters. A self-contained navigation \
-label for the user's problem or desired outcome, normally "subject — result". \
-Put the unique subject first and a concrete result, blocker, or completion \
-state second. No pane name, agent name, quotation marks, or trailing period.>
+HEADLINE: <about 5 words, HARD MAXIMUM 48 characters. A self-contained \
+navigation label for the user's problem or desired outcome, normally \
+"subject — result". No pane name, agent name, quotation marks, or trailing \
+period.>
 DETAIL: <exactly two complete sentences on this same physical line. State the \
 original goal first, then what has been achieved, what is blocked, or the next \
 step. Finish both sentences.>
 
 Rules:
+- THE FIRST TWO WORDS MUST IDENTIFY THIS PANE ON THEIR OWN. Narrow sidebars \
+truncate the headline after roughly two words, so they are often ALL the user \
+sees. Front-load the most specific noun phrase this session has — the feature, \
+the bug, the subsystem — and push everything generic behind it. Test yourself: \
+if the first two words could open the headline of a DIFFERENT session in the \
+same workspace, they are too generic.
+- Never OPEN with a bare activity name ("Code Review", "Bug Fix", "Refactor", \
+"Research") or process narration such as "Investigating", "Implementing", \
+"Working on", "Fixing", "Analyzing", "Reviewing", or an equivalent phrase in \
+the requested language. Name WHAT is being reviewed or fixed first; the \
+activity may follow after it if room remains.
 - The headline answers "Which user problem or outcome is this pane for?", not \
 "Which generic engineering activity is happening?" Use the user's vocabulary \
 when the original request is visible; otherwise infer the outcome cautiously \
 from the work.
-- Do not start the headline with process narration such as "Investigating", \
-"Implementing", "Working on", "Fixing", "Analyzing", "Reviewing", or an \
-equivalent phrase in the requested language. Those verbs spend the visible \
-space before identifying the task.
+- Aim for about 5 words. Shorter is acceptable only when the subject genuinely \
+needs fewer; never pad, never exceed 48 characters.
 - Keep file paths, class names, commands and implementation mechanisms OUT of \
 the headline. Put useful technical evidence in DETAIL instead.
 - Be concrete in DETAIL. "Working on the code" is worthless. Name supported \
@@ -277,7 +286,10 @@ plainly instead of inventing some.
 - Report, do not address the user, and do not offer help. No preamble, no \
 markdown, no bullet points, no code fences.
 
-Headline examples (poor -> useful):
+Headline examples (poor -> useful). Note how the first two words alone \
+already say which session this is:
+- "Code Review — 6 findings" -> \
+"Pane titles review — 6 findings"
 - "Consolidating the workspace launcher into a single screen" -> \
 "Workspace setup — one clear screen"
 - "Fixing three bugs in the terminal notification system" -> \
