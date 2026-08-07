@@ -391,6 +391,24 @@ def _local_runtime_payload(
     }
 
 
+def _managed_server_payload(spec: ProviderSpec) -> dict[str, Any] | None:
+    """Fail-closed state of the managed local realtime server; None elsewhere.
+
+    Same doctrine as ``_local_runtime_payload``: the card renders the
+    server-side sentence verbatim and never guesses readiness client-side.
+    Only the self-hosted realtime card carries a managed install.
+    """
+    if spec.id != "local-realtime":
+        return None
+    try:
+        from jarvis.realtime.local_server.install import server_status
+
+        return server_status()
+    except Exception as exc:  # noqa: BLE001 — the provider list must never 500
+        log.debug("Managed-server probe failed (%s); reporting none.", exc)
+        return None
+
+
 def _installed_local_models(provider_id: str, models: list[Any]) -> list[Any]:
     """Drop catalog entries whose files are not on this machine.
 
@@ -600,6 +618,9 @@ def _spec_to_payload(
         "local_runtime": _local_runtime_payload(
             spec, model_override=local_model_override
         ),
+        # Self-hosted realtime card only: state of the one-click managed
+        # server install (fail-closed, server sentence rendered verbatim).
+        "managed_server": _managed_server_payload(spec),
         # Gemini's AI-Studio-vs-Vertex split; None for single-path providers.
         "alt_credential": (
             {
@@ -2641,6 +2662,74 @@ async def get_local_install_status(provider_id: str) -> dict[str, Any]:
     ):
         raise HTTPException(status_code=400, detail=result["message"])
     return result
+
+
+@router.get("/providers/local-realtime/managed-server/preflight")
+async def managed_server_preflight() -> dict[str, Any]:
+    """Honest go/no-go for the one-click local realtime install (AD-5/AD-10).
+
+    Reports usable accelerator memory, the picked tier with download size and
+    expected latency, disk headroom, and the resolved brain — or the blocker
+    (12 GB floor, full disk, no brain) with the exact fixing actions. Runs
+    read-only probes only; nothing downloads here.
+    """
+    from jarvis.realtime.local_server.install import install_root
+    from jarvis.realtime.local_server.preflight import report_payload, run_preflight
+
+    report = await asyncio.to_thread(run_preflight, install_root())
+    return report_payload(report)
+
+
+@router.post("/providers/local-realtime/managed-server/install")
+async def managed_server_install() -> dict[str, Any]:
+    """Start (or join) the one-click managed server install.
+
+    Returns immediately with the poll-shaped progress snapshot; the heavy
+    lifting (venv, pinned packages, vendored patch, first smoke boot that
+    downloads the models) runs in a background thread. A second call while
+    a run is in flight joins it instead of starting a duplicate.
+    """
+    from jarvis.realtime.local_server.install import snapshot, start_install
+
+    started, message = await asyncio.to_thread(start_install)
+    payload = snapshot()
+    payload["started"] = started
+    payload["message"] = message
+    return payload
+
+
+@router.get("/providers/local-realtime/managed-server/status")
+async def managed_server_status() -> dict[str, Any]:
+    """Install progress AND the independent fail-closed readiness probe.
+
+    The on-disk probe is the authority (same doctrine as the on-device
+    speech installs): a tree installed by an earlier app run reads as ready,
+    and a finished install with a missing component reads as incomplete.
+    """
+    from jarvis.realtime.local_server.install import server_status, snapshot
+
+    progress = snapshot()
+    status = await asyncio.to_thread(server_status)
+    return {"progress": progress, "server": status}
+
+
+@router.delete(
+    "/providers/local-realtime/managed-server",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def managed_server_uninstall() -> dict[str, Any]:
+    """Remove the managed install tree (venv, markers, logs).
+
+    Deliberately dangerous-flagged: this deletes gigabytes that took a long
+    download to assemble. The shared HF model cache is NOT touched — other
+    local features may use the same checkpoints.
+    """
+    from jarvis.realtime.local_server.install import uninstall
+
+    ok, message = await asyncio.to_thread(uninstall)
+    if not ok:
+        raise HTTPException(status_code=409, detail=message)
+    return {"ok": True, "message": message}
 
 
 def _require_pull_capable(provider_id: str) -> None:

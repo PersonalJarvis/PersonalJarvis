@@ -789,9 +789,11 @@ jarvis = [
     # In-repo C source for the macOS stub launcher, compiled at install time
     # by jarvis/setup/macos_app_bundle.py (BUG-060 stable TCC identity).
     "setup/*.c",
-    # Vendored upstream patch for the managed local-realtime server install
-    # (realtime/local_server/patching.py reads it via Path(__file__)).
+    # Vendored upstream patch + pinned package set for the managed
+    # local-realtime server install (realtime/local_server/patching.py and
+    # install.py read them via Path(__file__)).
     "realtime/local_server/patches/*.patch",
+    "realtime/local_server/pins/*.txt",
 ]
 
 [tool.setuptools.data-files]
