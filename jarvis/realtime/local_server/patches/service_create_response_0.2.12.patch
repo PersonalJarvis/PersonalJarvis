@@ -1,0 +1,38 @@
+--- a/speech_to_speech/api/openai_realtime/service.py
++++ b/speech_to_speech/api/openai_realtime/service.py
+@@ -417,6 +417,24 @@
+ 
+     # ── STT → LM bridge ────────────────────────────
+ 
++    def _client_wants_auto_response(self, cfg) -> bool:
++        """Whether the session's turn_detection asks for automatic responses.
++
++        LOCAL PATCH (pending upstream, speech-to-speech 0.2.12): the OpenAI
++        Realtime protocol's manual-response mode (``turn_detection.
++        create_response: false``) was ignored — every final transcription
++        triggered a full LLM generation plus TTS that a manual-mode client
++        then had to cancel as unsolicited. That doubled LLM load and burned
++        seconds of TTS per turn for nothing. Default stays True: only an
++        explicit ``create_response: false`` disables the auto response.
++        """
++        session = getattr(cfg, "session", None)
++        audio = getattr(session, "audio", None)
++        audio_input = getattr(audio, "input", None)
++        turn_detection = getattr(audio_input, "turn_detection", None)
++        create_response = getattr(turn_detection, "create_response", None)
++        return True if create_response is None else bool(create_response)
++
+     def _on_transcription_completed(self, conn_id: str, event: TranscriptionCompletedEvent) -> list[ServerEvent]:
+         """Handle a final STT transcription: emit protocol event, append to chat, trigger LM."""
+         st = self._state(conn_id)
+@@ -453,7 +471,9 @@
+             st.speculative_user_speech_stopped_at_s = event.speech_stopped_at_s
+ 
+         queue = self.text_prompt_queue
+-        if queue and transcript:
++        # LOCAL PATCH: honor manual-response mode (create_response: false) —
++        # the client requests its responses explicitly via response.create.
++        if queue and transcript and self._client_wants_auto_response(cfg):
+             st.response_pending = True
+             queue.put(
+                 GenerateResponseRequest(
