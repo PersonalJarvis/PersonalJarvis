@@ -3830,6 +3830,7 @@
       "button_open": "Open the voice bubble — talk to {0}",
       "button_close": "Close the voice bubble",
       "ready": "Ready",
+      "connecting": "Connecting…",
       "listening": "Listening…",
       "thinking": "Thinking…",
       "speaking": "Speaking",

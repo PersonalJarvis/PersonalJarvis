@@ -2846,10 +2846,19 @@ class CodexSubscriptionRealtimeProvider:
         transport_module = importlib.import_module("jarvis.realtime.webrtc_transport")
         attempts: tuple[Any, ...] = (None, transport_module.stun_ice_servers)
         last_error: BaseException | None = None
+        # Built and primed ONCE for both attempts: the recognizer is pure
+        # local state, and rebuilding + re-warming it on the STUN retry paid
+        # seconds for nothing.
+        input_transcriber = self._build_input_transcriber(cfg)
         for index, ice_factory in enumerate(attempts):
             try:
                 session = await self._open_session_once(
-                    cfg, None if ice_factory is None else ice_factory()
+                    cfg,
+                    None if ice_factory is None else ice_factory(),
+                    input_transcriber=input_transcriber,
+                    # The STUN retry may ride the audit that passed seconds
+                    # ago on this very open; a first attempt never does.
+                    ride_recent_audit=index > 0,
                 )
                 if index > 0:
                     # Postmortem marker: this call paid the full re-open (a
@@ -2911,7 +2920,12 @@ class CodexSubscriptionRealtimeProvider:
             return None
 
     async def _open_session_once(
-        self, cfg: Any, ice_servers: Any
+        self,
+        cfg: Any,
+        ice_servers: Any,
+        *,
+        input_transcriber: Any = None,
+        ride_recent_audit: bool = False,
     ) -> _CodexSubscriptionRealtimeSession:
         # Jarvis owns the media path in-process. The UI could only ever broker
         # a signalling-shaped offer (no microphone), which ChatGPT-Live cannot
@@ -3007,7 +3021,11 @@ class CodexSubscriptionRealtimeProvider:
                 thread_id=thread_id,
                 answer_sdp=answer_sdp,
                 audio_endpoint=audio_endpoint,
-                input_transcriber=self._build_input_transcriber(cfg),
+                input_transcriber=(
+                    input_transcriber
+                    if input_transcriber is not None
+                    else self._build_input_transcriber(cfg)
+                ),
                 language=str(getattr(cfg, "language", "en") or "en"),
                 voice=voice,
             )

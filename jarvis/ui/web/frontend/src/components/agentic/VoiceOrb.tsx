@@ -52,6 +52,18 @@ const MOTIONS: Record<VoiceState, Motion> = {
     voiceImpact: 0,
     colorChurn: 0.28,
   },
+  connecting: {
+    // The handshake: alive and clearly in motion, but calmer than thinking —
+    // a steady expectant swirl while the transport comes up.
+    flowX: 0.2,
+    flowY: 0.05,
+    breathAmp: 0.012,
+    breathHz: 0.5,
+    turbulence: 1.1,
+    energy: 0.92,
+    voiceImpact: 0,
+    colorChurn: 0.6,
+  },
   listening: {
     flowX: 0.11,
     flowY: 0.035,

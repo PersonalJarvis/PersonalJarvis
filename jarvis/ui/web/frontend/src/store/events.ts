@@ -19,6 +19,7 @@ import {
  */
 export type VoiceState =
   | "idle"
+  | "connecting"
   | "listening"
   | "thinking"
   | "speaking"
@@ -28,6 +29,7 @@ export type VoiceState =
 /** The full lowercased supervisor vocabulary, in the order it is declared. */
 export const VOICE_STATES: readonly VoiceState[] = [
   "idle",
+  "connecting",
   "listening",
   "thinking",
   "speaking",

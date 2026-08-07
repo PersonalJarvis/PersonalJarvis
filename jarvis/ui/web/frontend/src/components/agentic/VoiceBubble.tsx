@@ -158,6 +158,7 @@ function storePos(pos: BubblePos): void {
 /** Locale keys for the status line, per state. */
 const STATUS_KEY: Record<VoiceState, string> = {
   idle: "agentic_grid.voice_bubble.ready",
+  connecting: "agentic_grid.voice_bubble.connecting",
   listening: "agentic_grid.voice_bubble.listening",
   thinking: "agentic_grid.voice_bubble.thinking",
   speaking: "agentic_grid.voice_bubble.speaking",

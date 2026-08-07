@@ -7711,9 +7711,6 @@ class SpeechPipeline:
         held_muted_reply: dict[str, Any] | None = None
         muted_reply_flush_task: asyncio.Task[Any] | None = None
         turn_complete = asyncio.Event()
-        # One warning per session when the supervisor cannot represent the
-        # connecting phase — a loud-once note, never a per-message log spam.
-        connecting_state_reported = False
         speaking = False
         post_output_echo_guard_until = 0.0
         # End of the tail's physically-audible phase (device latency residue);
@@ -7912,7 +7909,6 @@ class SpeechPipeline:
         async def _send_json(message: dict[str, Any]) -> None:
             nonlocal semantic_turn_committed, speaking
             nonlocal surface_playback_epoch, surface_playback_task
-            nonlocal connecting_state_reported
             kind = str(message.get("type", ""))
             if kind == "audio_starting":
                 # The provider handshake is ABOUT to run and can legitimately
@@ -7931,22 +7927,11 @@ class SpeechPipeline:
                     self._active_realtime_language or "unknown",
                     message.get("handshake_budget_s", "unknown"),
                 )
+                # SupervisorState.CONNECTING exists since the 2026-08-06
+                # campaign; the surfaces show a live "connecting" look for
+                # the whole handshake instead of freezing on their previous
+                # state (the WARN branch that used to sit here is retired).
                 await self._transition(_REALTIME_CONNECTING_STATE)
-                supervisor = getattr(self, "_supervisor", None)
-                if (
-                    supervisor is not None
-                    and not connecting_state_reported
-                    and getattr(supervisor, "state", "") != _REALTIME_CONNECTING_STATE
-                ):
-                    # The supervisor ignores states it does not know, by design.
-                    # Say so once instead of leaving the surface silently on its
-                    # previous state — that silence IS the bug this branch fixes.
-                    connecting_state_reported = True
-                    log.warning(
-                        "Supervisor does not know the %s state; the bar and orb "
-                        "keep their previous state through the handshake",
-                        _REALTIME_CONNECTING_STATE,
-                    )
             elif kind == "language":
                 # Mid-call language flip from the ONE resolver. Recorded so the
                 # surface can label the call honestly; never re-derived here.

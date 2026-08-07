@@ -50,6 +50,10 @@ from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 log = logging.getLogger(__name__)
 
 _DEFAULT_REQUEST_TIMEOUT_S: Final = 20.0
+# How long a passed cold-start audit may be ridden by a SECOND thread_start on
+# the same process (the STUN media-path retry). Short on purpose: warm starts
+# minutes later must re-audit in full.
+_STARTUP_AUDIT_TTL_S: Final = 10.0
 _SHUTDOWN_TIMEOUT_S: Final = 2.0
 _DEFAULT_SDP_TIMEOUT_S: Final = 15.0
 _DEFAULT_NOTIFICATION_QUEUE_SIZE: Final = 512
@@ -2031,8 +2035,17 @@ class CodexAppServerClient:
         # The live process whose FULL startup audit (profile, live account,
         # config requirements, effective config) just passed. ``thread_start``
         # consumes this to skip repeating that identical audit microseconds
-        # later; every WARM thread start still re-audits.
+        # later; every WARM thread start still re-audits. The (process, stamp)
+        # pair below extends the one-shot token by a short TTL for exactly one
+        # scenario: a failed host-candidate media path retries with STUN and
+        # pays a SECOND thread_start seconds after the audit passed — that
+        # retry rides the same audit instead of re-running three RPCs and a
+        # profile walk. Warm starts minutes later still re-audit in full, so
+        # "re-read immediately before EVERY subscription thread" keeps its
+        # meaning.
         self._startup_audit_process: asyncio.subprocess.Process | None = None
+        self._audited_process: asyncio.subprocess.Process | None = None
+        self._startup_audit_at = 0.0
 
     def _assert_owner_loop(self) -> asyncio.AbstractEventLoop:
         loop = asyncio.get_running_loop()
@@ -2290,6 +2303,8 @@ class CodexAppServerClient:
                 # three RPC round trips and a profile walk on the SAME process
                 # microseconds later.
                 self._startup_audit_process = self._process
+                self._audited_process = self._process
+                self._startup_audit_at = time.monotonic()
 
                 def _announce_ready() -> None:
                     # Status callers waiting out the "voice is starting"
@@ -3184,6 +3199,12 @@ class CodexAppServerClient:
         model: str | None = None,
         ephemeral: bool = True,
         extra: Mapping[str, Any] | None = None,
+        # EXPLICIT opt-in for one scenario only: a failed host-candidate media
+        # path retrying with STUN may ride an audit that passed within the TTL
+        # instead of running a third identical copy. Every ordinary (warm)
+        # thread start keeps the full re-audit — the account can switch under
+        # a shared process between calls, and that doctrine stays intact.
+        ride_recent_audit: bool = False,
     ) -> dict[str, Any]:
         """Start a verified ChatGPT-only transport thread outside the workspace."""
         # cwd/model/ephemeral stay caller-proof: the audit below pins them to
@@ -3309,9 +3330,15 @@ class CodexAppServerClient:
             # thread/start frame, so exactly one thread start can ride it and
             # every WARM start still re-audits.
             live_process = self._process
-            audit_is_fresh = (
-                live_process is not None
-                and self._startup_audit_process is live_process
+            audit_is_fresh = live_process is not None and (
+                self._startup_audit_process is live_process
+                or (
+                    ride_recent_audit
+                    and getattr(self, "_audited_process", None) is live_process
+                    and time.monotonic()
+                    - getattr(self, "_startup_audit_at", 0.0)
+                    <= _STARTUP_AUDIT_TTL_S
+                )
             )
             self._startup_audit_process = None
             try:
@@ -3329,6 +3356,11 @@ class CodexAppServerClient:
                     self._audit_effective_config(
                         await self._read_effective_config()
                     )
+                    # This full audit is byte-identical to the cold-start one;
+                    # stamp it so a STUN media-path retry seconds from now can
+                    # ride it instead of running a THIRD copy.
+                    self._audited_process = live_process
+                    self._startup_audit_at = time.monotonic()
             except CodexSubscriptionUnavailable as exc:
                 if isinstance(exc, CodexSubscriptionPlanUnsupported):
                     # The WARM call path re-judges the live account before
@@ -3576,6 +3608,8 @@ class CodexAppServerClient:
         if process is None:
             self._ready = False
             self._startup_audit_process = None
+            self._audited_process = None
+            self._startup_audit_at = 0.0
             self._close_lifeline()
             if self._profile_transport_epoch is not None:
                 # Epoch first, release off-loop and shielded: a cancellation
@@ -3591,6 +3625,8 @@ class CodexAppServerClient:
         self._process = None
         self._ready = False
         self._startup_audit_process = None
+        self._audited_process = None
+        self._startup_audit_at = 0.0
         tree = self._process_tree
         self._process_tree = None
         reader_task = self._reader_task

@@ -16,6 +16,12 @@ if TYPE_CHECKING:
 
 class SupervisorState(str, Enum):
     IDLE = "IDLE"
+    # A voice session's transport handshake is in flight (a cold codex
+    # subscription bring-up legitimately spends seconds here). Before this
+    # state existed the pipeline transitioned to "CONNECTING", the supervisor
+    # silently dropped the unknown value, and orb/bar froze on their previous
+    # look for the whole handshake - dead air with no visible progress.
+    CONNECTING = "CONNECTING"
     LISTENING = "LISTENING"
     THINKING = "THINKING"
     SPEAKING = "SPEAKING"

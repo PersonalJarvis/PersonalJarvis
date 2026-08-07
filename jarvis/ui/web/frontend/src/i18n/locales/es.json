@@ -3830,6 +3830,7 @@
       "button_open": "Abrir la burbuja de voz — habla con {0}",
       "button_close": "Cerrar la burbuja de voz",
       "ready": "Listo",
+      "connecting": "Conectando…",
       "listening": "Escuchando…",
       "thinking": "Pensando…",
       "speaking": "Hablando",
