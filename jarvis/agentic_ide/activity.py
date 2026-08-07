@@ -401,6 +401,25 @@ STAMP_FRESH_S = 6.0
 #: LIVE process — see the module docstring.
 SUBMIT_GRACE_S = 10.0
 
+#: How long movement must LAST before the badge calls a pane working.
+#:
+#: The inverse problem of the submit grace, reported the same day: any single
+#: printout into a once-instructed pane — a slash command's output, a menu, a
+#: redraw the user caused — kept the raw reading on ``working`` for the whole
+#: :data:`STILL_S` freshness tail, so the badge spun over an agent that was
+#: sitting at its prompt (the maintainer watched it spin right after ``/recap``
+#: printed). Real work is not a burst: every measured CLI repaints at least
+#: twice a second for as long as it is busy, so genuine work sustains movement
+#: indefinitely while a burst's tail dies after ``STILL_S``. Strictly above
+#: ``STILL_S`` for exactly that reason — a lone burst can never outlive it.
+#:
+#: The cost is bounded and covered: a pane that starts working WITHOUT a fresh
+#: submit shows its spinner this many seconds late, and the one start a user
+#: actually watches — their own Send — is carried by :data:`SUBMIT_GRACE_S`,
+#: which outlasts this window. The notification sweep keeps the raw reading;
+#: this gate is applied to the STAMPED word only (see ``notifications._step``).
+WORK_CONFIRM_S = 5.0
+
 
 class Reading(NamedTuple):
     """What a pane is doing, and when it started doing it.
@@ -440,6 +459,22 @@ def stamp(term: Any, activity: Activity, *, now: float) -> None:
     term.activity_at = now
 
 
+def in_submit_wake(term: Any, moment: float) -> bool:
+    """Did ``moment`` fall inside the wake of a confirmed submission?
+
+    True while ``moment`` is within :data:`SUBMIT_GRACE_S` of an instruction
+    that verifiably reached the LIVE process. The window where a still screen
+    may claim ``working`` (:func:`observed`), and where movement needs no
+    confirmation before the badge spins (``notifications._step``) — output
+    arriving this soon after a submit is the agent starting, not the user
+    printing something into the pane.
+    """
+    if not _has_current_instruction(term):
+        return False
+    at = float(getattr(term, "last_submit_at", 0.0) or 0.0)
+    return 0 <= moment - at <= SUBMIT_GRACE_S
+
+
 def _submit_graced(term: Any, reading: Reading, moment: float) -> Reading:
     """``working`` for the first seconds after a submit, before movement shows.
 
@@ -449,12 +484,9 @@ def _submit_graced(term: Any, reading: Reading, moment: float) -> Reading:
     """
     if reading.activity != "waiting":
         return reading
-    if not _has_current_instruction(term):
+    if not in_submit_wake(term, moment):
         return reading
-    at = float(getattr(term, "last_submit_at", 0.0) or 0.0)
-    if 0 <= moment - at <= SUBMIT_GRACE_S:
-        return Reading("working", at)
-    return reading
+    return Reading("working", float(getattr(term, "last_submit_at", 0.0) or 0.0))
 
 
 def observed(term: Any, *, now: float | None = None) -> Reading:
@@ -526,10 +558,12 @@ __all__ = [
     "STAMP_FRESH_S",
     "STILL_S",
     "SUBMIT_GRACE_S",
+    "WORK_CONFIRM_S",
     "TAIL_ROWS",
     "Activity",
     "Reading",
     "has_work_behind_it",
+    "in_submit_wake",
     "is_moving",
     "is_settled",
     "observed",

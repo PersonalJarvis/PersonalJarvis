@@ -97,7 +97,9 @@ from loguru import logger
 from .activity import (
     RESIZE_SHADOW_S,
     STILL_S,
+    WORK_CONFIRM_S,
     Activity,
+    in_submit_wake,
     is_moving,
     is_settled,
     read_activity,
@@ -346,6 +348,12 @@ class _PaneWatch:
     #: survive several PTYs; reusing the previous one's digest fabricates a
     #: still observation for the replacement process.
     process_generation: int = 0
+    #: When the CURRENT movement episode began, ``None`` while the pane is
+    #: still. What lets the stamped word demand that movement OUTLAST a single
+    #: burst (``WORK_CONFIRM_S``) before the badge spins — the raw reading
+    #: calls a pane working for the whole ``STILL_S`` tail of any lone
+    #: printout, slash-command output included.
+    moving_since: float | None = None
 
 
 def _detail(term: Any) -> str:
@@ -481,7 +489,10 @@ class ActivityWatcher:
                 process_generation=process_generation,
             )
             self._panes[ident] = watch
-            stamp(term, activity, now=now)
+            # Through the same movement-confirmation gate as every later sweep:
+            # a restored pane replaying its transcript is fresh output too, and
+            # first sight is not a reason to trust a burst more.
+            stamp(term, self._confirmed(term, watch, activity, now), now=now)
             self._checkpoint_resume_state(term, activity, watch, now)
             return None
 
@@ -519,7 +530,18 @@ class ActivityWatcher:
         # The pane list shows this on every pane, all the time, while an entry
         # is filed once per episode and only for the few states that are news —
         # so an early return below must never cost the UI its status.
-        stamp(term, activity, now=now)
+        #
+        # Publish the CONFIRMED word, not the raw one. Raw "working" covers the
+        # whole STILL_S tail of any single printout — a slash command's output,
+        # a menu, a redraw the user caused — and the badge spinning over an
+        # agent that is sitting at its prompt is exactly the slot machine the
+        # maintainer reported (2026-08-07, right after /recap printed). Real
+        # work repaints continuously and sustains the episode past
+        # WORK_CONFIRM_S; a burst's tail cannot. The bell below keeps the raw
+        # reading: its transitions are already debounced by SETTLE_S, and the
+        # user's own Send is carried through the confirm window by the submit
+        # grace in `observed`.
+        stamp(term, self._confirmed(term, watch, activity, now), now=now)
         self._checkpoint_resume_state(term, activity, watch, now)
 
         if watch.announced:
@@ -554,6 +576,33 @@ class ActivityWatcher:
                 created_at=now,
             )
         )
+
+    def _confirmed(self, term: Any, watch: _PaneWatch, activity: Activity, now: float) -> Activity:
+        """The word the badge wears: movement must outlast a single burst.
+
+        Tracks when the current movement episode began and reports ``waiting``
+        until it has lasted ``WORK_CONFIRM_S`` — strictly longer than the
+        freshness tail one lone printout leaves behind, so a slash command's
+        output can never spin the badge, while a genuinely working agent
+        (repainting at least twice a second, measured) confirms within a few
+        sweeps.
+
+        Movement whose episode BEGAN in the wake of a confirmed submission
+        needs no waiting: output that soon after a Send is the agent starting,
+        not the user printing something into the pane — and it is what hands
+        the badge over seamlessly from the submit grace (which covers the
+        still seconds before the first paint) to the observed movement.
+        """
+        if activity != "working":
+            watch.moving_since = None
+            return activity
+        if watch.moving_since is None:
+            watch.moving_since = now
+        if in_submit_wake(term, watch.moving_since):
+            return activity
+        if now - watch.moving_since < WORK_CONFIRM_S:
+            return "waiting"
+        return activity
 
     def _checkpoint_resume_state(
         self, term: Any, activity: Activity, watch: _PaneWatch, now: float

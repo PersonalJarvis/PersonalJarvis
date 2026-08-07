@@ -460,6 +460,80 @@ async def test_the_bell_keeps_the_strict_movement_rule(registry: Registry, tmp_p
     assert reading == "waiting"
 
 
+async def test_a_single_printout_does_not_spin_the_badge(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The slot machine (maintainer report 2026-08-07, with screenshot).
+
+    ``/recap`` printed its answer into a pane whose agent was waiting for
+    input, and the badge spun for the whole freshness tail of that one burst —
+    as it did for every menu, slash command and user-caused redraw. One
+    printout is not an agent at work: real work repaints continuously, a burst
+    dies within ``STILL_S``, and the stamped word now demands the difference.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    _instruct(term, 100.0)  # instructed long ago — no submit wake, no grace
+    term.transcript.feed(REST_SCREENS["claude"])
+    _sweep(registry, 500.0)
+    _sweep(registry, 502.0)
+    assert observed(term, now=502.0).activity == "waiting"
+
+    # A local command prints once — fresh bytes AND a changed picture.
+    term.transcript.feed("\r\nrecap: shipped the status badge fix\r\n")
+    term.last_output_at = 504.0
+    for at in (504.0, 506.0, 508.0):
+        _sweep(registry, at)
+        assert observed(term, now=at).activity == "waiting"
+
+
+async def test_sustained_repainting_still_reads_as_working(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """And the confirmation window costs real work only its first seconds.
+
+    An agent that is genuinely busy repaints at least twice a second for as
+    long as it runs, so its movement episode outlives the burst tail and the
+    badge spins — a few seconds late without a fresh submit, instantly with
+    one (the wake rule, covered below).
+    """
+    _session, term = await _pane(registry, tmp_path)
+    _instruct(term, 100.0)  # outside the submit wake: the strict path
+    term.transcript.feed(REST_SCREENS["claude"])
+    _sweep(registry, 500.0)
+    _sweep(registry, 502.0)
+
+    for at in (504.0, 506.0, 508.0, 510.0):
+        term.transcript.feed(f"\r\n· step at {at}\r\n")
+        term.last_output_at = at
+        _sweep(registry, at)
+
+    assert observed(term, now=510.0).activity == "working"
+
+
+async def test_movement_in_a_submits_wake_confirms_instantly(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """Output right after a Send is the agent starting, not a stray printout.
+
+    The seam between the submit grace (a still pane may claim working for ten
+    seconds after Send) and observed movement: without this, a slow first
+    paint landing late in the grace would flap the badge back to "done" while
+    the confirmation window ran. Movement whose episode begins in the wake of
+    a confirmed submission needs no further proof.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    term.transcript.feed(REST_SCREENS["claude"])
+    _sweep(registry, 500.0)
+    _sweep(registry, 502.0)
+
+    _instruct(term, 503.0)  # Send
+    term.transcript.feed("\r\n· Scurrying…\r\n")
+    term.last_output_at = 504.0  # first paint, one second later
+    _sweep(registry, 504.0)
+
+    assert observed(term, now=504.0).activity == "working"
+
+
 async def test_the_two_readings_of_one_pane_agree(registry: Registry, tmp_path: Path) -> None:
     """The workspace state and the pane-list poll describe the same pane alike.
 
