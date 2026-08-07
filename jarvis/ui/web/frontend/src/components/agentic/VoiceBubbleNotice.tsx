@@ -136,7 +136,10 @@ export function VoiceBubbleNotice({
 
   const body = (
     <>
-      <span className="block truncate text-[12px] font-semibold leading-snug text-foreground">
+      {/* Two lines rather than one truncated one: this is the sentence that
+          tells the user WHICH of their agents this is about, and half of it is
+          often the half that names the thing. */}
+      <span className="line-clamp-2 text-[12px] font-semibold leading-snug text-foreground">
         {headline}
       </span>
       <span className="mt-0.5 block truncate text-[11px] leading-snug text-muted-foreground">
