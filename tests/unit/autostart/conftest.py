@@ -25,6 +25,7 @@ def make_caps(
         has_cursor=False,
         display_present=display_present,
         is_wayland=False,
+        has_webview=False,
         ax_permission_granted=None,
     )
 

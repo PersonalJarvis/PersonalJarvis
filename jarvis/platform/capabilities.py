@@ -31,6 +31,7 @@ class Capabilities:
     has_cursor: bool
     display_present: bool
     is_wayland: bool
+    has_webview: bool
     ax_permission_granted: bool | None
 
 
@@ -47,6 +48,7 @@ def detect_capabilities() -> Capabilities:
         has_cursor=probes.has_cursor(),
         display_present=probes.display_present(),
         is_wayland=probes.is_wayland(),
+        has_webview=probes.webview_backend_available(),
         ax_permission_granted=probes.ax_permission_granted(),
     )
 

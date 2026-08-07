@@ -213,6 +213,39 @@ def test_has_overlay_requires_display_and_tkinter(monkeypatch):
     assert probes.has_overlay() is False
 
 
+# --- webview_backend_available ---------------------------------------------
+
+
+def test_webview_false_without_module_everywhere(monkeypatch):
+    for plat in ("win32", "darwin", "linux"):
+        _force_platform(monkeypatch, plat)
+        monkeypatch.setattr(probes, "_has_module", lambda n: False)
+        assert probes.webview_backend_available() is False
+
+
+def test_webview_module_suffices_on_windows_and_macos(monkeypatch):
+    for plat in ("win32", "darwin"):
+        _force_platform(monkeypatch, plat)
+        monkeypatch.setattr(probes, "_has_module", lambda n: n == "webview")
+        assert probes.webview_backend_available() is True
+
+
+def test_webview_linux_needs_display_and_gi(monkeypatch):
+    _force_platform(monkeypatch, "linux")
+    monkeypatch.setattr(probes, "_has_module", lambda n: n in ("webview", "gi"))
+    monkeypatch.setenv("DISPLAY", ":0")
+    assert probes.webview_backend_available() is True
+    # Headless: module present but no display → honest False.
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    assert probes.webview_backend_available() is False
+    # Display but the distro GTK/WebKit bindings (gi) are missing → False,
+    # because webview.start() would raise WebViewException later.
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr(probes, "_has_module", lambda n: n == "webview")
+    assert probes.webview_backend_available() is False
+
+
 def test_all_probes_run_without_raising_on_host():
     # Smoke: every probe returns a bool/None on the real host.
     assert isinstance(probes.display_present(), bool)
@@ -223,3 +256,4 @@ def test_all_probes_run_without_raising_on_host():
     assert isinstance(probes.has_elevation(), bool)
     assert probes.ax_permission_granted() in (True, False, None)
     assert probes.screen_recording_granted() in (True, False, None)
+    assert isinstance(probes.webview_backend_available(), bool)

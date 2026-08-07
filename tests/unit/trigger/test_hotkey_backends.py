@@ -56,6 +56,7 @@ def patch_platform(monkeypatch):
             has_elevation=False,
             display_present=True,
             is_wayland=not has_hotkey,
+            has_webview=False,
             ax_permission_granted=None,
             has_cursor=False,
         )

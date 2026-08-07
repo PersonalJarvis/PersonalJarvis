@@ -154,6 +154,24 @@ def has_overlay() -> bool:
     return display_present() and _has_module("tkinter")
 
 
+def webview_backend_available() -> bool:
+    """Can this host draw a native pywebview window (main or detached)?
+
+    Answers the capability question BEFORE the UI offers a window-spawning
+    control (the P-27/P-30 rule): ``pywebview`` ships in the ``[desktop]``
+    extra, so a headless install simply lacks the module. On Linux the module
+    alone is not enough — pywebview needs a display plus the distro-packaged
+    GTK/WebKit introspection bindings (``gi``), which pip cannot install; a
+    module-only claim would fail later inside ``webview.start()``.
+    """
+    if not _has_module("webview"):
+        return False
+    plat = detect_platform()
+    if plat in ("win32", "darwin"):
+        return True
+    return display_present() and _has_module("gi")
+
+
 def has_elevation() -> bool:
     """Is a privilege-escalation mechanism present (AD-12)?"""
     plat = detect_platform()
@@ -176,4 +194,5 @@ __all__ = [
     "has_cursor",
     "has_overlay",
     "has_elevation",
+    "webview_backend_available",
 ]

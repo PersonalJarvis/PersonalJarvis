@@ -25,6 +25,7 @@ def _caps(display: bool = True) -> Capabilities:
         has_cursor=False,
         display_present=display,
         is_wayland=False,
+        has_webview=False,
         ax_permission_granted=None,
     )
 

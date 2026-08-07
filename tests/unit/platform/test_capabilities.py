@@ -80,6 +80,7 @@ def test_real_host_capabilities_have_correct_types():
         "has_elevation",
         "display_present",
         "is_wayland",
+        "has_webview",
     ):
         assert isinstance(getattr(caps, field), bool), field
     assert caps.ax_permission_granted in (True, False, None)
@@ -112,4 +113,5 @@ def test_headless_fake_has_no_gui_features():
     assert caps.display_present is False
     assert caps.has_overlay is False
     assert caps.has_hotkey is False
+    assert caps.has_webview is False  # no native window backend headless
     assert caps.has_pty is True  # a VPS still has a PTY

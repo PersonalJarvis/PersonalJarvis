@@ -22,6 +22,7 @@ def fake_windows_capabilities(**overrides) -> Capabilities:
         has_cursor=True,
         display_present=True,
         is_wayland=False,
+        has_webview=True,
         ax_permission_granted=True,
     )
     base.update(overrides)
@@ -40,6 +41,7 @@ def fake_macos_capabilities(**overrides) -> Capabilities:
         has_cursor=True,
         display_present=True,
         is_wayland=False,
+        has_webview=True,
         ax_permission_granted=None,
     )
     base.update(overrides)
@@ -58,6 +60,7 @@ def fake_linux_capabilities(**overrides) -> Capabilities:
         has_cursor=True,
         display_present=True,
         is_wayland=False,
+        has_webview=True,
         ax_permission_granted=False,
     )
     base.update(overrides)
@@ -76,6 +79,7 @@ def fake_headless_capabilities(**overrides) -> Capabilities:
         has_cursor=False,
         display_present=False,
         is_wayland=False,
+        has_webview=False,
         ax_permission_granted=False,
     )
     base.update(overrides)
