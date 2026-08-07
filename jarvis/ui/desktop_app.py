@@ -59,6 +59,18 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 LOCK_FILE_PATH = DATA_DIR / "jarvis.lock"
+
+# Views the desktop shell can split off into their own solo window, mapped to
+# the window-title label. Keys mirror the frontend ``SECTION_IDS``
+# (``store/events.ts``); labels are deliberately the stable English section
+# names, NOT the wake-word brand — the product/window title is a compatibility
+# contract (see ``jarvis/core/branding.py``), only agent names are dynamic.
+DETACHABLE_VIEWS: dict[str, str] = {
+    "agentic-ide": "Agents",
+    "agentic-ide-classic": "Agents",
+    "chat-workspace": "Agents",
+    "chats": "Voice",
+}
 META_FILE_PATH = DATA_DIR / ".jarvis-running"
 #: Timeout for the initial lock acquire, in seconds. 0 = non-blocking,
 #: so we detect a running process immediately and focus it instead of
@@ -1102,6 +1114,11 @@ class DesktopApp:
         # _run_backend). The real app is delegated to it once built.
         self._bootstrap: Any = None
         self._window: Any = None
+        # Detached solo windows keyed by view id (see DETACHABLE_VIEWS). Only
+        # touched from worker threads (route handlers via asyncio.to_thread,
+        # pywebview event hooks, the tray bridge) — never from the asyncio
+        # loop, and never from the GUI MainThread.
+        self._detached_windows: dict[str, Any] = {}
         self._shutdown_done = False
         self._tray: Any = None
         self._user_requested_quit = False
@@ -2776,7 +2793,7 @@ class DesktopApp:
         )
 
         window = getattr(self, "_window", None)
-        if window is None:
+        if window is None and not self._detached_windows:
             return (False, "no desktop window to restart")
         try:
             import jarvis as _jarvis
@@ -2828,10 +2845,11 @@ class DesktopApp:
             # single-instance mutex + port free up so the relauncher's fresh
             # instance can claim them (without it, a lingering windowless
             # process holds the lock and the new instance bounces off it →
-            # "shuts down but never comes back").
+            # "shuts down but never comes back"). Destroys detached windows
+            # too — webview.start() returns only when the LAST window closes.
             run_restart_quit_sequence(
                 set_quit=_mark_quit,
-                destroy_window=window.destroy,
+                destroy_window=self._destroy_all_windows,
             )
 
         threading.Thread(
@@ -2859,7 +2877,7 @@ class DesktopApp:
         from jarvis.ui.relauncher import run_restart_quit_sequence
 
         window = getattr(self, "_window", None)
-        if window is None:
+        if window is None and not self._detached_windows:
             return False
 
         def _mark_quit() -> None:
@@ -2868,7 +2886,7 @@ class DesktopApp:
         def _quit_soon() -> None:
             run_restart_quit_sequence(
                 set_quit=_mark_quit,
-                destroy_window=window.destroy,
+                destroy_window=self._destroy_all_windows,
             )
 
         threading.Thread(
@@ -3823,6 +3841,274 @@ class DesktopApp:
             return {"ok": True, "focused": True}
         return {"ok": False, "focused": False, "reason": "foreground_lock"}
 
+    # ---- Detached solo windows ----------------------------------------------
+
+    def _detached_title(self, view: str) -> str:
+        """Distinct window title for a detached view.
+
+        The title doubles as the window handle on Windows (``FindWindowW``
+        exact match drives focus and the taskbar icon), so it must never equal
+        the main window's ``WINDOW_TITLE``.
+        """
+        return f"{WINDOW_TITLE} — {DETACHABLE_VIEWS[view]}"
+
+    def _window_background(self) -> str:
+        """The theme-correct frame color, same derivation as the main window."""
+        from jarvis.ui.theme import configured_theme, window_background
+
+        return window_background(configured_theme(getattr(self, "cfg", None)))
+
+    def open_detached_window(self, view: str) -> dict[str, Any]:
+        """Open ``view`` in its own solo window — MUST run on a worker thread.
+
+        pywebview materializes runtime windows only from a thread whose name is
+        not ``MainThread``, and every window call blocks its caller — both
+        reasons the ``/api/window/detach`` route gets here via
+        ``asyncio.to_thread``. Idempotent: an already-detached view is focused,
+        not duplicated. Every failure returns a reasoned ``ok: false`` with a
+        ``fallback_url`` so the frontend can open a browser tab instead — the
+        honest degrade on hosts whose webview backend cannot create runtime
+        windows.
+        """
+        fallback = f"/?view={view}&solo=1"
+        if view not in DETACHABLE_VIEWS:
+            return {"ok": False, "reason": "unknown_view"}
+        existing = self._detached_windows.get(view)
+        if existing is not None:
+            _bring_window_to_front_by_title(self._detached_title(view))
+            return {"ok": True, "already_open": True, "view": view}
+        if self._window is None and not self._detached_windows:
+            # No live window means no running GUI loop to attach to —
+            # pywebview's runtime create marshals onto an existing window's
+            # UI thread and would raise on an empty instance map.
+            return {"ok": False, "reason": "no_live_window", "fallback_url": fallback}
+        try:
+            import webview  # noqa: PLC0415 — [desktop] extra, never module-level
+
+            title = self._detached_title(view)
+            window = webview.create_window(
+                title,
+                f"{self._url()}/?view={view}&solo=1",
+                width=1100,
+                height=750,
+                min_size=(800, 520),
+                resizable=True,
+                confirm_close=False,
+                background_color=self._window_background(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            # WebViewException on a backend that cannot create runtime windows
+            # (the macOS/GTK live-check risk) — the reason travels back and the
+            # frontend falls back to a real browser tab.
+            from loguru import logger
+
+            logger.opt(exception=exc).warning(
+                "Detached window for '{}' could not be created", view
+            )
+            return {
+                "ok": False,
+                "reason": f"{type(exc).__name__}: {exc}",
+                "fallback_url": fallback,
+            }
+        self._detached_windows[view] = window
+        window.events.loaded += lambda w=window, v=view: self._inject_into_secondary(w, v)
+        window.events.closed += lambda v=view: self._on_detached_closed(v)
+        self._publish_detached_event_threadsafe(view, opened=True)
+        return {"ok": True, "already_open": False, "view": view}
+
+    def close_detached_window(self, view: str) -> dict[str, Any]:
+        """Close the detached window for ``view`` — worker-thread only.
+
+        Deregistration and the ``DetachedViewClosed`` event happen in the
+        window's ``closed`` hook, so this path and the user's own X on the
+        window behave identically.
+        """
+        window = self._detached_windows.get(view)
+        if window is None:
+            return {"ok": False, "reason": "not_detached"}
+        try:
+            window.destroy()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+        return {"ok": True, "view": view}
+
+    def detached_views_snapshot(self) -> list[str]:
+        """Currently detached view ids — the GET /api/window/detached payload."""
+        return list(self._detached_windows)
+
+    def _on_detached_closed(self, view: str) -> None:
+        """pywebview ``closed`` hook of a detached window.
+
+        Deregisters the view and mirrors the change to every window. When this
+        was the LAST window of the process (main already closed), mark the
+        quit: ``webview.start()`` returns next and ``run_window_only`` runs the
+        normal shutdown + hard-exit backstop — the "nothing lingers after the
+        last window closes" mandate, held.
+        """
+        self._detached_windows.pop(view, None)
+        self._publish_detached_event_threadsafe(view, opened=False)
+        if not self._detached_windows and self._window is None:
+            self._user_requested_quit = True
+
+    def _inject_into_secondary(self, window: Any, view: str) -> None:
+        """Prime a freshly loaded detached window — ``loaded`` hook.
+
+        Injects the embedded-shell flag (drives shell detection, dictation
+        delivery, open-external routing) and — ONLY for the voice surface —
+        the realtime broker token, so exactly one window across the process
+        ever runs a live broker. NEVER ``__JARVIS_TOKEN``: the bootstrap token
+        is single-use server-side and already consumed by the main window;
+        the detached window authenticates via open access or the shared
+        WebView2 cookie jar.
+        """
+        js = "window.__JARVIS_EMBEDDED_DESKTOP = true;"
+        if view == "chats":
+            broker_token_literal = json.dumps(self.realtime_transport_broker_token)
+            js += (
+                "Object.defineProperty(window, '__JARVIS_REALTIME_BROKER_TOKEN', {"
+                f"value: {broker_token_literal}, configurable: true, writable: false"
+                "});"
+            )
+        js += "window.dispatchEvent(new Event('jarvis-token-ready'));"
+        try:
+            window.evaluate_js(js)
+        except Exception:  # noqa: BLE001, S110
+            # Not fatal: the window still authenticates via open access / the
+            # shared cookie jar; only the embedded-shell niceties are lost.
+            pass
+        try:
+            from jarvis.ui.icon_utils import (  # noqa: PLC0415
+                project_icon_path,
+                set_window_icon_by_title,
+            )
+
+            # By TITLE, never by PID: with two windows the PID heuristic
+            # ("largest window of the process") is ambiguous.
+            set_window_icon_by_title(self._detached_title(view), project_icon_path())
+        except Exception:  # noqa: BLE001, S110
+            # Cosmetic and Win32-only — the window works with the default icon.
+            pass
+
+    def _publish_detached_event_threadsafe(self, view: str, *, opened: bool) -> None:
+        """Publish DetachedViewOpened/Closed from a non-async thread.
+
+        Best-effort, mirrors ``_publish_kill_requested_threadsafe``: during
+        early boot or teardown the backend loop/bus may be gone — then there is
+        no frontend listening either, so log instead of raising.
+        """
+        from loguru import logger
+
+        loop = self._backend_loop
+        bus = getattr(self._server, "bus", None) if self._server is not None else None
+        if loop is None or loop.is_closed() or bus is None:
+            logger.debug(
+                "Detached-view event for '{}' not published (backend bus down).",
+                view,
+            )
+            return
+        try:
+            from jarvis.core.events import (  # noqa: PLC0415
+                DetachedViewClosed,
+                DetachedViewOpened,
+            )
+
+            event = DetachedViewOpened(view=view) if opened else DetachedViewClosed(view=view)
+            asyncio.run_coroutine_threadsafe(bus.publish(event), loop)
+        except Exception:  # noqa: BLE001 — window plumbing must survive bus loss
+            logger.opt(exception=True).warning("Detached-view event publish failed.")
+
+    def _destroy_all_windows(self) -> None:
+        """Destroy every window — detached first, main last. Teardown helper.
+
+        ``webview.start()`` only returns once the LAST window closes, so every
+        full-quit path (tray Quit, self-restart, Terms decline) must sweep the
+        detached registry or the process would keep running headless behind a
+        set quit flag.
+        """
+        for view in list(self._detached_windows):
+            window = self._detached_windows.pop(view, None)
+            if window is None:
+                continue
+            try:
+                window.destroy()
+            except Exception:  # noqa: BLE001, S110
+                # Teardown best-effort: the window may already be gone.
+                pass
+        window = self._window
+        if window is not None:
+            try:
+                window.destroy()
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+    def _main_window_kwargs(self) -> dict[str, Any]:
+        """The main window's ``create_window`` kwargs — one source of truth.
+
+        Used by the boot path AND by ``_ensure_main_window`` when the tray
+        reopens a main window that was closed while a detached view lived on.
+        """
+        return {
+            "width": 1280,
+            "height": 800,
+            "min_size": (900, 600),
+            "resizable": True,
+            "confirm_close": False,
+            "background_color": self._window_background(),
+        }
+
+    def _hook_main_window_lifecycle(self) -> None:
+        """Attach the closing/closed contract to the current main window."""
+        self._window.events.closing += self._on_window_closing
+        self._window.events.closed += self._on_main_window_closed
+
+    def _on_main_window_closed(self) -> None:
+        """pywebview ``closed`` hook of the MAIN window.
+
+        Nulls the handle so every null-guarded path (focus route, tray show,
+        stale-reload) degrades honestly while detached windows keep the
+        process alive. Without detached windows the quit flag is already set
+        and ``webview.start()`` is about to return — nulling is harmless.
+        """
+        self._window = None
+        self._window_visible = False
+
+    def _ensure_main_window(self) -> None:
+        """Show the main window, recreating it if it was closed — tray thread.
+
+        With detached windows, closing main no longer quits; the tray "Open"
+        must then bring a NEW main window back. Runs on the tray bridge thread
+        (non-MainThread → pywebview accepts the runtime create). Failure is an
+        honest logged no-op — the tray must survive it.
+        """
+        if self._window is not None:
+            self._safe_window_show()
+            return
+        from loguru import logger
+
+        try:
+            import webview  # noqa: PLC0415 — [desktop] extra, never module-level
+
+            self._window = webview.create_window(
+                WINDOW_TITLE, self._url(), **self._main_window_kwargs()
+            )
+            self._hook_main_window_lifecycle()
+            self._window_visible = True
+        except Exception:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                "Reopening the main window failed — it stays closed."
+            )
+            return
+        try:
+            from jarvis.ui.icon_utils import (  # noqa: PLC0415
+                project_icon_path,
+                set_window_icon_by_title,
+            )
+
+            set_window_icon_by_title(WINDOW_TITLE, project_icon_path())
+        except Exception:  # noqa: BLE001, S110
+            # Cosmetic; see _inject_into_secondary.
+            pass
+
     # ---- WebView hooks -------------------------------------------------------
 
     def _inject_token(self, window: Any) -> None:
@@ -4004,21 +4290,13 @@ class DesktopApp:
 
         # The frame is painted before the web view has loaded a single byte, so
         # it must already know the user's theme — otherwise a light app spends
-        # its entire boot inside a black window.
-        from jarvis.ui.theme import configured_theme, window_background
-
-        window_bg = window_background(configured_theme(getattr(self, "cfg", None)))
-
+        # its entire boot inside a black window (_main_window_kwargs derives the
+        # background from the configured theme for exactly this reason).
         try:
             self._window = webview.create_window(
                 WINDOW_TITLE,
                 self._url(),
-                width=1280,
-                height=800,
-                min_size=(900, 600),
-                resizable=True,
-                confirm_close=False,
-                background_color=window_bg,
+                **self._main_window_kwargs(),
             )
         except webview.WebViewException as exc:
             # No native desktop-window backend is available. This is the Linux
@@ -4031,11 +4309,11 @@ class DesktopApp:
             return self._degrade_to_browser_ui(exc)
         self._window_visible = True
 
-        # Close button = minimize-to-tray (user decision 2026-04-20).
-        # The `closing` callback returns False → pywebview aborts the destroy.
-        # Extracted to a method so the tray-minimise + overlay-clear contract
-        # is unit-testable (test_desktop_minimize_to_tray_overlay.py).
-        self._window.events.closing += self._on_window_closing
+        # The X quits (when this is the last window) — see _on_window_closing —
+        # and the closed hook nulls the handle so detached windows can outlive
+        # a closed main window. Extracted so the contract is unit-testable
+        # (test_desktop_minimize_to_tray_overlay.py, test_desktop_detached_windows.py).
+        self._hook_main_window_lifecycle()
 
         # Start the tray + bridge to the main-thread window. A daemon
         # thread, so it doesn't stay alive when the main program exits.
@@ -4293,7 +4571,11 @@ class DesktopApp:
                     continue
                 action = cmd.action
                 if action == "open_ui":
-                    self._safe_window_show()
+                    # Recreates the main window when it was closed while a
+                    # detached view kept the process alive; plain show/raise
+                    # otherwise. This bridge thread is non-MainThread, which is
+                    # exactly what pywebview's runtime create requires.
+                    self._ensure_main_window()
                 elif action == "kill":
                     # Emergency stop (deep-dive 2026-07-15, C-02): this arm was
                     # missing entirely — the advertised tray "Emergency stop"
@@ -4303,13 +4585,10 @@ class DesktopApp:
                     self._publish_kill_requested_threadsafe()
                 elif action == "quit":
                     self._user_requested_quit = True
-                    try:
-                        if self._window is not None:
-                            self._window.destroy()
-                    except Exception:  # noqa: BLE001, S110
-                        # Teardown best-effort: the window may already be gone,
-                        # and the process is exiting on the next line anyway.
-                        pass
+                    # Detached windows too: webview.start() returns only once
+                    # the LAST window closes, so a survivor would keep a
+                    # quit-flagged process running headless.
+                    self._destroy_all_windows()
                     return
 
         threading.Thread(
@@ -4426,6 +4705,14 @@ class DesktopApp:
         tray. To keep Jarvis running in the background (so "Hey Jarvis" stays
         live) the user MINIMISES the window instead of closing it.
 
+        ONE exception (detachable views, 2026-08-07): while a detached solo
+        window is open, the X closes ONLY the main window — the user split that
+        view off precisely to keep using it without the main app. The mandate's
+        real content ("nothing lingers once the user is done") moves to the
+        LAST window: ``webview.start()`` returns only when every window is
+        gone, and ``_on_detached_closed`` sets the quit flag when the final one
+        goes. With no detached windows this method is byte-identical to before.
+
         We mark the quit and return ``True`` so pywebview destroys the window;
         ``webview.start()`` then returns and :meth:`run_window_only` runs
         :meth:`shutdown` (stops every surface) followed by a hard-exit backstop
@@ -4434,7 +4721,8 @@ class DesktopApp:
         otherwise keep it — and its tray icon — alive (forensic 2026-06-27: a
         hung shutdown kept the old process ~30 min).
         """
-        self._user_requested_quit = True
+        if not self._detached_windows:
+            self._user_requested_quit = True
         return True
 
     def _suppress_overlay_for_hidden_window(self) -> None:

@@ -623,6 +623,32 @@ class NavigateSidebar(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class DetachedViewOpened(Event):
+    """A section now lives in its own detached desktop window.
+
+    Published by the desktop shell when ``open_detached_window`` succeeds. The
+    frontend (``useWebSocket.ts``) mirrors the registry into every connected
+    window's ``detachedViews`` store field — the origin window reacts by
+    unmounting its own instance of the section (one mounted Agentic IDE
+    instance max: a second one steals every pane's output stream) and by
+    standing down its realtime broker when the voice surface moved out.
+    ``view`` mirrors the frontend ``SECTION_IDS`` (``store/events.ts``).
+    """
+    view: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class DetachedViewClosed(Event):
+    """A detached desktop window was closed; its section returns to the app.
+
+    Published by the pywebview ``closed`` hook of the detached window. The
+    frontend clears the section from ``detachedViews`` and the origin window
+    remounts it.
+    """
+    view: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class AgenticIdeTerminalsAdded(Event):
     """Panes were added to the Agentic-IDE workspace from outside its view.
 

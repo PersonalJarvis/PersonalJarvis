@@ -329,6 +329,7 @@ class WebServer:
         from .computer_use_routes import router as computer_use_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
+        from .desktop_routes import router as desktop_router
         from .diagnostics_routes import router as diagnostics_router
         from .dictation_routes import router as dictation_router
         from .dictionary_routes import router as dictionary_router
@@ -399,6 +400,9 @@ class WebServer:
         # Several subscriptions per coding CLI, switchable without a logout.
         app.include_router(agent_accounts_router)
         app.include_router(control_router)
+        # Detachable views: the desktop shell (when attached) spawns/closes
+        # solo windows; headless hosts answer honestly with a fallback URL.
+        app.include_router(desktop_router)
         app.include_router(profile_router)
         app.include_router(settings_router)
         app.include_router(permissions_router)

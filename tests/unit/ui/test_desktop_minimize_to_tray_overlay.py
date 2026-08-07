@@ -50,6 +50,9 @@ def _app(*, persistent: bool, orb: object, bridge: object) -> DesktopApp:
     app.cfg = SimpleNamespace(ui=SimpleNamespace(bar_persistent=persistent))
     app._orb = orb
     app._bridge = bridge
+    # No detached solo windows: the closing callback consults the registry —
+    # empty means the historical X-quits-everything contract applies unchanged.
+    app._detached_windows = {}
     return app
 
 
