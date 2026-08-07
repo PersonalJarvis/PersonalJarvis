@@ -1516,6 +1516,11 @@ class LocalRealtimeProvider:
             # lines from dying in a lost buffer.
             child_env.setdefault("PYTHONFAULTHANDLER", "1")
             child_env.setdefault("PYTHONUNBUFFERED", "1")
+            # Windows without the symlink privilege: huggingface_hub's
+            # symlinked snapshot layout dies with WinError 1314 mid-download
+            # (live 2026-08-07), which would brick the server's own model
+            # fetches. Copies cost disk, not correctness.
+            child_env.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
             subprocess.Popen(  # noqa: S603 — the maintainer configured this command
                 command,
                 stdin=subprocess.DEVNULL,
