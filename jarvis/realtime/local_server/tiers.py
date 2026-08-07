@@ -44,6 +44,12 @@ class Tier:
 
 
 #: Ordered bottom-up; :func:`pick_tier` returns the highest fitting tier.
+#:
+#: Thresholds sit slightly UNDER the marketing sizes on purpose: a "16 GB"
+#: card reports ~15.9 GiB usable (measured live on the dev box, nvidia-smi
+#: 16303 MiB), and calling it a 12 GB machine would be exactly the kind of
+#: dishonesty the probe exists to avoid. The floor itself (12.0) is NOT
+#: relaxed — the mandate's minimum is a hard line, not a label.
 TIERS: tuple[Tier, ...] = (
     Tier(
         key="t0-12gb",
@@ -58,7 +64,7 @@ TIERS: tuple[Tier, ...] = (
     Tier(
         key="t1-16gb",
         label="16 GB",
-        min_usable_gb=16.0,
+        min_usable_gb=15.5,
         brain_model="qwen2.5:7b",
         target_class="~30B-class brain (pending bake-off)",
         measured=False,
@@ -68,7 +74,7 @@ TIERS: tuple[Tier, ...] = (
     Tier(
         key="t2-32gb",
         label="32 GB",
-        min_usable_gb=32.0,
+        min_usable_gb=31.0,
         brain_model="qwen2.5:7b",
         target_class="~70B-class brain, quantized (pending bake-off)",
         measured=False,
@@ -78,7 +84,7 @@ TIERS: tuple[Tier, ...] = (
     Tier(
         key="t3-64gb",
         label="64 GB",
-        min_usable_gb=64.0,
+        min_usable_gb=62.0,
         brain_model="qwen2.5:7b",
         target_class="~70B-class brain, full precision / large MoE (pending bake-off)",
         measured=False,
@@ -88,7 +94,7 @@ TIERS: tuple[Tier, ...] = (
     Tier(
         key="t4-128gb",
         label="128 GB+",
-        min_usable_gb=128.0,
+        min_usable_gb=124.0,
         brain_model="qwen2.5:7b",
         target_class="frontier open-weights class, ~120B+ MoE (pending bake-off)",
         measured=False,

@@ -15,8 +15,13 @@ class TestTierLadder:
     def test_floor_and_boundaries(self) -> None:
         assert tiers.pick_tier(12.0) is not None
         assert tiers.pick_tier(12.0).key == "t0-12gb"
+        # Real cards report slightly under their marketing size (a 16 GB
+        # RTX measures ~15.9 GiB), so thresholds carry an engineering
+        # allowance — the marketing-16GB card must land in the 16 GB tier.
+        assert tiers.pick_tier(15.9).key == "t1-16gb"
         assert tiers.pick_tier(16.0).key == "t1-16gb"
-        assert tiers.pick_tier(31.9).key == "t1-16gb"
+        assert tiers.pick_tier(30.5).key == "t1-16gb"
+        assert tiers.pick_tier(31.5).key == "t2-32gb"
         assert tiers.pick_tier(700.0).key == "t4-128gb"
 
     def test_only_measured_tiers_may_claim_measured(self) -> None:
