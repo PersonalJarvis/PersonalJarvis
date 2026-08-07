@@ -8670,3 +8670,68 @@ brain died with `rc=1` and "node is not recognized": the app PATH carried the
 npm global directory but not the Node.js install directory, and the failure
 surfaced upstairs as "returned no answer". The child now gets the Node
 directory on its PATH, resolved the same way the mission workers already do.
+
+---
+
+## BUG-125: the ChatGPT-Live campaign — self-talk, one-turn death, choppy audio and slow spawn shared five roots (HIGH, FIXED 2026-08-07)
+
+**Symptoms (sessions.db, Aug 4–6, 8 codex-subscription sessions).** 50 % died
+after one turn; 6/8 recorded both-sides role-play inside one assistant
+response; 6/8 recorded garbage user fragments ("illst.", "Thank you for
+watching!"); audio was chopped and spliced; spawn took 5–12 s with a frozen
+orb. The 5 openai-realtime control sessions in the same window showed none of
+it — the disease was codex-path-specific.
+
+**Five confirmed roots, one campaign (branch `rt-campaign`, ~18 commits):**
+
+1. **An on-loop pywebview probe starved the media path.** The
+   ShowWindowRequested subscriber ran `evaluate_js` (bounded ~20 s) ON the
+   asyncio loop; two 15 s stalls put the WebRTC mic sender 40 s behind wall
+   clock and the provider reset the socket. Fix: the whole show path
+   thread-hops (`asyncio.to_thread`), `/api/window/focus` too; the realtime
+   loop-lag probe WARNs at 500 ms scheduling lag.
+2. **Rules faded; the opening monologue consumed the user's entitlement.**
+   The one-speaker rule was delivered once and line-diffed away while the
+   per-turn language pin held — repetition is what makes a rule real on this
+   channel. `update_session` grew `standing_directive` (re-asserted every
+   delivery). The server opens a response the moment it hears a VOICE;
+   the call's pre-first-final response is now a bounded GREETING (6 s, 2 s
+   while the user is mid-utterance), adopted as the answer if the final
+   lands while it speaks, closed without spending otherwise.
+3. **No terminal item exists — proven, not guessed.** The notification-dump
+   probe recorded the complete v3 vocabulary on a real answered call:
+   `thread/realtime/{started,sdp,transcript/delta,transcript/done}`. Nothing
+   else. The 1.2 s quiescence backstop IS the turn boundary, so its
+   consequences became free: playback resumes prebuffer-free within a 4 s
+   grace (every >1.2 s generation pause used to cost an audible 180 ms
+   seam), silent-close splices are sequenced behind a local boundary, the
+   half-duplex mute releases after ~2 s of provider silence (was 6+), and
+   `realtime_stop → realtime_start` on the SAME thread is confirmed to work.
+4. **The transcript layer lied.** Non-final partials persisted as user_text,
+   re-finals concatenated the utterance into itself, partials flipped the
+   call language mid-caption, and a misheard 328 ms fragment set the call
+   language for good. user_text is finals-only (explicit preview promotion
+   with a log line), parts are item-keyed REPLACE, language resolves on
+   finals with a 500 ms voiced-duration floor before the conversation is
+   established (duration, never spelling — AP-27 class), and unpinned codex
+   opens get a soft language hint on the working channel.
+5. **Storms were punished blindly.** A refusal storm on a line NOBODY spoke
+   into now stays a quiet refusal (the gate winning) instead of a rebuild
+   that could relapse-kill an idle call; a heard-but-discarded 200 ms sound
+   keeps a 4 s answer window instead of getting its real answer cut; a dead
+   transport's hanging close is bounded in the rebuild too, and the pump
+   survives waking mid-swap.
+
+**The missing evidence layer shipped with the fixes:** every session now ends
+with a content-free `RealtimeSessionPostmortem` counter event (flight
+recorder), RT-SPAWN spans time every bring-up step, and
+`scripts/codex_live_probe.py` drives REAL headless ChatGPT-Live calls from
+committed speech fixtures (`--dump` for contract discovery; verdicts via
+`scripts/diag_voice_sessions.py --harness`, shared with
+`jarvis/diagnostics/realtime_forensics.py`). Guards:
+`tests/integration/realtime/test_codex_multi_turn.py` (14 session-level
+guards), `tests/unit/realtime/test_codex_subscription.py` (84 adapter
+guards), `test_session_postmortem.py`, `test_realtime_probe_eval.py`,
+`test_realtime_forensics.py`. Probe caveat: the local recognizer rides the
+configured cloud STT; an exhausted quota mutes the harness's grounding
+half — the transport metrics stay valid.
