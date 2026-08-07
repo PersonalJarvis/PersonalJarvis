@@ -30,11 +30,18 @@ json-repair>=0.30
 # stopped publishing the architecture. KNOWN, ACCEPTED EXPOSURE: no
 # cryptography release after 46.0.3 publishes a Windows-ARM64 wheel, so that
 # one target stays on 46.0.3 and remains affected by the advisories fixed in
-# 46.0.5-48.0.1 (Dependabot #44-#47) — installability wins over an unfixable
-# pin; every other platform resolves 48.0.1/49.0.0 (clean). Re-check the
-# wheel matrix on each bump and lift the pin the moment win_arm64 returns.
+# 46.0.5-48.0.1 (Dependabot #44-#47) and by PYSEC-2026-3552 — installability
+# wins over an unfixable pin; Intel macOS likewise stays on 48.0.1 (last
+# release with an x86_64 darwin wheel). Every other platform resolves >=50
+# (clean). Re-check the wheel matrix on each bump and lift the pins the
+# moment the missing architectures return.
 cryptography==46.0.3; sys_platform == 'win32' and platform_machine == 'ARM64'
 cryptography==48.0.1; sys_platform == 'darwin' and platform_machine == 'x86_64'
+# Every OTHER platform must stay >=50: PYSEC-2026-3552 (PKCS#7 decrypt
+# Bleichenbacher oracle) affects 44.0.0-49.x and is fixed only in 50.0.0, and
+# without an explicit floor the universal resolver widens the Intel-mac 48.0.1
+# pin onto the mainstream branch. Marker = exact complement of the two pins.
+cryptography>=50; (sys_platform != 'win32' or platform_machine != 'ARM64') and (sys_platform != 'darwin' or platform_machine != 'x86_64')
 
 # Config & settings
 pydantic>=2.9,<3.0
