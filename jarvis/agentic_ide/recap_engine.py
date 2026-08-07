@@ -112,11 +112,12 @@ CALL_TIMEOUT_S = 45.0
 #: failed, and whatever they burned must still leave the CLI a real chance.
 SUBSCRIPTION_CLI_TIMEOUT_S = 35.0
 
-#: How many provider FAMILIES a single summary may try before giving up. A
+#: How many API provider FAMILIES a single summary may try before giving up. A
 #: depleted key fails at call time, after instantiating fine — the next try
 #: must come from a different family (AP-22), and two spare families cover
 #: every install that has anything to cross to without turning one recap into
-#: a tour of every configured provider.
+#: a tour of every configured provider. A connected coding subscription rides
+#: BEHIND this cap as the true last resort; it never competes for these slots.
 MAX_PROVIDER_TRIES = 3
 
 #: After this many consecutive failures a pane stops asking for a while. A
@@ -616,10 +617,17 @@ def _resolve_brains() -> list[Any]:
     # CLI running in the panes. It goes LAST because a CLI call costs a process
     # spawn and seconds where an API call costs milliseconds — it should write
     # the recap only when everything cheaper is dead.
-    if len(candidates) < MAX_PROVIDER_TRIES:
-        subscription = _resolve_subscription(config)
-        if subscription is not None:
-            candidates.append(subscription)
+    #
+    # Appended UNCONDITIONALLY, not into a spare slot. It used to be skipped
+    # whenever MAX_PROVIDER_TRIES API families were configured — which made it
+    # unreachable on exactly the install it was built for: three configured but
+    # broken keys occupied every slot, and the one credential provably working
+    # (the CLI running in the panes) was never asked. Resolving it here only
+    # instantiates the brain; the expensive CLI call happens solely when every
+    # API family has already failed.
+    subscription = _resolve_subscription(config)
+    if subscription is not None:
+        candidates.append(subscription)
     return candidates
 
 

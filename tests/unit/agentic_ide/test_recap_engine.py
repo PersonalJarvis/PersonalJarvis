@@ -452,20 +452,22 @@ def test_a_connected_subscription_is_the_last_candidate(monkeypatch) -> None:
     assert recap_engine._resolve_brains() == [api, subscription]  # noqa: SLF001
 
 
-def test_a_full_api_chain_never_pays_for_the_cli_probe(monkeypatch) -> None:
-    """The subscription is a last resort, not a fourth opinion."""
+def test_a_full_api_chain_still_ends_at_the_subscription(monkeypatch) -> None:
+    """The regression that shipped: three configured-but-dead API keys filled
+    every candidate slot, and the one credential provably working — the CLI
+    running in the panes — was never asked. The subscription rides behind the
+    API cap, always."""
     from jarvis.brain import resolver
 
     brains = [SimpleNamespace(model=f"api-{n}") for n in range(recap_engine.MAX_PROVIDER_TRIES)]
+    subscription = SimpleNamespace(model="coding-cli")
     monkeypatch.setattr(resolver, "frontier_brain_candidates", lambda cfg: iter(brains))
-
-    def never(cfg, **kwargs):  # noqa: ANN001, ANN202
-        raise AssertionError("the CLI probe must not run when the chain is full")
-
-    monkeypatch.setattr(resolver, "resolve_subscription_brain", never)
+    monkeypatch.setattr(
+        resolver, "resolve_subscription_brain", lambda cfg, **kwargs: subscription
+    )
     monkeypatch.setattr("jarvis.core.config.load_config", lambda: SimpleNamespace())
 
-    assert recap_engine._resolve_brains() == brains  # noqa: SLF001
+    assert recap_engine._resolve_brains() == [*brains, subscription]  # noqa: SLF001
 
 
 def test_a_failing_provider_leaves_the_previous_sentence_in_place() -> None:
