@@ -139,6 +139,52 @@ def test_a_pane_that_could_not_start_is_left_to_the_rules() -> None:
     assert not recap_engine._worth_summarizing(term, 30)  # noqa: SLF001
 
 
+def test_a_settled_title_ignores_output_growth() -> None:
+    """A navigation label names the session and stays put — like every chat UI
+    the user knows. Progress changes what a pane has ACHIEVED, never what it is
+    for, so once a summary has read a substantial transcript, more output alone
+    must not re-word the header the user navigates by."""
+    term = _pane(lines=0)
+    state = recap_engine._state(term.key)  # noqa: SLF001
+    state.generated_at = time.time() - 2 * recap_engine.MIN_REFRESH_S
+    state.lines_at = recap_engine.STABLE_AFTER_LINES
+    state.prompts_at = 0
+    state.status_at = "live"
+
+    grown = state.lines_at + 10 * recap_engine.MIN_NEW_LINES
+    assert not recap_engine._material_change(term, state, grown)  # noqa: SLF001
+
+
+def test_an_early_thin_summary_may_still_improve_with_output() -> None:
+    """A pane summarized at its first rows knows the banner, not the work."""
+    term = _pane(lines=0)
+    state = recap_engine._state(term.key)  # noqa: SLF001
+    state.generated_at = time.time() - 2 * recap_engine.MIN_REFRESH_S
+    state.lines_at = 10
+    state.prompts_at = 0
+    state.status_at = "live"
+
+    assert recap_engine._material_change(  # noqa: SLF001
+        term, state, 10 + recap_engine.MIN_NEW_LINES
+    )
+
+
+def test_a_settled_title_still_reopens_for_a_new_instruction_or_exit() -> None:
+    """The two events that CAN change what a pane is for."""
+    term = _pane(lines=0, prompts_sent=2)
+    state = recap_engine._state(term.key)  # noqa: SLF001
+    state.generated_at = time.time()
+    state.lines_at = recap_engine.STABLE_AFTER_LINES
+    state.prompts_at = 1
+    state.status_at = "live"
+
+    assert recap_engine._material_change(term, state, state.lines_at)  # noqa: SLF001
+
+    state.prompts_at = 2
+    term.status = "exited"
+    assert recap_engine._material_change(term, state, state.lines_at)  # noqa: SLF001
+
+
 def test_a_new_instruction_makes_a_pane_worth_re_reading() -> None:
     term = _pane(lines=30, prompts_sent=2)
     state = recap_engine._state(term.key)  # noqa: SLF001

@@ -19,10 +19,12 @@ fallback rather than as the product:
 * **Cached, never on the read path.** ``recap_for`` returns whatever is already
   known — a model recap when one has arrived, the deterministic one until then —
   and returns it immediately. The model call happens in a background task.
-* **Refreshed only on a material change.** A pane is re-summarized when it has
-  printed a few new lines, changed status, or been given a new instruction, and
-  at most once per :data:`MIN_REFRESH_S`. A grid that nobody has touched costs
-  nothing at all.
+* **Refreshed only on a material change, then SETTLED.** A young pane is
+  re-summarized as output arrives (at most once per :data:`MIN_REFRESH_S`), but
+  once a summary has read a substantial transcript the title stays put: only a
+  new instruction or a status change rewrites it (:data:`STABLE_AFTER_LINES`).
+  A navigation label that re-words itself while the user glances away cannot be
+  recognized again — and a grid that nobody has touched costs nothing at all.
 * **Bounded.** At most :data:`MAX_CONCURRENT` summaries are in flight across the
   whole app, each with its own timeout, and a pane whose summaries keep failing
   goes quiet for a while instead of retrying every poll.
@@ -76,6 +78,18 @@ MIN_REFRESH_S = 75.0
 #: is repainting its spinner or printing a progress counter, and a fresh
 #: summary would spend a model call to write the same sentence again.
 MIN_NEW_LINES = 5
+
+#: Once a summary was written from a transcript at least this many readable
+#: rows deep, the pane's PURPOSE was visible and the title is settled: output
+#: growth alone no longer triggers a rewrite, only a new instruction or a
+#: status change does. This is what every conversation UI the user knows does —
+#: a title names the session and then stays put, while "what is happening right
+#: now" lives in the activity badge next to it. A label that re-words itself
+#: every 75 seconds cannot be recognized, which is a navigation label's one
+#: job. Summaries written EARLIER than this (a pane summarized at its first
+#: eight rows knows the banner, not the work) may still improve with output
+#: until one of them has seen this much.
+STABLE_AFTER_LINES = 60
 
 #: How much readable output a pane needs before a summary is worth asking for.
 #: A pane that has printed a banner and a prompt box has nothing to summarize;
@@ -385,13 +399,24 @@ def _ui_language() -> str:
 
 
 def _material_change(term: Any, entry: _PaneState, line_count: int) -> bool:
-    """Has enough happened in this pane to be worth re-summarizing?"""
+    """Has enough happened in this pane to be worth re-summarizing?
+
+    Deliberately NOT "has it printed more" once the title has settled: progress
+    changes what a pane has achieved, never what it is for, and the header is a
+    navigation label. After a summary written from a substantial transcript
+    (:data:`STABLE_AFTER_LINES`), only the events that can change the pane's
+    purpose reopen it — a new instruction, or a status change (the final
+    summary of a pane that just exited). The manual Refresh button bypasses
+    this whole gate, as it always has.
+    """
     if entry.generated_at <= 0.0:
         return True
     if str(getattr(term, "status", "") or "") != entry.status_at:
         return True
     if int(getattr(term, "prompts_sent", 0) or 0) != entry.prompts_at:
         return True
+    if entry.lines_at >= STABLE_AFTER_LINES:
+        return False
     return line_count - entry.lines_at >= MIN_NEW_LINES
 
 
@@ -1031,6 +1056,7 @@ __all__ = [
     "MAX_EDIT_HEADLINE",
     "MIN_NEW_LINES",
     "MIN_REFRESH_S",
+    "STABLE_AFTER_LINES",
     "NO_PROVIDER_NOTE",
     "WHY_DISABLED",
     "WHY_NOT_STARTED",
