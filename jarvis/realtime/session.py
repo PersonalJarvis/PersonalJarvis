@@ -17,7 +17,7 @@ import re
 import time
 from collections import Counter, deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -1068,10 +1068,22 @@ def _session_instructions(
     # complaint 2026-07-21); the shared turn planner keeps such calendar
     # trivia native on the strength of this line.
     now = datetime.now().astimezone()
+    day = timedelta(days=1)
     clock_line = (
         f"Current local date and time: {now.strftime('%A, %Y-%m-%d %H:%M')} "
         f"({now.tzname() or 'local time'}). Answer date, weekday, and "
-        "time-of-day questions directly from this — never guess."
+        "time-of-day questions directly from this — never guess. "
+        # The neighbor days come precomputed because small self-hosted brains
+        # cannot be trusted with even one-step date arithmetic under the full
+        # instruction load: probed 2026-08-07 against qwen2.5:7b behind the
+        # local-realtime server, "tomorrow" came back as Friday the 11th with
+        # only the bare clock sentence above, and correct once the dates were
+        # spelled out. Frontier models ignore the redundancy; small ones need
+        # it, and the block is re-sent every turn so it stays current.
+        f"Yesterday was {(now - day).strftime('%A, %Y-%m-%d')}, the day "
+        f"before yesterday {(now - 2 * day).strftime('%A, %Y-%m-%d')}. "
+        f"Tomorrow is {(now + day).strftime('%A, %Y-%m-%d')}, the day after "
+        f"tomorrow {(now + 2 * day).strftime('%A, %Y-%m-%d')}."
     )
     # Stale-world-knowledge guard (live complaint 2026-07-21: asked when a
     # game ships, the model asserted its pre-cutoff "planned for 2025" state
