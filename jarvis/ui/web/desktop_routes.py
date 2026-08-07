@@ -48,7 +48,12 @@ def _solo_url_path(view: str) -> str:
     return f"/?view={view}&solo=1"
 
 
-@router.post("/detach", operation_id="window_detach")
+# operation_ids are the CLI command names: the dynamic layer builds one Click
+# group per tag and one command per operation, so these read
+# `jarvis api window detach|detached|reattach`. The paths match no dangerous
+# marker — opening/listing/closing local UI windows mutates no data — so the
+# normal mutating-confirmation tier applies (see jarvis/cli_ctl/safety.py).
+@router.post("/detach", operation_id="detach")
 async def window_detach(body: DetachBody, request: Request) -> dict[str, Any]:
     """Open ``view`` in its own detached desktop window (or focus it).
 
@@ -80,7 +85,7 @@ async def window_detach(body: DetachBody, request: Request) -> dict[str, Any]:
         }
 
 
-@router.get("/detached", operation_id="window_detached")
+@router.get("/detached", operation_id="detached")
 async def window_detached(request: Request) -> dict[str, Any]:
     """Snapshot of the currently detached views.
 
@@ -96,7 +101,7 @@ async def window_detached(request: Request) -> dict[str, Any]:
     return {"ok": True, "views": await asyncio.to_thread(fn)}
 
 
-@router.post("/reattach", operation_id="window_reattach")
+@router.post("/reattach", operation_id="reattach")
 async def window_reattach(body: DetachBody, request: Request) -> dict[str, Any]:
     """Close the detached window for ``view`` (its section returns to the app).
 
