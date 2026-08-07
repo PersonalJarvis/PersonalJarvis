@@ -133,6 +133,12 @@ export interface ProviderDescriptor {
    * missing so the card can offer the right next step. null on cloud cards.
    */
   local_runtime?: LocalRuntimeStatus | null;
+  /**
+   * Self-hosted realtime card only: fail-closed state of the one-click
+   * managed server install. `sentence` is the server's own wording and is
+   * rendered verbatim — the client never guesses readiness. null elsewhere.
+   */
+  managed_server?: ManagedServerStatus | null;
   /** Local/self-hosted cards: whether the card exposes an editable server URL
    *  (persisted via PUT /api/providers/{id}/base-url). */
   supports_base_url?: boolean;
@@ -808,6 +814,81 @@ export async function localInstallStatus(
     throw new Error(body.detail ?? `HTTP ${res.status}`);
   }
   return body as LocalInstallProgress;
+}
+
+/** Fail-closed readiness of the managed local realtime server. */
+export interface ManagedServerStatus {
+  ready: boolean;
+  components: Record<string, boolean>;
+  sentence: string;
+}
+
+/** Honest go/no-go report for the one-click managed install. */
+export interface ManagedPreflight {
+  ok: boolean;
+  blocker: string;
+  actions: string[];
+  usable_gb: number;
+  memory_source: string;
+  disk_free_gb: number;
+  tier: {
+    key: string;
+    label: string;
+    measured: boolean;
+    target_class: string;
+    download_gb: number;
+    expected_latency: string;
+  } | null;
+  stack_sentence: string;
+  brain: { kind: string; model: string; note: string } | null;
+}
+
+/** Poll-shaped progress of the managed install engine. */
+export interface ManagedInstallProgress {
+  phase: string;
+  percent: number;
+  detail: string;
+  error: string;
+  running: boolean;
+  log_tail: string[];
+  started?: boolean;
+  message?: string;
+}
+
+export async function managedServerPreflight(): Promise<ManagedPreflight> {
+  const res = await fetch("/api/providers/local-realtime/managed-server/preflight");
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
+  return body as ManagedPreflight;
+}
+
+export async function managedServerInstall(): Promise<ManagedInstallProgress> {
+  const res = await fetch("/api/providers/local-realtime/managed-server/install", {
+    method: "POST",
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
+  return body as ManagedInstallProgress;
+}
+
+export async function managedServerStatus(): Promise<{
+  progress: ManagedInstallProgress;
+  server: ManagedServerStatus;
+}> {
+  const res = await fetch("/api/providers/local-realtime/managed-server/status");
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
+  return body as { progress: ManagedInstallProgress; server: ManagedServerStatus };
+}
+
+export async function managedServerUninstall(): Promise<void> {
+  const res = await fetch("/api/providers/local-realtime/managed-server", {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
 }
 
 /** One curated model a local server can download, annotated for THIS machine. */

@@ -13,11 +13,17 @@ import {
   loginAntigravity,
   localInstallStatus,
   logoutAntigravity,
+  managedServerInstall,
+  managedServerPreflight,
+  managedServerStatus,
+  managedServerUninstall,
   modelPullStatus,
   pullableModels,
   startLocalInstall,
   startModelPull,
   type LocalInstallProgress,
+  type ManagedInstallProgress,
+  type ManagedPreflight,
   type ModelPullProgress,
   type ProviderDescriptor,
   type PullableModel,
@@ -1739,6 +1745,195 @@ function LocalRuntimePanel({
 }
 
 /**
+ * One-click managed install for the self-hosted realtime server (the card
+ * that used to require a terminal, a venv, and a hand-written launch
+ * command). Flow: preflight (honest hardware/tier/brain verdict or the
+ * 12 GB-floor blocker) → one confirm with download size and expected
+ * latency in view → poll-shaped progress → the card's fail-closed readiness
+ * flips server-side. Every sentence of substance comes from the server and
+ * renders verbatim; only the chrome is localized.
+ */
+function ManagedServerPanel({
+  descriptor,
+  onChanged,
+}: {
+  descriptor: ProviderDescriptor;
+  onChanged: () => void;
+}) {
+  const t = useT();
+  const status = descriptor.managed_server;
+  const [preflight, setPreflight] = useState<ManagedPreflight | null>(null);
+  const [progress, setProgress] = useState<ManagedInstallProgress | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const running = Boolean(progress?.running);
+
+  useEffect(() => {
+    if (!running) return;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await managedServerStatus();
+        if (cancelled) return;
+        setProgress(next.progress);
+        if (!next.progress.running) {
+          window.clearInterval(timer);
+          if (next.progress.phase === "error") {
+            setError(next.progress.error || "install failed");
+          }
+          onChanged();
+        }
+      } catch (err) {
+        if (cancelled) return;
+        window.clearInterval(timer);
+        setError(err instanceof Error ? err.message : String(err));
+        setProgress(null);
+      }
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [running, onChanged]);
+
+  if (!status) return null;
+
+  const check = async () => {
+    setError(null);
+    setChecking(true);
+    try {
+      setPreflight(await managedServerPreflight());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const startInstall = async () => {
+    setError(null);
+    try {
+      setProgress(await managedServerInstall());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const remove = async () => {
+    if (!confirmRemove) {
+      setConfirmRemove(true);
+      return;
+    }
+    setConfirmRemove(false);
+    setError(null);
+    try {
+      await managedServerUninstall();
+      setPreflight(null);
+      setProgress(null);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const failed = progress?.phase === "error";
+  return (
+    <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 p-3">
+      <div className="flex items-start gap-2 text-xs">
+        {status.ready ? (
+          <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+        ) : (
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+        )}
+        <span className="text-muted-foreground">
+          {running ? (progress?.detail ?? status.sentence) : status.sentence}
+        </span>
+      </div>
+
+      {running && (
+        <div className="space-y-1">
+          <div className="h-1.5 w-full overflow-hidden rounded bg-muted">
+            <div
+              className="h-full rounded bg-primary transition-all"
+              style={{ width: `${Math.max(2, progress?.percent ?? 0)}%` }}
+            />
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            {t("apikeys_view.managed_hint")}
+          </p>
+        </div>
+      )}
+
+      {!status.ready && !running && !preflight && (
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={check}
+          disabled={checking}
+          className="gap-2"
+        >
+          {checking ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Download className="h-3.5 w-3.5" />
+          )}
+          {failed
+            ? t("apikeys_view.managed_retry")
+            : t("apikeys_view.managed_check_cta")}
+        </Button>
+      )}
+
+      {!status.ready && !running && preflight && !preflight.ok && (
+        <div className="space-y-1 text-xs">
+          <p className="text-amber-500">{preflight.blocker}</p>
+          <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
+            {preflight.actions.map((action) => (
+              <li key={action}>{action}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {!status.ready && !running && preflight?.ok && preflight.tier && (
+        <div className="space-y-2 text-xs">
+          <div className="space-y-0.5 text-muted-foreground">
+            <p>
+              {preflight.tier.label} · {t("apikeys_view.managed_download_size")}{" "}
+              ~{preflight.tier.download_gb} GB ·{" "}
+              {t("apikeys_view.managed_latency")}{" "}
+              {preflight.tier.expected_latency}
+            </p>
+            <p>{preflight.stack_sentence}</p>
+            {preflight.brain && <p>{preflight.brain.note}</p>}
+          </div>
+          <Button size="sm" onClick={startInstall} className="gap-2">
+            <Download className="h-3.5 w-3.5" />
+            {t("apikeys_view.managed_install_cta")}
+          </Button>
+        </div>
+      )}
+
+      {status.ready && !running && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={remove}
+          className="gap-2 text-destructive hover:text-destructive"
+        >
+          <XCircle className="h-3.5 w-3.5" />
+          {confirmRemove
+            ? t("apikeys_view.managed_uninstall_confirm")
+            : t("apikeys_view.managed_uninstall")}
+        </Button>
+      )}
+
+      {error && <p className="text-[11px] text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/**
  * The download half of a keyless local brain card: which models this machine
  * could run, which it already has, and the one button that fetches one.
  *
@@ -1988,6 +2183,7 @@ export function AuthWidget({
         </div>
       )}
       <LocalRuntimePanel descriptor={descriptor} onChanged={onChanged} />
+      <ManagedServerPanel descriptor={descriptor} onChanged={onChanged} />
       {descriptor.supports_base_url && (
         <BaseUrlField descriptor={descriptor} onChanged={onChanged} />
       )}
