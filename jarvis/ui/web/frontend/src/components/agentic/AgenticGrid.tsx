@@ -965,10 +965,13 @@ export function AgenticGrid({
     const since = live?.activity_since ?? row?.activity_since ?? term.activity_since ?? 0;
     const worked = live?.worked ?? row?.worked ?? term.worked ?? false;
     const sent = sentAt[term.name];
+    // Never over "asking": a CLI that answers a submit with a permission
+    // prompt needs the user, and a spinner over that question would promise
+    // progress from a pane that is stuck on them.
     const bridging =
       sent !== undefined &&
       Date.now() - sent < SENT_BRIDGE_MS &&
-      (activity === "waiting" || activity === "asking" || activity === "");
+      (activity === "waiting" || activity === "");
     if (bridging) {
       return { activity: "working" as const, since: sent / 1000, worked: true };
     }

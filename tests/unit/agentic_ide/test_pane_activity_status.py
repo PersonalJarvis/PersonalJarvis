@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 
+from jarvis.agentic_ide import activity as activity_mod
 from jarvis.agentic_ide import notifications
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.activity import RESIZE_SHADOW_S, STAMP_FRESH_S, observed
@@ -216,9 +217,7 @@ async def test_output_after_the_resize_shadow_still_counts_as_working(
     assert term.to_dict()["activity"] == "working"
 
 
-async def test_a_grid_relayout_stamps_the_resize_shadow(
-    registry: Registry, tmp_path: Path
-) -> None:
+async def test_a_grid_relayout_stamps_the_resize_shadow(registry: Registry, tmp_path: Path) -> None:
     """The viewer's resize path leaves the stamp the detector reads."""
     _session, term = await _pane(registry, tmp_path)
     assert term.last_resize_at is None
@@ -379,6 +378,86 @@ async def test_the_caption_says_working_when_it_is(registry: Registry, tmp_path:
 
     assert state["activity"] == "working"
     assert "Working now" in state["recap_detail"]
+
+
+# ----------------------------------------------------- the moment after Send
+
+
+async def test_a_just_submitted_pane_reads_as_working_before_it_paints(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The blind window the maintainer kept hitting: Send, then a "done" badge.
+
+    Movement proves work, but the agent's first byte can be seconds away and
+    movement in the shadow of the submitting keystroke is discounted — so the
+    seconds right after a submit read as "waiting" under the user's own just-
+    pressed Send. The submission stamp is evidence enough for those seconds.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    term.transcript.feed(REST_SCREENS["claude"])
+    _watched(registry, term, moves=False)
+    assert term.to_dict()["activity"] == "waiting"
+
+    _instruct(term, time.time())
+
+    state = term.to_dict()
+    assert state["activity"] == "working"
+    # The episode began at the submit, not at the epoch — the tooltip's "For 2s".
+    assert state["activity_since"] > 0
+
+
+async def test_the_submit_grace_expires_into_the_truth(registry: Registry, tmp_path: Path) -> None:
+    """A prompt the agent swallowed stops claiming work within one glance."""
+    _session, term = await _pane(registry, tmp_path)
+    term.transcript.feed(REST_SCREENS["claude"])
+    _instruct(term, time.time() - activity_mod.SUBMIT_GRACE_S - 1)
+    _watched(registry, term, moves=False)
+
+    assert term.to_dict()["activity"] == "waiting"
+
+
+async def test_a_question_on_screen_outranks_the_submit_grace(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """A CLI that answers a submit with a permission prompt needs the USER.
+
+    Hiding that behind a grace-period spinner would be the worst of both: the
+    pane sits on a question while its badge promises progress.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    term.transcript.feed("\r\nDo you want to allow this command? (y/n)\r\n")
+    _watched(registry, term, moves=False)
+    _instruct(term, time.time())
+
+    assert term.to_dict()["activity"] == "asking"
+
+
+async def test_a_submit_to_a_replaced_process_earns_no_grace(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """Only the LIVE process's submission counts, exactly as for movement."""
+    _session, term = await _pane(registry, tmp_path)
+    term.transcript.feed(REST_SCREENS["claude"])
+    _instruct(term, time.time())
+    term.process_generation += 1  # the agent was respawned since that Send
+    _watched(registry, term, moves=False)
+
+    assert term.to_dict()["activity"] == "waiting"
+
+
+async def test_the_bell_keeps_the_strict_movement_rule(registry: Registry, tmp_path: Path) -> None:
+    """The grace lives in `observed`, never in the sweep's own reading.
+
+    Otherwise a swallowed prompt would count as a working episode, and its
+    grace expiring would file a "finished" bell for a pane that did nothing.
+    """
+    _session, term = await _pane(registry, tmp_path)
+    term.transcript.feed(REST_SCREENS["claude"])
+    _instruct(term, time.time())
+
+    reading = activity_mod.read_activity(term, now=time.time())
+
+    assert reading == "waiting"
 
 
 async def test_the_two_readings_of_one_pane_agree(registry: Registry, tmp_path: Path) -> None:

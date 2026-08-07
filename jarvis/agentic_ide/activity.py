@@ -101,6 +101,27 @@ exactly the moment the user was looking at the list to see what had finished
 agent that really is working keeps producing output after the shadow passes and
 is read as working again within a couple of seconds.
 
+## The moment after Send — the movement rule's one blind window
+
+Movement proves work, but it arrives LATE at exactly the moment the user is
+looking: right after they submit. An agent can take several seconds to produce
+its first byte, and movement in the shadow of the submitting keystroke is
+deliberately discounted (see the exclusions below) — so a pane that was just
+handed work read as "waiting", which under a freshly pressed Send looks like a
+send that silently failed (maintainer report 2026-08-07, repeated after the
+badge's poll was made fast — the lag was here, not in the poll).
+
+The submission itself is the missing evidence. It is stamped only when an
+instruction verifiably reached the live process (:func:`_has_current_instruction`
+— injected prompts confirm on screen, a hand-pressed Enter is verified before
+it stamps), so for :data:`SUBMIT_GRACE_S` after the stamp a still pane is
+reported ``working`` by :func:`observed`. A question on screen still outranks
+the grace — a CLI that answers a submit with a permission prompt needs the
+user, not a spinner — and the grace lives in :func:`observed` rather than in
+:func:`read_activity` on purpose: the notification sweep keeps the strict
+movement rule, or a prompt an agent swallowed would ring the bell "finished"
+ten seconds after nothing happened.
+
 ## Honest limits
 
 An agent whose process WEDGES stops repainting, so it reads as finished a few
@@ -371,6 +392,15 @@ def is_settled(activity: str) -> bool:
 #: module docstring.
 STAMP_FRESH_S = 6.0
 
+#: How long a fresh submission may claim ``working`` before movement confirms.
+#:
+#: Long enough to cover the slowest observed gap between a submit and the
+#: agent's first paint, short enough that a prompt an agent truly swallowed
+#: goes back to telling the truth within one glance at the list. Applied only
+#: on top of a ``waiting`` reading and only for a submission stamped for the
+#: LIVE process — see the module docstring.
+SUBMIT_GRACE_S = 10.0
+
 
 class Reading(NamedTuple):
     """What a pane is doing, and when it started doing it.
@@ -410,20 +440,40 @@ def stamp(term: Any, activity: Activity, *, now: float) -> None:
     term.activity_at = now
 
 
+def _submit_graced(term: Any, reading: Reading, moment: float) -> Reading:
+    """``working`` for the first seconds after a submit, before movement shows.
+
+    Upgrades only a ``waiting`` reading, so a question on screen keeps saying
+    "needs you" and a broken or exited pane keeps saying so. ``since`` is the
+    submit stamp — the honest moment this working episode began.
+    """
+    if reading.activity != "waiting":
+        return reading
+    if not _has_current_instruction(term):
+        return reading
+    at = float(getattr(term, "last_submit_at", 0.0) or 0.0)
+    if 0 <= moment - at <= SUBMIT_GRACE_S:
+        return Reading("working", at)
+    return reading
+
+
 def observed(term: Any, *, now: float | None = None) -> Reading:
     """What ``term`` is doing, for a caller with no history of its own.
 
     The sweep's reading while there is a fresh one, and a single-look answer
-    otherwise. Duck-typed like the rest of this module: a pane that has never
-    been stamped answers from the look, not with an ``AttributeError``.
+    otherwise — either way graced for a just-submitted pane (see the module
+    docstring: the sweep's strict movement rule goes blind for a few seconds
+    at exactly the moment the user has just pressed Send). Duck-typed like the
+    rest of this module: a pane that has never been stamped answers from the
+    look, not with an ``AttributeError``.
     """
     moment = time.time() if now is None else now
     word = str(getattr(term, "activity", "") or "")
     at = float(getattr(term, "activity_at", 0.0) or 0.0)
     if word and 0 <= moment - at <= STAMP_FRESH_S:
         since = float(getattr(term, "activity_since", 0.0) or 0.0)
-        return Reading(word, since)  # type: ignore[arg-type]
-    return Reading(read_activity(term, now=moment), 0.0)
+        return _submit_graced(term, Reading(word, since), moment)  # type: ignore[arg-type]
+    return _submit_graced(term, Reading(read_activity(term, now=moment), 0.0), moment)
 
 
 def has_work_behind_it(term: Any) -> bool:
@@ -475,6 +525,7 @@ __all__ = [
     "SETTLED",
     "STAMP_FRESH_S",
     "STILL_S",
+    "SUBMIT_GRACE_S",
     "TAIL_ROWS",
     "Activity",
     "Reading",
