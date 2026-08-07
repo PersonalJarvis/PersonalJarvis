@@ -645,6 +645,97 @@ async def test_a_repaint_gap_does_not_file_a_notification(
     assert watcher.poll(registry, now=100.0 + notifications.SETTLE_S + 5) == []
 
 
+async def test_a_lone_printout_into_an_instructed_pane_files_no_finished_bell(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The other half of the /recap fix. The badge learned to sit still for a
+    single burst, but the bell still rang "finished" for a pane whose agent did
+    nothing: the raw reading flipped waiting->working->waiting and `worked`
+    latched on the way down. One burst is not a confirmed episode of work — for
+    either of them."""
+    watcher = notifications.watcher()
+    _session, term = await _pane(registry, tmp_path)
+    # Instructed long ago — far outside the submit wake — and long finished.
+    term.last_submit_at = 500.0
+    term.submit_generation = term.process_generation
+    _quiet_since(term, 999.0)
+    _draw(term, IDLE_SCREEN)
+    watcher.poll(registry, now=1000.0)
+    watcher.poll(registry, now=1002.0)
+
+    # One printout: /recap output, a menu, anything changing the picture once.
+    term.transcript.clear()
+    _draw(term, "\r\nRecap: three files changed, tests green\r\n")
+    term.last_output_at = 1004.0
+    watcher.poll(registry, now=1004.0)
+    assert term.activity == "waiting", "the badge half of the fix still holds"
+
+    # The burst's tail dies, the pane settles, the settle window passes.
+    watcher.poll(registry, now=1004.0 + STILL_S + 1)
+    filed = watcher.poll(registry, now=1004.0 + STILL_S + notifications.SETTLE_S + 2)
+
+    assert filed == []
+
+
+async def test_a_confirmed_episode_is_stamped_from_when_movement_began(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """The badge's "For Ns" must count the episode, not the gate. Confirmation
+    spends the first WORK_CONFIRM_S of every non-wake episode; stamping the
+    hand-over as a fresh transition told the user work "just started" about a
+    pane that had visibly been repainting for six seconds."""
+    watcher = notifications.watcher()
+    _session, term = await _pane(registry, tmp_path)
+    term.last_submit_at = 500.0
+    term.submit_generation = term.process_generation
+    _quiet_since(term, 999.0)
+    _draw(term, IDLE_SCREEN)
+    watcher.poll(registry, now=996.0)
+
+    for step, at in enumerate((1000.0, 1002.0, 1004.0, 1006.0)):
+        term.transcript.clear()
+        _draw(term, f"\r\n· working, frame {step}\r\n")
+        term.last_output_at = at
+        watcher.poll(registry, now=at)
+
+    assert term.activity == "working"
+    assert term.activity_since == 1000.0, "the episode began with the movement, not the gate"
+
+
+async def test_a_tool_step_gap_does_not_demand_reconfirmation(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """A coding TUI pauses between tool steps. Movement resuming right after a
+    confirmed episode is the same job continuing — demanding a fresh
+    WORK_CONFIRM_S turned one long job into repeated false "waiting" dips."""
+    watcher = notifications.watcher()
+    _session, term = await _pane(registry, tmp_path)
+    term.last_submit_at = 500.0
+    term.submit_generation = term.process_generation
+    _quiet_since(term, 999.0)
+    _draw(term, IDLE_SCREEN)
+    watcher.poll(registry, now=996.0)
+
+    for step, at in enumerate((1000.0, 1002.0, 1004.0, 1006.0, 1008.0)):
+        term.transcript.clear()
+        _draw(term, f"\r\n· working, frame {step}\r\n")
+        term.last_output_at = at
+        watcher.poll(registry, now=at)
+    assert term.activity == "working", "sustained movement confirms"
+
+    # A quiet tool step: the screen stands still past its freshness tail.
+    watcher.poll(registry, now=1008.0 + STILL_S + 1)
+    assert term.activity == "waiting"
+
+    # Work resumes. The badge must follow on the SAME sweep, not five later.
+    term.transcript.clear()
+    _draw(term, "\r\n· working again after the tool call\r\n")
+    term.last_output_at = 1015.0
+    watcher.poll(registry, now=1015.0)
+
+    assert term.activity == "working", "a resuming job needs no re-confirmation"
+
+
 async def test_a_question_is_reported_even_though_it_never_worked(
     registry: Registry, tmp_path: Path
 ) -> None:

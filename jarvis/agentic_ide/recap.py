@@ -275,7 +275,7 @@ def _activity(tail: Sequence[str]) -> str:
     return ""
 
 
-def _typed_request(rows: Sequence[str]) -> str:
+def _typed_request(term: Any, rows: Sequence[str]) -> str:
     """The first thing the user typed INTO this pane, read off its transcript.
 
     A pane driven by hand has no ``last_prompt``, yet its purpose was stated in
@@ -284,16 +284,32 @@ def _typed_request(rows: Sequence[str]) -> str:
     screen that is safe to put in a header, because it is the same thing
     ``last_prompt`` would have held had the instruction come through Jarvis.
 
-    Two impostors share the marker and are excluded: the LIVE input box, by
+    Three impostors share the marker and are excluded: the LIVE input box, by
     position (it sits in the bottom rows, and what is there is being typed
-    right now), and the box's placeholder suggestion ('Try "fix lint errors"'),
-    by its wording.
+    right now); the box's placeholder suggestion ('Try "fix lint errors"'), by
+    its wording; and anything the AGENT prints with the same prefix — a
+    markdown blockquote, a diff line — by position again: the echo precedes the
+    agent's first response by construction, so the search ends at the first row
+    of agent prose. The CLI's own banner is allowed to precede the echo, and is
+    recognized the one way that needs no per-CLI list: it names the CLI.
     """
+    names = tuple(
+        value
+        for value in (
+            str(getattr(term, "display_name", "") or "").lower(),
+            str(getattr(term, "agent", "") or "").lower(),
+        )
+        if value
+    )
     source = [str(row) for row in list(rows)[:-_TYPED_SKIP_TAIL]][:_TYPED_SEARCH_LINES]
     for raw in source:
         text = raw.strip()
         marker = next((mark for mark in _INPUT_MARKERS if text.startswith(mark)), None)
         if marker is None:
+            if _informative(text) and not any(name in text.lower() for name in names):
+                # The agent's prose has started; any later marker row is the
+                # agent QUOTING something, not the echo of what the user typed.
+                return ""
             continue
         content = text[len(marker) :].strip()
         lowered = content.lower()
@@ -430,8 +446,11 @@ def summarize(term: Any, *, lines: Sequence[str] | None = None) -> Recap:
     # ran, safe to cite; a TUI's screen is the TUI's own interface, and citing
     # it is how headers came to read "Churned for 1m 53s" — the spinner.
     coding_tui = _typed_into(term)
-    # The user's first typed request, for a pane nobody briefed through Jarvis.
-    typed = "" if task else _typed_request(rows)
+    # The user's first typed request, for a CODING pane nobody briefed through
+    # Jarvis. Never computed for a shell: a shell prompt echoes every command
+    # behind the same marker, and titling a shell by its first command would
+    # pin it forever to "git status" — its newest row is its honest headline.
+    typed = "" if (task or not coding_tui) else _typed_request(term, rows)
     # One sentence about the instruction, computed once: every branch below
     # opens with it, and a plain terminal answers it differently.
     asked = (

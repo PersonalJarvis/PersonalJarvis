@@ -124,6 +124,15 @@ SETTLE_S = 5.0
 #: so this is about how quickly the bell should react, not about cost.
 SWEEP_INTERVAL_S = 2.0
 
+#: Movement resuming within this long of the badge last wearing "working"
+#: needs no fresh ``WORK_CONFIRM_S`` confirmation. A coding TUI pauses between
+#: tool steps — a slow shell command, a long model wait — and demanding a new
+#: five-second confirmation after every such gap turned one continuous job into
+#: repeated false "waiting" dips. Sized to cover an inter-step gap generously
+#: while staying far below the minutes a finished pane typically sits before
+#: the user prints something into it (the case the confirm gate exists for).
+WORK_RESUME_GRACE_S = 15.0
+
 #: How many entries are kept. A heavy day across six workspaces produces a few
 #: dozen; past this the oldest fall off the back, which is the right end to lose
 #: — the panes they point at are the ones most likely to be gone.
@@ -354,6 +363,10 @@ class _PaneWatch:
     #: calls a pane working for the whole ``STILL_S`` tail of any lone
     #: printout, slash-command output included.
     moving_since: float | None = None
+    #: When the badge last actually wore "working". Movement that resumes
+    #: within ``WORK_RESUME_GRACE_S`` of this is a job continuing after a
+    #: tool-step pause and skips re-confirmation.
+    stamped_working_at: float = 0.0
 
 
 def _detail(term: Any) -> str:
@@ -492,7 +505,12 @@ class ActivityWatcher:
             # Through the same movement-confirmation gate as every later sweep:
             # a restored pane replaying its transcript is fresh output too, and
             # first sight is not a reason to trust a burst more.
-            stamp(term, self._confirmed(term, watch, activity, now), now=now)
+            stamp(
+                term,
+                self._confirmed(term, watch, activity, now),
+                now=now,
+                since=watch.moving_since,
+            )
             self._checkpoint_resume_state(term, activity, watch, now)
             return None
 
@@ -520,7 +538,13 @@ class ActivityWatcher:
             term.idle_seen = True
 
         if activity != watch.activity:
-            if watch.activity == "working":
+            # `worked` — the half of "completed" that says the screen moved and
+            # then stopped — demands a CONFIRMED episode, judged the same way
+            # the badge judges it. Raw "working" covers the STILL_S tail of any
+            # lone printout, and counting that as work is how one /recap into a
+            # long-finished pane still rang a "finished" bell after the badge
+            # had already learned better.
+            if watch.activity == "working" and self._episode_confirmed(term, watch):
                 watch.worked = True
             watch.activity = activity
             watch.since = now
@@ -537,11 +561,20 @@ class ActivityWatcher:
         # agent that is sitting at its prompt is exactly the slot machine the
         # maintainer reported (2026-08-07, right after /recap printed). Real
         # work repaints continuously and sustains the episode past
-        # WORK_CONFIRM_S; a burst's tail cannot. The bell below keeps the raw
-        # reading: its transitions are already debounced by SETTLE_S, and the
-        # user's own Send is carried through the confirm window by the submit
-        # grace in `observed`.
-        stamp(term, self._confirmed(term, watch, activity, now), now=now)
+        # WORK_CONFIRM_S; a burst's tail cannot. The bell shares the same
+        # judgement through `worked` above, and the user's own Send is carried
+        # through the confirm window by the submit grace in `observed`.
+        #
+        # ``since`` is the moment the movement episode actually began, so the
+        # handover at the confirm boundary does not restart the badge's clock —
+        # "working for 6s" must not read "for 0s" merely because the first 5
+        # were spent confirming.
+        stamp(
+            term,
+            self._confirmed(term, watch, activity, now),
+            now=now,
+            since=watch.moving_since,
+        )
         self._checkpoint_resume_state(term, activity, watch, now)
 
         if watch.announced:
@@ -587,11 +620,16 @@ class ActivityWatcher:
         (repainting at least twice a second, measured) confirms within a few
         sweeps.
 
-        Movement whose episode BEGAN in the wake of a confirmed submission
-        needs no waiting: output that soon after a Send is the agent starting,
-        not the user printing something into the pane — and it is what hands
-        the badge over seamlessly from the submit grace (which covers the
-        still seconds before the first paint) to the observed movement.
+        Two kinds of movement need no waiting. An episode that BEGAN in the
+        wake of a confirmed submission: output that soon after a Send is the
+        agent starting, not the user printing something into the pane — the
+        seamless handover from the submit grace. And an episode that RESUMES
+        shortly after a confirmed one (:data:`WORK_RESUME_GRACE_S`): a coding
+        TUI pauses between tool steps, and demanding a fresh five-second
+        confirmation after every such gap turned one long job into repeated
+        false "waiting" dips. The gate exists for the pane that has been SITTING
+        at its prompt when a burst arrives, and such a pane has not worn
+        "working" for a long time.
         """
         if activity != "working":
             watch.moving_since = None
@@ -599,10 +637,33 @@ class ActivityWatcher:
         if watch.moving_since is None:
             watch.moving_since = now
         if in_submit_wake(term, watch.moving_since):
+            watch.stamped_working_at = now
             return activity
-        if now - watch.moving_since < WORK_CONFIRM_S:
+        if (
+            now - watch.moving_since < WORK_CONFIRM_S
+            and now - watch.stamped_working_at > WORK_RESUME_GRACE_S
+        ):
             return "waiting"
+        watch.stamped_working_at = now
         return activity
+
+    @staticmethod
+    def _episode_confirmed(term: Any, watch: _PaneWatch) -> bool:
+        """Did the movement episode that just ended count as real work?
+
+        The same standard the badge applies, asked retrospectively at the
+        moment raw ``working`` flips away. Judged by how long the screen kept
+        CHANGING (``changed_at - moving_since``), never by the clock at flip
+        time: raw ``working`` survives the whole ``STILL_S`` tail after the
+        last change, and ``STILL_S`` plus a sweep can reach ``WORK_CONFIRM_S``
+        — a lone burst must not confirm itself through its own tail.
+        """
+        began = watch.moving_since
+        if began is None:
+            return False
+        if in_submit_wake(term, began):
+            return True
+        return watch.changed_at - began >= WORK_CONFIRM_S
 
     def _checkpoint_resume_state(
         self, term: Any, activity: Activity, watch: _PaneWatch, now: float
@@ -873,6 +934,7 @@ __all__ = [
     "MAX_ENTRIES",
     "SETTLE_S",
     "SWEEP_INTERVAL_S",
+    "WORK_RESUME_GRACE_S",
     "ActivityWatcher",
     "Kind",
     "Notification",

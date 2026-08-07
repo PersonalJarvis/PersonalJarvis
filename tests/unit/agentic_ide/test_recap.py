@@ -204,6 +204,44 @@ def test_the_first_typed_request_titles_a_hand_driven_pane() -> None:
     assert summarize(term).headline == "make the workspace setup one clear screen"
 
 
+def test_a_shells_first_command_echo_never_pins_its_headline() -> None:
+    """A shell prompt echoes EVERY command behind the marker. Titling a shell
+    by its first echo would pin it to 'git status' forever; its newest row is
+    its honest headline."""
+    term = _pane(status="live", agent="shell", display_name="Terminal")
+    term.transcript.feed("❯ git status\r\n")
+    for step in range(10):
+        term.transcript.feed(f"Build log row {step}\r\n")
+    term.transcript.feed("Build finished OK in 3.2s\r\n")
+
+    assert summarize(term).headline == "Build finished OK in 3.2s"
+
+
+def test_a_blockquote_the_agent_prints_is_not_the_users_request() -> None:
+    """'>' also opens a markdown blockquote. Once the agent's prose has begun,
+    a marker row is the agent QUOTING something — arbitrary quoted content must
+    not be presented as the session's purpose."""
+    term = _pane(status="live")
+    term.transcript.feed("Reading the bug report:\r\n")
+    term.transcript.feed("> the login page crashes on submit\r\n")
+    for step in range(8):
+        term.transcript.feed(f"Analysing crash path {step}\r\n")
+
+    assert summarize(term).headline.startswith("Claude Code — running")
+
+
+def test_the_clis_own_banner_may_precede_the_typed_request() -> None:
+    """The one thing legitimately printed before the first echo is the CLI
+    introducing itself — recognized because it names the CLI."""
+    term = _pane(status="live")
+    term.transcript.feed("✻ Welcome to Claude Code!\r\n")
+    term.transcript.feed("> make the setup wizard one screen\r\n")
+    for step in range(8):
+        term.transcript.feed(f"Working on step {step}\r\n")
+
+    assert summarize(term).headline == "make the setup wizard one screen"
+
+
 def test_the_input_boxes_placeholder_suggestion_is_not_a_request() -> None:
     """'Try "fix lint errors"' is the CLI talking, not the user."""
     term = _pane(status="live")

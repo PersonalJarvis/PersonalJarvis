@@ -318,12 +318,17 @@ class _PaneState:
     headline: str = ""
     detail: str = ""
     generated_at: float = 0.0
-    #: Readable row count / prompts sent / status at the last summary. The
-    #: comparison against these decides whether anything worth re-reading has
-    #: happened.
+    #: Readable row count / prompts sent / status / last manual submit at the
+    #: last summary. The comparison against these decides whether anything
+    #: worth re-reading has happened.
     lines_at: int = 0
     prompts_at: int = 0
     status_at: str = ""
+    #: ``Terminal.last_submit_at`` as of the last summary. ``prompts_sent``
+    #: only counts instructions JARVIS sent; a person typing a brand-new task
+    #: into the pane and pressing Enter stamps only this — and a hand-typed
+    #: instruction must reopen a settled title exactly like a sent one.
+    submit_at: float = 0.0
     inflight: bool = False
     failures: int = 0
     quiet_until: float = 0.0
@@ -405,15 +410,18 @@ def _material_change(term: Any, entry: _PaneState, line_count: int) -> bool:
     changes what a pane has achieved, never what it is for, and the header is a
     navigation label. After a summary written from a substantial transcript
     (:data:`STABLE_AFTER_LINES`), only the events that can change the pane's
-    purpose reopen it — a new instruction, or a status change (the final
-    summary of a pane that just exited). The manual Refresh button bypasses
-    this whole gate, as it always has.
+    purpose reopen it — a new instruction (sent by Jarvis OR typed into the
+    pane by hand), or a status change (the final summary of a pane that just
+    exited). The manual Refresh button bypasses this whole gate, as it always
+    has.
     """
     if entry.generated_at <= 0.0:
         return True
     if str(getattr(term, "status", "") or "") != entry.status_at:
         return True
     if int(getattr(term, "prompts_sent", 0) or 0) != entry.prompts_at:
+        return True
+    if float(getattr(term, "last_submit_at", 0.0) or 0.0) > entry.submit_at:
         return True
     if entry.lines_at >= STABLE_AFTER_LINES:
         return False
@@ -551,6 +559,7 @@ async def _run(term: Any, key: str, rows: list[str], folder: str) -> None:
     lines_at = len(rows)
     prompts_at = int(getattr(term, "prompts_sent", 0) or 0)
     status_at = str(getattr(term, "status", "") or "")
+    submit_at = float(getattr(term, "last_submit_at", 0.0) or 0.0)
     try:
         summary = await asyncio.wait_for(
             summarize_with_model(term, rows, folder=folder), timeout=CALL_TIMEOUT_S
@@ -588,7 +597,14 @@ async def _run(term: Any, key: str, rows: list[str], folder: str) -> None:
     # not a race to be won by whichever finished last.
     if entry.pinned_headline:
         return
-    _store(entry, summary, lines_at=lines_at, prompts_at=prompts_at, status_at=status_at)
+    _store(
+        entry,
+        summary,
+        lines_at=lines_at,
+        prompts_at=prompts_at,
+        status_at=status_at,
+        submit_at=submit_at,
+    )
 
 
 def _store(
@@ -598,6 +614,7 @@ def _store(
     lines_at: int,
     prompts_at: int,
     status_at: str,
+    submit_at: float = 0.0,
 ) -> None:
     """Keep a fresh summary as this pane's recap and clear the back-off."""
     entry.headline = summary.headline
@@ -607,6 +624,7 @@ def _store(
     entry.lines_at = lines_at
     entry.prompts_at = prompts_at
     entry.status_at = status_at
+    entry.submit_at = submit_at
     entry.failures = 0
     entry.quiet_until = 0.0
     entry.note = ""
@@ -1013,6 +1031,7 @@ async def summarize_now(term: Any, *, lines: Sequence[str], folder: str = "") ->
         lines_at=len(rows),
         prompts_at=int(getattr(term, "prompts_sent", 0) or 0),
         status_at=str(getattr(term, "status", "") or ""),
+        submit_at=float(getattr(term, "last_submit_at", 0.0) or 0.0),
     )
     return summary
 

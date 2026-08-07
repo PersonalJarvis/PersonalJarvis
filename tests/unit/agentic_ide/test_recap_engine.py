@@ -169,6 +169,24 @@ def test_an_early_thin_summary_may_still_improve_with_output() -> None:
     )
 
 
+def test_a_hand_typed_instruction_reopens_a_settled_title() -> None:
+    """prompts_sent only counts what JARVIS sent. A person typing a brand-new
+    task into the pane stamps last_submit_at — and repurposing a pane by hand
+    must reopen its title exactly like a sent instruction does."""
+    term = _pane(lines=0, last_submit_at=200.0)
+    state = recap_engine._state(term.key)  # noqa: SLF001
+    state.generated_at = time.time()
+    state.lines_at = recap_engine.STABLE_AFTER_LINES
+    state.prompts_at = 0
+    state.status_at = "live"
+    state.submit_at = 100.0
+
+    assert recap_engine._material_change(term, state, state.lines_at)  # noqa: SLF001
+
+    state.submit_at = 200.0
+    assert not recap_engine._material_change(term, state, state.lines_at)  # noqa: SLF001
+
+
 def test_a_settled_title_still_reopens_for_a_new_instruction_or_exit() -> None:
     """The two events that CAN change what a pane is for."""
     term = _pane(lines=0, prompts_sent=2)
@@ -475,8 +493,8 @@ def test_a_depleted_key_failure_reads_as_a_sentence_not_json() -> None:
     """The screenshot case: the card led with a wall of provider JSON."""
     note = recap_engine.describe_failure(
         RuntimeError(
-            "429 Too Many Requests. {'message': '{\\n \"error\": {\\n \"code\": 429,"
-            "\\n \"message\": \"Your prepayment credits are depleted.\"}}'}"
+            '429 Too Many Requests. {\'message\': \'{\\n "error": {\\n "code": 429,'
+            '\\n "message": "Your prepayment credits are depleted."}}\'}'
         )
     )
 
@@ -490,9 +508,7 @@ def test_a_connected_subscription_is_the_last_candidate(monkeypatch) -> None:
     api = SimpleNamespace(model="depleted-api")
     subscription = SimpleNamespace(model="coding-cli")
     monkeypatch.setattr(resolver, "frontier_brain_candidates", lambda cfg: iter([api]))
-    monkeypatch.setattr(
-        resolver, "resolve_subscription_brain", lambda cfg, **kwargs: subscription
-    )
+    monkeypatch.setattr(resolver, "resolve_subscription_brain", lambda cfg, **kwargs: subscription)
     monkeypatch.setattr("jarvis.core.config.load_config", lambda: SimpleNamespace())
 
     assert recap_engine._resolve_brains() == [api, subscription]  # noqa: SLF001
@@ -508,9 +524,7 @@ def test_a_full_api_chain_still_ends_at_the_subscription(monkeypatch) -> None:
     brains = [SimpleNamespace(model=f"api-{n}") for n in range(recap_engine.MAX_PROVIDER_TRIES)]
     subscription = SimpleNamespace(model="coding-cli")
     monkeypatch.setattr(resolver, "frontier_brain_candidates", lambda cfg: iter(brains))
-    monkeypatch.setattr(
-        resolver, "resolve_subscription_brain", lambda cfg, **kwargs: subscription
-    )
+    monkeypatch.setattr(resolver, "resolve_subscription_brain", lambda cfg, **kwargs: subscription)
     monkeypatch.setattr("jarvis.core.config.load_config", lambda: SimpleNamespace())
 
     assert recap_engine._resolve_brains() == [*brains, subscription]  # noqa: SLF001

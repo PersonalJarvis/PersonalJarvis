@@ -452,15 +452,22 @@ class Reading(NamedTuple):
 NO_READING = Reading("", 0.0)
 
 
-def stamp(term: Any, activity: Activity, *, now: float) -> None:
+def stamp(term: Any, activity: Activity, *, now: float, since: float | None = None) -> None:
     """Publish what this sweep observed, for readers that cannot observe.
 
     Only the transition is timed: re-stamping the same word every two seconds
     must not keep resetting "since", or a pane that has been waiting for twenty
     minutes would always look like it just stopped.
+
+    ``since`` lets the caller backdate a transition to when the state actually
+    began. The confirm gate stamps "working" only once movement has outlasted
+    ``WORK_CONFIRM_S`` — the honest start of that episode is when the movement
+    began, not the moment the gate was satisfied, and without this every
+    confirmed episode reported "For 0s" about work already seconds old. Clamped
+    to ``now``: a stamp may be late, never early.
     """
     if getattr(term, "activity", "") != activity:
-        term.activity_since = now
+        term.activity_since = now if since is None else min(float(since), now)
     term.activity = activity
     term.activity_at = now
 
