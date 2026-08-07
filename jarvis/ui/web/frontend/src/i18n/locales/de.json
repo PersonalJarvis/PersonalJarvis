@@ -59,7 +59,14 @@
     "update_finish_restart": "Update abschließen",
     "update_staged_restart_failed": "Update heruntergeladen — starte {name} neu, um die Installation abzuschließen",
     "update_rolled_back": "Das letzte Update konnte nicht installiert werden — {name} wurde auf die vorherige Version zurückgesetzt",
-    "update_network_error": "Netzwerkfehler"
+    "update_network_error": "Netzwerkfehler",
+    "detach": "Eigenes Fenster",
+    "detach_hint": "Diese Ansicht in einem eigenen Fenster öffnen",
+    "detach_failed": "Eigenes Fenster konnte nicht geöffnet werden",
+    "detached_title": "Diese Ansicht ist in einem eigenen Fenster geöffnet",
+    "detached_body": "Arbeite dort weiter oder hole sie hierher zurück.",
+    "detach_focus": "Fenster zeigen",
+    "detach_bring_back": "Zurückholen"
   },
   "nav": {
     "chat_workspace": "Chat",

@@ -9,6 +9,7 @@ import {
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { ViewErrorBoundary } from "@/components/ViewErrorBoundary";
+import { DetachedViewPlaceholder } from "@/components/layout/DetachedViewPlaceholder";
 // Type-only, so the section's chunk stays split out of the entry bundle.
 import type { AgenticIdeViewProps } from "@/views/AgenticIdeView";
 // The default section is the one view that must be on screen the moment React
@@ -267,14 +268,38 @@ const STICKY_SECTION = "agentic-ide";
 export function MainView() {
   const active = useEventStore((s) => s.activeSection);
   const setActive = useEventStore((s) => s.setActiveSection);
+  const solo = useEventStore((s) => s.solo);
+  const detachedViews = useEventStore((s) => s.detachedViews);
 
   useIdleViewPrefetch();
 
-  const stickyActive = (CODING_SECTION_IDS as readonly string[]).includes(active);
+  /*
+   * While a coding view lives in a detached solo window, THIS (non-solo)
+   * window must not keep a mounted IDE instance around — not even hidden: the
+   * detached window's panes claim the PTY streams, and a second connected
+   * instance steals every pane's output (the exact defect the sticky-mount
+   * comment below warns about). The solo window itself is exempt — it IS the
+   * detached instance the registry entry refers to.
+   */
+  const codingDetached =
+    !solo &&
+    detachedViews.some((v) => (CODING_SECTION_IDS as readonly string[]).includes(v));
+
+  const stickyActive =
+    (CODING_SECTION_IDS as readonly string[]).includes(active) && !codingDetached;
   const [stickyMounted, setStickyMounted] = useState(stickyActive);
   useEffect(() => {
     if (stickyActive) setStickyMounted(true);
   }, [stickyActive]);
+  useEffect(() => {
+    // Genuine unmount on detach — and remount happens through the normal
+    // sticky path once DetachedViewClosed clears the registry.
+    if (codingDetached) setStickyMounted(false);
+  }, [codingDetached]);
+
+  if (codingDetached && (CODING_SECTION_IDS as readonly string[]).includes(active)) {
+    return <DetachedViewPlaceholder view={active} />;
+  }
 
   return (
     <>

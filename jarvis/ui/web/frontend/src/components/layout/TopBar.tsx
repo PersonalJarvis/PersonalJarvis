@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, RotateCw } from "lucide-react";
+import { AppWindow, Download, RotateCw } from "lucide-react";
 
-import { useEventStore } from "@/store/events";
+import { useEventStore, type SectionId } from "@/store/events";
 import { useUpdate } from "@/hooks/useUpdate";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
+import { hasEmbeddedDesktopBridge } from "@/components/voice/BrowserRealtimeControl";
+import { openExternalUrl } from "@/lib/openExternal";
 
 /**
  * Global top bar rendered above every view (see App.tsx). It carries the app-
@@ -72,9 +74,90 @@ export function TopBar() {
 export function TopBarActions() {
   return (
     <>
+      <DetachButton />
       <UpdateButton />
       <RestartButton />
     </>
+  );
+}
+
+/**
+ * The views the desktop shell can split off into their own solo window.
+ * Mirrors the backend ``DETACHABLE_VIEWS`` registry (jarvis/ui/desktop_app.py)
+ * — the server validates again, this set only decides where the button shows.
+ */
+const DETACHABLE_SECTIONS = new Set<SectionId>([
+  "agentic-ide",
+  "agentic-ide-classic",
+  "chat-workspace",
+  "chats",
+]);
+
+/**
+ * "Open this view in its own window" — the detach entry point.
+ *
+ * Bridge-first like `openExternalUrl`: inside the embedded desktop shell the
+ * backend spawns a real second pywebview window (WebView2 silently drops
+ * `window.open`, so the frontend cannot do it itself); in a plain browser the
+ * solo URL simply opens as a new tab. A shell whose webview backend cannot
+ * create runtime windows answers `ok: false` with a fallback URL and the view
+ * opens in the user's real browser instead — honest on every host. Idempotent:
+ * re-clicking while detached focuses the existing window.
+ */
+function DetachButton() {
+  const t = useT();
+  const activeSection = useEventStore((s) => s.activeSection);
+  const solo = useEventStore((s) => s.solo);
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [busy, setBusy] = useState(false);
+
+  // A solo window never detaches further, and most sections have no solo mode.
+  if (solo || !DETACHABLE_SECTIONS.has(activeSection)) return null;
+
+  async function onClick() {
+    if (busy) return;
+    const view = activeSection;
+    const soloPath = `/?view=${view}&solo=1`;
+    if (!hasEmbeddedDesktopBridge()) {
+      // A real browser: a tab of this same browser IS the detached window.
+      window.open(soloPath, "_blank", "noopener,noreferrer");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/window/detach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ view }),
+      });
+      const data = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        fallback_url?: string;
+      } | null;
+      if (data?.ok) return;
+      // The shell could not create a runtime window — open a browser tab.
+      await openExternalUrl(
+        `${window.location.origin}${data?.fallback_url ?? soloPath}`,
+      );
+    } catch {
+      pushToast("error", t("topbar.detach_failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void onClick()}
+      disabled={busy}
+      title={t("topbar.detach_hint")}
+      data-testid="detach-view-button"
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-secondary/40 px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:cursor-default disabled:opacity-70"
+    >
+      <AppWindow aria-hidden className="h-3.5 w-3.5" />
+      {t("topbar.detach")}
+    </button>
   );
 }
 

@@ -59,7 +59,14 @@
     "update_finish_restart": "Finalizar actualización",
     "update_staged_restart_failed": "Actualización descargada — reinicia {name} para terminar la instalación",
     "update_rolled_back": "La última actualización no se pudo instalar — {name} volvió a la versión anterior",
-    "update_network_error": "error de red"
+    "update_network_error": "error de red",
+    "detach": "Ventana propia",
+    "detach_hint": "Abrir esta vista en su propia ventana",
+    "detach_failed": "No se pudo abrir una ventana separada",
+    "detached_title": "Esta vista está abierta en su propia ventana",
+    "detached_body": "Sigue trabajando allí o tráela de vuelta aquí.",
+    "detach_focus": "Mostrar ventana",
+    "detach_bring_back": "Traer de vuelta"
   },
   "nav": {
     "chat_workspace": "Chat",

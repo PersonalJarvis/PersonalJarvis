@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { useEventStore } from "@/store/events";
+import { isSectionId, useEventStore } from "@/store/events";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useBrainStatus } from "@/hooks/useBrainStatus";
 import { useVoiceStatus } from "@/hooks/useVoiceStatus";
@@ -59,6 +59,31 @@ export default function App() {
    * including the terminals of the Agentic IDE.
    */
   useEffect(() => installDictationFocusTracker(), []);
+
+  /*
+   * Resync the detached-window registry once per document. The WS events keep
+   * it live afterwards; this fetch covers the window that (re)loaded after the
+   * events fired — preload recovery reloads every window after a frontend
+   * rebuild, and a fresh solo window mounts long after its own "opened" event.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/window/detached")
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = (await res.json().catch(() => null)) as {
+          views?: unknown[];
+        } | null;
+        if (cancelled || !Array.isArray(data?.views)) return;
+        useEventStore.getState().setDetachedViews(data.views.filter(isSectionId));
+      })
+      .catch(() => {
+        /* headless or warming backend — the WS events will catch us up */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /*
    * The sidebar is draggable, app-wide.

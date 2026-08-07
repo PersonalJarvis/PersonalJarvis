@@ -59,7 +59,14 @@
     "update_finish_restart": "Finish update",
     "update_staged_restart_failed": "Update downloaded — restart {name} to finish installing it",
     "update_rolled_back": "The last update could not be installed — {name} was rolled back to the previous version",
-    "update_network_error": "network error"
+    "update_network_error": "network error",
+    "detach": "Own window",
+    "detach_hint": "Open this view in its own window",
+    "detach_failed": "Could not open a separate window",
+    "detached_title": "This view is open in its own window",
+    "detached_body": "Keep working there, or bring it back into this window.",
+    "detach_focus": "Show window",
+    "detach_bring_back": "Bring it back"
   },
   "nav": {
     "chat_workspace": "Chat",
