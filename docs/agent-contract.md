@@ -220,7 +220,7 @@ check in order, name the layer (runbook:
    **Jarvis-Agent**. No other internal names.
 2. **User-visible brand** (UI labels, TTS output, transcript labels, API
    strings the UI displays, tool-schema prose spoken by the router): derived
-   from the configured wake word — "Hey Ruben" → **"Ruben-Agent(s)"**, any
+   from the configured wake word — "Hey Nova" → **"Nova-Agent(s)"**, any
    wake word likewise, neutral fallback **"Assistant-Agent"**. NEVER hardcode
    a fixed name in a user-visible string. Plumbing: i18n token `{name}-Agent`;
    `agentBrand`/`useAgentBrand` (`src/lib/agentBrand.ts`);
