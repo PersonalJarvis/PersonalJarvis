@@ -810,12 +810,15 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         signup_url="https://platform.openai.com/docs/guides/realtime",
         supports_base_url=True,
         credential_help=(
-            "Any server on your own machine or network that speaks the OpenAI "
-            "Realtime WebSocket protocol. Paste the address it prints on "
-            "startup (ws://… works, so does http://localhost:8765) — no cloud "
-            "account, nothing leaves your network. The model and voice come from the server itself; leave "
-            "them on 'auto' unless it serves several. This card is only used "
-            "when you select it and set an address. If your server requires a "
+            "Fully local voice calls, no cloud account. Easiest path: the "
+            "install panel below checks this machine (12 GB of GPU/unified "
+            "memory is the minimum for a good experience) and sets up the "
+            "managed server with one click — download size and expected "
+            "latency are shown before anything is fetched. Alternatively, "
+            "paste the address of ANY server that speaks the OpenAI Realtime "
+            "WebSocket protocol (ws://… works, so does http://localhost:8765). "
+            "The model and voice come from the server itself; leave them on "
+            "'auto' unless it serves several. If your server requires a "
             "token, export JARVIS_LOCAL_REALTIME_API_KEY — most need none."
         ),
         experimental=True,
