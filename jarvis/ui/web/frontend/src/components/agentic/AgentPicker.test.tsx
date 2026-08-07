@@ -1,8 +1,8 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { StrictMode, useState } from "react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AgentPickerMenu } from "./AgentPicker";
+import { AgentPickerMenu, offersAgentChoice } from "./AgentPicker";
 
 afterEach(cleanup);
 
@@ -32,48 +32,69 @@ function PickerHarness({ onPick = vi.fn() }: { onPick?: (agent: string) => void 
 }
 
 describe("AgentPickerMenu", () => {
-  it("uses ordinary dialog controls and keeps unavailable choices explainable", () => {
+  it("renders a labelled menu and keeps unavailable choices visible but inert", () => {
     const onPick = vi.fn();
     render(<PickerHarness onPick={onPick} />);
     fireEvent.click(screen.getByRole("button", { name: "Open picker" }));
 
-    expect(screen.getByRole("dialog", { name: "Choose a terminal" })).toBeTruthy();
+    expect(screen.getByRole("menu", { name: "Choose a terminal" })).toBeTruthy();
+
+    // A CLI that is not installed stays listed — the absence explains itself —
+    // but is a real disabled button, so clicking it picks nothing.
     const unavailable = screen.getByTestId("pick-claude");
-    expect(unavailable.getAttribute("aria-disabled")).toBe("true");
+    expect(unavailable.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText("not installed")).toBeTruthy();
     fireEvent.click(unavailable);
     expect(onPick).not.toHaveBeenCalled();
   });
 
-  it("Escape closes the dialog and restores focus to its trigger", () => {
-    render(
-      <StrictMode>
-        <PickerHarness />
-      </StrictMode>,
-    );
-    const trigger = screen.getByRole("button", { name: "Open picker" });
-    trigger.focus();
-    fireEvent.click(trigger);
+  it("focuses the first installed entry and picks it on click", () => {
+    const onPick = vi.fn();
+    render(<PickerHarness onPick={onPick} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open picker" }));
 
+    // Keyboard users land on the first actionable choice, not the wrapper.
     expect(document.activeElement).toBe(screen.getByTestId("pick-codex"));
-    fireEvent.keyDown(document.activeElement as Element, { key: "Escape" });
 
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(document.activeElement).toBe(trigger);
+    fireEvent.click(screen.getByTestId("pick-codex"));
+    expect(onPick).toHaveBeenCalledWith("codex");
   });
 
-  it("focuses the setup dialog when no choice is installed", () => {
-    render(
-      <AgentPickerMenu
-        title="Open what?"
-        ariaLabel="Choose a terminal"
-        agents={[]}
-        onPick={vi.fn()}
-        onDismiss={vi.fn()}
-        testId="empty-picker"
-        itemTestId={(agent) => `empty-${agent}`}
-      />,
-    );
+  it("Escape and a click outside both dismiss the menu", () => {
+    render(<PickerHarness />);
+    const trigger = screen.getByRole("button", { name: "Open picker" });
 
-    expect(document.activeElement).toBe(screen.getByRole("dialog"));
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByTestId("picker"), { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+
+    // The backdrop covers everything else, so a mousedown anywhere outside the
+    // menu lands on it and closes without a global listener.
+    fireEvent.click(trigger);
+    fireEvent.mouseDown(
+      screen.getByTestId("picker").previousElementSibling as Element,
+    );
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+});
+
+describe("offersAgentChoice", () => {
+  it("only offers a menu when more than one choice is actually installed", () => {
+    expect(offersAgentChoice(undefined)).toBe(false);
+    expect(
+      offersAgentChoice([{ name: "codex", displayName: "Codex", installed: true }]),
+    ).toBe(false);
+    expect(
+      offersAgentChoice([
+        { name: "codex", displayName: "Codex", installed: true },
+        { name: "claude", displayName: "Claude Code", installed: false },
+      ]),
+    ).toBe(false);
+    expect(
+      offersAgentChoice([
+        { name: "codex", displayName: "Codex", installed: true },
+        { name: "shell", displayName: "Plain Terminal", installed: true },
+      ]),
+    ).toBe(true);
   });
 });

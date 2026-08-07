@@ -1,5 +1,20 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// AppearanceRow inside AppSettingsGroup consumes useTheme, but this suite's
+// subject is the autostart row. Stub the hook so the group renders without a
+// ThemeProvider — mounting the real provider would also fire its own
+// /api/settings/appearance fetch and consume the sequenced fetch mocks below.
+vi.mock("@/hooks/useTheme", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useTheme")>()),
+  useTheme: () => ({
+    theme: "dark" as const,
+    preference: "dark" as const,
+    setPreference: vi.fn(),
+    toggle: vi.fn(),
+  }),
+}));
+
 import { AppSettingsGroup } from "./AppSettingsGroup";
 
 // A supported desktop host with autostart enabled (the default after the

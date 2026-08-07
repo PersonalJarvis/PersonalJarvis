@@ -6,6 +6,9 @@ vi.mock("@xterm/xterm", () => ({
   Terminal: class {
     cols = 80;
     rows = 24;
+    // The component retints a live terminal via `term.options.theme = …`, so
+    // the double must carry a real options bag like the xterm API does.
+    options: Record<string, unknown> = {};
     loadAddon() {}
     open() {}
     write(_data: string, done?: () => void) { done?.(); }
