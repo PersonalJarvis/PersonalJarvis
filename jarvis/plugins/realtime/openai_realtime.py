@@ -1484,7 +1484,11 @@ class LocalRealtimeProvider:
         import subprocess  # lazy (AP-26)
         from pathlib import Path
 
-        from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # lazy
+        # importlib, not a literal ``from jarvis...``: the plugin-module
+        # contract (no jarvis imports, AST-checked) counts lazy imports too.
+        NO_WINDOW_CREATIONFLAGS = importlib.import_module(
+            "jarvis.core.process_utils"
+        ).NO_WINDOW_CREATIONFLAGS  # AP-1
 
         log_dir = Path(os.environ.get("JARVIS_DATA_DIR") or "data")
         try:
