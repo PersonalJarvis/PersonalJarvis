@@ -213,6 +213,18 @@ MAX_TERMINALS = 100
 # pane header that may be a quarter of a screen wide. Long enough for "Frontend
 # rewrite", short enough that it stays a name rather than a description.
 MAX_TERMINAL_NAME = 40
+# The narrowest geometry a viewer can honestly have measured. The grid never
+# lays a real pane out under 120 px (`MIN_SEAM_PANE_PX` in the frontend), which
+# is at least ~10 columns even at the largest font — so a reported size below
+# these floors is a mid-layout measurement artifact (a grid cell caught before
+# flexbox settled), not a pane anybody is looking at. Resizing the shared PTY
+# to such a sliver makes the agent print its entire screen one character per
+# line, and that output stays wrecked in the scrollback long after the
+# geometry recovers. Attach and resize both refuse sizes under these floors,
+# because the viewer that sent one will report its real size the moment its
+# cell settles.
+MIN_VIEWER_COLS = 8
+MIN_VIEWER_ROWS = 2
 # Where a pane may land when it is dragged onto another one, in the same two
 # axes the grid is built from (columns of stacked panes). "swap" is listed first
 # because it is the one a user reaches for most: two panes are the wrong way
@@ -2522,6 +2534,16 @@ class Registry:
                 raise SessionNotReady("No Agentic-IDE session is running.")
             raise SessionError(f"Unknown terminal: {key}")
         session, term = found
+        if cols < MIN_VIEWER_COLS or rows < MIN_VIEWER_ROWS:
+            # The handshake geometry is a best effort measured before the grid
+            # cell settled, and a sliver slipping through here is how a whole
+            # conversation ends up printed one character per line (the resize
+            # path already refuses these — see the floors' comment). Fall back
+            # to the geometry the pane already has: for a live agent that means
+            # "no geometry change", for a fresh spawn the transcript's default,
+            # and either way the viewer reports its real size right after
+            # mounting.
+            cols, rows = term.transcript.cols, term.transcript.rows
         if appearance in THEME_COLOURS:
             term.queries.appearance = appearance
 
@@ -3270,6 +3292,15 @@ class Registry:
         Passing nothing keeps the old unconditional behaviour, which is what an
         internal caller (a repaint nudge, a test) means by it.
         """
+        if cols < MIN_VIEWER_COLS or rows < MIN_VIEWER_ROWS:
+            # A sliver is a measurement artifact, never a request (see the
+            # floors' comment). Refusing it — rather than clamping — keeps the
+            # PTY at the last honest size; the viewer re-reports the real one
+            # as soon as its grid cell settles.
+            logger.debug(
+                "Agentic IDE: refused an implausible {}x{} resize for {}", cols, rows, key
+            )
+            return False
         found = self._locate(key, workspace_id)
         if found is None:
             return False

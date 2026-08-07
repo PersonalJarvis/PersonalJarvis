@@ -139,6 +139,25 @@ const RECEIPT_MAX_AGE_MS = 30 * 60 * 1000;
  */
 const MAX_TERMINAL_NAME = 40;
 
+/**
+ * The narrowest geometry a REAL pane can measure.
+ *
+ * The grid never lays a pane out below `MIN_SEAM_PANE_PX` (120 px), which is
+ * at least ~10 columns even at the largest font — so a fit that comes back
+ * with fewer than this many columns did not measure a pane, it measured a
+ * moment: a grid cell mid-animation, a layout that has not settled, a
+ * container the browser reported before flexbox finished. Announcing such a
+ * size resizes the shared PTY to a sliver and the agent then prints its whole
+ * screen one character per line — output that stays wrecked in the scrollback
+ * long after the geometry recovers, because the agent will not repaint what it
+ * already said. Both the resize path and the connect-time handshake below
+ * refuse to report anything under these floors; the backend enforces the same
+ * ones (`jarvis/agentic_ide/session.py`), so a stale or older client cannot
+ * do the damage either.
+ */
+const MIN_REAL_COLS = 8;
+const MIN_REAL_ROWS = 2;
+
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
 
 /**
@@ -826,7 +845,7 @@ export function AgenticTerminal({
       } catch {
         return;
       }
-      if (term.cols < 2 || term.rows < 2) return;
+      if (term.cols < MIN_REAL_COLS || term.rows < MIN_REAL_ROWS) return;
       // Resizing a pane is the other half of the un-park story. Maximizing one,
       // dragging a seam, changing the font — all of them are a user opening up
       // a pane to READ it, and the pane it opens must not be a parked one still
@@ -860,8 +879,15 @@ export function AgenticTerminal({
       {
         name,
         workspaceId,
-        cols: term.cols || 80,
-        rows: term.rows || 24,
+        // The connect-time size is a best effort, and this is the one place a
+        // sliver could still slip through: the mount-time fit may have run
+        // against a grid cell mid-layout and left `term.cols` at 1 — a value
+        // `sendResize` refuses to SEND but which used to travel here as the
+        // handshake geometry, spawning (or resizing) the PTY one column wide.
+        // A size under the plausibility floor is treated as "not measured yet";
+        // the real one follows from `onOpen`'s fit as soon as the cell settles.
+        cols: term.cols >= MIN_REAL_COLS ? term.cols : 80,
+        rows: term.rows >= MIN_REAL_ROWS ? term.rows : 24,
         appearance: appearanceRef.current,
         claimOwner: viewerMayOwn(),
       },
