@@ -536,6 +536,48 @@ view") and confirm the UI reacts — that is the JavaScript-executed action path
 running through a handoff. Then remove the delegate brain and repeat: the
 assistant must say it cannot run actions and **stay on the call**.
 
+## Live-confirmed v3 contract (probe, 2026-08-06/07)
+
+`scripts/codex_live_probe.py --dump` records EVERY app-server notification of
+one real answered call. The complete observed vocabulary:
+
+| Notification | Meaning |
+|---|---|
+| `thread/realtime/started` | carries `realtimeSessionId`, `version` |
+| `thread/realtime/sdp` | the WebRTC answer (also in the RPC response) |
+| `thread/realtime/transcript/delta` | `role` = `user` \| `assistant`, `delta` |
+| `thread/realtime/transcript/done` | full text per part, same roles |
+
+There are **no item notifications at all** — no `response.*`, no
+`input_audio_buffer.*`; responses exist only as media audio and transcripts.
+The adapter's 1.2 s audible-quiescence backstop is therefore THE turn
+boundary of this transport (not a fallback), and the client treats
+backstop-derived boundaries as free: prebuffer-less playback resume,
+sequenced splices, ~2 s half-duplex release. `realtime_stop` →
+`realtime_start` on the SAME thread works (confirmed) — the STUN retry and
+future rebuilds can reuse the audited thread.
+
+### Reproducing a live call headlessly
+
+```
+# Desktop app must be STOPPED (the voice-profile lock refuses otherwise).
+python scripts/codex_live_probe.py --dump                 # contract discovery
+python scripts/codex_live_probe.py --scenario three_turns_de
+python scripts/diag_voice_sessions.py --harness <out>/round.jsonl
+```
+
+Committed speech fixtures live in `tests/fixtures/audio/realtime/`; scenarios
+in `tests/integration/realtime/scenarios/`. Every run bills the ChatGPT
+subscription's realtime usage (hard cap 5 calls per invocation). When running
+from a campaign worktree, point `JARVIS_CONFIG` at the live `jarvis.toml` —
+`PROJECT_ROOT` is module-anchored, so a worktree otherwise loads pure
+defaults. Footnote: the Codex voice profile lives under the OS user-data dir
+and deliberately ignores `JARVIS_DATA_DIR` (ADR-0027 parity gap, documented
+here, not fixed). The probe's grounding half rides the configured cloud STT;
+an exhausted STT quota mutes user finals while all transport metrics stay
+valid. Every session's health counters land as `RealtimeSessionPostmortem`
+in the flight recorder; spawn steps log as `RT-SPAWN span=...` lines.
+
 ## Primary sources
 
 - [Using Codex with your ChatGPT plan](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan)
