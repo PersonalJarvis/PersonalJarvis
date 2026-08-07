@@ -87,7 +87,12 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.configure.outputs.os-matrix) }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # 75, not 30 (2026-08-07): the suite outgrew the old budget without any
+    # test hanging — at cancellation macOS sat at 95% and Windows at 40%,
+    # both still advancing (Windows runners pace the suite at ~65 min). A
+    # genuine wedge no longer hides in the budget either way: the main pytest
+    # step below dumps every thread stack once a single test exceeds 300 s.
+    timeout-minutes: 75
 
     steps:
       - name: Checkout
@@ -181,6 +186,7 @@ jobs:
             )
           fi
           python -m pytest tests/ "${extra_pytest_args[@]}" -q -p no:cacheprovider \
+            -o faulthandler_timeout=300 \
             -m "not skip_ci and not slow and not openclaw_live and not voice_latency and not eval" \
             --continue-on-collection-errors \
             --junitxml=report.xml \
