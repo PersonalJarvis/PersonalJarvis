@@ -31,11 +31,14 @@ questions:
 * :attr:`Recap.detail` — one or two plain sentences for the hover tooltip: what
   it was asked to do, and what has happened since.
 
-Honest limits: a coding CLI's last printed line is a heuristic for "what it is
-doing", not a summary of the session, and a TUI that redraws a status bar as its
-bottom row will surface that instead of its last real step. So the wording never
-claims more than it knows — it quotes what the pane printed rather than
-asserting what the agent "is working on".
+Honest limits: a coding CLI's screen is mostly the CLI's own interface — its
+spinner, status bar and input box are redrawn on every frame, and no blacklist
+of chrome phrases wins against a TUI that randomizes its spinner verbs. So a
+coding pane's HEADLINE never quotes the screen at all: it names the session
+from the instruction it was sent, from the first request the user typed into
+it, or with a neutral "who, since when" label — while a plain shell, whose
+screen is a log rather than an interface, may still cite its newest row. What
+the pane last printed stays in the DETAIL, explicitly labelled as a quote.
 """
 
 from __future__ import annotations
@@ -77,6 +80,15 @@ HEADLINE_TASK_CHARS = HEADLINE_CHARS
 # Glyphs an agent TUI draws in front of its input line. A row starting with one
 # is the prompt box, not something the agent did.
 _INPUT_MARKERS = ("❯", ">", "›")
+
+# How far into the transcript's OPENING the user's first typed request is
+# looked for. The first submitted prompt is echoed near the top of the
+# scrollback, right after the CLI's banner.
+_TYPED_SEARCH_LINES = 40
+# The live input box (and the footer drawn under it) occupies the bottom rows
+# of the screen; whatever is there is an unfinished thought being typed, not
+# the session's purpose. Rows this close to the end never qualify.
+_TYPED_SKIP_TAIL = 6
 
 # Fragments that mark a row as the TUI's own chrome — key hints, the context
 # meter, the permission-mode banner. They are drawn on every frame, so without
@@ -263,6 +275,57 @@ def _activity(tail: Sequence[str]) -> str:
     return ""
 
 
+def _typed_request(rows: Sequence[str]) -> str:
+    """The first thing the user typed INTO this pane, read off its transcript.
+
+    A pane driven by hand has no ``last_prompt``, yet its purpose was stated in
+    its very first submitted prompt — which the CLI echoes into its scrollback
+    behind an input marker. That echo is USER text: the one part of a TUI's
+    screen that is safe to put in a header, because it is the same thing
+    ``last_prompt`` would have held had the instruction come through Jarvis.
+
+    Two impostors share the marker and are excluded: the LIVE input box, by
+    position (it sits in the bottom rows, and what is there is being typed
+    right now), and the box's placeholder suggestion ('Try "fix lint errors"'),
+    by its wording.
+    """
+    source = [str(row) for row in list(rows)[:-_TYPED_SKIP_TAIL]][:_TYPED_SEARCH_LINES]
+    for raw in source:
+        text = raw.strip()
+        marker = next((mark for mark in _INPUT_MARKERS if text.startswith(mark)), None)
+        if marker is None:
+            continue
+        content = text[len(marker) :].strip()
+        lowered = content.lower()
+        if lowered.startswith('try "'):
+            continue
+        if sum(1 for ch in content if ch.isalpha()) < 3:
+            continue
+        if any(fragment in lowered for fragment in _chrome_fragments()):
+            continue
+        if _bare_path_list(content):
+            continue
+        return condense(content, HEADLINE_CHARS)
+    return ""
+
+
+def _session_label(term: Any) -> str:
+    """This pane's honest self-description when nothing names the work.
+
+    Never a row off the screen: a full-screen coding CLI's screen is the CLI's
+    own interface, and quoting it produced headers reading "Churned for 1m 53s"
+    — the spinner, timestamped. A neutral "who, since when" label carries less,
+    but everything it says is true, and saying more is the job of the model
+    recap above this floor, not of a string heuristic.
+    """
+    name = str(getattr(term, "display_name", "") or getattr(term, "agent", "") or "Session")
+    started = getattr(term, "started_at", None)
+    if started:
+        clock = time.strftime("%H:%M", time.localtime(float(started)))
+        return condense(f"{name} — running since {clock}", HEADLINE_CHARS)
+    return condense(f"{name} — running", HEADLINE_CHARS)
+
+
 def _task(term: Any, limit: int = TASK_CHARS) -> str:
     """The instruction this pane was last given, short enough to quote.
 
@@ -327,24 +390,28 @@ def _task_sentence(task: str, *, sent: int, working: bool = False) -> str:
     return "No instruction has been sent to it from Jarvis yet."
 
 
-def summarize(term: Any, *, tail: Sequence[str] | None = None) -> Recap:
+def summarize(term: Any, *, lines: Sequence[str] | None = None) -> Recap:
     """Recap the session running in ``term``.
 
-    ``tail`` lets a caller that has already read the transcript pass the rows in
-    rather than have them read a second time — :meth:`Terminal.to_dict` counts
-    the transcript anyway, and replaying a 600-row screen twice per poll per
-    pane is a cost with nothing to show for it.
+    ``lines`` lets a caller that has already read the transcript pass the rows
+    in rather than have them read a second time — :meth:`Terminal.to_dict`
+    counts the transcript anyway, and replaying a 600-row screen twice per poll
+    per pane is a cost with nothing to show for it. The FULL rows, not a tail:
+    the headline may need the transcript's opening (the user's first typed
+    request is echoed there) while the detail quotes its newest readable row.
 
     Duck-typed on purpose (``Terminal`` lives in :mod:`.session`, which imports
     this module): every attribute is read defensively so a test double carrying
     half a pane still produces a sentence instead of an ``AttributeError``.
     """
-    if tail is None:
+    if lines is None:
         transcript = getattr(term, "transcript", None)
         try:
-            tail = transcript.tail(TAIL_LINES) if transcript is not None else []
+            lines = transcript.lines() if transcript is not None else []
         except Exception:  # noqa: BLE001 - a recap must never break a state read
-            tail = []
+            lines = []
+    rows = list(lines)
+    tail = rows[-TAIL_LINES:]
 
     status = str(getattr(term, "status", "") or "pending")
     task = _task(term)
@@ -358,11 +425,18 @@ def summarize(term: Any, *, tail: Sequence[str] | None = None) -> Recap:
     # correctly saying it had stopped. Two descriptions of one pane, disagreeing
     # inside a single payload.
     doing = observed(term).activity
+    # Is this a coding CLI (full-screen TUI) or a plain shell? The distinction
+    # decides what the HEADLINE may quote: a shell's screen is a log of what
+    # ran, safe to cite; a TUI's screen is the TUI's own interface, and citing
+    # it is how headers came to read "Churned for 1m 53s" — the spinner.
+    coding_tui = _typed_into(term)
+    # The user's first typed request, for a pane nobody briefed through Jarvis.
+    typed = "" if task else _typed_request(rows)
     # One sentence about the instruction, computed once: every branch below
     # opens with it, and a plain terminal answers it differently.
     asked = (
         _task_sentence(task, sent=sent, working=status == "live" and bool(activity or idle))
-        if _typed_into(term)
+        if coding_tui
         else "This is a plain terminal — you type into it yourself."
     )
 
@@ -389,9 +463,18 @@ def summarize(term: Any, *, tail: Sequence[str] | None = None) -> Recap:
     if status == "exited":
         code = getattr(term, "exit_code", None)
         ended = "Finished and exited" if code in (0, None) else f"Exited with code {code}"
-        closing = f"{ended}. Last output: {activity}" if activity else f"{ended}."
+        # The job still names the session — an exited pane is found in a list
+        # by what it WAS FOR, and the badge beside the title says it stopped.
+        if task:
+            headline = _task(term, HEADLINE_TASK_CHARS)
+        elif typed:
+            headline = typed
+        elif activity and not coding_tui:
+            headline = condense(f"{ended}. Last output: {activity}", HEADLINE_CHARS)
+        else:
+            headline = condense(ended, HEADLINE_CHARS)
         return Recap(
-            headline=condense(closing, HEADLINE_CHARS),
+            headline=headline,
             detail=_sentences(
                 asked,
                 f"{ended}" + (f", last printing: {activity}." if activity else "."),
@@ -402,11 +485,15 @@ def summarize(term: Any, *, tail: Sequence[str] | None = None) -> Recap:
     # this used to open with the newest readable row, on the theory that the
     # freshest signal is the most useful one. It is not. The last row of a
     # full-screen coding CLI is a fragment of a sentence it is halfway through
-    # printing — a pane that had just written a design document reported
-    # "without interrupting Claude's current work", which is a true quote and a
-    # complete non-answer. What the pane was ASKED to do is at least always
-    # about the job. The row it printed follows in the tooltip, and the real
-    # answer to "what has it achieved" comes from .recap_engine.
+    # printing — or, worse, the CLI's own spinner: panes shipped with headers
+    # reading "Churned for 1m 53s" and "2 MCP servers need attention", true
+    # quotes of the screen and complete non-answers. So for a coding TUI the
+    # headline now NEVER quotes the screen. What names the session, in order:
+    # the instruction Jarvis sent, the first request the user typed into the
+    # pane themselves, and failing both a neutral "who, since when" label. A
+    # plain shell keeps citing its newest row — its screen is a log, not an
+    # interface. The row a TUI printed still follows in the tooltip, and the
+    # real answer to "what has it achieved" comes from .recap_engine.
     #
     # The job goes in BARE — no "Working on:" prefix and no quotes. The header
     # is a few centimetres wide and clips the end of whatever is in it, so ten
@@ -414,8 +501,12 @@ def summarize(term: Any, *, tail: Sequence[str] | None = None) -> Recap:
     # the long form below still says which of the two it is.
     if task:
         headline = _task(term, HEADLINE_TASK_CHARS)
-    elif activity:
+    elif typed:
+        headline = typed
+    elif activity and not coding_tui:
         headline = activity
+    elif activity or idle:
+        headline = _session_label(term)
     else:
         headline = "Running — no work visible yet"
 

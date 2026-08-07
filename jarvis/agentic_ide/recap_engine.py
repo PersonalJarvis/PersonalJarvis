@@ -483,8 +483,7 @@ def recap_for(term: Any, *, lines: Sequence[str] | None = None) -> SmartRecap:
             reason=WHY_SUMMARIZED,
             writer=entry.writer,
         )
-    tail = None if lines is None else list(lines)[-recap.TAIL_LINES :]
-    plain = recap.summarize(term, tail=tail)
+    plain = recap.summarize(term, lines=None if lines is None else list(lines))
     return SmartRecap(
         headline=plain.headline,
         detail=plain.detail,
@@ -661,9 +660,7 @@ def _resolve_subscription(config: Any) -> Any | None:
     try:
         from jarvis.brain.resolver import resolve_subscription_brain
 
-        return resolve_subscription_brain(
-            config, cli_timeout_s=SUBSCRIPTION_CLI_TIMEOUT_S
-        )
+        return resolve_subscription_brain(config, cli_timeout_s=SUBSCRIPTION_CLI_TIMEOUT_S)
     except Exception:  # noqa: BLE001 - a broken CLI probe must not cost the recap
         logger.info("Agentic IDE recap: subscription fallback unavailable", exc_info=True)
         return None
@@ -1022,7 +1019,7 @@ async def summarize_now(term: Any, *, lines: Sequence[str], folder: str = "") ->
 
 def _floor(term: Any, rows: Sequence[str], why: str, *, note: str = "") -> SmartRecap:
     """The deterministic recap, labelled with why it is what came back."""
-    plain = recap.summarize(term, tail=list(rows)[-recap.TAIL_LINES :])
+    plain = recap.summarize(term, lines=list(rows))
     return SmartRecap(
         headline=plain.headline,
         detail=plain.detail,
