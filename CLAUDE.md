@@ -66,8 +66,10 @@ on unpinned libs; signing private keys ONLY in GH Actions secrets; no silent
 Working tree is SHARED: stage only YOUR files (`git add -p`/pathspec, never
 `git add -A`/`.`); auto-commit each logical step (Conventional Commits); never
 push automatically; never commit secrets. App restart =
-`POST /api/settings/restart-app`; desktop WebView has no F5/console — frontend
-fix = `npm run build` in `jarvis/ui/web/frontend/` + in-app Restart button.
+`POST /api/settings/restart-app`, for PYTHON-side changes only; desktop WebView
+has no F5/console — frontend fix = `npm run build` in
+`jarvis/ui/web/frontend/`, nothing else: open windows reload themselves
+(`src/lib/bundleWatch.ts`). Never end a frontend change by asking for a restart.
 Check `MEMORY.md` before larger decisions.
 
 ## 10. Run & test
