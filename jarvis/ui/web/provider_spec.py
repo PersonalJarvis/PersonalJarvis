@@ -752,7 +752,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         secret_keys=(),
         dashboard_url=None,
         login_cli=("codex", "login"),
-        install_hint="npm i -g @openai/codex@0.146.0",
+        install_hint="npm i -g @openai/codex@0.147.0",
         signup_url="https://chatgpt.com",
         credential_help=(
             "Beta — subscription voice through Codex is not finished yet and "

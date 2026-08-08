@@ -1,7 +1,7 @@
 # ChatGPT-plan realtime voice through Codex
 
-Status: experimental, opt-in, and pinned to Codex CLI 0.146.0
-Last verified: 2026-08-02 (implementation trace, local runtime evidence, and targeted tests)
+Status: experimental, opt-in, and pinned to audited Codex CLI 0.147.0/0.146.0 builds
+Last verified: 2026-08-08 (tagged source/schema audit, official artifact hashes, and targeted tests)
 
 ## Bottom line
 
@@ -132,8 +132,9 @@ The active pieces and gates are:
   dedicated voice login does not prove `CodexBrain` CLI readiness.
 - `CodexSubscriptionRealtimeProvider.verify_activation()` and
   `CodexAppServerClient.require_chatgpt_login()` start the pinned app-server and
-  verify the live account. The adapter requires Codex CLI 0.146.0, the audited
-  binary/hash and profile layout, ChatGPT authentication, and an accepted
+  verify the live account. The adapter prefers Codex CLI 0.147.0 and retains
+  0.146.0 as an exact-hash compatibility window; it also requires the audited
+  profile layout, ChatGPT authentication, and an accepted
   personal plan. Missing `aiortc`/`av`, unsupported architecture, bad profile,
   refused plan, or a failed media connection stops this provider honestly.
 - Codex v3 selects its model server-side (`model = "auto"`). The supported voice
@@ -248,10 +249,11 @@ entries are rejected.
 
 At process launch Jarvis:
 
-1. Requires the exact official Codex 0.146.0 native executable and verifies its
-   SHA-256. Windows uses a kill-on-close Job Object. macOS and Linux launch the
-   native binary behind a process-group supervisor whose parent-owned lifeline
-   pipe kills the group if Jarvis crashes.
+1. Requires an exact official Codex 0.147.0 or 0.146.0 native executable and
+   verifies its release-specific SHA-256. Windows uses a kill-on-close Job
+   Object. macOS and Linux launch the native binary behind a process-group
+   supervisor whose parent-owned lifeline pipe kills the group if Jarvis
+   crashes.
 2. Forces file-backed auth and strips inherited OpenAI/API billing credentials,
    proxy/provider variables, and keyring-session variables.
 3. Supplies isolated temporary home, app-data, log, database, model-catalog,
@@ -486,9 +488,10 @@ them changes the trade-off above, which is a property of the wire.
    printed device-code URL is the honest answer and the card should say so
    rather than leaving the user waiting for a window. Do not solve this by
    admitting `XDG_RUNTIME_DIR` back into the forced file-store environment.
-4. **The CLI version pin has a scheduled expiry.** `_TRUSTED_CODEX_TARGETS`
-   pins six SHA-256 hashes of `@openai/codex` 0.146.0, so any upgrade disables
-   subscription realtime with "does not match an official approved build".
+4. **Keep the CLI version pin current.** `_TRUSTED_CODEX_TARGETS` pins the six
+   SHA-256 hashes of `@openai/codex` 0.147.0; the previous audited 0.146.0 set
+   remains an explicit compatibility window. Every other build is disabled
+   with "does not match an official approved build".
    That is deliberate — but verify the pin is still current before any release
    claiming subscription voice works, and follow the five-step upgrade policy
    above when moving it.
@@ -581,5 +584,6 @@ in the flight recorder; spawn steps log as `RT-SPAWN span=...` lines.
 ## Primary sources
 
 - [Using Codex with your ChatGPT plan](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan)
-- [Codex 0.146.0 app-server protocol](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/app-server/README.md)
+- [Codex 0.147.0 app-server protocol](https://github.com/openai/codex/blob/rust-v0.147.0/codex-rs/app-server/README.md)
+- [Codex 0.146.0 compatibility protocol](https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/app-server/README.md)
 - [OpenAI Realtime API guide](https://developers.openai.com/api/docs/guides/realtime)

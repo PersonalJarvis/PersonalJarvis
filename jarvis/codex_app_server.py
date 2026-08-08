@@ -57,15 +57,61 @@ _STARTUP_AUDIT_TTL_S: Final = 10.0
 _SHUTDOWN_TIMEOUT_S: Final = 2.0
 _DEFAULT_SDP_TIMEOUT_S: Final = 15.0
 _DEFAULT_NOTIFICATION_QUEUE_SIZE: Final = 512
-_SUPPORTED_CODEX_VERSION: Final = "codex-cli 0.146.0"
+_SUPPORTED_CODEX_VERSION: Final = "codex-cli 0.147.0"
+_LEGACY_CODEX_VERSION: Final = "codex-cli 0.146.0"
+_SUPPORTED_CODEX_VERSIONS: Final = (
+    _SUPPORTED_CODEX_VERSION,
+    _LEGACY_CODEX_VERSION,
+)
 _CHILD_LIFELINE_SCRIPT: Final = str(
     Path(__file__).parent / "core" / "child_lifeline.py"
 )
 
 # SHA-256 of the native executables in OpenAI's six official npm artifacts for
-# @openai/codex 0.146.0. The app-server protocol used below is experimental;
+# @openai/codex 0.147.0. The app-server protocol used below is experimental;
 # an unknown build is refused instead of assuming its safety semantics match.
 _TRUSTED_CODEX_TARGETS: Final = {
+    ("darwin", "arm64"): (
+        "darwin-arm64",
+        "aarch64-apple-darwin",
+        "codex",
+        "19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37",
+    ),
+    ("darwin", "x86_64"): (
+        "darwin-x64",
+        "x86_64-apple-darwin",
+        "codex",
+        "8080a42da4cef9c4216dace512f29acfe2e526aeeec2a0ce450e5a2b18b84d8a",
+    ),
+    ("linux", "arm64"): (
+        "linux-arm64",
+        "aarch64-unknown-linux-musl",
+        "codex",
+        "e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2",
+    ),
+    ("linux", "x86_64"): (
+        "linux-x64",
+        "x86_64-unknown-linux-musl",
+        "codex",
+        "cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40",
+    ),
+    ("win32", "arm64"): (
+        "win32-arm64",
+        "aarch64-pc-windows-msvc",
+        "codex.exe",
+        "1f0e8c2dd3c6b471e985fac76908366c1cf31155094fde606fb2d3052cf00584",
+    ),
+    ("win32", "x86_64"): (
+        "win32-x64",
+        "x86_64-pc-windows-msvc",
+        "codex.exe",
+        "935a1911ed2556e4ffcec995f4886ac2ac425863ba26fed264df62e30272ad9d",
+    ),
+}
+# Keep the last audited protocol-compatible release available during the pin
+# transition. This is a compatibility window, not a semver trust rule: each
+# executable is still accepted only by its exact official artifact digest.
+_LEGACY_TRUSTED_CODEX_TARGETS: Final = {
     ("darwin", "arm64"): (
         "darwin-arm64",
         "aarch64-apple-darwin",
@@ -667,10 +713,10 @@ def _is_trusted_codex_runtime_binary(
                 and os.path.normcase(str(canonical))
                 == os.path.normcase(str(trusted))
             )
-        target = _TRUSTED_CODEX_TARGETS.get(
-            (sys.platform, _normalized_machine())
+        return (
+            _trusted_codex_target_for_digest(_sha256_file_cached(canonical))
+            is not None
         )
-        return target is not None and _sha256_file_cached(canonical) == target[3]
     except OSError:  # An unreadable binary is reported as an unavailable capability.
         return False
 
@@ -1252,7 +1298,6 @@ def _verify_spawn_binary(binary_path: str) -> None:
     outlive the evidence that it is wrong.
     """
     path = Path(binary_path)
-    target = _TRUSTED_CODEX_TARGETS.get((sys.platform, _normalized_machine()))
     try:
         identity: os.stat_result | None = path.stat()
     except OSError:  # Unreadable identity: verify anyway, just do not memoize.
@@ -1264,7 +1309,7 @@ def _verify_spawn_binary(binary_path: str) -> None:
         # path is approved would outlive the only evidence we have.
         _forget_cached_digest(path)
         raise
-    if target is None or digest != target[3]:
+    if _trusted_codex_target_for_digest(digest) is None:
         _forget_cached_digest(path)
         raise CodexSubscriptionUnavailable(
             "The Codex executable changed since it was verified."
@@ -1304,8 +1349,34 @@ def _codex_package_roots(launcher: Path) -> list[Path]:
     return package_roots
 
 
+def _trusted_codex_targets_for_platform() -> tuple[
+    tuple[str, tuple[str, str, str, str]], ...
+]:
+    """Return exact audited releases for this platform, newest first."""
+    key = (sys.platform, _normalized_machine())
+    releases = (
+        (_SUPPORTED_CODEX_VERSION, _TRUSTED_CODEX_TARGETS),
+        (_LEGACY_CODEX_VERSION, _LEGACY_TRUSTED_CODEX_TARGETS),
+    )
+    return tuple(
+        (version, target)
+        for version, targets in releases
+        if (target := targets.get(key)) is not None
+    )
+
+
+def _trusted_codex_target_for_digest(
+    digest: str,
+) -> tuple[str, tuple[str, str, str, str]] | None:
+    """Resolve an executable digest to its exact audited release."""
+    for version, target in _trusted_codex_targets_for_platform():
+        if digest == target[3]:
+            return version, target
+    return None
+
+
 def _trusted_native_codex_binary(resolved_binary: str, version: str | None) -> str:
-    """Locate the SHA-256-approved native executable for the pinned release.
+    """Locate a SHA-256-approved native executable for an audited release.
 
     The hash is the authority: a candidate matching an official artifact IS
     the pinned build, whatever the launcher's ``--version`` said. The version
@@ -1313,40 +1384,42 @@ def _trusted_native_codex_binary(resolved_binary: str, version: str | None) -> s
     ``node`` on PATH just to print it, and a service process without node used
     to fail the whole feature here although the native binary was intact.
     """
-    target = _TRUSTED_CODEX_TARGETS.get((sys.platform, _normalized_machine()))
-    if target is None:
+    release_targets = _trusted_codex_targets_for_platform()
+    if not release_targets:
         # A platform gate, not a setup defect: maps to lifecycle_unavailable,
         # whose card text says the feature is not available on this OS yet.
         raise CodexSubscriptionContainmentUnavailable(
             "This operating-system architecture is not approved for the experimental "
             "Codex subscription voice transport."
         )
-    variant, triple, executable_name, expected_hash = target
     try:
         launcher = Path(resolved_binary).resolve(strict=True)
     except OSError as exc:
         raise CodexSubscriptionUnavailable("The Codex CLI binary is unavailable.") from exc
 
     candidates: list[Path] = [launcher]
-    for package_root in _codex_package_roots(launcher):
-        candidates.extend(
-            (
-                package_root
-                / "node_modules"
-                / "@openai"
-                / f"codex-{variant}"
-                / "vendor"
-                / triple
-                / "bin"
-                / executable_name,
-                package_root.parent
-                / f"codex-{variant}"
-                / "vendor"
-                / triple
-                / "bin"
-                / executable_name,
+    package_roots = _codex_package_roots(launcher)
+    for _release, target in release_targets:
+        variant, triple, executable_name, _expected_hash = target
+        for package_root in package_roots:
+            candidates.extend(
+                (
+                    package_root
+                    / "node_modules"
+                    / "@openai"
+                    / f"codex-{variant}"
+                    / "vendor"
+                    / triple
+                    / "bin"
+                    / executable_name,
+                    package_root.parent
+                    / f"codex-{variant}"
+                    / "vendor"
+                    / triple
+                    / "bin"
+                    / executable_name,
+                )
             )
-        )
 
     seen: set[str] = set()
     for candidate in candidates:
@@ -1358,21 +1431,24 @@ def _trusted_native_codex_binary(resolved_binary: str, version: str | None) -> s
             seen.add(key)
             if _is_link_or_reparse(canonical) or not canonical.is_file():
                 continue
-            if _sha256_file_cached(canonical) == expected_hash:
+            if _trusted_codex_target_for_digest(
+                _sha256_file_cached(canonical)
+            ) is not None:
                 return str(canonical)
         except OSError:  # Unreadable installation candidates are skipped during discovery.
             continue
     if version is not None and version.startswith("codex-cli") and (
-        version != _SUPPORTED_CODEX_VERSION
+        version not in _SUPPORTED_CODEX_VERSIONS
     ):
         # The launcher answered with a real but different release — name the
         # required one instead of a generic hash complaint.
         raise CodexSubscriptionBinaryUnsupported(
-            "Subscription voice requires Codex CLI "
-            f"{_SUPPORTED_CODEX_VERSION.removeprefix('codex-cli ')}."
+            "Subscription voice supports Codex CLI "
+            f"{_SUPPORTED_CODEX_VERSION.removeprefix('codex-cli ')} or "
+            f"{_LEGACY_CODEX_VERSION.removeprefix('codex-cli ')}."
         )
     raise CodexSubscriptionBinaryUnsupported(
-        "The installed Codex 0.146 executable does not match an official approved build."
+        "The installed Codex executable does not match an official approved build."
     )
 
 
@@ -1467,7 +1543,7 @@ def _displayable_cli_version(raw: str | None) -> str | None:
 def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
     """Resolve the CLI; app-server itself authoritatively reads its auth store.
 
-    Discovery uses ``codex login status``, whose exact 0.146 output reports only
+    Discovery uses ``codex login status``, whose audited output reports only
     the mode and never token contents or account PII. Billing authority comes
     only from the live ``account/read`` RPC below.
     """
@@ -1495,10 +1571,21 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             resolved,
             version,
         )
-        # A hash match proves the pinned official build even when the npm
+        # A hash match proves the exact official build even when the npm
         # launcher could not print its version (for example: no node on the
         # service PATH).
-        version = _SUPPORTED_CODEX_VERSION
+        try:
+            approved = _trusted_codex_target_for_digest(
+                _sha256_file_cached(Path(resolved_binary))
+            )
+        except OSError:
+            # Test doubles may stand in for the already-authoritative native
+            # discovery helper. A real discovery result is an existing file.
+            approved = None
+        if approved is not None:
+            version = approved[0]
+        elif version not in _SUPPORTED_CODEX_VERSIONS:
+            version = _SUPPORTED_CODEX_VERSION
     except CodexSubscriptionContainmentUnavailable as exc:  # Expected platform gate becomes status.
         return CodexAppServerCapability(
             available=False,
@@ -1509,9 +1596,9 @@ def _read_codex_capability(binary_path: str | None) -> CodexAppServerCapability:
             reason_code="lifecycle_unavailable",
         )
     except CodexSubscriptionBinaryUnsupported as exc:
-        # The pinned release is absent (wrong version or unknown build). The
+        # No audited release is present (wrong version or unknown build). The
         # actionable state is "install the supported release" — the card then
-        # shows the pinned npm command instead of a profile warning.
+        # shows the preferred npm command instead of a profile warning.
         return CodexAppServerCapability(
             available=False,
             chatgpt_authenticated=False,
@@ -4395,13 +4482,19 @@ def start_codex_subscription_login(
         capability = _read_codex_capability(binary_path)
         if not capability.available or not capability.binary_path:
             raise CodexSubscriptionUnavailable(capability.reason)
-        target = _TRUSTED_CODEX_TARGETS.get(
-            (sys.platform, _normalized_machine())
+        approved = next(
+            (
+                (release, target)
+                for release, target in _trusted_codex_targets_for_platform()
+                if release == capability.version
+            ),
+            None,
         )
-        if target is None:
+        if approved is None:
             raise CodexSubscriptionUnavailable(
                 "This platform has no approved Codex subscription runtime."
             )
+        _release, target = approved
         lock_path = _subscription_process_lock_path()
         from jarvis.core.private_directory import (  # noqa: PLC0415
             ensure_owner_only_directory,

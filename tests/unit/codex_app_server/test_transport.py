@@ -32,7 +32,6 @@ from jarvis.codex_app_server import (
     CodexSubscriptionUnavailable,
 )
 
-
 # Captured before the autouse fixture stubs it out, so the dedicated test can
 # exercise the real pre-spawn verification.
 _REAL_VERIFY_SPAWN_BINARY = transport._verify_spawn_binary
@@ -2290,7 +2289,7 @@ async def test_realtime_start_forces_handoff_and_startup_context_boundaries(
     await client.close()
 
 
-def test_native_codex_version_and_hash_are_both_required(
+def test_native_codex_accepts_only_audited_current_or_legacy_hash(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -2311,6 +2310,18 @@ def test_native_codex_version_and_hash_are_both_required(
         },
     )
     monkeypatch.setattr(
+        transport,
+        "_LEGACY_TRUSTED_CODEX_TARGETS",
+        {
+            ("win32", "x86_64"): (
+                "win32-x64",
+                "x86_64-pc-windows-msvc",
+                "codex.exe",
+                "legacy-approved-hash",
+            )
+        },
+    )
+    monkeypatch.setattr(
         transport, "_sha256_file_cached", lambda _path: "approved-hash"
     )
 
@@ -2326,13 +2337,22 @@ def test_native_codex_version_and_hash_are_both_required(
         transport._trusted_native_codex_binary(str(binary), None)
         == str(binary.resolve())
     )
+    monkeypatch.setattr(
+        transport, "_sha256_file_cached", lambda _path: "legacy-approved-hash"
+    )
+    assert (
+        transport._trusted_native_codex_binary(
+            str(binary), transport._LEGACY_CODEX_VERSION
+        )
+        == str(binary.resolve())
+    )
 
     monkeypatch.setattr(
         transport, "_sha256_file_cached", lambda _path: "wrong-hash"
     )
     # A real-but-different release names the required version...
-    with pytest.raises(CodexSubscriptionUnavailable, match="requires Codex"):
-        transport._trusted_native_codex_binary(str(binary), "codex-cli 0.147.0")
+    with pytest.raises(CodexSubscriptionUnavailable, match="supports Codex"):
+        transport._trusted_native_codex_binary(str(binary), "codex-cli 0.148.0")
     # ...while an unknown build with the right version fails on the hash.
     with pytest.raises(CodexSubscriptionUnavailable, match="approved build"):
         transport._trusted_native_codex_binary(
@@ -2359,7 +2379,7 @@ def test_wrong_release_maps_to_not_installed(
 
     def refuse(_binary: str, _version: str | None) -> str:
         raise transport.CodexSubscriptionBinaryUnsupported(
-            "Subscription voice requires Codex CLI 0.146.0."
+            "Subscription voice supports Codex CLI 0.147.0 or 0.146.0."
         )
 
     monkeypatch.setattr(auth_module, "CodexAuthService", FakeAuthService)
@@ -2369,7 +2389,7 @@ def test_wrong_release_maps_to_not_installed(
 
     assert capability.reason_code == "not_installed"
     assert capability.available is False
-    assert "requires Codex CLI 0.146.0" in capability.reason
+    assert "supports Codex CLI 0.147.0 or 0.146.0" in capability.reason
     assert capability.version == "codex-cli 0.150.0"
 
 
@@ -2860,7 +2880,10 @@ def test_capability_survives_a_version_probe_that_prints_a_shell_error(
             return "codex-test"
 
         def _probe_version(self, _binary: str) -> str:
-            return 'Der Befehl ""node"" ist entweder falsch geschrieben oder\n'  # i18n-allow: verbatim Windows shell error under test
+            return (
+                'Der Befehl ""node"" ist entweder falsch '  # i18n-allow
+                "geschrieben oder\n"  # i18n-allow
+            )
 
         def login_status(self) -> tuple[bool, str]:
             return True, "chatgpt"
