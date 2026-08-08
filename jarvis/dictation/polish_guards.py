@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections import Counter
 from collections.abc import Sequence
 from typing import Final
 
@@ -382,6 +383,7 @@ _FORMAT_COMMAND_WORDS: Final[dict[str, frozenset[str]]] = {
         "quote", "unquote", "quotes", "question", "exclamation", "mark",
         "bullet", "bullets", "paragraph", "newline", "ellipsis",
         "parenthesis", "parentheses", "bracket", "brackets", "slash",
+        "next", "point",
     }),
     "de": frozenset({  # i18n-allow: German spoken commands (§1 list #3)
         "punkt", "komma", "doppelpunkt", "semikolon", "strichpunkt",  # i18n-allow
@@ -615,6 +617,79 @@ def _digit_runs(text: str) -> frozenset[str]:
     return frozenset(_DIGIT_RUN_RE.findall(_DIGIT_SEPARATOR_RE.sub("", str(text or ""))))
 
 
+#: A produced list line: "- ", "• ", "* ", "3. ", "3) " at the start of a
+#: line. What the discount below accepts as EVIDENCE that a spoken marker
+#: command was actually converted rather than merely deleted.
+_LIST_LINE_RE = re.compile(r"(?m)^[ \t]*(?:[-•*]|\d{1,3}[.)])\s")
+
+#: A marker command is at most two words ("next point", "nächster Punkt"),  # i18n-allow
+#: so one produced list line licenses at most this many discounted tokens.
+_MAX_MARKER_WORDS_PER_LINE = 2
+
+
+def _list_lines(text: str) -> int:
+    """How many list-marker lines *text* contains."""
+    return len(_LIST_LINE_RE.findall(str(text or "")))
+
+
+def _ratio_word_counts(
+    raw: str, polished: str, commands: frozenset[str]
+) -> tuple[int, int]:
+    """The two sides of the word-count band, with formatting commands settled.
+
+    The band compares CONTENT, and a spoken command is not content: converted
+    correctly it becomes a mark ("comma" -> ","), so a bullet dictation that
+    names the marker before every item HALVES its word count and an
+    unadjusted band rejects exactly the answers the prompt asked for. But a
+    naive "subtract every command word" discount opens two holes the first
+    version of this function shipped with, so what is subtracted is decided
+    per occurrence:
+
+    * an occurrence present on BOTH sides is a content homonym (a German
+      sentence about the most important "Punkt") — subtracted from both  # i18n-allow
+      sides, so it cancels instead of shrinking only the denominator and
+      pushing an unchanged answer over the growth ceiling;
+    * a RAW-only occurrence is a command the model may have converted — but
+      the discount has to be EARNED: it is granted only up to
+      ``_MAX_MARKER_WORDS_PER_LINE`` tokens per NEW list line in the answer.
+      A model that summarised a commanded dictation into plain prose shows no
+      list lines, earns no discount, and is caught by ``ratio_shrink``
+      exactly as before this function existed;
+    * an OUTPUT-only occurrence is a word the model ADDED — never discounted,
+      so padding an answer with command vocabulary ("mark mark mark") counts
+      as the growth it is.
+
+    Punctuation commands earn no discount from list lines and need none: a
+    dictation would have to be nearly half command words before their loss
+    trips the shrink floor, and real punctuation-command density sits far
+    below that.
+
+    ``total`` and ``hits`` come from two different tokenizers on purpose
+    (``count_words`` = ``\\w+``, ``_compare_tokens`` = ``[\\w']+``); the
+    mismatch is at most the apostrophes, and both sides share it.
+
+    A side that discounts to zero is returned as zero: the caller's
+    ``if raw_words:`` skip then treats a commands-only dictation like an
+    empty one, which it is, content-wise.
+    """
+    raw_total = count_words(raw)
+    out_total = count_words(polished)
+    if not commands or not raw_total:
+        return raw_total, out_total
+    raw_hits = Counter(t for t in _compare_tokens(raw) if t in commands)
+    out_hits = Counter(t for t in _compare_tokens(polished) if t in commands)
+    shared = sum((raw_hits & out_hits).values())
+    converted = sum((raw_hits - out_hits).values())
+    evidence = (
+        max(0, _list_lines(polished) - _list_lines(raw))
+        * _MAX_MARKER_WORDS_PER_LINE
+    )
+    return (
+        max(0, raw_total - shared - min(converted, evidence)),
+        max(0, out_total - shared),
+    )
+
+
 def _lost_quantity_word(raw: str, out: str, *, language: str) -> bool:
     """Whether a spoken QUANTITY vanished without a digit taking its place.
 
@@ -791,8 +866,24 @@ def _polish_drift_reason(
     if _is_meta_output(raw, polished):
         return "meta_output"
 
-    raw_words = count_words(raw)
-    out_words = count_words(polished)
+    # Detected up front because TWO checks below want the text's own language
+    # rather than its label: the command-word discount here and the rare-token
+    # lookup further down. The check ORDER is unchanged — a ratio rejection
+    # still outranks a language flip on the history row.
+    raw_language = detect_text_language(raw)
+    out_language = detect_text_language(polished)
+
+    # The band runs on content words: the spoken formatting commands are
+    # settled first (see ``_ratio_word_counts``). The table follows the TEXT
+    # where the detector has an opinion and the label only as a fallback,
+    # exactly like the rare-token lookup below — a mislabelled command-heavy
+    # dictation would otherwise earn no discount and be rejected as a shrink,
+    # the precise failure this discount exists to prevent.
+    commands = _FORMAT_COMMAND_WORDS.get(
+        _language_key(raw_language if raw_language != "unknown" else language),
+        frozenset(),
+    )
+    raw_words, out_words = _ratio_word_counts(raw, polished, commands)
     if raw_words:
         ratio = out_words / raw_words
         if ratio < max_shrink:
@@ -802,8 +893,6 @@ def _polish_drift_reason(
 
     # Skipped whenever EITHER side is undecided: the detector only knows
     # de/en/es, so "unknown" means "no opinion", never "different".
-    raw_language = detect_text_language(raw)
-    out_language = detect_text_language(polished)
     if raw_language != "unknown" and out_language != "unknown":
         if raw_language != out_language:
             return "language_flip"
@@ -937,8 +1026,18 @@ def translate_drift_reason(
         if len(translated) > len(raw) * _CROSS_SCRIPT_MAX_CHAR_GROWTH:
             return "ratio_growth"
     else:
-        raw_words = count_words(raw)
-        out_words = count_words(translated)
+        # The same command-word settlement the polish band runs
+        # (``_ratio_word_counts``), keyed on the SOURCE language the detector
+        # names — the commands were spoken there, and the translated side
+        # rarely contains them at all, which makes the settlement effectively
+        # a raw-side discount gated on produced list lines. The wide translate
+        # band absorbs single-word markers on its own, but a two-word marker
+        # ("nächster Punkt") spends two-thirds of a bullet dictation's words  # i18n-allow
+        # on commands and lands under even this band's floor.
+        commands = _FORMAT_COMMAND_WORDS.get(
+            _language_key(detect_text_language(raw)), frozenset()
+        )
+        raw_words, out_words = _ratio_word_counts(raw, translated, commands)
         if raw_words:
             ratio = out_words / raw_words
             if ratio < max_shrink:

@@ -545,6 +545,47 @@ def test_a_counted_enumeration_may_cross_as_a_numbered_list() -> None:
     )
 
 
+def test_a_spoken_bullet_command_crosses_as_a_bullet_line() -> None:
+    """A commanded bullet list translated: the command words vanish into the
+    "- " markers AND the language changes. The translate band is wide enough
+    to absorb the halved word count without the polish guard's command-word
+    adjustment, and no rare-token check exists here to mourn the command."""
+    # The German source below is the content UNDER TEST (§1 list #4).
+    raw = "Stichpunkt Milch Stichpunkt Eier Stichpunkt Butter"  # i18n-allow
+    translated = "- Milk\n- Eggs\n- Butter"
+    assert (
+        translate_drift_reason(
+            raw,
+            translated,
+            target_language="en",
+            protected=(),
+            max_shrink=0.40,
+            max_growth=2.50,
+        )
+        == ""
+    )
+
+
+def test_a_two_word_marker_crosses_within_the_band() -> None:
+    """A two-word marker spends two thirds of a bullet dictation's words on
+    commands: without the command settlement this correct answer scores
+    3/9 = 0.33 and even the wide translate band rejects it as a shrink."""
+    # The German source below is the content UNDER TEST (§1 list #4).
+    raw = "nächster Punkt Milch nächster Punkt Eier nächster Punkt Butter"  # i18n-allow
+    translated = "- Milk\n- Eggs\n- Butter"
+    assert (
+        translate_drift_reason(
+            raw,
+            translated,
+            target_language="en",
+            protected=(),
+            max_shrink=0.40,
+            max_growth=2.50,
+        )
+        == ""
+    )
+
+
 def test_a_model_that_answered_instead_of_translating_is_caught() -> None:
     assert (
         translate_drift_reason(

@@ -325,6 +325,83 @@ def test_an_uncounted_enumeration_may_become_a_bulleted_list() -> None:
     assert verdict(raw, polished, language="de") == ""
 
 
+def test_a_spoken_bullet_command_becomes_a_bullet_line() -> None:
+    """The guaranteed path to a bullet list: the speaker names the marker
+    before every item. The command word vanishes into the "- " that replaces
+    it — licensed by ``_FORMAT_COMMAND_WORDS`` — and the word count HALVES,
+    which the band only survives because commands are counted out of the
+    ratio on both sides. Before both fixes this dictation was rejected twice
+    over: ``lost_term`` for the vanished command, ``ratio_shrink`` for the
+    words it took with it."""
+    # The German source below is the content UNDER TEST (§1 list #4).
+    raw = "Stichpunkt Milch Stichpunkt Eier Stichpunkt Butter"  # i18n-allow
+    polished = "- Milch\n- Eier\n- Butter"  # i18n-allow
+    assert verdict(raw, polished, language="de") == ""
+
+
+def test_a_spoken_punctuation_command_becoming_its_mark_passes() -> None:
+    """The latent twin of the bullet-command bug, present since v1: the prompt
+    has always licensed "comma" -> ",", but the vanished command word was a
+    rare token to the guard and the conversion was rejected as ``lost_term``.
+    """
+    # The German source below is the content UNDER TEST (§1 list #4).
+    raw = "wir treffen uns um drei Komma bring bitte die Unterlagen mit"  # i18n-allow
+    polished = "Wir treffen uns um 3, bring bitte die Unterlagen mit."  # i18n-allow
+    assert verdict(raw, polished, language="de") == ""
+
+
+def test_a_content_homonym_of_a_command_cancels_on_both_sides() -> None:
+    """Command words are subtracted from BOTH sides of the ratio. A speaker
+    discussing an actual "Punkt" keeps the word in raw and answer alike; were
+    only the raw side adjusted, this unchanged-but-punctuated answer would
+    score 17/14 = 1.21 and be rejected as ``ratio_growth``."""
+    # The German source below is the content UNDER TEST (§1 list #4).
+    raw = (
+        "der erste Punkt ist gut der zweite Punkt ist besser und der "  # i18n-allow
+        "dritte Punkt ist am besten"  # i18n-allow
+    )
+    polished = (
+        "Der erste Punkt ist gut, der zweite Punkt ist besser, und der "  # i18n-allow
+        "dritte Punkt ist am besten."  # i18n-allow
+    )
+    assert verdict(raw, polished, language="de") == ""
+
+
+def test_a_summariser_earns_no_discount_from_spoken_commands() -> None:
+    """The command discount must be EARNED by produced list lines. A model
+    that swallowed a commanded dictation into prose shows none, gets the
+    undiscounted ratio, and is caught exactly as before the discount existed
+    — without this gate, the vanished command words would subsidise the
+    vanished content words."""
+    # The German source below is the content UNDER TEST (§1 list #4).
+    raw = "Stichpunkt Milch Stichpunkt Eier Stichpunkt Butter"  # i18n-allow
+    polished = "Milch und mehr"  # i18n-allow
+    assert verdict(raw, polished, language="de") == "ratio_shrink"
+
+
+def test_padding_with_command_vocabulary_is_still_growth() -> None:
+    """Only occurrences the RAW side also carries are settled. Command
+    vocabulary the model ADDED is never discounted, so an answer padded with
+    it counts as the growth it is."""
+    raw = "please send the report today"
+    polished = "Please send the report today mark mark mark mark mark mark."
+    assert verdict(raw, polished) == "ratio_growth"
+
+
+def test_a_two_word_marker_is_discounted_per_produced_line() -> None:
+    """A two-word marker ("next point" and its German twin below) spends TWO
+    command words on every produced line, which is why the discount is capped
+    per line rather than granted per word — and why the cap is two, not one."""
+    # The German source below is the content UNDER TEST (§1 list #4).
+    raw = "nächster Punkt Milch nächster Punkt Eier nächster Punkt Butter"  # i18n-allow
+    polished = "- Milch\n- Eier\n- Butter"  # i18n-allow
+    assert verdict(raw, polished, language="de") == ""
+
+    raw_en = "we need next point apples next point oranges next point bananas"
+    polished_en = "We need:\n- Apples\n- Oranges\n- Bananas"
+    assert verdict(raw_en, polished_en) == ""
+
+
 # --------------------------------------------------------------------------- #
 # The helpers the guards are built out of
 # --------------------------------------------------------------------------- #

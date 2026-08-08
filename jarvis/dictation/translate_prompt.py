@@ -53,7 +53,11 @@ from jarvis.dictation.polish_prompt import (
 #: v4: mirrors the polish prompt's v5 — the digit ALWAYS replaces the spoken
 #: ordinal, and restructuring the remaining item is expressly licensed. Live
 #: runs split the lines but kept the ordinal word written out.
-TRANSLATE_PROMPT_VERSION: Final[int] = 4
+#:
+#: v5: mirrors the polish prompt's v6 — a spoken list-marker command always
+#: opens a "- " line and never survives into the text, and "a list never
+#: deletes content" is a stated rule.
+TRANSLATE_PROMPT_VERSION: Final[int] = 5
 
 #: English names for every code ``[dictation].translate_target`` accepts.
 #:
@@ -153,8 +157,11 @@ CLEAN IT UP AS YOU GO — this is dictated speech, not written prose:
   one item per line, numbered "1.", "2.", "3." when the speaker counted, "- "
   bullets when they did not. The digit ALWAYS replaces the spoken ordinal —
   an ordinal word never remains at the start of a numbered line; restructure
-  the rest of the item where dropping it requires. A running sentence that
-  merely mentions items in passing stays a sentence.
+  the rest of the item where dropping it requires. A spoken list-marker
+  command ("bullet point" and its source-language equivalents) always opens
+  a "- " line and never survives into the text. Turning speech into a list
+  never deletes content, and a running sentence that merely mentions items
+  in passing stays a sentence.
 - Normalize spoken numbers to numerals where a writer would, but never invent
   a number that was not spoken.
 - Drop stray ellipses the recognizer left at a pause.

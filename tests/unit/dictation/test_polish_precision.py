@@ -265,6 +265,27 @@ def test_sharpening_may_not_become_writing() -> None:
     )
 
 
+def test_the_command_settlement_holds_under_the_precision_band() -> None:
+    """The precision guard shares the command-word settlement with the
+    ordinary one, and here it matters MORE: the rare-token backstop is
+    already traded away, so the band is the only thing standing between a
+    commanded bullet list and a padded or summarised answer. Four items
+    rather than three, because the precision shrink floor (0.45) is looser
+    than the polish one and a three-item summary would slip past it."""
+    # The German source below is the content UNDER TEST (§1 list #4).
+    raw = "Stichpunkt Milch Stichpunkt Eier Stichpunkt Butter Stichpunkt Brot"  # i18n-allow
+    bullets = "- Milch\n- Eier\n- Butter\n- Brot"  # i18n-allow
+    assert _precision_verdict(raw, bullets, language="de") == ""
+    summary = "Milch und mehr"  # i18n-allow
+    assert _precision_verdict(raw, summary, language="de") == "ratio_shrink"
+
+    padded = "Please send the report today mark mark mark mark mark mark mark."
+    assert (
+        _precision_verdict("please send the report today", padded)
+        == "ratio_growth"
+    )
+
+
 def test_a_language_with_no_quantity_table_is_a_no_op() -> None:
     """~96 of the recognition languages have no table; none of them get a veto."""
     assert (

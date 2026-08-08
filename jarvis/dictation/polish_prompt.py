@@ -50,7 +50,14 @@ from typing import Final
 #: enumeration adverb changes the word order of what follows, and a model not
 #: expressly allowed to repair that keeps the adverb rather than break the
 #: sentence.
-POLISH_PROMPT_VERSION: Final[int] = 5
+#:
+#: v6: bullet lists got their own recognition contract. An explicit spoken
+#: list-marker command ("bullet point" and its input-language equivalents)
+#: always opens a "- " line; uncommanded bullets need an announced or clearly
+#: parallel list; and "turning speech into a list never deletes content" is a
+#: stated rule. Matched by the guards' ``_FORMAT_COMMAND_WORDS`` table, which
+#: licenses the command words to vanish into the marks that replace them.
+POLISH_PROMPT_VERSION: Final[int] = 6
 
 #: The delimiters that fence the untrusted transcript inside the user message.
 #: Deliberately ugly and unlikely to be dictated by accident; deliberately
@@ -122,9 +129,16 @@ WHAT YOU MAY DO:
   never remains at the start of a numbered line. Where dropping the ordinal
   breaks the word order of the rest of the item, restructure the item so it
   reads naturally ("first we prepare the offer" -> "1. We prepare the
-  offer"). When they listed without counting, start each line with "- ".
-  Every item keeps the speaker's own words; a running sentence that merely
-  mentions items in passing stays a sentence.
+  offer").
+- A spoken list-marker command ALWAYS starts a new "- " line: "bullet
+  point", "next point", and their equivalents in the input language. The
+  command words become the marker itself and never appear in the text.
+- Without a command, use "- " bullets only when the speaker plainly
+  delivered an uncounted list: they announced one ("we need the following")
+  or spoke three or more short items of the same shape in a row. Turning
+  speech into a list never deletes content — every word that is not the
+  count, the command or the enumeration word itself stays. When you cannot
+  tell a list from a flowing sentence, keep the sentence.
 - Normalize spoken numbers to numerals where a writer would ("seven" -> "7"),
   but never invent a number that was not spoken.
 - Remove stray ellipses left by the recognizer at a pause.
