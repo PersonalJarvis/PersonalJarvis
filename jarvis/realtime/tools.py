@@ -297,10 +297,18 @@ class RealtimeToolBridge:
             and isinstance(getattr(result, "output", None), dict)
         ):
             self._pending = _PendingConfirmation(trace_id=trace_id, tool_name=name)
+            impact = result.output.get("impact")
+            if not isinstance(impact, dict):
+                impact = {}
             return name, {
                 "success": False,
                 "confirmation_required": True,
-                "message": format_tool_confirmation(name, language=self._language),
+                "message": format_tool_confirmation(
+                    name,
+                    language=self._language,
+                    impact_level=impact.get("level"),
+                    impact_commands=impact.get("commands"),
+                ),
                 "instruction": (
                     "Ask the user this question. Call the same function again only "
                     "after a clear affirmative answer."

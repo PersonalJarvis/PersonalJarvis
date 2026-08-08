@@ -63,13 +63,64 @@ _GENERIC_QUESTION: dict[str, str] = {
 }
 
 
-def format_tool_confirmation(tool_name: str, *, language: str = "de") -> str:
+# Impact-aware questions for shell commands (explain layer, 2026-08-08): a
+# non-technical user hears WHAT the command would do, not just "run that?".
+# ``{commands}`` is DATA (the classified command words, e.g. "rm"), not
+# re-localized phrasing — same doctrine as the failed-outcome detail below.
+_IMPACT_QUESTIONS: dict[str, dict[str, str]] = {
+    "destructive": {
+        "de": ("Achtung, dieser Befehl würde etwas löschen ({commands}). "
+               "Soll ich ihn wirklich ausführen? Sag ja oder nein."),
+        "en": ("Careful, this command would delete something ({commands}). "
+               "Do you really want me to run it? Say yes or no."),
+        "es": ("Cuidado, este comando borraría algo ({commands}). "
+               "¿Quieres que lo ejecute de verdad? Di sí o no."),
+    },
+    "modify": {
+        "de": ("Dieser Befehl würde etwas auf dem Computer verändern "
+               "({commands}). Soll ich ihn ausführen? Sag ja oder nein."),
+        "en": ("This command would change something on the computer "
+               "({commands}). Do you want me to run it? Say yes or no."),
+        "es": ("Este comando cambiaría algo en el equipo ({commands}). "
+               "¿Quieres que lo ejecute? Di sí o no."),
+    },
+    "read": {
+        "de": ("Dieser Befehl liest nur Daten ({commands}). "
+               "Soll ich ihn ausführen? Sag ja oder nein."),
+        "en": ("This command only reads data ({commands}). "
+               "Do you want me to run it? Say yes or no."),
+        "es": ("Este comando solo lee datos ({commands}). "
+               "¿Quieres que lo ejecute? Di sí o no."),
+    },
+}
+
+_IMPACT_COMMANDS_MAX_CHARS = 60
+
+
+def format_tool_confirmation(
+    tool_name: str,
+    *,
+    language: str = "de",
+    impact_level: str | None = None,
+    impact_commands: str | None = None,
+) -> str:
     """Render the spoken/written confirmation question for ``tool_name``.
 
-    Falls back to a generic question for any tool without a specific entry, and
-    to ``DEFAULT_LOCALE`` for an unrecognised language tag. Never returns "".
+    When the deferring tool supplied an impact classification (see
+    ``describe_args`` in ``jarvis/plugins/tool/run_shell.py``), the question
+    states in plain language what the command would do. An unknown
+    ``impact_level`` is ignored — phrasing must never fail. Falls back to a
+    tool-specific, then a generic question, and to ``DEFAULT_LOCALE`` for an
+    unrecognised language tag. Never returns "".
     """
     lang = _phrase_lang(language)
+    if impact_level in _IMPACT_QUESTIONS:
+        template = _IMPACT_QUESTIONS[impact_level][lang]
+        commands = " ".join((impact_commands or "").split())
+        commands = commands[:_IMPACT_COMMANDS_MAX_CHARS].strip()
+        if commands:
+            return template.format(commands=commands)
+        return template.replace(" ({commands})", "")
     table = _TOOL_QUESTIONS.get(tool_name)
     if table is not None and lang in table:
         return table[lang]

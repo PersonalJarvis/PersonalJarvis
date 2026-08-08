@@ -1055,9 +1055,14 @@ class ToolUseLoop:
                         from jarvis.voice.tool_confirmation import (
                             format_tool_confirmation,
                         )
+                        impact = result.output.get("impact")
+                        if not isinstance(impact, dict):
+                            impact = {}
                         question = format_tool_confirmation(
                             result.output.get("tool_name", tool_name),
                             language=out_lang,
+                            impact_level=impact.get("level"),
+                            impact_commands=impact.get("commands"),
                         )
                         final_agg.text = question
                         final_agg.finish_reason = "voice_confirm_pending"
@@ -1068,8 +1073,8 @@ class ToolUseLoop:
                         if text_consumer is not None and question:
                             try:
                                 text_consumer(question)
-                            except Exception:  # noqa: BLE001
-                                pass
+                            except Exception:  # noqa: BLE001 — consumer errors must not lose the turn
+                                log.debug("text_consumer failed on confirm question", exc_info=True)
                         return final_agg
                     tool_result_payload = {
                         "success": result.success,

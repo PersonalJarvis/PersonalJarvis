@@ -105,3 +105,23 @@ def test_run_shell_keeps_static_tier_for_reads_and_modifies() -> None:
     assert tool.risk_tier_for_args({"command": "ls -la"}) is None
     assert tool.risk_tier_for_args({"command": "mkdir x"}) is None
     assert tool.risk_tier_for_args({"command": ""}) is None
+
+
+# ── describe_args hook (explain layer) ───────────────────────────────────
+
+
+def test_run_shell_describe_args_summarizes_the_impact() -> None:
+    summary = RunShellTool().describe_args({"command": "rm -rf build"})
+    assert summary == {"level": DESTRUCTIVE, "commands": "rm"}
+
+
+def test_run_shell_describe_args_dedupes_command_words() -> None:
+    summary = RunShellTool().describe_args(
+        {"command": "ls a | grep x && ls b"}
+    )
+    assert summary is not None
+    assert summary["commands"] == "ls, grep"
+
+
+def test_run_shell_describe_args_empty_command_is_none() -> None:
+    assert RunShellTool().describe_args({"command": "  "}) is None

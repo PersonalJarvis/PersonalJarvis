@@ -84,6 +84,46 @@ async def test_voice_confirm_defers_instead_of_blocking() -> None:
     assert result.output["trace_id"] == str(tid)
 
 
+class _DescribingTool(_AskTool):
+    """Tool with the optional ``describe_args`` impact-summary hook."""
+
+    name = "run_shell"
+
+    def describe_args(self, args: dict[str, Any]) -> dict[str, str]:
+        return {"level": "destructive", "commands": "rm"}
+
+
+class _BrokenDescribeTool(_AskTool):
+    name = "run_shell"
+
+    def describe_args(self, args: dict[str, Any]) -> dict[str, str]:
+        raise RuntimeError("boom")
+
+
+@pytest.mark.asyncio
+async def test_sentinel_carries_the_impact_summary() -> None:
+    # Explain layer (2026-08-08): a tool may summarize WHAT the deferred
+    # action would do; the sentinel forwards it for plain-language phrasing.
+    executor, _approval, _bus = _executor()
+    result = await executor.execute(
+        _DescribingTool(), args={"command": "rm -rf x"},
+        config_snapshot={"voice_confirm": True}, trace_id=uuid4(),
+    )
+    assert result.error == VOICE_CONFIRM_SENTINEL
+    assert result.output["impact"] == {"level": "destructive", "commands": "rm"}
+
+
+@pytest.mark.asyncio
+async def test_broken_describe_args_never_blocks_the_deferral() -> None:
+    executor, _approval, _bus = _executor()
+    result = await executor.execute(
+        _BrokenDescribeTool(), args={"command": "rm -rf x"},
+        config_snapshot={"voice_confirm": True}, trace_id=uuid4(),
+    )
+    assert result.error == VOICE_CONFIRM_SENTINEL
+    assert "impact" not in result.output
+
+
 @pytest.mark.asyncio
 async def test_execute_confirmed_runs_the_stashed_action() -> None:
     executor, _approval, bus = _executor()

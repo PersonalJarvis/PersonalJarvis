@@ -64,6 +64,72 @@ class TestFormatToolConfirmation:
         assert "?" in q
 
 
+class TestImpactQuestions:
+    """Explain layer (2026-08-08): when the deferring tool classified its
+    command, the question says WHAT would happen — in plain language."""
+
+    def test_destructive_de_names_the_danger_and_the_command(self) -> None:
+        q = format_tool_confirmation(
+            "run_shell", language="de",
+            impact_level="destructive", impact_commands="rm",
+        )
+        assert "löschen" in q.lower()  # i18n-allow — quotes the German product surface
+        assert "rm" in q
+        assert "ja" in q.lower()  # the confirm cue
+
+    def test_modify_and_read_have_calmer_wording(self) -> None:
+        modify = format_tool_confirmation(
+            "run_shell", language="de",
+            impact_level="modify", impact_commands="mkdir",
+        )
+        read = format_tool_confirmation(
+            "run_shell", language="de",
+            impact_level="read", impact_commands="ls",
+        )
+        assert "verändern" in modify.lower() and "mkdir" in modify  # i18n-allow
+        assert "liest" in read.lower() and "ls" in read
+        assert "löschen" not in modify.lower()  # i18n-allow — German surface quote
+        assert "löschen" not in read.lower()  # i18n-allow — German surface quote
+
+    @pytest.mark.parametrize("level", ["destructive", "modify", "read"])
+    @pytest.mark.parametrize("lang", ["de", "en", "es"])
+    def test_every_impact_level_covers_all_three_languages(
+        self, level: str, lang: str
+    ) -> None:
+        q = format_tool_confirmation(
+            "run_shell", language=lang,
+            impact_level=level, impact_commands="rm",
+        )
+        assert q.strip() != ""
+        assert "?" in q
+        assert "{commands}" not in q  # placeholder must always resolve
+
+    def test_missing_commands_leaves_no_placeholder_residue(self) -> None:
+        q = format_tool_confirmation(
+            "run_shell", language="de", impact_level="destructive",
+        )
+        assert "{commands}" not in q
+        assert "()" not in q
+        assert q.strip() != ""
+
+    def test_unknown_impact_level_falls_back_to_tool_or_generic(self) -> None:
+        q = format_tool_confirmation(
+            "gmail", language="de",
+            impact_level="bogus", impact_commands="rm",
+        )
+        # Unknown level is ignored — the gmail-specific question wins.
+        assert "E-Mail" in q
+
+    def test_command_list_is_collapsed_and_bounded(self) -> None:
+        q = format_tool_confirmation(
+            "run_shell", language="en",
+            impact_level="destructive",
+            impact_commands="  rm \n del  " + "x" * 500,
+        )
+        assert "\n" not in q
+        assert len(q) < 220
+
+
 class TestFormatConfirmOutcome:
     def test_done_de_is_a_short_confirmation(self) -> None:
         msg = format_confirm_outcome("done", "gmail", language="de")

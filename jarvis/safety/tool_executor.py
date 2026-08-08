@@ -271,13 +271,29 @@ class ToolExecutor:
                     "voice-confirm: deferring %s (tier=%s) for two-turn confirmation",
                     tool.name, decision.tier,
                 )
+                sentinel_output: dict[str, Any] = {
+                    "tool_name": tool.name,
+                    "trace_id": str(tid),
+                    "risk_tier": decision.tier,
+                }
+                # Optional hook (like ``risk_tier_for_args``): a tool may
+                # summarize what the deferred action would DO so the spoken
+                # confirmation question can say it in plain language.
+                # Best-effort — phrasing must never block the confirm flow.
+                describe = getattr(tool, "describe_args", None)
+                if callable(describe):
+                    try:
+                        summary = describe(args)
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("describe_args on %r failed: %s", tool.name, exc)
+                        summary = None
+                    if isinstance(summary, dict) and summary:
+                        sentinel_output["impact"] = {
+                            str(k): str(v) for k, v in summary.items()
+                        }
                 return ToolResult(
                     success=False,
-                    output={
-                        "tool_name": tool.name,
-                        "trace_id": str(tid),
-                        "risk_tier": decision.tier,
-                    },
+                    output=sentinel_output,
                     error=VOICE_CONFIRM_SENTINEL,
                 )
             try:

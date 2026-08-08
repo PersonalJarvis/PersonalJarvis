@@ -166,6 +166,23 @@ class RunShellTool:
             return "ask"
         return None
 
+    def describe_args(self, args: dict[str, Any]) -> dict[str, str] | None:
+        """Plain-language impact summary for the confirmation question.
+
+        Consumed by ``ToolExecutor`` when this call is deferred for two-turn
+        voice/chat confirmation: the spoken question then says WHAT the
+        command would do ("would delete something (rm)") instead of a generic
+        "run that?". The command words are DATA (English tool names), the
+        surrounding phrasing is localized in
+        ``jarvis/voice/tool_confirmation.py``.
+        """
+        command = (args.get("command") or "").strip()
+        if not command:
+            return None
+        impact = classify_command(command)
+        commands = ", ".join(dict.fromkeys(impact.commands))
+        return {"level": impact.level, "commands": commands}
+
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
         command = (args.get("command") or "").strip()
         timeout_s = float(args.get("timeout_s", 30))
