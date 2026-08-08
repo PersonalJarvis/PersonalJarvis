@@ -2059,7 +2059,9 @@ async def test_direct_mode_uses_delegate_when_provider_cannot_declare_tools():
 
 
 @pytest.mark.asyncio
-async def test_capability_forced_delegate_executes_provider_handoff():
+async def test_capability_forced_delegate_executes_provider_handoff(caplog):
+    caplog.set_level("INFO")
+
     class NoDirectToolsProvider(FakeProvider):
         supports_direct_tools = False
 
@@ -2094,6 +2096,11 @@ async def test_capability_forced_delegate_executes_provider_handoff():
     assert brain.calls[0][0] == "Open the settings view."
     assert not [item for item in jsons if item.get("type") == "provider_error"]
     await sess.end(reason="test")
+    assert sess._handoff_action_turns == 1
+    assert sess._handoff_requests == 1
+    assert sess._handoff_delegate_dispatches == 1
+    assert sess._handoff_declines == 0
+    assert "handoff_obligation_misses=0" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -2141,6 +2148,10 @@ async def test_handoff_without_a_delegate_declines_instead_of_ending_the_call():
     # The stream kept being consumed after the refusal.
     assert any(item.get("type") == "turn_complete" for item in jsons)
     await sess.end(reason="test")
+    assert sess._handoff_action_turns == 1
+    assert sess._handoff_requests == 1
+    assert sess._handoff_delegate_dispatches == 0
+    assert sess._handoff_declines == 1
 
 
 @pytest.mark.asyncio

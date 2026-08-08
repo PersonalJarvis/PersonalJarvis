@@ -141,6 +141,10 @@ async def test_end_publishes_one_postmortem_with_adapter_counters() -> None:
         }
     )
     session, seen = await _open(wire)
+    session._handoff_action_turns = 2  # noqa: SLF001 - postmortem inputs
+    session._handoff_requests = 1  # noqa: SLF001 - postmortem inputs
+    session._handoff_delegate_dispatches = 2  # noqa: SLF001 - postmortem inputs
+    session._handoff_declines = 1  # noqa: SLF001 - postmortem inputs
 
     await asyncio.wait_for(session.end(reason="hotkey"), TIMEOUT_S)
 
@@ -152,6 +156,11 @@ async def test_end_publishes_one_postmortem_with_adapter_counters() -> None:
     assert event.ungrounded_captions_dropped == 2
     assert event.quiescence_boundary_turns == 2
     assert event.sender_pacing_resyncs == 1
+    assert event.handoff_action_turns == 2
+    assert event.handoff_requests == 1
+    assert event.handoff_delegate_dispatches == 2
+    assert event.handoff_declines == 1
+    assert event.handoff_obligation_misses == 1
     assert event.ready_ms >= 0
     assert event.close_clean is True
 

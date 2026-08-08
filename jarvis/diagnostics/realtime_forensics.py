@@ -120,6 +120,17 @@ def evaluate_postmortem(pm: Mapping[str, Any]) -> list[RealtimeFinding]:
             )
         )
 
+    handoff_misses = _count(pm, "handoff_obligation_misses")
+    if handoff_misses:
+        add(
+            RealtimeFinding(
+                "high" if handoff_misses >= 2 else "warn",
+                "handoff-obligation-miss",
+                f"{handoff_misses} planner-confirmed action turn(s) did not "
+                "receive the provider's required handoff control event",
+            )
+        )
+
     mutes = _count(pm, "mute_emergency_releases")
     if mutes:
         add(

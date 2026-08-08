@@ -41,6 +41,7 @@ def test_every_failure_class_maps_to_its_finding() -> None:
         "ungrounded_captions_dropped": 3,
         "ungrounded_responses_refused": 7,
         "self_dialogue_rebuilds": 1,
+        "handoff_obligation_misses": 2,
         "mute_emergency_releases": 2,
         "max_loop_stall_ms": 15_000,
         "sender_pacing_resyncs": 1,
@@ -59,6 +60,7 @@ def test_every_failure_class_maps_to_its_finding() -> None:
         "ungrounded-caption-storm",
         "refusal-storm",
         "self-dialogue",
+        "handoff-obligation-miss",
         "mute-emergency-release",
         "event-loop-stall",
         "sender-behind-wall-clock",
@@ -90,6 +92,12 @@ def test_severity_boundaries_hold() -> None:
     assert _kinds(_healthy() | {"first_audio_ms": 0}) == set()
     # One language flip is normal conversation behaviour (de -> en on purpose).
     assert _kinds(_healthy() | {"language_flips": 1}) == set()
+    one_handoff_miss = evaluate_postmortem(
+        _healthy() | {"handoff_obligation_misses": 1}
+    )
+    assert [(f.severity, f.kind) for f in one_handoff_miss] == [
+        ("warn", "handoff-obligation-miss")
+    ]
 
 
 def test_extract_postmortems_reads_both_capture_shapes() -> None:

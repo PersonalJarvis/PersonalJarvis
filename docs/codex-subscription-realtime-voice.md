@@ -469,26 +469,20 @@ For every supported upgrade:
 5. Update the user-facing experimental warning if OpenAI changes plan or
    connected-Voice accounting.
 
-## Parity roadmap
+## Parity status and remaining roadmap
 
 Ordered. Each step keeps this path equivalent to API-key realtime; none of
 them changes the trade-off above, which is a property of the wire.
 
-1. **Make the handoff obligation observable.** The model deciding *not* to
-   hand off is the only silent action failure left here. Count handoffs per
-   call alongside delegate dispatches and emit one bounded log line when a
-   call produces user turns that a `realtime_tool_mode = "direct"` API session
-   would have turned into tool calls. That converts a prompt regression from
-   "users say it got lazy" into a number. Do **not** add local intent
-   detection that starts actions the model never requested — considered and
-   rejected as too willing to act.
-2. **Pin the substitution with a contract test.**
-   `tests/contract/test_realtime_provider_contract.py` asserts the capability
-   flags but not the behaviour behind them. Add: every installed provider with
-   `supports_direct_tools = False` must resolve to a delegate-backed action
-   path when a callable brain exists, and must decline rather than fail when
-   it does not. This is what stops a future refactor from quietly restoring
-   the terminal failure.
+1. **Handoff observability is complete.** Every capability-limited call now
+   records planner-confirmed action turns, provider handoff requests, actual
+   deterministic delegate dispatches, declines, and handoff-obligation misses
+   in `RealtimeSessionPostmortem`. Calls with action turns emit one bounded,
+   content-free summary line; no new intent detector can initiate actions.
+2. **The substitution is contract-pinned.** The provider contract suite now
+   requires every installed provider with `supports_direct_tools = False` to
+   resolve a callable brain to the delegate path and to decline an unavailable
+   handoff audibly without ending the call.
 3. **Wayland-only browser hand-off.** Establish whether `codex` can open a
    browser on a pure-Wayland session without XWayland. If it cannot, the
    printed device-code URL is the honest answer and the card should say so

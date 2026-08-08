@@ -1675,6 +1675,16 @@ class RealtimeSessionPostmortem(Event):
     opening_responses_bounded: int = 0
     #: Self-dialogue verdicts that forced a transport replacement (BUG-124).
     self_dialogue_rebuilds: int = 0
+    #: Planner-confirmed action turns on a provider without native tools.
+    handoff_action_turns: int = 0
+    #: Provider handoff control events received during the call.
+    handoff_requests: int = 0
+    #: Deterministic delegate jobs actually started on that transport.
+    handoff_delegate_dispatches: int = 0
+    #: Handoffs declined because no usable request/delegate was available.
+    handoff_declines: int = 0
+    #: Action turns where the provider omitted its required handoff event.
+    handoff_obligation_misses: int = 0
     #: Half-duplex mutes released by the emergency timer, not a turn boundary.
     mute_emergency_releases: int = 0
     #: Microphone sender wall-clock resyncs (mic audio lost to a stall).

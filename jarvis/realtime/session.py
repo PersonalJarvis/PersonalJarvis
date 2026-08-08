@@ -1343,6 +1343,15 @@ class RealtimeVoiceSession:
         self._language_flips = 0
         self._close_timed_out = False
         self._adapter_diag_accum: Counter[str] = Counter()
+        # Capability-limited action-path observability. These counters never
+        # classify or execute a request; they record decisions the existing
+        # turn planner/provider already made so a prompt-level handoff miss is
+        # visible after the call instead of presenting as "the agent got lazy."
+        self._handoff_action_turns = 0
+        self._handoff_requests = 0
+        self._handoff_delegate_dispatches = 0
+        self._handoff_declines = 0
+        self._handoff_action_seen_for_turn = False
 
         brain_config = getattr(self._config, "brain", None)
         reply_language = str(
@@ -2952,6 +2961,13 @@ class RealtimeVoiceSession:
                             ).strip()
                     if event.is_final and input_observed:
                         turn_plan = self._plan_turn(self._last_user_text)
+                        if (
+                            turn_plan.requires_orchestrator
+                            and not self._active_provider_supports_direct_tools()
+                            and not self._handoff_action_seen_for_turn
+                        ):
+                            self._handoff_action_turns += 1
+                            self._handoff_action_seen_for_turn = True
                         reasons = ",".join(
                             sorted(reason.value for reason in turn_plan.reasons)
                         ) or "none"
@@ -3202,6 +3218,8 @@ class RealtimeVoiceSession:
                     handoff_text = _dictionary_corrected(
                         str(getattr(event, "text", "") or "").strip()
                     )
+                    if not self._active_provider_supports_direct_tools():
+                        self._handoff_requests += 1
                     if handoff_text and not self._last_user_text:
                         self._last_user_text = handoff_text
                         self._input_turn_observed = True
@@ -5405,6 +5423,7 @@ class RealtimeVoiceSession:
         self._turn_final_text = ""
         self._surface_spoke_this_turn = False
         self._delegate_required_for_turn = False
+        self._handoff_action_seen_for_turn = False
         self._deferred_provider_speech_start = False
         self._scrub_cancelled_for_turn = False
         self._embedded_silence_ms = 0.0
@@ -6102,6 +6121,8 @@ class RealtimeVoiceSession:
         if turn_state.dispatch_started or turn_state.result_complete:
             return
         turn_state.dispatch_started = True
+        if not self._active_provider_supports_direct_tools():
+            self._handoff_delegate_dispatches += 1
         self._mark_latency_named(
             "REALTIME_DELEGATE_STARTED",
             detail="kind=deterministic",
@@ -6134,6 +6155,8 @@ class RealtimeVoiceSession:
         """
         from jarvis.voice.action_phrases import action_phrase  # noqa: PLC0415
 
+        if not self._active_provider_supports_direct_tools():
+            self._handoff_declines += 1
         log.warning(
             "realtime[%s] provider handoff declined: %s",
             self.session_id,
@@ -7150,6 +7173,28 @@ class RealtimeVoiceSession:
                 exc_info=True,
             )
 
+    def _active_provider_supports_direct_tools(self) -> bool:
+        """Return the current provider's action-wire capability."""
+        return bool(getattr(self._provider, "supports_direct_tools", True))
+
+    def _log_handoff_observability(self) -> None:
+        """Emit one content-free summary when handoffs mattered this call."""
+        if self._handoff_action_turns <= 0:
+            return
+        misses = max(0, self._handoff_action_turns - self._handoff_requests)
+        logger = log.warning if misses else log.info
+        logger(
+            "realtime[%s] capability-limited action audit: action_turns=%d "
+            "handoff_requests=%d delegate_dispatches=%d declines=%d "
+            "handoff_obligation_misses=%d",
+            self.session_id,
+            self._handoff_action_turns,
+            self._handoff_requests,
+            self._handoff_delegate_dispatches,
+            self._handoff_declines,
+            misses,
+        )
+
     def _build_postmortem(self, reason: str) -> Any:
         """Assemble the RealtimeSessionPostmortem event from all counters."""
         from jarvis.core.events import RealtimeSessionPostmortem
@@ -7188,6 +7233,13 @@ class RealtimeVoiceSession:
             sequenced_boundaries=diag.get("sequenced_boundaries", 0),
             opening_responses_bounded=diag.get("opening_responses_bounded", 0),
             self_dialogue_rebuilds=diag.get("self_dialogue_rebuilds", 0),
+            handoff_action_turns=self._handoff_action_turns,
+            handoff_requests=self._handoff_requests,
+            handoff_delegate_dispatches=self._handoff_delegate_dispatches,
+            handoff_declines=self._handoff_declines,
+            handoff_obligation_misses=max(
+                0, self._handoff_action_turns - self._handoff_requests
+            ),
             mute_emergency_releases=self._mute_emergency_releases,
             sender_pacing_resyncs=diag.get("sender_pacing_resyncs", 0),
             sender_shed_frames=diag.get("sender_shed_frames", 0),
@@ -7328,6 +7380,7 @@ class RealtimeVoiceSession:
         # it. The flight recorder is its consumer.
         if self._session is not None:
             self._harvest_adapter_diagnostics(self._session)
+        self._log_handoff_observability()
         if self._bus is not None:
             try:
                 await self._bus.publish(
