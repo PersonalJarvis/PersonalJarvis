@@ -1325,9 +1325,16 @@ def _normalize_local_root(url: str) -> str:
 
     So: ``ws``/``wss`` map to ``http``/``https``, a trailing ``/realtime`` is
     dropped, a bare ``host:port`` gains a scheme, and ``0.0.0.0`` (a server
-    BIND address, unusable as a client target) maps to localhost — the same
+    BIND address, unusable as a client target) maps to loopback — the same
     normalization the local brain cards apply, kept local to this module
     because a plugin does not reach into the rest of the tree.
+
+    ``localhost`` is pinned to ``127.0.0.1`` deliberately: the OS resolver
+    tries ``::1`` first while the common self-hosted server binds IPv4 only,
+    and that dead IPv6 attempt cost 2,050 ms per connect on the dev box
+    (measured 2026-08-08: ws open via "localhost" 2,093 ms, via "127.0.0.1"
+    2.1 ms — it WAS the user-felt connect delay). A genuinely IPv6-only
+    server stays reachable by entering ``[::1]`` explicitly.
     """
     root = (url or "").strip().rstrip("/")
     if not root:
@@ -1338,7 +1345,8 @@ def _normalize_local_root(url: str) -> str:
         root = f"http://{root[len('ws://'):]}"
     elif root.startswith("wss://"):
         root = f"https://{root[len('wss://'):]}"
-    root = root.replace("://0.0.0.0", "://localhost")
+    root = root.replace("://0.0.0.0", "://127.0.0.1")
+    root = root.replace("://localhost", "://127.0.0.1")
     if root.endswith("/realtime"):
         root = root[: -len("/realtime")].rstrip("/")
     if root.endswith("/v1"):

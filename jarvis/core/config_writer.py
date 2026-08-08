@@ -2047,8 +2047,12 @@ def set_local_realtime_launch_command(
             block = tomlkit.table()
             providers["local-realtime"] = block
         block["launch_command"] = cleaned
-        if not str(block.get("base_url", "") or "").strip():
-            block["base_url"] = "http://localhost:8765"
+        # 127.0.0.1, not "localhost": the resolver tries ::1 first while the
+        # server binds IPv4 only, and that dead IPv6 attempt measured 2,050 ms
+        # per connect (2026-08-08) — the literal IP is the instant path.
+        current_base = str(block.get("base_url", "") or "").strip()
+        if not current_base or current_base == "http://localhost:8765":
+            block["base_url"] = "http://127.0.0.1:8765"
 
         out = tomlkit.dumps(doc)
         if had_bom:
@@ -2157,7 +2161,12 @@ def clear_local_realtime_launch_command(
         if only_if_under and not _command_references_root(command, only_if_under):
             return
         block["launch_command"] = ""
-        if str(block.get("base_url", "") or "").strip() == "http://localhost:8765":
+        # Both defaults this module ever pinned (localhost historically,
+        # 127.0.0.1 since 2026-08-08) count as ours; a custom URL survives.
+        if str(block.get("base_url", "") or "").strip() in (
+            "http://localhost:8765",
+            "http://127.0.0.1:8765",
+        ):
             block["base_url"] = ""
 
         out = tomlkit.dumps(doc)

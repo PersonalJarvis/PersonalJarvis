@@ -36,21 +36,27 @@ def _cfg(base_url: str = "", model: str = "") -> SimpleNamespace:
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        ("http://localhost:8080", "http://localhost:8080/v1"),
-        ("http://localhost:8080/", "http://localhost:8080/v1"),
+        # "localhost" is pinned to 127.0.0.1: the resolver tries ::1 first
+        # while the common server binds IPv4 only — that dead IPv6 attempt
+        # measured 2,050 ms per connect (2026-08-08) and WAS the user-felt
+        # connect delay.
+        ("http://localhost:8080", "http://127.0.0.1:8080/v1"),
+        ("http://localhost:8080/", "http://127.0.0.1:8080/v1"),
         # An already-complete API root must not double up to /v1/v1.
-        ("http://localhost:8080/v1", "http://localhost:8080/v1"),
-        ("localhost:8080", "http://localhost:8080/v1"),
+        ("http://localhost:8080/v1", "http://127.0.0.1:8080/v1"),
+        ("localhost:8080", "http://127.0.0.1:8080/v1"),
         # What a realtime server actually PRINTS on startup is its websocket
         # endpoint, and that is what a user pastes. The SDK wants the HTTP API
         # root and derives the socket itself, so the paste has to survive.
-        ("ws://localhost:8765/v1/realtime", "http://localhost:8765/v1"),
-        ("ws://localhost:8765", "http://localhost:8765/v1"),
+        ("ws://localhost:8765/v1/realtime", "http://127.0.0.1:8765/v1"),
+        ("ws://localhost:8765", "http://127.0.0.1:8765/v1"),
         ("wss://gpu.lan:8443/v1/realtime", "https://gpu.lan:8443/v1"),
-        ("http://localhost:8765/v1/realtime", "http://localhost:8765/v1"),
+        ("http://localhost:8765/v1/realtime", "http://127.0.0.1:8765/v1"),
         # 0.0.0.0 is a server BIND address; as a client target it fails.
-        ("0.0.0.0:8080", "http://localhost:8080/v1"),
+        ("0.0.0.0:8080", "http://127.0.0.1:8080/v1"),
         ("https://gpu.lan:8443", "https://gpu.lan:8443/v1"),
+        # An explicit IPv6 loopback is a deliberate choice and survives.
+        ("http://[::1]:8765", "http://[::1]:8765/v1"),
         ("", ""),
         ("   ", ""),
     ],
@@ -220,7 +226,8 @@ async def test_model_comes_from_the_server_when_none_is_pinned(fake_models) -> N
     fake_models.payload = {"data": [{"id": "moshi-v1"}, {"id": "other"}]}
     provider = LocalRealtimeProvider(base_url="http://localhost:8080")
     assert await provider._resolve_model() == "moshi-v1"
-    assert fake_models.last_url == "http://localhost:8080/v1/models"
+    # localhost is pinned to 127.0.0.1 at normalization (IPv6-fallback fix).
+    assert fake_models.last_url == "http://127.0.0.1:8080/v1/models"
 
 
 async def test_a_pinned_model_skips_the_probe(fake_models) -> None:
