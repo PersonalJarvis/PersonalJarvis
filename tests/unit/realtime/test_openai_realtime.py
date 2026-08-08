@@ -80,6 +80,7 @@ class _FakeRealtimeAPI:
         # Transports handed out to reconnects (BUG-064 rebuild tests).
         self.extra_conns: list[_FakeConn] = []
         self.connect_error: Exception | None = None
+        self.connection_managers: list[_FakeConnectCM] = []
 
     def connect(self, *, model: str) -> _FakeConnectCM:
         self.connect_calls.append(model)
@@ -87,7 +88,9 @@ class _FakeRealtimeAPI:
             if self.connect_error is not None:
                 raise self.connect_error
             self.last_conn = self.extra_conns.pop(0) if self.extra_conns else _FakeConn()
-        return _FakeConnectCM(self.last_conn)
+        manager = _FakeConnectCM(self.last_conn)
+        self.connection_managers.append(manager)
+        return manager
 
 
 class _FakeAsyncOpenAI:
@@ -1454,17 +1457,32 @@ async def test_accepted_response_without_done_stalls_and_rebuilds(
     api.extra_conns.append(conn2)
 
     await session.request_response()
+    marker = conn1.response_create_payloads[0]["response"]["metadata"][
+        "jarvis_request_id"
+    ]
     conn1._events = iter(
         [
             SimpleNamespace(
                 type="response.created",
-                response=SimpleNamespace(id="resp-hung", metadata=None),
+                response=SimpleNamespace(
+                    id="resp-hung",
+                    metadata={"jarvis_request_id": marker},
+                ),
+            ),
+            # Thinking before the first material output may legitimately take
+            # longer on a local model. This byte proves output had already
+            # started before the lifecycle wedged and lost response.done.
+            SimpleNamespace(
+                type="response.output_audio.delta",
+                response_id="resp-hung",
+                item_id="item-hung",
+                delta=base64.b64encode(b"\x01\x00").decode("ascii"),
             ),
         ]
     )
     session._events = conn1.__aiter__()
 
-    assert [event async for event in session.receive()] == []
+    assert [event.type async for event in session.receive()] == ["audio_delta"]
     assert not session._response_idle.is_set()
 
     # The healthy 8 s threshold protected the accept flow above; from here
@@ -1481,6 +1499,131 @@ async def test_accepted_response_without_done_stalls_and_rebuilds(
     events = [event async for event in session.receive()]
     assert [event.type for event in events] == ["input_transcript"]
     assert events[0].text == "Heard again"
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_slow_first_output_uses_the_declared_response_start_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A response.created event only acknowledges the request; it does not
+    mean a self-hosted LLM has produced content. The post-output 8 s watchdog
+    must not kill a healthy local generation while it is still thinking."""
+    client = _FakeAsyncOpenAI(api_key="test-key")
+    session = await openai_realtime._open_realtime_session(
+        client,
+        RealtimeSessionConfig(model="gpt-realtime"),
+        model="gpt-realtime",
+        response_start_timeout_s=120.0,
+    )
+    conn = session._conn
+
+    await session.request_response()
+    marker = conn.response_create_payloads[0]["response"]["metadata"][
+        "jarvis_request_id"
+    ]
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(
+                    id="resp-thinking",
+                    metadata={"jarvis_request_id": marker},
+                ),
+            )
+        ]
+    )
+    session._events = conn.__aiter__()
+    assert [event async for event in session.receive()] == []
+
+    response_started_at = session._response_started_at
+    monkeypatch.setattr(
+        openai_realtime.time,
+        "monotonic",
+        lambda: response_started_at + openai_realtime._RESPONSE_STALL_S + 1.0,
+    )
+    session._maybe_begin_rebuild()
+
+    assert session._rebuild_task is None
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_serial_rebuild_releases_single_slot_before_retrying() -> None:
+    """The managed server owns one pipeline slot. A rebuild must disconnect
+    the old socket first, then tolerate its asynchronous drain before retrying
+    the replacement handshake."""
+    client = _FakeAsyncOpenAI(api_key="local")
+    session = await openai_realtime._open_realtime_session(
+        client,
+        RealtimeSessionConfig(model="gpt-realtime"),
+        model="gpt-realtime",
+        disconnect_before_rebuild=True,
+        rebuild_retry_window_s=1.0,
+        rebuild_retry_step_s=0.0,
+        owns_client=False,
+    )
+    old_manager = client.realtime.connection_managers[0]
+    replacement = _FakeConn()
+    replacement._events = iter([SimpleNamespace(type="session.updated")])
+    attempts: list[bool] = []
+
+    def _connect_after_drain(*, model: str) -> _FakeConnectCM:
+        del model
+        attempts.append(old_manager.exited)
+        if len(attempts) == 1:
+            raise RuntimeError("pipeline is still draining")
+        return _FakeConnectCM(replacement)
+
+    client.realtime.connect = _connect_after_drain  # type: ignore[method-assign]
+
+    await session._rebuild_transport()
+
+    assert attempts == [True, True]
+    assert session._conn is replacement
+    assert not session._closed
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_serial_rebuild_releases_the_replacement_slot() -> None:
+    """A hang-up can cancel history replay after the replacement connected.
+    The uncommitted candidate must close itself because session.close still
+    points at the already-retired old transport."""
+    client = _FakeAsyncOpenAI(api_key="local")
+    session = await openai_realtime._open_realtime_session(
+        client,
+        RealtimeSessionConfig(model="gpt-realtime"),
+        model="gpt-realtime",
+        disconnect_before_rebuild=True,
+        rebuild_retry_window_s=1.0,
+        rebuild_retry_step_s=0.0,
+        owns_client=False,
+    )
+    session.set_history_snapshot(({"role": "user", "text": "Keep context"},))
+    replacement = _FakeConn()
+    replacement._events = iter([SimpleNamespace(type="session.updated")])
+    replay_started = asyncio.Event()
+    never_finishes = asyncio.Event()
+
+    async def _blocked_history_item(*, item: dict[str, Any]) -> None:
+        del item
+        replay_started.set()
+        await never_finishes.wait()
+
+    replacement.conversation.item.create = _blocked_history_item
+    replacement_manager = _FakeConnectCM(replacement)
+    client.realtime.connect = (  # type: ignore[method-assign]
+        lambda *, model: replacement_manager
+    )
+
+    rebuild = asyncio.create_task(session._rebuild_transport())
+    await replay_started.wait()
+    rebuild.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await rebuild
+
+    assert replacement_manager.exited
     await session.close()
 
 

@@ -54,10 +54,23 @@ _SUPPRESS_ARM_MIN_QUIET_S = 2.0
 # ``_response_idle`` stayed CLEAR forever. Every deaf-wedge defense gates on
 # idle ("with a response in flight no transcript is owed"), so adoption, the
 # transcript deadline, and the transport rebuild were ALL disarmed at once and
-# the session sat silent until manual hang-up. A healthy in-flight response
-# streams events every few tens of milliseconds; one that produces NO
-# response event at all for this long is dead, and the transport is rebuilt.
+# the session sat silent until manual hang-up. Once material output begins, a
+# healthy response streams every few tens of milliseconds; silence for this
+# long then proves the lifecycle is wedged. Waiting for the first output is a
+# separate provider capability because local inference can take much longer.
 _RESPONSE_STALL_S = 8.0
+_RESPONSE_OUTPUT_EVENTS = frozenset(
+    {
+        "response.output_audio.delta",
+        "response.output_audio.done",
+        "response.output_audio_transcript.delta",
+        "response.output_audio_transcript.done",
+        "response.output_text.delta",
+        "response.output_text.done",
+        "response.function_call_arguments.delta",
+        "response.function_call_arguments.done",
+    }
+)
 # Benign response-lifecycle races (BUG-053/BUG-056): both sides of the same
 # boundary. ``conversation_already_has_active_response`` = our response.create
 # arrived while one was still running; ``response_cancel_not_active`` = our
@@ -299,6 +312,10 @@ class _OpenAIRealtimeSession:
         connect_model: str = "",
         history_seed: tuple[dict[str, str], ...] = (),
         rebuild_on_transport_death: bool = False,
+        response_start_timeout_s: float | None = None,
+        disconnect_before_rebuild: bool = False,
+        rebuild_retry_window_s: float = 0.0,
+        rebuild_retry_step_s: float = 1.0,
         owns_client: bool = True,
     ) -> None:
         self._conn = connection
@@ -319,6 +336,25 @@ class _OpenAIRealtimeSession:
         # the server was healthy again within a minute), so its sessions
         # opt in and the existing budgeted rebuild machinery does the rest.
         self.rebuild_on_transport_death = bool(rebuild_on_transport_death)
+        # ``response.created`` only acknowledges a request. Hosted models
+        # normally produce their first delta inside the strict stall window;
+        # self-hosted models declare a larger first-token budget so legitimate
+        # inference is not mistaken for a dead transport.
+        self._response_start_timeout_s = max(
+            0.0,
+            float(
+                _RESPONSE_STALL_S
+                if response_start_timeout_s is None
+                else response_start_timeout_s
+            ),
+        )
+        # A capacity-one server must release the old pipeline before opening a
+        # replacement. Hosted endpoints retain make-before-break; self-hosted
+        # endpoints can opt into serial replacement plus bounded drain retries.
+        self._disconnect_before_rebuild = bool(disconnect_before_rebuild)
+        self._rebuild_retry_window_s = max(0.0, float(rebuild_retry_window_s))
+        self._rebuild_retry_step_s = max(0.0, float(rebuild_retry_step_s))
+        self._connection_is_open = True
         self._events = connection.__aiter__()
         self.session_id = session_id
         # Model the transport was opened with — required to rebuild the
@@ -343,13 +379,13 @@ class _OpenAIRealtimeSession:
         # time.monotonic() ticks at ~16 ms, so two adjacent events can carry
         # the SAME timestamp and an ordering comparison silently lies.
         self._transcript_heard_since_rearm = True
-        # Last moment the server showed ANY response-lifecycle sign of life
-        # (any ``response.*`` event, or our own response.create going out).
-        # While ``_response_idle`` is clear this is the liveness signal that
-        # detects a response whose ``response.done`` the server swallowed
-        # (BUG-064 recurrence #3) — without it a stuck lifecycle disarms
-        # every idle-gated deaf-wedge defense at once.
-        self._last_response_activity = time.monotonic()
+        # Separate the silent model-thinking phase from a stream that stopped
+        # after material output began. The first uses the provider's declared
+        # start budget; the second uses the strict stream-stall threshold.
+        now = time.monotonic()
+        self._response_started_at = now
+        self._last_response_activity = now
+        self._response_output_started = False
         self._last_item_id = ""
         # Whether THIS response's transcript arrived as a delta stream. Servers
         # split here: OpenAI streams it token by token, a self-hosted stack that
@@ -451,9 +487,8 @@ class _OpenAIRealtimeSession:
             yield _ProviderEvent(
                 type="error",
                 error=(
-                    "Realtime transport rebuilt after the provider went deaf "
-                    "(no input transcript for a heard user turn); the last "
-                    "utterance was lost"
+                    "Realtime transport rebuilt after the provider stopped "
+                    "making progress; the in-flight utterance was interrupted"
                 ),
                 recoverable=True,
             )
@@ -472,6 +507,8 @@ class _OpenAIRealtimeSession:
             # ~7.8 s (2026-07-16 11:23), keeping a dead lifecycle looking
             # alive just under the 8 s stall threshold forever.
             self._last_response_activity = time.monotonic()
+            if event_type in _RESPONSE_OUTPUT_EVENTS:
+                self._response_output_started = True
         if event_type == "response.output_audio.delta":
             self._last_item_id = str(getattr(event, "item_id", "") or "")
             yield _ProviderEvent(
@@ -564,6 +601,7 @@ class _OpenAIRealtimeSession:
             elif len(self._accepted_response_ids) == 1:
                 self._accepted_response_ids.pop()
             self._response_idle.set()
+            self._response_output_started = False
             usage = _usage_from_response(getattr(event, "response", None))
             if usage is not None:
                 # Every response bills its own pass over the session context,
@@ -745,6 +783,7 @@ class _OpenAIRealtimeSession:
             await self._conn.response.cancel()
         finally:
             self._response_idle.set()
+            self._response_output_started = False
 
     async def send_tool_result(self, call_id: str, name: str, result: dict[str, Any]) -> None:
         del name
@@ -773,7 +812,10 @@ class _OpenAIRealtimeSession:
         async with self._response_create_lock:
             await self._response_idle.wait()
             self._response_idle.clear()
-            self._last_response_activity = time.monotonic()
+            now = time.monotonic()
+            self._response_started_at = now
+            self._last_response_activity = now
+            self._response_output_started = False
             marker = uuid4().hex
             self._pending_response_markers.add(marker)
             response: dict[str, Any] = {
@@ -786,6 +828,7 @@ class _OpenAIRealtimeSession:
             except BaseException:
                 self._pending_response_markers.discard(marker)
                 self._response_idle.set()
+                self._response_output_started = False
                 raise
 
     @staticmethod
@@ -845,7 +888,10 @@ class _OpenAIRealtimeSession:
                 )
                 self._response_idle.clear()
                 self._accepted_response_ids.add(response_id)
-                self._last_response_activity = time.monotonic()
+                now = time.monotonic()
+                self._response_started_at = now
+                self._last_response_activity = now
+                self._response_output_started = False
                 self._server_heard_user_since_response = False
                 self._auto_adopted_unanswered_input = True
                 await self._rearm_session_contract()
@@ -973,28 +1019,39 @@ class _OpenAIRealtimeSession:
         return time.monotonic() >= self._transcript_deadline
 
     def _response_lifecycle_stalled(self) -> bool:
-        """A response marked in flight that emits no events at all is dead.
+        """Whether an in-flight response exceeded its current phase budget.
 
         BUG-064 recurrence #3 (grok-realtime 2026-07-16 10:51): the server
         never sent ``response.done`` for an accepted response whose output a
         local barge-in had dropped, so ``_response_idle`` stayed clear and
         every idle-gated defense (adoption, transcript deadline, rebuild)
-        was disarmed at once. A healthy in-flight response streams events
-        continuously; total silence for ``_RESPONSE_STALL_S`` is proof the
-        lifecycle will never finish on this transport.
+        was disarmed at once. After material output starts, continuous silence
+        for ``_RESPONSE_STALL_S`` is proof the stream will not finish. Before
+        that point, ``response.created`` is only an acknowledgement, so the
+        provider's first-output budget applies instead.
         """
         if self._closed or self._session_contract is None:
             return False
         if self._response_idle.is_set():
             return False
-        return time.monotonic() - self._last_response_activity >= _RESPONSE_STALL_S
+        if self._response_output_started:
+            return time.monotonic() - self._last_response_activity >= _RESPONSE_STALL_S
+        return time.monotonic() - self._response_started_at >= self._response_start_timeout_s
 
     def _maybe_begin_rebuild(self) -> None:
         if self._response_lifecycle_stalled():
-            self._begin_rebuild(
-                "in-flight response produced no response event for "
-                f"{_RESPONSE_STALL_S:.0f} s — response.done is not coming"
-            )
+            if self._response_output_started:
+                reason = (
+                    "in-flight response stopped producing events for "
+                    f"{_RESPONSE_STALL_S:.0f} s after output began — "
+                    "response.done is not coming"
+                )
+            else:
+                reason = (
+                    "in-flight response produced no material output for "
+                    f"{self._response_start_timeout_s:.0f} s"
+                )
+            self._begin_rebuild(reason)
             return
         if not self._transcript_overdue():
             return
@@ -1027,43 +1084,33 @@ class _OpenAIRealtimeSession:
                 )
         return not self._closed and self._events is not old_events
 
-    async def _rebuild_transport(self) -> None:
-        """Replace the connection when a deaf session cannot be re-armed.
-
-        BUG-064 escalation (grok-realtime 2026-07-16 09:23): the contract
-        re-arm demonstrably ran and the server still never delivered another
-        input transcript — the call sat in LISTENING until manual hang-up.
-        A fresh transport carrying the same session contract is the only
-        remaining repair. In-call conversation history is lost, which is
-        strictly better than a session that can no longer hear at all. A
-        failed rebuild closes the session so the orchestrator reports an
-        honest provider error instead of keeping a silently deaf call open.
-        """
-        log.warning(
-            "OpenAI Realtime rebuilding the transport: the server kept the "
-            "session deaf (heard user turn, no input transcript within "
-            "%.0f s) despite a session-contract re-arm",
-            _TRANSCRIPT_OVERDUE_S,
-        )
-        old_cm = self._connection_cm
+    async def _open_rebuild_connection(
+        self, *, handshake_timeout_s: float
+    ) -> tuple[Any, Any, Any]:
+        """Open and fully handshake one replacement transport."""
+        connection_cm: Any | None = None
         try:
             connection_cm = self._client.realtime.connect(model=self._connect_model or _MODEL)
             connection = await connection_cm.__aenter__()
-            try:
-                await connection.session.update(session=self._session_contract)
-                events = connection.__aiter__()
+            await connection.session.update(session=self._session_contract)
+            events = connection.__aiter__()
 
-                async def _wait_ready() -> None:
-                    while True:
-                        event = await anext(events)
-                        event_type = str(getattr(event, "type", "") or "")
-                        if event_type == "session.updated":
-                            return
-                        if event_type == "error":
-                            raise RuntimeError(_error_message(event))
+            async def _wait_ready() -> None:
+                while True:
+                    event = await anext(events)
+                    event_type = str(getattr(event, "type", "") or "")
+                    if event_type == "session.updated":
+                        return
+                    if event_type == "error":
+                        raise RuntimeError(_error_message(event))
 
-                await asyncio.wait_for(_wait_ready(), timeout=_HANDSHAKE_TIMEOUT_S)
-            except BaseException as exc:
+            await asyncio.wait_for(
+                _wait_ready(),
+                timeout=max(0.001, float(handshake_timeout_s)),
+            )
+            return connection_cm, connection, events
+        except BaseException as exc:
+            if connection_cm is not None:
                 try:
                     await connection_cm.__aexit__(type(exc), exc, exc.__traceback__)
                 except BaseException:  # noqa: BLE001 — preserve the root cause
@@ -1071,25 +1118,95 @@ class _OpenAIRealtimeSession:
                         "OpenAI Realtime rebuild cleanup after failed handshake failed",
                         exc_info=True,
                     )
-                raise
-        except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001 — degrade honestly instead of hanging deaf
-            log.warning(
-                "OpenAI Realtime transport rebuild failed; closing the dead session",
-                exc_info=True,
-            )
-            await self.close()
-            return
-        # Restore the call transcript before any new turn flows (BUG-088):
-        # the dead transport held the conversation server-side, and without
-        # this seed the rebuilt session answers follow-ups with amnesia.
-        await self._seed_conversation_history(connection)
-        # Swap fully initialized state first; only then retire the old
-        # transport so send_audio and the receive() hop never observe a
-        # half-built connection.
+
+    async def _rebuild_transport(self) -> None:
+        """Replace a transport that no longer satisfies its live contract.
+
+        Hosted endpoints use make-before-break. A capacity-one self-hosted
+        endpoint declares break-before-make: the old WebSocket is retired
+        first, then replacement handshakes are retried while the server drains
+        that pipeline. Either path restores the bounded call transcript before
+        the receive pump can continue on the new connection.
+        """
+        log.warning(
+            "OpenAI Realtime rebuilding a transport that stopped making progress"
+        )
+        old_cm = self._connection_cm
+        old_retired = False
+        if self._disconnect_before_rebuild:
+            try:
+                await old_cm.__aexit__(None, None, None)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — never risk opening a second slot
+                log.warning(
+                    "OpenAI Realtime could not retire the old transport before "
+                    "a serial rebuild; closing the session",
+                    exc_info=True,
+                )
+                await self.close()
+                return
+            self._connection_is_open = False
+            old_retired = True
+
+        deadline = time.monotonic() + self._rebuild_retry_window_s
+        attempt = 0
+        while True:
+            attempt += 1
+            remaining = deadline - time.monotonic()
+            handshake_timeout_s = _HANDSHAKE_TIMEOUT_S
+            if (
+                self._disconnect_before_rebuild
+                and self._rebuild_retry_window_s > 0.0
+            ):
+                handshake_timeout_s = min(
+                    _HANDSHAKE_TIMEOUT_S,
+                    max(0.001, remaining),
+                )
+            try:
+                connection_cm, connection, events = await self._open_rebuild_connection(
+                    handshake_timeout_s=handshake_timeout_s
+                )
+                break
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — bounded recovery, final failure is terminal
+                remaining = deadline - time.monotonic()
+                if not self._disconnect_before_rebuild or remaining <= 0.0:
+                    log.warning(
+                        "OpenAI Realtime transport rebuild failed; closing the dead session",
+                        exc_info=True,
+                    )
+                    await self.close()
+                    return
+                log.info(
+                    "OpenAI Realtime replacement handshake attempt %d failed; "
+                    "the retired server slot may still be draining (%.1f s left)",
+                    attempt,
+                    remaining,
+                )
+                await asyncio.sleep(min(self._rebuild_retry_step_s, remaining))
+
+        # Restore the call transcript before any new turn flows (BUG-088).
+        # The user can hang up while this await is running. Until the swap
+        # below, close() still owns the old transport, so this candidate must
+        # clean itself up on cancellation or it would keep the only local
+        # server slot occupied after the call ended.
+        try:
+            await self._seed_conversation_history(connection)
+        except BaseException as exc:
+            try:
+                await connection_cm.__aexit__(type(exc), exc, exc.__traceback__)
+            except BaseException:  # noqa: BLE001 — preserve cancellation/root cause
+                log.debug(
+                    "OpenAI Realtime rebuild candidate cleanup failed",
+                    exc_info=True,
+                )
+            raise
         self._conn = connection
         self._connection_cm = connection_cm
+        self._connection_is_open = True
         self._events = events
         self._pending_response_markers.clear()
         self._accepted_response_ids.clear()
@@ -1100,17 +1217,21 @@ class _OpenAIRealtimeSession:
         self._transcript_deadline = None
         self._last_contract_rearm = float("-inf")
         self._transcript_heard_since_rearm = True
-        self._last_response_activity = time.monotonic()
+        now = time.monotonic()
+        self._response_started_at = now
+        self._last_response_activity = now
+        self._response_output_started = False
         self._server_heard_user_since_response = False
         self._auto_adopted_unanswered_input = False
         self._response_idle.set()
-        try:
-            await old_cm.__aexit__(None, None, None)
-        except Exception:  # noqa: BLE001 — the dead transport may already be gone
-            log.debug(
-                "OpenAI Realtime old transport close failed after rebuild",
-                exc_info=True,
-            )
+        if not old_retired:
+            try:
+                await old_cm.__aexit__(None, None, None)
+            except Exception:  # noqa: BLE001 — the dead transport may already be gone
+                log.debug(
+                    "OpenAI Realtime old transport close failed after rebuild",
+                    exc_info=True,
+                )
 
     def _response_is_accepted(self, event: Any) -> bool:
         response_id = self._event_response_id(event)
@@ -1131,8 +1252,13 @@ class _OpenAIRealtimeSession:
         self._pending_response_markers.clear()
         self._accepted_response_ids.clear()
         self._response_idle.set()
+        self._response_output_started = False
         try:
-            await self._connection_cm.__aexit__(None, None, None)
+            if self._connection_is_open:
+                try:
+                    await self._connection_cm.__aexit__(None, None, None)
+                finally:
+                    self._connection_is_open = False
         finally:
             if self._owns_client:
                 close = getattr(self._client, "close", None)
@@ -1149,6 +1275,10 @@ async def _open_realtime_session(
     model: str,
     transcription_model: str | None = "gpt-4o-mini-transcribe",
     rebuild_on_transport_death: bool = False,
+    response_start_timeout_s: float | None = None,
+    disconnect_before_rebuild: bool = False,
+    rebuild_retry_window_s: float = 0.0,
+    rebuild_retry_step_s: float = 1.0,
     owns_client: bool = True,
 ) -> _OpenAIRealtimeSession:
     """Open, configure and hand back a live session on ``client``.
@@ -1195,6 +1325,10 @@ async def _open_realtime_session(
         connect_model=model,
         history_seed=tuple(getattr(cfg, "history", ()) or ()),
         rebuild_on_transport_death=rebuild_on_transport_death,
+        response_start_timeout_s=response_start_timeout_s,
+        disconnect_before_rebuild=disconnect_before_rebuild,
+        rebuild_retry_window_s=rebuild_retry_window_s,
+        rebuild_retry_step_s=rebuild_retry_step_s,
         owns_client=owns_client,
     )
     try:
@@ -1260,6 +1394,10 @@ _LOCAL_PROBE_TIMEOUT_S = 3.0
 #: rebuild (BUG-071) lands here, so giving up early turns every server crash
 #: into a dead call.
 _LOCAL_CONNECT_PATIENT_WINDOW_S = 120.0
+# The pinned local brain produced a healthy first token after more than eight
+# seconds during a delegated turn (live 2026-08-08). Its response.created
+# acknowledgement must not start the post-output stream-stall clock.
+_LOCAL_RESPONSE_START_TIMEOUT_S = 90.0
 #: The window when NOBODY revives the server (no launch command): nothing is
 #: going to change, so only ride out a brief hiccup instead of holding the
 #: call hostage.
@@ -1814,6 +1952,14 @@ class LocalRealtimeProvider:
             # a dead transport is worth rebuilding in place (BUG-071 path)
             # instead of ending the call.
             rebuild_on_transport_death=True,
+            # Local inference can spend seconds generating before its first
+            # output event; only silence after this declared budget is a wedge.
+            response_start_timeout_s=_LOCAL_RESPONSE_START_TIMEOUT_S,
+            # The managed server has one pipeline slot. Release it before the
+            # replacement handshake and ride out asynchronous handler drain.
+            disconnect_before_rebuild=True,
+            rebuild_retry_window_s=self._connect_retry_window_s(),
+            rebuild_retry_step_s=_LOCAL_CONNECT_RETRY_STEP_S,
             # The client above is cached across sessions; closing this
             # session must not tear it down.
             owns_client=False,

@@ -315,6 +315,9 @@ async def test_local_sessions_opt_into_transport_rebuild(monkeypatch) -> None:
     )
     assert await provider.open_session(SimpleNamespace(model="my-model")) == "session"
     assert captured["rebuild_on_transport_death"] is True
+    assert captured["response_start_timeout_s"] > module._RESPONSE_STALL_S
+    assert captured["disconnect_before_rebuild"] is True
+    assert captured["rebuild_retry_window_s"] > 0.0
 
 
 async def test_connect_retries_until_the_server_is_back(monkeypatch) -> None:
