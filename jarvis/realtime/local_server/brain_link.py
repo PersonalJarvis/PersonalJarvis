@@ -153,6 +153,73 @@ def _openai_key() -> str:
         return ""
 
 
+def list_brain_choices(
+    *, timeout: float = 2.5, usable_gb: float = 0.0, current_model: str = ""
+) -> dict[str, object]:
+    """Every brain candidate for the voice server, annotated for THIS machine.
+
+    The data behind the card's model picker (maintainer ask 2026-08-08: the
+    user could not CHOOSE the server brain, only watch the resolver pick).
+    Installed chat-capable Ollama tags come first, then curated
+    recommendations that are not installed yet; every entry carries the
+    honest fit verdict against the accelerator — the same ``_fits`` rule the
+    resolver applies, so the picker and the resolver can never disagree.
+    """
+    base = _ollama_base()
+    served = _ollama_models(base, timeout)
+    reachable = served is not None
+    choices: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for name, size in served or []:
+        if not _usable_tag(name):
+            continue
+        seen.add(name)
+        fits = _fits(size, usable_gb)
+        choices.append(
+            {
+                "id": name,
+                "label": name,
+                "size_gb": round(size, 1),
+                "installed": True,
+                "fits": fits,
+                "note": "" if fits else _no_fit_note(size, usable_gb),
+                "recommended": name in _PREFERRED_MODELS,
+                "current": bool(current_model) and name == current_model,
+            }
+        )
+    from jarvis.brain.ollama_pull import RECOMMENDED_MODELS  # lazy (AP-26)
+
+    for entry in RECOMMENDED_MODELS:
+        if entry.role != "chat" or entry.id in seen:
+            continue
+        fits = _fits(entry.size_gb, usable_gb)
+        choices.append(
+            {
+                "id": entry.id,
+                "label": entry.label,
+                "size_gb": round(entry.size_gb, 1),
+                "installed": False,
+                "fits": fits,
+                "note": "" if fits else _no_fit_note(entry.size_gb, usable_gb),
+                "recommended": entry.id in _PREFERRED_MODELS,
+                "current": False,
+            }
+        )
+    return {
+        "reachable": reachable,
+        "usable_gb": round(usable_gb, 1),
+        "current": current_model,
+        "models": choices,
+    }
+
+
+def _no_fit_note(size_gb: float, usable_gb: float) -> str:
+    return (
+        f"~{size_gb:.0f} GB does not fit next to the voice stack on "
+        f"{usable_gb:.0f} GB of accelerator memory."
+    )
+
+
 def resolve_brain(
     *, timeout: float = 2.5, preferred_model: str = "", usable_gb: float = 0.0
 ) -> BrainResolution:

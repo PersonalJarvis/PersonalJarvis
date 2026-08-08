@@ -14,22 +14,24 @@ import {
   localInstallStatus,
   logoutAntigravity,
   managedServerBrain,
+  managedServerBrainModels,
   managedServerInstall,
   managedServerPreflight,
   managedServerStart,
   managedServerStatus,
   managedServerStop,
   managedServerUninstall,
+  modelPullStatus,
   ollamaRuntime,
   ollamaRuntimeInstall,
   ollamaRuntimeStart,
+  startModelPull,
+  type ManagedBrainChoice,
   type ManagedServerRuntime,
   type OllamaRuntimeInstallProgress,
   type OllamaRuntimeStatus,
-  modelPullStatus,
   pullableModels,
   startLocalInstall,
-  startModelPull,
   type LocalInstallProgress,
   type ManagedInstallProgress,
   type ManagedPreflight,
@@ -1920,6 +1922,10 @@ function ManagedServerPanel({
   const [progress, setProgress] = useState<ManagedInstallProgress | null>(null);
   const [runtime, setRuntime] = useState<ManagedServerRuntime | null>(null);
   const [brainNote, setBrainNote] = useState<string | null>(null);
+  const [brainModels, setBrainModels] = useState<Awaited<
+    ReturnType<typeof managedServerBrainModels>
+  > | null>(null);
+  const [brainBusy, setBrainBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [lifecycleBusy, setLifecycleBusy] = useState(false);
@@ -2054,10 +2060,58 @@ function ManagedServerPanel({
     try {
       const result = await managedServerBrain();
       setBrainNote(result.brain.note);
+      void loadBrainModels();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLifecycleBusy(false);
+    }
+  };
+
+  const loadBrainModels = useCallback(async () => {
+    try {
+      setBrainModels(await managedServerBrainModels());
+    } catch {
+      setBrainModels(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!installed || running) return;
+    void loadBrainModels();
+  }, [installed, running, loadBrainModels]);
+
+  const chooseBrain = async (choice: ManagedBrainChoice) => {
+    setError(null);
+    setBrainNote(null);
+    setBrainBusy(choice.id);
+    try {
+      if (!choice.installed) {
+        // Download through the SAME pull machinery the Ollama card uses,
+        // then adopt — never adopt a model the server cannot serve yet.
+        await startModelPull("ollama", choice.id);
+        for (;;) {
+          const pull = await modelPullStatus("ollama", choice.id);
+          if (pull.state === "done") break;
+          if (pull.state === "error") {
+            throw new Error(pull.message || "model download failed");
+          }
+          setBrainNote(
+            `${choice.label}: ${Math.round(pull.percent ?? 0)}%`,
+          );
+          await new Promise((resolve) => window.setTimeout(resolve, 2500));
+        }
+      }
+      const result = await managedServerBrain(choice.id);
+      setBrainNote(
+        `${result.brain.note} ${t("apikeys_view.managed_brain_next_start")}`,
+      );
+      await loadBrainModels();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBrainBusy(null);
     }
   };
 
@@ -2174,6 +2228,67 @@ function ManagedServerPanel({
         <p className="text-[11px] text-muted-foreground" aria-live="polite">
           {brainNote}
         </p>
+      )}
+
+      {!running && installed && brainModels && brainModels.models.length > 0 && (
+        <div className="space-y-1" data-testid="managed-brain-picker">
+          <p className="text-[11px] font-medium text-foreground">
+            {t("apikeys_view.managed_brain_picker_title")}
+          </p>
+          <ul className="space-y-1">
+            {brainModels.models.map((choice) => (
+              <li
+                key={choice.id}
+                className="flex items-center gap-2 text-[11px] text-muted-foreground"
+              >
+                <span className="min-w-0 flex-1 truncate">
+                  {choice.label}
+                  <span className="text-muted-foreground/70">
+                    {" "}
+                    · ~{choice.size_gb} GB
+                  </span>
+                  {choice.current && (
+                    <span className="ml-1.5 text-emerald-400">
+                      {t("apikeys_view.managed_brain_current")}
+                    </span>
+                  )}
+                  {!choice.current && choice.recommended && choice.fits && (
+                    <span className="ml-1.5 text-primary/80">
+                      {t("apikeys_view.managed_brain_recommended")}
+                    </span>
+                  )}
+                </span>
+                {!choice.fits ? (
+                  <span
+                    className="shrink-0 text-amber-500/90"
+                    title={choice.note}
+                  >
+                    {t("apikeys_view.managed_brain_no_fit")}
+                  </span>
+                ) : choice.current ? null : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void chooseBrain(choice)}
+                    disabled={brainBusy !== null}
+                    className="h-6 shrink-0 gap-1.5 px-2 text-[11px]"
+                  >
+                    {brainBusy === choice.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : choice.installed ? (
+                      <Check className="h-3 w-3" />
+                    ) : (
+                      <Download className="h-3 w-3" />
+                    )}
+                    {choice.installed
+                      ? t("apikeys_view.managed_brain_use")
+                      : t("apikeys_view.managed_brain_pull_use")}
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {running && (

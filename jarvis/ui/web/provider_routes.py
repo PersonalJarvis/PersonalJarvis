@@ -2886,6 +2886,29 @@ async def managed_server_stop(request: Request) -> dict[str, Any]:
     return {"ok": True, "message": message, "runtime": runtime}
 
 
+@router.get("/providers/local-realtime/managed-server/brain-models")
+async def managed_server_brain_models(request: Request) -> dict[str, Any]:
+    """Brain candidates for the voice server, annotated for THIS machine.
+
+    Installed chat-capable Ollama tags first, then curated recommendations
+    not installed yet; every entry carries the same fit verdict the resolver
+    itself applies (picker and resolver can never disagree), plus which one
+    the persisted launch command currently uses.
+    """
+    from jarvis.realtime.local_server.brain_link import list_brain_choices
+    from jarvis.realtime.local_server.preflight import _usable_accelerator_gb
+    from jarvis.realtime.local_server.supervisor import _brain_endpoint
+
+    _base_url, command = _local_realtime_card(request)
+
+    def _collect() -> dict[str, Any]:
+        usable_gb, _source = _usable_accelerator_gb()
+        current_model, _brain_base = _brain_endpoint(command)
+        return list_brain_choices(usable_gb=usable_gb, current_model=current_model)
+
+    return await asyncio.to_thread(_collect)
+
+
 @router.post("/providers/local-realtime/managed-server/brain")
 async def managed_server_brain(request: Request) -> dict[str, Any]:
     """Re-resolve the brain model and rewrite the launch command in place.
@@ -2926,6 +2949,18 @@ async def managed_server_brain(request: Request) -> dict[str, Any]:
             detail=(
                 brain.note
                 or "no usable local brain was found — install one via Ollama first"
+            ),
+        )
+    if requested and brain.model != requested:
+        # An EXPLICIT choice is never silently swapped (user autonomy): the
+        # resolver's fallback pick is fine for automatic re-resolution, but a
+        # user who named a model gets the honest refusal with the reason.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                brain.note
+                or f"'{requested}' is not served by Ollama or does not fit "
+                "this machine."
             ),
         )
     changed = await asyncio.to_thread(

@@ -923,6 +923,38 @@ export async function managedServerStart(): Promise<ManagedServerRuntime | null>
   return (body.runtime ?? null) as ManagedServerRuntime | null;
 }
 
+/** One brain candidate for the voice server, annotated for this machine. */
+export interface ManagedBrainChoice {
+  id: string;
+  label: string;
+  size_gb: number;
+  installed: boolean;
+  fits: boolean;
+  /** Honest reason when it does not fit; empty otherwise. */
+  note: string;
+  recommended: boolean;
+  current: boolean;
+}
+
+export async function managedServerBrainModels(): Promise<{
+  reachable: boolean;
+  usable_gb: number;
+  current: string;
+  models: ManagedBrainChoice[];
+}> {
+  const res = await fetch(
+    "/api/providers/local-realtime/managed-server/brain-models",
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
+  return body as {
+    reachable: boolean;
+    usable_gb: number;
+    current: string;
+    models: ManagedBrainChoice[];
+  };
+}
+
 /** Re-resolve the Ollama brain model and rewrite the launch command in place. */
 export async function managedServerBrain(model?: string): Promise<{
   ok: boolean;

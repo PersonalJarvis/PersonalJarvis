@@ -306,6 +306,53 @@ def test_brain_route_rewrites_the_model_without_reinstall(
     assert "--model_name llama3.1:8b" in cfg_file.read_text(encoding="utf-8")
 
 
+def test_brain_models_route_lists_annotated_choices(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.core.config import BrainProviderConfig
+
+    server.app.state.config.brain.providers["local-realtime"] = BrainProviderConfig(
+        launch_command="serve --model_name qwen2.5:7b"
+    )
+    monkeypatch.setattr(preflight, "_usable_accelerator_gb", lambda: (16.0, "nvidia-smi"))
+    monkeypatch.setattr(
+        brain_link, "_ollama_models", lambda base, timeout: [("qwen2.5:7b", 4.7)]
+    )
+    with TestClient(server.app) as client:
+        resp = client.get(
+            "/api/providers/local-realtime/managed-server/brain-models"
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["reachable"] is True
+    assert body["current"] == "qwen2.5:7b"
+    by_id = {entry["id"]: entry for entry in body["models"]}
+    assert by_id["qwen2.5:7b"]["current"] is True
+
+
+def test_brain_route_refuses_to_swap_an_explicit_choice(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A named model that does not fit gets an honest 409 — never a silent
+    substitution (user autonomy)."""
+    monkeypatch.setattr(preflight, "_usable_accelerator_gb", lambda: (16.0, "nvidia-smi"))
+    monkeypatch.setattr(
+        brain_link,
+        "_ollama_models",
+        lambda base, timeout: [
+            ("nemotron-cascade-2:latest", 24.0),
+            ("qwen2.5:7b", 4.7),
+        ],
+    )
+    with TestClient(server.app) as client:
+        resp = client.post(
+            "/api/providers/local-realtime/managed-server/brain",
+            json={"model": "nemotron-cascade-2:latest"},
+        )
+    assert resp.status_code == 409
+    assert "does not fit" in resp.json()["detail"]
+
+
 def test_brain_route_answers_409_without_a_local_brain(
     server: WebServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -83,6 +83,42 @@ class TestBrainResolution:
         )
         assert chosen == "mystery-model:latest"
 
+    def test_brain_choices_annotate_fit_and_installed_state(self, monkeypatch) -> None:
+        """The picker's data: installed tags first with the SAME fit rule the
+        resolver applies, then curated not-yet-installed recommendations."""
+        monkeypatch.setattr(
+            brain_link,
+            "_ollama_models",
+            lambda base, timeout: [
+                ("qwen2.5:7b", 4.7),
+                ("nemotron-cascade-2:latest", 24.0),
+                ("nomic-embed-text:latest", 0.3),  # never a voice brain
+            ],
+        )
+        payload = brain_link.list_brain_choices(
+            usable_gb=16.0, current_model="qwen2.5:7b"
+        )
+        assert payload["reachable"] is True
+        by_id = {entry["id"]: entry for entry in payload["models"]}
+        assert "nomic-embed-text:latest" not in by_id
+        assert by_id["qwen2.5:7b"]["installed"] is True
+        assert by_id["qwen2.5:7b"]["fits"] is True
+        assert by_id["qwen2.5:7b"]["current"] is True
+        assert by_id["qwen2.5:7b"]["recommended"] is True
+        assert by_id["nemotron-cascade-2:latest"]["fits"] is False
+        assert "does not fit" in by_id["nemotron-cascade-2:latest"]["note"]
+        # Curated chat entries that are not installed join the list.
+        assert any(
+            not entry["installed"] for entry in payload["models"]
+        ), "curated recommendations must be offered for download"
+
+    def test_brain_choices_survive_an_unreachable_ollama(self, monkeypatch) -> None:
+        monkeypatch.setattr(brain_link, "_ollama_models", lambda base, timeout: None)
+        payload = brain_link.list_brain_choices(usable_gb=16.0)
+        assert payload["reachable"] is False
+        # Curated entries still render so the user sees what COULD run here.
+        assert payload["models"]
+
     def test_running_ollama_with_model_is_fully_local(self, monkeypatch) -> None:
         monkeypatch.setattr(
             brain_link, "_ollama_models", lambda base, timeout: [("qwen2.5:7b", 4.7)]
