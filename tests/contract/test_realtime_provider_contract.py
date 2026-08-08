@@ -9,7 +9,10 @@ from jarvis.plugins.realtime.codex_subscription import (
     CodexSubscriptionRealtimeProvider,
 )
 from jarvis.plugins.realtime.gemini_live import GeminiLiveProvider
-from jarvis.plugins.realtime.openai_realtime import OpenAIRealtimeProvider
+from jarvis.plugins.realtime.openai_realtime import (
+    LocalRealtimeProvider,
+    OpenAIRealtimeProvider,
+)
 from jarvis.realtime.protocol import RealtimeProvider
 
 
@@ -44,6 +47,24 @@ def test_subscription_provider_is_structurally_conformant_without_api_key() -> N
     assert provider.requires_webrtc_offer is False
 
 
+def test_local_provider_is_structurally_conformant_without_api_key() -> None:
+    """The self-hosted card joined every roster except this one (found in
+    the 2026-08-08 hardening review) — its protocol conformance was pinned
+    only in its own unit file."""
+    provider = LocalRealtimeProvider()
+
+    assert isinstance(provider, RealtimeProvider)
+    assert provider.supports_realtime is True
+    assert provider.name == "local-realtime"
+    assert provider.input_sample_rate == 24_000
+    assert provider.output_sample_rate == 24_000
+    # Keyless by design, and never an ambient stand-in for another card.
+    assert provider.credential_candidates == ()
+    assert provider.implicit_usage_fallback_allowed is False
+    # The small-brain latency capability the session builder keys on.
+    assert provider.prefers_compact_instructions is True
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "provider_cls",
@@ -51,6 +72,11 @@ def test_subscription_provider_is_structurally_conformant_without_api_key() -> N
 )
 async def test_keyless_capability_probe_is_false(provider_cls):
     assert await provider_cls().can_open_duplex_session() is False
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_local_provider_probe_is_false() -> None:
+    assert await LocalRealtimeProvider().can_open_duplex_session() is False
 
 
 @pytest.mark.parametrize(
