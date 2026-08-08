@@ -55,6 +55,7 @@ import {
   submitLoginFlowCode,
 } from "@/lib/agentAccountsApi";
 import { robustCopy, robustPaste } from "@/lib/clipboard";
+import { openExternalUrl } from "@/lib/openExternal";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 
@@ -597,15 +598,14 @@ function LoginFlowBox({
               <Copy className="h-3 w-3" />
               {t("agent_accounts.flow.copy")}
             </button>
-            <a
-              href={flow.url}
-              target="_blank"
-              rel="noreferrer noopener"
+            <button
+              type="button"
+              onClick={() => void openExternalUrl(flow.url!)}
               className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] hover:border-primary/40"
             >
               <ExternalLink className="h-3 w-3" />
               {t("agent_accounts.flow.open")}
-            </a>
+            </button>
           </div>
           <p className="text-[10px] leading-relaxed text-muted-foreground">
             {t("agent_accounts.flow.link_hint")}

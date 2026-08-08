@@ -20,6 +20,7 @@ import {
   startLoginFlow,
   submitLoginFlowCode,
 } from "@/lib/agentAccountsApi";
+import { openExternalUrl } from "@/lib/openExternal";
 
 vi.mock("@/lib/agentAccountsApi", async () => {
   const actual = await vi.importActual<typeof import("@/lib/agentAccountsApi")>(
@@ -39,6 +40,10 @@ vi.mock("@/lib/agentAccountsApi", async () => {
     cancelLoginFlow: vi.fn(),
   };
 });
+
+vi.mock("@/lib/openExternal", () => ({
+  openExternalUrl: vi.fn(async () => undefined),
+}));
 
 function account(over: Partial<Record<string, unknown>> = {}) {
   return {
@@ -110,6 +115,7 @@ beforeEach(() => {
   vi.mocked(startLoginFlow).mockReset();
   vi.mocked(getLoginFlow).mockReset();
   vi.mocked(submitLoginFlowCode).mockReset();
+  vi.mocked(openExternalUrl).mockReset();
 });
 
 describe("AgentAccountsPanel", () => {
@@ -199,6 +205,10 @@ describe("AgentAccountsPanel", () => {
     // into a private window, not auto-opened and gone.
     const url = await screen.findByTestId("login-flow-url");
     expect(url.textContent).toContain("claude.ai/oauth/authorize");
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      "https://claude.ai/oauth/authorize?client_id=abc&state=xyz",
+    );
 
     fireEvent.change(
       screen.getByPlaceholderText("Paste the code from the browser here"),
