@@ -49,7 +49,11 @@ from jarvis.dictation.polish_prompt import (
 #: v3: the paragraph and enumeration clauses carry the same concrete target
 #: format the polish prompt's v4 gained — the two passes must lay text out the
 #: same way, or the translate switch would silently change list formatting.
-TRANSLATE_PROMPT_VERSION: Final[int] = 3
+#:
+#: v4: mirrors the polish prompt's v5 — the digit ALWAYS replaces the spoken
+#: ordinal, and restructuring the remaining item is expressly licensed. Live
+#: runs split the lines but kept the ordinal word written out.
+TRANSLATE_PROMPT_VERSION: Final[int] = 4
 
 #: English names for every code ``[dictation].translate_target`` accepts.
 #:
@@ -146,9 +150,11 @@ CLEAN IT UP AS YOU GO — this is dictated speech, not written prose:
   with ONE blank line.
 - Turn spoken punctuation commands into the mark itself, in {target}.
 - Turn a spoken enumeration into a list when the speaker clearly enumerated:
-  one item per line, numbered "1.", "2.", "3." when the speaker counted (the
-  number replaces the spoken ordinal), "- " bullets when they did not. A
-  running sentence that merely mentions items in passing stays a sentence.
+  one item per line, numbered "1.", "2.", "3." when the speaker counted, "- "
+  bullets when they did not. The digit ALWAYS replaces the spoken ordinal —
+  an ordinal word never remains at the start of a numbered line; restructure
+  the rest of the item where dropping it requires. A running sentence that
+  merely mentions items in passing stays a sentence.
 - Normalize spoken numbers to numerals where a writer would, but never invent
   a number that was not spoken.
 - Drop stray ellipses the recognizer left at a pause.

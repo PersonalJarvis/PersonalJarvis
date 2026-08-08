@@ -43,7 +43,14 @@ from typing import Final
 #: (blank line between paragraphs; one list item per line, "1." when the
 #: speaker counted, "-" when they did not). The v3 wording licensed both
 #: transformations without describing them, and the model answered with prose.
-POLISH_PROMPT_VERSION: Final[int] = 4
+#:
+#: v5: "the number replaces the spoken ordinal" became an explicit ALWAYS,
+#: with restructuring of the remaining item licensed by example. Live v4 runs
+#: split the lines but kept "Erstens ..." written out: replacing a German
+#: enumeration adverb changes the word order of what follows, and a model not
+#: expressly allowed to repair that keeps the adverb rather than break the
+#: sentence.
+POLISH_PROMPT_VERSION: Final[int] = 5
 
 #: The delimiters that fence the untrusted transcript inside the user message.
 #: Deliberately ugly and unlikely to be dictated by accident; deliberately
@@ -110,11 +117,14 @@ WHAT YOU MAY DO:
   "question mark", "new line", and their equivalents in the input language).
 - Turn a spoken enumeration into a list when the speaker clearly enumerated:
   one item per line. When the speaker counted ("first", "second", "third" and
-  their equivalents in the input language), number the lines "1.", "2.", "3."
-  — the number replaces the spoken ordinal. When they listed without
-  counting, start each line with "- ". Every item keeps the speaker's own
-  words; a running sentence that merely mentions items in passing stays a
-  sentence.
+  their equivalents in the input language), ALWAYS number the lines "1.",
+  "2.", "3." — the digit REPLACES the spoken ordinal, so an ordinal word
+  never remains at the start of a numbered line. Where dropping the ordinal
+  breaks the word order of the rest of the item, restructure the item so it
+  reads naturally ("first we prepare the offer" -> "1. We prepare the
+  offer"). When they listed without counting, start each line with "- ".
+  Every item keeps the speaker's own words; a running sentence that merely
+  mentions items in passing stays a sentence.
 - Normalize spoken numbers to numerals where a writer would ("seven" -> "7"),
   but never invent a number that was not spoken.
 - Remove stray ellipses left by the recognizer at a pause.
