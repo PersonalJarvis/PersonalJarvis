@@ -567,7 +567,6 @@ discord = "jarvis.channels.discord:DiscordChannel"
 [project.entry-points."jarvis.realtime"]
 # Provider-neutral speech-to-speech plugins. Every adapter loads lazily; the
 # orchestrator chooses a credential-ready family and crosses families on failure.
-codex-subscription-realtime = "jarvis.plugins.realtime.codex_subscription:CodexSubscriptionRealtimeProvider"
 openai-realtime = "jarvis.plugins.realtime.openai_realtime:OpenAIRealtimeProvider"
 gemini-live = "jarvis.plugins.realtime.gemini_live:GeminiLiveProvider"
 # Self-hosted endpoint speaking the same realtime protocol — the local option

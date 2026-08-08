@@ -310,6 +310,37 @@ def _dictation_specs() -> tuple[ProviderSpec, ...]:
 
 _DICTATION_PROVIDERS: tuple[ProviderSpec, ...] = _dictation_specs()
 
+# Kept in the source tree for continued local development, but deliberately
+# withheld from the public provider catalog until the transport is dependable.
+# Releasing it again is a one-line catalog move; no implementation is deleted.
+_WITHHELD_PROVIDERS: tuple[ProviderSpec, ...] = (
+    ProviderSpec(
+        id="codex-subscription-realtime",
+        label="ChatGPT subscription (Codex)",
+        tier="realtime",
+        auth_mode="codex",
+        secret_keys=(),
+        dashboard_url=None,
+        login_cli=("codex", "login"),
+        install_hint="npm i -g @openai/codex@0.147.0",
+        signup_url="https://chatgpt.com",
+        credential_help=(
+            "Beta — subscription voice through Codex is not finished yet and "
+            "can break without notice. "
+            "Uses the ChatGPT plan signed in through Codex. The voice itself "
+            "needs no API key, and the app never switches it silently to "
+            "metered API voice: if it cannot start, the call stops. Select an "
+            "API Realtime provider if you want usage billing. One caveat — "
+            "Jarvis transcribes your side of the call with the provider chosen "
+            "in Speech-to-Text, so a CLOUD recognizer is still billed per turn "
+            "to that key; choose an on-device one to keep the whole call off "
+            "metered billing. Brain and tool providers keep their separately "
+            "configured billing."
+        ),
+        experimental=True,
+    ),
+)
+
 #: Polish family id -> the id of the card that configures it, and back. The
 #: config key ``[dictation].polish_provider`` stores a FAMILY id while the UI
 #: and the health rollup address a SPEC id; these two are the one translation.
@@ -745,31 +776,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # Realtime voice providers share the provider-neutral RealtimeProvider
     # contract. Subscription and API billing remain independently selectable.
     ProviderSpec(
-        id="codex-subscription-realtime",
-        label="ChatGPT subscription (Codex)",
-        tier="realtime",
-        auth_mode="codex",
-        secret_keys=(),
-        dashboard_url=None,
-        login_cli=("codex", "login"),
-        install_hint="npm i -g @openai/codex@0.147.0",
-        signup_url="https://chatgpt.com",
-        credential_help=(
-            "Beta — subscription voice through Codex is not finished yet and "
-            "can break without notice. "
-            "Uses the ChatGPT plan signed in through Codex. The voice itself "
-            "needs no API key, and the app never switches it silently to "
-            "metered API voice: if it cannot start, the call stops. Select an "
-            "API Realtime provider if you want usage billing. One caveat — "
-            "Jarvis transcribes your side of the call with the provider chosen "
-            "in Speech-to-Text, so a CLOUD recognizer is still billed per turn "
-            "to that key; choose an on-device one to keep the whole call off "
-            "metered billing. Brain and tool providers keep their separately "
-            "configured billing."
-        ),
-        experimental=True,
-    ),
-    ProviderSpec(
         id="openai-realtime",
         label="OpenAI Realtime",
         tier="realtime",
@@ -830,7 +836,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
 
 def get_spec(provider_id: str) -> ProviderSpec | None:
     """Look up a spec by ID. None if unknown."""
-    for spec in PROVIDERS:
+    for spec in (*PROVIDERS, *_WITHHELD_PROVIDERS):
         if spec.id == provider_id:
             return spec
     return None

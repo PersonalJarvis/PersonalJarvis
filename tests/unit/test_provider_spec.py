@@ -88,6 +88,11 @@ def test_get_spec_lookup() -> None:
     assert get_spec("does-not-exist") is None
 
 
+def test_codex_subscription_realtime_is_withheld_but_implementation_metadata_remains() -> None:
+    assert get_spec("codex-subscription-realtime") is not None
+    assert "codex-subscription-realtime" not in {spec.id for spec in PROVIDERS}
+
+
 def test_groq_stt_is_last_and_not_recommended() -> None:
     """Groq remains selectable, but the Voice Input UI must de-emphasize it."""
     stt_specs = [spec for spec in PROVIDERS if spec.tier == "stt"]
