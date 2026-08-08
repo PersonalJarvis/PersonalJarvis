@@ -926,7 +926,7 @@ async def test_a_conversation_that_starts_late_is_still_found(
     """
     fake_pty.tui_echo = True
     await registry.start(str(tmp_path), [{"agent": "codex", "name": "Cody"}])
-    await registry.attach("Cody", 80, 24, _noop, _noop_exit)
+    term = await registry.attach("Cody", 80, 24, _noop, _noop_exit)
     await _settle()
     assert registry.session.find("Cody").resume is None, "nothing exists to find yet"
     assert late_cli.calls, "the pane still looks right after starting"
@@ -934,6 +934,10 @@ async def test_a_conversation_that_starts_late_is_still_found(
     # The pane is given its first instruction, which is what makes the CLI write
     # its session file.
     late_cli.spoken_to = True
+    await fake_pty.emit(
+        term.pty_id,
+        "\x1b[2J\x1b[H› Ask Codex anything\x1b[1;3H\x1b[?25h",
+    )
     await registry.send_prompt("Cody", "review the pipeline")
     await _settle()
 

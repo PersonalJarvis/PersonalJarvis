@@ -20,10 +20,12 @@ Scope is deliberately narrow — the sequences TUIs actually use for layout:
 * index / reverse index (IND, RI, NEL) and scroll up / down (SU, SD),
 * a scroll region (DECSTBM), because status bars depend on it.
 
-Everything else — colours (SGR), cursor visibility, bracketed paste, mouse
-reporting, alternate screen switches — is parsed and ignored, which is correct:
-it changes appearance, not content. Unknown sequences are skipped rather than
-printed, so a future escape code cannot leak garbage into the transcript.
+Everything else — colours (SGR), bracketed paste, mouse reporting, alternate
+screen switches — is parsed and ignored, which is correct: it changes
+appearance, not content. Cursor visibility is the one appearance bit retained:
+coding TUIs use it to distinguish a writable composer from a disabled one.
+Unknown sequences are skipped rather than printed, so a future escape code
+cannot leak garbage into the transcript.
 
 Not a goal: a conformant emulator. There is no support for double-width glyphs,
 character sets, or wide-character alignment. A row is a list of single-cell
@@ -56,6 +58,7 @@ class ScreenBuffer:
         "_grid",
         "_cursor_row",
         "_cursor_col",
+        "_cursor_visible",
         "_scrollback",
         "_pending",
         "_scroll_top",
@@ -69,6 +72,7 @@ class ScreenBuffer:
         self._grid: list[list[str]] = [self._blank_row() for _ in range(self.rows)]
         self._cursor_row = 0
         self._cursor_col = 0
+        self._cursor_visible = True
         self._scrollback: deque[str] = deque(maxlen=scrollback)
         # Bytes of an escape sequence split across two PTY reads.
         self._pending = ""
@@ -236,8 +240,12 @@ class ScreenBuffer:
 
         private = raw.startswith("?")
         if private:
-            # DEC private modes: cursor visibility, alternate screen, mouse
-            # reporting, bracketed paste. None of them change content.
+            # Cursor visibility is semantic for prompt delivery: Ratatui hides
+            # it when a composer's input is disabled and puts it back on the
+            # input row only when key events can be consumed. Other private
+            # modes affect presentation or input routing, not screen content.
+            if final in "hl" and "25" in raw[1:].split(";"):
+                self._cursor_visible = final == "h"
             return length
 
         params = [int(p) if p.isdigit() else 0 for p in raw.split(";")] if raw else []
@@ -349,6 +357,19 @@ class ScreenBuffer:
             rows.pop()
         return rows
 
+    @property
+    def visible_cursor(self) -> tuple[int, int] | None:
+        """Current ``(row, column)`` when the application exposes its cursor."""
+        if not self._cursor_visible:
+            return None
+        return self._cursor_row, self._cursor_col
+
+    def row_text(self, row: int) -> str:
+        """One visible grid row, or an empty string outside the screen."""
+        if row < 0 or row >= self.rows:
+            return ""
+        return "".join(self._grid[row]).rstrip()
+
     def history(self) -> list[str]:
         """Rows that have scrolled off the top, oldest first."""
         return list(self._scrollback)
@@ -356,6 +377,7 @@ class ScreenBuffer:
     def reset(self) -> None:
         self._grid = [self._blank_row() for _ in range(self.rows)]
         self._cursor_row = self._cursor_col = 0
+        self._cursor_visible = True
         self._scrollback.clear()
         self._pending = ""
         self._scroll_top = 0

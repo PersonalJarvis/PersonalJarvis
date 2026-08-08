@@ -344,15 +344,6 @@ COLD_START_LIMIT = max(2, (os.cpu_count() or 4) // 4)
 # enough to stagger, short enough that nobody watches a spinner for it.
 COLD_START_SETTLE_S = 1.2
 
-# How long a deferred "carry on" waits after its pane's process appears.
-#
-# The process existing is not the same as its prompt box being on screen: a
-# coding CLI spends a second or two loading, and text typed into that window is
-# swallowed whole rather than queued (measured on a real Codex — see
-# `_await_arrival`). Long enough to clear that boot burst, short enough that
-# nobody watches a pane sit there.
-CONTINUE_AFTER_START_S = 2.5
-
 # How long the nudged window size is held before it is put back (see
 # ``_nudge_repaint``). A PTY carries one size, not a queue of them: set twice
 # within the same event-loop tick, the agent may only ever observe the second
@@ -975,8 +966,12 @@ class Terminal:
     # Sending only to the ones that happen to be up already is what made the
     # button look like it skipped terminals; refusing them would be the same
     # answer worn differently. So the wish is REMEMBERED here and spent by
-    # `attach` the moment that pane's agent exists.
+    # `attach` once that pane's agent exposes a writable input line.
     continue_when_ready: bool = False
+    # The exact nudge paired with ``continue_when_ready``. Usually the one-word
+    # default, but the REST contract accepts custom wording and a queued pane
+    # must not silently replace it while waiting for its cold-start slot.
+    continue_prompt: str = ""
     # Has this pane's screen been observed STANDING STILL since its current
     # process started?
     #
@@ -1535,6 +1530,11 @@ class Registry:
         # it is first awaited on, and the registry is also built in tests that
         # run each case on a loop of its own.
         self._cold_start: asyncio.Semaphore | None = None
+        # Some CLIs serialize badly on one account-scoped runtime store even
+        # when the machine has ample CPU. Their registry entry supplies the
+        # limit; separate accounts get separate gates, and CLIs with no limit
+        # never touch this path.
+        self._agent_cold_starts: dict[tuple[str, str], asyncio.Semaphore] = {}
 
     # ---------------------------------------------------------------- state
     @property
@@ -2403,6 +2403,32 @@ class Registry:
             else:
                 gate.release()
 
+    async def _acquire_agent_cold_start(
+        self, term: Terminal
+    ) -> asyncio.Semaphore | None:
+        """Take this CLI/account's boot slot when its registry entry needs one.
+
+        The machine-wide gate protects CPU and process count. This narrower gate
+        protects a vendor runtime store: Codex resumes that are fast alone can
+        block one another for minutes when they initialize against the same
+        account database concurrently. The caller releases the slot only after
+        the pane's actual input line appears (or the readiness timeout expires).
+        """
+        spec = workspace_agents.get_agent(term.agent)
+        if not term.resumed:
+            return None
+        limit = max(0, spec.resume_start_limit if spec is not None else 0)
+        if limit == 0:
+            return None
+        key = (term.agent, term.account or "")
+        gate = self._agent_cold_starts.get(key)
+        if gate is None:
+            # No await between lookup and assignment: concurrent mounts cannot
+            # create two independent gates for one account.
+            gate = self._agent_cold_starts[key] = asyncio.Semaphore(limit)
+        await gate.acquire()
+        return gate
+
     async def attach(
         self,
         key: str,
@@ -2674,7 +2700,14 @@ class Registry:
         # resume and came back empty is not reported as waiting to be nudged.
         # A valid conversation may already be finished or waiting for input.
         # Offer a nudge only when the previous live pane was observed working.
-        term.continuation_pending = term.resumed and term.resume_continuation_needed
+        # A Continue claimed while this pane was still pending stays claimed:
+        # raising the flag again during attach would let a second click enqueue
+        # the same nudge while the first is waiting for the input line.
+        term.continuation_pending = (
+            term.resumed
+            and term.resume_continuation_needed
+            and not term.continue_when_ready
+        )
         if not term.resumed:
             term.resume_continuation_needed = False
 
@@ -2684,6 +2717,10 @@ class Registry:
         term.process_generation += 1
         term.idle_seen = False
         term.transcript.resize(cols, rows)
+        # Readiness belongs to this process. Keeping the dead process's screen
+        # here leaves old prompt sigils visible to the readiness probe and makes
+        # a freshly spawned CLI look writable before it has emitted one byte.
+        term.transcript.clear()
         # A fresh process draws a fresh screen: anything the previous one left
         # in the replay buffer belongs to a terminal that no longer exists, and
         # replaying it to the next viewer would show output from a dead agent.
@@ -2780,32 +2817,42 @@ class Registry:
                     self._prepare_spawn, term, session.folder
                 )
 
-        # One of a few starts at a time (see COLD_START_LIMIT).
-        async with self._cold_start_slot():
-            try:
-                pty_session = await manager.spawn(
-                    shell_argv=argv,
-                    shell_id=f"agentic-ide:{term.key}",
-                    cwd=session.folder,
-                    cols=cols,
-                    rows=rows,
-                    on_output=_output,
-                    on_closed=_closed,
-                    env=env,
-                    # In the READER THREAD, not here: a CLI asking its terminal
-                    # for the device type or the screen colours reads the answer
-                    # within milliseconds of asking, and this event loop is at
-                    # its busiest while panes are starting — which is exactly
-                    # when the question is asked. Answered from the pump, the
-                    # reply was measured 203-234 ms late under a 300 ms stall
-                    # and landed in the CLI's prompt as junk the user never
-                    # typed. Off the loop it is immediate.
-                    on_probe=term.queries.feed,
-                )
-            except Exception as exc:  # noqa: BLE001 - surfaced to the pane
-                term.status = "error"
-                term.error = str(exc)
-                raise SessionError(str(exc)) from exc
+        # The provider/account gate is acquired BEFORE the machine-wide gate.
+        # A Codex pane waiting on shared state must never occupy a CPU slot that
+        # an unrelated Claude/OpenCode pane could use immediately.
+        agent_start_gate = await self._acquire_agent_cold_start(term)
+        spawn_succeeded = False
+        try:
+            # One of a few starts at a time (see COLD_START_LIMIT).
+            async with self._cold_start_slot():
+                try:
+                    pty_session = await manager.spawn(
+                        shell_argv=argv,
+                        shell_id=f"agentic-ide:{term.key}",
+                        cwd=session.folder,
+                        cols=cols,
+                        rows=rows,
+                        on_output=_output,
+                        on_closed=_closed,
+                        env=env,
+                        # In the READER THREAD, not here: a CLI asking its terminal
+                        # for the device type or the screen colours reads the answer
+                        # within milliseconds of asking, and this event loop is at
+                        # its busiest while panes are starting — which is exactly
+                        # when the question is asked. Answered from the pump, the
+                        # reply was measured 203-234 ms late under a 300 ms stall
+                        # and landed in the CLI's prompt as junk the user never
+                        # typed. Off the loop it is immediate.
+                        on_probe=term.queries.feed,
+                    )
+                except Exception as exc:  # noqa: BLE001 - surfaced to the pane
+                    term.status = "error"
+                    term.error = str(exc)
+                    raise SessionError(str(exc)) from exc
+            spawn_succeeded = True
+        finally:
+            if not spawn_succeeded and agent_start_gate is not None:
+                agent_start_gate.release()
 
         term.pty_id = pty_session.terminal_id
         term.status = "live"
@@ -2836,6 +2883,27 @@ class Registry:
         # And this process has not stood still yet, whatever the previous one
         # did. Everything it is about to draw is a CLI painting itself, not an
         # agent working — see the field.
+        if agent_start_gate is not None:
+            from . import fleet_actions
+
+            try:
+                ready = await fleet_actions.wait_for_prompt_ready(
+                    session,
+                    [term.name],
+                    timeout_s=fleet_actions.READY_TIMEOUT_S,
+                )
+                if term.name not in ready:
+                    # Never strand the remaining panes behind a CLI that stopped
+                    # on login, trust, or an unknown future startup screen. Prompt
+                    # delivery still waits independently and therefore stays safe.
+                    logger.warning(
+                        "Agentic IDE: {} did not expose an input line before its "
+                        "cold-start slot expired; admitting the next {} pane",
+                        term.name,
+                        term.display_name,
+                    )
+            finally:
+                agent_start_gate.release()
         if term.resume is None and can_resume(term.agent):
             # A CLI that cannot be told its session id (Codex): find out which
             # one it just created, shortly from now.
@@ -2843,34 +2911,50 @@ class Registry:
         if term.continue_when_ready:
             # Somebody pressed "Continue" while this pane was still waiting for
             # a cold-start slot. The wish outlives the wait — see
-            # `continue_when_ready` — and is spent HERE, once the agent exists
-            # and can be typed into. As a task, because the pane's socket is
-            # waiting on this call: the nudge itself watches the pane's screen
-            # for a few seconds, and holding the attach open for that would
-            # leave the terminal blank while it ran.
-            term.continue_when_ready = False
-            self._schedule_continue(session, term)
+            # `continue_when_ready` — and is spent HERE. As a task, because the
+            # submit itself verifies the pane's screen for a few seconds and the
+            # viewer should not wait for that receipt before attaching.
+            self.defer_continue(session, term, term.continue_prompt)
         await self._persist()
         return term
 
-    def _schedule_continue(self, session: Session, term: Terminal) -> None:
+    def defer_continue(self, session: Session, term: Terminal, prompt: str = "") -> None:
+        """Remember a Continue nudge and schedule it once this pane is live.
+
+        A pending pane carries the request into :meth:`attach`. A live pane may
+        still be booting, so it enters the same background path immediately and
+        :meth:`send_prompt` waits for the actual input line. There is one route
+        for both states and therefore no fixed-delay race.
+        """
+        from .interrupted import CONTINUE_PROMPT
+
+        term.continue_when_ready = True
+        term.continue_prompt = (prompt or CONTINUE_PROMPT).strip() or CONTINUE_PROMPT
+        if term.status != "live" or not term.pty_id:
+            return
+        queued_prompt = term.continue_prompt
+        term.continue_when_ready = False
+        term.continue_prompt = ""
+        self._schedule_continue(session, term, queued_prompt)
+
+    def _schedule_continue(self, session: Session, term: Terminal, prompt: str) -> None:
         """Send the deferred "carry on" to a pane that has just come up.
 
         Kept on the session's own task set, like the conversation-id lookups, so
         closing that workspace cancels it rather than leaving a nudge in flight
         for a pane that no longer exists.
         """
-        from .interrupted import CONTINUE_PROMPT
-
         async def _nudge() -> None:
             try:
-                # The agent's CLI needs a moment after its process exists before
-                # its prompt box is on screen; typing into the boot sequence is
-                # how a paste gets swallowed whole (see `_await_arrival`, which
-                # then waits for text that never appears).
-                await asyncio.sleep(CONTINUE_AFTER_START_S)
-                await self.send_prompt(term.name, CONTINUE_PROMPT)
+                await self.send_prompt(
+                    term.name,
+                    prompt,
+                    workspace_id=session.id,
+                )
             except SessionError as exc:
+                # No bytes were written when readiness timed out or the pane
+                # stopped. Put the offer back instead of losing the user's click.
+                term.continuation_pending = True
                 logger.warning(
                     "Agentic IDE: {} came up but could not be continued: {}", term.name, exc
                 )
@@ -3830,7 +3914,9 @@ class Registry:
             next_slot[term.column] = term.slot + 1
 
     # --------------------------------------------------------------- prompt
-    async def send_prompt(self, wanted: str, text: str) -> Terminal:
+    async def send_prompt(
+        self, wanted: str, text: str, *, workspace_id: str | None = None
+    ) -> Terminal:
         """Type ``text`` into a terminal, press Enter, and CONFIRM it was sent.
 
         Typing and hoping is not enough, which a live failure proved on
@@ -3856,11 +3942,20 @@ class Registry:
            the single-line form that has always worked. The worst case is
            therefore the old behaviour, never a lost instruction.
 
-        Raises ``SessionError`` when the terminal is unknown, not running, or the
-        prompt sanitizes down to nothing. A prompt that was typed but refused to
-        submit is NOT an error — the text is in the box and the caller is told.
+        ``workspace_id`` pins background work such as a deferred Continue to the
+        pane it came from; without it, the front workspace keeps the established
+        call-sign resolution rules.
+
+        Raises ``SessionError`` when the terminal is unknown, not running, still
+        booting after the readiness window, or the prompt sanitizes down to
+        nothing. A prompt that was typed but refused to submit is NOT an error —
+        the text is in the box and the caller is told.
         """
-        found = self.find_terminal(wanted)
+        found = (
+            self._locate(wanted, workspace_id)
+            if workspace_id is not None
+            else self.find_terminal(wanted)
+        )
         if found is None:
             raise self._unknown_terminal(wanted)
         owner, term = found
@@ -3881,6 +3976,29 @@ class Registry:
         payload = sanitize_prompt(text, keep_newlines=True)
         if not payload:
             raise SessionError("The prompt was empty after cleanup.")
+
+        # A spawned PTY is not necessarily an interactive CLI yet. Codex in
+        # particular can spend tens of seconds opening plugins and MCP servers,
+        # and a paste written during that phase is swallowed rather than queued.
+        # Waiting on the real input line is capability-gated, so the measured
+        # stable fast path (Claude) remains immediate and new CLIs fail safe.
+        from . import fleet_actions
+
+        ready = await fleet_actions.wait_for_prompt_ready(
+            owner,
+            [term.name],
+            timeout_s=fleet_actions.READY_TIMEOUT_S,
+        )
+        if term.name not in ready:
+            if term.status != "live" or not term.pty_id:
+                raise SessionError(
+                    f"{term.name} stopped while it was starting (status: {term.status}) — "
+                    "nothing was sent."
+                )
+            raise SessionError(
+                f"{term.name} is still starting — its input line never appeared, "
+                "so nothing was sent."
+            )
 
         manager = self._manager()
         multiline = "\n" in payload

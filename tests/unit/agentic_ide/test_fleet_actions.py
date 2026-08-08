@@ -8,14 +8,7 @@ from jarvis.agentic_ide.fleet_actions import (
     close_agent_terminals,
     wait_for_prompt_ready,
 )
-
-
-class _Transcript:
-    def __init__(self, lines: list[str]) -> None:
-        self._lines = lines
-
-    def tail(self, _count: int) -> list[str]:
-        return self._lines
+from jarvis.agentic_ide.transcript import Transcript
 
 
 @dataclass
@@ -24,7 +17,7 @@ class _Term:
     agent: str
     status: str = "live"
     pty_id: str | None = "pty"
-    transcript: _Transcript = field(default_factory=lambda: _Transcript([]))
+    transcript: Transcript = field(default_factory=Transcript)
 
 
 class _Session:
@@ -45,7 +38,18 @@ async def test_codex_waits_for_its_input_line_but_claude_does_not() -> None:
         "Clara",
     )
 
-    codex.transcript = _Transcript(["OpenAI Codex", "› "])
+    codex.transcript.feed(
+        "\x1b[2J\x1b[HOpenAI Codex\r\n"
+        "› Input disabled.\x1b[2;3H\x1b[?25l"
+    )
+    assert await wait_for_prompt_ready(session, ["Cody", "Clara"], timeout_s=0) == (
+        "Clara",
+    )
+
+    codex.transcript.feed(
+        "\x1b[2J\x1b[HOpenAI Codex\r\n"
+        "› Ask Codex anything\x1b[2;3H\x1b[?25h"
+    )
     assert await wait_for_prompt_ready(session, ["Cody", "Clara"], timeout_s=0) == (
         "Cody",
         "Clara",

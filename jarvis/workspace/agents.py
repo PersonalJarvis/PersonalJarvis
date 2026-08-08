@@ -236,6 +236,16 @@ class WorkspaceAgent:
     #: The prompt sigils this CLI's input line starts with. Empty means "the
     #: shared default set", which covers every TUI observed so far.
     input_markers: tuple[str, ...] = ()
+    #: True when readiness requires the terminal cursor to be visible on the
+    #: input-marker row. Ratatui CLIs can draw the same marker while disabling
+    #: keyboard input; cursor visibility is the stable distinction.
+    requires_visible_input_cursor: bool = False
+    #: Maximum resumed panes of this CLI and account that may still be starting.
+    #: Zero means no provider-specific limit beyond the shared machine gate.
+    #: Use this when parallel starts contend on one vendor runtime store; the
+    #: slot is held until the pane exposes its real input line, not merely until
+    #: its process exists.
+    resume_start_limit: int = 0
     #: TUI furniture to strip before a transcript is summarised — banners,
     #: status bars, key hints. Additive to the shared set.
     chrome_fragments: tuple[str, ...] = ()
@@ -531,6 +541,13 @@ _AGENTS: dict[str, WorkspaceAgent] = {
             kind="node",
         ),
         instruction_filename="AGENTS.md",
+        input_markers=("›", "»"),
+        requires_visible_input_cursor=True,
+        # Two simultaneous resumes against Codex's shared SQLite/runtime store
+        # were measured beyond 90 s while one resume initialized substantially
+        # faster. Serialize only this shared-store boot phase. Claude and every
+        # unrelated CLI keep the normal parallel path.
+        resume_start_limit=1,
         spoken_aliases=("codex", "kodex", "codecs", "codeks"),
     ),
     "opencode": make_cli_agent(

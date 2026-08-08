@@ -13,7 +13,7 @@ _INPUT_MARKERS = ("›", "❯", ">")
 log = logging.getLogger(__name__)
 
 
-def _ready_for_prompt(term: Any) -> bool:
+def ready_for_prompt(term: Any) -> bool:
     """Is this pane far enough along to be typed into?
 
     Every CLI observed so far swallows a prompt that arrives while it is still
@@ -37,13 +37,43 @@ def _ready_for_prompt(term: Any) -> bool:
         return True
     transcript = getattr(term, "transcript", None)
     if transcript is None:
-        return True
+        return False
     try:
-        lines = transcript.tail(30)
+        # Read the visible bottom of the current screen when it is available.
+        # Transcript history can contain old prompt sigils from the conversation
+        # being resumed; treating one of those as the new input box is the same
+        # early-write bug with a more convincing false positive.
+        screen = getattr(transcript, "screen", None)
+        display = getattr(screen, "display", None)
+        lines = display()[-10:] if callable(display) else transcript.tail(10)
     except Exception:  # noqa: BLE001 - a test double may expose no real buffer
-        return True
+        return False
     markers = (spec.input_markers if spec else ()) or _INPUT_MARKERS
+    if spec is not None and spec.requires_visible_input_cursor:
+        # Codex renders the same sigil when its composer is disabled, but its
+        # Ratatui frame hides the cursor in that state. The visible cursor is
+        # placed back on the editable row only when key events are accepted.
+        try:
+            visible_cursor = getattr(screen, "visible_cursor", None)
+            row_text = getattr(screen, "row_text", None)
+            if visible_cursor is None or not callable(row_text):
+                return False
+            row, column = visible_cursor
+            line = row_text(row)
+        except Exception:  # noqa: BLE001 - malformed extensions fail closed
+            return False
+        stripped = line.lstrip()
+        for marker in markers:
+            if stripped.startswith(marker):
+                marker_column = len(line) - len(stripped)
+                return column > marker_column
+        return False
     return any(line.strip().startswith(markers) for line in lines)
+
+
+def _ready_for_prompt(term: Any) -> bool:
+    """Backward-compatible private name for older callers and extensions."""
+    return ready_for_prompt(term)
 
 
 async def wait_for_prompt_ready(
@@ -52,14 +82,14 @@ async def wait_for_prompt_ready(
     *,
     timeout_s: float = READY_TIMEOUT_S,
 ) -> tuple[str, ...]:
-    """Wait for newly mounted Codex panes to display their real input line."""
+    """Wait for newly mounted panes to display their real input line."""
     wanted = tuple(dict.fromkeys(name for name in names if name))
     deadline = time.monotonic() + max(0.0, timeout_s)
     while True:
         ready = tuple(
             name
             for name in wanted
-            if (term := session.find(name)) is not None and _ready_for_prompt(term)
+            if (term := session.find(name)) is not None and ready_for_prompt(term)
         )
         if len(ready) == len(wanted) or time.monotonic() >= deadline:
             return ready
@@ -108,6 +138,7 @@ __all__ = [
     "READY_POLL_S",
     "READY_TIMEOUT_S",
     "close_agent_terminals",
+    "ready_for_prompt",
     "terminals_closed_event",
     "wait_for_prompt_ready",
 ]

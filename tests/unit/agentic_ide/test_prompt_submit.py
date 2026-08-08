@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from jarvis.agentic_ide import fleet_actions
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.session import (
     PASTE_END,
@@ -130,6 +131,8 @@ def registry(fake_pty: FakePtyManager, monkeypatch: pytest.MonkeyPatch) -> Regis
     monkeypatch.setattr(session_mod, "_SUBMIT_RETRY_AFTER_S", 0.02)
     monkeypatch.setattr(session_mod, "_ARRIVAL_POLL_S", 0.01)
     monkeypatch.setattr(session_mod, "_ARRIVAL_WINDOW_S", 0.04)
+    monkeypatch.setattr(fleet_actions, "READY_POLL_S", 0.01)
+    monkeypatch.setattr(fleet_actions, "READY_TIMEOUT_S", 0.08)
     return Registry(pty_manager=fake_pty)
 
 
@@ -148,6 +151,51 @@ async def _noop_exit(_code: int) -> None:
 async def _live(registry: Registry, tmp_path: Path):
     await _open(registry, tmp_path)
     return await registry.attach("Alex", 100, 30, _noop, _noop_exit)
+
+
+async def _live_codex(registry: Registry, tmp_path: Path):
+    session = await registry.start(
+        str(tmp_path), [{"agent": "codex", "name": "Cody"}]
+    )
+    # A dead process's input marker must not make the replacement process look
+    # ready. The attach path owns clearing this generation's screen evidence.
+    session.terminals[0].transcript.feed("\u203a old prompt\r\n")
+    return await registry.attach("Cody", 100, 30, _noop, _noop_exit)
+
+
+async def test_a_booting_codex_is_not_typed_into_until_its_input_line_exists(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    fake_pty.tui_echo = True
+    term = await _live_codex(registry, tmp_path)
+    await fake_pty.emit(
+        term.pty_id,
+        "\x1b[2J\x1b[H\u203a Input disabled.\x1b[1;3H\x1b[?25l",
+    )
+
+    sending = asyncio.create_task(registry.send_prompt("Cody", "review the pipeline"))
+    await asyncio.sleep(0.03)
+    assert fake_pty.typed == [], "boot-time keystrokes are swallowed by Codex"
+
+    await fake_pty.emit(
+        term.pty_id,
+        "\x1b[2J\x1b[H\u203a Ask Codex anything\x1b[1;3H\x1b[?25h",
+    )
+    delivered = await sending
+
+    assert fake_pty.typed[:2] == ["review the pipeline", "\r"]
+    assert delivered.submitted is True
+
+
+async def test_a_codex_that_never_becomes_ready_receives_no_partial_prompt(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    await _live_codex(registry, tmp_path)
+
+    with pytest.raises(SessionError, match="input line never appeared"):
+        await registry.send_prompt("Cody", "review the pipeline")
+
+    assert fake_pty.typed == []
 
 
 async def test_a_trailing_reference_gets_a_closing_space(

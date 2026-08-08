@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+from jarvis.agentic_ide import fleet_actions
 from jarvis.agentic_ide import session as ide
 from tests.fakes.fake_pty_manager import FakePtyManager
 
@@ -93,6 +94,52 @@ async def test_a_full_workspace_starts_in_waves(
 
     assert len(pool.spawns) == 12, "every pane still gets its agent"
     assert pool.peak <= 3, f"{pool.peak} agents were starting at once"
+
+
+async def test_codex_shared_store_starts_are_serial_until_the_input_line(
+    pool: CountingPtyManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A process existing does not release Codex's account-scoped boot slot."""
+    monkeypatch.setattr(ide, "COLD_START_SETTLE_S", 0.0)
+    monkeypatch.setattr(fleet_actions, "READY_POLL_S", 0.01)
+    monkeypatch.setattr(fleet_actions, "READY_TIMEOUT_S", 1.0)
+    registry = ide.Registry(pty_manager=pool)
+    session = await registry.start(
+        str(tmp_path),
+        [
+            {"agent": "codex", "name": "Cody"},
+            {"agent": "codex", "name": "Cole"},
+        ],
+    )
+    monkeypatch.setattr(ide, "has_conversation", lambda *_args, **_kwargs: True)
+    for index, term in enumerate(session.terminals):
+        term.resume = ide.ResumeHandle(
+            kind="codex_rollout", id=f"resume-{index}", captured_at=0.0
+        )
+
+    mounting = asyncio.create_task(_attach_all(registry, session))
+    for _ in range(50):
+        if len(pool.spawns) == 1:
+            break
+        await asyncio.sleep(0.01)
+    assert len(pool.spawns) == 1
+    first = next(term for term in session.terminals if term.status == "live")
+    await pool.emit(
+        first.pty_id,
+        "\x1b[2J\x1b[H\u203a Ask Codex anything\x1b[1;3H\x1b[?25h",
+    )
+
+    for _ in range(50):
+        if len(pool.spawns) == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert len(pool.spawns) == 2, "the next pane starts as soon as the first is writable"
+    second = next(term for term in session.terminals if term is not first)
+    await pool.emit(
+        second.pty_id,
+        "\x1b[2J\x1b[H\u203a Ask Codex anything\x1b[1;3H\x1b[?25h",
+    )
+    await asyncio.wait_for(mounting, timeout=1.0)
 
 
 async def test_rejoining_a_running_agent_never_waits_for_a_starting_one(

@@ -20,7 +20,13 @@ from typing import Any
 
 import pytest
 
-from jarvis.agentic_ide import activity, interrupted, notifications, resume_store
+from jarvis.agentic_ide import (
+    activity,
+    fleet_actions,
+    interrupted,
+    notifications,
+    resume_store,
+)
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.agent_sessions import ResumeHandle
 from jarvis.agentic_ide.session import Registry
@@ -51,9 +57,8 @@ def registry(fake_pty: FakePtyManager, monkeypatch: pytest.MonkeyPatch) -> Regis
     monkeypatch.setattr(session_mod, "_SUBMIT_RETRY_AFTER_S", 0.02)
     monkeypatch.setattr(session_mod, "_ARRIVAL_POLL_S", 0.01)
     monkeypatch.setattr(session_mod, "_ARRIVAL_WINDOW_S", 0.04)
-    # A deferred continue waits for the CLI's boot burst to clear before typing.
-    # Real length, no value to a test that owns a fake terminal.
-    monkeypatch.setattr(session_mod, "CONTINUE_AFTER_START_S", 0.01)
+    monkeypatch.setattr(fleet_actions, "READY_POLL_S", 0.01)
+    monkeypatch.setattr(fleet_actions, "READY_TIMEOUT_S", 0.12)
     return Registry(pty_manager=fake_pty)
 
 
@@ -73,6 +78,7 @@ async def _restarted_pane(
     name: str = "Alex",
     conversation: str = "conv-1",
     continuation_needed: bool = True,
+    agent: str = "claude",
 ):
     """A pane whose agent was spawned onto a conversation that already exists.
 
@@ -80,10 +86,11 @@ async def _restarted_pane(
     point, the CLI's own history really holds the conversation, and attaching
     launches the agent with ``--resume``.
     """
-    session = await registry.start(str(folder), [{"agent": "claude", "name": name}])
-    existing_conversation(conversation)
+    session = await registry.start(str(folder), [{"agent": agent, "name": name}])
+    existing_conversation(conversation, agent=agent)
+    kind = "codex_rollout" if agent == "codex" else "claude_session"
     session.terminals[0].resume = ResumeHandle(
-        kind="claude_session", id=conversation, captured_at=1.0
+        kind=kind, id=conversation, captured_at=0.0 if agent == "codex" else 1.0
     )
     session.terminals[0].resume_continuation_needed = continuation_needed
     term = await registry.attach(name, 100, 30, _noop, _noop_exit)
@@ -406,6 +413,60 @@ async def test_a_pane_still_starting_is_continued_when_it_comes_up(
 
     assert fake_pty.typed.count(interrupted.CONTINUE_PROMPT) == 1, fake_pty.typed
     assert late.continue_when_ready is False
+    assert interrupted.scan(registry) == []
+
+
+async def test_continue_queues_a_live_codex_until_its_input_line_appears(
+    registry: Registry,
+    fake_pty: FakePtyManager,
+    tmp_path: Path,
+    existing_conversation: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pending claim survives spawn and the whole live-but-booting phase."""
+    monkeypatch.setattr(fleet_actions, "READY_TIMEOUT_S", 1.0)
+    fake_pty.tui_echo = True
+    session = await registry.start(
+        str(tmp_path), [{"agent": "codex", "name": "Cody"}]
+    )
+    existing_conversation("conv-codex", agent="codex")
+    term = session.terminals[0]
+    term.resume = ResumeHandle(kind="codex_rollout", id="conv-codex", captured_at=0.0)
+    term.resume_continuation_needed = True
+    term.continuation_pending = True
+
+    report = await interrupted.continue_panes(registry)
+
+    assert report.queued == ["Cody"]
+    assert report.continued == []
+    assert fake_pty.typed == []
+
+    mounting = asyncio.create_task(
+        registry.attach("Cody", 100, 30, _noop, _noop_exit)
+    )
+    for _ in range(50):
+        if term.status == "live":
+            break
+        await asyncio.sleep(0.01)
+    assert term.status == "live"
+    second_press = await interrupted.continue_panes(registry)
+    assert second_press.to_dict() == {
+        "ok": True,
+        "continued": [],
+        "queued": [],
+        "unconfirmed": [],
+        "failed": [],
+    }
+
+    await fake_pty.emit(
+        term.pty_id,
+        "\x1b[2J\x1b[H\u203a Ask Codex anything\x1b[1;3H\x1b[?25h",
+    )
+    await asyncio.wait_for(mounting, timeout=1.0)
+    await _settle(session)
+
+    assert fake_pty.typed.count(interrupted.CONTINUE_PROMPT) == 1
+    assert term.submitted is True
     assert interrupted.scan(registry) == []
 
 

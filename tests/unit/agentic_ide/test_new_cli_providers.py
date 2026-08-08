@@ -450,17 +450,42 @@ def test_a_dropped_file_is_written_the_way_each_cli_reads_it() -> None:
 
 
 class _Pane:
-    def __init__(self, agent: str, lines: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        agent: str,
+        lines: tuple[str, ...] = (),
+        *,
+        cursor_visible: bool = True,
+    ) -> None:
         self.agent = agent
         self.status = "live"
         self.pty_id = "pty-1"
         self._lines = lines
+        self._cursor_visible = cursor_visible
 
     @property
     def transcript(self) -> Any:
         lines = self._lines
+        cursor_visible = self._cursor_visible
 
         class _T:
+            class _Screen:
+                @staticmethod
+                def display() -> tuple[str, ...]:
+                    return lines
+
+                @property
+                def visible_cursor(self) -> tuple[int, int] | None:
+                    if not cursor_visible or not lines:
+                        return None
+                    return len(lines) - 1, len(lines[-1])
+
+                @staticmethod
+                def row_text(row: int) -> str:
+                    return lines[row] if 0 <= row < len(lines) else ""
+
+            screen = _Screen()
+
             @staticmethod
             def tail(_n: int) -> tuple[str, ...]:
                 return lines
@@ -478,5 +503,10 @@ def test_a_booting_pane_of_a_new_cli_is_not_prompted_yet() -> None:
     assert _ready_for_prompt(_Pane("opencode", ("Loading...",))) is False
     assert _ready_for_prompt(_Pane("opencode", ("> ",))) is True
     assert _ready_for_prompt(_Pane("kimi", ("starting",))) is False
+    assert _ready_for_prompt(
+        _Pane("codex", ("› Input disabled.",), cursor_visible=False)
+    ) is False
+    assert _ready_for_prompt(_Pane("codex", ("› Ask Codex anything",))) is True
+    assert _ready_for_prompt(_Pane("codex", ("» Ask Codex anything",))) is True
     # The one measured exception keeps its fast path.
     assert _ready_for_prompt(_Pane("claude", ("anything",))) is True

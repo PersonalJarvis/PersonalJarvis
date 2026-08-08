@@ -40,6 +40,21 @@ def test_absolute_cursor_positioning_is_honoured() -> None:
     assert t.tail() == ["first line", "third line"]
 
 
+def test_screen_tracks_the_visible_cursor_used_by_tui_input_gates() -> None:
+    screen = ScreenBuffer(cols=40, rows=10)
+    screen.feed("\x1b[3;1H› Ask Codex anything\x1b[3;3H\x1b[?25l")
+
+    assert screen.visible_cursor is None
+
+    screen.feed("\x1b[?25h")
+
+    assert screen.visible_cursor == (2, 2)
+    assert screen.row_text(2).startswith("› ")
+
+    screen.reset()
+    assert screen.visible_cursor == (0, 0)
+
+
 def test_erase_line_removes_stale_content() -> None:
     """A repainted row must not leave the longer previous text behind."""
     t = Transcript()

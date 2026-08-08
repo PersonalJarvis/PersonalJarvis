@@ -96,6 +96,10 @@ def test_install_commands_are_runnable_or_honestly_absent() -> None:
 def test_launch_command_is_bare_binary() -> None:
     assert get_agent("claude").launch_command == "claude"
     assert get_agent("codex").launch_command == "codex"
+    assert get_agent("codex").resume_start_limit == 1
+    assert get_agent("claude").resume_start_limit == 0
+    assert get_agent("codex").input_markers == ("›", "»")
+    assert get_agent("codex").requires_visible_input_cursor is True
     assert get_agent("opencode").launch_command == "opencode"
     # The profile runs the borrowed binary, not a command named after itself.
     assert get_agent("glm").launch_command == "claude"

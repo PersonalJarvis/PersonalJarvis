@@ -66,6 +66,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from .activity import read_activity, shows_question
+from .fleet_actions import ready_for_prompt
 from .recap import condense
 from .session import SessionError, accepts_prompts
 
@@ -156,8 +157,8 @@ class ContinueReport:
     continued: list[str]
     unconfirmed: list[str]
     failed: list[tuple[str, str]]
-    #: Panes whose agent had not started yet. The instruction is held and
-    #: delivered when it comes up — a promise, not a refusal and not a send.
+    #: Panes whose process or input line is still starting. The instruction is
+    #: held and delivered when it becomes writable — a promise, not a refusal.
     queued: list[str] = field(default_factory=list)
 
     @property
@@ -206,9 +207,12 @@ def _starting(term: Terminal) -> bool:
 
     Cold starts are staggered on purpose (``COLD_START_LIMIT``), so a workspace
     of a dozen panes has most of them in this state for the first few seconds
-    after it appears — the exact window somebody presses "Continue" in.
+    after it appears. A spawned process also stays here until its TUI exposes a
+    real input line; process existence alone is not prompt readiness.
     """
-    return term.status == "pending"
+    return term.status == "pending" or (
+        term.status == "live" and bool(term.pty_id) and not ready_for_prompt(term)
+    )
 
 
 def _describe(session: Session, term: Terminal) -> InterruptedPane:
@@ -312,7 +316,9 @@ def _selected(
     return chosen, rejected
 
 
-def _claim(registry: Registry, pane: InterruptedPane) -> Terminal | None:
+def _claim(
+    registry: Registry, pane: InterruptedPane
+) -> tuple[Session, Terminal] | None:
     """Take a pane off the waiting list BEFORE anything is sent to it.
 
     **The bug this fixes.** Typing a prompt and verifying it takes seconds — the
@@ -326,23 +332,26 @@ def _claim(registry: Registry, pane: InterruptedPane) -> Terminal | None:
     caller puts the flag back when the send fails, and the pane returns to the
     list rather than being silently dropped.
     """
-    found = registry.find_terminal(pane.name)
-    if found is None:
+    session = registry.get(pane.workspace_id)
+    if session is None:
         return None
-    term = found[1]
+    term = session.find(pane.key)
+    if term is None:
+        return None
     if not term.continuation_pending:
         # Somebody got here first — another press, or the user typing into the
         # pane themselves between the scan and now.
         return None
     term.continuation_pending = False
-    return term
+    return session, term
 
 
-def _release(registry: Registry, name: str) -> None:
+def _release(registry: Registry, pane: InterruptedPane) -> None:
     """Put a pane back on the waiting list after its nudge failed to go."""
-    found = registry.find_terminal(name)
-    if found is not None:
-        found[1].continuation_pending = True
+    session = registry.get(pane.workspace_id)
+    term = session.find(pane.key) if session is not None else None
+    if term is not None:
+        term.continuation_pending = True
 
 
 async def continue_panes(
@@ -366,8 +375,8 @@ async def continue_panes(
     **A pane still starting is queued, not skipped.** Cold starts are staggered
     (``COLD_START_LIMIT``), so most of a big workspace is still coming up in the
     seconds after it appears — the very window this button is pressed in. Those
-    panes are marked and continued by :meth:`Registry.attach` the moment their
-    agent exists, and reported as ``queued`` rather than as done or refused.
+    panes are marked and continued when their agent's input line is writable,
+    and reported as ``queued`` rather than as done or refused.
 
     **Pressing twice cannot send twice.** Every pane is claimed off the waiting
     list synchronously before a single byte is typed (see :func:`_claim`), and
@@ -383,20 +392,25 @@ async def continue_panes(
     for pane in chosen:
         if not pane.continuable:
             continue
-        term = _claim(registry, pane)
-        if term is None:
+        claimed = _claim(registry, pane)
+        if claimed is None:
             # Already claimed by a press that is still in flight. Not a failure
             # and not a second send — the first one is doing the work.
             continue
+        owner, term = claimed
         if pane.starting:
-            term.continue_when_ready = True
+            registry.defer_continue(owner, term, text)
             queued.append(pane.name)
         else:
             runnable.append(pane)
 
     async def _send(pane: InterruptedPane) -> tuple[InterruptedPane, Any]:
         try:
-            return pane, await registry.send_prompt(pane.name, text)
+            return pane, await registry.send_prompt(
+                pane.name,
+                text,
+                workspace_id=pane.workspace_id,
+            )
         except SessionError as exc:
             return pane, exc
         except Exception as exc:  # noqa: BLE001 - one pane must not fail the batch
@@ -408,7 +422,7 @@ async def continue_panes(
     for pane, outcome in await asyncio.gather(*(_send(pane) for pane in runnable)):
         if isinstance(outcome, Exception):
             # Nothing reached the agent, so this one is still waiting.
-            _release(registry, pane.name)
+            _release(registry, pane)
             failed.append((pane.name, str(outcome) or outcome.__class__.__name__))
         elif getattr(outcome, "submitted", None) is True:
             continued.append(pane.name)
