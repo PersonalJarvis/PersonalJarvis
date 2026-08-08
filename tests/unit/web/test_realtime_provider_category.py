@@ -253,6 +253,18 @@ def test_set_realtime_provider_preserves_sibling_worker_table(tmp_path: Path):
     assert 'provider = "openai-realtime"' in content
 
 
+def test_set_realtime_fallback_provider_keeps_primary(tmp_path: Path):
+    toml = tmp_path / "jarvis.toml"
+    toml.write_text(
+        '[brain.realtime]\nprovider = "codex-subscription-realtime"\n',
+        encoding="utf-8",
+    )
+    config_writer.set_realtime_fallback_provider("local-realtime", path=toml)
+    content = toml.read_text(encoding="utf-8")
+    assert 'provider = "codex-subscription-realtime"' in content
+    assert 'fallback_provider = "local-realtime"' in content
+
+
 # ---------------------------------------------------------------------------
 # GET/PUT /api/providers/{id}/realtime-options
 # (selectable Realtime model + voice, per realtime provider)

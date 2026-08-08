@@ -1239,6 +1239,18 @@ def set_realtime_provider(provider: str, *, path: Path = DEFAULT_CONFIG_FILE) ->
     _patch_realtime_provider_toml(path, provider)
 
 
+def set_realtime_fallback_provider(provider: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[brain.realtime] fallback_provider``.
+
+    The factory tries the fallback after the primary during the SAME handshake
+    (jarvis/realtime/factory.py reads ``provider`` then ``fallback_provider``),
+    so an explicit fallback is how a subscription primary degrades honestly
+    instead of silently losing realtime voice. Same TOML-only rationale as
+    :func:`set_realtime_provider`.
+    """
+    _patch_realtime_provider_toml(path, provider, key="fallback_provider")
+
+
 def set_silence_window_ms(ms: int, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the voice silence window to ``[speech] vad_silence_ms`` in jarvis.toml.
 
@@ -2299,8 +2311,8 @@ def _patch_worker_provider_toml(path: Path, name: str) -> None:
         _atomic_write(path, out)
 
 
-def _patch_realtime_provider_toml(path: Path, name: str) -> None:
-    """Set ``[brain.realtime] provider = name`` in the TOML.
+def _patch_realtime_provider_toml(path: Path, name: str, *, key: str = "provider") -> None:
+    """Set ``[brain.realtime] <key> = name`` in the TOML.
 
     Unlike :func:`_patch_table`, this walks the NESTED ``brain`` -> ``realtime``
     path instead of treating ``"brain.realtime"`` as a flat top-level key
@@ -2326,7 +2338,7 @@ def _patch_realtime_provider_toml(path: Path, name: str) -> None:
         if realtime is None:
             realtime = tomlkit.table()
             brain["realtime"] = realtime
-        realtime["provider"] = name
+        realtime[key] = name
 
         out = tomlkit.dumps(doc)
         if had_bom:
