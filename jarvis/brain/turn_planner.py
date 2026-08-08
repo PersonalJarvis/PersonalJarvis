@@ -77,10 +77,16 @@ _DEFINITION_RE = re.compile(
 )
 _INSTRUCTIONAL_RE = re.compile(
     r"\b(?:how (?:do|can|would) (?:i|you)|how to|"
+    r"what can (?:you|jarvis) do|what (?:you|jarvis) can do|"
+    r"what are (?:your|jarvis(?:'s)?) capabilities|"
     r"wie (?:kann|koennte|wuerde) (?:ich|man)|"  # i18n-allow: speech input
     r"wie (?:kannst|koenntest|wuerdest) du|"  # i18n-allow: speech input
     r"wie (?:koennen|koennten|wuerden) sie|"  # i18n-allow: speech input
-    r"como (?:puedo|puedes|podria|podrias|se puede)|como hacer)\b"
+    r"was kannst du|was kann jarvis|"  # i18n-allow: speech input
+    r"welche faehigkeiten (?:hast du|hat jarvis)|"  # i18n-allow: speech input
+    r"como (?:puedo|puedes|podria|podrias|se puede)|como hacer|"
+    r"que puedes hacer|que puede hacer jarvis|"  # i18n-allow: speech input
+    r"cuales son tus capacidades)\b"  # i18n-allow: speech input
     # i18n-allow: multilingual speech-input matching data
 )
 _OWNERSHIP_RE = re.compile(

@@ -62,6 +62,35 @@ def test_timeless_or_instructional_turns_stay_native(
 @pytest.mark.parametrize(
     "utterance",
     [
+        (
+            "No, just tell me more about what Jarvis can do on the Jarvis "
+            "desktop app. What you can do there."
+        ),
+        "Was kannst du in der Jarvis Desktop-App?",  # i18n-allow: spoken fixture
+        "¿Qué puedes hacer en la aplicación de Jarvis?",  # i18n-allow: spoken fixture
+    ],
+)
+def test_capability_overview_follow_up_stays_in_the_live_conversation(
+    registry: CapabilityRegistry,
+    utterance: str,
+) -> None:
+    """A request to explain the desktop app is conversation, not a request to
+    inspect live connectors. Prior answers may mention weather, inboxes, and
+    online data; those nouns must not turn the follow-up into a slow delegate."""
+    plan = plan_turn(
+        utterance,
+        capability_registry=registry,
+        context=(
+            "I can check weather, read email, open apps, and find information online.",
+        ),
+    )
+
+    assert plan.path is TurnPath.NATIVE_REALTIME
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
         "What is in my Gmail inbox?",
         "Read the SAP customer record.",
         "Which pull requests are open today?",
