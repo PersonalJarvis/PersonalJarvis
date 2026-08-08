@@ -31,7 +31,7 @@
  * unit-testable without a renderer.
  */
 import { create } from "zustand";
-import type { ProviderDescriptor } from "@/hooks/useProviders";
+import type { Billing } from "@/hooks/useProviders";
 
 /** Where the preference is stored, per machine. */
 export const LOCAL_MODE_KEY = "jarvis.providers.localMode";
@@ -71,14 +71,20 @@ export function writeLocalMode(value: boolean): void {
  * `"local"`. Reading that field keeps the definition in ONE place — the moment
  * a new keyless card ships, it shows up in Local Mode without a code change
  * here, and a hosted card can never sneak in by being named "local-something".
+ *
+ * Deliberately typed on the field rather than on `ProviderDescriptor`: the
+ * subagent tier has its OWN row shape (`/api/jarvis-agent/status` returns a
+ * different payload) and carries the very same backend `billing` value. One
+ * definition serves both, so Local Mode cannot mean two different things on
+ * two tabs — which is exactly how the subagents tab came to ignore it.
  */
-export function runsOnOwnHardware(provider: ProviderDescriptor): boolean {
+export function runsOnOwnHardware(provider: { billing: Billing }): boolean {
   return provider.billing === "local";
 }
 
-export interface LocalModeFilter {
+export interface LocalModeFilter<T> {
   /** The cards to render, in the order they came in. */
-  visible: ProviderDescriptor[];
+  visible: T[];
   /** How many hosted cards Local Mode took off the screen. */
   hiddenCount: number;
   /** True when a hosted card was kept because it is the ACTIVE one. */
@@ -86,23 +92,27 @@ export interface LocalModeFilter {
 }
 
 /**
- * Apply Local Mode to one tier's card list.
+ * Apply Local Mode to one list of provider cards.
  *
  * Disabled, this is the identity function — the exact same array comes back, so
  * the off state cannot differ from the pre-feature behaviour in any way.
+ *
+ * `isActive` defaults to the `active` field the provider-tier payload uses; the
+ * subagent rows name theirs differently and pass their own reader.
  */
-export function filterForLocalMode(
-  providers: ProviderDescriptor[],
+export function filterForLocalMode<T extends { billing: Billing; active?: boolean }>(
+  items: T[],
   enabled: boolean,
-): LocalModeFilter {
+  isActive: (item: T) => boolean = (item) => item.active === true,
+): LocalModeFilter<T> {
   if (!enabled) {
-    return { visible: providers, hiddenCount: 0, keptActiveHosted: false };
+    return { visible: items, hiddenCount: 0, keptActiveHosted: false };
   }
-  const visible = providers.filter((p) => runsOnOwnHardware(p) || p.active);
+  const visible = items.filter((p) => runsOnOwnHardware(p) || isActive(p));
   return {
     visible,
-    hiddenCount: providers.length - visible.length,
-    keptActiveHosted: visible.some((p) => p.active && !runsOnOwnHardware(p)),
+    hiddenCount: items.length - visible.length,
+    keptActiveHosted: visible.some((p) => isActive(p) && !runsOnOwnHardware(p)),
   };
 }
 

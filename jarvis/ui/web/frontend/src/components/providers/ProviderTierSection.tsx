@@ -427,6 +427,10 @@ export function LocalModeNotice({
   return (
     <div
       data-testid="local-mode-notice"
+      // The count as a plain attribute as well as in the sentence: the sentence
+      // is a translated template, so this is the one place a test (or a support
+      // screenshot) can read the number without depending on wording.
+      data-hidden-count={hiddenCount}
       className="mb-3 flex items-start gap-2.5 rounded-xl border border-primary/25 bg-primary/[0.05] px-3 py-2"
     >
       <HardDrive aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
@@ -468,6 +472,7 @@ export function VoiceEngineContext({
   activeSessionProvider,
   activeSessionModel,
   transitioning,
+  lastStartError = null,
   liveMode,
   onOpenRecommendedTab,
 }: {
@@ -489,6 +494,8 @@ export function VoiceEngineContext({
   activeSessionProvider: string;
   activeSessionModel: string;
   transitioning: boolean;
+  /** Why the LAST realtime start attempt failed; null while connecting/live. */
+  lastStartError?: { provider: string; message: string; at: number } | null;
   liveMode: string;
   onOpenRecommendedTab: (tab: RecommendationTab) => void;
 }) {
@@ -596,6 +603,18 @@ export function VoiceEngineContext({
           aria-live="polite"
         >
           {offerDetail}
+        </p>
+      )}
+
+      {liveMode === "realtime" && lastStartError && (
+        <p
+          data-testid="voice-engine-last-start-error"
+          className="mt-1 text-[11px] leading-snug text-amber-600 dark:text-amber-400"
+          aria-live="polite"
+        >
+          {t("voice_state.connect_failed")
+            .replace("{0}", lastStartError.provider || "?")
+            .replace("{1}", lastStartError.message)}
         </p>
       )}
 

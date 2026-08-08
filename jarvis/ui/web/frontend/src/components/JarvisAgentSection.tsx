@@ -24,6 +24,8 @@ import {
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { AgentAccountsPanel } from "@/components/AgentAccountsPanel";
+import { LocalModeNotice } from "@/components/providers/ProviderTierSection";
+import { filterForLocalMode, useLocalMode } from "@/lib/localMode";
 
 /**
  * Subagent tier for the API-Keys view.
@@ -153,6 +155,10 @@ export function JarvisAgentSection({
     useState<AntigravityStatus | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<ClaudeStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The same per-machine view preference the provider tiers read. The subagent
+  // tier used to ignore it, which made Local Mode look broken exactly where a
+  // keyless install most needs it: this is the tab that picks the worker.
+  const { localMode, setLocalMode } = useLocalMode();
 
   // Re-fetch on brain-switch / subagent-switch / secret-set so the active
   // provider highlight + the per-provider "Key gesetzt" badges track live.
@@ -216,29 +222,68 @@ export function JarvisAgentSection({
   // connection cards; their "Set active" control now lives ON those cards, so
   // exclude them from the generic provider list to avoid a duplicate card per
   // CLI (the confusing "no select button on the subscription" the user hit).
-  const codexRow = bridge.mapping.find((r) => r.jarvis === "openai-codex");
-  const antigravityRow = bridge.mapping.find((r) => r.jarvis === "antigravity");
+  // Local Mode applies to EVERY card on this tab, including the three
+  // subscription-login cards below — a keyless install has no ChatGPT plan
+  // either, and hiding only the API column would have been a half-answer.
+  // Same rule as the provider tiers: own-hardware cards stay, plus whichever
+  // card is the ACTIVE worker, so the tab can always show what is running.
+  const isActiveRow = (r: SubagentMappingRow) => r.is_active_brain;
+  const { visible: localVisibleRows, hiddenCount: hiddenByLocalMode } =
+    filterForLocalMode(bridge.mapping, localMode, isActiveRow);
+  const shown = new Set(localVisibleRows.map((r) => r.jarvis));
+  const inLocalMode = (r: SubagentMappingRow | undefined) =>
+    r && shown.has(r.jarvis) ? r : undefined;
+
+  const codexRow = inLocalMode(
+    bridge.mapping.find((r) => r.jarvis === "openai-codex"),
+  );
+  const antigravityRow = inLocalMode(
+    bridge.mapping.find((r) => r.jarvis === "antigravity"),
+  );
   // Claude is dual-billed (Claude Max subscription OR Anthropic API key) — it
   // gets its own connection card showing the signed-in account, like Codex /
   // Antigravity, so exclude it from the generic per-key provider list too.
-  const claudeRow = bridge.mapping.find((r) => r.jarvis === "claude-api");
-  const providerRows = bridge.mapping.filter(
+  const claudeRow = inLocalMode(
+    bridge.mapping.find((r) => r.jarvis === "claude-api"),
+  );
+  const providerRows = localVisibleRows.filter(
     (r) =>
       r.jarvis !== "openai-codex" &&
       r.jarvis !== "antigravity" &&
       r.jarvis !== "claude-api",
   );
   // Split the generic providers by access type so each lands in the right
-  // column. Practically these are all API-key providers (gemini/openai/…), but
-  // splitting on the backend `billing` field keeps a future subscription
-  // provider in the correct column instead of the wrong one (AP-21: gate on
-  // capability, never a provider name).
-  const subProviderRows = providerRows.filter((r) => r.billing !== "api");
+  // group. Splitting on the backend `billing` field keeps a future provider in
+  // the correct group instead of the wrong one (AP-21: gate on capability,
+  // never a provider name).
+  //
+  // Own-hardware workers get their OWN group rather than riding along in the
+  // subscription column. They were landing there because the split was
+  // "anything that is not billed per token", which put Ollama under a heading
+  // that reads "sign in with an account" — the opposite of what a keyless card
+  // is. Three access types, three headings.
+  const localProviderRows = providerRows.filter((r) => r.billing === "local");
+  const subProviderRows = providerRows.filter(
+    (r) => r.billing !== "api" && r.billing !== "local",
+  );
   const apiProviderRows = providerRows.filter((r) => r.billing === "api");
+  const hasSubscriptionColumn =
+    Boolean(codexRow || antigravityRow || claudeRow) || subProviderRows.length > 0;
+  const hasApiColumn = Boolean(claudeRow) || apiProviderRows.length > 0;
 
   return (
     <section className="space-y-4">
       {!hideHeader && <SectionHeader label={t("apikeys_view.tier_subagent")} />}
+
+      {localMode && hiddenByLocalMode > 0 && (
+        <LocalModeNotice
+          hiddenCount={hiddenByLocalMode}
+          keptActiveHosted={localVisibleRows.some(
+            (r) => isActiveRow(r) && r.billing !== "local",
+          )}
+          onDisable={() => setLocalMode(false)}
+        />
+      )}
 
       <BridgeStatusStrip status={bridge} />
 
@@ -254,19 +299,45 @@ export function JarvisAgentSection({
 
       {/* Scoped Agent keys are managed here. Older shared Brain keys remain a
           compatibility fallback and are labelled honestly on the relevant card. */}
-      <p className="flex items-start gap-2 px-1 text-[11px] leading-relaxed text-muted-foreground">
-        <ArrowUp className="mt-0.5 h-3 w-3 shrink-0 text-primary" />
-        <span>
-          API-backed Agents can use a dedicated key set on this tab. Existing
-          Brain keys remain available as a compatibility fallback; Realtime keys
-          stay isolated to Realtime Voice.
-        </span>
-      </p>
+      {/* Suppressed once Local Mode has filtered the API column away: a note
+          about dedicated keys, above a screen with no key fields on it, is the
+          kind of leftover that makes a filtered view feel broken. */}
+      {hasApiColumn && (
+        <p className="flex items-start gap-2 px-1 text-[11px] leading-relaxed text-muted-foreground">
+          <ArrowUp className="mt-0.5 h-3 w-3 shrink-0 text-primary" />
+          <span>
+            API-backed Agents can use a dedicated key set on this tab. Existing
+            Brain keys remain available as a compatibility fallback; Realtime keys
+            stay isolated to Realtime Voice.
+          </span>
+        </p>
+      )}
 
       {/* Two access-typed columns so the two ways to power an agent never mix:
           subscription logins (violet) on the left, API-key providers (sky) on
           the right. The colour matches each card's access badge + accent stripe. */}
+      {/* Own-hardware workers lead, full width. They are the group with no
+          account and no bill behind them, so they belong to neither column —
+          and putting them first is what makes the Subagents tab usable at all
+          on an install that entered no credentials. */}
+      {localProviderRows.length > 0 && (
+        <div className="space-y-3">
+          <ColumnHeader
+            icon={Laptop}
+            title="On your own hardware"
+            hint="no account, no key"
+            tone="emerald"
+          />
+          <div className="grid gap-3 md:grid-cols-2 md:items-start">
+            {localProviderRows.map((row) => (
+              <SubagentProviderCard key={row.jarvis} row={row} onSwitched={reload} />
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-4 md:grid-cols-2 md:items-start">
+        {hasSubscriptionColumn && (
         <div className="space-y-3">
           <ColumnHeader
             icon={Sparkles}
@@ -299,7 +370,9 @@ export function JarvisAgentSection({
             <SubagentProviderCard key={row.jarvis} row={row} onSwitched={reload} />
           ))}
         </div>
+        )}
 
+        {hasApiColumn && (
         <div className="space-y-3">
           <ColumnHeader
             icon={CreditCard}
@@ -318,6 +391,7 @@ export function JarvisAgentSection({
             <SubagentProviderCard key={row.jarvis} row={row} onSwitched={reload} />
           ))}
         </div>
+        )}
       </div>
 
       {/* Below the two columns rather than inside one: this is a second axis.
@@ -602,9 +676,16 @@ function ColumnHeader({
   icon: LucideIcon;
   title: string;
   hint: string;
-  tone: "violet" | "sky";
+  /** Matches the access accent each card in the group already carries:
+   *  violet = subscription login, sky = API key, emerald = own hardware. */
+  tone: "violet" | "sky" | "emerald";
 }) {
-  const toneCls = tone === "violet" ? "text-violet-400" : "text-sky-400";
+  const toneCls =
+    tone === "violet"
+      ? "text-violet-400"
+      : tone === "emerald"
+        ? "text-emerald-400"
+        : "text-sky-400";
   return (
     <div className="flex items-center gap-2 px-1 pb-0.5">
       <Icon className={cn("h-4 w-4", toneCls)} />
