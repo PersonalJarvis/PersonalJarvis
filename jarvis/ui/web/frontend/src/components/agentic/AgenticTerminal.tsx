@@ -424,6 +424,11 @@ export function AgenticTerminal({
    * completion may reveal the pane.
    */
   const replayCurtainRef = useRef(false);
+  // Every replay and active-stage transition invalidates callbacks/frames from
+  // the one before it. A boolean alone cannot distinguish "A finished" from
+  // "B is still rebuilding", so an old callback could otherwise reveal B.
+  const replayGenerationRef = useRef(0);
+  const replayRevealFrameRef = useRef<number | undefined>(undefined);
   /**
    * The delivery this pane is currently showing a receipt for, if any.
    *
@@ -494,7 +499,12 @@ export function AgenticTerminal({
     // down between a replay dropping the curtain and its write callback (see
     // `replayToPane`), which would leave the new terminal invisible with
     // nothing left to lift it.
+    replayGenerationRef.current += 1;
     replayCurtainRef.current = false;
+    if (replayRevealFrameRef.current !== undefined) {
+      cancelAnimationFrame(replayRevealFrameRef.current);
+      replayRevealFrameRef.current = undefined;
+    }
     setTailReady(activeRef.current);
 
     const linkOptions = {
@@ -860,6 +870,12 @@ export function AgenticTerminal({
      */
     const replayToPane = (text: string) => {
       if (!text) return;
+      const generation = replayGenerationRef.current + 1;
+      replayGenerationRef.current = generation;
+      if (replayRevealFrameRef.current !== undefined) {
+        cancelAnimationFrame(replayRevealFrameRef.current);
+        replayRevealFrameRef.current = undefined;
+      }
       // Parked output belongs to the screen this replay REPLACES, and it was
       // captured before it. Written afterwards it would paint the older screen
       // over the newer one; written before, it would be reset away regardless.
@@ -888,6 +904,7 @@ export function AgenticTerminal({
       // is parked and un-parked by the same rules as anything else — and so it
       // counts as the pane having painted.
       writeToPane(text, () => {
+        if (generation !== replayGenerationRef.current) return;
         // Cleared unconditionally: a callback that fired while the pane was
         // away must not leave the stage-switch settle step refusing to lift
         // the curtain forever.
@@ -897,8 +914,15 @@ export function AgenticTerminal({
         // prompt, never several screens above it.
         term.scrollToBottom?.();
         if (!curtain) return;
-        requestAnimationFrame(() => {
-          if (disposed || !activeRef.current) return;
+        replayRevealFrameRef.current = requestAnimationFrame(() => {
+          replayRevealFrameRef.current = undefined;
+          if (
+            disposed ||
+            !activeRef.current ||
+            generation !== replayGenerationRef.current
+          ) {
+            return;
+          }
           term.scrollToBottom?.();
           setTailReady(true);
         });
@@ -1204,6 +1228,12 @@ export function AgenticTerminal({
 
     return () => {
       disposed = true;
+      replayGenerationRef.current += 1;
+      replayCurtainRef.current = false;
+      if (replayRevealFrameRef.current !== undefined) {
+        cancelAnimationFrame(replayRevealFrameRef.current);
+        replayRevealFrameRef.current = undefined;
+      }
       // Before the terminal is disposed below: a deadline flush one tick later
       // would write into it after it is gone.
       cancelHoldTimer();
@@ -1246,6 +1276,15 @@ export function AgenticTerminal({
    * hidden siblings stay parked even when a prompt is addressed to them.
    */
   useLayoutEffect(() => {
+    // A stage change supersedes every reveal owned by the stage before it. If
+    // a replay is still parsing, the active branch's queue barrier below waits
+    // for it and becomes the only path allowed to lift the new curtain.
+    replayGenerationRef.current += 1;
+    replayCurtainRef.current = false;
+    if (replayRevealFrameRef.current !== undefined) {
+      cancelAnimationFrame(replayRevealFrameRef.current);
+      replayRevealFrameRef.current = undefined;
+    }
     if (!active) {
       setTailReady(false);
       visibilityRef.current?.park();

@@ -437,6 +437,92 @@ describe("AgenticTerminal layout", () => {
     expect(terminalHarness.scrollToBottom).toHaveBeenCalled();
     expect(region?.className).not.toContain("invisible");
   });
+
+  it("does not let an older replay reveal a newer replay", () => {
+    vi.useFakeTimers();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+    const region = screen.getByTestId("agentic-terminal-host-Dana").parentElement;
+    act(() => vi.advanceTimersByTime(20));
+
+    terminalHarness.deferWrite = true;
+    act(() => {
+      terminalHarness.handlers.current?.onReplay?.("older replay" as never);
+      terminalHarness.handlers.current?.onReplay?.("newer replay" as never);
+    });
+    expect(region?.className).toContain("invisible");
+    expect(terminalHarness.writeCallbacks).toHaveLength(2);
+
+    act(() => {
+      terminalHarness.writeCallbacks.shift()?.();
+      vi.advanceTimersByTime(20);
+    });
+    expect(region?.className).toContain("invisible");
+
+    act(() => {
+      terminalHarness.writeCallbacks.shift()?.();
+      vi.advanceTimersByTime(20);
+    });
+    expect(region?.className).not.toContain("invisible");
+  });
+
+  it("does not let a stale replay frame bypass a new stage barrier", () => {
+    vi.useFakeTimers();
+    const view = render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+    const region = screen.getByTestId("agentic-terminal-host-Dana").parentElement;
+    act(() => vi.advanceTimersByTime(20));
+
+    terminalHarness.deferWrite = true;
+    act(() => {
+      terminalHarness.handlers.current?.onReplay?.("recorded session" as never);
+      terminalHarness.writeCallbacks.shift()?.();
+    });
+    // The replay completion has scheduled its reveal frame, but a stage switch
+    // supersedes it before that frame gets to paint.
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+        active={false}
+      />,
+    );
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+    expect(terminalHarness.writeCallbacks).toHaveLength(1);
+
+    act(() => vi.advanceTimersByTime(20));
+    expect(region?.className).toContain("invisible");
+
+    act(() => {
+      terminalHarness.writeCallbacks.shift()?.();
+      vi.advanceTimersByTime(20);
+    });
+    expect(region?.className).not.toContain("invisible");
+  });
 });
 
 describe("pane keyboard", () => {
