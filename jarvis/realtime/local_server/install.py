@@ -44,6 +44,7 @@ from jarvis.realtime.local_server.preflight import (
 log = logging.getLogger(__name__)
 
 _PINS_FILE = Path(__file__).parent / "pins" / f"core-{PATCH_TARGET_VERSION}.txt"
+_SMOKE_MARKER_SCHEMA = 1
 
 #: torch flavor per probed hardware. The CUDA build ships from the PyTorch
 #: index; everything else takes the default wheels (macOS arm64 wheels carry
@@ -112,6 +113,42 @@ def _site_packages() -> Path:
 
 def _smoke_marker() -> Path:
     return install_root() / "smoke_ok.json"
+
+
+def _smoke_marker_valid() -> bool:
+    """Validate the durable proof for this exact pinned server build."""
+    try:
+        payload = json.loads(_smoke_marker().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    at = payload.get("at")
+    valid_at = (
+        isinstance(at, (int, float)) and not isinstance(at, bool) and at > 0.0
+    )
+    return (
+        payload.get("schema") == _SMOKE_MARKER_SCHEMA
+        and payload.get("patch_version") == PATCH_TARGET_VERSION
+        and valid_at
+        and isinstance(payload.get("tier"), str)
+        and bool(payload.get("tier"))
+        and payload.get("brain") in {"ollama", "cloud-openai"}
+        and isinstance(payload.get("preflight"), dict)
+    )
+
+
+def _invalidate_smoke_marker() -> None:
+    """Remove old success proof before any reinstall can mutate the venv."""
+    _smoke_marker().unlink(missing_ok=True)
+
+
+def _write_smoke_marker(payload: dict[str, object]) -> None:
+    """Durably publish success only after the smoke child was fully reaped."""
+    from jarvis.realtime.local_server.supervisor import _atomic_write_json
+
+    if not _atomic_write_json(_smoke_marker(), payload):
+        raise OSError("could not atomically write the managed-server smoke marker")
 
 
 @dataclass
@@ -219,7 +256,7 @@ def server_status() -> dict[str, object]:
         "venv": _venv_python().exists(),
         "entrypoint": _server_entrypoint().exists(),
         "patch": patch_state(_site_packages()) == "patched",
-        "smoke_boot": _smoke_marker().exists(),
+        "smoke_boot": _smoke_marker_valid(),
     }
     ready = all(components.values())
     command = _configured_launch_command()
@@ -264,6 +301,7 @@ def derive_launch_command(brain: BrainResolution, *, memory_source: str) -> str:
     parts = [
         f'"{_server_entrypoint()}"',
         "--mode realtime",
+        "--ws_host 127.0.0.1",
         "--tts qwen3",
         f"--qwen3_tts_device {tts_device}",
         "--qwen3_tts_dtype bfloat16",
@@ -291,6 +329,12 @@ def _run(cmd: list[str], *, timeout: int, cwd: Path | None = None) -> None:
     """
     env = dict(os.environ)
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    popen_kwargs: dict[str, object] = {}
+    if os.name != "nt":
+        # The timeout path kills this process group. Without a fresh session,
+        # pip's build-backend children can outlive the launcher and continue
+        # mutating the venv after the lifecycle lease is released.
+        popen_kwargs["start_new_session"] = True
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -301,6 +345,7 @@ def _run(cmd: list[str], *, timeout: int, cwd: Path | None = None) -> None:
         cwd=str(cwd) if cwd else None,
         env=env,
         creationflags=NO_WINDOW_CREATIONFLAGS,
+        **popen_kwargs,  # type: ignore[arg-type]
     )
 
     def _pump() -> None:
@@ -324,14 +369,16 @@ def _run(cmd: list[str], *, timeout: int, cwd: Path | None = None) -> None:
         raise RuntimeError(f"step failed (exit {code}): {' '.join(cmd[:3])}…")
 
 
-def _kill_tree(proc: subprocess.Popen) -> None:
+def _kill_tree(proc: subprocess.Popen) -> bool:
     """Terminate a step's whole process tree, not just the launcher.
 
-    POSIX: the smoke boot spawns with ``start_new_session=True``, so the pid
-    is its process-group leader — SIGTERM the group, grace, then SIGKILL what
-    remains. Terminating only the launcher (the old behavior) orphaned the
-    server's worker processes, which then kept the GPU and the smoke port.
+    POSIX: every installer child spawns with ``start_new_session=True``, so
+    the pid is its process-group leader — SIGTERM the group, grace, then
+    SIGKILL what remains. Terminating only the launcher (the old behavior)
+    orphaned build backends and server workers.
     """
+    if proc.poll() is not None:
+        return True
     try:
         if os.name == "nt":
             subprocess.run(
@@ -340,6 +387,11 @@ def _kill_tree(proc: subprocess.Popen) -> None:
                 timeout=30,
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                return False
+            return proc.poll() is not None
         else:
             import signal
 
@@ -355,8 +407,10 @@ def _kill_tree(proc: subprocess.Popen) -> None:
                 except (ProcessLookupError, PermissionError, OSError):
                     proc.kill()
                 proc.wait(timeout=10)
-    except Exception:  # pragma: no cover — best-effort teardown
+            return proc.poll() is not None
+    except Exception:  # pragma: no cover - teardown failure is reported by caller
         log.warning("local-realtime install: process-tree teardown incomplete", exc_info=True)
+        return False
 
 
 def _port_open(port: int, timeout: float = 1.0) -> bool:
@@ -371,7 +425,8 @@ def _smoke_boot(launch_command: str, brain: BrainResolution) -> None:
     """Boot the freshly installed server once on a throwaway port.
 
     Proves the whole stack (imports, patched service, model downloads into
-    the HF cache, port bind) before the install may call itself ready.
+    the HF cache, and a live model pool) before the install may call itself
+    ready. A TCP bind alone is not model readiness.
     Mirrors the adapter's revive spawn exactly: raw string on Windows,
     shlex on POSIX, and the same hardening environment.
 
@@ -390,7 +445,11 @@ def _smoke_boot(launch_command: str, brain: BrainResolution) -> None:
     # The one shared hardening env (faulthandler, unbuffered, HF symlinks on
     # Windows) — the same the supervisor gives the real server, so the smoke
     # boot proves the environment the production spawn will actually use.
-    from jarvis.realtime.local_server.supervisor import hardened_child_env
+    from jarvis.realtime.local_server.supervisor import (
+        _kill_by_install_root,
+        hardened_child_env,
+        probe_runtime,
+    )
 
     env = hardened_child_env(inject_openai_key=False)
     if brain.kind == "cloud-openai" and brain.api_key:
@@ -416,10 +475,11 @@ def _smoke_boot(launch_command: str, brain: BrainResolution) -> None:
                 raise RuntimeError(
                     f"server exited during smoke boot (code {proc.returncode}); see {smoke_log}"
                 )
-            if _port_open(_SMOKE_PORT):
+            pool = probe_runtime(f"http://127.0.0.1:{_SMOKE_PORT}", timeout=1.0)
+            if pool is not None:
                 # The port pre-check above makes this OUR server; still
                 # require the process to be alive at success so a crash
-                # racing the poll cannot slip through.
+                # racing the pool response cannot slip through.
                 if proc.poll() is not None:
                     raise RuntimeError(
                         f"server exited right after binding (code {proc.returncode}); "
@@ -431,7 +491,12 @@ def _smoke_boot(launch_command: str, brain: BrainResolution) -> None:
             time.sleep(5)
         raise TimeoutError(f"server did not come up within {_SMOKE_TIMEOUT_S}s; see {smoke_log}")
     finally:
-        _kill_tree(proc)
+        tree_stopped = _kill_tree(proc)
+        _swept, survivors = _kill_by_install_root(install_root())
+        if survivors or (not tree_stopped and proc.poll() is None):
+            raise RuntimeError(
+                f"smoke-boot process {proc.pid} survived teardown; see {smoke_log}"
+            )
 
 
 def start_install(*, confirmed_brain: str = "") -> tuple[bool, str]:
@@ -464,9 +529,110 @@ def start_install(*, confirmed_brain: str = "") -> tuple[bool, str]:
 
 
 def _run_install(confirmed_brain: str = "") -> None:
+    """Hold the cross-process server lifecycle lease for the whole install."""
+    from jarvis.realtime.local_server import supervisor
+
+    with supervisor.lifecycle_guard() as guarded:
+        if not guarded:
+            _fail("another local-realtime lifecycle operation is already running")
+            return
+        _run_install_guarded(confirmed_brain)
+
+
+def _pull_brain_model(model: str) -> None:
+    """Pull one Ollama model synchronously, forwarding progress into the state.
+
+    The pull machinery is async and keeps its download task on the calling
+    loop, so the WHOLE pull must live inside one ``asyncio.run`` — starting
+    it in one loop and polling from another would orphan the task the
+    moment the first loop closes.
+    """
+    import asyncio
+
+    async def _pull_and_wait() -> None:
+        from jarvis.brain.ollama_pull import pull_status, start_pull
+
+        first = await start_pull(model)
+        if str(first.get("state")) == "error":
+            raise RuntimeError(str(first.get("message") or "model download failed"))
+        deadline = time.monotonic() + 3600
+        while time.monotonic() < deadline:
+            status = await pull_status(model)
+            state = str(status.get("state"))
+            if state == "done":
+                return
+            if state == "error":
+                raise RuntimeError(
+                    str(
+                        status.get("error")
+                        or status.get("message")
+                        or "model download failed"
+                    )
+                )
+            percent = float(status.get("percent") or 0.0)
+            _set(
+                "brain-setup",
+                6,
+                f"downloading the brain model {model} ({percent:.0f}%)",
+            )
+            await asyncio.sleep(3)
+        raise TimeoutError(f"the brain model download did not finish: {model}")
+
+    asyncio.run(_pull_and_wait())
+
+
+def resolve_brain_for_install() -> BrainResolution:
+    """The brain resolution the install engine trusts (own seam for tests)."""
+    from jarvis.realtime.local_server.brain_link import resolve_brain
+    from jarvis.realtime.local_server.preflight import (
+        _preferred_brain_model,
+        _usable_accelerator_gb,
+    )
+
+    usable_gb, _source = _usable_accelerator_gb()
+    return resolve_brain(
+        preferred_model=_preferred_brain_model(), usable_gb=usable_gb
+    )
+
+
+def _setup_local_brain() -> None:
+    """Make the Ollama brain real: runtime installed + running + model present.
+
+    The single-click promise (maintainer directive 2026-08-08): selecting
+    local models must never end in a terminal command. Raises with the
+    honest platform reason when a silent setup is impossible — the install
+    then fails with that exact sentence instead of a generic one.
+    """
+    from jarvis.brain import ollama_runtime
+    from jarvis.realtime.local_server.brain_link import _PREFERRED_MODELS
+
+    _set("brain-setup", 4, "setting up the local brain (Ollama)")
+    ok, detail = ollama_runtime.ensure_runtime_blocking()
+    if not ok:
+        raise RuntimeError(detail)
+    if resolve_brain_for_install().ok:
+        return
+    _set("brain-setup", 5, "no usable brain model yet — downloading one")
+    _pull_brain_model(_PREFERRED_MODELS[0])
+
+
+def _run_install_guarded(confirmed_brain: str = "") -> None:
     try:
         _set("preflight", 2, "checking hardware, disk, and brain")
         report: PreflightReport = run_preflight(install_root())
+        if (
+            not report.ok
+            and confirmed_brain == "ollama"
+            and report.tier is not None
+            and report.brain is not None
+            and report.brain.kind == "blocked"
+        ):
+            # Hardware and disk are fine; only the BRAIN is missing — and
+            # the user just confirmed a fully-local install. Set it up
+            # (install/start Ollama, pull the model) and check again.
+            _setup_local_brain()
+            _set("preflight", 7, "re-checking after the brain setup")
+            report = run_preflight(install_root())
         if not report.ok:
             _fail(report.blocker)
             return
@@ -487,9 +653,22 @@ def _run_install(confirmed_brain: str = "") -> None:
         try:
             from jarvis.realtime.local_server import supervisor
 
-            supervisor.stop(owned_only=True, install_root=install_root())
-        except Exception:  # noqa: BLE001 — best effort, the install continues
-            log.debug("install: pre-install server stop failed", exc_info=True)
+            stopped, stop_message = supervisor._stop_owned_unlocked(
+                owned_only=True,
+                install_root=install_root(),
+            )
+            if not stopped and stop_message != "no owned server process found":
+                _fail(f"could not stop the existing managed server: {stop_message}")
+                return
+        except Exception as exc:  # noqa: BLE001 - never install under a live server
+            log.warning("install: pre-install server stop failed", exc_info=True)
+            _fail(f"could not stop the existing managed server safely: {exc}")
+            return
+
+        # From this point onward a failure means the previous installation is
+        # no longer proven. Invalidate before the first venv mutation so a
+        # failed reinstall can never leave stale "ready" evidence behind.
+        _invalidate_smoke_marker()
 
         if not _venv_python().exists():
             _set("venv", 8, "creating the server's Python environment")
@@ -519,17 +698,15 @@ def _run_install(confirmed_brain: str = "") -> None:
         _smoke_boot(launch_command, report.brain)
 
         _set("configure", 96, "writing the launch configuration")
-        _smoke_marker().write_text(
-            json.dumps(
-                {
-                    "at": time.time(),
-                    "tier": report.tier.key,
-                    "brain": report.brain.kind,
-                    "preflight": report_payload(report),
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
+        _write_smoke_marker(
+            {
+                "schema": _SMOKE_MARKER_SCHEMA,
+                "patch_version": PATCH_TARGET_VERSION,
+                "at": time.time(),
+                "tier": report.tier.key,
+                "brain": report.brain.kind,
+                "preflight": report_payload(report),
+            }
         )
         from jarvis.core.config_writer import set_local_realtime_launch_command
 
@@ -543,31 +720,6 @@ def _run_install(confirmed_brain: str = "") -> None:
         log.info("local-realtime: managed install completed")
     except Exception as exc:  # noqa: BLE001 — every failure must land in the state
         _fail(str(exc))
-
-
-def _stop_managed_server(root: Path) -> None:
-    """Best-effort stop of any process running out of the install tree.
-
-    Deleting a venv under a LIVE server is exactly the mid-tree abort the
-    2026-08-07 screenshot showed (WinError 2 deep inside site-packages).
-    psutil is optional; without it the tolerant rmtree below still carries
-    the removal, just with more retries.
-    """
-    try:
-        import psutil  # type: ignore[import-untyped]
-    except ImportError:
-        log.debug("uninstall: psutil unavailable — skipping process stop")
-        return
-    needle = str(root).lower()
-    for proc in psutil.process_iter(["pid", "exe", "cmdline"]):
-        try:
-            exe = (proc.info.get("exe") or "").lower()
-            cmdline = " ".join(proc.info.get("cmdline") or ()).lower()
-            if needle in exe or needle in cmdline:
-                proc.kill()
-                proc.wait(timeout=10)
-        except (psutil.Error, OSError):  # pragma: no cover — best effort
-            continue
 
 
 def _rmtree_tolerant(root: Path) -> None:
@@ -624,6 +776,16 @@ def _clear_managed_config(root: Path) -> None:
 
 
 def uninstall() -> tuple[bool, str]:
+    """Serialize the entire removal against every server lifecycle action."""
+    from jarvis.realtime.local_server import supervisor
+
+    with supervisor.lifecycle_guard() as guarded:
+        if not guarded:
+            return False, "another local-realtime lifecycle operation is already running"
+        return _uninstall_guarded()
+
+
+def _uninstall_guarded() -> tuple[bool, str]:
     """Stop the managed server, delete its tree, and clear its config."""
     with _LOCK:
         if _STATE.thread is not None and _STATE.thread.is_alive():
@@ -635,11 +797,16 @@ def uninstall() -> tuple[bool, str]:
     try:
         from jarvis.realtime.local_server import supervisor
 
-        supervisor.stop(owned_only=True, install_root=root)
+        stopped, stop_message = supervisor._stop_owned_unlocked(
+            owned_only=True,
+            install_root=root,
+        )
+        if not stopped and stop_message != "no owned server process found":
+            return False, f"could not stop the managed server safely: {stop_message}"
         supervisor.clear_pidfile()
-    except Exception:  # noqa: BLE001 — the needle scan below still runs
-        log.debug("uninstall: supervisor stop failed", exc_info=True)
-    _stop_managed_server(root)
+    except Exception as exc:  # noqa: BLE001 - never delete under a live server
+        log.warning("uninstall: supervisor stop failed", exc_info=True)
+        return False, f"could not stop the managed server safely: {exc}"
     try:
         _rmtree_tolerant(root)
     except OSError as exc:

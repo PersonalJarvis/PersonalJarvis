@@ -2000,7 +2000,11 @@ function ManagedServerPanel({
   const startInstall = async () => {
     setError(null);
     try {
-      const first = await managedServerInstall(preflight?.brain?.kind);
+      // A fixable blocked brain is CONFIRMED as "ollama": the engine sets it
+      // up first and its post-setup re-check must match this confirmation.
+      const first = await managedServerInstall(
+        preflight?.brain_fixable ? "ollama" : preflight?.brain?.kind,
+      );
       setProgress(first);
       // A failure BEFORE the first poll tick (fast preflight error inside
       // the engine thread) would otherwise never render: the polling
@@ -2205,7 +2209,7 @@ function ManagedServerPanel({
         </Button>
       )}
 
-      {!status.ready && !running && preflight && !preflight.ok && (
+      {!status.ready && !running && preflight && !preflight.ok && !preflight.brain_fixable && (
         <div className="space-y-2 text-xs">
           <p className="text-amber-500">{preflight.blocker}</p>
           <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
@@ -2213,40 +2217,39 @@ function ManagedServerPanel({
               <li key={action}>{action}</li>
             ))}
           </ul>
-          {/* A blocked BRAIN is fixable right here: the local brain is
-              Ollama by design, so offer its install/start instead of only
-              printing the terminal command. Re-runs the preflight once the
-              runtime comes up. */}
-          {preflight.brain?.kind === "blocked" && (
-            <OllamaRuntimePanel
-              providerId="ollama"
-              onChanged={() => {
-                void check();
-                onChanged();
-              }}
-            />
-          )}
         </div>
       )}
 
-      {!status.ready && !running && preflight?.ok && preflight.tier && (
-        <div className="space-y-2 text-xs">
-          <div className="space-y-0.5 text-muted-foreground">
-            <p>
-              {preflight.tier.label} · {t("apikeys_view.managed_download_size")}{" "}
-              ~{preflight.tier.download_gb} GB ·{" "}
-              {t("apikeys_view.managed_latency")}{" "}
-              {preflight.tier.expected_latency}
-            </p>
-            <p>{preflight.stack_sentence}</p>
-            {preflight.brain && <p>{preflight.brain.note}</p>}
+      {!status.ready &&
+        !running &&
+        preflight &&
+        (preflight.ok || preflight.brain_fixable) &&
+        preflight.tier && (
+          <div className="space-y-2 text-xs">
+            <div className="space-y-0.5 text-muted-foreground">
+              <p>
+                {preflight.tier.label} · {t("apikeys_view.managed_download_size")}{" "}
+                ~{preflight.tier.download_gb} GB ·{" "}
+                {t("apikeys_view.managed_latency")}{" "}
+                {preflight.tier.expected_latency}
+              </p>
+              <p>{preflight.stack_sentence}</p>
+              {preflight.brain && <p>{preflight.brain.note}</p>}
+              {/* Blocked brain, but the install fixes it itself: say so
+                  honestly BEFORE the click — Ollama plus the brain model are
+                  extra downloads the tier size above does not include. */}
+              {!preflight.ok && preflight.brain_fixable && (
+                <p className="text-amber-500">
+                  {t("apikeys_view.managed_brain_setup_note")}
+                </p>
+              )}
+            </div>
+            <Button size="sm" onClick={startInstall} className="gap-2">
+              <Download className="h-3.5 w-3.5" />
+              {t("apikeys_view.managed_install_cta")}
+            </Button>
           </div>
-          <Button size="sm" onClick={startInstall} className="gap-2">
-            <Download className="h-3.5 w-3.5" />
-            {t("apikeys_view.managed_install_cta")}
-          </Button>
-        </div>
-      )}
+        )}
 
       {anythingOnDisk && !running && (
         <Button

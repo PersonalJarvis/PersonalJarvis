@@ -445,6 +445,35 @@ def _install_linux() -> str:
     return "install-script"
 
 
+def ensure_runtime_blocking() -> tuple[bool, str]:
+    """Install (when absent) and start Ollama, synchronously. ``(ok, detail)``.
+
+    For callers that already run on their own worker thread with their own
+    progress surface (the managed realtime install engine): same steps as
+    the poll-shaped installer, but inline and never raising — the caller
+    owns the phase reporting.
+    """
+    try:
+        status = runtime_status()
+        if status["running"]:
+            return True, "Ollama is already running."
+        if not status["installed"]:
+            if os.name == "nt":
+                method = _install_windows()
+            elif sys.platform == "darwin":
+                method = _install_macos()
+            else:
+                method = _install_linux()
+            _record_marker(method)
+            if not find_binary():
+                return False, (
+                    "the Ollama installer finished but no binary was found"
+                )
+        return start_server()
+    except Exception as exc:  # noqa: BLE001 — honest sentence, never a raise
+        return False, str(exc)
+
+
 def _run_install() -> None:
     try:
         status = runtime_status()

@@ -179,6 +179,16 @@ def report_payload(report: PreflightReport) -> dict[str, object]:
         "ok": report.ok,
         "blocker": report.blocker,
         "actions": list(report.actions),
+        # Hardware and disk pass but the BRAIN is blocked: the one blocked
+        # state the install can fix ITSELF (install/start Ollama, pull the
+        # model). The card keeps the Install button alive on this flag with
+        # an honest note about the extra downloads.
+        "brain_fixable": (
+            not report.ok
+            and tier is not None
+            and report.brain is not None
+            and report.brain.kind == "blocked"
+        ),
         "usable_gb": round(report.usable_gb, 1),
         "memory_source": report.memory_source,
         "disk_free_gb": round(report.disk_free_gb, 1),

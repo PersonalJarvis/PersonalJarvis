@@ -847,6 +847,8 @@ export interface ManagedPreflight {
   ok: boolean;
   blocker: string;
   actions: string[];
+  /** Blocked ONLY by the missing brain — the install can fix that itself. */
+  brain_fixable?: boolean;
   usable_gb: number;
   memory_source: string;
   disk_free_gb: number;

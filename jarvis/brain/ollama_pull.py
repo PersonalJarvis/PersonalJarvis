@@ -122,6 +122,15 @@ RECOMMENDED_MODELS: tuple[RecommendedModel, ...] = (
         purpose="The balanced default: chat, voice, and reliable tool calling.",
     ),
     RecommendedModel(
+        id="qwen2.5:7b",
+        label="Qwen 2.5 7B",
+        size_gb=4.7,
+        # The measured brain of the local realtime voice stack (tiers.py
+        # t0/t1): the managed install's brain-setup pulls THIS tag, so the
+        # panel must list it too — two curated lists must not drift apart.
+        purpose="The local realtime voice stack's measured brain model.",
+    ),
+    RecommendedModel(
         id="gpt-oss:20b",
         label="GPT-OSS 20B",
         size_gb=13.8,

@@ -1180,6 +1180,7 @@
     "managed_server_port_conflict": "Ein anderer Prozess belegt diesen Port",
     "managed_start_cta": "Server starten",
     "managed_stop_cta": "Server stoppen",
+    "managed_brain_setup_note": "Richtet zuerst das lokale Denkmodell ein: installiert bei Bedarf Ollama und lädt das Modell herunter (mehrere zusätzliche GB).",
     "ollama_install_cta": "Ollama installieren",
     "ollama_install_confirm": "Erneut klicken, um Ollama jetzt zu installieren",
     "ollama_install_hint": "Lädt die offizielle Ollama-Laufzeit von ollama.com und startet sie — ganz ohne Terminal. Lokale Modelle laufen vollständig auf diesem Rechner.",

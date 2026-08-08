@@ -177,6 +177,7 @@ class TestDeriveLaunchCommand:
         assert "--responses_api_api_key ollama" in cmd
         assert "--qwen3_tts_device cuda" in cmd
         assert "--model_name qwen2.5:7b" in cmd
+        assert "--ws_host 127.0.0.1" in cmd
 
     def test_cloud_command_never_carries_the_secret(self) -> None:
         brain = brain_link.BrainResolution(
@@ -209,6 +210,33 @@ class TestServerStatusFailClosed:
         components = status["components"]
         assert components["venv"] is True  # type: ignore[index]
         assert components["patch"] is False  # type: ignore[index]
+
+    def test_corrupt_smoke_marker_is_not_readiness(self, monkeypatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        python = install._venv_python()
+        entrypoint = install._server_entrypoint()
+        python.parent.mkdir(parents=True)
+        python.write_bytes(b"")
+        entrypoint.write_bytes(b"")
+        install._smoke_marker().write_text("", encoding="utf-8")
+        monkeypatch.setattr(install, "patch_state", lambda path: "patched")
+
+        status = install.server_status()
+
+        assert status["ready"] is False
+        assert status["components"]["smoke_boot"] is False  # type: ignore[index]
+
+    def test_smoke_marker_must_match_the_current_patch_version(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        install.install_root().mkdir(parents=True)
+        install._smoke_marker().write_text(
+            '{"schema": 1, "patch_version": "old", "at": 1, '
+            '"tier": "t1-16gb", "brain": "ollama", "preflight": {}}',
+            encoding="utf-8",
+        )
+        assert install._smoke_marker_valid() is False
 
     def test_stale_config_earns_the_repair_sentence(
         self, monkeypatch, tmp_path: Path
@@ -275,6 +303,180 @@ class TestSnapshot:
 
 class TestReviewFixes:
     """Contracts pinned by the 2026-08-07 code review."""
+
+    def test_posix_install_steps_start_a_killable_process_group(self, monkeypatch) -> None:
+        captured: dict[str, object] = {}
+
+        class _Process:
+            stdout: list[str] = []
+
+            def wait(self, timeout: int) -> int:
+                return 0
+
+        def popen(*args, **kwargs):
+            captured.update(kwargs)
+            return _Process()
+
+        monkeypatch.setattr(install.os, "name", "posix")
+        monkeypatch.setattr(install.subprocess, "Popen", popen)
+        install._run(["python", "-m", "pip", "install", "package"], timeout=30)
+        assert captured["start_new_session"] is True
+
+    def test_failed_reinstall_invalidates_the_previous_smoke_marker(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from jarvis.realtime.local_server import supervisor
+
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        install.install_root().mkdir(parents=True)
+        install._venv_python().parent.mkdir(parents=True)
+        install._venv_python().write_bytes(b"")
+        install._write_smoke_marker(
+            {
+                "schema": install._SMOKE_MARKER_SCHEMA,
+                "patch_version": install.PATCH_TARGET_VERSION,
+                "at": 1.0,
+                "tier": "t1-16gb",
+                "brain": "ollama",
+                "preflight": {},
+            }
+        )
+        report = preflight.PreflightReport(
+            ok=True,
+            usable_gb=16.0,
+            memory_source="nvidia-smi",
+            disk_free_gb=100.0,
+            tier=tiers.TIERS[1],
+            stack_sentence="x",
+            brain=brain_link.BrainResolution(kind="ollama", model="qwen2.5:7b"),
+        )
+        monkeypatch.setattr(install, "run_preflight", lambda root: report)
+        monkeypatch.setattr(
+            supervisor,
+            "_stop_owned_unlocked",
+            lambda **kwargs: (False, "no owned server process found"),
+        )
+
+        def failed_step(*args, **kwargs):
+            raise RuntimeError("dependency install failed")
+
+        monkeypatch.setattr(install, "_run", failed_step)
+        install._run_install()
+
+        assert not install._smoke_marker().exists()
+        assert install.snapshot()["phase"] == "error"
+
+    def test_smoke_boot_always_tears_down_its_child(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        install.install_root().mkdir(parents=True)
+
+        class _Process:
+            pid = 4711
+            returncode = None
+
+            def poll(self):
+                return None
+
+        process = _Process()
+        monkeypatch.setattr(install.subprocess, "Popen", lambda *args, **kwargs: process)
+        monkeypatch.setattr(
+            "jarvis.realtime.local_server.supervisor.probe_runtime",
+            lambda *args, **kwargs: {
+                "size": 1,
+                "in_use": 0,
+                "available": 1,
+                "stuck": 0,
+            },
+        )
+        killed: list[object] = []
+        monkeypatch.setattr(
+            install, "_kill_tree", lambda proc: killed.append(proc) or True
+        )
+
+        install._smoke_boot(
+            "serve --mode realtime",
+            brain_link.BrainResolution(kind="ollama", model="qwen2.5:7b"),
+        )
+
+        assert killed == [process]
+
+    def test_smoke_boot_fails_if_its_child_survives_teardown(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        install.install_root().mkdir(parents=True)
+
+        class _Process:
+            pid = 4711
+            returncode = None
+
+            def poll(self):
+                return None
+
+        monkeypatch.setattr(
+            install.subprocess,
+            "Popen",
+            lambda *args, **kwargs: _Process(),
+        )
+        monkeypatch.setattr(
+            "jarvis.realtime.local_server.supervisor.probe_runtime",
+            lambda *args, **kwargs: {
+                "size": 1,
+                "in_use": 0,
+                "available": 1,
+                "stuck": 0,
+            },
+        )
+        monkeypatch.setattr(install, "_kill_tree", lambda proc: False)
+
+        with pytest.raises(RuntimeError, match="survived teardown"):
+            install._smoke_boot(
+                "serve --mode realtime",
+                brain_link.BrainResolution(kind="ollama", model="qwen2.5:7b"),
+            )
+
+    def test_install_holds_the_server_lifecycle_lease_for_its_body(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from jarvis.realtime.local_server import supervisor
+
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        outcomes: list[str] = []
+
+        def guarded_body(confirmed_brain: str = "") -> None:
+            outcomes.append(
+                supervisor.ensure_running(
+                    launch_command="serve",
+                    base_url="http://127.0.0.1:8765",
+                    reason="lease-test",
+                )
+            )
+
+        monkeypatch.setattr(install, "_run_install_guarded", guarded_body)
+        install._run_install()
+        assert outcomes == ["refused:spawn-in-progress"]
+
+    def test_uninstall_holds_the_server_lifecycle_lease_for_its_body(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from jarvis.realtime.local_server import supervisor
+
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        outcomes: list[str] = []
+
+        def guarded_body() -> tuple[bool, str]:
+            outcomes.append(
+                supervisor.ensure_running(
+                    launch_command="serve",
+                    base_url="http://127.0.0.1:8765",
+                    reason="lease-test",
+                )
+            )
+            return True, "done"
+
+        monkeypatch.setattr(install, "_uninstall_guarded", guarded_body)
+        assert install.uninstall() == (True, "done")
+        assert outcomes == ["refused:spawn-in-progress"]
 
     def test_install_root_is_absolute_without_env(self, monkeypatch) -> None:
         monkeypatch.delenv("JARVIS_DATA_DIR", raising=False)
@@ -351,6 +553,137 @@ class TestReviewFixes:
         assert not root.exists()
         # Idempotent on an already-gone tree.
         install._rmtree_tolerant(root)
+
+
+class TestBrainSetupChain:
+    """Single-click promise: a confirmed local install sets up its own brain."""
+
+    @staticmethod
+    def _blocked_report() -> preflight.PreflightReport:
+        return preflight.PreflightReport(
+            ok=False,
+            blocker="No brain available: neither a running Ollama nor an OpenAI key.",
+            usable_gb=16.0,
+            memory_source="nvidia-smi",
+            disk_free_gb=100.0,
+            tier=tiers.TIERS[0],
+            brain=brain_link.BrainResolution(kind="blocked", note="no brain"),
+        )
+
+    def test_confirmed_ollama_runs_the_brain_setup(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        reports = [self._blocked_report(), self._blocked_report()]
+        monkeypatch.setattr(install, "run_preflight", lambda root: reports.pop(0))
+        calls: list[str] = []
+        monkeypatch.setattr(
+            install, "_setup_local_brain", lambda: calls.append("setup")
+        )
+        install._run_install("ollama")
+        # Setup ran; the still-blocked re-check then failed honestly (which
+        # also keeps this test off the heavy venv/pip tail).
+        assert calls == ["setup"]
+        assert install.snapshot()["phase"] == "error"
+
+    def test_unconfirmed_blocked_brain_fails_without_setup(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """Nothing installs without the user's explicit confirmation."""
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        monkeypatch.setattr(
+            install, "run_preflight", lambda root: self._blocked_report()
+        )
+        calls: list[str] = []
+        monkeypatch.setattr(
+            install, "_setup_local_brain", lambda: calls.append("setup")
+        )
+        install._run_install("")
+        assert calls == []
+        assert install.snapshot()["phase"] == "error"
+
+    def test_floor_blocked_never_runs_brain_setup(self, monkeypatch, tmp_path) -> None:
+        """A machine under the VRAM floor cannot be fixed by installing
+        Ollama — the honest hardware blocker must win."""
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        floor_blocked = preflight.PreflightReport(
+            ok=False,
+            blocker="under the minimum",
+            usable_gb=4.0,
+            memory_source="nvidia-smi",
+            disk_free_gb=100.0,
+        )
+        monkeypatch.setattr(install, "run_preflight", lambda root: floor_blocked)
+        calls: list[str] = []
+        monkeypatch.setattr(
+            install, "_setup_local_brain", lambda: calls.append("setup")
+        )
+        install._run_install("ollama")
+        assert calls == []
+        assert "minimum" in str(install.snapshot()["error"])
+
+    def test_setup_pulls_the_preferred_model_when_missing(self, monkeypatch) -> None:
+        from jarvis.brain import ollama_runtime
+
+        monkeypatch.setattr(
+            ollama_runtime, "ensure_runtime_blocking", lambda: (True, "running")
+        )
+        monkeypatch.setattr(
+            install,
+            "resolve_brain_for_install",
+            lambda: brain_link.BrainResolution(kind="blocked", note="no model"),
+        )
+        pulled: list[str] = []
+        monkeypatch.setattr(
+            install, "_pull_brain_model", lambda model: pulled.append(model)
+        )
+        install._setup_local_brain()
+        assert pulled == [brain_link._PREFERRED_MODELS[0]]
+
+    def test_setup_skips_the_pull_when_a_brain_already_resolves(
+        self, monkeypatch
+    ) -> None:
+        from jarvis.brain import ollama_runtime
+
+        monkeypatch.setattr(
+            ollama_runtime, "ensure_runtime_blocking", lambda: (True, "running")
+        )
+        monkeypatch.setattr(
+            install,
+            "resolve_brain_for_install",
+            lambda: brain_link.BrainResolution(kind="ollama", model="qwen2.5:7b"),
+        )
+        pulled: list[str] = []
+        monkeypatch.setattr(
+            install, "_pull_brain_model", lambda model: pulled.append(model)
+        )
+        install._setup_local_brain()
+        assert pulled == []
+
+    def test_setup_raises_the_honest_platform_reason(self, monkeypatch) -> None:
+        from jarvis.brain import ollama_runtime
+
+        monkeypatch.setattr(
+            ollama_runtime,
+            "ensure_runtime_blocking",
+            lambda: (False, "passwordless sudo is not available here"),
+        )
+        with pytest.raises(RuntimeError, match="sudo"):
+            install._setup_local_brain()
+
+    def test_payload_flags_the_fixable_brain(self) -> None:
+        payload = preflight.report_payload(self._blocked_report())
+        assert payload["brain_fixable"] is True
+        floor_blocked = preflight.PreflightReport(
+            ok=False, blocker="x", usable_gb=4.0, memory_source="nvidia-smi"
+        )
+        assert preflight.report_payload(floor_blocked)["brain_fixable"] is False
+
+    def test_the_preferred_model_is_in_the_curated_pull_list(self) -> None:
+        """The auto-pull target and the download panel must agree — two
+        curated lists drifting apart ships a model the panel disowns."""
+        from jarvis.brain.ollama_pull import RECOMMENDED_MODELS
+
+        curated = {entry.id for entry in RECOMMENDED_MODELS}
+        assert brain_link._PREFERRED_MODELS[0] in curated
 
 
 class TestCrossPlatformHonesty:
