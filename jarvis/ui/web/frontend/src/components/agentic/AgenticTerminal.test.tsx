@@ -107,6 +107,7 @@ vi.mock("@xterm/xterm", () => ({
     scrollToBottom() {
       terminalHarness.scrollToBottom();
     }
+    reset() {}
     resize() {}
     dispose() {}
     clearTextureAtlas() {}
@@ -376,6 +377,55 @@ describe("AgenticTerminal layout", () => {
       />,
     );
 
+    expect(region?.className).toContain("invisible");
+    expect(terminalHarness.writeCallbacks).toHaveLength(1);
+
+    act(() => {
+      // The held flush has parsed…
+      terminalHarness.writeCallbacks.shift()?.();
+    });
+    // …and the pane placed a queue barrier behind it: an earlier write (a
+    // replay flushed while hidden) may still be mid-parse, and the curtain
+    // must not lift onto its tail printing.
+    expect(terminalHarness.write).toHaveBeenLastCalledWith("");
+    expect(terminalHarness.writeCallbacks).toHaveLength(1);
+
+    act(() => {
+      terminalHarness.writeCallbacks.shift()?.();
+      vi.advanceTimersByTime(20);
+    });
+
+    expect(terminalHarness.scrollToBottom).toHaveBeenCalled();
+    expect(region?.className).not.toContain("invisible");
+  });
+
+  it("hides an active pane while a replay rebuilds it, then reveals it at the tail", () => {
+    vi.useFakeTimers();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+    const region = screen.getByTestId("agentic-terminal-host-Dana").parentElement;
+    act(() => {
+      vi.advanceTimersByTime(20);
+    });
+    expect(region?.className).not.toContain("invisible");
+
+    // A normal-buffer CLI's replay is its whole scrollback, parsed in slices:
+    // painted onto a visible surface it prints top to bottom with the
+    // viewport chasing it. The pane must hide until the tail scroll landed.
+    terminalHarness.deferWrite = true;
+    terminalHarness.scrollToBottom.mockClear();
+    act(() => {
+      terminalHarness.handlers.current?.onReplay?.(
+        "the whole recorded session" as never,
+      );
+    });
     expect(region?.className).toContain("invisible");
     expect(terminalHarness.writeCallbacks).toHaveLength(1);
 

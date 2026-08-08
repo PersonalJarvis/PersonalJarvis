@@ -412,6 +412,18 @@ export function AgenticTerminal({
   // The terminal itself stays in a ref. This small epoch only tells the scroll
   // rail that the ref now points at a new instance after a restart.
   const [terminalEpoch, setTerminalEpoch] = useState(0);
+  /*
+   * Is a replay currently rebuilding this pane behind the curtain?
+   *
+   * The replay path and the chat-stage switch both hide the surface until the
+   * tail scroll has landed, and they can interleave: a replay arriving within
+   * a frame of a stage switch (or of the mount) would otherwise have the
+   * OTHER sequence's settle step lift the curtain while the replay is still
+   * printing its history — which is exactly the top-to-bottom scroll the
+   * curtain exists to hide. While this is true, only the replay's own
+   * completion may reveal the pane.
+   */
+  const replayCurtainRef = useRef(false);
   /**
    * The delivery this pane is currently showing a receipt for, if any.
    *
@@ -478,6 +490,12 @@ export function AgenticTerminal({
     // A restart builds a brand-new terminal on a blank screen, so the pane owes
     // the user the same "it is coming up" answer it owed on its first mount.
     setPainted(false);
+    // And it must not inherit a curtain: a rebuild can tear the old terminal
+    // down between a replay dropping the curtain and its write callback (see
+    // `replayToPane`), which would leave the new terminal invisible with
+    // nothing left to lift it.
+    replayCurtainRef.current = false;
+    setTailReady(activeRef.current);
 
     const linkOptions = {
       workspaceId,
@@ -851,13 +869,39 @@ export function AgenticTerminal({
       offscreen.drain();
       liveTuiTracking.reset();
       term.reset();
+      // A normal-buffer CLI's replay is its whole scrollback — up to the
+      // server's 128 KB (see `ReplayBuffer`) — and xterm parses it in time
+      // slices. Written onto a VISIBLE surface, the history prints top to
+      // bottom with the viewport chasing it for the length of the parse
+      // (reported 2026-08-08: every switch onto a fresh Codex pane opened on
+      // the top of its history and visibly raced down). Alt-screen replays
+      // repaint in place, which is why only normal-buffer CLIs ever showed
+      // it. So the surface is hidden for the length of the rebuild — the same
+      // curtain a chat-stage switch drops — and lifted one settled frame
+      // after the tail scroll has landed.
+      const curtain = paneVisible && activeRef.current;
+      if (curtain) {
+        replayCurtainRef.current = true;
+        setTailReady(false);
+      }
       // Through the ordinary path, so a replay arriving while nobody is looking
       // is parked and un-parked by the same rules as anything else — and so it
       // counts as the pane having painted.
       writeToPane(text, () => {
+        // Cleared unconditionally: a callback that fired while the pane was
+        // away must not leave the stage-switch settle step refusing to lift
+        // the curtain forever.
+        replayCurtainRef.current = false;
+        if (disposed || !activeRef.current) return;
         // A selected chat returning from another session opens on the live
         // prompt, never several screens above it.
-        if (activeRef.current) term.scrollToBottom?.();
+        term.scrollToBottom?.();
+        if (!curtain) return;
+        requestAnimationFrame(() => {
+          if (disposed || !activeRef.current) return;
+          term.scrollToBottom?.();
+          setTailReady(true);
+        });
       });
     };
 
@@ -1219,14 +1263,29 @@ export function AgenticTerminal({
     // consumed that output, one final frame lets its canvas and viewport settle;
     // only then may the surface paint.
     followTail();
-    const afterFlush = () => {
+    const settle = () => {
       if (cancelled || !activeRef.current) return;
       followTail();
       frame = requestAnimationFrame(() => {
         if (cancelled || !activeRef.current) return;
         followTail();
-        setTailReady(true);
+        // A replay mid-rebuild keeps the curtain: lifting it here would show
+        // the rest of its history printing. Its own completion reveals the
+        // pane (see `replayToPane`).
+        if (!replayCurtainRef.current) setTailReady(true);
       });
+    };
+    const afterFlush = () => {
+      if (cancelled || !activeRef.current) return;
+      followTail();
+      // The held flush joins the END of xterm's write queue, but a write that
+      // reached the terminal earlier — a replay flushed while this pane was
+      // hidden — may still be mid-parse, and settling now would lift the
+      // curtain onto its tail printing. An empty write is a queue barrier:
+      // its callback fires only after everything already queued has parsed.
+      const term = termRef.current;
+      if (term) term.write("", settle);
+      else settle();
     };
     const visibility = visibilityRef.current;
     if (visibility) visibility.show(afterFlush);
