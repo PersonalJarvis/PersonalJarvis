@@ -45,7 +45,11 @@ from jarvis.dictation.polish_prompt import (
 
 #: Bumped whenever the wording below changes in a way that could change model
 #: behaviour, exactly like ``POLISH_PROMPT_VERSION``.
-TRANSLATE_PROMPT_VERSION: Final[int] = 2
+#:
+#: v3: the paragraph and enumeration clauses carry the same concrete target
+#: format the polish prompt's v4 gained — the two passes must lay text out the
+#: same way, or the translate switch would silently change list formatting.
+TRANSLATE_PROMPT_VERSION: Final[int] = 3
 
 #: English names for every code ``[dictation].translate_target`` accepts.
 #:
@@ -137,8 +141,14 @@ CLEAN IT UP AS YOU GO — this is dictated speech, not written prose:
   only. ("at 2, actually 3" -> "at 3")
 - Punctuate and capitalize the {target} text properly. Sentence boundaries in
   the input may have been broken by the recognizer mid-thought; repair them.
+- Break the text into paragraphs where the speaker clearly moved to a new
+  thought or topic, and wherever they dictated a break. Separate paragraphs
+  with ONE blank line.
 - Turn spoken punctuation commands into the mark itself, in {target}.
-- Turn a spoken enumeration into a list when the speaker clearly enumerated.
+- Turn a spoken enumeration into a list when the speaker clearly enumerated:
+  one item per line, numbered "1.", "2.", "3." when the speaker counted (the
+  number replaces the spoken ordinal), "- " bullets when they did not. A
+  running sentence that merely mentions items in passing stays a sentence.
 - Normalize spoken numbers to numerals where a writer would, but never invent
   a number that was not spoken.
 - Drop stray ellipses the recognizer left at a pause.

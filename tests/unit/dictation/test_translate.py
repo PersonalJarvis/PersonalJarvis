@@ -520,6 +520,31 @@ def test_numbers_and_names_must_survive_a_translation() -> None:
     )
 
 
+def test_a_counted_enumeration_may_cross_as_a_numbered_list() -> None:
+    """The polish prompt's list layout and the translate prompt's are ONE
+    format (the v4/v3 parity): a German "erstens, zweitens" that comes back as
+    English "1.", "2." lines must survive the translate guard. The spoken
+    ordinal vanished into the marker that replaced it, and the added digits
+    are legal by the same one-directional number rule the polish guard has."""
+    # The German source below is the content UNDER TEST (§1 list #4).
+    raw = (
+        "wir machen erstens das Angebot fertig und zweitens schicken wir "  # i18n-allow
+        "die Rechnung raus"  # i18n-allow
+    )
+    translated = "1. We finish the offer.\n2. We send out the invoice."
+    assert (
+        translate_drift_reason(
+            raw,
+            translated,
+            target_language="en",
+            protected=(),
+            max_shrink=0.40,
+            max_growth=2.50,
+        )
+        == ""
+    )
+
+
 def test_a_model_that_answered_instead_of_translating_is_caught() -> None:
     assert (
         translate_drift_reason(

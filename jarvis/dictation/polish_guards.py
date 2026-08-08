@@ -172,7 +172,12 @@ _CROSS_SCRIPT_MAX_CHAR_GROWTH = 6.0
 
 _TOKEN_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 _WORDLIKE_RE = re.compile(r"[\w']+", re.UNICODE)
-_WHITESPACE_RE = re.compile(r"\s+", re.UNICODE)
+# The two halves of "did anything change at all": a whitespace run CONTAINING a
+# line break collapses to one "\n", and every other run collapses to one space.
+# Kept apart on purpose — see ``normalize_for_compare`` for why a line break is
+# content here and not noise.
+_LINE_BREAK_RUN_RE = re.compile(r"\s*\n\s*", re.UNICODE)
+_INLINE_SPACE_RE = re.compile(r"[^\S\n]+", re.UNICODE)
 _DIGIT_RUN_RE = re.compile(r"\d+")
 # A separator BETWEEN two digits is formatting, not content: "1,000" and "1000"
 # are the same number, and a formatter is allowed to add or drop the grouping
@@ -306,6 +311,13 @@ _COMMON_WORDS_BASE: Final[dict[str, frozenset[str]]] = {
 # Spoken number words are common vocabulary AND explicitly licensed to vanish:
 # the prompt asks for "seven" -> "7", so a rarity guard that mourns the missing
 # word would reject the single transformation the feature was built to make.
+#
+# The ordinals and enumeration adverbs ("firstly", "erstens", "quinto") are
+# here for the same reason: the prompt turns a counted enumeration into a
+# numbered list, so the spoken ordinal vanishes into the "1." marker that
+# replaces it. A German speaker who counts says "erstens, zweitens, drittens"
+# — adverb forms no table here carried, so every counted list was rejected as
+# ``lost_term`` and the licensed transformation never survived the guard.
 _NUMBER_WORDS: Final[dict[str, frozenset[str]]] = {
     "en": frozenset({
         "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
@@ -313,7 +325,9 @@ _NUMBER_WORDS: Final[dict[str, frozenset[str]]] = {
         "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty",
         "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred",
         "thousand", "million", "billion", "first", "second", "third", "fourth",
-        "fifth", "half", "quarter", "dozen",
+        "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "firstly",
+        "secondly", "thirdly", "fourthly", "fifthly", "half", "quarter",
+        "dozen",
     }),
     "de": frozenset({  # i18n-allow: German number words (§1 list #3)
         "null", "eins", "zwei", "drei", "vier", "f\u00fcnf", "sechs", "sieben",  # i18n-allow
@@ -321,8 +335,11 @@ _NUMBER_WORDS: Final[dict[str, frozenset[str]]] = {
         "f\u00fcnfzehn", "sechzehn", "siebzehn", "achtzehn", "neunzehn",  # i18n-allow
         "zwanzig", "drei\u00dfig", "dreissig", "vierzig", "f\u00fcnfzig",  # i18n-allow
         "sechzig", "siebzig", "achtzig", "neunzig", "hundert", "tausend",  # i18n-allow
-        "million", "millionen", "erste", "zweite", "dritte", "halb", "viertel",  # i18n-allow
-        "dutzend",  # i18n-allow
+        "million", "millionen", "erste", "zweite", "dritte", "vierte",  # i18n-allow
+        "fünfte", "sechste", "siebte", "achte", "neunte", "zehnte",  # i18n-allow
+        "erstens", "zweitens", "drittens", "viertens", "fünftens",  # i18n-allow
+        "sechstens", "siebtens", "siebentens", "achtens", "neuntens",  # i18n-allow
+        "zehntens", "halb", "viertel", "dutzend",  # i18n-allow
     }),
     "es": frozenset({  # i18n-allow: Spanish number words (§1 list #3)
         "cero", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete",  # i18n-allow
@@ -330,7 +347,8 @@ _NUMBER_WORDS: Final[dict[str, frozenset[str]]] = {
         "diecis\u00e9is", "diecisiete", "dieciocho", "diecinueve", "veinte",  # i18n-allow
         "treinta", "cuarenta", "cincuenta", "sesenta", "setenta", "ochenta",  # i18n-allow
         "noventa", "cien", "ciento", "mil", "mill\u00f3n", "millones",  # i18n-allow
-        "primero", "segundo", "tercero", "medio", "cuarto", "docena",  # i18n-allow
+        "primero", "segundo", "tercero", "quinto", "sexto", "séptimo",  # i18n-allow
+        "octavo", "noveno", "décimo", "medio", "cuarto", "docena",  # i18n-allow
     }),
 }
 
@@ -387,13 +405,24 @@ _QUANTITY_WORDS: Final[dict[str, frozenset[str]]] = {
 def normalize_for_compare(text: str) -> str:
     """Collapse *text* to the form used to decide "did anything change at all".
 
-    Unicode-normalised (NFKC) and whitespace-collapsed, and nothing else:
-    punctuation and capitalization are exactly what the polish pass is FOR, so
-    normalising them away would report a successful repunctuation as
-    ``unchanged`` and throw the result away.
+    Unicode-normalised (NFKC), with runs of INLINE whitespace collapsed to one
+    space — and nothing else: punctuation, capitalization and line structure are
+    exactly what the polish pass is FOR, so normalising them away would report a
+    successful repunctuation as ``unchanged`` and throw the result away.
+
+    Line breaks survive as a single ``"\\n"`` on purpose. The pass's paragraph
+    and list work is made ENTIRELY of line breaks — a transcript split into
+    paragraphs, or an enumeration laid out one item per line, is often the same
+    words with only ``"\\n"`` added — and the first version of this function
+    collapsed those into spaces, reported the answer as ``unchanged``, and threw
+    the only formatting the user asked for on the floor. How a break is spelled
+    (``"\\n"``, ``"\\r\\n"``, a blank line) still normalises to one form: the
+    comparison cares that the text was split, not which convention split it.
     """
     flat = unicodedata.normalize("NFKC", str(text or ""))
-    return _WHITESPACE_RE.sub(" ", flat).strip()
+    flat = flat.replace("\r\n", "\n").replace("\r", "\n")
+    flat = _LINE_BREAK_RUN_RE.sub("\n", flat)
+    return _INLINE_SPACE_RE.sub(" ", flat).strip()
 
 
 def _compare_tokens(text: str) -> list[str]:

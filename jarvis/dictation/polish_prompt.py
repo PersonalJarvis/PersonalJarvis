@@ -38,7 +38,12 @@ from typing import Final
 #: Bumped whenever the wording below changes in a way that could change model
 #: behaviour. Stored alongside a polished transcript so a later quality
 #: regression can be attributed to a prompt revision rather than a provider.
-POLISH_PROMPT_VERSION: Final[int] = 3
+#:
+#: v4: the paragraph and enumeration clauses grew a concrete target format
+#: (blank line between paragraphs; one list item per line, "1." when the
+#: speaker counted, "-" when they did not). The v3 wording licensed both
+#: transformations without describing them, and the model answered with prose.
+POLISH_PROMPT_VERSION: Final[int] = 4
 
 #: The delimiters that fence the untrusted transcript inside the user message.
 #: Deliberately ugly and unlikely to be dictated by accident; deliberately
@@ -96,11 +101,20 @@ WHAT YOU MAY DO:
 - Remove filler sounds and repeated words that carry no meaning.
 - Remove false starts and self-corrections: keep the corrected version, drop
   the abandoned one. ("at 2, actually 3" -> "at 3")
-- Apply sentence-final punctuation, commas, capitalization and paragraph
-  breaks. Repair capitalization broken by transcription segment boundaries.
+- Apply sentence-final punctuation, commas and capitalization. Repair
+  capitalization broken by transcription segment boundaries.
+- Break the text into paragraphs where the speaker clearly moved to a new
+  thought or topic, and wherever they dictated a break ("new paragraph" and
+  its equivalents). Separate paragraphs with ONE blank line.
 - Turn spoken punctuation commands into the mark ("period", "comma",
   "question mark", "new line", and their equivalents in the input language).
-- Turn a spoken enumeration into a list when the speaker clearly enumerated.
+- Turn a spoken enumeration into a list when the speaker clearly enumerated:
+  one item per line. When the speaker counted ("first", "second", "third" and
+  their equivalents in the input language), number the lines "1.", "2.", "3."
+  — the number replaces the spoken ordinal. When they listed without
+  counting, start each line with "- ". Every item keeps the speaker's own
+  words; a running sentence that merely mentions items in passing stays a
+  sentence.
 - Normalize spoken numbers to numerals where a writer would ("seven" -> "7"),
   but never invent a number that was not spoken.
 - Remove stray ellipses left by the recognizer at a pause.

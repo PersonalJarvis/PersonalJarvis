@@ -254,16 +254,101 @@ def test_a_language_the_detector_cannot_classify_is_never_vetoed() -> None:
     assert verdict(raw, polished, language="pl") == ""
 
 
+def test_a_paragraph_split_alone_survives_every_guard() -> None:
+    """A transcript split into paragraphs is the same words with "\\n\\n" added.
+    No token vanishes, no count moves — nothing here is the guards' business."""
+    raw = (
+        "the offer went out this morning and I already got a reply next week "
+        "we should talk about the invoice and the timeline"
+    )
+    polished = (
+        "The offer went out this morning, and I already got a reply.\n\n"
+        "Next week we should talk about the invoice and the timeline."
+    )
+    assert verdict(raw, polished) == ""
+
+
+def test_a_counted_enumeration_may_become_a_numbered_list() -> None:
+    """"erstens, zweitens, drittens" -> "1. 2. 3." is the transformation the
+    prompt licenses. The spoken ordinal is a number word that may vanish into
+    the marker replacing it — the same one-directional trade as "seven" -> "7"
+    — and the added digits are legal by the same asymmetry. Before the adverb
+    forms joined the German number table, every counted list was rejected as
+    ``lost_term`` and the feature looked permanently inert in German."""
+    # The German source below is the content UNDER TEST (§1 list #4).
+    raw = (
+        "wir machen erstens das Angebot fertig zweitens schicken wir die "  # i18n-allow
+        "Rechnung und drittens bestätigen wir den Termin"  # i18n-allow
+    )
+    polished = (
+        "1. Wir machen das Angebot fertig.\n"  # i18n-allow
+        "2. Wir schicken die Rechnung.\n"  # i18n-allow
+        "3. Wir bestätigen den Termin."  # i18n-allow
+    )
+    assert detect_text_language(raw) == "de"
+    assert verdict(raw, polished, language="de") == ""
+
+    # The same trade in the other two table languages.
+    raw_en = (
+        "firstly prepare the offer secondly send the invoice thirdly "
+        "confirm the appointment"
+    )
+    polished_en = (
+        "1. Prepare the offer.\n2. Send the invoice.\n3. Confirm the appointment."
+    )
+    assert verdict(raw_en, polished_en) == ""
+
+    # The Spanish source below is the content UNDER TEST (§1 list #4).
+    raw_es = (
+        "primero revisamos la oferta segundo mandamos la factura tercero "  # i18n-allow
+        "confirmamos la cita"  # i18n-allow
+    )
+    polished_es = (
+        "1. Revisamos la oferta.\n"  # i18n-allow
+        "2. Mandamos la factura.\n"  # i18n-allow
+        "3. Confirmamos la cita."  # i18n-allow
+    )
+    assert verdict(raw_es, polished_es, language="es") == ""
+
+
+def test_an_uncounted_enumeration_may_become_a_bulleted_list() -> None:
+    """A plain spoken listing may come back one item per line with "-" bullets;
+    the bullet mark is punctuation, not a token, so no guard has an opinion."""
+    # The German source below is the content UNDER TEST (§1 list #4).
+    raw = "wir brauchen dafür noch Milch Eier und Butter vom Markt"  # i18n-allow
+    polished = (
+        "Wir brauchen dafür noch vom Markt:\n"  # i18n-allow
+        "- Milch\n"  # i18n-allow
+        "- Eier\n"  # i18n-allow
+        "- Butter"  # i18n-allow
+    )
+    assert verdict(raw, polished, language="de") == ""
+
+
 # --------------------------------------------------------------------------- #
 # The helpers the guards are built out of
 # --------------------------------------------------------------------------- #
 
 
-def test_normalize_for_compare_collapses_whitespace_but_keeps_punctuation() -> None:
+def test_normalize_for_compare_collapses_spaces_but_keeps_punctuation() -> None:
     """Punctuation is what the pass ADDS, so normalising it away would report a
     successful repunctuation as "unchanged" and throw the result on the floor."""
-    assert normalize_for_compare("  a   b\n c  ") == "a b c"
+    assert normalize_for_compare("  a   b \t c  ") == "a b c"
     assert normalize_for_compare("hello there") != normalize_for_compare("Hello there.")
+
+
+def test_normalize_for_compare_keeps_line_breaks() -> None:
+    """Line structure is ALSO what the pass adds — paragraphs and list items are
+    often the same words with only "\\n" inserted. The first version collapsed
+    those into spaces, reported the answer as "unchanged", and threw the only
+    formatting the user asked for on the floor. How a break is spelled still
+    normalises to one form: the comparison cares that the text was split, not
+    which convention split it."""
+    flat = "the offer is ready next we send the invoice"
+    split = "The offer is ready.\n\nNext we send the invoice."
+    assert normalize_for_compare(flat) != normalize_for_compare(split)
+    assert normalize_for_compare("a\r\nb") == normalize_for_compare("a\nb")
+    assert normalize_for_compare("a \n\n b") == normalize_for_compare("a\nb")
 
 
 def test_rare_tokens_keeps_names_and_ignores_ordinary_words() -> None:

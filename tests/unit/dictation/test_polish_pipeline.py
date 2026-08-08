@@ -164,6 +164,25 @@ async def test_a_model_that_changed_nothing_reports_unchanged(
     assert outcome.text == RAW
 
 
+async def test_a_paragraph_break_alone_is_a_change_worth_delivering(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one formatting job whose entire output is whitespace: the same words
+    split into paragraphs. It must be delivered as "applied" — while the
+    comparison collapsed line breaks, this exact answer was reported
+    "unchanged" and the split was thrown away."""
+    split = (
+        "So we should probably move the meeting to the morning.\n\n"
+        "And tell the team."
+    )
+    _wire(monkeypatch, chain=(GROQ,), clients=[_FakeClient(reply=split)])
+
+    outcome = await polish_transcript(RAW, language="en", cfg=_Cfg())
+
+    assert outcome.status == "applied"
+    assert outcome.text == split
+
+
 async def test_the_user_pinned_model_is_used_for_the_primary_family(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
