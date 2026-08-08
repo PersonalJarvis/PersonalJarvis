@@ -1405,12 +1405,20 @@ class _StubEndpointer:
 
 
 class _RecoveringEndpointer(_StubEndpointer):
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, *, ground_call: bool = True) -> None:
         super().__init__(speaking=True)
         self.text = text
         self.recovery_calls: list[tuple[bytes, int]] = []
         self._events = asyncio.Queue()
         self._events.put_nowait(InputTranscriptEvent(kind="speech_started"))
+        if ground_call:
+            # Under the no-unsolicited-opening policy an answer only plays
+            # once a user final exists.
+            self._events.put_nowait(
+                InputTranscriptEvent(
+                    kind="transcript", text="Hi.", is_final=True
+                )
+            )
 
     async def next_event(self):  # noqa: ANN202 - test protocol
         return await self._events.get()
@@ -2231,7 +2239,16 @@ async def test_a_pause_inside_one_reply_does_not_cut_off_its_remainder(
         output_schedule=((0.02, speech), (0.30, speech))
     )
     transcriber = _ScheduledInputTranscriber(
-        [(0.0, InputTranscriptEvent(kind="speech_started"))]
+        [
+            (0.0, InputTranscriptEvent(kind="speech_started")),
+            # Grounded call: the first answer needs a user final now.
+            (
+                0.0,
+                InputTranscriptEvent(
+                    kind="transcript", text="Hello there.", is_final=True
+                ),
+            ),
+        ]
     )
     client = _Client()
     client.subscription = _keeps_stream_open()
@@ -2261,7 +2278,13 @@ async def test_a_completed_turn_still_refuses_the_next_ungrounded_response() -> 
     even though the far end is still producing output milliseconds later.
     """
     transcriber = _ScriptedInputTranscriber(
-        [InputTranscriptEvent(kind="speech_started")]
+        [
+            InputTranscriptEvent(kind="speech_started"),
+            # Grounded call: the first answer needs a user final now.
+            InputTranscriptEvent(
+                kind="transcript", text="Hello there.", is_final=True
+            ),
+        ]
     )
     client = _Client(
         [
@@ -2306,7 +2329,13 @@ async def test_an_invented_user_caption_retires_the_entitlement() -> None:
     for its own invented turn is refused.
     """
     transcriber = _ScriptedInputTranscriber(
-        [InputTranscriptEvent(kind="speech_started")]
+        [
+            InputTranscriptEvent(kind="speech_started"),
+            # Grounded call: the first answer needs a user final now.
+            InputTranscriptEvent(
+                kind="transcript", text="Hello there.", is_final=True
+            ),
+        ]
     )
     transcriber._speaking = False  # the microphone is quiet from here on
     client = _Client(
@@ -2358,7 +2387,16 @@ async def test_interrupt_drops_the_remainder_without_any_codex_turn_id(
         output_schedule=((0.02, speech), (0.15, speech), (0.05, speech))
     )
     transcriber = _ScheduledInputTranscriber(
-        [(0.0, InputTranscriptEvent(kind="speech_started"))]
+        [
+            (0.0, InputTranscriptEvent(kind="speech_started")),
+            # Grounded call: the first answer needs a user final now.
+            (
+                0.0,
+                InputTranscriptEvent(
+                    kind="transcript", text="Hello there.", is_final=True
+                ),
+            ),
+        ]
     )
     client = _Client()
     client.subscription = _keeps_stream_open()
@@ -2522,8 +2560,9 @@ async def test_shadow_recovery_yields_to_an_open_user_utterance(
         output_schedule=tuple((0.04, speech) for _ in range(8))
     )
     # speech_started with no final: the utterance stays open for the whole
-    # window, so no shadow attempt may run.
-    transcriber = _RecoveringEndpointer("Must never be used.")
+    # window, so no shadow attempt may run (and under the
+    # no-unsolicited-opening policy the response never plays either).
+    transcriber = _RecoveringEndpointer("Must never be used.", ground_call=False)
     client = _Client()
     client.subscription = _keeps_stream_open()
     session = await _provider(
@@ -3085,15 +3124,14 @@ async def test_the_standing_directive_is_reasserted_on_every_delivery() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_rambling_opening_is_cut_and_the_real_answer_still_flows(
-    monkeypatch,
-) -> None:
-    """Probe round 1: a 16 s greeting monologue rode over the user's first
-    question. The opening response is now cut at the cap, its remainder is
-    refused frame by frame, and the answer the question earns still flows
-    through the continuation window afterwards."""
-    monkeypatch.setattr(codex_subscription_mod, "_OPENING_RESPONSE_MAX_S", 0.2)
-    monkeypatch.setattr(codex_subscription_mod, "_OPENING_OVERLAP_MAX_S", 0.2)
+async def test_an_unsolicited_opening_never_plays_on_a_grounded_host() -> None:
+    """Maintainer live test 2026-08-08: the bounded-greeting compromise lost —
+    what played was the model echoing the user's own words and acknowledging
+    itself ("geht ab? ... Okay."). Policy now mirrors the zero-role-play
+    control adapter: before the call's first user FINAL, nothing unsolicited
+    plays at all; the answer the question earns flows right after the final
+    (the refused-open response is re-judged immediately, never after the
+    stale window)."""
     loud = (1000).to_bytes(2, "little", signed=True) * 480
     transcriber = _ScheduledInputTranscriber(
         [
@@ -3108,11 +3146,13 @@ async def test_a_rambling_opening_is_cut_and_the_real_answer_still_flows(
     )
     endpoint = _FakeAudioEndpoint(
         output_schedule=[
+            # The server's greeting monologue, streaming BEFORE any final.
             (0.05, loud),
             (0.10, loud),
             (0.10, loud),
-            (0.15, loud),  # ~0.40 s in: past the 0.2 s cap -> cut here
-            (0.05, loud),  # the remainder the far end streams anyway
+            (0.15, loud),
+            # ...and the frames it keeps sending after the final landed.
+            (0.30, loud),
             (0.05, loud),
         ]
     )
@@ -3139,43 +3179,49 @@ async def test_a_rambling_opening_is_cut_and_the_real_answer_still_flows(
     ).open_session(RealtimeSessionConfig())
 
     events = []
+    final_seen = False
+    audio_before_final = 0
+    audio_after_final = 0
     async with asyncio.timeout(5.0):
         async for event in session.receive():
             events.append(event)
+            if event.type == "input_transcript" and event.is_final:
+                final_seen = True
+            elif event.type == "audio_delta":
+                if final_seen:
+                    audio_after_final += 1
+                else:
+                    audio_before_final += 1
             if event.type == "output_transcript_delta" and "real answer" in (
                 event.text or ""
             ):
                 break
 
-    assert session.diagnostics().get("opening_responses_bounded", 0) == 1
-    boundary_positions = [
-        i for i, e in enumerate(events) if e.type == "turn_complete"
-    ]
-    assert boundary_positions, "the cut must close the opening turn"
-    answer_position = next(
-        i
-        for i, e in enumerate(events)
-        if e.type == "output_transcript_delta"
-        and "real answer" in (e.text or "")
+    assert audio_before_final == 0, (
+        "an unsolicited opening reached the surface before the first final"
     )
-    assert boundary_positions[0] < answer_position
+    assert audio_after_final > 0, (
+        "the re-judged response after the final must play"
+    )
+    assert session.diagnostics().get("opening_responses_bounded", 0) == 0, (
+        "grounded hosts refuse the opener outright; the bound is the "
+        "recognizer-less fallback only"
+    )
     await session.close()
 
 
 @pytest.mark.asyncio
-async def test_a_final_landing_mid_opening_adopts_the_response(
-    monkeypatch,
-) -> None:
-    """A genuinely fast answer must never be cut: when the user's final lands
-    while the opening response still speaks, the response is ADOPTED as the
-    answer and the bound lifts."""
-    monkeypatch.setattr(codex_subscription_mod, "_OPENING_RESPONSE_MAX_S", 0.3)
+async def test_a_final_rejudges_the_open_refused_response_immediately() -> None:
+    """The far end often starts answering before the local final lands. That
+    response is (correctly) refused while ungrounded - but once the final
+    arrives, waiting out the stale-refusal window would eat the answer. The
+    final closes the refusal on the spot, and the next frame is granted."""
     loud = (1000).to_bytes(2, "little", signed=True) * 480
     transcriber = _ScheduledInputTranscriber(
         [
             (0.02, InputTranscriptEvent(kind="speech_started")),
             (
-                0.10,
+                0.25,
                 InputTranscriptEvent(
                     kind="transcript", text="Quick one?", is_final=True
                 ),
@@ -3184,10 +3230,9 @@ async def test_a_final_landing_mid_opening_adopts_the_response(
     )
     endpoint = _FakeAudioEndpoint(
         output_schedule=[
+            (0.05, loud),  # pre-final: refused (opens the refused response)
+            (0.35, loud),  # post-final: must be re-judged and granted
             (0.05, loud),
-            (0.15, loud),
-            (0.20, loud),  # ~0.40 s in: past the cap, but adopted by then
-            (0.10, loud),
         ]
     )
     client = _Client()
@@ -3212,14 +3257,14 @@ async def test_a_final_landing_mid_opening_adopts_the_response(
     ).open_session(RealtimeSessionConfig())
 
     events = await _collect_until(
-        session, stop_after=1, kind="never", timeout_s=1.2
+        session, stop_after=2, kind="audio_delta", timeout_s=2.0
     )
 
-    assert session.diagnostics().get("opening_responses_bounded", 0) == 0, (
-        "an adopted opening response is the answer and must not be cut"
-    )
     audio_events = [e for e in events if e.type == "audio_delta"]
-    assert len(audio_events) == 4, "all audio flowed, none was refused"
+    assert len(audio_events) == 2, (
+        "the post-final frames must flow without waiting out the "
+        f"stale-refusal window; saw {len(audio_events)}"
+    )
     await session.close()
 
 
@@ -3233,9 +3278,19 @@ async def test_a_discarded_utterance_keeps_its_response_window(
     plays - and after the grace an unanswered window retires."""
     transcriber = _ScheduledInputTranscriber(
         [
-            (0.02, InputTranscriptEvent(kind="speech_started")),
+            # Priming exchange: the call opening answers no bare cough under
+            # the no-unsolicited policy, so the discard under test is a
+            # MID-CALL event like the live BUG-124 amplifier was.
+            (0.01, InputTranscriptEvent(kind="speech_started")),
             (
-                0.03,
+                0.0,
+                InputTranscriptEvent(
+                    kind="transcript", text="Hello there.", is_final=True
+                ),
+            ),
+            (0.05, InputTranscriptEvent(kind="speech_started")),
+            (
+                0.01,
                 InputTranscriptEvent(kind="speech_discarded", voiced_ms=200),
             ),
         ]
@@ -3281,9 +3336,19 @@ async def test_an_unanswered_discard_window_expires(monkeypatch) -> None:
     )
     transcriber = _ScheduledInputTranscriber(
         [
-            (0.02, InputTranscriptEvent(kind="speech_started")),
+            # Priming exchange: the call opening answers no bare cough under
+            # the no-unsolicited policy, so the discard under test is a
+            # MID-CALL event like the live BUG-124 amplifier was.
+            (0.01, InputTranscriptEvent(kind="speech_started")),
             (
-                0.03,
+                0.0,
+                InputTranscriptEvent(
+                    kind="transcript", text="Hello there.", is_final=True
+                ),
+            ),
+            (0.05, InputTranscriptEvent(kind="speech_started")),
+            (
+                0.01,
                 InputTranscriptEvent(kind="speech_discarded", voiced_ms=200),
             ),
         ]

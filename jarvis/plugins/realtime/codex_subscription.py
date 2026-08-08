@@ -34,20 +34,14 @@ _BROKER_OFFER_WAIT_S = 3.0
 # in-reply pauses on ChatGPT-Live reach ~720 ms, so a shorter window would
 # split a single answer at every breath.
 _OUTPUT_QUIESCENCE_S = 1.2
-# Cap on the call's OPENING response while no user question exists yet.
-# ChatGPT-Live opens a response the moment it hears a voice - before the
-# user's first sentence is finished - and probe round 1 (2026-08-06) recorded
-# a 16 s greeting monologue riding over the user's first question. A greeting
-# that long is never a greeting. Bounded per frame (no timer task); a user
-# final arriving mid-greeting ADOPTS the response instead (see the local
-# input branch), so a genuinely fast answer is never cut.
+# Cap on a recognizer-LESS host's first (failopen) response. On grounded
+# hosts nothing unsolicited plays before the call's first user final at all
+# (maintainer live test 2026-08-08 killed the bounded-greeting compromise:
+# the opener's remainder re-earned grants and the first final adopted the
+# model's own echo-monologue as "the answer"). A host without any local
+# recognizer cannot ground anything, so its opening keeps only this coarse
+# bound against the 13.9 s demo-monologue class (live 2026-08-06 17:03).
 _OPENING_RESPONSE_MAX_S = 6.0
-# Much tighter cap while the user is MID-UTTERANCE: under half-duplex the
-# greeting's own playback mutes the microphone, so every second of overlap
-# eats a second of the user's first question (live probe 2026-08-06: only
-# 2.4 s of the question survived and the server answered a fragment). The
-# model may say "hey", not a paragraph, over a speaking user.
-_OPENING_OVERLAP_MAX_S = 2.0
 # A locally DISCARDED utterance (under the endpointer's minimum voiced
 # length) keeps its response window this long. The far end heard the sound
 # regardless of the local verdict and often answers it; consuming the
@@ -827,11 +821,6 @@ class _CodexSubscriptionRealtimeSession:
         # answer was then refused as ungrounded).
         first_user_final_seen = False
         call_response_index = 0
-        # Once an opening response was cut at the cap, its streamed remainder
-        # must not earn a fresh greeting grant frame by frame - the utterance
-        # keeps its entitlement, but nothing speaks on it until a FINAL
-        # exists (or the user audibly starts over).
-        opening_bound_cut = False
         # A discarded utterance's still-open response window (see
         # _DISCARDED_UTTERANCE_GRACE_S): the generation it covers and when
         # the discard happened.
@@ -1066,26 +1055,28 @@ class _CodexSubscriptionRealtimeSession:
             if not self._local_grounding_active():
                 response_allowed = True
                 response_grant = "failopen"
-            elif local_input_generation > consumed_input_generation and (
-                first_user_final_seen or not opening_bound_cut
+            elif (
+                local_input_generation > consumed_input_generation
+                and first_user_final_seen
             ):
-                # Same consumption machinery either way; the grant label is
-                # what changes the OPENING response's treatment. The server
-                # opens a response the moment it hears a VOICE - before the
-                # user's first sentence exists (probe round 1, 2026-08-06: a
-                # 16 s greeting monologue opened 2 s into the user's question
-                # and starved the real answer). A pre-first-final response is
-                # therefore a GREETING: bounded at the media handler, adopted
-                # as the answer if the final lands while it still speaks, and
-                # its bound-cut closes WITHOUT spending - the continuation
-                # window stays open for the answer the question still earns.
+                # NOTHING unsolicited ever plays before the call's first user
+                # FINAL. The bounded-greeting compromise this replaces lost
+                # its live test (maintainer, 2026-08-08): the greeting's
+                # remainder re-earned a grant the moment speech re-opened,
+                # the first final then ADOPTED it as "the answer", and what
+                # played was the model echoing the user's own words and
+                # acknowledging itself ("geht ab? ... Okay."). The control
+                # adapter (openai-realtime) never adopts unsolicited
+                # responses and shows zero role-play - this is that policy.
+                # The user's question keeps its entitlement while the opener
+                # is refused (a refusal never consumes), and the first final
+                # re-judges a refused-open response immediately (see the
+                # local-input branch), so the real answer still flows.
                 active_response_generation = local_input_generation
                 entitled_generation = local_input_generation
                 entitlement_spent = False
                 response_allowed = True
-                response_grant = (
-                    "fresh" if first_user_final_seen else "greeting"
-                )
+                response_grant = "fresh"
             elif _trusted_permit_available():
                 self._trusted_output_permits -= 1
                 self._diag["trusted_permit_responses"] += 1
@@ -1580,7 +1571,6 @@ class _CodexSubscriptionRealtimeSession:
                     if payload.kind == _SPEECH_STARTED:
                         local_input_generation += 1
                         user_utterance_open = True
-                        opening_bound_cut = False
                         local_transcript_failed = False
                         user_final_emitted = False
                         missing_boundary_emitted = False
@@ -1636,6 +1626,19 @@ class _CodexSubscriptionRealtimeSession:
                         # covers the same audio and the endpointer already
                         # vouched for it. Silence here would strand the turn.
                         user_utterance_open = False
+                        # The endpointer vouched for a COMPLETE real
+                        # utterance, so the call's opening phase ends here
+                        # even though no clean text exists - otherwise a
+                        # recognizer hiccup on turn 1 would keep refusing
+                        # every answer of the call.
+                        first_user_final_seen = True
+                        if response_open and not response_allowed:
+                            _close_response(spent=False)
+                            log.info(
+                                "Codex subscription re-judges the open "
+                                "refused response after a failed local "
+                                "transcript proved a real utterance"
+                            )
                         preview = self._server_user_preview
                         self._server_user_preview = ""
                         local_transcript_failed = True
@@ -1657,24 +1660,22 @@ class _CodexSubscriptionRealtimeSession:
                             user_utterance_open = False
                             local_transcript_failed = False
                             user_final_emitted = True
-                            if not first_user_final_seen:
-                                first_user_final_seen = True
-                                if (
-                                    response_open
-                                    and response_allowed
-                                    and response_grant == "greeting"
-                                ):
-                                    # The question landed while the opening
-                                    # response still speaks: adopt it as the
-                                    # answer and lift the greeting bound
-                                    # (the entitlement machinery is already
-                                    # armed by the grant).
-                                    response_grant = "fresh"
-                                    log.info(
-                                        "Codex subscription adopted the "
-                                        "opening response as the answer to "
-                                        "the user's first utterance"
-                                    )
+                            first_user_final_seen = True
+                            if response_open and not response_allowed:
+                                # A REFUSED response is still open while the
+                                # user's final just landed - the far end may
+                                # already be answering the question it heard.
+                                # Close the refusal now (never consuming) so
+                                # the very next frame is re-judged against
+                                # the fresh entitlement, instead of the
+                                # answer waiting out the stale-refusal
+                                # window and losing its head.
+                                _close_response(spent=False)
+                                log.info(
+                                    "Codex subscription re-judges the open "
+                                    "refused response now that a user final "
+                                    "landed"
+                                )
                         yield _ProviderEvent(
                             type="input_transcript",
                             text=payload.text,
@@ -1742,32 +1743,18 @@ class _CodexSubscriptionRealtimeSession:
                         response_allowed
                         and first_audible_at
                         and not first_user_final_seen
-                        and (
-                            response_grant == "greeting"
-                            or (
-                                response_grant == "failopen"
-                                and call_response_index == 1
-                            )
-                        )
+                        and response_grant == "failopen"
+                        and call_response_index == 1
                     ):
+                        # A recognizer-less host cannot refuse its opener (no
+                        # grounding exists), so its FIRST response keeps a
+                        # coarse cap against the demo-monologue class. On
+                        # grounded hosts the opener never plays at all.
                         opening_age = (
                             asyncio.get_running_loop().time() - first_audible_at
                         )
-                        opening_cap = (
-                            _OPENING_OVERLAP_MAX_S
-                            if user_utterance_open
-                            else _OPENING_RESPONSE_MAX_S
-                        )
-                        if opening_age > opening_cap:
-                            # No user question exists yet and the opener is
-                            # still going: this is the 13.9 s / 16 s demo
-                            # monologue class, cut at the cap. A greeting
-                            # close keeps the user's entitlement (spent=False)
-                            # so their in-flight question still earns its
-                            # answer; a recognizer-less failopen host has no
-                            # entitlement to keep.
+                        if opening_age > _OPENING_RESPONSE_MAX_S:
                             self._diag["opening_responses_bounded"] += 1
-                            opening_bound_cut = True
                             log.warning(
                                 "Codex subscription bounded an opening "
                                 "response at %.1fs - no user question exists "
@@ -1776,15 +1763,6 @@ class _CodexSubscriptionRealtimeSession:
                                 response_grant,
                             )
                             await self._interrupt_active_codex_turn()
-                            # The far end streams the remainder regardless.
-                            # Deliberately NOT the output-drop barrier: its
-                            # handler closes with spent=True, which would
-                            # burn the continuation window the user's
-                            # in-flight question needs for its real answer.
-                            # The opening_bound_cut gate refuses the
-                            # remainder frame by frame instead, and the
-                            # grace keeps their echo captions out of the
-                            # self-dialogue counters (the BUG-124 lesson).
                             interrupt_grace_until = (
                                 asyncio.get_running_loop().time()
                                 + _POST_INTERRUPT_GRACE_S
@@ -1793,7 +1771,7 @@ class _CodexSubscriptionRealtimeSession:
                             completion_emitted = True
                             yield _ProviderEvent(type="turn_complete")
                             _reset_assistant_capture()
-                            _close_response(spent=response_grant != "greeting")
+                            _close_response(spent=True)
                             response_grant = ""
                             continue
                     if (
