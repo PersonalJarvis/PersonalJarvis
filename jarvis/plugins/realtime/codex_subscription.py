@@ -495,6 +495,29 @@ def _consume_cleanup_task(task: asyncio.Task[Any]) -> None:
         task.result()
 
 
+async def _cancel_background_task(task: asyncio.Task[Any] | None) -> None:
+    """Cancel and consume one locally owned startup task."""
+    if task is None:
+        return
+    if not task.done():
+        task.cancel()
+    with suppress(asyncio.CancelledError, Exception):
+        await task
+
+
+async def _warm_input_transcriber(transcriber: Any) -> None:
+    """Prime local STT concurrently with the independent transport startup."""
+    warm = getattr(transcriber, "warm", None)
+    if not callable(warm):
+        return
+    started_at = time.monotonic()
+    await warm()
+    log.info(
+        "RT-SPAWN span=transcriber_warm ms=%d",
+        int((time.monotonic() - started_at) * 1000.0),
+    )
+
+
 async def _bounded_remote_call(
     client: Any,
     method_name: str,
@@ -2783,35 +2806,45 @@ class CodexSubscriptionRealtimeProvider:
         # local state, and rebuilding + re-warming it on the STUN retry paid
         # seconds for nothing.
         input_transcriber = self._build_input_transcriber(cfg)
-        for index, ice_factory in enumerate(attempts):
-            try:
-                session = await self._open_session_once(
-                    cfg,
-                    None if ice_factory is None else ice_factory(),
-                    input_transcriber=input_transcriber,
-                    # The STUN retry may ride the audit that passed seconds
-                    # ago on this very open; a first attempt never does.
-                    ride_recent_audit=index > 0,
-                )
-                if index > 0:
-                    # Postmortem marker: this call paid the full re-open (a
-                    # second thread_start bundle included) to reach STUN.
-                    session._diag["stun_retries"] = index
-                    log.info("RT-SPAWN stun_retry=%d", index)
-                return session
-            except transport_module.WebRtcMediaPathUnavailable as exc:
-                last_error = exc
-                if index + 1 < len(attempts):
-                    log.warning(
-                        "Realtime media path did not connect on host candidates "
-                        "(%s); retrying with a STUN server",
-                        exc,
+        warm_task: asyncio.Task[Any] | None = None
+        if callable(getattr(input_transcriber, "warm", None)):
+            warm_task = asyncio.create_task(
+                _warm_input_transcriber(input_transcriber),
+                name="codex-realtime-transcriber-warm",
+            )
+        try:
+            for index, ice_factory in enumerate(attempts):
+                try:
+                    session = await self._open_session_once(
+                        cfg,
+                        None if ice_factory is None else ice_factory(),
+                        input_transcriber=input_transcriber,
+                        input_transcriber_warm_task=warm_task,
+                        # The STUN retry may ride the audit that passed seconds
+                        # ago on this very open; a first attempt never does.
+                        ride_recent_audit=index > 0,
                     )
-                    continue
-                raise
-        raise RuntimeError(  # pragma: no cover - the loop always returns or raises
-            "Codex subscription realtime could not open a media path"
-        ) from last_error
+                    if index > 0:
+                        # Postmortem marker: this call paid the full re-open (a
+                        # second thread_start bundle included) to reach STUN.
+                        session._diag["stun_retries"] = index
+                        log.info("RT-SPAWN stun_retry=%d", index)
+                    return session
+                except transport_module.WebRtcMediaPathUnavailable as exc:
+                    last_error = exc
+                    if index + 1 < len(attempts):
+                        log.warning(
+                            "Realtime media path did not connect on host candidates "
+                            "(%s); retrying with a STUN server",
+                            exc,
+                        )
+                        continue
+                    raise
+            raise RuntimeError(  # pragma: no cover - loop returns or raises
+                "Codex subscription realtime could not open a media path"
+            ) from last_error
+        finally:
+            await _cancel_background_task(warm_task)
 
     def _build_input_transcriber(self, cfg: Any = None) -> Any:
         """Local user-speech recognition, or ``None`` when unavailable.
@@ -2858,44 +2891,50 @@ class CodexSubscriptionRealtimeProvider:
         ice_servers: Any,
         *,
         input_transcriber: Any = None,
+        input_transcriber_warm_task: asyncio.Task[Any] | None = None,
         ride_recent_audit: bool = False,
     ) -> _CodexSubscriptionRealtimeSession:
         # Jarvis owns the media path in-process. The UI could only ever broker
         # a signalling-shaped offer (no microphone), which ChatGPT-Live cannot
         # use: on v3 the audio IS the WebRTC track.
-        # RT-SPAWN spans: every step of this open is sequential today, so the
-        # per-step numbers are what makes the latency budget (and any future
-        # overlap) measurable instead of anecdotal.
-        last_stamp = time.monotonic()
-
-        def _stamp(name: str) -> None:
-            nonlocal last_stamp
-            now = time.monotonic()
+        # RT-SPAWN spans use each operation's own start so overlapping work
+        # stays measurable instead of producing misleading near-zero deltas.
+        def _stamp(name: str, started_at: float) -> None:
             log.info(
-                "RT-SPAWN span=%s ms=%d", name, int((now - last_stamp) * 1000.0)
+                "RT-SPAWN span=%s ms=%d",
+                name,
+                int((time.monotonic() - started_at) * 1000.0),
             )
-            last_stamp = now
 
         audio_endpoint: Any = None
-        if self._audio_endpoint_factory is not None:
-            audio_endpoint = self._audio_endpoint_factory(ice_servers)
-        else:
-            transport_module = importlib.import_module("jarvis.realtime.webrtc_transport")
-            audio_endpoint = transport_module.RealtimeWebRtcAudioEndpoint(ice_servers)
-        offer_sdp = await audio_endpoint.create_offer()
-        _stamp("offer_create")
-
         client = self._client
-        if client is None:
-            app_server_module = importlib.import_module("jarvis.codex_app_server")
-            client = app_server_module.get_shared_codex_app_server(self._binary_path)
-
+        offer_task: asyncio.Task[str] | None = None
         subscription: Any = None
         thread_id = ""
         try:
+            if self._audio_endpoint_factory is not None:
+                audio_endpoint = self._audio_endpoint_factory(ice_servers)
+            else:
+                transport_module = importlib.import_module(
+                    "jarvis.realtime.webrtc_transport"
+                )
+                audio_endpoint = transport_module.RealtimeWebRtcAudioEndpoint(
+                    ice_servers
+                )
+            offer_started_at = time.monotonic()
+            offer_task = asyncio.create_task(
+                audio_endpoint.create_offer(), name="codex-realtime-create-offer"
+            )
+
+            if client is None:
+                app_server_module = importlib.import_module("jarvis.codex_app_server")
+                client = app_server_module.get_shared_codex_app_server(
+                    self._binary_path
+                )
             # ``thread_start`` lazily calls app-server ``ensure_started``. That
             # performs the authoritative capability probe plus live
             # ``account/read`` verification before accepting this thread.
+            thread_started_at = time.monotonic()
             thread_result = await client.thread_start(
                 base_instructions=_THREAD_BASE_INSTRUCTIONS,
                 developer_instructions=_THREAD_DEVELOPER_INSTRUCTIONS,
@@ -2904,7 +2943,9 @@ class CodexSubscriptionRealtimeProvider:
             thread_id = _thread_id_from_result(thread_result)
             if not thread_id:
                 raise RuntimeError("Codex app-server did not return a thread id")
-            _stamp("thread_start")
+            _stamp("thread_start", thread_started_at)
+            offer_sdp = await offer_task
+            _stamp("offer_create", offer_started_at)
             subscription = client.subscribe(thread_id)
 
             configured_model = str(getattr(cfg, "model", "") or "").strip()
@@ -2933,6 +2974,7 @@ class CodexSubscriptionRealtimeProvider:
                 ),
             )
             initial_items = _history_initial_items(getattr(cfg, "history", ()))
+            realtime_started_at = time.monotonic()
             start = await client.realtime_start(
                 thread_id,
                 output_modality="audio",
@@ -2953,12 +2995,13 @@ class CodexSubscriptionRealtimeProvider:
             answer_sdp = str(getattr(start, "answer_sdp", "") or "").strip()
             if not answer_sdp:
                 raise RuntimeError("Codex app-server did not return a WebRTC answer SDP")
-            _stamp("realtime_start_sdp")
+            _stamp("realtime_start_sdp", realtime_started_at)
+            media_started_at = time.monotonic()
             await audio_endpoint.apply_answer(answer_sdp)
             # Fail here rather than mid-call: without a live media path the
             # session would look connected and stay mute in both directions.
             await audio_endpoint.wait_connected()
-            _stamp("media_connect")
+            _stamp("media_connect", media_started_at)
             session = _CodexSubscriptionRealtimeSession(
                 client=client,
                 subscription=subscription,
@@ -2974,16 +3017,16 @@ class CodexSubscriptionRealtimeProvider:
                 voice=voice,
                 initial_context=initial_context,
             )
-            # Build and prime the recognizer here, not inside the first
-            # utterance: a local engine costs seconds to construct, and paying
-            # that while the user is already speaking delays the first
-            # transcript past its own turn. Idempotent and never raises.
-            warm = getattr(session._input_transcriber, "warm", None)
-            if callable(warm):
-                await warm()
-            _stamp("transcriber_warm")
+            # The recognizer was primed alongside offer/thread startup. Wait
+            # for that independent work before exposing the session so the
+            # first utterance never pays its cold-start cost.
+            if input_transcriber_warm_task is not None:
+                await input_transcriber_warm_task
+            else:
+                await _warm_input_transcriber(session._input_transcriber)
             return session
         except BaseException:
+            await _cancel_background_task(offer_task)
             try:
                 await _cleanup_remote_thread(client, thread_id)
             finally:
@@ -2991,7 +3034,8 @@ class CodexSubscriptionRealtimeProvider:
                     if subscription is not None:
                         await _close_subscription(subscription)
                 finally:
-                    await audio_endpoint.close()
+                    if audio_endpoint is not None:
+                        await audio_endpoint.close()
             raise
 
 

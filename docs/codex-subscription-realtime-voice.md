@@ -180,8 +180,10 @@ Codex 0.147 also disables its automatic delegation acknowledgement. All of
 that configuration is therefore atomic with session creation: no synthetic
 developer message can provoke a greeting or confirmation before the user's
 first grounded utterance. The provider then applies the SDP answer and waits
-for media. It declares a 45-second handshake budget because a cold start has
-measured at 15-25 seconds.
+for media. WebRTC offer creation, the ephemeral Codex thread start, and local
+recognizer warm-up run concurrently; cleanup still unloads a thread if either
+parallel local task fails. The provider declares a 45-second handshake budget
+because a cold start has measured at 15-25 seconds.
 
 `_CodexSubscriptionRealtimeSession.send_audio()` sends 24 kHz mono PCM through
 the persistent, statefully resampled WebRTC track. Local energy-gated

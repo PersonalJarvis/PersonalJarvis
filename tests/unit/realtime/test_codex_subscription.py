@@ -1237,9 +1237,8 @@ async def test_provider_error_and_app_server_death_are_normalized() -> None:
 
 
 @pytest.mark.asyncio
-async def test_media_endpoint_failure_fails_before_app_server_launch() -> None:
-    """No media path means no call: ChatGPT-Live audio IS the WebRTC track, so
-    failing early beats a session that looks connected and stays mute."""
+async def test_media_endpoint_failure_cleans_parallel_thread_before_realtime() -> None:
+    """A failed local offer must not leave the parallel thread start behind."""
     client = _Client()
 
     class _BrokenEndpoint(_FakeAudioEndpoint):
@@ -1251,8 +1250,55 @@ async def test_media_endpoint_failure_fails_before_app_server_launch() -> None:
     with pytest.raises(RuntimeError, match="no local WebRTC endpoint"):
         await provider.open_session(RealtimeSessionConfig())
 
-    assert client.capability_calls == 0
-    assert client.thread_starts == []
+    assert len(client.thread_starts) == 1
+    assert client.realtime_starts == []
+    assert client.stops == ["thread-1"]
+    assert client.unsubscribes == ["thread-1"]
+    assert provider.test_endpoint.closed is True
+
+
+@pytest.mark.asyncio
+async def test_offer_thread_and_transcriber_warm_overlap() -> None:
+    """Independent cold-start work runs concurrently, without timing guesses."""
+    offer_started = asyncio.Event()
+    warm_started = asyncio.Event()
+    release_parallel_work = asyncio.Event()
+
+    class _GatedEndpoint(_FakeAudioEndpoint):
+        async def create_offer(self) -> str:
+            offer_started.set()
+            await release_parallel_work.wait()
+            return await super().create_offer()
+
+    class _GatedTranscriber:
+        async def warm(self) -> bool:
+            warm_started.set()
+            await release_parallel_work.wait()
+            return True
+
+        async def close(self) -> None:
+            return None
+
+    class _GatedClient(_Client):
+        async def thread_start(self, **kwargs):
+            await asyncio.gather(offer_started.wait(), warm_started.wait())
+            release_parallel_work.set()
+            return await super().thread_start(**kwargs)
+
+    client = _GatedClient()
+    provider = _provider(
+        client,
+        endpoint=_GatedEndpoint(),
+        input_transcriber_factory=_GatedTranscriber,
+    )
+
+    session = await asyncio.wait_for(
+        provider.open_session(RealtimeSessionConfig()), timeout=1.0
+    )
+
+    assert offer_started.is_set()
+    assert warm_started.is_set()
+    await session.close()
 
 
 @pytest.mark.asyncio
@@ -1274,11 +1320,16 @@ async def test_broker_keeps_answered_lease_until_provider_release() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unconnectable_host_path_retries_with_stun() -> None:
+async def test_unconnectable_host_path_retries_with_stun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Host candidates cost no gathering time and connect on an ordinary
     network; a network that needs a reflexive candidate must still work, so a
     dead media path is retried once WITH a STUN server."""
-    from jarvis.realtime.webrtc_transport import WebRtcMediaPathUnavailable
+    from jarvis.realtime import webrtc_transport
+
+    monkeypatch.setattr(webrtc_transport, "stun_ice_servers", lambda: ["stun"])
+    WebRtcMediaPathUnavailable = webrtc_transport.WebRtcMediaPathUnavailable
 
     client = _Client()
     ice_configs: list[object] = []
