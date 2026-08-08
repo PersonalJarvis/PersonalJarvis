@@ -69,6 +69,31 @@ def test_blacklist_beats_whitelist():
         ev.evaluate(tool, {"command": "format c:"})
 
 
+def test_unprefixed_blacklist_pattern_matches_args_only():
+    # Audit 2026-08-08: shipped configs wrote bare patterns ("format *")
+    # that never matched the "run_shell format c:" candidate — every default
+    # blacklist entry was dead. Bare patterns must match the serialized args.
+    ev = RiskTierEvaluator(_make_safety(blacklist=["format *"]))
+    tool = _StubTool("run_shell", risk_tier="safe")
+    with pytest.raises(ActionBlocked):
+        ev.evaluate(tool, {"command": "format c:"})
+
+
+def test_unprefixed_whitelist_pattern_matches_args_only():
+    ev = RiskTierEvaluator(_make_safety(whitelist=["git status"]))
+    tool = _StubTool("run_shell", risk_tier="ask")
+    decision = ev.evaluate(tool, {"command": "git status"})
+    assert decision.tier == "safe"
+    assert decision.approved_by == "whitelist"
+
+
+def test_unprefixed_pattern_does_not_match_other_strings():
+    ev = RiskTierEvaluator(_make_safety(blacklist=["format *"]))
+    tool = _StubTool("run_shell", risk_tier="monitor")
+    decision = ev.evaluate(tool, {"command": "echo format is a word"})
+    assert decision.tier == "monitor"
+
+
 def test_case_insensitive_match():
     ev = RiskTierEvaluator(_make_safety(blacklist=["run_shell FORMAT*"]))
     tool = _StubTool("run_shell")
@@ -79,14 +104,14 @@ def test_case_insensitive_match():
 def test_needs_confirmation_ask_tier():
     ev = RiskTierEvaluator(_make_safety())
     tool = _StubTool("delete_file", risk_tier="ask")
-    decision = ev.evaluate(tool, {"path": "/tmp/x"})
+    decision = ev.evaluate(tool, {"path": "sandbox/x"})
     assert ev.needs_user_confirmation(decision) is True
 
 
 def test_needs_confirmation_whitelist_skips():
     ev = RiskTierEvaluator(_make_safety(whitelist=["delete_file *"]))
     tool = _StubTool("delete_file", risk_tier="ask")
-    decision = ev.evaluate(tool, {"path": "/tmp/x"})
+    decision = ev.evaluate(tool, {"path": "sandbox/x"})
     assert ev.needs_user_confirmation(decision) is False
 
 

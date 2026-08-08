@@ -34,6 +34,7 @@ from typing import Any
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.core.protocols import ExecutionContext, ToolResult
+from jarvis.plugins.tool.command_impact import DESTRUCTIVE, classify_command
 
 if sys.platform == "win32":
     _SHELL_LABEL = "Windows PowerShell 5.1"
@@ -124,6 +125,10 @@ class RunShellTool:
     risk_tier: str = "monitor"
     description: str = (
         f"Runs a shell command via {_SHELL_LABEL} on this machine. "
+        "Use it for ANY local outcome a command can achieve: create/delete/"
+        "rename/move/copy files and folders, list directories, read file "
+        "contents, start programs, timers, system queries — the user never "
+        "needs to mention a terminal; translate their goal into a command. "
         f"{_SHELL_HINT} "
         "Commands are matched against the whitelist/blacklist. "
         "Default timeout 30s."
@@ -142,6 +147,24 @@ class RunShellTool:
         },
         "required": ["command"],
     }
+
+    def risk_tier_for_args(self, args: dict[str, Any]) -> str | None:
+        """Escalate destructive commands to the ``ask`` tier.
+
+        Same per-action pattern as the gmail tool (forensic 2026-06-19): the
+        static ``monitor`` tier stays for reading/modifying commands, but a
+        command classified as destructive (rm, del, format, Remove-Item, …)
+        requires user confirmation. Whitelist and blacklist keep priority in
+        ``RiskTierEvaluator`` — a ``run_shell *`` whitelist entry still
+        downgrades everything, so confirmation-averse setups are unchanged.
+        Returning ``None`` falls back to the static tier.
+        """
+        command = (args.get("command") or "").strip()
+        if not command:
+            return None
+        if classify_command(command).level == DESTRUCTIVE:
+            return "ask"
+        return None
 
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
         command = (args.get("command") or "").strip()

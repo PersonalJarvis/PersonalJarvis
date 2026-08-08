@@ -8,7 +8,13 @@ The priority order matters and is non-negotiable:
    solution for "anti-confirmation-fatigue" (user preference).
 3. **Tool default**, or fallback to `config.safety.default_tier`.
 
-Matching runs via an `fnmatch` glob against `"<tool_name> <serialized_args>"`.
+Matching runs via an `fnmatch` glob against BOTH `"<tool_name>
+<serialized_args>"` and the bare `"<serialized_args>"`. The second form exists
+because shipped configs wrote bare command patterns (`"format *"`,
+`"rm -rf /"`) that could never match the prefixed string — audit 2026-08-08
+found every blacklist entry in the default config dead for `run_shell` calls.
+Accepting both forms makes existing user configs behave as their authors
+obviously intended, in the safety-increasing direction for blacklists.
 """
 from __future__ import annotations
 
@@ -102,21 +108,34 @@ class RiskTierEvaluator:
             try:
                 whitelist, blacklist = self._extra_patterns_fn()
                 patterns.extend(whitelist if kind == "whitelist" else blacklist)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001 — a broken catalog must never hang the gate
+                log.debug("extra_patterns_fn failed (%s patterns unaffected): %s", kind, exc)
         return patterns
 
+    @staticmethod
+    def _pattern_matches(pattern: str, candidates: tuple[str, ...]) -> bool:
+        """Case-sensitive and case-insensitive fnmatch over all candidates."""
+        return any(
+            fnmatch.fnmatchcase(candidate, pattern)
+            or fnmatch.fnmatchcase(candidate.lower(), pattern.lower())
+            for candidate in candidates
+        )
+
     def evaluate(self, tool: Tool, args: dict[str, Any]) -> TierDecision:
-        cmd = f"{tool.name} {_serialize_args(args)}".strip()
+        args_str = _serialize_args(args)
+        cmd = f"{tool.name} {args_str}".strip()
+        # Patterns match with and without the tool-name prefix (see module
+        # docstring: bare patterns in shipped configs were silently dead).
+        candidates = (cmd, args_str) if args_str else (cmd,)
 
         # 1. Blacklist — hard block
         for pattern in self._collect_patterns("blacklist"):
-            if fnmatch.fnmatchcase(cmd, pattern) or fnmatch.fnmatchcase(cmd.lower(), pattern.lower()):
+            if self._pattern_matches(pattern, candidates):
                 raise ActionBlocked(pattern=pattern, matched=cmd)
 
         # 2. Whitelist — downgrade to safe
         for pattern in self._collect_patterns("whitelist"):
-            if fnmatch.fnmatchcase(cmd, pattern) or fnmatch.fnmatchcase(cmd.lower(), pattern.lower()):
+            if self._pattern_matches(pattern, candidates):
                 return TierDecision(
                     tier="safe",
                     approved_by="whitelist",
