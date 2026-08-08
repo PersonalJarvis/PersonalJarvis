@@ -373,9 +373,17 @@ def test_patience_is_earned_by_a_launch_command() -> None:
 
 
 def _fresh_launch_state(monkeypatch) -> list[dict[str, Any]]:
-    """Reset the class-level spawn stamp and capture Popen calls."""
+    """Reset the class-level spawn stamp and capture Popen calls.
+
+    The port probe is pinned closed: a REAL listener on 8765 (a live dev
+    server on this machine) would otherwise turn the spawn into an honest
+    "already-running" and fail the test for the wrong reason.
+    """
     import subprocess
 
+    from jarvis.realtime.local_server import supervisor
+
+    monkeypatch.setattr(supervisor, "_port_open", lambda port, timeout=1.0: False)
     monkeypatch.setattr(LocalRealtimeProvider, "_last_launch_at", float("-inf"))
     spawned: list[dict[str, Any]] = []
 
@@ -511,3 +519,73 @@ async def test_a_running_orphan_still_connects_despite_a_stale_command(
 
     monkeypatch.setattr(provider, "_open_session_once", healthy)
     assert await provider.open_session(SimpleNamespace(model="m")) == "session"
+
+
+# ── Boot-time prewarm (warm_transport capability) ────────────────────────
+def _warm_cfg(base_url: str, launch_command: str) -> SimpleNamespace:
+    provider = SimpleNamespace(
+        base_url=base_url, model="", launch_command=launch_command
+    )
+    return SimpleNamespace(
+        brain=SimpleNamespace(providers={"local-realtime": provider})
+    )
+
+
+async def test_warm_transport_prewarms_via_the_supervisor(
+    monkeypatch, tmp_path
+) -> None:
+    """The shared warm worker calls this after boot: server up + brain model
+    resident BEFORE the first call, which is what makes connects instant."""
+    from jarvis.realtime.local_server import supervisor
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "ensure_running",
+        lambda **kwargs: calls.append(f"run:{kwargs['reason']}") or "spawned",
+    )
+    monkeypatch.setattr(
+        supervisor, "warm_brain", lambda **kwargs: calls.append("warm") or True
+    )
+    exe = tmp_path / "server"
+    exe.write_bytes(b"")
+    cfg = _warm_cfg("http://localhost:8765", f'"{exe}" --model_name m')
+    assert await LocalRealtimeProvider.warm_transport(cfg) is True
+    assert calls == ["run:prewarm", "warm"]
+
+
+async def test_warm_transport_skips_a_deleted_install(monkeypatch, tmp_path) -> None:
+    """Prewarming a deleted entry point would just burn the rate limit and
+    log noise at every boot."""
+    from jarvis.realtime.local_server import supervisor
+
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        supervisor, "ensure_running", lambda **kwargs: spawned.append("x") or "spawned"
+    )
+    gone = tmp_path / "venv" / "Scripts" / "speech-to-speech.exe"
+    cfg = _warm_cfg("http://localhost:8765", f'"{gone}" --model_name m')
+    assert await LocalRealtimeProvider.warm_transport(cfg) is False
+    assert spawned == []
+
+
+async def test_warm_transport_requires_an_address_and_a_command() -> None:
+    assert await LocalRealtimeProvider.warm_transport(_warm_cfg("", "serve")) is False
+    assert (
+        await LocalRealtimeProvider.warm_transport(
+            _warm_cfg("http://localhost:8765", "")
+        )
+        is False
+    )
+    # A LAN endpoint is never spawned here — wrong host.
+    assert (
+        await LocalRealtimeProvider.warm_transport(
+            _warm_cfg("http://gpu.lan:8443", "serve")
+        )
+        is False
+    )
+
+
+async def test_warm_transport_never_raises(monkeypatch) -> None:
+    """Best-effort by contract: no failure may reach the warm worker."""
+    assert await LocalRealtimeProvider.warm_transport(None) is False

@@ -139,6 +139,23 @@ def _fail(message: str) -> None:
         _STATE.finished_at = time.time()
 
 
+def _reset_for_tests() -> None:
+    """Reset the module-level progress singleton between tests.
+
+    ``_STATE`` leaks across the pytest session otherwise: a test that drove
+    an install to "error" left every later test reading that phase.
+    """
+    with _LOCK:
+        _STATE.phase = "idle"
+        _STATE.percent = 0
+        _STATE.detail = ""
+        _STATE.error = ""
+        _STATE.started_at = 0.0
+        _STATE.finished_at = 0.0
+        _STATE.log_tail.clear()
+        _STATE.thread = None
+
+
 def snapshot() -> dict[str, object]:
     """Poll-shaped view of the running (or last) install."""
     with _LOCK:
@@ -344,13 +361,12 @@ def _smoke_boot(launch_command: str, brain: BrainResolution) -> None:
     with_port = f"{launch_command} --ws_port {_SMOKE_PORT}"
     cmd: str | list[str] = with_port if os.name == "nt" else shlex.split(with_port)
     smoke_log = install_root() / "smoke_boot.log"
-    env = dict(os.environ)
-    env.setdefault("PYTHONIOENCODING", "utf-8")
-    env.setdefault("PYTHONFAULTHANDLER", "1")
-    env.setdefault("PYTHONUNBUFFERED", "1")
-    # Windows without the symlink privilege: huggingface_hub's symlinked
-    # snapshot layout dies with WinError 1314 mid-download (live 2026-08-07).
-    env.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
+    # The one shared hardening env (faulthandler, unbuffered, HF symlinks on
+    # Windows) — the same the supervisor gives the real server, so the smoke
+    # boot proves the environment the production spawn will actually use.
+    from jarvis.realtime.local_server.supervisor import hardened_child_env
+
+    env = hardened_child_env(inject_openai_key=False)
     if brain.kind == "cloud-openai" and brain.api_key:
         env.setdefault("OPENAI_API_KEY", brain.api_key)
     with open(smoke_log, "ab") as sink:
@@ -433,6 +449,16 @@ def _run_install(confirmed_brain: str = "") -> None:
             )
             return
         install_root().mkdir(parents=True, exist_ok=True)
+
+        # A live server holds file locks inside the venv (Windows) and the
+        # GPU everywhere; installing under it is the mid-tree abort of
+        # 2026-08-07. Stop OUR server first — a foreign listener stays.
+        try:
+            from jarvis.realtime.local_server import supervisor
+
+            supervisor.stop(owned_only=True, install_root=install_root())
+        except Exception:  # noqa: BLE001 — best effort, the install continues
+            log.debug("install: pre-install server stop failed", exc_info=True)
 
         if not _venv_python().exists():
             _set("venv", 8, "creating the server's Python environment")
@@ -575,6 +601,13 @@ def uninstall() -> tuple[bool, str]:
     if not root.exists():
         _clear_managed_config(root)
         return True, "nothing installed"
+    try:
+        from jarvis.realtime.local_server import supervisor
+
+        supervisor.stop(owned_only=True, install_root=root)
+        supervisor.clear_pidfile()
+    except Exception:  # noqa: BLE001 — the needle scan below still runs
+        log.debug("uninstall: supervisor stop failed", exc_info=True)
     _stop_managed_server(root)
     try:
         _rmtree_tolerant(root)

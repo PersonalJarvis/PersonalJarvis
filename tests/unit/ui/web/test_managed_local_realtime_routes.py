@@ -98,15 +98,108 @@ def test_install_accepts_an_empty_body(
     assert resp.json()["started"] is True
 
 
-def test_status_pairs_progress_with_failclosed_probe(server: WebServer) -> None:
+def test_status_pairs_progress_with_failclosed_probe(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.realtime.local_server import supervisor
+
+    monkeypatch.setattr(supervisor, "_port_open", lambda port, timeout=1.0: False)
     with TestClient(server.app) as client:
         resp = client.get("/api/providers/local-realtime/managed-server/status")
     body = resp.json()
-    assert set(body) == {"progress", "server"}
+    assert set(body) == {"progress", "server", "runtime"}
     # Nothing is installed under the tmp data dir: readiness must be False
     # with the exact not-installed sentence, never a guess.
     assert body["server"]["ready"] is False
     assert body["server"]["sentence"] == "Managed server not installed."
+    # The live half says what the disk cannot: nothing serves, nothing owned.
+    assert body["runtime"] == {
+        "reachable": False,
+        "port": 8765,
+        "pid": None,
+        "owned": False,
+        "stale": False,
+    }
+
+
+def test_start_without_a_launch_command_answers_409(server: WebServer) -> None:
+    with TestClient(server.app) as client:
+        resp = client.post("/api/providers/local-realtime/managed-server/start")
+    assert resp.status_code == 409
+    assert "launch command" in resp.json()["detail"]
+
+
+def test_start_forwards_the_supervisor_refusal(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.core.config import BrainProviderConfig
+    from jarvis.realtime.local_server import supervisor
+
+    server.app.state.config.brain.providers["local-realtime"] = BrainProviderConfig(
+        launch_command="serve --flag"
+    )
+    monkeypatch.setattr(
+        supervisor, "ensure_running", lambda **kwargs: "refused:rate-limited"
+    )
+    with TestClient(server.app) as client:
+        resp = client.post("/api/providers/local-realtime/managed-server/start")
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "refused:rate-limited"
+
+
+def test_start_spawns_and_warms_the_brain(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.core.config import BrainProviderConfig
+    from jarvis.realtime.local_server import supervisor
+
+    server.app.state.config.brain.providers["local-realtime"] = BrainProviderConfig(
+        launch_command="serve --flag"
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "ensure_running",
+        lambda **kwargs: calls.append("start") or "spawned",
+    )
+    monkeypatch.setattr(
+        supervisor, "warm_brain", lambda **kwargs: calls.append("warm") or True
+    )
+    monkeypatch.setattr(supervisor, "_port_open", lambda port, timeout=1.0: True)
+    with TestClient(server.app) as client:
+        resp = client.post("/api/providers/local-realtime/managed-server/start")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["outcome"] == "spawned"
+    assert calls == ["start", "warm"]
+    assert body["runtime"]["reachable"] is True
+
+
+def test_stop_answers_409_when_nothing_is_owned(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.realtime.local_server import supervisor
+
+    monkeypatch.setattr(
+        supervisor, "stop", lambda **kwargs: (False, "no owned server process found")
+    )
+    with TestClient(server.app) as client:
+        resp = client.post("/api/providers/local-realtime/managed-server/stop")
+    assert resp.status_code == 409
+
+
+def test_stop_reports_success(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.realtime.local_server import supervisor
+
+    monkeypatch.setattr(supervisor, "stop", lambda **kwargs: (True, "stopped pid 4711"))
+    monkeypatch.setattr(supervisor, "_port_open", lambda port, timeout=1.0: False)
+    with TestClient(server.app) as client:
+        resp = client.post("/api/providers/local-realtime/managed-server/stop")
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
 
 
 def test_uninstall_refuses_while_running(

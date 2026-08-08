@@ -1526,11 +1526,11 @@ class LocalRealtimeProvider:
 
         The reference stack's whole process dies silently under load (live
         2026-08-06 19:57: its log ends mid-request, the call died with it,
-        and nothing owned bringing it back). With a configured
-        ``launch_command`` Jarvis owns that: spawn detached, window-less
-        (AP-1), stderr into a log under the data dir so the NEXT crash
-        finally leaves forensics. Rate-limited so a crash-looping server is
-        not hammered (AP-24 doctrine).
+        and nothing owned bringing it back). The actual spawn lives in the
+        supervisor module — ONE code path shared with the boot-time prewarm,
+        so the two can never double-spawn. The provider-level rate limit
+        stays as the first gate (AP-24 doctrine: a crash-looping server is
+        not hammered).
         """
         if not self._launch_command or not self._server_is_local_process():
             return False
@@ -1539,77 +1539,19 @@ class LocalRealtimeProvider:
             return False
         LocalRealtimeProvider._last_launch_at = now
         import importlib  # lazy (AP-26)
-        import subprocess  # lazy (AP-26)
-        from pathlib import Path
 
         # importlib, not a literal ``from jarvis...``: the plugin-module
         # contract (no jarvis imports, AST-checked) counts lazy imports too.
-        NO_WINDOW_CREATIONFLAGS = importlib.import_module(
-            "jarvis.core.process_utils"
-        ).NO_WINDOW_CREATIONFLAGS  # AP-1
-
-        log_dir = Path(os.environ.get("JARVIS_DATA_DIR") or "data")
         try:
-            log_dir.mkdir(parents=True, exist_ok=True)
-            server_log = open(  # noqa: SIM115 — handed to the child for its lifetime
-                log_dir / "local_realtime_server.log", "ab"
+            supervisor = importlib.import_module(
+                "jarvis.realtime.local_server.supervisor"
             )
-        except OSError as exc:
-            log.warning(
-                "Local realtime server: could not open %s (%s); the child "
-                "runs without a persisted server log.",
-                log_dir / "local_realtime_server.log",
-                exc,
-            )
-            server_log = None
-        try:
-            if os.name == "nt":
-                command: str | list[str] = self._launch_command
-            else:
-                import shlex
-
-                command = shlex.split(self._launch_command)
-            child_env = dict(os.environ)
-            # The 2026-08-06 19:57 crash left NO trace: the server process
-            # died without a Python traceback, which means the fault was
-            # native (torch/onnx/ctranslate2 C code). faulthandler prints
-            # the low-level stack to stderr on such deaths — and stderr goes
-            # into the server log below — so the NEXT native crash finally
-            # names its faulting module. Unbuffered output keeps the final
-            # lines from dying in a lost buffer.
-            child_env.setdefault("PYTHONFAULTHANDLER", "1")
-            child_env.setdefault("PYTHONUNBUFFERED", "1")
-            # Windows without the symlink privilege: huggingface_hub's
-            # symlinked snapshot layout dies with WinError 1314 mid-download
-            # (live 2026-08-07), which would brick the server's own model
-            # fetches. Copies cost disk, not correctness.
-            child_env.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
-            # The managed install's cloud-brain path deliberately keeps the
-            # OpenAI key OUT of the persisted launch command (secrets never
-            # enter jarvis.toml); the server's OpenAI client reads it from
-            # this spawn environment instead. Keyring-held keys are not in
-            # os.environ, so inject here — otherwise every turn of a
-            # cloud-brained managed server 401s although the install was
-            # green (review 2026-08-07). Ollama-brained and keyless servers
-            # simply never look at it.
-            if not child_env.get("OPENAI_API_KEY"):
-                try:
-                    get_secret = importlib.import_module("jarvis.core.config").get_secret  # AP-1
-                    key = get_secret("openai_api_key", env_fallback="OPENAI_API_KEY") or ""
-                    if key:
-                        child_env["OPENAI_API_KEY"] = key
-                except Exception:  # noqa: BLE001 — a secretless host is a valid host
-                    log.debug(
-                        "local-realtime: OpenAI key lookup for spawn env failed",
-                        exc_info=True,
-                    )
-            subprocess.Popen(  # noqa: S603 — the maintainer configured this command
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=server_log or subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
-                creationflags=NO_WINDOW_CREATIONFLAGS,
-                env=child_env,
+            outcome = str(
+                supervisor.ensure_running(
+                    launch_command=self._launch_command,
+                    base_url=self._base_url,
+                    reason="connect-revive",
+                )
             )
         except Exception as exc:  # noqa: BLE001 — a bad command must not kill the call
             log.warning(
@@ -1619,14 +1561,60 @@ class LocalRealtimeProvider:
                 exc,
             )
             return False
-        finally:
-            if server_log is not None:
-                server_log.close()
-        log.info(
-            "local-realtime: server unreachable — launched the configured "
-            "server command; waiting for it to come up"
-        )
-        return True
+        if outcome == "spawned":
+            log.info(
+                "local-realtime: server unreachable — launched the configured "
+                "server command; waiting for it to come up"
+            )
+            return True
+        log.info("local-realtime: revive skipped (%s)", outcome)
+        return False
+
+    @classmethod
+    async def warm_transport(cls, cfg: Any) -> bool:
+        """Boot-time prewarm (called by the shared realtime warm worker).
+
+        Brings the self-hosted server up BEFORE the first call and makes the
+        Ollama brain model resident, so a warm connect costs a handshake
+        instead of a 45-90 s cold boot plus a multi-second model load. A
+        capability the warm worker discovers by name (AP-21); best-effort by
+        contract — no failure here may reach the caller.
+        """
+        try:
+            provider = cls.from_runtime_config(cfg)
+            if (
+                not provider._base_url
+                or not provider._launch_command
+                or not provider._server_is_local_process()
+            ):
+                return False
+            if _launch_command_target_state(provider._launch_command) == "missing":
+                log.info(
+                    "local-realtime: prewarm skipped — the configured launch "
+                    "command points at a program that does not exist "
+                    "(reinstall or clear it)."
+                )
+                return False
+            import importlib  # lazy (AP-26)
+
+            def _warm() -> bool:
+                supervisor = importlib.import_module(
+                    "jarvis.realtime.local_server.supervisor"
+                )
+                outcome = str(
+                    supervisor.ensure_running(
+                        launch_command=provider._launch_command,
+                        base_url=provider._base_url,
+                        reason="prewarm",
+                    )
+                )
+                supervisor.warm_brain(launch_command=provider._launch_command)
+                return outcome in ("spawned", "already-running")
+
+            return await asyncio.to_thread(_warm)
+        except Exception:  # noqa: BLE001 — warming is best-effort by contract
+            log.debug("local-realtime: warm_transport failed", exc_info=True)
+            return False
 
     async def open_session(self, cfg: Any) -> _OpenAIRealtimeSession:
         if not self._base_url:

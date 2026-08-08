@@ -2711,19 +2711,84 @@ async def managed_server_install(request: Request) -> dict[str, Any]:
     return payload
 
 
+def _local_realtime_card(request: Request) -> tuple[str, str]:
+    """(base_url, launch_command) of the local-realtime card, defensively."""
+    cfg = getattr(request.app.state, "config", None) or getattr(
+        request.app.state, "cfg", None
+    )
+    providers = getattr(getattr(cfg, "brain", None), "providers", None) or {}
+    getter = getattr(providers, "get", None)
+    card = getter("local-realtime") if callable(getter) else None
+    return (
+        str(getattr(card, "base_url", "") or ""),
+        str(getattr(card, "launch_command", "") or ""),
+    )
+
+
 @router.get("/providers/local-realtime/managed-server/status")
-async def managed_server_status() -> dict[str, Any]:
-    """Install progress AND the independent fail-closed readiness probe.
+async def managed_server_status(request: Request) -> dict[str, Any]:
+    """Install progress, the fail-closed readiness probe, AND the live runtime.
 
     The on-disk probe is the authority (same doctrine as the on-device
     speech installs): a tree installed by an earlier app run reads as ready,
     and a finished install with a missing component reads as incomplete.
+    ``runtime`` adds what the disk cannot know: whether something is serving
+    the configured port right now and whether that process is OURS.
     """
+    from jarvis.realtime.local_server import supervisor
     from jarvis.realtime.local_server.install import server_status, snapshot
 
+    base_url, _command = _local_realtime_card(request)
     progress = snapshot()
     status = await asyncio.to_thread(server_status)
-    return {"progress": progress, "server": status}
+    runtime = await asyncio.to_thread(supervisor.status, base_url)
+    return {"progress": progress, "server": status, "runtime": runtime}
+
+
+@router.post("/providers/local-realtime/managed-server/start")
+async def managed_server_start(request: Request) -> dict[str, Any]:
+    """Start the managed server now (the same path the prewarm uses).
+
+    409 with the supervisor's reason when starting cannot help: install in
+    flight, rate-limited, foreign listener on the port, spawn failure. A
+    server that is already up (or booting under our pid) answers ok.
+    """
+    from jarvis.realtime.local_server import supervisor
+
+    base_url, command = _local_realtime_card(request)
+    if not command:
+        raise HTTPException(
+            status_code=409,
+            detail="no launch command is configured — install the managed server first",
+        )
+    outcome = await asyncio.to_thread(
+        lambda: supervisor.ensure_running(
+            launch_command=command, base_url=base_url, reason="rest-start"
+        )
+    )
+    if outcome.startswith("refused:"):
+        raise HTTPException(status_code=409, detail=outcome)
+    # Make the brain model resident too — a started server whose brain still
+    # cold-loads on the first sentence is only half a start.
+    await asyncio.to_thread(lambda: supervisor.warm_brain(launch_command=command))
+    runtime = await asyncio.to_thread(supervisor.status, base_url)
+    return {"ok": True, "outcome": outcome, "runtime": runtime}
+
+
+@router.post("/providers/local-realtime/managed-server/stop")
+async def managed_server_stop(request: Request) -> dict[str, Any]:
+    """Stop the server THIS install owns (pidfile-verified; never a foreign one)."""
+    from jarvis.realtime.local_server import supervisor
+    from jarvis.realtime.local_server.install import install_root
+
+    base_url, _command = _local_realtime_card(request)
+    changed, message = await asyncio.to_thread(
+        lambda: supervisor.stop(owned_only=True, install_root=install_root())
+    )
+    if not changed:
+        raise HTTPException(status_code=409, detail=message)
+    runtime = await asyncio.to_thread(supervisor.status, base_url)
+    return {"ok": True, "message": message, "runtime": runtime}
 
 
 @router.delete(
