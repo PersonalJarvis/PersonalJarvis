@@ -59,9 +59,12 @@ const PAGE_DOWN = "\x1b[6~";
  *
  * A stroke, not a jump to a position: the gesture says "keep going this way",
  * which is the only thing the rail can honestly promise when the application
- * owns the history. Roughly half a screen per rail-length drag.
+ * owns the history. At 7 the maintainer's verdict on a real Claude pane was
+ * "you drag and almost nothing happens" — a grip that moves the transcript
+ * less than the hand moved feels dead, so the step errs brisk rather than
+ * fine; the wheel remains the fine-grained gesture.
  */
-export const STROKE_STEP_PX = 7;
+export const STROKE_STEP_PX = 3;
 
 function clamp(value: number, low: number, high: number): number {
   return Math.min(high, Math.max(low, value));

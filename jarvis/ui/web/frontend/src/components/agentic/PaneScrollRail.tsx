@@ -504,9 +504,20 @@ export function PaneScrollRail({
             className="h-full w-full fill-[#141210]/70"
             aria-hidden="true"
           >
-            <circle cx="4" cy="10" r="1.1" />
-            <circle cx="4" cy="14" r="1.1" />
-            <circle cx="4" cy="18" r="1.1" />
+            {/* While held, the dots become an arrow in the direction the hand
+                is moving — the gesture's receipt, since the grip itself will
+                not stay anywhere. */}
+            {dragging && gripOffset < 0 ? (
+              <path d="M4 9 7 15H1Z" />
+            ) : dragging && gripOffset > 0 ? (
+              <path d="M4 19 1 13h6Z" />
+            ) : (
+              <>
+                <circle cx="4" cy="10" r="1.1" />
+                <circle cx="4" cy="14" r="1.1" />
+                <circle cx="4" cy="18" r="1.1" />
+              </>
+            )}
           </svg>
         </div>
       )}

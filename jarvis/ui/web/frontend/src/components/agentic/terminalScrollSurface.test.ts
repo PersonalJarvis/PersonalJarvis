@@ -98,11 +98,11 @@ describe("terminalScrollSurface", () => {
   });
 
   it("converts a stroke into whole relay units and carries the remainder", () => {
-    // 7px per unit: two units and 3px left over for the next pointer event, so
-    // a slow drag accumulates instead of being rounded away to nothing.
-    expect(strokeUnits(17)).toEqual({ units: 2, consumedPx: 14 });
-    expect(strokeUnits(-17)).toEqual({ units: 2, consumedPx: -14 });
-    expect(strokeUnits(6)).toEqual({ units: 0, consumedPx: 0 });
+    // 3px per unit: five units and 2px left over for the next pointer event,
+    // so a slow drag accumulates instead of being rounded away to nothing.
+    expect(strokeUnits(17)).toEqual({ units: 5, consumedPx: 15 });
+    expect(strokeUnits(-17)).toEqual({ units: 5, consumedPx: -15 });
+    expect(strokeUnits(2)).toEqual({ units: 0, consumedPx: 0 });
     expect(strokeUnits(0)).toEqual({ units: 0, consumedPx: 0 });
     expect(strokeUnits(50, 25)).toEqual({ units: 2, consumedPx: 50 });
   });
