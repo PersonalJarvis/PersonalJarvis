@@ -528,6 +528,66 @@ async def test_a_running_orphan_still_connects_despite_a_stale_command(
     assert await provider.open_session(SimpleNamespace(model="m")) == "session"
 
 
+# ── SDK-client reuse (the ~230 ms per-call client build, 2026-08-08) ─────
+async def test_the_sdk_client_is_cached_across_sessions(monkeypatch) -> None:
+    """Building AsyncOpenAI costs ~230 ms (httpx + SSL context); one cached
+    client per endpoint turns that into a one-time cost."""
+    from jarvis.plugins.realtime import openai_realtime as module
+
+    captured: list[Any] = []
+
+    async def fake_open(client: Any, cfg: Any, **kwargs: Any) -> str:
+        captured.append((client, kwargs.get("owns_client")))
+        return "session"
+
+    monkeypatch.setattr(module, "_open_realtime_session", fake_open)
+    provider = LocalRealtimeProvider(base_url="http://localhost:8765", model="m")
+    await provider.open_session(SimpleNamespace(model="m"))
+    await provider.open_session(SimpleNamespace(model="m"))
+    assert captured[0][0] is captured[1][0]  # the SAME client object
+    assert captured[0][1] is False  # sessions never own the cached client
+
+
+async def test_closing_a_local_session_keeps_the_cached_client_alive() -> None:
+    """A cached client that dies with its first session would make every
+    LATER call pay the rebuild — and closing a shared client under a
+    concurrent session would kill that session's transport."""
+    from jarvis.plugins.realtime.openai_realtime import _OpenAIRealtimeSession
+
+    class _FakeCm:
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+    closed: list[str] = []
+
+    class _FakeClient:
+        async def close(self) -> None:
+            closed.append("client")
+
+    class _FakeConn:
+        def __aiter__(self):
+            return self
+
+    shared = _OpenAIRealtimeSession(
+        connection=_FakeConn(),
+        connection_cm=_FakeCm(),
+        client=_FakeClient(),
+        session_id="s1",
+        owns_client=False,
+    )
+    await shared.close()
+    assert closed == []  # cached client survives
+
+    owned = _OpenAIRealtimeSession(
+        connection=_FakeConn(),
+        connection_cm=_FakeCm(),
+        client=_FakeClient(),
+        session_id="s2",
+    )
+    await owned.close()
+    assert closed == ["client"]  # hosted default behavior is unchanged
+
+
 # ── Boot-time prewarm (warm_transport capability) ────────────────────────
 def _warm_cfg(base_url: str, launch_command: str) -> SimpleNamespace:
     provider = SimpleNamespace(

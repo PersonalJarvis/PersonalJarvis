@@ -15,10 +15,15 @@ def _reset_local_server_singletons():
     pytest session, and an install driven to "error" would leak that phase
     into unrelated tests.
     """
+    from jarvis.plugins.realtime.openai_realtime import LocalRealtimeProvider
     from jarvis.realtime.local_server import install, supervisor
 
     install._reset_for_tests()
     supervisor._reset_for_tests()
+    LocalRealtimeProvider._client_cache.clear()
+    LocalRealtimeProvider._model_cache.clear()
     yield
     install._reset_for_tests()
     supervisor._reset_for_tests()
+    LocalRealtimeProvider._client_cache.clear()
+    LocalRealtimeProvider._model_cache.clear()

@@ -299,10 +299,16 @@ class _OpenAIRealtimeSession:
         connect_model: str = "",
         history_seed: tuple[dict[str, str], ...] = (),
         rebuild_on_transport_death: bool = False,
+        owns_client: bool = True,
     ) -> None:
         self._conn = connection
         self._connection_cm = connection_cm
         self._client = client
+        # False when the provider CACHES the client across sessions (the
+        # self-hosted card): building a fresh AsyncOpenAI costs ~230 ms per
+        # call (httpx + SSL-context setup, measured 2026-08-08), so the local
+        # provider reuses one and close() must then leave it alive.
+        self._owns_client = bool(owns_client)
         # Capability consumed by the session pump (BUG-071): may a transport
         # that died mid-call be reopened in place? Hosted cards keep today's
         # deliberate terminal semantics (the BUG-064 stack self-heals
@@ -1128,11 +1134,12 @@ class _OpenAIRealtimeSession:
         try:
             await self._connection_cm.__aexit__(None, None, None)
         finally:
-            close = getattr(self._client, "close", None)
-            if close is not None:
-                result = close()
-                if hasattr(result, "__await__"):
-                    await result
+            if self._owns_client:
+                close = getattr(self._client, "close", None)
+                if close is not None:
+                    result = close()
+                    if hasattr(result, "__await__"):
+                        await result
 
 
 async def _open_realtime_session(
@@ -1142,6 +1149,7 @@ async def _open_realtime_session(
     model: str,
     transcription_model: str | None = "gpt-4o-mini-transcribe",
     rebuild_on_transport_death: bool = False,
+    owns_client: bool = True,
 ) -> _OpenAIRealtimeSession:
     """Open, configure and hand back a live session on ``client``.
 
@@ -1165,16 +1173,17 @@ async def _open_realtime_session(
                 "Realtime connection cleanup after failed enter failed",
                 exc_info=True,
             )
-        try:
-            close = getattr(client, "close", None)
-            if close is not None:
-                result = close()
-                if hasattr(result, "__await__"):
-                    await result
-        except BaseException:  # noqa: BLE001 - preserve failure/cancellation
-            log.debug(
-                "Realtime client cleanup after failed enter failed", exc_info=True
-            )
+        if owns_client:
+            try:
+                close = getattr(client, "close", None)
+                if close is not None:
+                    result = close()
+                    if hasattr(result, "__await__"):
+                        await result
+            except BaseException:  # noqa: BLE001 - preserve failure/cancellation
+                log.debug(
+                    "Realtime client cleanup after failed enter failed", exc_info=True
+                )
         raise
     payload = _session_payload(cfg, transcription_model=transcription_model)
     session = _OpenAIRealtimeSession(
@@ -1186,6 +1195,7 @@ async def _open_realtime_session(
         connect_model=model,
         history_seed=tuple(getattr(cfg, "history", ()) or ()),
         rebuild_on_transport_death=rebuild_on_transport_death,
+        owns_client=owns_client,
     )
     try:
         await connection.session.update(session=payload)
@@ -1400,6 +1410,21 @@ class LocalRealtimeProvider:
     # providers freely, and a per-instance stamp would let every rebuild spawn
     # another server.
     _last_launch_at: float = float("-inf")
+    # One SDK client per endpoint, shared across sessions AND provider
+    # instances: building a fresh AsyncOpenAI costs ~230 ms per call (httpx +
+    # SSL-context setup, measured 2026-08-08) — a quarter of the whole
+    # user-felt connect. The client is a stateless connection factory, so a
+    # server restart never stales it; sessions opened on it carry
+    # owns_client=False so their close() leaves it alive.
+    _client_cache: dict[tuple[str, str], Any] = {}
+    # Served-model probe results per endpoint, ``{base_url: (model, expires)}``:
+    # the probe builds its own httpx client per call — the SAME ~200 ms
+    # SSL-context bill as above, paid on EVERY connect while the card's model
+    # sits on "auto". A server's roster changes only when its operator
+    # reconfigures it, so five minutes of reuse is honest; the prewarm fills
+    # the cache so the first real call never pays the probe either.
+    _model_cache: dict[str, tuple[str, float]] = {}
+    _MODEL_CACHE_TTL_S = 300.0
 
     def __init__(
         self,
@@ -1470,6 +1495,9 @@ class LocalRealtimeProvider:
         """
         if self._model:
             return self._model
+        cached = LocalRealtimeProvider._model_cache.get(self._base_url)
+        if cached is not None and cached[1] > time.monotonic():
+            return cached[0]
         import httpx  # lazy (AP-26)
 
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
@@ -1488,12 +1516,21 @@ class LocalRealtimeProvider:
                 self._base_url,
                 type(exc).__name__,
             )
+            # A server without the endpoint answers the same way every time —
+            # cache the default so the probe is not re-paid on every call.
+            LocalRealtimeProvider._model_cache[self._base_url] = (
+                _MODEL,
+                time.monotonic() + LocalRealtimeProvider._MODEL_CACHE_TTL_S,
+            )
             return _MODEL
-        for name in served:
-            if name:
-                log.info("local-realtime: no model configured — using served %s", name)
-                return name
-        return _MODEL
+        chosen = next((name for name in served if name), _MODEL)
+        if chosen != _MODEL:
+            log.info("local-realtime: no model configured — using served %s", chosen)
+        LocalRealtimeProvider._model_cache[self._base_url] = (
+            chosen,
+            time.monotonic() + LocalRealtimeProvider._MODEL_CACHE_TTL_S,
+        )
+        return chosen
 
     def _connect_retry_window_s(self) -> float:
         """How long a failing connect keeps retrying before giving up.
@@ -1625,7 +1662,15 @@ class LocalRealtimeProvider:
                 supervisor.warm_brain(launch_command=provider._launch_command)
                 return outcome in ("spawned", "already-running")
 
-            return await asyncio.to_thread(_warm)
+            warmed = await asyncio.to_thread(_warm)
+            if warmed:
+                try:
+                    # Fill the model-probe cache too, so the first real call
+                    # pays neither the probe nor its httpx client build.
+                    await provider._resolve_model()
+                except Exception:  # noqa: BLE001, S110 — probe is best-effort
+                    pass
+            return warmed
         except Exception:  # noqa: BLE001 — warming is best-effort by contract
             log.debug("local-realtime: warm_transport failed", exc_info=True)
             return False
@@ -1683,15 +1728,24 @@ class LocalRealtimeProvider:
                     min(_LOCAL_CONNECT_RETRY_STEP_S, max(remaining, 0.0))
                 )
 
-    async def _open_session_once(self, cfg: Any) -> _OpenAIRealtimeSession:
+    def _shared_client(self) -> Any:
+        """The cached SDK client for this endpoint (built once, reused forever)."""
         from openai import AsyncOpenAI  # lazy (AP-26)
 
-        client = AsyncOpenAI(
-            # Most self-hosted servers ignore the key; the SDK still insists on
-            # a non-empty one.
-            api_key=self._api_key or "local",
-            base_url=self._base_url,
-        )
+        key = (self._base_url, self._api_key or "local")
+        client = LocalRealtimeProvider._client_cache.get(key)
+        if client is None:
+            client = AsyncOpenAI(
+                # Most self-hosted servers ignore the key; the SDK still
+                # insists on a non-empty one.
+                api_key=self._api_key or "local",
+                base_url=self._base_url,
+            )
+            LocalRealtimeProvider._client_cache[key] = client
+        return client
+
+    async def _open_session_once(self, cfg: Any) -> _OpenAIRealtimeSession:
+        client = self._shared_client()
         connect_model = str(getattr(cfg, "model", "") or "").strip()
         if not connect_model or connect_model == "auto":
             # "auto" is what the card offers while the server's roster is
@@ -1707,4 +1761,7 @@ class LocalRealtimeProvider:
             # a dead transport is worth rebuilding in place (BUG-071 path)
             # instead of ending the call.
             rebuild_on_transport_death=True,
+            # The client above is cached across sessions; closing this
+            # session must not tear it down.
+            owns_client=False,
         )
