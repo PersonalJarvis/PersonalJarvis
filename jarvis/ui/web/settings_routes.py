@@ -272,6 +272,27 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     # subprocess off the event loop so a settings poll cannot punch a hole in
     # live Realtime audio playback.
     prov = await asyncio.to_thread(_realtime_available_provider, cfg)
+    realtime_available = prov is not None
+    realtime_availability_pending = False
+    if prov == "codex-subscription-realtime":
+        # Runtime discovery deliberately fails open on ``busy`` because the
+        # authoritative session opener can protect an in-flight/live call.
+        # A STATUS surface must not convert that unknown answer into "ready":
+        # the provider card says checking and mode persistence returns 409, so
+        # this route reports the same pending truth while retaining the
+        # resolved provider/model labels for display.
+        from jarvis.ui.web.provider_routes import (
+            _codex_binary_path,
+            _codex_subscription_status_payload,
+        )
+
+        codex_status = await asyncio.to_thread(
+            _codex_subscription_status_payload,
+            _codex_binary_path(request),
+        )
+        if codex_status.get("reason_code") in {"busy", "login_in_progress"}:
+            realtime_available = False
+            realtime_availability_pending = True
     requires_webrtc_offer = await asyncio.to_thread(
         _realtime_requires_webrtc_offer, cfg
     )
@@ -299,7 +320,8 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     session_model = str(runtime.get("active_session_model", "") or "")
     return {
         "mode": mode,
-        "realtime_available": prov is not None,
+        "realtime_available": realtime_available,
+        "realtime_availability_pending": realtime_availability_pending,
         "requires_webrtc_offer": requires_webrtc_offer,
         "handshake_budget_s": handshake_budget_s,
         "transport_offer_ready": transport_offer_ready,

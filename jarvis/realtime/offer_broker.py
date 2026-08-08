@@ -1,10 +1,16 @@
-"""In-process WebRTC offer handoff between UI and native voice surfaces.
+"""Retained WebRTC-offer compatibility seam for realtime plugins.
 
 Some externally authenticated realtime transports need a genuine browser SDP
 offer even when the microphone owner is the native desktop voice loop.  The UI
 keeps a recv-only peer ready and registers its offer here; a provider leases it
 exactly once and returns the answer through the same registration.  No audio,
 credentials, or model content passes through this broker.
+
+No built-in provider currently declares ``requires_webrtc_offer = True``:
+Codex owns its media peer in-process and the API providers use their SDKs. The
+broker, websocket, and frontend component intentionally remain capability-
+gated for third-party entry-point providers that need browser-origin WebRTC.
+They are compatibility infrastructure, not an alternate Codex media path.
 """
 
 from __future__ import annotations

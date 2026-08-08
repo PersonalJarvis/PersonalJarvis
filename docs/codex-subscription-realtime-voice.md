@@ -483,11 +483,11 @@ them changes the trade-off above, which is a property of the wire.
    requires every installed provider with `supports_direct_tools = False` to
    resolve a callable brain to the delegate path and to decline an unavailable
    handoff audibly without ending the call.
-3. **Wayland-only browser hand-off.** Establish whether `codex` can open a
-   browser on a pure-Wayland session without XWayland. If it cannot, the
-   printed device-code URL is the honest answer and the card should say so
-   rather than leaving the user waiting for a window. Do not solve this by
-   admitting `XDG_RUNTIME_DIR` back into the forced file-store environment.
+3. **Pure-Wayland login is explicit.** Without an X/XWayland `DISPLAY`, the
+   isolated file-credential environment cannot auto-open the browser. The card
+   keeps Connect available when a supported terminal exists and tells the user
+   before the click to follow the device-login URL printed there. It does not
+   admit `XDG_RUNTIME_DIR` back into the credential-isolated environment.
 4. **Keep the CLI version pin current.** `_TRUSTED_CODEX_TARGETS` pins the six
    SHA-256 hashes of `@openai/codex` 0.147.0; the previous audited 0.146.0 set
    remains an explicit compatibility window. Every other build is disabled
@@ -495,18 +495,16 @@ them changes the trade-off above, which is a property of the wire.
    That is deliberate — but verify the pin is still current before any release
    claiming subscription voice works, and follow the five-step upgrade policy
    above when moving it.
-5. **Retire or wire the dormant browser-offer stack.** No shipped provider
-   sets `requires_webrtc_offer = True` since Jarvis took the WebRTC peer
-   in-process, so `realtime/offer_broker.py`, `/ws/realtime-transport`,
-   `lib/realtimeTransportBroker.ts`, `SubscriptionRealtimeTransportBroker.tsx`
-   and the desktop broker-token plumbing are unreachable in production. Either
-   delete them or mark them as a deliberately retained seam.
-6. **Reconcile `busy` between the probe and the card.**
-   `external_login_ready()` fails **open** on a transient `busy` probe, while
-   `_codex_subscription_status_payload` reports the same `busy` as
-   `connected: false`. So `/voice-mode` can say `realtime_available: true`
-   while the card says "not connected" and `PUT /voice-mode` answers 409. Both
-   halves are individually right; the contradiction the user sees is not.
+5. **The browser-offer stack is a retained compatibility seam.** No built-in
+   provider currently sets `requires_webrtc_offer = True`; the broker,
+   `/ws/realtime-transport`, frontend broker, and desktop token plumbing remain
+   capability-gated for third-party entry-point providers. They are documented
+   as compatibility infrastructure, not a second Codex media path.
+6. **Transient status is reconciled.** Runtime discovery may still fail open
+   on `busy` so an authoritative opener protects a live/in-flight call. Status
+   surfaces do not: `/voice-mode` now reports availability as pending/false,
+   the card renders checking, and mode persistence returns 409. None calls an
+   unknown account state connected.
 
 ### Failure modes and where to look first
 

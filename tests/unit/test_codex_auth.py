@@ -844,6 +844,26 @@ def test_graphical_linux_without_a_terminal_does_not_invite_a_login(
     assert "terminal emulator" in reason
 
 
+def test_pure_wayland_login_names_the_manual_browser_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The card must not leave a pure-Wayland user waiting for a window."""
+    import jarvis.codex_app_server as transport
+    import jarvis.codex_auth as codex_mod
+
+    monkeypatch.setattr(transport.sys, "platform", "linux")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.setattr(codex_mod, "linux_login_terminal_available", lambda: True)
+
+    reason, code = transport._login_required_state("please log in")
+
+    assert code == "login_required"
+    assert "pure-Wayland" in reason
+    assert "device-login URL" in reason
+    assert "terminal" in reason
+
+
 def test_every_login_terminal_records_why_its_flags_keep_it_in_the_foreground() -> None:
     """The reason column is the review gate for a new entry, not decoration.
 

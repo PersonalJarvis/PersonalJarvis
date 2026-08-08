@@ -1470,6 +1470,11 @@ _NO_LOGIN_TERMINAL_REASON: Final = (
     "desktop does not provide. Install one (for example gnome-terminal, "
     "konsole, xfce4-terminal, kitty or alacritty) and connect again."
 )
+_PURE_WAYLAND_LOGIN_REASON: Final = (
+    "This pure-Wayland session has no XWayland display, so the isolated "
+    "subscription login cannot auto-open a browser. Connect opens a terminal; "
+    "follow the device-login URL printed there."
+)
 
 
 def _headless_linux() -> bool:
@@ -1478,6 +1483,15 @@ def _headless_linux() -> bool:
         sys.platform.startswith("linux")
         and not os.environ.get("DISPLAY")
         and not os.environ.get("WAYLAND_DISPLAY")
+    )
+
+
+def _pure_wayland_linux() -> bool:
+    """A graphical Linux session with Wayland but no X/XWayland display."""
+    return bool(
+        sys.platform.startswith("linux")
+        and os.environ.get("WAYLAND_DISPLAY")
+        and not os.environ.get("DISPLAY")
     )
 
 
@@ -1529,6 +1543,8 @@ def _login_required_state(reason: str) -> tuple[str, CodexSubscriptionReasonCode
             if _headless_linux()
             else _NO_LOGIN_TERMINAL_REASON
         )
+    elif _pure_wayland_linux():
+        reason = _PURE_WAYLAND_LOGIN_REASON
     return reason, code
 
 

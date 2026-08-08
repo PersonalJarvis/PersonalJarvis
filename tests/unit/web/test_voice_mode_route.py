@@ -210,6 +210,33 @@ def test_put_voice_mode_codex_busy_answers_409_and_persists_nothing(monkeypatch)
     assert "being checked" in r.json()["detail"]
 
 
+def test_get_voice_mode_codex_busy_is_pending_not_ready(monkeypatch):
+    """Status surfaces agree: busy means checking, never connected/ready."""
+    from jarvis.ui.web import provider_routes, settings_routes
+
+    monkeypatch.setattr(
+        settings_routes,
+        "_realtime_available_provider",
+        lambda _cfg: "codex-subscription-realtime",
+    )
+    monkeypatch.setattr(
+        provider_routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "connected": False,
+            "reason_code": "busy",
+        },
+    )
+
+    body = TestClient(_app(mode="realtime")).get(
+        "/api/settings/voice-mode"
+    ).json()
+
+    assert body["active_provider"] == "codex-subscription-realtime"
+    assert body["realtime_available"] is False
+    assert body["realtime_availability_pending"] is True
+
+
 def test_put_voice_mode_codex_logged_out_is_400(monkeypatch):
     """A pinned but logged-out provider must not be persisted as the mode."""
     from jarvis.ui.web import provider_routes, settings_routes
