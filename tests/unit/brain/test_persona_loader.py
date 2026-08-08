@@ -104,6 +104,55 @@ def test_load_persona_prompt_extracts_real_persona(monkeypatch) -> None:
     assert "Goodbye" in prompt or "Auf Wiedersehen" in prompt  # i18n-allow
 
 
+def test_compact_persona_is_a_real_distillation() -> None:
+    """The compact block exists in the shipped MD, keeps the load-bearing
+    rules, and is a fraction of the full block's size (the entire point:
+    7.8 s of 7B prefill per turn measured 2026-08-07)."""
+    invalidate_cache()
+    try:
+        full = load_persona_prompt()
+        compact = pl.load_compact_persona_prompt()
+    finally:
+        invalidate_cache()
+    assert compact
+    assert compact != full
+    assert len(compact) < len(full) / 4
+    assert "JARVIS" not in compact  # name-neutral, like the full block
+    assert "voice companion" in compact
+    # The strict spoken-output core must survive the distillation.
+    assert "digit" in compact
+    assert "Markdown" in compact
+
+
+def test_compact_falls_back_to_full_when_section_missing(
+    monkeypatch, tmp_path
+) -> None:
+    """A persona that silently shrank to nothing would change the voice;
+    a missing compact section must serve the full block instead."""
+    invalidate_cache()
+    md_file = tmp_path / "JARVIS_PERSONA.md"
+    md_file.write_text(
+        "## System-Prompt\n```\nFull only.\n```\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(pl, "_persona_md_path", lambda: md_file)
+    try:
+        assert pl.load_compact_persona_prompt() == "Full only."
+    finally:
+        invalidate_cache()
+
+
+def test_custom_override_wins_even_in_compact_mode(monkeypatch, tmp_path) -> None:
+    """User autonomy outranks the latency optimization: their exact words
+    stay, whatever profile the provider asked for."""
+    invalidate_cache()
+    monkeypatch.setattr(pl, "read_custom_prompt", lambda: "My own words.")
+    try:
+        assert pl.load_effective_persona_prompt(compact=True) == "My own words."
+        assert pl.load_effective_persona_prompt(compact=False) == "My own words."
+    finally:
+        invalidate_cache()
+
+
 def test_load_persona_prompt_missing_file_returns_empty(monkeypatch, tmp_path) -> None:
     """When the MD is missing, the loader returns an empty string — no raise."""
     invalidate_cache()

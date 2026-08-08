@@ -1057,10 +1057,22 @@ def _session_instructions(
     preferences: str = "",
     skill_directive: str = "",
     workspace_directive: str = "",
+    compact: bool = False,
 ) -> str:
+    """Assemble the session instructions; ``compact`` is the small-brain profile.
+
+    ``compact`` is requested by a provider capability
+    (``prefers_compact_instructions``, AP-21 — today the self-hosted card): a
+    7B brain spends multiple seconds prefilling the full ~24k-char block
+    EVERY turn (7.8 s live, 2026-08-07). The compact profile swaps in the
+    distilled persona and shortened static guards, and orders the assembly
+    static-first / dynamic-last so a prefix-caching server (Ollama) reuses
+    the unchanged head across turns and only re-reads the per-turn tail.
+    Cloud providers keep the exact historical text and ordering.
+    """
     from jarvis.brain.persona_loader import load_effective_persona_prompt
 
-    persona = _realtime_persona(load_effective_persona_prompt())
+    persona = _realtime_persona(load_effective_persona_prompt(compact=compact))
     # The block is re-sent with every per-turn session update, so this stays
     # current across long sessions. Without it the model must either
     # hallucinate calendar answers or delegate a trivial "what day is
@@ -1128,6 +1140,24 @@ def _session_instructions(
         "you to check or look it up, that is an explicit action request "
         "for your action function."
     )
+    if compact:
+        # Same contracts, an eighth of the words: the full guards teach with
+        # incident detail a frontier model benefits from and a 7B model pays
+        # prefill time for. The action-request hand-off sentence survives in
+        # both because it is load-bearing for routing.
+        freshness_line = (
+            "Your built-in knowledge is months to years out of date. For "
+            "time-sensitive facts, reason from the current date given below, "
+            "mark such answers as possibly outdated, and offer to check. A "
+            "request to check or look something up is an action request for "
+            "your action function, not world knowledge."
+        )
+        precision_line = (
+            "Never present a remembered niche figure (measurements, specs, "
+            "capacities) as exact, and never rest a flat verdict on one; "
+            "give an estimate clearly marked as such and offer to check the "
+            "real numbers."
+        )
     language_name = _LANGUAGE_NAMES.get(language, "the user's language")
     input_language_name = _LANGUAGE_NAMES.get(input_language)
     if input_language_name:
@@ -1150,6 +1180,35 @@ def _session_instructions(
             "turn is only a one- or two-word interjection, keep replying in "
             f"{language_name}, the current conversation language."
         )
+    identity_line = (
+        "Runtime identity: this voice session is using the Realtime engine"
+        + (f", provider {provider}" if provider else "")
+        + (f", model {model}" if model else "")
+        + ". If the user asks which engine, provider, or model is active, "
+        "answer from this runtime identity exactly; do not describe the "
+        "classic text brain configuration."
+    )
+    if compact:
+        # Static-first / dynamic-last: everything that is identical from turn
+        # to turn forms one stable prefix, so Ollama's KV prefix cache skips
+        # re-reading it; only the tail (workspace roster, skill, clock,
+        # language) changes between per-turn session updates.
+        parts = [
+            persona,
+            preferences,
+            _ONE_SPEAKER_DIRECTIVE,
+            tool_directive,
+            _REALTIME_SAFETY_APPENDIX,
+            freshness_line,
+            precision_line,
+            identity_line,
+            workspace_directive,
+            skill_directive,
+            input_directive,
+            clock_line,
+            language_directive,
+        ]
+        return "\n\n".join(part for part in parts if part)
     parts = [
         persona,
         # The user's own standing instructions come right after the persona and
@@ -1174,14 +1233,7 @@ def _session_instructions(
         clock_line,
         freshness_line,
         precision_line,
-        (
-            "Runtime identity: this voice session is using the Realtime engine"
-            + (f", provider {provider}" if provider else "")
-            + (f", model {model}" if model else "")
-            + ". If the user asks which engine, provider, or model is active, "
-            "answer from this runtime identity exactly; do not describe the "
-            "classic text brain configuration."
-        ),
+        identity_line,
         language_directive,
     ]
     return "\n\n".join(part for part in parts if part)
@@ -2085,6 +2137,12 @@ class RealtimeVoiceSession:
                     tool_directive=self._tool_directive(provider=provider),
                     preferences=_preferences_block(self._config),
                     workspace_directive=self._workspace_directive(),
+                    # Capability, never a provider-name check (AP-21): a small
+                    # self-hosted brain asks for the compact profile so it is
+                    # not prefilling 24k chars per turn.
+                    compact=bool(
+                        getattr(provider, "prefers_compact_instructions", False)
+                    ),
                 ),
                 language=self._language,
                 input_language=self._input_language,
@@ -2178,6 +2236,11 @@ class RealtimeVoiceSession:
             self._provider = provider
             self._session = session
             self._active_model = model
+            # Captured at accept so every per-turn instruction rebuild keeps
+            # the profile the accepted provider asked for.
+            self._compact_instructions = bool(
+                getattr(provider, "prefers_compact_instructions", False)
+            )
             # Retained for the per-turn "which voice spoke" transcript label.
             self._active_voice = voice
             self._input_sample_rate = input_rate
@@ -2948,6 +3011,9 @@ class RealtimeVoiceSession:
                                 # call, and a roster naming a terminal that is
                                 # gone is worse than none.
                                 workspace_directive=self._workspace_directive(),
+                                compact=getattr(
+                                    self, "_compact_instructions", False
+                                ),
                             ),
                             "language": new_language,
                             # For append-only transports: the turn-scoped

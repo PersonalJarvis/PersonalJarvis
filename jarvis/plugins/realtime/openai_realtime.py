@@ -1371,6 +1371,12 @@ class LocalRealtimeProvider:
     # and quietly routing a call into one the user did not pick is the opposite
     # of what a local card is for.
     implicit_usage_fallback_allowed = False
+    # Small self-hosted brains prefill the whole instruction block EVERY turn;
+    # the full ~24k-char profile cost 7.8 s of LLM time per answer against
+    # qwen2.5:7b (live 2026-08-07). The session builder honors this capability
+    # with the distilled persona and a prefix-cache-friendly static-first
+    # ordering (AP-21: a declared capability, never a provider-name check).
+    prefers_compact_instructions = True
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
     # EMPTY, not absent. The keyless path is chosen by this tuple being empty

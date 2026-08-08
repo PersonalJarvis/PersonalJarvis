@@ -1,22 +1,28 @@
-"""Persona-Loader: extrahiert den System-Prompt-Block aus `JARVIS_PERSONA.md`.
+"""Persona loader: extracts the system-prompt block from `JARVIS_PERSONA.md`.
 
-`JARVIS_PERSONA.md` ist das autoritative Handbuch für die Jarvis-Voice-Persona
-(10 Sprechmuster, OUTPUT RULES, INTERACTION PATTERNS). Der eigentliche
-System-Prompt liegt als Plain-Text innerhalb des ersten Code-Fence (```) nach
-der Zeile `## System-Prompt`. Alles drumherum (Doku, Router-Empfehlung,
-Quellen) ist Metadaten — nicht für das LLM.
+`JARVIS_PERSONA.md` is the authoritative handbook for the voice persona
+(speech patterns, OUTPUT RULES, INTERACTION PATTERNS). The actual system
+prompt is the plain text inside the first code fence (```) after the line
+`## System-Prompt`. Everything around it (docs, router notes, sources) is
+maintainer metadata — never sent to the LLM.
 
-Dieser Loader:
+A second, much shorter block lives after `## System-Prompt (Compact)`: the
+distilled persona for small self-hosted realtime brains, where the full 15k
+characters cost multiple seconds of prompt processing EVERY turn (7.8 s
+measured against qwen2.5:7b, 2026-08-07). Missing compact section falls back
+to the full block — honest, never a silent truncation.
 
-1. Liest die MD-Datei einmal und cached das Ergebnis (`lru_cache`).
-2. Extrahiert den ersten Fence nach der Marker-Section.
-3. Liefert den Plain-Text zurück — bereit für `_build_system_prompt()`.
+This loader:
 
-Robust gegen:
-- Fehlende Datei → leerer String (silent fallback, keine Exception in der
-  Brain-Init-Pfad).
-- Fehlender Code-Fence → leerer String.
-- CRLF-Line-Endings → werden normalisiert.
+1. Reads the MD file once and caches the result (`lru_cache`).
+2. Extracts the first fence after the requested marker section.
+3. Returns the plain text — ready for `_build_system_prompt()`.
+
+Robust against:
+- Missing file → empty string (silent fallback, no exception on the
+  brain-init path).
+- Missing code fence → empty string.
+- CRLF line endings → normalized.
 """
 from __future__ import annotations
 
@@ -28,22 +34,23 @@ log = logging.getLogger(__name__)
 
 _PERSONA_MD_FILENAME = "JARVIS_PERSONA.md"
 _SECTION_MARKER = "## System-Prompt"
+_COMPACT_SECTION_MARKER = "## System-Prompt (Compact)"
 _FENCE = "```"
 
 
 def _persona_md_path() -> Path:
-    """Pfad zur autoritativen `JARVIS_PERSONA.md` im `jarvis/brain/`-Package."""
+    """Path to the authoritative `JARVIS_PERSONA.md` in the `jarvis/brain/` package."""
     return Path(__file__).resolve().parent / _PERSONA_MD_FILENAME
 
 
-def _extract_fence_after_marker(content: str) -> str:
-    """Holt den ersten ```...```-Block nach der Zeile `## System-Prompt`.
+def _extract_fence_after_marker(content: str, marker: str = _SECTION_MARKER) -> str:
+    """The first ```...``` block after the given marker line.
 
-    Wenn der Marker oder der Fence fehlt, liefert die Funktion einen leeren
-    String — der Aufrufer entscheidet, ob das tolerabel ist.
+    When the marker or the fence is missing, the function returns an empty
+    string — the caller decides whether that is tolerable.
     """
     normalized = content.replace("\r\n", "\n")
-    marker_idx = normalized.find(_SECTION_MARKER)
+    marker_idx = normalized.find(marker)
     if marker_idx == -1:
         return ""
     tail = normalized[marker_idx:]
@@ -51,7 +58,7 @@ def _extract_fence_after_marker(content: str) -> str:
     if open_idx == -1:
         return ""
     body_start = open_idx + len(_FENCE)
-    # Zeilenumbruch nach dem Opening-Fence überspringen.
+    # Skip the line break after the opening fence.
     newline_after_open = tail.find("\n", body_start)
     if newline_after_open == -1:
         return ""
@@ -62,34 +69,52 @@ def _extract_fence_after_marker(content: str) -> str:
     return tail[body_start:close_idx].rstrip()
 
 
-@lru_cache(maxsize=1)
-def load_persona_prompt() -> str:
-    """System-Prompt-Block aus `JARVIS_PERSONA.md` — gecacht über Prozess-Leben.
-
-    Return: Prompt-Text oder leerer String wenn Datei/Fence nicht gefunden.
-    """
+def _read_persona_md() -> str:
     path = _persona_md_path()
     try:
-        content = path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        log.warning("JARVIS_PERSONA.md fehlt an %s — Persona-Layer leer.", path)
+        log.warning("JARVIS_PERSONA.md missing at %s — persona layer empty.", path)
         return ""
     except OSError as exc:
-        log.warning("JARVIS_PERSONA.md nicht lesbar (%s) — Persona-Layer leer.", exc)
+        log.warning("JARVIS_PERSONA.md unreadable (%s) — persona layer empty.", exc)
         return ""
 
-    block = _extract_fence_after_marker(content)
+
+@lru_cache(maxsize=1)
+def load_persona_prompt() -> str:
+    """System-prompt block from `JARVIS_PERSONA.md` — cached for the process."""
+    block = _extract_fence_after_marker(_read_persona_md())
     if not block:
         log.warning(
-            "JARVIS_PERSONA.md: Section '%s' oder Code-Fence fehlt — Persona-Layer leer.",
+            "JARVIS_PERSONA.md: section '%s' or code fence missing — persona layer empty.",
             _SECTION_MARKER,
         )
     return block
 
 
+@lru_cache(maxsize=1)
+def load_compact_persona_prompt() -> str:
+    """The distilled persona for small self-hosted brains — cached.
+
+    Falls back to the FULL block when the compact section is absent: a
+    persona that silently shrank to nothing would change the voice, while a
+    temporarily slower prompt merely changes latency.
+    """
+    compact = _extract_fence_after_marker(_read_persona_md(), _COMPACT_SECTION_MARKER)
+    if compact:
+        return compact
+    log.info(
+        "JARVIS_PERSONA.md: no '%s' section — compact requests use the full persona.",
+        _COMPACT_SECTION_MARKER,
+    )
+    return load_persona_prompt()
+
+
 def invalidate_cache() -> None:
-    """Cache invalidieren — für Tests oder Hot-Reload nach MD-Edit."""
+    """Invalidate the caches — for tests or hot reload after an MD edit."""
     load_persona_prompt.cache_clear()
+    load_compact_persona_prompt.cache_clear()
 
 
 # ---------------------------------------------------------------------------
@@ -150,11 +175,18 @@ def default_persona_prompt() -> str:
     return load_persona_prompt()
 
 
-def load_effective_persona_prompt() -> str:
-    """The persona block the brain should use: custom override if set, else default."""
+def load_effective_persona_prompt(*, compact: bool = False) -> str:
+    """The persona block the brain should use: custom override if set, else default.
+
+    The custom override wins EVEN in compact mode — the user chose those
+    exact words for their assistant, and user autonomy outranks the latency
+    optimization (the trade-off is documented on the settings surface).
+    """
     custom = read_custom_prompt()
     if custom is not None:
         return custom
+    if compact:
+        return load_compact_persona_prompt()
     return default_persona_prompt()
 
 
