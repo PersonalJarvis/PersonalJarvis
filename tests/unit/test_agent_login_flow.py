@@ -250,3 +250,17 @@ def test_a_second_start_for_the_same_account_cancels_the_first(
     assert first["flow_id"] != second["flow_id"]
     _wait_for(lambda: first_handle.terminated)
     assert _state(second["flow_id"])["status"] == "starting"
+
+
+def test_success_stamps_the_onboarding_marker_into_the_account_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without the marker a signed-in account still boots panes into the CLI's
+    first-run wizard — which reads exactly like the login having failed."""
+    import json
+
+    handle, _backend, state = _start(monkeypatch, tmp_path, [])
+    monkeypatch.setattr(agent_login_flow, "_connected", lambda account: True)
+    _wait_for(lambda: _state(state["flow_id"])["status"] == "success")
+    doc = json.loads((tmp_path / "seat" / ".claude.json").read_text(encoding="utf-8"))
+    assert doc["hasCompletedOnboarding"] is True

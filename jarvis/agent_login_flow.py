@@ -169,7 +169,48 @@ def _connected(account: AgentAccount) -> bool:
         return False
 
 
+def _mark_onboarded(account: AgentAccount) -> None:
+    """Record in the account's own config that first-run setup is behind it.
+
+    Claude Code's wizard is keyed on ``hasCompletedOnboarding``, not on the
+    credentials — without this, a freshly signed-in account still boots every
+    new pane into "Select login method", which reads exactly like the login
+    having failed (2026-08-08 report). Config parity carries the user's own
+    marker across too; this stamp is for the machine where no native setup
+    exists to carry it FROM. Only ever ADDS the key — a value the CLI wrote
+    itself is never touched — and never fails the flow: the login is real
+    whether or not this cosmetic marker could be written.
+    """
+    if account.platform != "claude":
+        return
+    import json
+
+    from jarvis.agent_config_parity import setup_lock
+
+    path = account.config_dir / ".claude.json"
+    try:
+        with setup_lock(account.config_dir):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8-sig") or "{}")
+            except (OSError, ValueError):
+                data = {}
+            if not isinstance(data, dict) or data.get("hasCompletedOnboarding"):
+                return
+            data["hasCompletedOnboarding"] = True
+            tmp = path.with_name(f"{path.name}.{uuid4().hex[:8]}.tmp")
+            tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            import os
+
+            os.replace(tmp, path)
+    except OSError as exc:
+        logger.debug("Guided login: onboarding marker not written: {}", exc)
+
+
 def _finish(flow: _Flow, status: str, message: str) -> None:
+    # BEFORE the status flips: anything that reacts to "success" — the dialog's
+    # next poll, a pane respawn — must already find the marker on disk.
+    if status == "success":
+        _mark_onboarded(flow.account)
     with flow.lock:
         if flow.status in _FINISHED:
             return
@@ -209,8 +250,7 @@ def _ingest(flow: _Flow, data: str) -> None:
         # one; an unrelated later URL never replaces the sign-in link.
         candidate = _scan_for_url(cleaned)
         if candidate is not None and (
-            flow.url is None
-            or (candidate.startswith(flow.url) and len(candidate) > len(flow.url))
+            flow.url is None or (candidate.startswith(flow.url) and len(candidate) > len(flow.url))
         ):
             flow.url = candidate
         if not flow.code_expected and _CODE_PROMPT_RE.search(cleaned):

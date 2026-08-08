@@ -217,7 +217,20 @@ USER_SETUP: dict[Platform, tuple[Shared, ...]] = {
 
 #: Keys merged out of a document that also holds identity. See :class:`MergedKey`.
 MERGED_KEYS: dict[Platform, tuple[MergedKey, ...]] = {
-    "claude": (MergedKey(".claude.json", "mcpServers"),),
+    "claude": (
+        MergedKey(".claude.json", "mcpServers"),
+        # The CLI's first-run wizard is keyed on these markers, NOT on the
+        # credentials: an account that is fully signed in but lacks them still
+        # boots every new pane into "Select login method" (2026-08-08 report —
+        # the user read a healthy account as a failed login). Carrying the
+        # user's own markers makes a pane on an added account start where their
+        # ordinary terminal starts. `_merge_key` never overwrites a value the
+        # account already holds, so an account that walked the wizard itself
+        # keeps its own record.
+        MergedKey(".claude.json", "hasCompletedOnboarding"),
+        MergedKey(".claude.json", "lastOnboardingVersion"),
+        MergedKey(".claude.json", "theme"),
+    ),
     # Codex's mcp_servers live in config.toml, which is shared whole above.
     "codex": (),
 }

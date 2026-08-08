@@ -318,9 +318,7 @@ def test_a_plugin_tree_the_cli_half_filled_is_replaced_as_a_whole(native: Path) 
     stale.mkdir(parents=True)
     ensure_parity("claude", account.id)
     assert (account.config_dir / "plugins" / "installed_plugins.json").exists()
-    assert (
-        account.config_dir / ("plugins" + agent_config_parity.SUPERSEDED_SUFFIX)
-    ).is_dir()
+    assert (account.config_dir / ("plugins" + agent_config_parity.SUPERSEDED_SUFFIX)).is_dir()
 
 
 def test_the_superseded_copy_is_only_moved_aside_once(native: Path) -> None:
@@ -465,9 +463,12 @@ def test_panes_provisioning_one_account_at_once_do_not_race(native: Path) -> Non
     # Same entries every time — no thread saw a half-provisioned directory.
     assert {tuple(sorted(r)) for r in results} == {tuple(sorted(results[0]))}
     assert (account.config_dir / "skills" / "git-rescue" / "SKILL.md").is_file()
-    assert json.loads(
-        (account.config_dir / agent_config_parity.STATE_FILE).read_text(encoding="utf-8")
-    )["version"] == agent_config_parity.STATE_VERSION
+    assert (
+        json.loads(
+            (account.config_dir / agent_config_parity.STATE_FILE).read_text(encoding="utf-8")
+        )["version"]
+        == agent_config_parity.STATE_VERSION
+    )
 
 
 def test_the_setup_lock_is_one_per_account_and_re_entrant(tmp_path: Path) -> None:
@@ -494,3 +495,45 @@ def test_it_never_raises_on_a_host_that_refuses_everything(
     report = ensure_parity("claude", account.id)
     assert report.redirected is True
     assert report.skipped  # honestly reported, not silently empty
+
+
+# ------------------------------------------------------- the first-run markers
+
+
+def test_the_onboarding_markers_are_carried_so_a_pane_skips_the_wizard(
+    native: Path,
+) -> None:
+    """2026-08-08: a fully signed-in added account still booted every pane into
+    "Select login method", because the wizard is keyed on these markers rather
+    than on the credentials — and the user read that as a failed login."""
+    (native / ".claude.json").write_text(
+        json.dumps(
+            {
+                "hasCompletedOnboarding": True,
+                "lastOnboardingVersion": "2.1.220",
+                "userID": "user-1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    account = _account()
+    ensure_parity("claude", account.id)
+    doc = json.loads((account.config_dir / ".claude.json").read_text(encoding="utf-8"))
+    assert doc["hasCompletedOnboarding"] is True
+    assert doc["lastOnboardingVersion"] == "2.1.220"
+    assert "userID" not in doc  # identity stays the account's own
+
+
+def test_a_marker_the_account_wrote_itself_is_never_overwritten(
+    native: Path,
+) -> None:
+    (native / ".claude.json").write_text(
+        json.dumps({"lastOnboardingVersion": "2.1.220"}), encoding="utf-8"
+    )
+    account = _account()
+    (account.config_dir / ".claude.json").write_text(
+        json.dumps({"lastOnboardingVersion": "2.1.226"}), encoding="utf-8"
+    )
+    ensure_parity("claude", account.id)
+    doc = json.loads((account.config_dir / ".claude.json").read_text(encoding="utf-8"))
+    assert doc["lastOnboardingVersion"] == "2.1.226"
