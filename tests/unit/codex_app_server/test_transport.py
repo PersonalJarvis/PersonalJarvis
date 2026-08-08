@@ -2045,6 +2045,42 @@ def test_effective_config_audit_requires_empty_host_layers_and_session_origins()
         shutil.rmtree(client._workspace.root, ignore_errors=True)
 
 
+def test_effective_config_audit_accepts_0147_structured_feature_origin() -> None:
+    client = CodexAppServerClient()
+    client._trusted_binary_version = transport._SUPPORTED_CODEX_VERSION
+    client._workspace = transport._create_safe_transport_workspace()
+    client._sink_base_url = "http://127.0.0.1:43123/v1"
+    try:
+        result = _safe_audit_result(client)
+        origin = result["origins"].pop("features.multi_agent_v2")
+        result["origins"]["features.multi_agent_v2.enabled"] = origin
+
+        client._audit_effective_config(result)
+
+        client._trusted_binary_version = transport._LEGACY_CODEX_VERSION
+        with pytest.raises(CodexSubscriptionUnavailable, match="origins failed"):
+            client._audit_effective_config(result)
+    finally:
+        shutil.rmtree(client._workspace.root, ignore_errors=True)
+
+
+def test_effective_config_audit_rejects_duplicate_structured_feature_origin() -> None:
+    client = CodexAppServerClient()
+    client._trusted_binary_version = transport._SUPPORTED_CODEX_VERSION
+    client._workspace = transport._create_safe_transport_workspace()
+    client._sink_base_url = "http://127.0.0.1:43123/v1"
+    try:
+        result = _safe_audit_result(client)
+        result["origins"]["features.multi_agent_v2.enabled"] = dict(
+            result["origins"]["features.multi_agent_v2"]
+        )
+
+        with pytest.raises(CodexSubscriptionUnavailable, match="origins failed"):
+            client._audit_effective_config(result)
+    finally:
+        shutil.rmtree(client._workspace.root, ignore_errors=True)
+
+
 @pytest.mark.asyncio
 async def test_dedicated_home_is_revalidated_before_a_warm_thread_start(
     monkeypatch: pytest.MonkeyPatch,

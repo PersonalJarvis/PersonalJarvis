@@ -284,6 +284,18 @@ _DISABLED_APP_SERVER_FEATURES: Final = (
     "chronicle",
 )
 
+# Codex 0.147 keeps the effective/session-layer value for ``multi_agent_v2``
+# as the scalar supplied by ``--disable``, but config/read attributes that one
+# value to the structured feature field ``features.multi_agent_v2.enabled``.
+# Canonicalize only this audited release/path pair. The exact origin set,
+# sessionFlags source, version, effective value, and allowed session surface
+# are still checked below, so this does not admit an additional config field.
+_CODEX_CONFIG_ORIGIN_PATH_ALIASES: Final = {
+    _SUPPORTED_CODEX_VERSION: {
+        "features.multi_agent_v2.enabled": "features.multi_agent_v2",
+    },
+}
+
 _TRANSPORT_BASE_INSTRUCTIONS: Final = (
     "This ephemeral thread exists only to carry a realtime voice transport. "
     "Never use tools, inspect files, access the network, or perform actions. "
@@ -2752,7 +2764,19 @@ class CodexAppServerClient:
             for path, expected in expected_paths.items()
             if expected not in ([], {})
         }
-        if not isinstance(origins, Mapping) or set(origins) != expected_origin_keys:
+        if not isinstance(origins, Mapping):
+            raise CodexSubscriptionUnavailable(
+                "Codex configuration origins failed the transport safety audit."
+            )
+        origin_keys = set(origins)
+        aliases = _CODEX_CONFIG_ORIGIN_PATH_ALIASES.get(
+            self._trusted_binary_version or "", {}
+        )
+        canonical_origin_keys = {aliases.get(key, key) for key in origin_keys}
+        if (
+            len(canonical_origin_keys) != len(origin_keys)
+            or canonical_origin_keys != expected_origin_keys
+        ):
             raise CodexSubscriptionUnavailable(
                 "Codex configuration origins failed the transport safety audit."
             )
