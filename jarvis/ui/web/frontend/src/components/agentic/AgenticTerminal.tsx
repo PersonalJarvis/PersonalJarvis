@@ -1414,7 +1414,9 @@ export function AgenticTerminal({
         ref={terminalRegionRef}
         id={terminalRegionId}
         className={cn(
-          "relative min-h-0 flex-1 overflow-hidden px-1.5 pb-0.5 pt-0.5",
+          // `group/pane`: the scroll rail fades itself in on pointer contact
+          // with THIS pane when it has no position to show. See PaneScrollRail.
+          "group/pane relative min-h-0 flex-1 overflow-hidden px-1.5 pb-0.5 pt-0.5",
           active && !tailReady && "invisible",
         )}
       >

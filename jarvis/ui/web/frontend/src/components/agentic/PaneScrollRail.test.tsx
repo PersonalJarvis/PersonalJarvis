@@ -197,27 +197,28 @@ describe("PaneScrollRail", () => {
     ).toBe("terminal-Mika");
   });
 
-  it("moves a mouse-aware full-screen IDE both up and down and keeps the measured position", () => {
+  it("strokes a mouse-aware full-screen IDE both ways and shows no position at all", () => {
     const harness = fakeTerminal({ owner: "mouse-app" });
     render(<RailHarness name="Aria" term={harness.term} />);
     const rail = giveTrackGeometry("Aria");
-    const thumb = screen.getByTestId("pane-scroll-thumb-Aria");
     const xtermScreen = screen.getByTestId("xterm-screen-Aria");
     const deltas: number[] = [];
     xtermScreen.addEventListener("wheel", (event) => deltas.push(event.deltaY));
-    // Nothing has been relayed yet, so the grip rests in the middle and says so.
-    expect(thumb.style.top).toBe("82px");
-    expect(rail.dataset.scrollPosition).toBe("unmeasured");
+    // The regression this pins: no shape in this track, in any state. Twice a
+    // grip was drawn here and twice it was read as a position that was wrong.
+    expect(screen.queryByTestId("pane-scroll-thumb-Aria")).toBeNull();
+    expect(rail.dataset.scrollPosition).toBe("none");
 
-    fireEvent.pointerDown(thumb, { button: 0, clientY: 100, pointerId: 2 });
+    fireEvent.pointerDown(rail, { button: 0, clientY: 100, pointerId: 2 });
+    // A press alone must move nothing: there is no position it could mean.
+    expect(deltas).toEqual([]);
     fireEvent.pointerMove(rail, { clientY: 65, pointerId: 2 });
     fireEvent.pointerMove(rail, { clientY: 121, pointerId: 2 });
     fireEvent.pointerUp(rail, { clientY: 121, pointerId: 2 });
 
     expect(deltas.some((delta) => delta < 0)).toBe(true);
     expect(deltas.some((delta) => delta > 0)).toBe(true);
-    expect(thumb.style.top).not.toBe("82px");
-    expect(rail.dataset.scrollPosition).toBe("measuring");
+    expect(screen.queryByTestId("pane-scroll-thumb-Aria")).toBeNull();
     expect(rail.dataset.scrollMode).toBe("application");
     expect(rail.hasAttribute("aria-valuemin")).toBe(false);
     expect(rail.hasAttribute("aria-valuemax")).toBe(false);
@@ -254,49 +255,18 @@ describe("PaneScrollRail", () => {
     expect(deltas.some((delta) => delta > 0)).toBe(true);
   });
 
-  it("parks the grip at whichever end the application stopped repainting at", () => {
-    vi.useFakeTimers({
-      toFake: [
-        "setTimeout",
-        "clearTimeout",
-        "setInterval",
-        "clearInterval",
-        "requestAnimationFrame",
-        "cancelAnimationFrame",
-      ],
-    });
-    try {
-      const harness = fakeTerminal({ owner: "mouse-app" });
-      render(<RailHarness name="Ida" term={harness.term} />);
-      const rail = giveTrackGeometry("Ida");
-      const thumb = screen.getByTestId("pane-scroll-thumb-Ida");
-      const older = screen.getByRole("button", { name: "Scroll older in Ida" });
-      const newer = screen.getByRole("button", { name: "Scroll newer in Ida" });
-      const settle = () => act(() => vi.advanceTimersByTime(400));
+  it("says plainly why an application rail has no position, and hides at rest", () => {
+    const harness = fakeTerminal({ owner: "mouse-app" });
+    render(<RailHarness name="Ida" term={harness.term} />);
+    const rail = giveTrackGeometry("Ida");
 
-      // A page the application answers with a repaint is real movement.
-      fireEvent.click(older);
-      harness.repaint();
-      settle();
-      expect(Number.parseFloat(thumb.style.top)).toBeLessThan(164);
-      expect(rail.dataset.scrollPosition).toBe("measuring");
-
-      // A page it answers with nothing is the oldest end, which also fixes the
-      // scale: the distance counted so far IS the whole history.
-      fireEvent.click(older);
-      settle();
-      expect(thumb.style.top).toBe("0px");
-      expect(rail.dataset.scrollPosition).toBe("calibrated");
-      expect(rail.title).toBe("Application history, at the oldest end");
-
-      // And the newest end is the newest end, not the middle.
-      fireEvent.click(newer);
-      settle();
-      expect(thumb.style.top).toBe("164px");
-      expect(rail.title).toBe("Application history, at the newest end");
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(rail.title).toBe(
+      "Scroll Ida: this app keeps its own history, so there is no position to show",
+    );
+    // Carrying no information, it stays out of the way until the pointer is in
+    // the pane. An exact rail keeps its resting visibility — it IS information.
+    expect(rail.className).toContain("opacity-0");
+    expect(rail.className).toContain("group-hover/pane:opacity-70");
   });
 
   it("notices a mouse-tracking flip that arrives without any buffer event", () => {
@@ -329,22 +299,44 @@ describe("PaneScrollRail", () => {
     }
   });
 
-  it("restores the current owner geometry when a TUI starts during a drag", () => {
-    const harness = fakeTerminal({ owner: "terminal", line: 50 });
-    render(<RailHarness name="Iris" term={harness.term} />);
-    const rail = giveTrackGeometry("Iris");
-    const thumb = screen.getByTestId("pane-scroll-thumb-Iris");
-    expect(rail.dataset.scrollMode).toBe("terminal");
+  it("drops the exact thumb when a TUI takes the screen during a drag", () => {
+    vi.useFakeTimers({
+      toFake: [
+        "setInterval",
+        "clearInterval",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+      ],
+    });
+    try {
+      const harness = fakeTerminal({ owner: "terminal", line: 50 });
+      render(<RailHarness name="Iris" term={harness.term} />);
+      const rail = giveTrackGeometry("Iris");
+      const thumb = screen.getByTestId("pane-scroll-thumb-Iris");
+      expect(rail.dataset.scrollMode).toBe("terminal");
+      const deltas: number[] = [];
+      screen
+        .getByTestId("xterm-screen-Iris")
+        .addEventListener("wheel", (event) => deltas.push(event.deltaY));
 
-    fireEvent.pointerDown(thumb, { button: 0, clientY: 100, pointerId: 5 });
-    harness.setOwner("mouse-app");
-    fireEvent.pointerMove(rail, { clientY: 190, pointerId: 5 });
-    fireEvent.pointerUp(rail, { clientY: 190, pointerId: 5 });
+      fireEvent.pointerDown(thumb, { button: 0, clientY: 100, pointerId: 5 });
+      harness.setOwner("mouse-app");
+      fireEvent.pointerMove(rail, { clientY: 60, pointerId: 5 });
+      fireEvent.pointerUp(rail, { clientY: 60, pointerId: 5 });
+      act(() => {
+        vi.advanceTimersByTime(50);
+      });
 
-    // The release belongs to the application that took over mid-gesture, so the
-    // grip lands on the application scale, dragged to its newest end. The exact
-    // xterm thumb the drag started on would have rested at 142.86px.
-    expect(thumb.style.top).toBe("164px");
+      // The gesture continues as a stroke on the application that took over,
+      // and the thumb it started on is gone rather than left pointing at a line
+      // the pane no longer has.
+      expect(deltas.length).toBeGreaterThan(0);
+      expect(deltas.every((delta) => delta < 0)).toBe(true);
+      expect(screen.queryByTestId("pane-scroll-thumb-Iris")).toBeNull();
+      expect(rail.dataset.scrollMode).toBe("application");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("cancels an uncaptured drag when the pointer leaves the rail", () => {
