@@ -20,6 +20,8 @@ from jarvis.setup import state as st
 from jarvis.setup.onboarding_fastpath import state_payload as _shared_state_payload
 from jarvis.setup.onboarding_meta import CURRENT_TERMS_VERSION, read_terms_text
 
+from .lifecycle_guard import require_interactive_desktop_action
+
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
@@ -100,6 +102,9 @@ async def post_decline_terms(request: Request) -> dict:
     start shows the gate again. 409 once the Terms are accepted — the gate no
     longer exists then, and this endpoint must not double as a kill switch.
     """
+    require_interactive_desktop_action(
+        request, action="quit", require_origin=True
+    )
     if _safe_state_payload()["terms"]["accepted"]:
         raise HTTPException(status_code=409, detail="terms already accepted")
     _schedule_app_shutdown(request)
@@ -140,6 +145,9 @@ def _schedule_fresh_restart(request: Request) -> bool:
 
 @router.post("/complete")
 async def post_complete(request: Request) -> dict:
+    require_interactive_desktop_action(
+        request, action="restart", require_origin=True
+    )
     st.mark_onboarding_complete(_path())
     restarting = _schedule_fresh_restart(request)
     return {"ok": True, "restarting": restarting}

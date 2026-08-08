@@ -65,8 +65,10 @@ on unpinned libs; signing private keys ONLY in GH Actions secrets; no silent
 ## 9. Operational reality & git
 Working tree is SHARED: stage only YOUR files (`git add -p`/pathspec, never
 `git add -A`/`.`); auto-commit each logical step (Conventional Commits); never
-push automatically; never commit secrets. App restart =
-`POST /api/settings/restart-app`, for PYTHON-side changes only; desktop WebView
+push automatically; never commit secrets. **Coding agents NEVER restart, quit,
+kill, or relaunch the desktop app** (no restart API/CLI, `Stop-Process`, or
+equivalent). If Python changes need a restart, explain why and let the maintainer
+click Restart in the desktop UI. The desktop WebView
 has no F5/console — frontend fix = `npm run build` in
 `jarvis/ui/web/frontend/`, nothing else: open windows reload themselves
 (`src/lib/bundleWatch.ts`). Never end a frontend change by asking for a restart.

@@ -94,8 +94,12 @@ the genuinely consequential:
 - **Reads** (`GET`) and **reversible mutations** (switch provider, set language,
   enable a skill) just run.
 - **Destructive** actions — every `DELETE`, plus `config set`, `missions dispatch`,
-  `telephony outbound`, `system restart` — refuse unless you pass `--yes` (or set
+  and `telephony outbound` — refuse unless you pass `--yes` (or set
   `JARVIS_CLI_ASSUME_YES=1`). A prompt is not an accepted substitute.
+- **Desktop restart is UI-only.** Control/API clients, including
+  `jarvis system restart`, cannot restart the app even with `--yes --force`;
+  the maintainer must click Restart in the desktop UI. This preserves live
+  Agentic-IDE terminals and makes human presence explicit.
 - `--dry-run` on any command prints the exact request (method, path, body, whether
   auth is attached) and sends nothing — the safe way to inspect before acting.
 - Secrets are never accepted as inline arguments; they are read from a hidden

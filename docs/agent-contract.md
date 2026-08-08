@@ -468,9 +468,14 @@ Detail in [`docs/BUGS.md`](BUGS.md):
   (`git add -p` / pathspec-scoped). A large uncommitted diff is normal. On a
   corrupted-looking index/HEAD, recover via temp-index commit + `update-ref`
   CAS + safety branch (`git-rescue` on repo-wide disorder).
-- **App restart is `POST /api/settings/restart-app`**, not `Stop-Process`
-  (Access Denied under the tray `pythonw.exe`). Editable-install fixes need
-  this restart to take effect.
+- **Coding agents NEVER restart, quit, kill, or relaunch the desktop app.** Do
+  not call `POST /api/settings/restart-app`, `jarvis system restart`,
+  `Stop-Process`, or an equivalent process-control path. A task such as
+  "finish", "verify", or "fix it" is not restart approval, and `--yes` is not
+  human presence. When a Python-side change genuinely needs a fresh process,
+  state the reason and let the maintainer click Restart in the desktop UI. The
+  server rejects Control-API/Bearer restart requests so this contract remains
+  fail-closed when a prompt is missed.
 - **Jarvis is used as a DESKTOP APP, not a browser tab.** The window is an
   embedded WebView (`jarvis/ui/desktop_app.py`) with no address bar, no
   reload button and no dev tools, so "press Ctrl+R / F5", "hard-refresh",
@@ -483,10 +488,8 @@ Detail in [`docs/BUGS.md`](BUGS.md):
   fresh window against the ones this one is running, and reloads once the
   change has settled and the user has stopped typing. **Do not end a frontend
   change by asking for a restart**: restarting stops the voice stack and the
-  live terminal panes to replace files the window fetches on its own. A
-  restart is for Python-side changes (editable install, config, plugins), and
-  only there. Running from a browser against `--dev` is a contributor path,
-  not the maintainer's.
+  live terminal panes to replace files the window fetches on its own. Running
+  from a browser against `--dev` is a contributor path, not the maintainer's.
 - **New worktree:** run `pwsh scripts/preflight.ps1` before writing code;
   non-zero exit → fix first (BUG-006/014).
 - **Memory:** check `MEMORY.md` (`~/.claude/projects/.../memory/`) before

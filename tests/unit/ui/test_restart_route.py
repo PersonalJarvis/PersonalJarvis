@@ -51,6 +51,23 @@ def test_restart_schedules_when_window_present():
     assert calls["n"] == 1
 
 
+def test_restart_rejects_control_bearer_even_when_forced():
+    """A coding/API client cannot turn ``force`` into fake human presence."""
+    calls = {"n": 0}
+    desktop = SimpleNamespace(
+        request_restart=lambda: calls.__setitem__("n", calls["n"] + 1) or True
+    )
+
+    r = _client(desktop).post(
+        "/api/settings/restart-app?force=true",
+        headers={"Authorization": "Bearer control-client"},
+    )
+
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"] == "interactive_restart_required"
+    assert calls["n"] == 0
+
+
 def test_restart_503_without_desktop_app():
     r = _client().post("/api/settings/restart-app")  # headless: no desktop_app
     assert r.status_code == 503

@@ -40,6 +40,8 @@ from jarvis.memory.wiki.integration import get_running_curator
 from jarvis.speech.local_models import FASTER_WHISPER_PACKAGE
 from jarvis.ui.overlay_styles import OVERLAY_STYLES, normalize_overlay_style
 
+from .lifecycle_guard import require_interactive_desktop_action
+
 if TYPE_CHECKING:
     from jarvis.core.config import WikiCuratorConfig
 
@@ -2181,6 +2183,11 @@ async def restart_app(request: Request, force: bool = False) -> dict[str, object
     DesktopApp spawns a detached relauncher and quits ~0.8 s later, so this
     request returns 200 first. Returns 503 on a headless host (no window).
 
+    Control/API callers are rejected even with ``force=true``: a coding agent
+    cannot prove human presence, and restarting destroys every Agentic-IDE
+    terminal in the process. Only an explicit desktop-UI click may enter the
+    restart path.
+
     Mission guard: an app restart kills every in-flight mission (the process and
     its worker Job-Objects die). That is the dominant cause of "aborted" missions
     — a healthy-but-quiet worker looks like a hang, the app gets restarted, and
@@ -2188,9 +2195,10 @@ async def restart_app(request: Request, force: bool = False) -> dict[str, object
     during active use, none correlated with system Standby). So unless the caller
     passes ``force=true``, a restart while missions run is refused with HTTP 409
     and the live mission list, letting the UI/CLI confirm before the kill. This
-    protects every restart source at once: TopBar, taskbar settings, the
-    ``jarvis-ctl restart`` CLI, and any parallel dev session hitting the endpoint.
+    protects every interactive restart source at once: TopBar and taskbar
+    settings. Control clients are refused before this guard.
     """
+    require_interactive_desktop_action(request, action="restart")
     if not force:
         kontrollierer = getattr(request.app.state, "kontrollierer", None)
         list_running = getattr(kontrollierer, "running_mission_ids", None)
@@ -2267,6 +2275,8 @@ async def restart_unelevated(request: Request, force: bool = False) -> dict[str,
     UP: a restart that never returns is worse than the problem being fixed.
     Honours the same running-mission guard as ``/restart-app``.
     """
+    require_interactive_desktop_action(request, action="restart")
+
     from jarvis.platform.input_isolation import describe_input_isolation
 
     report = describe_input_isolation()

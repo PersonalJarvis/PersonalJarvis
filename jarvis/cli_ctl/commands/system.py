@@ -15,55 +15,43 @@ def restart(
         False,
         "--force",
         "-f",
-        help="Restart even while missions are running (this kills them).",
+        help="Compatibility flag; CLI/API restart requests remain blocked.",
     ),
     yes: bool = typer.Option(
-        False, "--yes", "-y", help="Authorize the restart without a prompt."
+        False,
+        "--yes",
+        "-y",
+        help="Compatibility flag; it is not proof of a user's presence.",
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Print the request and exit without restarting."
     ),
 ) -> None:
-    """Cleanly restart the desktop app (POST /api/settings/restart-app).
-
-    This is the deterministic restart path — use it instead of asking the
-    voice/CU layer to 'restart yourself' (which mis-routes to the GUI loop).
-
-    A restart kills every in-flight mission, so the server refuses (HTTP 409)
-    while missions run and lists them; pass ``--force`` to restart anyway.
-    """
+    """Refuse a CLI restart; use the desktop UI's explicit Restart action."""
     from jarvis.cli_ctl import safety
-    from jarvis.cli_ctl.__main__ import as_json, make_client
+    from jarvis.cli_ctl.__main__ import as_json
 
-    if not safety.gate_request(
-        "POST", "/api/settings/restart-app",
-        assume_yes=yes, dry_run=dry_run, as_json=as_json(),
-    ):
+    path = (
+        "/api/settings/restart-app?force=true"
+        if force
+        else "/api/settings/restart-app"
+    )
+    if dry_run:
+        safety.gate_request(
+            "POST",
+            path,
+            assume_yes=yes,
+            dry_run=True,
+            as_json=as_json(),
+        )
         return  # dry run: preview already printed, nothing sent
 
-    try:
-        with make_client() as client:
-            out = client.request(
-                "POST",
-                "/api/settings/restart-app",
-                params={"force": "true"} if force else None,
-            )
-    except ApiError as exc:
-        if exc.status_code == 409 and isinstance(exc.payload, dict):
-            missions = exc.payload.get("missions", []) or []
-            lines = [
-                f"  - {m.get('id')}  {(m.get('title') or '').strip() or '(no title)'}"
-                for m in missions
-            ]
-            render.error(
-                f"{len(missions)} mission(s) still running — restart refused.\n"
-                + "\n".join(lines)
-                + "\nRe-run with --force to restart anyway (this kills them)."
-            )
-            raise typer.Exit(code=1) from exc
-        render.error(exc.message)
-        raise typer.Exit(code=1) from exc
-    render.emit(out or {"restarting": True}, as_json=as_json())
+    render.error(
+        "Desktop restarts require an explicit click in the desktop UI. "
+        "Control API and coding-agent clients are not allowed to restart the app; "
+        "--yes and --force do not override this boundary."
+    )
+    raise typer.Exit(code=1)
 
 
 @app.command("audio-devices")

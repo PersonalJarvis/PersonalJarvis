@@ -19,7 +19,7 @@ def state_dir(tmp_path, monkeypatch):
 def client(state_dir):
     app = FastAPI()
     app.include_router(onboarding_routes.router)
-    return TestClient(app)
+    return TestClient(app, headers={"Origin": "http://testserver"})
 
 
 def test_state_starts_incomplete(client):
@@ -105,6 +105,22 @@ def test_decline_terms_quits_before_acceptance(client, monkeypatch):
     assert client.get("/api/onboarding/state").json()["terms"]["accepted"] is False
 
 
+def test_decline_terms_rejects_a_non_browser_control_client(client, monkeypatch):
+    calls: list[int] = []
+    monkeypatch.setattr(
+        onboarding_routes, "_schedule_app_shutdown", lambda req: calls.append(1)
+    )
+
+    r = client.post(
+        "/api/onboarding/decline-terms",
+        headers={"Authorization": "Bearer control-client", "Origin": ""},
+    )
+
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"] == "interactive_quit_required"
+    assert calls == []
+
+
 def test_decline_terms_409_after_acceptance(client, monkeypatch):
     calls: list[int] = []
     monkeypatch.setattr(
@@ -167,7 +183,7 @@ def _client_with_desktop(desktop):
     app = FastAPI()
     app.include_router(onboarding_routes.router)
     app.state.desktop_app = desktop
-    return TestClient(app)
+    return TestClient(app, headers={"Origin": "http://testserver"})
 
 
 def test_complete_restarts_fresh_on_desktop(state_dir):
@@ -188,6 +204,41 @@ def test_complete_restarts_fresh_on_desktop(state_dir):
     assert r.status_code == 200
     assert r.json() == {"ok": True, "restarting": True}
     assert completed_when_restart_fired == [True]
+
+
+def test_complete_rejects_control_client_without_marking_complete(state_dir):
+    from types import SimpleNamespace
+
+    calls: list[int] = []
+    c = _client_with_desktop(
+        SimpleNamespace(request_restart=lambda: calls.append(1) or True)
+    )
+
+    r = c.post(
+        "/api/onboarding/complete",
+        headers={"Authorization": "Bearer control-client", "Origin": ""},
+    )
+
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"] == "interactive_restart_required"
+    assert calls == []
+    assert c.get("/api/onboarding/state").json()["completed"] is False
+
+
+def test_complete_rejects_originless_shell_client(state_dir):
+    from types import SimpleNamespace
+
+    calls: list[int] = []
+    c = _client_with_desktop(
+        SimpleNamespace(request_restart=lambda: calls.append(1) or True)
+    )
+
+    r = c.post("/api/onboarding/complete", headers={"Origin": ""})
+
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"] == "interactive_restart_required"
+    assert calls == []
+    assert c.get("/api/onboarding/state").json()["completed"] is False
 
 
 def test_complete_without_desktop_completes_in_place(client):

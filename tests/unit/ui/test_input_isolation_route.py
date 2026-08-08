@@ -113,6 +113,28 @@ class TestRepairRoute:
         assert r.json()["unelevated"] is True
         assert calls["n"] == 1
 
+    def test_rejects_control_bearer_before_privilege_or_restart_work(self, pin_report):
+        """The alternate restart path has the same human-presence boundary."""
+        pin_report(
+            _report(blocked=True, reason=InputIsolationReason.ELEVATED, repairable=True)
+        )
+        calls = {"n": 0}
+        desktop = SimpleNamespace(
+            request_unelevated_restart=lambda: (
+                calls.__setitem__("n", calls["n"] + 1) or True,
+                "scheduled",
+            )
+        )
+
+        r = _client(desktop).post(
+            "/api/settings/restart-unelevated?force=true",
+            headers={"Authorization": "Bearer control-client"},
+        )
+
+        assert r.status_code == 403
+        assert r.json()["detail"]["error"] == "interactive_restart_required"
+        assert calls["n"] == 0
+
     def test_refuses_when_there_is_nothing_to_repair(self, pin_report):
         """Never restart a healthy app: the button must be inert, not eager."""
         pin_report(
