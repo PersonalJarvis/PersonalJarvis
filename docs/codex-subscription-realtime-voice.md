@@ -174,10 +174,14 @@ startup pre-roll. Its readiness timeout is 20 seconds.
 
 `CodexSubscriptionRealtimeProvider._open_session_once()` creates
 `RealtimeWebRtcAudioEndpoint`, starts an ephemeral app-server thread, invokes
-`thread/realtime/start` with a v3 offer and client-managed handoffs, applies the
-answer, waits for the media connection, then injects persona and bounded
-same-call history as developer context. The provider declares a 45-second
-handshake budget because a cold start has measured at 15-25 seconds.
+`thread/realtime/start` with a v3 offer, client-managed handoffs, the complete
+live persona/language contract, and bounded role-bearing same-call history.
+Codex 0.147 also disables its automatic delegation acknowledgement. All of
+that configuration is therefore atomic with session creation: no synthetic
+developer message can provoke a greeting or confirmation before the user's
+first grounded utterance. The provider then applies the SDP answer and waits
+for media. It declares a 45-second handshake budget because a cold start has
+measured at 15-25 seconds.
 
 `_CodexSubscriptionRealtimeSession.send_audio()` sends 24 kHz mono PCM through
 the persistent, statefully resampled WebRTC track. Local energy-gated

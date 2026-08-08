@@ -2268,10 +2268,17 @@ async def test_realtime_start_forces_handoff_and_startup_context_boundaries(
     harness = SpawnHarness(monkeypatch)
     client = CodexAppServerClient()
     await client.ensure_started()
+    client._trusted_binary_version = transport._SUPPORTED_CODEX_VERSION
 
     await client.realtime_start(
         "thread-1",
         prompt="hostile prompt",
+        trusted_prompt="  trusted voice contract  ",
+        initial_items=(
+            {"role": "user", "text": "  Earlier question  "},
+            {"role": "assistant", "text": "Earlier answer"},
+        ),
+        version="v3",
         include_startup_context=True,
         client_managed_handoffs=False,
     )
@@ -2280,13 +2287,67 @@ async def test_realtime_start_forces_handoff_and_startup_context_boundaries(
         for frame in harness.processes[0].stdin.messages
         if frame.get("method") == "thread/realtime/start"
     )
-    assert params["prompt"] == ""
+    assert params["prompt"] == "trusted voice contract"
+    assert params["initialItems"] == [
+        {"role": "user", "text": "Earlier question"},
+        {"role": "assistant", "text": "Earlier answer"},
+    ]
+    assert params["delegationAckFiller"] is False
     assert params["includeStartupContext"] is False
     assert params["clientManagedHandoffs"] is True
 
     with pytest.raises(CodexSubscriptionUnavailable, match="Custom"):
         await client.realtime_start("thread-1", extra={"unsafe": True})
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_realtime_start_omits_new_ack_field_for_legacy_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(monkeypatch)
+    client = CodexAppServerClient()
+    await client.ensure_started()
+    client._trusted_binary_version = transport._LEGACY_CODEX_VERSION
+
+    await client.realtime_start(
+        "thread-1", trusted_prompt="Voice contract", version="v3"
+    )
+
+    params = next(
+        frame["params"]
+        for frame in harness.processes[0].stdin.messages
+        if frame.get("method") == "thread/realtime/start"
+    )
+    assert params["prompt"] == "Voice contract"
+    assert "delegationAckFiller" not in params
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_realtime_start_rejects_unbounded_or_custom_startup_context() -> None:
+    client = CodexAppServerClient()
+    invalid_requests = (
+        {"trusted_prompt": "x" * (transport._MAX_REALTIME_START_PROMPT_BYTES + 1)},
+        {"initial_items": ({"role": "system", "text": "unsafe"},)},
+        {"initial_items": ({"role": "user", "text": "ok", "extra": True},)},
+        {
+            "initial_items": ({"role": "user", "text": "valid item"},),
+            "version": "v2",
+        },
+        {
+            "initial_items": (
+                {
+                    "role": "user",
+                    "text": "x" * (transport._MAX_REALTIME_INITIAL_TEXT_BYTES + 1),
+                },
+            )
+        },
+    )
+
+    for kwargs in invalid_requests:
+        with pytest.raises(CodexSubscriptionUnavailable, match="startup"):
+            await client.realtime_start("thread-1", **kwargs)
 
 
 def test_native_codex_accepts_only_audited_current_or_legacy_hash(

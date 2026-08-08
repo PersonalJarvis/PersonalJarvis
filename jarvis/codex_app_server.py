@@ -57,6 +57,10 @@ _STARTUP_AUDIT_TTL_S: Final = 10.0
 _SHUTDOWN_TIMEOUT_S: Final = 2.0
 _DEFAULT_SDP_TIMEOUT_S: Final = 15.0
 _DEFAULT_NOTIFICATION_QUEUE_SIZE: Final = 512
+_MAX_REALTIME_START_PROMPT_BYTES: Final = 64_000
+_MAX_REALTIME_INITIAL_ITEMS: Final = 128
+_MAX_REALTIME_INITIAL_TEXT_BYTES: Final = 32_768
+_REALTIME_INITIAL_ROLES: Final = frozenset({"user", "developer", "assistant"})
 _SUPPORTED_CODEX_VERSION: Final = "codex-cli 0.147.0"
 _LEGACY_CODEX_VERSION: Final = "codex-cli 0.146.0"
 _SUPPORTED_CODEX_VERSIONS: Final = (
@@ -1892,6 +1896,49 @@ def _result_dict(method: str, result: Any) -> dict[str, Any]:
     raise CodexAppServerError(f"Codex app-server returned an invalid {method} result.")
 
 
+def _validated_realtime_initial_items(
+    initial_items: Sequence[Mapping[str, Any]] | None,
+) -> list[dict[str, str]]:
+    """Bound the exact role/text startup-history surface audited upstream."""
+    if initial_items is None:
+        return []
+    if (
+        not isinstance(initial_items, Sequence)
+        or isinstance(initial_items, (str, bytes))
+        or len(initial_items) > _MAX_REALTIME_INITIAL_ITEMS
+    ):
+        raise CodexSubscriptionUnavailable(
+            "Codex realtime startup history is invalid or too large."
+        )
+    validated: list[dict[str, str]] = []
+    total_bytes = 0
+    for item in initial_items:
+        if not isinstance(item, Mapping) or set(item) != {"role", "text"}:
+            raise CodexSubscriptionUnavailable(
+                "Codex realtime startup history contains an invalid item."
+            )
+        role = item.get("role")
+        text = item.get("text")
+        if (
+            not isinstance(role, str)
+            or role not in _REALTIME_INITIAL_ROLES
+            or not isinstance(text, str)
+        ):
+            raise CodexSubscriptionUnavailable(
+                "Codex realtime startup history contains an invalid role or text."
+            )
+        clean_text = text.strip()
+        if not clean_text:
+            continue
+        total_bytes += len(clean_text.encode("utf-8"))
+        if total_bytes > _MAX_REALTIME_INITIAL_TEXT_BYTES:
+            raise CodexSubscriptionUnavailable(
+                "Codex realtime startup history is too large."
+            )
+        validated.append({"role": str(role), "text": clean_text})
+    return validated
+
+
 def _config_layers(result: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
     raw_layers = result.get("layers")
     if not isinstance(raw_layers, list):
@@ -2107,6 +2154,7 @@ class CodexAppServerClient:
         self._sink_server: asyncio.Server | None = None
         self._sink_base_url: str | None = None
         self._trusted_binary_path: str | None = None
+        self._trusted_binary_version: str | None = None
         # Ownership epoch of this client's profile reservation; None when the
         # client holds none. Releases quote it so stale teardown can never
         # touch a newer reservation.
@@ -2340,6 +2388,7 @@ class CodexAppServerClient:
                 raise CodexSubscriptionUnavailable("Codex CLI binary is unavailable.")
             try:
                 self._trusted_binary_path = capability.binary_path
+                self._trusted_binary_version = capability.version
                 codex_home = await asyncio.to_thread(
                     _validated_subscription_home,
                     create=False,
@@ -3552,6 +3601,8 @@ class CodexAppServerClient:
         output_modality: str = "audio",
         offer_sdp: str | None = None,
         prompt: str | None = None,
+        trusted_prompt: str | None = None,
+        initial_items: Sequence[Mapping[str, Any]] | None = None,
         voice: str | None = None,
         version: str | None = None,
         model: str | None = None,
@@ -3566,13 +3617,37 @@ class CodexAppServerClient:
                 "Custom Codex realtime fields are disabled for subscription voice."
             )
         del prompt, include_startup_context, client_managed_handoffs
+        if trusted_prompt is not None and not isinstance(trusted_prompt, str):
+            raise CodexSubscriptionUnavailable(
+                "Codex realtime startup instructions are invalid."
+            )
+        start_prompt = (trusted_prompt or "").strip()
+        if len(start_prompt.encode("utf-8")) > _MAX_REALTIME_START_PROMPT_BYTES:
+            raise CodexSubscriptionUnavailable(
+                "Codex realtime startup instructions are too large."
+            )
+        startup_items = _validated_realtime_initial_items(initial_items)
+        if startup_items and version != "v3":
+            raise CodexSubscriptionUnavailable(
+                "Codex realtime startup history requires the audited v3 protocol."
+            )
         params = {
             "clientManagedHandoffs": True,
             "includeStartupContext": False,
             "outputModality": output_modality,
-            "prompt": "",
+            "prompt": start_prompt,
             "threadId": thread_id,
         }
+        if startup_items:
+            params["initialItems"] = startup_items
+        # Added in audited 0.147.0. Older approved binaries must not receive an
+        # unknown field, while 0.147 explicitly suppresses the automatic
+        # delegation acknowledgement that otherwise speaks over Jarvis.
+        if (
+            version == "v3"
+            and self._trusted_binary_version == _SUPPORTED_CODEX_VERSION
+        ):
+            params["delegationAckFiller"] = False
         optional: dict[str, Any] = {
             "version": version,
             "voice": voice,

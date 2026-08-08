@@ -273,34 +273,25 @@ async def test_direct_sdp_open_uses_safe_experimental_transport_contract() -> No
     # the voice knew nothing about its own project.
     assert "persona" in base
 
-    # Jarvis's own persona/context reaches the model as developer context —
-    # ChatGPT-Live has no client-settable session-instructions field. With no
-    # explicit reply-language preference there is NO opening pin (hard-pinning
-    # the default nailed every call's first reply to English), but there IS a
-    # soft opening HINT on the working channel: the thread-start mirror rule
-    # alone is the channel live calls proved unreliable, and unpinned German
-    # sessions opened in English throughout.
-    appended = [text for _thread, text, _role in client.text_appends]
-    assert appended[0] == "Speak concise English."
-    assert len(appended) == 2
-    assert "Reply in the language the user actually speaks" in appended[1]
-    assert "reply only in" not in appended[1], "a hint is not a pin"
+    # Persona, language policy, and history are part of the atomic live start.
+    # No developer append exists for the far end to acknowledge before the
+    # user speaks.
+    assert client.text_appends == []
     _thread_id, start = client.realtime_starts[0]
-    assert start == {
-        "output_modality": "audio",
-        # Jarvis's own peer produced this offer: ChatGPT-Live carries the
-        # audio itself, which a signalling-only UI offer cannot do.
-        "offer_sdp": "v=0\r\no=python-peer\r\n",
-        "prompt": "",
-        # v3 (ChatGPT-Live): the server chooses the model — the client must
-        # not send one (rejected with "Field `session.model` is not allowed",
-        # verified live 2026-08-01).
-        "model": None,
-        "voice": "cove",
-        "version": "v3",
-        "include_startup_context": False,
-        "client_managed_handoffs": True,
-    }
+    assert start["output_modality"] == "audio"
+    assert start["offer_sdp"] == "v=0\r\no=python-peer\r\n"
+    assert start["prompt"] == ""
+    assert start["initial_items"] == []
+    assert start["model"] is None
+    assert start["voice"] == "cove"
+    assert start["version"] == "v3"
+    assert start["include_startup_context"] is False
+    assert start["client_managed_handoffs"] is True
+    trusted_prompt = start["trusted_prompt"]
+    assert "Speak concise English." in trusted_prompt
+    assert "Speak only the assistant side" in trusted_prompt
+    assert "Reply in the language the user actually speaks" in trusted_prompt
+    assert "reply only in" not in trusted_prompt, "a hint is not a pin"
     await session.close()
     assert client.unsubscribes == ["thread-1"]
 
@@ -321,19 +312,11 @@ async def test_reopened_session_restores_bounded_same_call_history() -> None:
         )
     )
 
-    # Persona, then the restored history, then the soft opening language
-    # hint (no PIN: this session carries no explicit preference).
-    assert len(client.text_appends) == 3
-    thread_id, restored, role = client.text_appends[1]
-    assert thread_id == "thread-1"
-    assert role == "developer"
-    assert "conversation_history" in restored
-    assert "Which language were we discussing?" in restored
-    assert "We were discussing Malbolge." in restored
-    assert (
-        "Reply in the language the user actually speaks"
-        in client.text_appends[2][1]
-    )
+    assert client.text_appends == []
+    _thread_id, start = client.realtime_starts[0]
+    assert start["initial_items"] == list(history)
+    assert "Speak concise English." in start["trusted_prompt"]
+    assert "Reply in the language the user actually speaks" in start["trusted_prompt"]
     await session.close()
 
 
@@ -417,11 +400,9 @@ async def test_language_update_is_developer_context_and_speech_is_authoritative(
     await session.send_speech("Trusted answer")
 
     appended = [text for _thread, text, _role in client.text_appends]
-    # The soft opening hint (no pin without an explicit preference), then the
-    # first REAL pin — the one this turn actually resolved to.
-    assert len(appended) == 2
-    assert "Reply in the language the user actually speaks" in appended[0]
-    assert appended[1] == codex_subscription_mod._language_pin_text("es")
+    # The opening hint was atomic startup configuration; the only append is
+    # the first real per-turn pin resolved upstream.
+    assert appended == [codex_subscription_mod._language_pin_text("es")]
     assert client.speech_appends == [("thread-1", "Trusted answer")]
     await session.close()
 
@@ -444,11 +425,10 @@ async def test_context_refresh_appends_only_the_changed_lines() -> None:
     context_appends = [
         text
         for _thread, text, role in client.text_appends
-        if role == "developer" and "Persona line." in text or "Clock" in text
+        if role == "developer" and ("Persona line." in text or "Clock" in text)
     ]
-    assert context_appends[0] == "Persona line.\nClock: 12:00."
-    assert len(context_appends) == 2
-    update = context_appends[1]
+    assert len(context_appends) == 1
+    update = context_appends[0]
     assert "Clock: 12:01." in update
     assert "Persona line." not in update
     assert "stay in force" in update
@@ -510,20 +490,16 @@ async def test_turn_directive_supersedes_instead_of_accumulating() -> None:
     )
 
     appends = [text for _thread, text, _role in client.text_appends]
-    assert appends[0] == "Persona line.\nDirective A."
-    # The soft opening language hint rides between the persona and the first
-    # per-turn update on every unpinned open.
-    assert "Reply in the language the user actually speaks" in appends[1]
     # Turn 2: the directive travels ONLY in its superseding section, never
     # additionally as a diffed context line.
-    assert "REPLACE every earlier instruction" in appends[2]
-    assert "Directive B." in appends[2]
-    assert appends[2].count("Directive B.") == 1
+    assert "REPLACE every earlier instruction" in appends[0]
+    assert "Directive B." in appends[0]
+    assert appends[0].count("Directive B.") == 1
     # Turn 3: reverting re-issues the directive as a full replacement even
     # though an identical copy already sits in the thread's opening block.
-    assert "REPLACE every earlier instruction" in appends[3]
-    assert "Directive A." in appends[3]
-    assert "Directive B." not in appends[3]
+    assert "REPLACE every earlier instruction" in appends[1]
+    assert "Directive A." in appends[1]
+    assert "Directive B." not in appends[1]
     await session.close()
 
 
@@ -539,13 +515,9 @@ async def test_open_pins_language_only_for_an_explicit_reply_language() -> None:
         )
     )
 
-    assert client.text_appends == [
-        (
-            "thread-1",
-            codex_subscription_mod._language_pin_text("de"),
-            "developer",
-        ),
-    ]
+    assert client.text_appends == []
+    _thread_id, start = client.realtime_starts[0]
+    assert codex_subscription_mod._language_pin_text("de") in start["trusted_prompt"]
     await session.close()
 
 
@@ -568,10 +540,7 @@ async def test_same_language_is_reasserted_at_every_local_turn_boundary() -> Non
     await session.update_session(language="de")
 
     pin = codex_subscription_mod._language_pin_text("de")
-    assert client.text_appends == [
-        ("thread-1", pin, "developer"),
-        ("thread-1", pin, "developer"),
-    ]
+    assert client.text_appends == [("thread-1", pin, "developer")]
     await session.close()
 
 
@@ -1741,7 +1710,11 @@ async def test_ungrounded_turn_warning_uses_the_resolved_session_language(
                 0.0,
                 _Notification(
                     "thread/realtime/transcript/done",
-                    {"threadId": "thread-1", "role": "user", "text": "Und weiter?"},  # i18n-allow: German utterance under test
+                    {
+                        "threadId": "thread-1",
+                        "role": "user",
+                        "text": "Und weiter?",  # i18n-allow
+                    },
                 ),
             ),
         ]
@@ -2917,15 +2890,8 @@ async def test_truncate_reports_the_played_position_to_the_model() -> None:
 
 
 @pytest.mark.asyncio
-async def test_context_and_history_writes_never_authorize_a_response() -> None:
-    """Silent configuration writes must not buy the model a turn.
-
-    The persona, the call history and the language pin travel as the same
-    ``appendText`` call that ``send_text``/``send_speech`` use, but they mean
-    the opposite thing: they configure the session rather than ask for speech.
-    Arming a trusted-output permit for them would authorize one ungrounded
-    answer per write - at session open, before the user has said anything.
-    """
+async def test_startup_context_never_authorizes_a_response() -> None:
+    """Atomic startup configuration must not buy the model a spoken turn."""
     client = _Client(
         [
             _Notification(
@@ -2956,12 +2922,11 @@ async def test_context_and_history_writes_never_authorize_a_response() -> None:
         )
     )
 
-    # The language pin, the persona and the history: three developer writes.
-    assert [role for _thread, _text, role in client.text_appends] == [
-        "developer",
-        "developer",
-        "developer",
-    ]
+    assert client.text_appends == []
+    _thread_id, start = client.realtime_starts[0]
+    assert "You are Nova" in start["trusted_prompt"]
+    assert codex_subscription_mod._language_pin_text("en") in start["trusted_prompt"]
+    assert start["initial_items"] == [{"role": "user", "text": "Earlier question"}]
 
     events = [event async for event in session.receive()]
 
