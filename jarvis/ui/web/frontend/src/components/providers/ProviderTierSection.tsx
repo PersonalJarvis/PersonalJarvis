@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Bot, Brain, Check, Copy, Download, HardDrive, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Sparkles, Square, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
@@ -20,7 +20,12 @@ import {
   managedServerStatus,
   managedServerStop,
   managedServerUninstall,
+  ollamaRuntime,
+  ollamaRuntimeInstall,
+  ollamaRuntimeStart,
   type ManagedServerRuntime,
+  type OllamaRuntimeInstallProgress,
+  type OllamaRuntimeStatus,
   modelPullStatus,
   pullableModels,
   startLocalInstall,
@@ -2201,13 +2206,26 @@ function ManagedServerPanel({
       )}
 
       {!status.ready && !running && preflight && !preflight.ok && (
-        <div className="space-y-1 text-xs">
+        <div className="space-y-2 text-xs">
           <p className="text-amber-500">{preflight.blocker}</p>
           <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">
             {preflight.actions.map((action) => (
               <li key={action}>{action}</li>
             ))}
           </ul>
+          {/* A blocked BRAIN is fixable right here: the local brain is
+              Ollama by design, so offer its install/start instead of only
+              printing the terminal command. Re-runs the preflight once the
+              runtime comes up. */}
+          {preflight.brain?.kind === "blocked" && (
+            <OllamaRuntimePanel
+              providerId="ollama"
+              onChanged={() => {
+                void check();
+                onChanged();
+              }}
+            />
+          )}
         </div>
       )}
 
@@ -2241,6 +2259,162 @@ function ManagedServerPanel({
           {confirmRemove
             ? t("apikeys_view.managed_uninstall_confirm")
             : t("apikeys_view.managed_uninstall")}
+        </Button>
+      )}
+
+      {error && <p className="text-[11px] text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * Install or start the Ollama runtime itself — the last terminal step on the
+ * local-model path. Invisible while Ollama runs (nothing to do); when it is
+ * stopped it offers Start, when it is absent it offers a confirmed Install
+ * (official ollama.com artifacts only, backend-authored status sentences
+ * rendered verbatim). Mounted on pull-capable cards and inside the managed
+ * realtime card's blocked-brain state.
+ */
+function OllamaRuntimePanel({
+  providerId,
+  onChanged,
+}: {
+  /** The pull-capable card whose runtime routes this panel drives. */
+  providerId: string;
+  onChanged: () => void;
+}) {
+  const t = useT();
+  const [status, setStatus] = useState<OllamaRuntimeStatus | null>(null);
+  const [progress, setProgress] = useState<OllamaRuntimeInstallProgress | null>(
+    null,
+  );
+  const [confirmInstall, setConfirmInstall] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const installing = Boolean(progress?.running);
+
+  const refresh = useCallback(async () => {
+    try {
+      const next = await ollamaRuntime(providerId);
+      // A mocked/older backend may answer with a partial body — treat any
+      // missing half as "no data" instead of crashing the whole card.
+      if (!next.status || !next.install) return null;
+      setStatus(next.status);
+      setProgress(next.install);
+      return next;
+    } catch {
+      return null;
+    }
+  }, [providerId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!installing) return;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      const next = await refresh();
+      if (cancelled || next === null) return;
+      if (!next.install.running) {
+        window.clearInterval(timer);
+        if (next.install.phase === "error") {
+          setError(next.install.error || "install failed");
+        }
+        onChanged();
+      }
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [installing, refresh, onChanged]);
+
+  const install = async () => {
+    if (!confirmInstall) {
+      setConfirmInstall(true);
+      return;
+    }
+    setConfirmInstall(false);
+    setError(null);
+    try {
+      const first = await ollamaRuntimeInstall(providerId);
+      setProgress(first);
+      if (!first.running && first.phase === "error" && first.error) {
+        setError(first.error);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const start = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const next = await ollamaRuntimeStart(providerId);
+      if (next) setStatus(next);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (status === null) return null;
+  if (status.running && !installing) return null; // healthy — stay out of the way
+
+  return (
+    <div
+      className="space-y-2 rounded-md border border-border/60 bg-muted/30 p-3"
+      data-testid="ollama-runtime-panel"
+    >
+      <div className="flex items-start gap-2 text-xs">
+        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+        <span className="text-muted-foreground">
+          {installing ? (progress?.detail ?? status.detail) : status.detail}
+        </span>
+      </div>
+
+      {installing && (
+        <div className="h-1.5 w-full overflow-hidden rounded bg-muted">
+          <div
+            className="h-full rounded bg-primary transition-all"
+            style={{ width: `${Math.max(2, progress?.percent ?? 0)}%` }}
+          />
+        </div>
+      )}
+
+      {!installing && !status.installed && (
+        <div className="space-y-1">
+          <Button size="sm" onClick={install} className="gap-2">
+            <Download className="h-3.5 w-3.5" />
+            {confirmInstall
+              ? t("apikeys_view.ollama_install_confirm")
+              : t("apikeys_view.ollama_install_cta")}
+          </Button>
+          <p className="text-[11px] text-muted-foreground">
+            {t("apikeys_view.ollama_install_hint")}
+          </p>
+        </div>
+      )}
+
+      {!installing && status.installed && !status.running && (
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={start}
+          disabled={busy}
+          className="gap-2"
+        >
+          {busy ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Play className="h-3.5 w-3.5" />
+          )}
+          {t("apikeys_view.ollama_start_cta")}
         </Button>
       )}
 
@@ -2560,6 +2734,11 @@ export function AuthWidget({
       <ManagedServerPanel descriptor={descriptor} onChanged={onChanged} />
       {descriptor.supports_base_url && (
         <BaseUrlField descriptor={descriptor} onChanged={onChanged} />
+      )}
+      {/* The runtime itself comes before the model list: pull buttons are
+          dead while Ollama is absent or stopped, and this panel is the fix. */}
+      {descriptor.supports_model_pull && (
+        <OllamaRuntimePanel providerId={descriptor.id} onChanged={onChanged} />
       )}
       <LocalModelDownloadPanel descriptor={descriptor} onChanged={onChanged} />
       {/* Ordered after the server URL on purpose: a download can only be
