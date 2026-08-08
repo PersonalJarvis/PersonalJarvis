@@ -2540,6 +2540,27 @@ describe("chat view", () => {
 
   const toChat = () => fireEvent.click(screen.getByTestId("agentic-view-mode-toggle"));
 
+  const railOrder = () =>
+    screen
+      .getAllByTestId(/^chat-rail-item-/)
+      .map((item) => item.dataset.terminal);
+
+  function placeRailItem(name: string, top: number) {
+    const item = screen.getByTestId(`chat-rail-item-${name}`);
+    item.getBoundingClientRect = () =>
+      ({
+        left: 0,
+        top,
+        width: 200,
+        height: 36,
+        right: 200,
+        bottom: top + 36,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      }) as DOMRect;
+  }
+
   it("starts in the grid, with the rail hidden", () => {
     renderGrid(FOUR);
     expect(screen.getByTestId("agentic-chat-rail").className).toContain("hidden");
@@ -2631,6 +2652,63 @@ describe("chat view", () => {
     fireEvent.click(screen.getByTestId("chat-rail-Aria"));
     expect(cellClass("Aria")).not.toContain("hidden");
     expect(cellClass("Mika")).toContain("hidden");
+  });
+
+  it("swaps two rail positions by dragging without moving or remounting the panes", async () => {
+    renderGrid(FOUR);
+    const paneBefore = screen.getByTestId("pane-Mika");
+    toChat();
+    placeRailItem("Mika", 0);
+    placeRailItem("Nova", 36);
+    placeRailItem("Aria", 72);
+    placeRailItem("Kai", 108);
+
+    fireEvent(
+      screen.getByTestId("chat-rail-Mika"),
+      new MouseEvent("pointerdown", {
+        bubbles: true,
+        clientX: 40,
+        clientY: 18,
+        button: 0,
+      }),
+    );
+    act(() => {
+      window.dispatchEvent(
+        new MouseEvent("pointermove", { clientX: 40, clientY: 90 }),
+      );
+    });
+
+    expect(screen.getByTestId("chat-rail-arrange-ghost").textContent).toContain(
+      "Mika",
+    );
+    expect(screen.getByTestId("chat-rail-item-Aria").className).toContain(
+      "ring-primary/70",
+    );
+
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("pointerup"));
+    });
+
+    expect(railOrder()).toEqual(["Aria", "Nova", "Mika", "Kai"]);
+    expect(api.moveTerminal).not.toHaveBeenCalled();
+    expect(screen.getByTestId("pane-Mika")).toBe(paneBefore);
+    // Chromium follows a drag release with a compatibility click on the row
+    // below it. That click belongs to the drag and must not switch the stage.
+    fireEvent.click(screen.getByTestId("chat-rail-Aria"));
+    expect(cellClass("Mika")).not.toContain("hidden");
+    expect(cellClass("Aria")).toContain("hidden");
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          window.localStorage.getItem("jarvis.agenticIde.chatOrder.v1.ide_test") ??
+            "[]",
+        ),
+      ).toEqual(["aria@0", "nova@0", "mika@0", "kai@0"]),
+    );
+
+    cleanup();
+    renderGrid(FOUR);
+    expect(railOrder()).toEqual(["Aria", "Nova", "Mika", "Kai"]);
   });
 
   it("grounds deictic voice references in the pane visibly on stage", async () => {

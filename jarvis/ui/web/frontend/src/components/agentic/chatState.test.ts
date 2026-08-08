@@ -6,6 +6,7 @@ import {
   orderChatTerminals,
   reconcileChatOrder,
   sameRows,
+  swapChatOrder,
 } from "./chatState";
 
 function terminal(
@@ -101,6 +102,17 @@ describe("chat session ordering", () => {
       ["t2-lifetime", "new-t1"],
     );
     expect(chatTerminalIdentity(replacement)).toBe("new-t1");
+  });
+
+  it("exchanges exactly the two sessions that were dragged together", () => {
+    expect(swapChatOrder(["first", "second", "third", "fourth"], "first", "third"))
+      .toEqual(["third", "second", "first", "fourth"]);
+  });
+
+  it("keeps the existing order object when either dragged session is gone", () => {
+    const order = ["first", "second"];
+    expect(swapChatOrder(order, "first", "gone")).toBe(order);
+    expect(swapChatOrder(order, "first", "first")).toBe(order);
   });
 });
 

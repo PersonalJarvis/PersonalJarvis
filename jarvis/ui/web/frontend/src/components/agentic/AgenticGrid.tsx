@@ -74,7 +74,14 @@ import { PromptPreview } from "./PromptPreview";
 import { PromptEditor } from "./PromptEditor";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { usePaneFileDrag } from "./paneFileDrag";
-import { initialChatOrder, orderChatTerminals, reconcileChatOrder, sameRows } from "./chatState";
+import {
+  chatTerminalIdentity,
+  initialChatOrder,
+  orderChatTerminals,
+  reconcileChatOrder,
+  sameRows,
+  swapChatOrder,
+} from "./chatState";
 import {
   extractPaneDrop,
   extractPasteFiles,
@@ -1408,6 +1415,43 @@ export function AgenticGrid({
         .some((field) => String(field).toLowerCase().includes(needle)),
     );
   }, [chatTerminals, railFilter]);
+
+  /*
+   * The chat rail is a user's reading order, independent of the pane grid.
+   * Dropping one row on another exchanges only their stable lifetime keys: no
+   * terminal moves, remounts or reconnects, and the existing storage effect
+   * below makes the chosen order survive the next visit.
+   */
+  const suppressRailClickUntil = useRef(0);
+  const swapRailTerminals = useCallback(
+    (moved: string, targetName: string) => {
+      const movedTerminal = session.terminals.find((terminal) => terminal.name === moved);
+      const targetTerminal = session.terminals.find(
+        (terminal) => terminal.name === targetName,
+      );
+      if (!movedTerminal || !targetTerminal) return;
+      const next = swapChatOrder(
+        stableChatKeys,
+        chatTerminalIdentity(movedTerminal),
+        chatTerminalIdentity(targetTerminal),
+      );
+      if (next === stableChatKeys) return;
+      // Releasing over a row also produces a click in Chromium. Suppress that
+      // compatibility click so a reorder does not unexpectedly change stages.
+      suppressRailClickUntil.current = Date.now() + 250;
+      setChatOrder({ workspaceId: session.id, keys: next });
+    },
+    [session.id, session.terminals, stableChatKeys],
+  );
+  const railArrange = usePaneArrange(
+    useCallback(
+      (moved: string, targetName: string) => swapRailTerminals(moved, targetName),
+      [swapRailTerminals],
+    ),
+  );
+  const canReorderRail =
+    chatView && !selectionMode && !busy && !working && railTerminals.length > 1;
+
   useEffect(() => {
     rememberChatOrder(session.id, stableChatKeys);
     if (chatOrder.workspaceId === session.id && chatOrder.keys === stableChatKeys) {
@@ -2427,20 +2471,40 @@ export function AgenticGrid({
                  * button inside a button is invalid HTML, and browsers resolve
                  * it by dropping one of them — usually the one you wanted.
                  */
-                <div key={term.key} className="group relative ml-3 mb-0.5">
+                <div
+                  key={term.key}
+                  ref={railArrange.registerCell(term.name)}
+                  data-testid={`chat-rail-item-${term.name}`}
+                  data-terminal={term.name}
+                  className={cn(
+                    "group relative ml-3 mb-0.5 rounded-md transition-[opacity,box-shadow,background-color]",
+                    railArrange.held === term.name && "opacity-50",
+                    railArrange.hover?.target === term.name &&
+                      "bg-primary/10 ring-2 ring-inset ring-primary/70",
+                  )}
+                >
                   <button
                     type="button"
                     data-testid={`chat-rail-${term.name}`}
                     aria-label={`${title}, ${term.display_name || term.agent}`}
                     aria-pressed={selectionMode ? marked : active}
-                    onClick={() =>
+                    onPointerDown={
+                      canReorderRail
+                        ? (event) => railArrange.start(term.name, event)
+                        : undefined
+                    }
+                    onClick={(event) => {
+                      if (Date.now() < suppressRailClickUntil.current) {
+                        event.preventDefault();
+                        return;
+                      }
                       // Selection mode borrows the rail: in chat view the grid's
                       // per-pane overlays are hidden with their panes, so the
                       // rail is where a multi-close is composed.
                       selectionMode
                         ? toggleTerminalSelection(term.name)
-                        : selectChatPane(term.name, takesPrompts(term))
-                    }
+                        : selectChatPane(term.name, takesPrompts(term));
+                    }}
                     /*
                      * Selection is a barely-there lift of the surface — no hue,
                      * no border, no fill. Eleven rows of tinted boxes turn a
@@ -2456,7 +2520,12 @@ export function AgenticGrid({
                         : active && !selectionMode
                           ? "bg-foreground/[0.09]"
                           : "hover:bg-foreground/[0.055]",
+                      canReorderRail &&
+                        (railArrange.held === term.name
+                          ? "cursor-grabbing"
+                          : "cursor-grab"),
                     )}
+                    style={{ touchAction: canReorderRail ? "none" : undefined }}
                   >
                     {/* The right padding is permanent, not applied on hover:
                         the close button appears where the badge would otherwise
@@ -3082,6 +3151,24 @@ export function AgenticGrid({
               {t("agentic_grid.arrange.swap_hint")}
             </span>
           )}
+        </div>
+      )}
+      {railArrange.held !== null && railArrange.point !== null && (
+        <div
+          data-testid="chat-rail-arrange-ghost"
+          className="pointer-events-none fixed z-50 flex items-center gap-1.5 rounded-lg border border-primary/60 bg-card px-2.5 py-1.5 text-xs font-semibold shadow-xl"
+          style={{ left: railArrange.point.x + 14, top: railArrange.point.y + 14 }}
+        >
+          <GripVertical className="h-3.5 w-3.5 text-primary" />
+          {railArrange.held}
+          <span className="font-normal text-muted-foreground">
+            {railArrange.hover === null
+              ? t("agentic_grid.arrange.carrying")
+              : t("agentic_grid.arrange.swap").replace(
+                  "{0}",
+                  railArrange.hover.target,
+                )}
+          </span>
         </div>
       )}
     </div>

@@ -34,6 +34,22 @@ export function reconcileChatOrder(
   return sameStrings(previous, next) ? previous : next;
 }
 
+/** Exchange two session positions without disturbing any rows between them. */
+export function swapChatOrder(
+  previous: readonly string[],
+  first: string,
+  second: string,
+): readonly string[] {
+  if (first === second) return previous;
+  const firstIndex = previous.indexOf(first);
+  const secondIndex = previous.indexOf(second);
+  if (firstIndex < 0 || secondIndex < 0) return previous;
+  const next = [...previous];
+  next[firstIndex] = second;
+  next[secondIndex] = first;
+  return next;
+}
+
 /** Put terminal objects into the stable order used by the chat rail. */
 export function orderChatTerminals(
   terminals: readonly TerminalState[],
