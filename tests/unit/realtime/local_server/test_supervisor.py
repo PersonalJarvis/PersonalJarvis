@@ -14,11 +14,15 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
+from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.realtime.local_server import supervisor
 
 
@@ -437,7 +441,12 @@ def test_spawn_is_windowless_and_records_ownership(monkeypatch, tmp_path) -> Non
         launch_command="serve --flag", base_url="http://localhost:8765", reason="test"
     )
     assert outcome == "spawned"
-    assert spawned[0]["creationflags"] == NO_WINDOW_CREATIONFLAGS  # AP-1
+    creationflags = int(spawned[0]["creationflags"])
+    if os.name == "nt":
+        assert creationflags & NO_WINDOW_CREATIONFLAGS  # AP-1
+        assert creationflags & supervisor._WINDOWS_BREAKAWAY_FROM_JOB
+    else:
+        assert creationflags == 0
     record = json.loads(
         (tmp_path / "local_realtime_server.pid.json").read_text(encoding="utf-8")
     )
@@ -668,6 +677,167 @@ def test_windows_taskkill_success_code_is_not_enough_if_pid_survives(monkeypatch
     monkeypatch.setattr(supervisor.time, "monotonic", lambda: next(moments))
 
     assert supervisor._kill_pid_tree(4711) is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows process-object semantics")
+def test_windows_pid_probe_rejects_an_exited_but_still_referenced_process() -> None:
+    """A signalled process object is dead even while Python retains its handle."""
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "pass"],
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+    proc.wait(timeout=10)
+
+    assert supervisor._pid_exists(proc.pid) is False
+
+
+def test_managed_server_windows_flags_detach_and_break_away() -> None:
+    flags = supervisor._server_creationflags(platform_name="nt")
+
+    assert flags & supervisor._WINDOWS_NO_WINDOW
+    assert flags & supervisor._WINDOWS_DETACHED_PROCESS
+    assert flags & supervisor._WINDOWS_BREAKAWAY_FROM_JOB
+
+
+def test_spawn_retries_without_breakaway_when_the_host_job_forbids_it(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    attempts: list[int] = []
+
+    class _Process:
+        pid = 4711
+
+    def popen(*args, **kwargs):
+        attempts.append(int(kwargs["creationflags"]))
+        if len(attempts) == 1:
+            raise PermissionError("breakaway denied")
+        return _Process()
+
+    flags = NO_WINDOW_CREATIONFLAGS | supervisor._WINDOWS_BREAKAWAY_FROM_JOB
+    monkeypatch.setattr(supervisor, "_server_creationflags", lambda: flags)
+    monkeypatch.setattr(supervisor.subprocess, "Popen", popen)
+
+    assert supervisor._spawn("server --mode realtime", reason="test") == 4711
+    assert attempts == [flags, flags & ~supervisor._WINDOWS_BREAKAWAY_FROM_JOB]
+
+
+def test_runtime_monitor_restarts_and_rewarms_a_dead_owned_server(
+    monkeypatch, tmp_path
+) -> None:
+    from jarvis.realtime.local_server import install
+
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    calls: list[str] = []
+    monkeypatch.setattr(install, "server_status", lambda: {"ready": True})
+    monkeypatch.setattr(
+        supervisor,
+        "ensure_running",
+        lambda **kwargs: calls.append(f"ensure:{kwargs['reason']}") or "spawned",
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "wait_until_ready",
+        lambda *args, **kwargs: calls.append("ready") or True,
+    )
+    monkeypatch.setattr(
+        install,
+        "repair_smoke_marker_from_live_runtime",
+        lambda base_url: calls.append("marker") or True,
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "warm_brain",
+        lambda **kwargs: calls.append("brain") or True,
+    )
+
+    outcome = supervisor._revive_from_monitor(
+        launch_command="serve --model_name m",
+        base_url="http://127.0.0.1:8765",
+        reason="watchdog-exit",
+        cancel_event=threading.Event(),
+    )
+
+    assert outcome == "ready"
+    assert calls == ["ensure:watchdog-exit", "ready", "marker", "brain"]
+
+
+def test_runtime_monitor_is_singleton_for_one_managed_generation(
+    monkeypatch, tmp_path
+) -> None:
+    from jarvis.realtime.local_server import install
+
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    root = tmp_path / "local_realtime"
+    root.mkdir()
+    command = f'"{root / "server.exe"}" --mode realtime'
+    monkeypatch.setattr(install, "server_status", lambda: {"ready": True})
+    monkeypatch.setattr(supervisor, "_owned_process", lambda: (4711, True))
+    started: list[tuple[object, tuple[object, ...]]] = []
+
+    class _Thread:
+        def __init__(self, *, target, args, **kwargs):
+            del kwargs
+            self._target = target
+            self._args = args
+            self._alive = False
+
+        def start(self) -> None:
+            self._alive = True
+            started.append((self._target, self._args))
+
+        def is_alive(self) -> bool:
+            return self._alive
+
+    monkeypatch.setattr(supervisor.threading, "Thread", _Thread)
+
+    assert supervisor.start_runtime_monitor(
+        launch_command=command,
+        base_url="http://127.0.0.1:8765",
+    )
+    assert not supervisor.start_runtime_monitor(
+        launch_command=command,
+        base_url="http://127.0.0.1:8765",
+    )
+    assert len(started) == 1
+
+
+def test_runtime_monitor_never_revives_an_unproven_failed_install(monkeypatch) -> None:
+    from jarvis.realtime.local_server import install
+
+    monkeypatch.setattr(install, "server_status", lambda: {"ready": False})
+
+    def forbidden(**kwargs):
+        raise AssertionError("an invalidated install must not be spawned")
+
+    monkeypatch.setattr(supervisor, "ensure_running", forbidden)
+
+    assert (
+        supervisor._revive_from_monitor(
+            launch_command="serve --model_name m",
+            base_url="http://127.0.0.1:8765",
+            reason="watchdog-exit",
+            cancel_event=threading.Event(),
+        )
+        == "refused:install-unproven"
+    )
+
+
+def test_deliberate_stop_disarms_the_runtime_monitor(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    supervisor._reset_for_tests()
+    monitor_stop = threading.Event()
+    monkeypatch.setattr(supervisor, "_monitor_stop", monitor_stop)
+    monkeypatch.setattr(
+        supervisor,
+        "_stop_owned_unlocked",
+        lambda **kwargs: (True, "stopped pid 4711"),
+    )
+
+    changed, _message = supervisor.stop(owned_only=True)
+
+    assert changed is True
+    assert monitor_stop.is_set()
 
 
 def test_stop_clears_a_stale_pidfile(monkeypatch, tmp_path) -> None:

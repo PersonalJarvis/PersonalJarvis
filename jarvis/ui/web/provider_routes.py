@@ -2735,8 +2735,8 @@ async def _finish_managed_server_warm(
     command: str,
     cancel_event: threading.Event,
 ) -> None:
-    """Wait off-request for managed readiness, then warm its brain."""
-    from jarvis.realtime.local_server import supervisor
+    """Wait off-request for readiness, prove it, monitor it, then warm its brain."""
+    from jarvis.realtime.local_server import install, supervisor
 
     try:
         managed = await asyncio.to_thread(
@@ -2755,9 +2755,26 @@ async def _finish_managed_server_warm(
             )
         )
         if ready and not cancel_event.is_set():
-            await asyncio.to_thread(
-                lambda: supervisor.warm_brain(launch_command=command)
-            )
+            def _finish_ready_runtime() -> None:
+                if cancel_event.is_set():
+                    return
+                proven = install.repair_smoke_marker_from_live_runtime(base_url)
+                if cancel_event.is_set():
+                    return
+                if proven:
+                    supervisor.start_runtime_monitor(
+                        launch_command=command,
+                        base_url=base_url,
+                    )
+                else:
+                    log.warning(
+                        "managed local-realtime server is ready but its install "
+                        "proof could not be repaired"
+                    )
+                if not cancel_event.is_set():
+                    supervisor.warm_brain(launch_command=command)
+
+            await asyncio.to_thread(_finish_ready_runtime)
     except asyncio.CancelledError:
         cancel_event.set()
         raise

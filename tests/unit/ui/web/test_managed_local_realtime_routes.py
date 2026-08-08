@@ -234,6 +234,16 @@ async def test_background_warm_waits_for_managed_pool_before_brain(
 
     monkeypatch.setattr(supervisor, "wait_until_ready", ready)
     monkeypatch.setattr(
+        install,
+        "repair_smoke_marker_from_live_runtime",
+        lambda base_url: calls.append(("marker", base_url)) or True,
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "start_runtime_monitor",
+        lambda **kwargs: calls.append(("monitor", kwargs)) or True,
+    )
+    monkeypatch.setattr(
         supervisor,
         "warm_brain",
         lambda **kwargs: calls.append(("brain", kwargs)) or True,
@@ -245,7 +255,12 @@ async def test_background_warm_waits_for_managed_pool_before_brain(
         threading.Event(),
     )
 
-    assert [name for name, _payload in calls] == ["ready", "brain"]
+    assert [name for name, _payload in calls] == [
+        "ready",
+        "marker",
+        "monitor",
+        "brain",
+    ]
     ready_kwargs = calls[0][1]
     assert isinstance(ready_kwargs, dict)
     assert ready_kwargs["cleanup_on_timeout"] is True

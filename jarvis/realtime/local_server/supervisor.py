@@ -39,7 +39,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 log = logging.getLogger(__name__)
@@ -55,6 +55,14 @@ RUNTIME_READY_TIMEOUT_S = 120.0
 RUNTIME_READY_POLL_S = 0.5
 OWNED_STARTUP_TIMEOUT_S = RUNTIME_READY_TIMEOUT_S
 
+# The managed process is meant to be warm before a user calls. Poll its
+# ownership cheaply once a second so an idle native crash starts recovering
+# immediately; probe the full model pool less often to catch a live-but-wedged
+# child without filling the server log with health requests.
+RUNTIME_MONITOR_POLL_S = 1.0
+RUNTIME_MONITOR_POOL_INTERVAL_S = 30.0
+RUNTIME_MONITOR_UNREADY_GRACE_S = 30.0
+
 _MAX_POOL_RESPONSE_BYTES = 64 * 1024
 
 #: How long the Ollama brain model stays resident after a warm ping. Slides on
@@ -64,8 +72,18 @@ BRAIN_KEEP_ALIVE = "2h"
 
 _DEFAULT_PORT = 8765
 
+_WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+_WINDOWS_DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+_WINDOWS_BREAKAWAY_FROM_JOB = getattr(
+    subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000
+)
+
 _LOCK = threading.Lock()
 _last_spawn_at: float = float("-inf")
+_MONITOR_LOCK = threading.Lock()
+_monitor_thread: threading.Thread | None = None
+_monitor_stop: threading.Event | None = None
+_monitor_key: tuple[str, str] | None = None
 
 
 # ── Paths ────────────────────────────────────────────────────────────────
@@ -697,7 +715,11 @@ def ensure_running(*, launch_command: str, base_url: str, reason: str) -> str:
             owned_root = (
                 managed_install_root(owned_command) if owned_command is not None else None
             )
-            if owned_root is not None and not _uses_loopback_bind(owned_command):
+            if (
+                owned_root is not None
+                and owned_command is not None
+                and not _uses_loopback_bind(owned_command)
+            ):
                 # Managed servers survive app exits, so an upgrade can inherit
                 # a healthy but LAN-bound legacy generation. Only a verified
                 # owned process is eligible for this one-time migration.
@@ -774,9 +796,22 @@ def ensure_running(*, launch_command: str, base_url: str, reason: str) -> str:
         return "spawned"
 
 
+def _server_creationflags(*, platform_name: str | None = None) -> int:
+    """Windowless flags that let the managed server survive an app restart."""
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # lazy
+
+    platform = os.name if platform_name is None else platform_name
+    if platform != "nt":
+        return NO_WINDOW_CREATIONFLAGS
+    return (
+        _WINDOWS_NO_WINDOW
+        | _WINDOWS_DETACHED_PROCESS
+        | _WINDOWS_BREAKAWAY_FROM_JOB
+    )
+
+
 def _spawn(command: str, *, reason: str) -> int | None:
     """Detached, window-less, log-sinked spawn. ``None`` when it failed."""
-    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # lazy
 
     try:
         _server_log().parent.mkdir(parents=True, exist_ok=True)
@@ -800,15 +835,36 @@ def _spawn(command: str, *, reason: str) -> int | None:
             # Its own session/process group, so a deliberate stop can take the
             # whole tree down with killpg instead of orphaning workers.
             popen_kwargs["start_new_session"] = True
-        proc = subprocess.Popen(  # noqa: S603 — the maintainer configured this command
-            argv,
-            stdin=subprocess.DEVNULL,
-            stdout=sink or subprocess.DEVNULL,
-            stderr=subprocess.STDOUT,
-            creationflags=NO_WINDOW_CREATIONFLAGS,
-            env=hardened_child_env(inject_openai_key=True),
+        creationflags = _server_creationflags()
+        common_kwargs: dict[str, Any] = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": sink or subprocess.DEVNULL,
+            "stderr": subprocess.STDOUT,
+            "env": hardened_child_env(inject_openai_key=True),
             **popen_kwargs,
-        )
+        }
+        try:
+            proc = subprocess.Popen(  # noqa: S603
+                argv,
+                creationflags=creationflags,
+                **common_kwargs,
+            )
+        except PermissionError as exc:
+            if not creationflags & _WINDOWS_BREAKAWAY_FROM_JOB:
+                raise
+            # Some Windows hosts forbid explicit job breakaway. Keep the
+            # server usable, but report the degraded survive-parent guarantee.
+            fallback_flags = creationflags & ~_WINDOWS_BREAKAWAY_FROM_JOB
+            log.warning(
+                "supervisor: server breakaway was denied (%s); retrying without "
+                "CREATE_BREAKAWAY_FROM_JOB",
+                exc,
+            )
+            proc = subprocess.Popen(  # noqa: S603
+                argv,
+                creationflags=fallback_flags,
+                **common_kwargs,
+            )
     except Exception as exc:  # noqa: BLE001 — a bad command must not kill the caller
         log.warning(
             "supervisor: spawning the server failed (%s: %s) — check "
@@ -824,6 +880,197 @@ def _spawn(command: str, *, reason: str) -> int | None:
     return proc.pid
 
 
+def start_runtime_monitor(*, launch_command: str, base_url: str) -> bool:
+    """Keep one verified managed runtime warm for this Jarvis process.
+
+    The server still survives app exit. This lightweight daemon only closes
+    the gap while Jarvis is running: an idle native crash is otherwise noticed
+    only when the next user starts a call and pays the whole model cold boot.
+    Returns ``True`` when a new monitor was armed and ``False`` when the same
+    generation is already covered or cannot be owned safely.
+    """
+    command = (launch_command or "").strip()
+    host, _port = _host_port(base_url)
+    if managed_install_root(command) is None or not _is_loopback(host):
+        return False
+    try:
+        from jarvis.realtime.local_server import install
+
+        if not bool(install.server_status().get("ready")):
+            return False
+    except Exception:  # noqa: BLE001 - no proof means no autonomous monitor
+        log.warning("supervisor: runtime monitor could not verify the install", exc_info=True)
+        return False
+    _pid, alive = _owned_process()
+    if not alive:
+        return False
+    key = (command, _pool_url(base_url))
+
+    global _monitor_thread, _monitor_stop, _monitor_key
+    with _MONITOR_LOCK:
+        if (
+            _monitor_thread is not None
+            and _monitor_thread.is_alive()
+            and _monitor_key == key
+        ):
+            return False
+        if _monitor_stop is not None:
+            _monitor_stop.set()
+        stop_event = threading.Event()
+        thread = threading.Thread(
+            target=_runtime_monitor,
+            args=(command, base_url, stop_event, key),
+            name="local-realtime-monitor",
+            daemon=True,
+        )
+        _monitor_stop = stop_event
+        _monitor_thread = thread
+        _monitor_key = key
+        thread.start()
+    log.info("local-realtime supervisor: continuous runtime monitor armed")
+    return True
+
+
+def _revive_from_monitor(
+    *,
+    launch_command: str,
+    base_url: str,
+    reason: str,
+    cancel_event: threading.Event,
+) -> str:
+    """Run one generation-bound revive and return its explicit outcome."""
+    try:
+        from jarvis.realtime.local_server import install
+
+        if not bool(install.server_status().get("ready")):
+            return "refused:install-unproven"
+    except Exception:  # noqa: BLE001 - fail closed before an autonomous spawn
+        log.warning("supervisor: monitor revive could not verify the install", exc_info=True)
+        return "refused:install-unproven"
+    outcome = ensure_running(
+        launch_command=launch_command,
+        base_url=base_url,
+        reason=reason,
+    )
+    if outcome != "spawned":
+        return outcome
+    ready = wait_until_ready(
+        base_url,
+        timeout=RUNTIME_READY_TIMEOUT_S,
+        launch_command=launch_command,
+        cleanup_on_timeout=True,
+        cancel_event=cancel_event,
+    )
+    if not ready:
+        return "cancelled" if cancel_event.is_set() else "readiness-timeout"
+    try:
+        install.repair_smoke_marker_from_live_runtime(base_url)
+    except Exception:  # noqa: BLE001 - runtime recovery remains usable
+        log.warning("supervisor: smoke-proof repair after revive failed", exc_info=True)
+    warm_brain(launch_command=launch_command)
+    return "ready"
+
+
+def _runtime_monitor(
+    launch_command: str,
+    base_url: str,
+    stop_event: threading.Event,
+    key: tuple[str, str],
+) -> None:
+    """Detect an idle process exit promptly and a wedged pool conservatively."""
+    next_pool_probe = time.monotonic() + RUNTIME_MONITOR_POOL_INTERVAL_S
+    unready_since: float | None = None
+    last_outcome = ""
+    try:
+        while not stop_event.wait(RUNTIME_MONITOR_POLL_S):
+            try:
+                if managed_install_root(launch_command) is None:
+                    return
+                _pid, alive = _owned_process()
+                if not alive:
+                    # A healthy listener without our ownership is foreign. Do
+                    # not fight it or keep trying to adopt it.
+                    if probe_runtime(base_url, timeout=0.25) is not None:
+                        log.warning(
+                            "local-realtime monitor stopped: ready listener is no "
+                            "longer owned by this install"
+                        )
+                        return
+                    outcome = _revive_from_monitor(
+                        launch_command=launch_command,
+                        base_url=base_url,
+                        reason="watchdog-exit",
+                        cancel_event=stop_event,
+                    )
+                    if outcome == "ready":
+                        log.info("local-realtime monitor: crashed runtime recovered")
+                        unready_since = None
+                        next_pool_probe = (
+                            time.monotonic() + RUNTIME_MONITOR_POOL_INTERVAL_S
+                        )
+                    elif outcome != last_outcome:
+                        log.warning(
+                            "local-realtime monitor: crash recovery deferred (%s)",
+                            outcome,
+                        )
+                    last_outcome = outcome
+                    continue
+
+                now = time.monotonic()
+                if now < next_pool_probe:
+                    continue
+                next_pool_probe = now + RUNTIME_MONITOR_POOL_INTERVAL_S
+                if probe_runtime(base_url, timeout=0.75) is not None:
+                    unready_since = None
+                    last_outcome = ""
+                    continue
+                if unready_since is None:
+                    unready_since = now
+                    log.warning(
+                        "local-realtime monitor: owned process stopped reporting "
+                        "a ready model pool; waiting for a second failed probe"
+                    )
+                    continue
+                if now - unready_since < RUNTIME_MONITOR_UNREADY_GRACE_S:
+                    continue
+                outcome = _revive_from_monitor(
+                    launch_command=launch_command,
+                    base_url=base_url,
+                    reason="watchdog-unready",
+                    cancel_event=stop_event,
+                )
+                if outcome == "ready":
+                    log.info("local-realtime monitor: wedged runtime recovered")
+                    unready_since = None
+                    next_pool_probe = (
+                        time.monotonic() + RUNTIME_MONITOR_POOL_INTERVAL_S
+                    )
+                elif outcome != last_outcome:
+                    log.warning(
+                        "local-realtime monitor: unready recovery deferred (%s)",
+                        outcome,
+                    )
+                last_outcome = outcome
+            except Exception:  # noqa: BLE001 - a monitor must survive one bad probe
+                log.warning("local-realtime monitor iteration failed", exc_info=True)
+    finally:
+        global _monitor_thread, _monitor_stop, _monitor_key
+        with _MONITOR_LOCK:
+            if _monitor_stop is stop_event:
+                _monitor_thread = None
+                _monitor_stop = None
+                _monitor_key = None
+
+
+def _request_runtime_monitor_stop() -> bool:
+    """Disarm autonomous recovery before a deliberate lifecycle stop."""
+    with _MONITOR_LOCK:
+        if _monitor_stop is None:
+            return False
+        _monitor_stop.set()
+        return True
+
+
 # ── Stop ─────────────────────────────────────────────────────────────────
 
 
@@ -832,6 +1079,7 @@ def stop(*, owned_only: bool = True, install_root: Path | None = None) -> tuple[
     with lifecycle_guard() as guarded:
         if not guarded:
             return False, "server lifecycle operation already in progress"
+        _request_runtime_monitor_stop()
         return _stop_owned_unlocked(owned_only=owned_only, install_root=install_root)
 
 
@@ -932,7 +1180,7 @@ def _kill_pid_tree(pid: int) -> bool:
         # The spawn used start_new_session, so the pid IS the group leader:
         # SIGTERM the group, grace, then SIGKILL what remains.
         try:
-            os.killpg(pid, signal.SIGTERM)
+            os.killpg(pid, signal.SIGTERM)  # type: ignore[attr-defined]
         except ProcessLookupError:
             return True
         except (PermissionError, OSError):
@@ -943,11 +1191,11 @@ def _kill_pid_tree(pid: int) -> bool:
                 return True
             time.sleep(0.2)
         try:
-            os.killpg(pid, signal.SIGKILL)
+            os.killpg(pid, signal.SIGKILL)  # type: ignore[attr-defined]
         except ProcessLookupError:
             return True
         except (PermissionError, OSError):
-            os.kill(pid, signal.SIGKILL)
+            os.kill(pid, signal.SIGKILL)  # type: ignore[attr-defined]
         return True
     except Exception:  # noqa: BLE001 — best-effort teardown, reported honestly
         log.warning("supervisor: kill of pid %s incomplete", pid, exc_info=True)
@@ -957,6 +1205,41 @@ def _kill_pid_tree(pid: int) -> bool:
 def _pid_exists(pid: int) -> bool:
     if pid <= 0:
         return False
+    if os.name == "nt":
+        # ``os.kill(pid, 0)`` only proves that Windows can still open the
+        # process object. A terminated object remains open while another
+        # handle references it, which made a successful taskkill look alive
+        # and aborted repair installs. A signalled handle is the real test.
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            synchronize = 0x00100000
+            wait_timeout = 0x00000102
+            wait_failed = 0xFFFFFFFF
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.OpenProcess.argtypes = [
+                wintypes.DWORD,
+                wintypes.BOOL,
+                wintypes.DWORD,
+            ]
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel32.WaitForSingleObject.restype = wintypes.DWORD
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            handle = kernel32.OpenProcess(synchronize, False, pid)
+            if not handle:
+                # Access denied proves an object exists but not that it is safe
+                # to call dead. Every other error is the normal gone-PID case.
+                return ctypes.get_last_error() == 5
+            try:
+                result = int(kernel32.WaitForSingleObject(handle, 0))
+            finally:
+                kernel32.CloseHandle(handle)
+            return result in {wait_timeout, wait_failed}
+        except Exception:  # noqa: BLE001 - unknown must fail safe as possibly alive
+            log.debug("supervisor: Windows pid-state probe failed", exc_info=True)
+            return True
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -1124,6 +1407,12 @@ def _brain_endpoint(launch_command: str) -> tuple[str, str]:
 
 
 def _reset_for_tests() -> None:
-    """Reset module-level state (rate limit) between tests."""
-    global _last_spawn_at
+    """Reset module-level rate-limit and monitor state between tests."""
+    global _last_spawn_at, _monitor_thread, _monitor_stop, _monitor_key
     _last_spawn_at = float("-inf")
+    with _MONITOR_LOCK:
+        if _monitor_stop is not None:
+            _monitor_stop.set()
+        _monitor_thread = None
+        _monitor_stop = None
+        _monitor_key = None

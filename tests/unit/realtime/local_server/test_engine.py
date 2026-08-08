@@ -1,5 +1,6 @@
 """Install engine, tier ladder, preflight, and brain resolution contracts."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -238,6 +239,99 @@ class TestServerStatusFailClosed:
         )
         assert install._smoke_marker_valid() is False
 
+    def test_owned_live_runtime_repairs_a_missing_smoke_marker(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """A schema upgrade must not demand a destructive multi-GB reinstall.
+
+        A ready server owned by this exact patched install is stronger smoke
+        evidence than the marker that an older Jarvis version wrote.
+        """
+        from jarvis.realtime.local_server import supervisor
+
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        install._venv_python().parent.mkdir(parents=True)
+        install._venv_python().write_bytes(b"")
+        install._server_entrypoint().write_bytes(b"")
+        monkeypatch.setattr(install, "patch_state", lambda path: "patched")
+        monkeypatch.setattr(
+            supervisor,
+            "status",
+            lambda base_url: {"ready": True, "owned": True},
+        )
+        report = preflight.PreflightReport(
+            ok=True,
+            usable_gb=16.0,
+            memory_source="nvidia-smi",
+            disk_free_gb=100.0,
+            tier=tiers.TIERS[1],
+            stack_sentence="x",
+            brain=brain_link.BrainResolution(kind="ollama", model="qwen2.5:7b"),
+        )
+        monkeypatch.setattr(install, "run_preflight", lambda root: report)
+
+        assert install.repair_smoke_marker_from_live_runtime(
+            "http://127.0.0.1:8765"
+        )
+
+        payload = json.loads(install._smoke_marker().read_text(encoding="utf-8"))
+        assert payload["schema"] == install._SMOKE_MARKER_SCHEMA
+        assert payload["patch_version"] == install.PATCH_TARGET_VERSION
+        assert payload["repair_source"] == "owned-live-runtime"
+        assert install._smoke_marker_valid()
+
+    def test_foreign_runtime_cannot_repair_the_smoke_marker(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        from jarvis.realtime.local_server import supervisor
+
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        install._venv_python().parent.mkdir(parents=True)
+        install._venv_python().write_bytes(b"")
+        install._server_entrypoint().write_bytes(b"")
+        monkeypatch.setattr(install, "patch_state", lambda path: "patched")
+        monkeypatch.setattr(
+            supervisor,
+            "status",
+            lambda base_url: {"ready": True, "owned": False},
+        )
+
+        assert not install.repair_smoke_marker_from_live_runtime(
+            "http://127.0.0.1:8765"
+        )
+        assert not install._smoke_marker().exists()
+
+    def test_smoke_marker_repair_refuses_during_another_lifecycle_operation(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        from jarvis.realtime.local_server import supervisor
+
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+
+        class _BusyLifecycle:
+            def __enter__(self) -> bool:
+                return False
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+        monkeypatch.setattr(
+            supervisor,
+            "lifecycle_guard",
+            lambda: _BusyLifecycle(),
+        )
+        monkeypatch.setattr(
+            install,
+            "_repair_smoke_marker_from_live_runtime_unlocked",
+            lambda base_url: (_ for _ in ()).throw(
+                AssertionError("repair must not race an install")
+            ),
+        )
+
+        assert not install.repair_smoke_marker_from_live_runtime(
+            "http://127.0.0.1:8765"
+        )
+
     def test_stale_config_earns_the_repair_sentence(
         self, monkeypatch, tmp_path: Path
     ) -> None:
@@ -365,6 +459,37 @@ class TestReviewFixes:
 
         assert not install._smoke_marker().exists()
         assert install.snapshot()["phase"] == "error"
+
+    def test_install_repairs_live_proof_without_stopping_the_server(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from jarvis.realtime.local_server import supervisor
+
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        monkeypatch.setattr(install, "_smoke_marker_valid", lambda: False)
+        monkeypatch.setattr(
+            install,
+            "_repair_smoke_marker_from_live_runtime_unlocked",
+            lambda base_url: True,
+        )
+        monkeypatch.setattr(
+            install,
+            "_read_smoke_marker_payload",
+            lambda: {"brain": "ollama"},
+        )
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("a healthy server must not be stopped for marker repair")
+
+        monkeypatch.setattr(install, "run_preflight", forbidden)
+        monkeypatch.setattr(supervisor, "_stop_owned_unlocked", forbidden)
+
+        install._run_install_guarded("ollama")
+
+        state = install.snapshot()
+        assert state["phase"] == "done"
+        assert state["percent"] == 100
+        assert "proof repaired" in str(state["detail"])
 
     def test_smoke_boot_always_tears_down_its_child(self, monkeypatch, tmp_path) -> None:
         monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))

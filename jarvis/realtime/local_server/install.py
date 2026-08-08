@@ -27,6 +27,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.realtime.local_server.brain_link import BrainResolution
@@ -115,13 +116,18 @@ def _smoke_marker() -> Path:
     return install_root() / "smoke_ok.json"
 
 
-def _smoke_marker_valid() -> bool:
-    """Validate the durable proof for this exact pinned server build."""
+def _read_smoke_marker_payload() -> dict[str, object] | None:
     try:
         payload = json.loads(_smoke_marker().read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return False
-    if not isinstance(payload, dict):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _smoke_marker_valid() -> bool:
+    """Validate the durable proof for this exact pinned server build."""
+    payload = _read_smoke_marker_payload()
+    if payload is None:
         return False
     at = payload.get("at")
     valid_at = (
@@ -149,6 +155,65 @@ def _write_smoke_marker(payload: dict[str, object]) -> None:
 
     if not _atomic_write_json(_smoke_marker(), payload):
         raise OSError("could not atomically write the managed-server smoke marker")
+
+
+def repair_smoke_marker_from_live_runtime(base_url: str) -> bool:
+    """Recover missing or legacy proof from a verified live managed runtime.
+
+    A ready pool owned by this exact patched install is stronger smoke evidence
+    than a marker written by an older Jarvis version. Foreign listeners,
+    partial installs, failed preflight, and drifted patches remain fail-closed.
+    """
+    if _smoke_marker_valid():
+        return True
+    from jarvis.realtime.local_server import supervisor
+
+    # Marker publication must be serialized with install/uninstall. Otherwise
+    # a warm worker could restore a valid marker after a failed reinstall had
+    # deliberately invalidated it, falsely advertising a half-mutated venv.
+    with supervisor.lifecycle_guard() as guarded:
+        if not guarded:
+            return False
+        return _repair_smoke_marker_from_live_runtime_unlocked(base_url)
+
+
+def _repair_smoke_marker_from_live_runtime_unlocked(base_url: str) -> bool:
+    """Repair proof while the caller owns the server lifecycle lease."""
+    if _smoke_marker_valid():
+        return True
+    if (
+        not _venv_python().exists()
+        or not _server_entrypoint().exists()
+        or patch_state(_site_packages()) != "patched"
+    ):
+        return False
+    try:
+        from jarvis.realtime.local_server import supervisor
+
+        runtime = supervisor.status(base_url)
+        if not bool(runtime.get("ready")) or not bool(runtime.get("owned")):
+            return False
+        report = run_preflight(install_root())
+        if not report.ok or report.tier is None or report.brain is None:
+            return False
+        if report.brain.kind not in {"ollama", "cloud-openai"}:
+            return False
+        _write_smoke_marker(
+            {
+                "schema": _SMOKE_MARKER_SCHEMA,
+                "patch_version": PATCH_TARGET_VERSION,
+                "at": time.time(),
+                "tier": report.tier.key,
+                "brain": report.brain.kind,
+                "preflight": report_payload(report),
+                "repair_source": "owned-live-runtime",
+            }
+        )
+    except Exception:  # noqa: BLE001 - readiness repair is advisory, never fatal
+        log.warning("local-realtime: live smoke-proof repair failed", exc_info=True)
+        return False
+    log.info("local-realtime: repaired smoke proof from the owned live runtime")
+    return True
 
 
 @dataclass
@@ -329,7 +394,7 @@ def _run(cmd: list[str], *, timeout: int, cwd: Path | None = None) -> None:
     """
     env = dict(os.environ)
     env.setdefault("PYTHONIOENCODING", "utf-8")
-    popen_kwargs: dict[str, object] = {}
+    popen_kwargs: dict[str, Any] = {}
     if os.name != "nt":
         # The timeout path kills this process group. Without a fresh session,
         # pip's build-backend children can outlive the launcher and continue
@@ -345,7 +410,7 @@ def _run(cmd: list[str], *, timeout: int, cwd: Path | None = None) -> None:
         cwd=str(cwd) if cwd else None,
         env=env,
         creationflags=NO_WINDOW_CREATIONFLAGS,
-        **popen_kwargs,  # type: ignore[arg-type]
+        **popen_kwargs,
     )
 
     def _pump() -> None:
@@ -396,14 +461,14 @@ def _kill_tree(proc: subprocess.Popen) -> bool:
             import signal
 
             try:
-                os.killpg(proc.pid, signal.SIGTERM)
+                os.killpg(proc.pid, signal.SIGTERM)  # type: ignore[attr-defined]
             except (ProcessLookupError, PermissionError, OSError):
                 proc.terminate()
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 try:
-                    os.killpg(proc.pid, signal.SIGKILL)
+                    os.killpg(proc.pid, signal.SIGKILL)  # type: ignore[attr-defined]
                 except (ProcessLookupError, PermissionError, OSError):
                     proc.kill()
                 proc.wait(timeout=10)
@@ -454,7 +519,7 @@ def _smoke_boot(launch_command: str, brain: BrainResolution) -> None:
     env = hardened_child_env(inject_openai_key=False)
     if brain.kind == "cloud-openai" and brain.api_key:
         env.setdefault("OPENAI_API_KEY", brain.api_key)
-    popen_kwargs: dict[str, object] = {}
+    popen_kwargs: dict[str, Any] = {}
     if os.name != "nt":
         # Its own process group so _kill_tree's killpg reaches every worker.
         popen_kwargs["start_new_session"] = True
@@ -466,7 +531,7 @@ def _smoke_boot(launch_command: str, brain: BrainResolution) -> None:
             stderr=sink,
             env=env,
             creationflags=NO_WINDOW_CREATIONFLAGS,
-            **popen_kwargs,  # type: ignore[arg-type]
+            **popen_kwargs,
         )
     try:
         deadline = time.monotonic() + _SMOKE_TIMEOUT_S
@@ -618,6 +683,23 @@ def _setup_local_brain() -> None:
 
 def _run_install_guarded(confirmed_brain: str = "") -> None:
     try:
+        # Marker-schema upgrades are metadata debt, not grounds to tear down a
+        # healthy multi-gigabyte runtime. Only this exact patched install's
+        # owned, fully-ready pool may take the non-destructive repair path.
+        if not _smoke_marker_valid() and _repair_smoke_marker_from_live_runtime_unlocked(
+            f"http://127.0.0.1:{SERVE_PORT}"
+        ):
+            marker = _read_smoke_marker_payload() or {}
+            repaired_brain = str(marker.get("brain") or "")
+            if not confirmed_brain or repaired_brain == confirmed_brain:
+                with _LOCK:
+                    _STATE.phase = "done"
+                    _STATE.percent = 100
+                    _STATE.detail = "installed; smoke proof repaired from the live server"
+                    _STATE.error = ""
+                    _STATE.finished_at = time.time()
+                log.info("local-realtime: install proof repaired without server teardown")
+                return
         _set("preflight", 2, "checking hardware, disk, and brain")
         report: PreflightReport = run_preflight(install_root())
         if (

@@ -434,7 +434,11 @@ def test_revive_spawns_windowless_and_rate_limited(monkeypatch, tmp_path) -> Non
     # Immediately again: rate-limited, a crash-looping server is not hammered.
     assert provider._maybe_launch_server() is False
     assert len(spawned) == 1
-    assert spawned[0]["creationflags"] == NO_WINDOW_CREATIONFLAGS  # AP-1
+    creationflags = int(spawned[0]["creationflags"])
+    if NO_WINDOW_CREATIONFLAGS:
+        assert creationflags & NO_WINDOW_CREATIONFLAGS  # AP-1
+    else:
+        assert creationflags == 0
 
 
 def test_transient_lifecycle_refusal_is_immediately_retryable(monkeypatch) -> None:
@@ -644,7 +648,7 @@ async def test_warm_transport_prewarms_via_the_supervisor(
 ) -> None:
     """The shared warm worker calls this after boot: server up + brain model
     resident BEFORE the first call, which is what makes connects instant."""
-    from jarvis.realtime.local_server import supervisor
+    from jarvis.realtime.local_server import install, supervisor
 
     calls: list[str] = []
     monkeypatch.setattr(
@@ -661,11 +665,21 @@ async def test_warm_transport_prewarms_via_the_supervisor(
     monkeypatch.setattr(
         supervisor, "warm_brain", lambda **kwargs: calls.append("warm") or True
     )
+    monkeypatch.setattr(
+        install,
+        "repair_smoke_marker_from_live_runtime",
+        lambda base_url: calls.append("marker") or True,
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "start_runtime_monitor",
+        lambda **kwargs: calls.append("monitor") or True,
+    )
     exe = tmp_path / "server"
     exe.write_bytes(b"")
     cfg = _warm_cfg("http://localhost:8765", f'"{exe}" --model_name m')
     assert await LocalRealtimeProvider.warm_transport(cfg) is True
-    assert calls == ["run:prewarm", "ready", "warm"]
+    assert calls == ["run:prewarm", "ready", "marker", "monitor", "warm"]
 
 
 async def test_warm_transport_never_warms_the_brain_before_speech_is_ready(

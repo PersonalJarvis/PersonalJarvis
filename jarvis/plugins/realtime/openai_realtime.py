@@ -1846,6 +1846,22 @@ class LocalRealtimeProvider:
                             "was ready"
                         )
                         return False
+                    install = importlib.import_module(
+                        "jarvis.realtime.local_server.install"
+                    )
+                    if not bool(
+                        install.repair_smoke_marker_from_live_runtime(
+                            provider._base_url
+                        )
+                    ):
+                        log.warning(
+                            "local-realtime: server is ready but its managed-install "
+                            "smoke proof could not be repaired"
+                        )
+                    supervisor.start_runtime_monitor(
+                        launch_command=provider._launch_command,
+                        base_url=provider._base_url,
+                    )
                 # Only the pinned managed stack promises /v1/pool. A BYO
                 # OpenAI-compatible server remains valid without that private
                 # endpoint. For managed launches, the wait above also ensures
