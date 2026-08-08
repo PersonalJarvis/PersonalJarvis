@@ -367,6 +367,9 @@
       "precision_title": "Sharpen my word choice",
       "precision_description": "Goes one step further and also changes WHICH words are used: a vague placeholder becomes the word you actually meant, and padding collapses into the plain verb — \"make a decision\" becomes \"decide\". Simple and exact. It will never swap a normal word for a longer one just to sound impressive.",
       "precision_tradeoff": "In exchange, one safety check is relaxed: replacing an unusual word is now allowed, so a word the model misheard can be replaced rather than flagged. Your names, your numbers and your dictionary terms stay protected, and the original transcript is always kept. Applies to translated dictation too.",
+      "conversation_title": "Also tidy up conversations",
+      "conversation_description": "Applies the same clean-up to what you say in an ordinary conversation, not just to dictation — so the transcript view and your session history read as written sentences instead of raw speech.",
+      "conversation_latency": "It never slows a reply down: the assistant answers your raw words straight away, and the tidied version arrives a moment later. What was actually said is always kept alongside it.",
       "provider_label": "Model",
       "provider_auto": "Automatic — use whichever key I have",
       "provider_hint": "Automatic takes a key you already have and moves to a different provider when one is rate-limited or out of credit. Pin one only if you want a specific account billed.",
@@ -3930,5 +3933,10 @@
     "loading": "Reading the current setting...",
     "unavailable": "The current setting could not be read.",
     "save_failed": "That choice could not be saved."
+  },
+  "session_turn": {
+    "polished": "tidied up",
+    "show_original": "Show what was actually said",
+    "hide_original": "Hide the original"
   }
 }

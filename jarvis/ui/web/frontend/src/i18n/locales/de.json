@@ -367,6 +367,9 @@
       "precision_title": "Wortwahl schärfen",
       "precision_description": "Geht einen Schritt weiter und ändert auch, WELCHE Wörter benutzt werden: Ein vager Platzhalter wird zu dem Wort, das du wirklich gemeint hast, und Füllkonstruktionen werden zum einfachen Verb — aus „eine Entscheidung treffen“ wird „entscheiden“. Einfach und genau. Nie ein längeres Wort, nur damit es klüger klingt.",
       "precision_tradeoff": "Dafür wird eine Sicherheitsprüfung gelockert: Ungewöhnliche Wörter dürfen jetzt ersetzt werden, ein falsch verstandenes Wort wird also eher ausgetauscht als angezeigt. Deine Namen, deine Zahlen und deine Wörterbuch-Einträge bleiben geschützt, und der Originaltext bleibt immer erhalten. Gilt auch für übersetzte Diktate.",
+      "conversation_title": "Auch Gespräche aufräumen",
+      "conversation_description": "Wendet dieselbe Aufbereitung auf das an, was du im normalen Gespräch sagst — nicht nur aufs Diktat. Die Transkript-Ansicht und dein Gesprächsverlauf lesen sich dann wie geschriebene Sätze statt wie roher Sprechtext.",
+      "conversation_latency": "Die Antwort wird dadurch nie langsamer: Der Assistent antwortet sofort auf deine Rohworte, die aufgeräumte Fassung kommt einen Moment später. Was du wirklich gesagt hast, bleibt immer daneben erhalten.",
       "provider_label": "Modell",
       "provider_auto": "Automatisch — nimm den Schlüssel, den ich habe",
       "provider_hint": "Automatisch nimmt einen Schlüssel, den du ohnehin hast, und wechselt zu einem anderen Anbieter, wenn einer am Limit oder ohne Guthaben ist. Feste Wahl nur, wenn ein bestimmtes Konto abgerechnet werden soll.",
@@ -3930,5 +3933,10 @@
     "loading": "Aktuelle Einstellung wird gelesen...",
     "unavailable": "Die aktuelle Einstellung konnte nicht gelesen werden.",
     "save_failed": "Diese Auswahl konnte nicht gespeichert werden."
+  },
+  "session_turn": {
+    "polished": "aufgeräumt",
+    "show_original": "Zeigen, was wirklich gesagt wurde",
+    "hide_original": "Original ausblenden"
   }
 }

@@ -94,6 +94,14 @@ export interface VoiceTurnRow {
   started_ms: number;
   ended_ms: number | null;
   user_text: string;
+  /**
+   * The wording pass's reading of `user_text`; "" when it never ran, is
+   * switched off, or was refused. Never replaces `user_text` — what was said is
+   * the record, so the card shows this and keeps the original one click away.
+   *
+   * Optional so a session recorded before the column existed still parses.
+   */
+  user_text_polished?: string;
   user_lang: string;
   jarvis_text: string;
   jarvis_lang: string;

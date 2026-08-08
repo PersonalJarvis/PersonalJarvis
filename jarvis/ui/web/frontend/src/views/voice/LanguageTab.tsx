@@ -4,6 +4,7 @@ import {
   Info,
   Languages,
   Loader2,
+  MessageSquare,
   PlugZap,
   Scissors,
   Wand2,
@@ -112,6 +113,15 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
     }
   }
 
+  async function onToggleConversation(next: boolean) {
+    try {
+      await saveSettings({ polish_conversation: next });
+      pushToast("success", t("dictation.saved"));
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    }
+  }
+
   async function onTogglePrecision(next: boolean) {
     // Clearing matters more here than on the other switches: the dry run uses a
     // DIFFERENT sample in precision mode, so a stale result would sit next to
@@ -167,6 +177,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
   // Default OFF, unlike the switch above, and the card says why: this one
   // relaxes a guard rather than only costing a formatting pass.
   const precisionOn = settings?.polish_precision ?? false;
+  const conversationOn = settings?.polish_conversation ?? false;
   const polishProvider = settings?.polish_provider ?? "auto";
   const served = choices?.polish_provider ?? ["auto"];
   // A pin the served list does not contain would otherwise render as the first
@@ -327,6 +338,48 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
 
             {polishOn && (
               <>
+                {/* INSIDE the block, unlike the precision row above: this one
+                    genuinely needs the formatter, because it switches the same
+                    pass on for a second source rather than being a pass of its
+                    own. Showing it while the formatter is off would be a switch
+                    that saves, reads as on, and does nothing (AP-31). */}
+                <div
+                  className="mt-3 flex items-start justify-between gap-4 border-t border-border/60 pt-3"
+                  data-testid="dictation-conversation-row"
+                >
+                  <div className="min-w-0">
+                    <h5 className="flex items-center gap-2 text-xs font-semibold">
+                      <MessageSquare
+                        aria-hidden="true"
+                        className="h-3 w-3 text-primary"
+                      />
+                      {t("voice.polish.conversation_title")}
+                    </h5>
+                    <p
+                      className="mt-1 text-[11px] text-muted-foreground"
+                      data-testid="dictation-conversation-description"
+                    >
+                      {t("voice.polish.conversation_description")}
+                    </p>
+                    {/* The question anyone asks about a model call on the voice
+                        path, answered before it is asked. It runs beside the
+                        reply, never in front of it. */}
+                    <p
+                      className="mt-1.5 text-[11px] text-muted-foreground"
+                      data-testid="dictation-conversation-latency"
+                    >
+                      {t("voice.polish.conversation_latency")}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={conversationOn}
+                    disabled={loading}
+                    onCheckedChange={(next) => void onToggleConversation(next)}
+                    aria-label={t("voice.polish.conversation_title")}
+                    data-testid="dictation-conversation-toggle"
+                  />
+                </div>
+
                 {/* The same themed control as the language picker above it —
                     a native <select> sitting right beside one would put the
                     operating system's own grey list back on the card. No

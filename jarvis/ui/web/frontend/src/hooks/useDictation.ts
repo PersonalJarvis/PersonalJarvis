@@ -318,6 +318,14 @@ export interface DictationSettings {
    */
   polish_precision: boolean;
   /**
+   * Also tidy up the transcripts of ordinary conversations, not just dictation.
+   *
+   * Never delays a reply: the assistant answers the raw words and the tidied
+   * version arrives afterwards, for the transcript view and the session record.
+   * What was actually said is always kept alongside. Needs `polish`.
+   */
+  polish_conversation: boolean;
+  /**
    * Deliver every dictation in `translate_target`, whatever language was
    * spoken. Ships OFF: it changes which words come out, not just how they are
    * written, so it is never acquired by an install that did not ask for it.

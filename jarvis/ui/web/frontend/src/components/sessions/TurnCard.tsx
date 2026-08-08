@@ -15,7 +15,7 @@ import {
   Volume2,
   Wrench,
 } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -69,6 +69,16 @@ interface Props {
 
 export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
   const t = useT();
+  const [showRaw, setShowRaw] = useState(false);
+  // `null` unless a polished reading exists AND differs from what was said.
+  // A stored value equal to the raw text is not a rewrite, and showing a badge
+  // for it would claim a change that never happened.
+  const rawUserText = turn.user_text ?? "";
+  const polishedUserText = (turn.user_text_polished ?? "").trim();
+  const polished =
+    polishedUserText && polishedUserText !== rawUserText.trim()
+      ? polishedUserText
+      : null;
   const pushToast = useEventStore((s) => s.pushToast);
   const assistantName = useEventStore((s) => s.assistantName);
   // Desktop shell → save to ~/Downloads via the backend; browser → blob download.
@@ -172,10 +182,44 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
               <Badge variant="secondary" className="ml-1 text-[9px]">
                 {turn.user_lang}
               </Badge>
+              {/* Shown only when the two actually differ, so the badge means
+                  "this was rewritten" rather than "the feature is on". */}
+              {polished && (
+                <Badge
+                  variant="outline"
+                  className="ml-1 text-[9px]"
+                  data-testid="turn-polished-badge"
+                >
+                  {t("session_turn.polished")}
+                </Badge>
+              )}
             </div>
             <div className="min-w-0 whitespace-pre-wrap break-words rounded-md border border-emerald-400/20 bg-emerald-400/5 p-2 text-sm [overflow-wrap:anywhere]">
-              {turn.user_text}
+              {polished ?? turn.user_text}
             </div>
+            {/* The original is never more than one click away. A transcript is
+                a RECORD of what was said, and a view that shows only a model's
+                reading of it — with no way back — is no longer a record. */}
+            {polished && (
+              <button
+                type="button"
+                onClick={() => setShowRaw((v) => !v)}
+                className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+                data-testid="turn-polished-toggle"
+              >
+                {showRaw
+                  ? t("session_turn.hide_original")
+                  : t("session_turn.show_original")}
+              </button>
+            )}
+            {polished && showRaw && (
+              <div
+                className="min-w-0 whitespace-pre-wrap break-words rounded-md border border-border/60 bg-background/40 p-2 text-[13px] text-muted-foreground [overflow-wrap:anywhere]"
+                data-testid="turn-raw-text"
+              >
+                {turn.user_text}
+              </div>
+            )}
           </div>
         )}
 

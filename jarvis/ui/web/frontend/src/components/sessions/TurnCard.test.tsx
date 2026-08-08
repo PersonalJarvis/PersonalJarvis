@@ -3,7 +3,7 @@
  * assistant text and keeps status phrases/readbacks on a supplemental track.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import { useEventStore } from "@/store/events";
 import { TurnCard, formatTurnPlain } from "./TurnCard";
@@ -57,6 +57,54 @@ function spokenLine(over: Partial<VoiceSpokenLine> = {}): VoiceSpokenLine {
     ...over,
   };
 }
+
+describe("TurnCard polished transcript", () => {
+  const RAW = "so um we should probably move the meeting to the morning";
+  const TIDY = "We should probably move the meeting to the morning.";
+
+  it("shows the tidied reading and marks it as one", () => {
+    render(<TurnCard turn={turn({ user_text: RAW, user_text_polished: TIDY })} />);
+
+    expect(screen.getByText(TIDY)).toBeTruthy();
+    expect(screen.getByTestId("turn-polished-badge")).toBeTruthy();
+    // The raw text is not on screen until it is asked for.
+    expect(screen.queryByTestId("turn-raw-text")).toBeNull();
+  });
+
+  it("keeps what was actually said one click away", () => {
+    // A transcript is a RECORD. A view that shows only a model's reading of it,
+    // with no way back to the words themselves, is no longer a record.
+    render(<TurnCard turn={turn({ user_text: RAW, user_text_polished: TIDY })} />);
+
+    fireEvent.click(screen.getByTestId("turn-polished-toggle"));
+
+    expect(screen.getByTestId("turn-raw-text").textContent).toBe(RAW);
+  });
+
+  it("says nothing when no polished reading was stored", () => {
+    render(<TurnCard turn={turn({ user_text: RAW })} />);
+
+    expect(screen.getByText(RAW)).toBeTruthy();
+    expect(screen.queryByTestId("turn-polished-badge")).toBeNull();
+    expect(screen.queryByTestId("turn-polished-toggle")).toBeNull();
+  });
+
+  it("claims no rewrite when the stored reading equals what was said", () => {
+    // A stored value identical to the raw text is not a rewrite, and a badge
+    // for it would claim a change that never happened.
+    render(<TurnCard turn={turn({ user_text: RAW, user_text_polished: RAW })} />);
+
+    expect(screen.queryByTestId("turn-polished-badge")).toBeNull();
+  });
+
+  it("renders a session recorded before the column existed", () => {
+    const { user_text_polished: _omitted, ...legacy } = turn({ user_text: RAW });
+
+    render(<TurnCard turn={legacy as VoiceTurnRow} />);
+
+    expect(screen.getByText(RAW)).toBeTruthy();
+  });
+});
 
 describe("TurnCard spoken track", () => {
   it("uses the contiguous display number instead of a stale stored index", () => {

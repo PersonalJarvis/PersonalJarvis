@@ -573,6 +573,73 @@ describe("LanguageTab — the wording pass", () => {
   });
 
   // ------------------------------------------------------------------
+  // Conversation transcripts — the same pass, a second source
+  // ------------------------------------------------------------------
+
+  it("keeps conversation polish off until it is asked for", async () => {
+    installFetchMock(routes());
+    render(<LanguageTab hideHeader />);
+
+    const toggle = await waitFor(() =>
+      screen.getByTestId("dictation-conversation-toggle"),
+    );
+    // Off by default on COST, not safety: a conversation produces a turn every
+    // few seconds and each one would spend a model call.
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    // And the latency question is answered before anyone has to ask it.
+    expect(
+      screen.getByTestId("dictation-conversation-latency").textContent,
+    ).toBeTruthy();
+  });
+
+  it("saves the conversation switch", async () => {
+    const calls = installFetchMock(
+      routes({
+        "PUT /api/dictation/settings": () => ({
+          body: {
+            settings: { ...SETTINGS, polish_conversation: true },
+            persisted: true,
+          },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    fireEvent.click(
+      await waitFor(() => screen.getByTestId("dictation-conversation-toggle")),
+    );
+
+    await waitFor(() => {
+      const put = calls.find(
+        (c) => c.method === "PUT" && c.url === "/api/dictation/settings",
+      );
+      expect(JSON.parse(put?.body ?? "{}")).toMatchObject({
+        polish_conversation: true,
+        persist: true,
+      });
+    });
+  });
+
+  it("hides the conversation switch when the formatter is off", async () => {
+    // Unlike precision, this one genuinely needs the formatter — it switches
+    // the same pass on for a second source. A visible switch that saves, reads
+    // as on and does nothing is the AP-31 shape.
+    installFetchMock(
+      routes({
+        "GET /api/dictation/settings": () => ({
+          body: { settings: { ...SETTINGS, polish: false }, choices: CHOICES },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("dictation-polish-toggle")).toBeTruthy(),
+    );
+    expect(screen.queryByTestId("dictation-conversation-toggle")).toBeNull();
+  });
+
+  // ------------------------------------------------------------------
   // Translation — same tab, and the switch that changes which words come out
   // ------------------------------------------------------------------
 

@@ -367,6 +367,9 @@
       "precision_title": "Afinar mi elección de palabras",
       "precision_description": "Va un paso más allá y también cambia QUÉ palabras se usan: un comodín vago se convierte en la palabra que de verdad querías decir, y el relleno se reduce al verbo simple: «tomar una decisión» pasa a «decidir». Sencillo y exacto. Nunca cambiará una palabra normal por otra más larga solo para sonar impresionante.",
       "precision_tradeoff": "A cambio se relaja una comprobación de seguridad: ahora se permite sustituir una palabra poco común, así que una palabra mal entendida se reemplaza en vez de señalarse. Tus nombres, tus números y los términos de tu diccionario siguen protegidos, y el texto original siempre se conserva. También se aplica al dictado traducido.",
+      "conversation_title": "Pulir también las conversaciones",
+      "conversation_description": "Aplica la misma limpieza a lo que dices en una conversación normal, no solo al dictado: así la vista de transcripción y tu historial se leen como frases escritas en vez de como habla en bruto.",
+      "conversation_latency": "Nunca retrasa una respuesta: el asistente responde de inmediato a tus palabras tal cual, y la versión pulida llega un momento después. Lo que dijiste realmente siempre se conserva al lado.",
       "provider_label": "Modelo",
       "provider_auto": "Automático: usa la clave que ya tengo",
       "provider_hint": "El modo automático usa una clave que ya tienes y cambia a otro proveedor cuando uno alcanza su límite o se queda sin saldo. Fija uno solo si quieres que se cobre a una cuenta concreta.",
@@ -3930,5 +3933,10 @@
     "loading": "Leyendo la configuración actual...",
     "unavailable": "No se pudo leer la configuración actual.",
     "save_failed": "No se pudo guardar esa selección."
+  },
+  "session_turn": {
+    "polished": "pulido",
+    "show_original": "Mostrar lo que se dijo realmente",
+    "hide_original": "Ocultar el original"
   }
 }
