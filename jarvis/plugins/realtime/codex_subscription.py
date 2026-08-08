@@ -85,6 +85,11 @@ _REJECTED_RESPONSE_MAX_S = 2.0
 _NORMALIZATION_QUEUE_MAX = 128
 _REMOTE_CLEANUP_TIMEOUT_S = 1.5
 _TURN_INTERRUPT_TIMEOUT_S = 1.5
+# Key for the app-server's per-host STUN media-path memory. The WebRTC media
+# path runs from THIS machine to ChatGPT-Live, so whether STUN is needed is
+# decided by the local NAT, not by any configurable remote host — one
+# process-scoped key is the honest granularity.
+_MEDIA_PATH_MEMORY_KEY = "chatgpt-live"
 # ChatGPT-Live renders a generation pause as silent PCM. This USED to be
 # compressed away — correct for the retired v1 protocol, where audio arrived as
 # sideband deltas FASTER than realtime, so dropping silence genuinely shortened
@@ -3145,7 +3150,20 @@ class CodexSubscriptionRealtimeProvider:
         genuinely needs a reflexive candidate gets one on the retry.
         """
         transport_module = importlib.import_module("jarvis.realtime.webrtc_transport")
+        app_server_module = importlib.import_module("jarvis.codex_app_server")
+        # STUN need is a property of the LOCAL network path to ChatGPT-Live,
+        # not of a configurable remote host, so the process-scoped memory is
+        # keyed by a constant. When the last successful connect needed a
+        # reflexive candidate, start with STUN directly: on such a network the
+        # host-only attempt is doomed and costs a full second open (thread_start
+        # bundle included). The memory is an optimization, never a gate — an
+        # unknown or expired entry restores host-candidates-first.
         attempts: tuple[Any, ...] = (None, transport_module.stun_ice_servers)
+        try:
+            if app_server_module.media_path_prefers_stun(_MEDIA_PATH_MEMORY_KEY):
+                attempts = (transport_module.stun_ice_servers, None)
+        except Exception:  # noqa: BLE001 - the memory must never block an open
+            log.debug("STUN media-path memory probe failed", exc_info=True)
         last_error: BaseException | None = None
         # Built and primed ONCE for both attempts: the recognizer is pure
         # local state, and rebuilding + re-warming it on the STUN retry paid
@@ -3172,9 +3190,20 @@ class CodexSubscriptionRealtimeProvider:
                     )
                     if index > 0:
                         # Postmortem marker: this call paid the full re-open (a
-                        # second thread_start bundle included) to reach STUN.
+                        # second thread_start bundle included) to switch the
+                        # media path (host-only -> STUN, or the reverse when
+                        # the STUN memory reordered the attempts).
                         session._diag["stun_retries"] = index
                         log.info("RT-SPAWN stun_retry=%d", index)
+                    try:
+                        app_server_module.record_media_path_outcome(
+                            _MEDIA_PATH_MEMORY_KEY,
+                            needed_stun=ice_factory is not None,
+                        )
+                    except Exception:  # noqa: BLE001 - memory is best-effort
+                        log.debug(
+                            "STUN media-path memory record failed", exc_info=True
+                        )
                     return session
                 except transport_module.WebRtcMediaPathUnavailable as exc:
                     last_error = exc

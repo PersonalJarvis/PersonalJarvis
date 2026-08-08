@@ -1321,6 +1321,18 @@ async def test_broker_keeps_answered_lease_until_provider_release() -> None:
     assert await broker.pending_count() == 0
 
 
+@pytest.fixture(autouse=True)
+def _isolated_stun_media_path_memory():
+    """The STUN media-path memory is process-global; tests must not leak it."""
+    from jarvis import codex_app_server
+
+    with codex_app_server._stun_media_path_lock:
+        codex_app_server._stun_media_path_memory.clear()
+    yield
+    with codex_app_server._stun_media_path_lock:
+        codex_app_server._stun_media_path_memory.clear()
+
+
 @pytest.mark.asyncio
 async def test_unconnectable_host_path_retries_with_stun(
     monkeypatch: pytest.MonkeyPatch,
@@ -1360,6 +1372,43 @@ async def test_unconnectable_host_path_retries_with_stun(
     assert ice_configs[1]
     assert len(ice_configs) == 2
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_stun_memory_starts_with_stun_and_host_success_clears_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A network that needed STUN last time skips the doomed host-only attempt;
+    a later successful host-only connect forgets the preference again."""
+    from jarvis import codex_app_server
+    from jarvis.realtime import webrtc_transport
+
+    monkeypatch.setattr(webrtc_transport, "stun_ice_servers", lambda: ["stun"])
+
+    client = _Client()
+    ice_configs: list[object] = []
+
+    def factory(ice_servers=None) -> _FakeAudioEndpoint:
+        ice_configs.append(ice_servers)
+        return _FakeAudioEndpoint()
+
+    provider = CodexSubscriptionRealtimeProvider(client=client, audio_endpoint_factory=factory)
+
+    codex_app_server.record_media_path_outcome("chatgpt-live", needed_stun=True)
+    session = await provider.open_session(RealtimeSessionConfig())
+    await session.close()
+    # STUN went FIRST and succeeded in a single attempt.
+    assert ice_configs == [["stun"]]
+    # The successful STUN connect keeps the preference armed.
+    assert codex_app_server.media_path_prefers_stun("chatgpt-live")
+
+    codex_app_server.record_media_path_outcome("chatgpt-live", needed_stun=False)
+    ice_configs.clear()
+    session = await provider.open_session(RealtimeSessionConfig())
+    await session.close()
+    # Forgotten preference restores host-candidates-first.
+    assert ice_configs == [None]
+    assert not codex_app_server.media_path_prefers_stun("chatgpt-live")
 
 
 @pytest.mark.asyncio
