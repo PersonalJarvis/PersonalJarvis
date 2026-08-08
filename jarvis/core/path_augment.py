@@ -93,6 +93,10 @@ def _windows_candidates() -> list[str]:
         # winget's shim dir lands on the *registry* PATH only — a running
         # process (and every subprocess it spawns) misses fresh installs.
         dirs.append(os.path.join(local, "Microsoft", "WinGet", "Links"))
+        # Ollama's per-user installer (OllamaSetup.exe / winget) writes here
+        # and appends it to the registry PATH only — a Jarvis that just
+        # installed Ollama would otherwise not find the binary it installed.
+        dirs.append(os.path.join(local, "Programs", "Ollama"))
     appdata = os.environ.get("APPDATA")
     if appdata:
         dirs.append(os.path.join(appdata, "npm"))
