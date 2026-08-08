@@ -4,8 +4,9 @@
  * A terminal has one of two scroll owners:
  *
  * * xterm owns a normal buffer, so its exact line and extent are public;
- * * a full-screen application owns an alternate/mouse-tracking buffer, so the
- *   only truthful operation is to relay scroll input to that application.
+ * * a full-screen application owns an alternate/mouse-tracking buffer, or the
+ *   user explicitly activates a keyboard-owned inline view, so the only
+ *   truthful operation is to relay scroll input to that application.
  *
  * In the second case there is NO POSITION. Not an estimated one — none, so
  * that nothing on screen can be read as an answer to "where am I". The rail
@@ -49,10 +50,34 @@ export interface ScrollThumbGeometry {
   height: number;
 }
 
+/** The CSI slice used to observe cursor visibility without handling the mode. */
+export interface TerminalModeParser {
+  registerCsiHandler(
+    id: { prefix?: string; intermediates?: string; final: string },
+    callback: (params: (number | number[])[]) => boolean,
+  ): { dispose(): void };
+  registerEscHandler(
+    id: { intermediates?: string; final: string },
+    callback: () => boolean,
+  ): { dispose(): void };
+}
+
+export interface LiveTuiCursorTracking {
+  /** Reset local mode state before a terminal replay/reset boundary. */
+  reset(): void;
+  dispose(): void;
+}
+
 export const MIN_THUMB_PX = 28;
 const MAX_RELAY_NOTCHES = 80;
 const PAGE_UP = "\x1b[5~";
 const PAGE_DOWN = "\x1b[6~";
+const CURSOR_UP = "\x1b[A";
+const CURSOR_DOWN = "\x1b[B";
+const APPLICATION_CURSOR_UP = "\x1bOA";
+const APPLICATION_CURSOR_DOWN = "\x1bOB";
+const WHEEL_PIXELS_PER_CURSOR_ROW = 40;
+const MAX_CURSOR_ROWS_PER_WHEEL = 12;
 
 /**
  * Pixels of pointer travel per relayed unit when stroking an application rail.
@@ -76,17 +101,23 @@ function finiteWhole(value: unknown): number {
 }
 
 /** Which side can truthfully answer where this pane is scrolled. */
-export function terminalScrollOwner(term: Terminal): TerminalScrollOwner {
+export function terminalScrollOwner(
+  term: Terminal,
+  liveTuiActive = false,
+): TerminalScrollOwner {
   const tracking = term.modes?.mouseTrackingMode ?? "none";
   const bufferType = term.buffer?.active?.type ?? "normal";
-  return bufferType === "alternate" || tracking !== "none"
+  return liveTuiActive || bufferType === "alternate" || tracking !== "none"
     ? "application"
     : "terminal";
 }
 
 /** Read a scroll view without inspecting or interpreting terminal content. */
-export function readTerminalScrollView(term: Terminal): TerminalScrollView {
-  const owner = terminalScrollOwner(term);
+export function readTerminalScrollView(
+  term: Terminal,
+  liveTuiActive = false,
+): TerminalScrollView {
+  const owner = terminalScrollOwner(term, liveTuiActive);
   const rows = Math.max(1, finiteWhole(term.rows));
   if (owner === "application") {
     return { owner, rows, maxLine: 0, line: 0 };
@@ -160,6 +191,165 @@ export function strokeUnits(
 export function applicationPageNotches(rows: number): number {
   // Measured coding TUIs move roughly three transcript rows per report.
   return Math.max(1, Math.ceil(Math.max(1, rows) / 3));
+}
+
+/**
+ * Track cursor visibility as a candidate signal for a live drawn view.
+ *
+ * This is deliberately NOT an input-ownership decision: progress indicators
+ * and disabled prompts also hide the cursor. A separate explicit user action
+ * must activate cursor-key navigation while this candidate remains present.
+ *
+ * The handlers return false, so xterm still performs DECSET/DECRST itself. The
+ * caller owns reset boundaries because `Terminal.reset()` is a local API call
+ * and therefore does not pass through the parser.
+ */
+export function installLiveTuiCursorTracking(
+  parser: TerminalModeParser,
+  onActive: (active: boolean) => void,
+): LiveTuiCursorTracking {
+  let active = false;
+  const update = (next: boolean) => {
+    if (next === active) return;
+    active = next;
+    onActive(next);
+  };
+  const carriesCursorMode = (params: (number | number[])[]) =>
+    params.some((param) =>
+      Array.isArray(param) ? param.includes(25) : param === 25,
+    );
+  const handlers = [
+    parser.registerCsiHandler({ prefix: "?", final: "l" }, (params) => {
+      if (carriesCursorMode(params)) update(true);
+      return false;
+    }),
+    parser.registerCsiHandler({ prefix: "?", final: "h" }, (params) => {
+      if (carriesCursorMode(params)) update(false);
+      return false;
+    }),
+    // DECSTR and RIS restore cursor visibility without emitting `?25h`.
+    // Observe both while leaving xterm's reset implementation in charge.
+    parser.registerCsiHandler({ intermediates: "!", final: "p" }, () => {
+      update(false);
+      return false;
+    }),
+    parser.registerEscHandler({ final: "c" }, () => {
+      update(false);
+      return false;
+    }),
+  ];
+  return {
+    reset: () => update(false),
+    dispose: () => {
+      update(false);
+      for (const handler of handlers) handler.dispose();
+    },
+  };
+}
+
+/**
+ * Move the selection/viewport of a keyboard-driven live TUI by whole rows.
+ *
+ * Inline coding-agent views are often drawn in the normal terminal buffer but
+ * keep a windowed list of their own. Claude Code's workflow agent list is one
+ * example: xterm can scroll the surrounding transcript, while the rows omitted
+ * from that live list exist only inside Claude Code and are reached with cursor
+ * keys. Use xterm's current cursor-key mode so the bytes match what a physical
+ * ArrowUp/ArrowDown press would have produced.
+ */
+export function scrollLiveCursor(
+  term: Terminal,
+  direction: -1 | 1,
+  rows = 1,
+): number {
+  const count = Math.min(
+    MAX_CURSOR_ROWS_PER_WHEEL,
+    Math.max(0, Math.floor(rows)),
+  );
+  if (count === 0) return 0;
+  const applicationKeys = term.modes?.applicationCursorKeysMode === true;
+  const sequence =
+    direction < 0
+      ? applicationKeys
+        ? APPLICATION_CURSOR_UP
+        : CURSOR_UP
+      : applicationKeys
+        ? APPLICATION_CURSOR_DOWN
+        : CURSOR_DOWN;
+  // One user action, one PTY/WebSocket frame. Repeating term.input here would
+  // recreate the frame-count amplification that made long prompt delivery lag.
+  term.input(sequence.repeat(count), true);
+  return count;
+}
+
+/**
+ * Give wheel input to an explicitly activated inline TUI view.
+ *
+ * Two histories can share a normal xterm buffer:
+ *
+ * * xterm's exact transcript, which keeps ordinary wheel behaviour; and
+ * * a live, windowed block owned by the coding CLI, whose omitted rows are not
+ *   terminal scrollback at all.
+ *
+ * `isLiveTuiActive` is an explicit user opt-in, not a guess derived from output
+ * or cursor visibility. While it is active, both directions belong to the live
+ * view. Shift+wheel is deliberately left native as the escape hatch to exact
+ * terminal history. Plain prompts and every negotiated mouse protocol also
+ * remain native.
+ */
+export function createLiveTuiWheelHandler(
+  term: Terminal,
+  isLiveTuiActive: () => boolean,
+): (event: WheelEvent) => boolean {
+  let pixelRemainder = 0;
+
+  return (event: WheelEvent): boolean => {
+    if (
+      event.deltaY === 0 ||
+      Math.abs(event.deltaX) > Math.abs(event.deltaY) ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey
+    ) {
+      pixelRemainder = 0;
+      return true;
+    }
+
+    const active = term.buffer?.active;
+    const bufferType = active?.type ?? "normal";
+    const tracking = term.modes?.mouseTrackingMode ?? "none";
+    const direction: -1 | 1 = event.deltaY < 0 ? -1 : 1;
+    const keyboardOwnedLiveView =
+      bufferType === "normal" && tracking === "none" && isLiveTuiActive();
+
+    if (!keyboardOwnedLiveView) {
+      pixelRemainder = 0;
+      return true;
+    }
+
+    let rows: number;
+    if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+      rows = applicationPageNotches(term.rows);
+      pixelRemainder = 0;
+    } else if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+      rows = Math.max(1, Math.ceil(Math.abs(event.deltaY)));
+      pixelRemainder = 0;
+    } else {
+      if (pixelRemainder !== 0 && Math.sign(pixelRemainder) !== direction) {
+        pixelRemainder = 0;
+      }
+      pixelRemainder += event.deltaY;
+      rows = Math.floor(Math.abs(pixelRemainder) / WHEEL_PIXELS_PER_CURSOR_ROW);
+      if (rows > 0) {
+        pixelRemainder -= direction * rows * WHEEL_PIXELS_PER_CURSOR_ROW;
+      }
+    }
+
+    if (rows > 0) scrollLiveCursor(term, direction, rows);
+    // Even a sub-row trackpad delta belongs to the accumulator above. Letting
+    // xterm also process it would emit a mouse report or move a second history.
+    return false;
+  };
 }
 
 /**

@@ -3,10 +3,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   applicationPageNotches,
   bindTerminalScrollRegion,
+  createLiveTuiWheelHandler,
   forwardWheelToTerminal,
+  installLiveTuiCursorTracking,
   lineAtThumbTop,
   readTerminalScrollView,
   scrollApplication,
+  scrollLiveCursor,
   scrollThumbGeometry,
   strokeUnits,
   terminalScrollOwner,
@@ -85,6 +88,45 @@ describe("terminalScrollSurface", () => {
     expect(lineAtThumbTop(view, 160, 200)).toBe(80);
   });
 
+  it("tracks hidden-cursor live views through the real xterm parser", async () => {
+    const term = await newTerminal();
+    const states: boolean[] = [];
+    const tracking = installLiveTuiCursorTracking(term.parser, (active) =>
+      states.push(active),
+    );
+    try {
+      await write(term, "\x1b[?25l");
+      await write(term, "\x1b[?25l");
+      expect(states).toEqual([true]);
+
+      tracking.reset();
+      expect(states).toEqual([true, false]);
+      await write(term, "\x1b[?25l");
+      await write(term, "\x1b[?25h");
+      expect(states).toEqual([true, false, true, false]);
+
+      await write(term, "\x1b[?25l");
+      await write(term, "\x1b[!p");
+      expect(states).toEqual([true, false, true, false, true, false]);
+
+      await write(term, "\x1b[?25l");
+      await write(term, "\x1bc");
+      expect(states).toEqual([
+        true,
+        false,
+        true,
+        false,
+        true,
+        false,
+        true,
+        false,
+      ]);
+    } finally {
+      tracking.dispose();
+      term.dispose();
+    }
+  });
+
   it("offers NO thumb geometry for an application-owned screen", () => {
     // The regression this pins: twice a shape was drawn in this track — once
     // parked in the middle, once at a measured offset — and both times the
@@ -134,6 +176,108 @@ describe("terminalScrollSurface", () => {
       "\x1b[6~",
       "\x1b[6~",
     ]);
+  });
+
+  it("reveals all eight rows after explicit live-view activation", () => {
+    const term = terminalDouble("none", "normal");
+    const agents = Array.from(
+      { length: 8 },
+      (_, index) => `agent-${index + 1}`,
+    );
+    let selected = 4;
+    term.input.mockImplementation((data: string) => {
+      for (const sequence of data.matchAll(/\x1b\[([AB])/g)) {
+        selected = Math.max(
+          0,
+          Math.min(
+            agents.length - 1,
+            selected + (sequence[1] === "B" ? 1 : -1),
+          ),
+        );
+      }
+    });
+    const visible = () => {
+      const start = Math.min(Math.max(0, selected - 4), agents.length - 5);
+      return agents.slice(start, start + 5);
+    };
+    const handleWheel = createLiveTuiWheelHandler(term, () => true);
+
+    expect(visible()).toEqual(agents.slice(0, 5));
+
+    expect(
+      handleWheel(
+        new WheelEvent("wheel", {
+          deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+          deltaY: 120,
+        }),
+      ),
+    ).toBe(false);
+    expect(term.input).toHaveBeenCalledWith("\x1b[B".repeat(3), true);
+    expect(visible()).toEqual(agents.slice(3, 8));
+
+    expect(handleWheel(new WheelEvent("wheel", { deltaY: -40 }))).toBe(false);
+    expect(term.input).toHaveBeenLastCalledWith("\x1b[A", true);
+  });
+
+  it("keeps both wheel directions native without explicit activation", () => {
+    const term = terminalDouble("none", "normal");
+    const handleWheel = createLiveTuiWheelHandler(term, () => false);
+
+    expect(handleWheel(new WheelEvent("wheel", { deltaY: 120 }))).toBe(true);
+    expect(handleWheel(new WheelEvent("wheel", { deltaY: -120 }))).toBe(true);
+    expect(term.input).not.toHaveBeenCalled();
+  });
+
+  it("keeps Shift+wheel as access to exact xterm history", () => {
+    const term = terminalDouble("none", "normal");
+    const handleWheel = createLiveTuiWheelHandler(term, () => true);
+
+    expect(
+      handleWheel(new WheelEvent("wheel", { deltaY: -120, shiftKey: true })),
+    ).toBe(true);
+    expect(term.input).not.toHaveBeenCalled();
+  });
+
+  it("leaves negotiated normal-buffer mouse tracking untouched", () => {
+    const term = terminalDouble("any", "normal");
+    Object.assign(term.modes, { applicationCursorKeysMode: true });
+    const handleWheel = createLiveTuiWheelHandler(term, () => true);
+
+    expect(
+      handleWheel(
+        new WheelEvent("wheel", {
+          deltaMode: WheelEvent.DOM_DELTA_LINE,
+          deltaY: -2,
+        }),
+      ),
+    ).toBe(true);
+    expect(term.input).not.toHaveBeenCalled();
+  });
+
+  it("leaves alternate-screen mouse protocols untouched", () => {
+    const term = terminalDouble("any", "alternate");
+    const handleWheel = createLiveTuiWheelHandler(term, () => true);
+
+    expect(handleWheel(new WheelEvent("wheel", { deltaY: 120 }))).toBe(true);
+    expect(term.input).not.toHaveBeenCalled();
+  });
+
+  it("accumulates fine trackpad input without moving two histories", () => {
+    const term = terminalDouble("none", "normal");
+    const handleWheel = createLiveTuiWheelHandler(term, () => true);
+
+    expect(handleWheel(new WheelEvent("wheel", { deltaY: 20 }))).toBe(false);
+    expect(term.input).not.toHaveBeenCalled();
+    expect(handleWheel(new WheelEvent("wheel", { deltaY: 20 }))).toBe(false);
+    expect(term.input).toHaveBeenCalledWith("\x1b[B", true);
+  });
+
+  it("emits no more cursor rows than one bounded wheel action", () => {
+    const term = terminalDouble("none", "normal");
+
+    expect(scrollLiveCursor(term, 1, 100)).toBe(12);
+    expect(term.input).toHaveBeenCalledOnce();
+    expect(term.input).toHaveBeenCalledWith("\x1b[B".repeat(12), true);
   });
 
   it("forwards the wheel over a rail unchanged and contains the workspace", () => {

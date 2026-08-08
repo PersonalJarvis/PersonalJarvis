@@ -124,10 +124,12 @@ function fakeTerminal({
 function RailHarness({
   name,
   term,
+  liveTuiCandidate = false,
   onOpenHistory,
 }: {
   name: string;
   term: Terminal;
+  liveTuiCandidate?: boolean;
   onOpenHistory?: () => void;
 }) {
   const regionRef = useRef<HTMLDivElement | null>(null);
@@ -135,7 +137,11 @@ function RailHarness({
   const terminalRef = useRef<Terminal | null>(term);
   return (
     <div ref={regionRef} id={`terminal-${name}`}>
-      <div ref={hostRef}>
+      <div
+        ref={hostRef}
+        data-live-tui-candidate={liveTuiCandidate ? "true" : "false"}
+        data-live-tui-navigation="false"
+      >
         <div className="xterm-screen" data-testid={`xterm-screen-${name}`} />
       </div>
       <PaneScrollRail
@@ -204,6 +210,72 @@ describe("PaneScrollRail", () => {
         .getByRole("scrollbar", { name: "Scroll Mika" })
         .getAttribute("aria-controls"),
     ).toBe("terminal-Mika");
+  });
+
+  it("strokes a positionless live inline TUI in both directions", () => {
+    const harness = fakeTerminal({ owner: "terminal" });
+    render(<RailHarness name="Mira" term={harness.term} liveTuiCandidate />);
+    const rail = giveTrackGeometry("Mira");
+
+    // Cursor-hidden is only a candidate. Until the user explicitly activates
+    // the live view, the exact terminal thumb and its keyboard behavior win.
+    expect(screen.getByTestId("pane-scroll-thumb-Mira")).toBeTruthy();
+    const candidateButton = screen.getByRole("button", {
+      name: "Control live view in Mira",
+    });
+    const nativeWheel: number[] = [];
+    screen
+      .getByTestId("xterm-screen-Mira")
+      .addEventListener("wheel", (event) => nativeWheel.push(event.deltaY));
+    fireEvent.wheel(candidateButton, { deltaY: 120 });
+    expect(nativeWheel).toEqual([120]);
+    fireEvent.keyDown(rail, { key: "ArrowDown" });
+    expect(harness.scrollLines).toHaveBeenCalledWith(1);
+    expect(harness.input).not.toHaveBeenCalled();
+
+    fireEvent.click(candidateButton);
+    const grip = screen.getByTestId("pane-scroll-grip-Mira");
+
+    fireEvent.pointerDown(grip, { button: 0, clientY: 100, pointerId: 21 });
+    fireEvent.pointerMove(rail, { clientY: 115, pointerId: 21 });
+    fireEvent.pointerMove(rail, { clientY: 109, pointerId: 21 });
+    fireEvent.pointerUp(rail, { clientY: 109, pointerId: 21 });
+
+    expect(harness.input.mock.calls.map((call) => call[0])).toEqual([
+      "\x1b[B".repeat(5),
+      "\x1b[A".repeat(2),
+    ]);
+    expect(screen.queryByTestId("pane-scroll-thumb-Mira")).toBeNull();
+    expect(rail.dataset.scrollPosition).toBe("none");
+  });
+
+  it("hands ArrowDown and PageDown to an explicit live inline TUI", () => {
+    const harness = fakeTerminal({ owner: "terminal" });
+    render(<RailHarness name="Tali" term={harness.term} liveTuiCandidate />);
+    const rail = giveTrackGeometry("Tali");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Control live view in Tali" }),
+    );
+
+    fireEvent.keyDown(rail, { key: "ArrowDown" });
+    fireEvent.keyDown(rail, { key: "PageDown" });
+
+    expect(harness.scrollLines).not.toHaveBeenCalled();
+    expect(harness.input.mock.calls.map((call) => call[0])).toEqual([
+      "\x1b[B",
+      "\x1b[B".repeat(7),
+    ]);
+  });
+
+  it("keeps ArrowDown native at a visible-cursor prompt, including its tail", () => {
+    const harness = fakeTerminal({ owner: "terminal" });
+    render(<RailHarness name="Niko" term={harness.term} />);
+    const rail = giveTrackGeometry("Niko");
+
+    fireEvent.keyDown(rail, { key: "ArrowDown" });
+
+    expect(harness.scrollLines).toHaveBeenCalledWith(1);
+    expect(harness.input).not.toHaveBeenCalled();
   });
 
   it("strokes a mouse-aware full-screen IDE both ways and shows no position at all", () => {

@@ -117,6 +117,10 @@ import {
 import { installQuerySuppression } from "./terminalQueries";
 import { PaneScrollRail } from "./PaneScrollRail";
 import {
+  createLiveTuiWheelHandler,
+  installLiveTuiCursorTracking,
+} from "./terminalScrollSurface";
+import {
   openPaneSocket,
   type PaneSocket,
   type PromptDelivery,
@@ -524,6 +528,21 @@ export function AgenticTerminal({
     // before reaching it — too late, and then visible as junk in its prompt.
     // The backend answers those instead. See ./terminalQueries.
     const disposeQuerySuppression = installQuerySuppression(term.parser);
+    // A hidden cursor is only a CANDIDATE for a keyboard-owned live drawing:
+    // progress spinners use the same terminal mode. The rail exposes an
+    // explicit activation control for that candidate; only that user choice
+    // may turn wheel/drag input into cursor keys.
+    let cursorHidden = false;
+    const setCursorHidden = (hidden: boolean) => {
+      cursorHidden = hidden;
+      container.dataset.liveTuiCandidate = hidden ? "true" : "false";
+      if (!hidden) container.dataset.liveTuiNavigation = "false";
+    };
+    setCursorHidden(false);
+    const liveTuiTracking = installLiveTuiCursorTracking(
+      term.parser,
+      setCursorHidden,
+    );
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon(activateLink));
@@ -542,6 +561,19 @@ export function AgenticTerminal({
       /* proposed API unavailable in this build — widths stay at Unicode 6 */
     }
     term.open(container);
+    // A normal-buffer coding CLI can draw a windowed live block inside ordinary
+    // terminal history. xterm can scroll that history, but rows omitted by the
+    // live block only exist in the CLI and need cursor navigation. The handler
+    // is active only after the rail's explicit live-view activation, and that
+    // opt-in is revoked as soon as the CLI restores the cursor.
+    term.attachCustomWheelEventHandler(
+      createLiveTuiWheelHandler(
+        term,
+        () =>
+          cursorHidden &&
+          container.dataset.liveTuiNavigation === "true",
+      ),
+    );
     // Canvas rather than the DOM renderer: a coding agent's TUI redraws its
     // prompt box on every keystroke, and per-cell DOM elements both lag and
     // land on fractional pixel offsets. Loaded AFTER open() because it needs
@@ -817,6 +849,7 @@ export function AgenticTerminal({
       // screen this replay just replaced.
       cancelHoldTimer();
       offscreen.drain();
+      liveTuiTracking.reset();
       term.reset();
       // Through the ordinary path, so a replay arriving while nobody is looking
       // is parked and un-parked by the same rules as anything else — and so it
@@ -994,9 +1027,12 @@ export function AgenticTerminal({
           }
         },
         onExit: (code) => {
+          // A crash cannot be trusted to restore cursor visibility. End live
+          // TUI ownership before drawing the terminal's definitive exit row.
+          liveTuiTracking.reset();
           report("exited", explainExit(code));
           writeToPane(
-            `\r\n\x1b[33m${describeExit(displayName, code)}\x1b[0m\r\n`,
+            `\r\n\x1b[?25h\x1b[33m${describeExit(displayName, code)}\x1b[0m\r\n`,
           );
         },
         onTrouble: (message, retrying) => {
@@ -1142,6 +1178,7 @@ export function AgenticTerminal({
       disposeCopyBridge();
       disposePasteBridge();
       disposeNewlineBridge();
+      liveTuiTracking.dispose();
       disposeQuerySuppression();
       try {
         socket?.close();

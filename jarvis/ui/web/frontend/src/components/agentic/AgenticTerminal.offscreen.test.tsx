@@ -44,6 +44,7 @@ vi.mock("@xterm/xterm", () => ({
     parser = {
       registerOscHandler: () => ({ dispose() {} }),
       registerCsiHandler: () => ({ dispose() {} }),
+      registerEscHandler: () => ({ dispose() {} }),
     };
 
     loadAddon() {}
@@ -54,6 +55,7 @@ vi.mock("@xterm/xterm", () => ({
     // ./terminalNewline) — a stand-in without these is a terminal xterm never
     // shipped either.
     attachCustomKeyEventHandler() {}
+    attachCustomWheelEventHandler() {}
     input() {}
     getSelection() {
       return "";

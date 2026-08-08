@@ -15,6 +15,13 @@ const terminalHarness = vi.hoisted(() => ({
   input: vi.fn<(data: string) => void>(),
   /** xterm's single custom key handler, so a test can press a key. */
   keys: { current: null as ((event: KeyboardEvent) => boolean) | null },
+  /** xterm's wheel arbiter, which bridges a live inline TUI at its tail. */
+  wheel: { current: null as ((event: WheelEvent) => boolean) | null },
+  /** Custom CSI observers installed on xterm's parser. */
+  csiHandlers: [] as {
+    id: { prefix?: string; final: string };
+    callback: (params: (number | number[])[]) => boolean;
+  }[],
   focus: vi.fn(),
   scrollToBottom: vi.fn(),
   write: vi.fn(),
@@ -52,7 +59,20 @@ vi.mock("@xterm/xterm", () => ({
     // (see ./terminalQueries). The double only has to accept the handlers.
     parser = {
       registerOscHandler: () => ({ dispose() {} }),
-      registerCsiHandler: () => ({ dispose() {} }),
+      registerEscHandler: () => ({ dispose() {} }),
+      registerCsiHandler: (
+        id: { prefix?: string; final: string },
+        callback: (params: (number | number[])[]) => boolean,
+      ) => {
+        const entry = { id, callback };
+        terminalHarness.csiHandlers.push(entry);
+        return {
+          dispose() {
+            const index = terminalHarness.csiHandlers.indexOf(entry);
+            if (index >= 0) terminalHarness.csiHandlers.splice(index, 1);
+          },
+        };
+      },
     };
 
     loadAddon() {}
@@ -65,6 +85,9 @@ vi.mock("@xterm/xterm", () => ({
     paste() {}
     attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
       terminalHarness.keys.current = handler;
+    }
+    attachCustomWheelEventHandler(handler: (event: WheelEvent) => boolean) {
+      terminalHarness.wheel.current = handler;
     }
     input(data: string) {
       terminalHarness.input(data);
@@ -142,6 +165,8 @@ describe("AgenticTerminal layout", () => {
     terminalHarness.write.mockClear();
     terminalHarness.deferWrite = false;
     terminalHarness.writeCallbacks = [];
+    terminalHarness.wheel.current = null;
+    terminalHarness.csiHandlers = [];
     globalThis.ResizeObserver = ResizeObserverHarness;
   });
 
@@ -177,6 +202,62 @@ describe("AgenticTerminal layout", () => {
     expect(host.className).not.toMatch(/(?:^|\s)p[trblxy]?-/);
     expect(terminalHarness.open).toHaveBeenCalledWith(host);
     expect(terminalHarness.observe).toHaveBeenCalledWith(host);
+    expect(terminalHarness.wheel.current).not.toBeNull();
+  });
+
+  it("requires explicit live-view activation and revokes it on exit", () => {
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+      />,
+    );
+    const host = screen.getByTestId("agentic-terminal-host-Dana");
+    const hide = terminalHarness.csiHandlers.find(
+      ({ id }) => id.prefix === "?" && id.final === "l",
+    );
+    const show = terminalHarness.csiHandlers.find(
+      ({ id }) => id.prefix === "?" && id.final === "h",
+    );
+
+    expect(host.dataset.liveTuiCandidate).toBe("false");
+    expect(host.dataset.liveTuiNavigation).toBe("false");
+    expect(hide?.callback([25])).toBe(false);
+    expect(host.dataset.liveTuiCandidate).toBe("true");
+    expect(host.dataset.liveTuiNavigation).toBe("false");
+    expect(
+      terminalHarness.wheel.current?.(
+        new WheelEvent("wheel", { deltaY: 120 }),
+      ),
+    ).toBe(true);
+    expect(terminalHarness.input).not.toHaveBeenCalled();
+
+    host.dataset.liveTuiNavigation = "true";
+    expect(
+      terminalHarness.wheel.current?.(
+        new WheelEvent("wheel", { deltaY: 120 }),
+      ),
+    ).toBe(false);
+    expect(terminalHarness.input).toHaveBeenCalledWith("\x1b[B".repeat(3));
+    expect(show?.callback([25])).toBe(false);
+    expect(host.dataset.liveTuiCandidate).toBe("false");
+    expect(host.dataset.liveTuiNavigation).toBe("false");
+
+    expect(hide?.callback([25])).toBe(false);
+    host.dataset.liveTuiNavigation = "true";
+    terminalHarness.input.mockClear();
+    act(() => terminalHarness.handlers.current?.onExit?.(1 as never));
+    expect(host.dataset.liveTuiCandidate).toBe("false");
+    expect(host.dataset.liveTuiNavigation).toBe("false");
+    expect(terminalHarness.write).toHaveBeenLastCalledWith(
+      expect.stringContaining("\x1b[?25h"),
+    );
+    expect(terminalHarness.wheel.current?.(new WheelEvent("wheel", { deltaY: 120 }))).toBe(
+      true,
+    );
+    expect(terminalHarness.input).not.toHaveBeenCalled();
   });
 
   it("waits for the area-aware grid measurement before opening the PTY", () => {
