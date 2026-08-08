@@ -859,7 +859,11 @@ async def test_media_track_forwards_provider_silence_verbatim() -> None:
 async def test_default_done_waits_for_all_late_audio_before_one_completion(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_QUIESCENCE_S", 0.03)
+    # The last chunk must land WELL inside the quiescence window: Windows
+    # timer granularity (~15.6 ms) makes two sequential sleeps overshoot a
+    # same-length single sleep, so a schedule that races the deadline exactly
+    # loses deterministically there while passing elsewhere.
+    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_QUIESCENCE_S", 0.25)
     client = _Client()
     client.subscription = _ScheduledSubscription(
         [
@@ -872,12 +876,12 @@ async def test_default_done_waits_for_all_late_audio_before_one_completion(
             ),
             # Keeps the notification stream open while the late media audio
             # arrives, as a live transport does.
-            (0.2, _Notification("thread/realtime/keepalive", {"threadId": "thread-1"})),
+            (0.6, _Notification("thread/realtime/keepalive", {"threadId": "thread-1"})),
         ]
     )
-    # Late RTP audio must keep re-arming the quiescence timer so one turn ends
-    # exactly once, after the last audible chunk.
-    endpoint = _FakeAudioEndpoint(output_schedule=((0.015, b"\x01\x00"), (0.015, b"\x01\x00")))
+    # Late RTP audio must arrive inside the quiescence window so one turn ends
+    # exactly once, after the last chunk.
+    endpoint = _FakeAudioEndpoint(output_schedule=((0.05, b"\x01\x00"), (0.05, b"\x01\x00")))
     session = await _provider(client, endpoint=endpoint).open_session(RealtimeSessionConfig())
 
     events = [event async for event in session.receive()]
@@ -1292,9 +1296,7 @@ async def test_offer_thread_and_transcriber_warm_overlap() -> None:
         input_transcriber_factory=_GatedTranscriber,
     )
 
-    session = await asyncio.wait_for(
-        provider.open_session(RealtimeSessionConfig()), timeout=1.0
-    )
+    session = await asyncio.wait_for(provider.open_session(RealtimeSessionConfig()), timeout=1.0)
 
     assert offer_started.is_set()
     assert warm_started.is_set()
@@ -1435,9 +1437,7 @@ class _RecoveringEndpointer(_StubEndpointer):
             # Under the no-unsolicited-opening policy an answer only plays
             # once a user final exists.
             self._events.put_nowait(
-                InputTranscriptEvent(
-                    kind="transcript", text="Hi.", is_final=True
-                )
+                InputTranscriptEvent(kind="transcript", text="Hi.", is_final=True)
             )
 
     async def next_event(self):  # noqa: ANN202 - test protocol
@@ -1713,9 +1713,7 @@ async def test_ungrounded_server_turn_aborts_an_open_response_without_a_boundary
 
     events = [event async for event in session.receive()]
 
-    assert [event.text for event in events if event.type == "output_transcript_delta"] == [
-        "Hi."
-    ]
+    assert [event.text for event in events if event.type == "output_transcript_delta"] == ["Hi."]
     assert [event.type for event in events].count("turn_complete") == 1
     errors = [event for event in events if event.type == "error"]
     assert len(errors) == 1
@@ -2200,15 +2198,15 @@ async def test_a_refused_response_does_not_deafen_the_next_real_turn() -> None:
             ),
         ]
     )
-    session = await _provider(
-        client, input_transcriber_factory=lambda: transcriber
-    ).open_session(RealtimeSessionConfig())
+    session = await _provider(client, input_transcriber_factory=lambda: transcriber).open_session(
+        RealtimeSessionConfig()
+    )
 
     events = [event async for event in session.receive()]
 
-    assert [
-        event.text for event in events if event.type == "output_transcript_delta"
-    ] == ["The real answer."]
+    assert [event.text for event in events if event.type == "output_transcript_delta"] == [
+        "The real answer."
+    ]
     await session.close()
 
 
@@ -2268,9 +2266,7 @@ async def test_a_pause_inside_one_reply_does_not_cut_off_its_remainder(
             # Grounded call: the first answer needs a user final now.
             (
                 0.0,
-                InputTranscriptEvent(
-                    kind="transcript", text="Hello there.", is_final=True
-                ),
+                InputTranscriptEvent(kind="transcript", text="Hello there.", is_final=True),
             ),
         ]
     )
@@ -2282,9 +2278,7 @@ async def test_a_pause_inside_one_reply_does_not_cut_off_its_remainder(
         input_transcriber_factory=lambda: transcriber,
     ).open_session(RealtimeSessionConfig())
 
-    events = await _collect_until(
-        session, stop_after=2, kind="audio_delta", timeout_s=1.5
-    )
+    events = await _collect_until(session, stop_after=2, kind="audio_delta", timeout_s=1.5)
 
     assert [event.type for event in events].count("audio_delta") == 2
     # The backstop still delivered its boundary between the two halves.
@@ -2305,9 +2299,7 @@ async def test_a_completed_turn_still_refuses_the_next_ungrounded_response() -> 
         [
             InputTranscriptEvent(kind="speech_started"),
             # Grounded call: the first answer needs a user final now.
-            InputTranscriptEvent(
-                kind="transcript", text="Hello there.", is_final=True
-            ),
+            InputTranscriptEvent(kind="transcript", text="Hello there.", is_final=True),
         ]
     )
     client = _Client(
@@ -2330,15 +2322,15 @@ async def test_a_completed_turn_still_refuses_the_next_ungrounded_response() -> 
             ),
         ]
     )
-    session = await _provider(
-        client, input_transcriber_factory=lambda: transcriber
-    ).open_session(RealtimeSessionConfig())
+    session = await _provider(client, input_transcriber_factory=lambda: transcriber).open_session(
+        RealtimeSessionConfig()
+    )
 
     events = [event async for event in session.receive()]
 
-    assert [
-        event.text for event in events if event.type == "output_transcript_delta"
-    ] == ["Answer one."]
+    assert [event.text for event in events if event.type == "output_transcript_delta"] == [
+        "Answer one."
+    ]
     assert [event.type for event in events].count("turn_complete") == 1
     await session.close()
 
@@ -2356,9 +2348,7 @@ async def test_an_invented_user_caption_retires_the_entitlement() -> None:
         [
             InputTranscriptEvent(kind="speech_started"),
             # Grounded call: the first answer needs a user final now.
-            InputTranscriptEvent(
-                kind="transcript", text="Hello there.", is_final=True
-            ),
+            InputTranscriptEvent(kind="transcript", text="Hello there.", is_final=True),
         ]
     )
     transcriber._speaking = False  # the microphone is quiet from here on
@@ -2382,15 +2372,15 @@ async def test_an_invented_user_caption_retires_the_entitlement() -> None:
             ),
         ]
     )
-    session = await _provider(
-        client, input_transcriber_factory=lambda: transcriber
-    ).open_session(RealtimeSessionConfig())
+    session = await _provider(client, input_transcriber_factory=lambda: transcriber).open_session(
+        RealtimeSessionConfig()
+    )
 
     events = [event async for event in session.receive()]
 
-    assert [
-        event.text for event in events if event.type == "output_transcript_delta"
-    ] == ["Answer one."]
+    assert [event.text for event in events if event.type == "output_transcript_delta"] == [
+        "Answer one."
+    ]
     await session.close()
 
 
@@ -2407,18 +2397,14 @@ async def test_interrupt_drops_the_remainder_without_any_codex_turn_id(
     """
     monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_QUIESCENCE_S", 5.0)
     speech = (1000).to_bytes(2, "little", signed=True) * 480
-    endpoint = _FakeAudioEndpoint(
-        output_schedule=((0.02, speech), (0.15, speech), (0.05, speech))
-    )
+    endpoint = _FakeAudioEndpoint(output_schedule=((0.02, speech), (0.15, speech), (0.05, speech)))
     transcriber = _ScheduledInputTranscriber(
         [
             (0.0, InputTranscriptEvent(kind="speech_started")),
             # Grounded call: the first answer needs a user final now.
             (
                 0.0,
-                InputTranscriptEvent(
-                    kind="transcript", text="Hello there.", is_final=True
-                ),
+                InputTranscriptEvent(kind="transcript", text="Hello there.", is_final=True),
             ),
         ]
     )
@@ -2463,12 +2449,8 @@ async def test_late_provider_transcript_is_shadow_recovered_for_the_gate(
     hold). The local recognizer recovers vetting text early; the shadow flag
     keeps it out of the user-visible transcript.
     """
-    monkeypatch.setattr(
-        codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_AFTER_S", 0.05
-    )
-    monkeypatch.setattr(
-        codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_RETRY_S", 0.01
-    )
+    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_AFTER_S", 0.05)
+    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_RETRY_S", 0.01)
     speech = (1000).to_bytes(2, "little", signed=True) * 480
     endpoint = _FakeAudioEndpoint(
         output_schedule=(
@@ -2497,9 +2479,7 @@ async def test_late_provider_transcript_is_shadow_recovered_for_the_gate(
     with contextlib.suppress(TimeoutError):
         async with asyncio.timeout(1.5):
             async for event in session.receive():
-                if event.type == "output_transcript_delta" and getattr(
-                    event, "shadow", False
-                ):
+                if event.type == "output_transcript_delta" and getattr(event, "shadow", False):
                     shadow = event
                     break
 
@@ -2519,12 +2499,8 @@ async def test_slow_shadow_recovery_never_stalls_the_receive_pump(
     recognizer's own time bound — audio stalled and the user's speech edge
     arrived seconds late. The recovery now runs as a background task.
     """
-    monkeypatch.setattr(
-        codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_AFTER_S", 0.05
-    )
-    monkeypatch.setattr(
-        codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_RETRY_S", 0.01
-    )
+    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_AFTER_S", 0.05)
+    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_RETRY_S", 0.01)
 
     class _SlowRecoveringEndpointer(_RecoveringEndpointer):
         async def transcribe_audio(self, pcm: bytes, *, sample_rate: int) -> str:
@@ -2532,9 +2508,7 @@ async def test_slow_shadow_recovery_never_stalls_the_receive_pump(
             return await super().transcribe_audio(pcm, sample_rate=sample_rate)
 
     speech = (1000).to_bytes(2, "little", signed=True) * 480
-    endpoint = _FakeAudioEndpoint(
-        output_schedule=tuple((0.04, speech) for _ in range(14))
-    )
+    endpoint = _FakeAudioEndpoint(output_schedule=tuple((0.04, speech) for _ in range(14)))
     transcriber = _SlowRecoveringEndpointer("Here is the answer.")
     transcriber._events.put_nowait(
         InputTranscriptEvent(kind="transcript", text="Hi", is_final=True)
@@ -2554,9 +2528,7 @@ async def test_slow_shadow_recovery_never_stalls_the_receive_pump(
             async for event in session.receive():
                 if event.type == "audio_delta" and not shadow_seen:
                     audio_before_shadow += 1
-                if event.type == "output_transcript_delta" and getattr(
-                    event, "shadow", False
-                ):
+                if event.type == "output_transcript_delta" and getattr(event, "shadow", False):
                     shadow_seen = True
                     break
 
@@ -2573,16 +2545,10 @@ async def test_shadow_recovery_yields_to_an_open_user_utterance(
     monkeypatch,
 ) -> None:
     """The microphone owns the shared recognizer mid-utterance (review R2)."""
-    monkeypatch.setattr(
-        codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_AFTER_S", 0.05
-    )
-    monkeypatch.setattr(
-        codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_RETRY_S", 0.01
-    )
+    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_AFTER_S", 0.05)
+    monkeypatch.setattr(codex_subscription_mod, "_OUTPUT_EARLY_RECOVERY_RETRY_S", 0.01)
     speech = (1000).to_bytes(2, "little", signed=True) * 480
-    endpoint = _FakeAudioEndpoint(
-        output_schedule=tuple((0.04, speech) for _ in range(8))
-    )
+    endpoint = _FakeAudioEndpoint(output_schedule=tuple((0.04, speech) for _ in range(8)))
     # speech_started with no final: the utterance stays open for the whole
     # window, so no shadow attempt may run (and under the
     # no-unsolicited-opening policy the response never plays either).
@@ -2599,8 +2565,7 @@ async def test_shadow_recovery_yields_to_an_open_user_utterance(
         async with asyncio.timeout(0.8):
             async for event in session.receive():
                 assert not (
-                    event.type == "output_transcript_delta"
-                    and getattr(event, "shadow", False)
+                    event.type == "output_transcript_delta" and getattr(event, "shadow", False)
                 )
 
     assert transcriber.recovery_calls == []
@@ -2621,17 +2586,13 @@ async def test_interrupt_retires_an_entitlement_the_response_never_used(
     answer).
     """
     speech = (1000).to_bytes(2, "little", signed=True) * 480
-    endpoint = _FakeAudioEndpoint(
-        output_schedule=((0.35, speech), (0.02, speech))
-    )
+    endpoint = _FakeAudioEndpoint(output_schedule=((0.35, speech), (0.02, speech)))
     transcriber = _ScheduledInputTranscriber(
         [
             (0.0, InputTranscriptEvent(kind="speech_started")),
             (
                 0.02,
-                InputTranscriptEvent(
-                    kind="transcript", text="Wetter morgen?", is_final=True
-                ),
+                InputTranscriptEvent(kind="transcript", text="Wetter morgen?", is_final=True),
             ),
         ]
     )
@@ -2680,16 +2641,12 @@ async def test_barge_in_never_consumes_the_new_utterances_entitlement() -> None:
             (0.0, InputTranscriptEvent(kind="speech_started")),
             (
                 0.02,
-                InputTranscriptEvent(
-                    kind="transcript", text="Frage eins", is_final=True
-                ),
+                InputTranscriptEvent(kind="transcript", text="Frage eins", is_final=True),
             ),
             (0.05, InputTranscriptEvent(kind="speech_started")),
             (
                 0.02,
-                InputTranscriptEvent(
-                    kind="transcript", text="Warte, anders", is_final=True
-                ),
+                InputTranscriptEvent(kind="transcript", text="Warte, anders", is_final=True),
             ),
         ]
     )
@@ -2720,9 +2677,7 @@ async def test_barge_in_never_consumes_the_new_utterances_entitlement() -> None:
                     audio_after.append(event)
                     break
 
-    assert audio_after, (
-        "the far end's answer to the barge-in utterance must stay audible"
-    )
+    assert audio_after, "the far end's answer to the barge-in utterance must stay audible"
     await session.close()
 
 
@@ -2984,9 +2939,7 @@ async def test_startup_context_never_authorizes_a_response() -> None:
     # No microphone energy stands behind this answer, and a configuration
     # write is not consent to speak - so it is refused, exactly like any other
     # ungrounded turn.
-    assert [
-        event.text for event in events if event.type == "output_transcript_delta"
-    ] == []
+    assert [event.text for event in events if event.type == "output_transcript_delta"] == []
     await session.close()
 
 
@@ -3014,9 +2967,7 @@ async def test_the_language_pin_never_authorizes_a_response() -> None:
 
     events = [event async for event in session.receive()]
 
-    assert [
-        event.text for event in events if event.type == "output_transcript_delta"
-    ] == []
+    assert [event.text for event in events if event.type == "output_transcript_delta"] == []
     await session.close()
 
 
@@ -3040,9 +2991,7 @@ async def test_a_barge_splice_is_sequenced_behind_a_local_boundary() -> None:
             (0.25, InputTranscriptEvent(kind="speech_started")),
             (
                 0.0,
-                InputTranscriptEvent(
-                    kind="transcript", text="And again", is_final=True
-                ),
+                InputTranscriptEvent(kind="transcript", text="And again", is_final=True),
             ),
         ]
     )
@@ -3073,9 +3022,9 @@ async def test_a_barge_splice_is_sequenced_behind_a_local_boundary() -> None:
             ),
         ]
     )
-    session = await _provider(
-        client, input_transcriber_factory=lambda: transcriber
-    ).open_session(RealtimeSessionConfig())
+    session = await _provider(client, input_transcriber_factory=lambda: transcriber).open_session(
+        RealtimeSessionConfig()
+    )
 
     events = []
     async with asyncio.timeout(5.0):
@@ -3089,11 +3038,7 @@ async def test_a_barge_splice_is_sequenced_behind_a_local_boundary() -> None:
             if event.type == "output_transcript_delta" and "Second" in text:
                 break
 
-    deltas = [
-        i
-        for i, event in enumerate(events)
-        if event.type == "output_transcript_delta"
-    ]
+    deltas = [i for i, event in enumerate(events) if event.type == "output_transcript_delta"]
     first_idx = next(
         i
         for i, event in enumerate(events)
@@ -3125,12 +3070,8 @@ async def test_the_standing_directive_is_reasserted_on_every_delivery() -> None:
     baseline = len(client.text_appends)
 
     rule = "SPEAK AS ONE VOICE ONLY."
-    await session.update_session(
-        instructions="PERSONA BLOCK", standing_directive=rule
-    )
-    await session.update_session(
-        instructions="PERSONA BLOCK", standing_directive=rule
-    )
+    await session.update_session(instructions="PERSONA BLOCK", standing_directive=rule)
+    await session.update_session(instructions="PERSONA BLOCK", standing_directive=rule)
 
     payloads = [text for _, text, _ in client.text_appends[baseline:]]
     assert len(payloads) == 2, "an unchanged turn still delivers the rule"
@@ -3154,9 +3095,7 @@ async def test_an_unsolicited_opening_never_plays_on_a_grounded_host() -> None:
             (0.02, InputTranscriptEvent(kind="speech_started")),
             (
                 0.55,
-                InputTranscriptEvent(
-                    kind="transcript", text="What is up?", is_final=True
-                ),
+                InputTranscriptEvent(kind="transcript", text="What is up?", is_final=True),
             ),
         ]
     )
@@ -3208,20 +3147,15 @@ async def test_an_unsolicited_opening_never_plays_on_a_grounded_host() -> None:
                     audio_after_final += 1
                 else:
                     audio_before_final += 1
-            if event.type == "output_transcript_delta" and "real answer" in (
-                event.text or ""
-            ):
+            if event.type == "output_transcript_delta" and "real answer" in (event.text or ""):
                 break
 
     assert audio_before_final == 0, (
         "an unsolicited opening reached the surface before the first final"
     )
-    assert audio_after_final > 0, (
-        "the re-judged response after the final must play"
-    )
+    assert audio_after_final > 0, "the re-judged response after the final must play"
     assert session.diagnostics().get("opening_responses_bounded", 0) == 0, (
-        "grounded hosts refuse the opener outright; the bound is the "
-        "recognizer-less fallback only"
+        "grounded hosts refuse the opener outright; the bound is the recognizer-less fallback only"
     )
     await session.close()
 
@@ -3238,9 +3172,7 @@ async def test_a_final_rejudges_the_open_refused_response_immediately() -> None:
             (0.02, InputTranscriptEvent(kind="speech_started")),
             (
                 0.25,
-                InputTranscriptEvent(
-                    kind="transcript", text="Quick one?", is_final=True
-                ),
+                InputTranscriptEvent(kind="transcript", text="Quick one?", is_final=True),
             ),
         ]
     )
@@ -3272,9 +3204,7 @@ async def test_a_final_rejudges_the_open_refused_response_immediately() -> None:
         input_transcriber_factory=lambda: transcriber,
     ).open_session(RealtimeSessionConfig())
 
-    events = await _collect_until(
-        session, stop_after=2, kind="audio_delta", timeout_s=2.0
-    )
+    events = await _collect_until(session, stop_after=2, kind="audio_delta", timeout_s=2.0)
 
     audio_events = [e for e in events if e.type == "audio_delta"]
     assert len(audio_events) == 2, (
@@ -3300,9 +3230,7 @@ async def test_a_discarded_utterance_keeps_its_response_window(
             (0.01, InputTranscriptEvent(kind="speech_started")),
             (
                 0.0,
-                InputTranscriptEvent(
-                    kind="transcript", text="Hello there.", is_final=True
-                ),
+                InputTranscriptEvent(kind="transcript", text="Hello there.", is_final=True),
             ),
             (0.05, InputTranscriptEvent(kind="speech_started")),
             (
@@ -3327,18 +3255,14 @@ async def test_a_discarded_utterance_keeps_its_response_window(
             ),
         ]
     )
-    session = await _provider(
-        client, input_transcriber_factory=lambda: transcriber
-    ).open_session(RealtimeSessionConfig())
+    session = await _provider(client, input_transcriber_factory=lambda: transcriber).open_session(
+        RealtimeSessionConfig()
+    )
 
     events = await _collect_until(
         session, stop_after=1, kind="output_transcript_delta", timeout_s=2.0
     )
-    delivered = [
-        event.text
-        for event in events
-        if event.type == "output_transcript_delta"
-    ]
+    delivered = [event.text for event in events if event.type == "output_transcript_delta"]
     assert delivered == ["Did you say something?"], (
         "the answer to a heard-but-discarded sound must play inside the grace"
     )
@@ -3347,9 +3271,7 @@ async def test_a_discarded_utterance_keeps_its_response_window(
 
 @pytest.mark.asyncio
 async def test_an_unanswered_discard_window_expires(monkeypatch) -> None:
-    monkeypatch.setattr(
-        codex_subscription_mod, "_DISCARDED_UTTERANCE_GRACE_S", 0.05
-    )
+    monkeypatch.setattr(codex_subscription_mod, "_DISCARDED_UTTERANCE_GRACE_S", 0.05)
     transcriber = _ScheduledInputTranscriber(
         [
             # Priming exchange: the call opening answers no bare cough under
@@ -3358,9 +3280,7 @@ async def test_an_unanswered_discard_window_expires(monkeypatch) -> None:
             (0.01, InputTranscriptEvent(kind="speech_started")),
             (
                 0.0,
-                InputTranscriptEvent(
-                    kind="transcript", text="Hello there.", is_final=True
-                ),
+                InputTranscriptEvent(kind="transcript", text="Hello there.", is_final=True),
             ),
             (0.05, InputTranscriptEvent(kind="speech_started")),
             (
@@ -3385,19 +3305,434 @@ async def test_an_unanswered_discard_window_expires(monkeypatch) -> None:
             ),
         ]
     )
-    session = await _provider(
-        client, input_transcriber_factory=lambda: transcriber
-    ).open_session(RealtimeSessionConfig())
+    session = await _provider(client, input_transcriber_factory=lambda: transcriber).open_session(
+        RealtimeSessionConfig()
+    )
 
     events = await _collect_until(
         session, stop_after=1, kind="output_transcript_delta", timeout_s=1.5
     )
-    delivered = [
-        event.text
-        for event in events
-        if event.type == "output_transcript_delta"
-    ]
-    assert delivered == [], (
-        "past the grace a discarded utterance grounds nothing"
+    delivered = [event.text for event in events if event.type == "output_transcript_delta"]
+    assert delivered == [], "past the grace a discarded utterance grounds nothing"
+    await session.close()
+
+
+def test_readback_render_budget_is_declared() -> None:
+    """A delegate readback on this transport is spoken by ChatGPT-Live, whose
+    audio lags its own start (7.4 s scrub-hold measured 2026-08-05). Without a
+    declared budget the session's 2.5 s hosted floor governed, so the surface
+    fallback took delegated answers in the wrong voice or withheld them
+    entirely (AP-21: a declared capability, never a provider-name check)."""
+    assert CodexSubscriptionRealtimeProvider.readback_render_budget_s == 12.0
+    assert CodexSubscriptionRealtimeProvider.readback_render_budget_s > 2.5, (
+        "the declared budget must beat the shared hosted floor"
     )
+
+
+class _DyingTranscriber(_StubEndpointer):
+    """Local recognizer whose event stream dies on first read."""
+
+    def __init__(self) -> None:
+        super().__init__(speaking=True)
+
+    async def next_event(self):  # noqa: ANN202 - test protocol
+        raise RuntimeError("recognizer stream died")
+
+
+_LOUD_FRAME = (1000).to_bytes(2, "little", signed=True) * 480
+
+
+@pytest.mark.asyncio
+async def test_every_ungrounded_response_is_bounded(monkeypatch) -> None:
+    """F5a: bounding only the opener left responses #2..n unbounded whenever
+    the recognizer was absent or dead — the regime where the two-AIs
+    self-talk loop ran unopposed and past grounded-path fixes 'did not
+    stick'. Every failopen response now keeps the same coarse bound."""
+    monkeypatch.setattr(codex_subscription_mod, "_OPENING_RESPONSE_MAX_S", 0.05)
+    client = _Client()
+    client.subscription = _keeps_stream_open()
+    endpoint = _FakeAudioEndpoint(
+        output_schedule=(
+            # Response 1: second chunk ages past the bound.
+            (0.0, _LOUD_FRAME),
+            (0.1, _LOUD_FRAME),
+            # Response 2: same shape — previously unbounded.
+            (0.1, _LOUD_FRAME),
+            (0.1, _LOUD_FRAME),
+        )
+    )
+    session = await _provider(client, endpoint=endpoint).open_session(RealtimeSessionConfig())
+
+    events = await _collect_until(session, stop_after=2, kind="turn_complete", timeout_s=3.0)
+
+    assert [event.type for event in events].count("turn_complete") == 2
+    diag = session.diagnostics()
+    assert diag.get("opening_responses_bounded", 0) == 1
+    assert diag.get("ungrounded_responses_bounded", 0) == 1, (
+        "the second ungrounded response must be bounded exactly like the opener"
+    )
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_recognizer_rebuild_restores_grounding(monkeypatch) -> None:
+    """F5b: a dead recognizer stream is no longer a one-way latch. The
+    rebuild reuses the ordinary build path (process-wide STT cache), so the
+    call regains its grounding source instead of running ungrounded until
+    hangup."""
+    monkeypatch.setattr(codex_subscription_mod, "_RECOGNIZER_REBUILD_BACKOFF_S", 0.0)
+    replacements = [
+        _DyingTranscriber(),
+        _ScriptedInputTranscriber(
+            [
+                InputTranscriptEvent(kind="speech_started"),
+                InputTranscriptEvent(kind="transcript", text="Hello again.", is_final=True),
+            ]
+        ),
+    ]
+    client = _Client()
+    client.subscription = _keeps_stream_open()
+    session = await _provider(
+        client,
+        input_transcriber_factory=lambda: replacements.pop(0),
+    ).open_session(RealtimeSessionConfig())
+
+    events = await _collect_until(session, stop_after=1, kind="input_transcript", timeout_s=3.0)
+
+    finals = [event for event in events if event.type == "input_transcript"]
+    assert [event.text for event in finals] == ["Hello again."], (
+        "the rebuilt recognizer must ground turns again"
+    )
+    assert not [event for event in events if event.type == "error"], (
+        "a recovered stream death deserves no surface notice"
+    )
+    diag = session.diagnostics()
+    assert diag.get("recognizer_rebuild_attempts", 0) == 1
+    assert diag.get("recognizer_rebuilds_restored", 0) == 1
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_exhausted_rebuilds_degrade_out_loud_exactly_once(
+    monkeypatch,
+) -> None:
+    """F5a+F5b: only after both rebuilds are spent does the call enter the
+    bounded ungrounded regime — and it says so on the surface exactly once
+    (AP-30), instead of the silent one-way latch that hid the degradation."""
+    monkeypatch.setattr(codex_subscription_mod, "_RECOGNIZER_REBUILD_BACKOFF_S", 0.0)
+    client = _Client()
+    client.subscription = _keeps_stream_open()
+    session = await _provider(
+        client,
+        input_transcriber_factory=_DyingTranscriber,
+    ).open_session(RealtimeSessionConfig())
+
+    events = await _collect_until(session, stop_after=1, kind="error", timeout_s=3.0)
+
+    notices = [event for event in events if event.type == "error"]
+    assert len(notices) == 1
+    assert "stopped during this" in str(notices[0].error)
+    assert notices[0].recoverable is True
+    diag = session.diagnostics()
+    assert diag.get("recognizer_rebuild_attempts", 0) == 2
+    assert diag.get("recognizer_rebuilds_restored", 0) == 2
+    assert diag.get("grounding_unavailable_notices", 0) == 1
+    assert session._local_grounding_ok is False
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_rebuilds_also_end_in_one_notice(monkeypatch) -> None:
+    """The rebuild that cannot even BUILD (factory returns None) retries and
+    then reports the same single degradation notice as a dying stream."""
+    monkeypatch.setattr(codex_subscription_mod, "_RECOGNIZER_REBUILD_BACKOFF_S", 0.0)
+    replacements: list = [_DyingTranscriber()]
+    client = _Client()
+    client.subscription = _keeps_stream_open()
+    session = await _provider(
+        client,
+        input_transcriber_factory=lambda: replacements.pop(0) if replacements else None,
+    ).open_session(RealtimeSessionConfig())
+
+    events = await _collect_until(session, stop_after=1, kind="error", timeout_s=3.0)
+
+    notices = [event for event in events if event.type == "error"]
+    assert len(notices) == 1
+    assert "could not be rebuilt" in str(notices[0].error)
+    diag = session.diagnostics()
+    assert diag.get("recognizer_rebuild_attempts", 0) == 2
+    assert diag.get("recognizer_rebuilds_restored", 0) == 0
+    assert diag.get("grounding_unavailable_notices", 0) == 1
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_recognizer_build_is_announced_at_session_start() -> None:
+    """F5a: a call whose recognizer BUILD failed used to degrade with only a
+    build-time log line — the silently disarmed grounding gate. The surface
+    now hears about it before the first frame, exactly once."""
+    session = codex_subscription_mod._CodexSubscriptionRealtimeSession(
+        client=_Client(),
+        subscription=_Subscription(),
+        thread_id="thread-1",
+        answer_sdp="v=0\r\nanswer",
+        audio_endpoint=_FakeAudioEndpoint(),
+        input_transcriber=None,
+        grounding_unavailable_reason="RuntimeError: no STT backend",
+    )
+
+    events = []
+    async for event in session.receive():
+        events.append(event)
+        if len(events) >= 2:
+            break
+
+    assert events[0].type == "error"
+    assert events[0].recoverable is True
+    assert "RuntimeError: no STT backend" in str(events[0].error)
+    assert "bounded" in str(events[0].error)
+    assert session.diagnostics().get("grounding_unavailable_notices", 0) == 1
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_an_injected_none_recognizer_stays_silent() -> None:
+    """A caller that explicitly builds the session without a recognizer (every
+    test in this file, and any embedder that owns its own STT story) is a
+    choice, not a degradation — no start-of-call notice."""
+    client = _Client()
+    session = await _provider(client).open_session(RealtimeSessionConfig())
+
+    events = [event async for event in session.receive()]
+
+    assert not [
+        event
+        for event in events
+        if event.type == "error" and "speech recognition is unavailable" in str(event.error)
+    ]
+    await session.close()
+
+
+def test_a_recognizer_build_failure_carries_its_reason(monkeypatch) -> None:
+    """The reason travels to the session so the surface notice can name it."""
+    real_import = codex_subscription_mod.importlib.import_module
+
+    def _refusing_import(name, *args, **kwargs):
+        if name == "jarvis.realtime.input_transcription":
+            raise RuntimeError("no usable STT backend")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(codex_subscription_mod.importlib, "import_module", _refusing_import)
+    provider = CodexSubscriptionRealtimeProvider()
+
+    transcriber, reason = provider._build_input_transcriber_outcome(
+        SimpleNamespace(input_language="de")
+    )
+
+    assert transcriber is None
+    assert reason == "RuntimeError: no usable STT backend"
+
+
+def test_session_language_reaches_the_recognizer(monkeypatch) -> None:
+    """F5c happy path: the resolved session input language is threaded into
+    the local recognizer, which pins it on the STT config it builds."""
+    built = []
+
+    class _NewTranscriber:
+        def __init__(self, *, sample_rate: int, language=None) -> None:
+            built.append((sample_rate, language))
+
+    fake_module = SimpleNamespace(LocalInputTranscriber=_NewTranscriber)
+    real_import = codex_subscription_mod.importlib.import_module
+    monkeypatch.setattr(
+        codex_subscription_mod.importlib,
+        "import_module",
+        lambda name, *a, **k: (
+            fake_module
+            if name == "jarvis.realtime.input_transcription"
+            else real_import(name, *a, **k)
+        ),
+    )
+    provider = CodexSubscriptionRealtimeProvider()
+
+    provider._build_input_transcriber(SimpleNamespace(input_language="de"))
+    provider._build_input_transcriber(SimpleNamespace(input_language="auto"))
+
+    assert built == [
+        (codex_subscription_mod._INPUT_RATE, "de"),
+        (
+            codex_subscription_mod._INPUT_RATE,
+            None,
+        ),
+    ], "an explicit language is passed; 'auto' keeps the configured one"
+
+
+def test_language_kwarg_rejection_warns_exactly_once(monkeypatch, caplog) -> None:
+    """F5c: the tolerance probe for an out-of-tree recognizer without the
+    ``language`` kwarg stays, but its failure is a one-shot WARNING — the
+    silently swallowed capability (a DEBUG line) is how the un-pinned session
+    language survived unreported (AP-30)."""
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setattr(codex_subscription_mod, "_language_kwarg_rejected_warned", False)
+
+    class _OldTranscriber:
+        def __init__(self, *, sample_rate: int) -> None:
+            self.sample_rate = sample_rate
+
+    fake_module = SimpleNamespace(LocalInputTranscriber=_OldTranscriber)
+    real_import = codex_subscription_mod.importlib.import_module
+    monkeypatch.setattr(
+        codex_subscription_mod.importlib,
+        "import_module",
+        lambda name, *a, **k: (
+            fake_module
+            if name == "jarvis.realtime.input_transcription"
+            else real_import(name, *a, **k)
+        ),
+    )
+    provider = CodexSubscriptionRealtimeProvider()
+    cfg = SimpleNamespace(input_language="de")
+
+    first = provider._build_input_transcriber(cfg)
+    second = provider._build_input_transcriber(cfg)
+
+    assert isinstance(first, _OldTranscriber)
+    assert isinstance(second, _OldTranscriber), (
+        "the probe must fall back, never lose the grounding source"
+    )
+    rejections = [
+        record
+        for record in caplog.records
+        if "does not accept a session language" in record.getMessage()
+    ]
+    assert [record.levelno for record in rejections] == [
+        logging.WARNING,
+        logging.DEBUG,
+    ]
+
+
+class _RosterClient(_Client):
+    """Client whose server publishes a live voice roster (codex-cli 0.147)."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.roster_requests: list[str] = []
+
+    async def realtime_list_voices(self, thread_id: str) -> dict:
+        self.roster_requests.append(thread_id)
+        return {
+            "v1": ["Nova"],
+            "v2": ["cove"],
+            "defaultV1": "nova",
+            "defaultV2": "cove",
+        }
+
+
+class _RosterRpcError(Exception):
+    """Duck-typed stand-in for CodexAppServerRPCError."""
+
+    def __init__(self, message: str, code: int) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class _RosterRejectingClient(_Client):
+    async def realtime_list_voices(self, thread_id: str) -> dict:
+        del thread_id
+        raise _RosterRpcError("Method not found", -32601)
+
+
+class _RosterDeadTransportClient(_Client):
+    async def realtime_list_voices(self, thread_id: str) -> dict:
+        del thread_id
+        raise RuntimeError("app-server transport is gone")
+
+
+@pytest.mark.asyncio
+async def test_the_live_voice_roster_extends_the_audited_static_set() -> None:
+    """The server's own listVoices answer is authoritative when readable, so
+    a voice the nine-name frozenset never heard of still validates."""
+    client = _RosterClient()
+    session = await _provider(client).open_session(RealtimeSessionConfig(voice="nova"))
+
+    assert client.roster_requests == ["thread-1"]
+    _thread_id, start = client.realtime_starts[0]
+    assert start["voice"] == "nova"
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_list_voices_falls_back_to_the_static_roster() -> None:
+    """An older server build without the method (JSON-RPC refusal, has a
+    ``code``) degrades to the audited nine-voice frozenset — capability
+    probed, never version-string-gated in this adapter (AP-21/AP-22)."""
+    session = await _provider(_RosterRejectingClient()).open_session(
+        RealtimeSessionConfig(voice="cove")
+    )
+    await session.close()
+
+    with pytest.raises(RuntimeError, match="unsupported voice"):
+        await _provider(_RosterRejectingClient()).open_session(RealtimeSessionConfig(voice="nova"))
+
+
+@pytest.mark.asyncio
+async def test_a_transport_failure_during_list_voices_propagates() -> None:
+    """A failure WITHOUT an RPC code is a dead transport, not a roster
+    verdict; validating against a guess would open a session that cannot
+    work."""
+    with pytest.raises(RuntimeError, match="transport is gone"):
+        await _provider(_RosterDeadTransportClient()).open_session(
+            RealtimeSessionConfig(voice="cove")
+        )
+
+
+class _InstructionSlotClient(_Client):
+    """Client that declares the 0.147 realtimeStartInstructions lever."""
+
+    async def realtime_start(
+        self,
+        thread_id: str,
+        *,
+        realtime_start_instructions: str | None = None,
+        **kwargs,
+    ):
+        kwargs["realtime_start_instructions"] = realtime_start_instructions
+        self.realtime_starts.append((thread_id, kwargs))
+        return SimpleNamespace(
+            response=self.start_response,
+            answer_sdp="v=0\r\nanswer",
+        )
+
+
+@pytest.mark.asyncio
+async def test_startup_contract_rides_the_instruction_slot_when_declared() -> None:
+    """When the client declares realtime_start_instructions, the startup
+    contract travels as SESSION instructions instead of a trusted first
+    prompt — injected prompt context is what the model audibly acknowledged
+    mid-open."""
+    client = _InstructionSlotClient()
+    session = await _provider(client).open_session(
+        RealtimeSessionConfig(instructions="You are Nova.")
+    )
+
+    _thread_id, start = client.realtime_starts[0]
+    assert start["trusted_prompt"] == ""
+    assert "You are Nova." in start["realtime_start_instructions"]
+    assert "Speak only the assistant side" in start["realtime_start_instructions"]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_startup_contract_stays_on_the_prompt_without_the_slot() -> None:
+    """A client that does not DECLARE the parameter by name keeps the proven
+    trusted-prompt path — a ``**kwargs`` sink would swallow the contract
+    without sending it, the exact silent capability loss AP-30 forbids."""
+    client = _Client()
+    session = await _provider(client).open_session(
+        RealtimeSessionConfig(instructions="You are Nova.")
+    )
+
+    _thread_id, start = client.realtime_starts[0]
+    assert "realtime_start_instructions" not in start
+    assert "You are Nova." in start["trusted_prompt"]
     await session.close()

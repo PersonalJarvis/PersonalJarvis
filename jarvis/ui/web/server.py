@@ -88,6 +88,18 @@ _WS_LEVEL_SEND_TIMEOUT_S = 0.25
 # inside the window cancels the wait rather than delaying it.
 ULTRAWIKI_PIPELINE_GRACE_S = 20.0
 
+# How long the realtime transport warm is held back after boot. Warming can
+# spawn a provider's app-server and verify a live account, so it must not
+# compete with the wake-model load and the brain/MCP build for CPU and disk
+# (AP-26). A few seconds still lands it long before a realistic first wake
+# word, which is the entire point of warming.
+REALTIME_WARM_BOOT_DELAY_S = 5.0
+
+# Shared with the desktop shell's warm worker (``jarvis/ui/desktop_app.py``).
+# Both surfaces schedule onto ONE event loop in a desktop boot, so the task
+# name is what keeps that boot from warming the same transports twice.
+REALTIME_WARM_TASK_NAME = "realtime-transport-warm"
+
 
 class WebServer:
     """In-process uvicorn + FastAPI, run by the orchestrator loop."""
@@ -127,6 +139,10 @@ class WebServer:
         self._refresh_scheduler_start_handle: asyncio.Handle | None = None
         self._refresh_registry_tasks: set[asyncio.Task[Any]] = set()
         self._refresh_scheduler_stopping = False
+        # Realtime transport pre-warm — scheduled at the end of start() so the
+        # headless/browser-only boot path gets the same warm the desktop shell
+        # runs. Cancelled in stop().
+        self._realtime_warm_task: asyncio.Task[None] | None = None
         # Board stack is populated in _setup_board() (in the _build_app path).
         self._board_aggregator: Any | None = None
         self._board_aggregator_task: asyncio.Task[None] | None = None
@@ -2129,6 +2145,65 @@ class WebServer:
             "will be renewed in the background."
         )
 
+    def _schedule_realtime_transport_warm(self) -> None:
+        """Pre-open the selected realtime transports off the boot path.
+
+        ``run.bat --headless`` and every browser-only install boot through this
+        server and never through the desktop shell, so without this hook they
+        paid the realtime provider's whole cold start inside the user's first
+        call — for a subscription transport a spawned app-server plus a live
+        account check. Every OS reaches it the same way; nothing here is
+        desktop- or Windows-specific.
+
+        Exactly-once by construction: the desktop shell starts its own warm
+        worker under :data:`REALTIME_WARM_TASK_NAME` before it awaits
+        :meth:`start`, and both run on the same loop, so an already-live task
+        of that name means this boot is already covered. Whether warming is
+        appropriate at all stays the factory's decision — it skips itself when
+        realtime is not the configured voice mode and warms only explicitly
+        selected providers.
+        """
+        existing = self._realtime_warm_task
+        if existing is not None and not existing.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No loop (a synchronous start in a test harness): nothing to warm
+            # onto, and boot must not care.
+            logger.debug("Realtime transport warm not scheduled — no running event loop.")
+            return
+        for task in asyncio.all_tasks(loop):
+            if task.get_name() == REALTIME_WARM_TASK_NAME and not task.done():
+                logger.debug(
+                    "Realtime transport warm already running on this loop — "
+                    "not scheduling a second one."
+                )
+                return
+        self._realtime_warm_task = loop.create_task(
+            self._warm_realtime_transports(), name=REALTIME_WARM_TASK_NAME
+        )
+
+    async def _warm_realtime_transports(self) -> None:
+        """Warm the explicitly selected realtime transports once, after boot.
+
+        Advisory by contract and never silent (AP-30): a failure here changes
+        nothing except that the first call pays the cold start it pays today,
+        and it says so at warning level.
+        """
+        try:
+            await asyncio.sleep(REALTIME_WARM_BOOT_DELAY_S)
+            from jarvis.realtime.factory import realtime_warm_selected_transports
+
+            await realtime_warm_selected_transports(self.cfg)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 -- warming is advisory, never fatal
+            logger.opt(exception=exc).warning(
+                "Realtime transport warm failed — the first realtime call will "
+                "pay the provider's cold start."
+            )
+
     async def _stop_marketplace_refresh_scheduler(self) -> None:
         """Cancel a pending start and stop the live refresh task, if any."""
         self._refresh_scheduler_stopping = True
@@ -2493,6 +2568,10 @@ class WebServer:
         # catalog/keyring reads or refresh network calls can begin. This shared
         # hook covers normal desktop, headless, and direct WebServer starts.
         self._schedule_marketplace_refresh_scheduler()
+        # Same reasoning, and the same three boot paths: a headless or
+        # browser-only install has no desktop shell to warm the realtime
+        # transport for it.
+        self._schedule_realtime_transport_warm()
 
     async def _init_screenshot_retention(self) -> None:
         """Auto-delete captured screenshot blobs older than the configured
@@ -3335,6 +3414,18 @@ class WebServer:
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).debug("voice-ready watchdog shutdown: {}", exc)
             self._voice_ready_watchdog_task = None
+        # Realtime transport warm: usually finished long before a shutdown, but
+        # a stop inside its boot delay must not orphan it at loop close.
+        _warm_task = self._realtime_warm_task
+        self._realtime_warm_task = None
+        if _warm_task is not None and not _warm_task.done():
+            _warm_task.cancel()
+            try:
+                await asyncio.wait_for(_warm_task, timeout=2.0)
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+            except Exception as exc:  # noqa: BLE001 -- shutdown stays best-effort
+                logger.opt(exception=exc).debug("Realtime transport warm shutdown: {}", exc)
         if self._bio_scheduler is not None:
             try:
                 await self._bio_scheduler.stop()

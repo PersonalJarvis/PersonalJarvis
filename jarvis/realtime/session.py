@@ -16,11 +16,17 @@ import random
 import re
 import time
 from collections import Counter, deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
+# The planner module itself is also imported: the delegate-by-default
+# ambiguity test for tool-less transports reuses the planner's suppressor
+# vocabulary in place instead of keeping a second copy here that would
+# silently drift.
+from jarvis.brain import turn_planner as _planner_vocab
 from jarvis.brain.action_honesty import (
     action_not_started_phrase,
     has_deferred_action_claim,
@@ -83,6 +89,17 @@ _HALF_DUPLEX_MUTE_REPEAT_S = 10.0
 # reply that is merely pausing keeps its mute, and far below the alert. No
 # audio playing means no echo risk — reopening matches barge-in semantics.
 _HALF_DUPLEX_SILENT_RELEASE_S = 2.0
+# Provider-frame silence says the provider stopped SENDING, not that the room
+# stopped HEARING: the desktop surface still holds ~180 ms of jitter reserve
+# plus the device's output latency in flight (DEFAULT_PREBUFFER_MS in
+# jarvis.realtime.desktop; 0.410 s device latency measured live 2026-08-08,
+# 0.869 s worst field report, BUG-100). Where the surface exposes a PHYSICAL
+# playback probe (``set_playback_probe``) the release consults it directly;
+# where it does not, this margin is added to the silence window so the mic
+# does not reopen into the reply's still-audible tail (self-talk fuel on open
+# speakers). The probe's veto is bounded by the alert threshold below — a
+# latched probe must never create a new stuck-mute class.
+_HALF_DUPLEX_NO_PROBE_DRAIN_MARGIN_S = 1.0
 # Before the conversation's language is ESTABLISHED, a final this short is
 # too little audio to trust its words for the language decision ("Was geht
 # ab?" misheard as "Vaskit up" flipped a whole German call to English).
@@ -107,6 +124,11 @@ _OUTPUT_DROP_LOG_INTERVAL_S = 2.0
 # (cleared on rebuild) and bounded, so a long call cannot grow one entry per
 # utterance forever.
 _ANSWERED_INPUT_ID_MAX = 64
+# Provider response ids retained after a boundary. This suppresses audio or
+# transcript frames that arrive late from a completed response instead of
+# letting them open and clear the next response's scrub gate. Per session and
+# bounded, like the input-item duplicate guard above.
+_COMPLETED_RESPONSE_ID_MAX = 64
 _TOOL_TRANSCRIPT_WAIT_S = 3.0
 # Grace window for the model to finish its goodbye after an end_call tool
 # call; if the provider never sends turn_complete, hang up anyway.
@@ -621,6 +643,61 @@ def _is_presence_check(text: str) -> bool:
 def _requires_jarvis_action(text: str) -> bool:
     """Compatibility wrapper around the shared Pipeline/Realtime planner."""
     return plan_turn(text).requires_orchestrator
+
+
+# Delegate-by-default floor: a tasking phrase alone ("bitte", "please") is an
+# interjection, not a request — it must carry at least this many words before
+# an ambiguous final is worth a delegation round trip.
+_TOOLLESS_AMBIGUITY_MIN_WORDS = 3
+# Hear-me probes phrased AS a task ("Kannst du mich hoeren?"): the closed
+# presence vocabulary above covers only the bare idioms, and a hearing check
+# routed through a 12-34 s delegation reads as a dead call. Matched on the
+# planner-normalized text (ae/oe/ue form).
+# i18n-allow: multilingual speech-input matching data
+_TOOLLESS_HEARING_PROBE_RE = re.compile(
+    r"\bmich\s+(?:noch\s+|gut\s+|jetzt\s+)?(?:hoeren|verstehen)\b"
+    r"|\bhear\s+me\b|\bunderstand\s+me\b"
+    r"|\bme\s+(?:oyes|escuchas|entiendes)\b"
+)
+
+
+def _toolless_ambiguous_action(text: str) -> bool:
+    """Whether an action-shaped-but-ambiguous final should delegate anyway.
+
+    Only consulted for providers that declare ``supports_direct_tools=False``
+    (capability read, AP-21): on such a transport the session-side planner is
+    the ONLY action path — there is no native tool declaration the model
+    could fall back to, and the model-initiated handoff item has never been
+    observed on the live wire. A final the planner routes natively is
+    therefore answered unaided by the far end, and any action in it is lost
+    with only the ``handoff_obligation_misses`` audit as a trace.
+
+    So the tie-break flips for these transports: a final that TASKS the
+    assistant ("kannst du …", "please …") but matches none of the planner's
+    action vocabulary prefers DELEGATION over a native answer. Over-matching
+    costs latency only — the orchestrator still answers conversationally —
+    while under-matching loses the user's action (the planner module states
+    the same doctrine for its own action vocabulary). Deterministic regex on
+    the final's shape, reusing the planner's vocabulary verbatim; no LLM, no
+    I/O. Explanation shapes (definition / how-to / opinion) and bare
+    presence probes stay native — they are conversation, not lost actions.
+    """  # i18n-allow: quotes the German tasking idiom the vocabulary matches
+    normalized = _planner_vocab._normalize(text).strip()
+    if not normalized:
+        return False
+    if len(normalized.split()) < _TOOLLESS_AMBIGUITY_MIN_WORDS:
+        return False
+    if not _planner_vocab._ASSISTANT_TASKING_RE.search(normalized):
+        return False
+    if (
+        _planner_vocab._DEFINITION_RE.search(normalized)
+        or _planner_vocab._INSTRUCTIONAL_RE.search(normalized)
+        or _planner_vocab._OPINION_RE.search(normalized)
+    ):
+        return False
+    if _TOOLLESS_HEARING_PROBE_RE.search(normalized):
+        return False
+    return not _is_presence_check(text)
 
 
 # Ceiling for a delegate reply injected into the provider context. ~4 000
@@ -1313,6 +1390,13 @@ class RealtimeVoiceSession:
         # the condition is visible instead of invisible (AP-30).
         self._half_duplex_muted_since: float | None = None
         self._half_duplex_mute_reported = 0.0
+        # Physical playback probe, installed by the owning surface via
+        # ``set_playback_probe`` when provider PCM plays through a device this
+        # process can observe (the desktop pipeline's AudioPlayer window).
+        # Capability injection, never a surface-id check (AP-21): a surface
+        # that plays elsewhere (browser) simply never installs one and the
+        # provider-frame heuristic plus drain margin governs the mute release.
+        self._playback_active_probe: Callable[[], bool] | None = None
         # When provider audio last actually reached the surface. A reply that
         # is still playing must never be cut short by the mute release below,
         # and "is it still playing" is a question only this timestamp answers:
@@ -1338,6 +1422,15 @@ class RealtimeVoiceSession:
         self._audio_start_monotonic = 0.0
         self._ready_monotonic = 0.0
         self._first_audio_emit_monotonic = 0.0
+        # First user FINAL of the call and the answer latency measured from
+        # it to the first AUDIBLE provider frame that follows. This is the
+        # user-perceived wait; ``first_audio_ms`` (from session start) also
+        # counts the user's own speaking time and read as a budget breach on
+        # a call whose real wait was under a second (8 311 ms vs 923 ms,
+        # codex live 2026-08-08). 0 = never measured, so a captured sub-ms
+        # value is floored to 1.
+        self._first_final_monotonic = 0.0
+        self._first_final_to_first_audio_ms = 0
         self._rebuild_count = 0
         self._mute_emergency_releases = 0
         self._language_flips = 0
@@ -1351,6 +1444,12 @@ class RealtimeVoiceSession:
         self._handoff_requests = 0
         self._handoff_delegate_dispatches = 0
         self._handoff_declines = 0
+        # Delegate-by-default dispatches on a tool-less transport (finals the
+        # planner routed natively but whose tasking shape delegated anyway).
+        # Kept apart from the planner-confirmed action counters so the audit
+        # can tell planner dispatches, ambiguity dispatches and
+        # model-initiated handoffs from one another.
+        self._handoff_ambiguous_delegations = 0
         self._handoff_action_seen_for_turn = False
 
         brain_config = getattr(self._config, "brain", None)
@@ -1543,6 +1642,12 @@ class RealtimeVoiceSession:
         self._tool_transcript_task: asyncio.Task[None] | None = None
         self._response_requested_for_turn = False
         self._response_requested_input_ids: set[str] = set()
+        self._active_provider_response_id = ""
+        self._completed_provider_response_ids: deque[str] = deque(
+            maxlen=_COMPLETED_RESPONSE_ID_MAX
+        )
+        self._response_identity_drops = 0
+        self._unsafe_output_cancellations = 0
         # True once the surface TTS spoke anything in THIS turn, so the turn is
         # answered and the no-audio rescue must not speak over it.
         self._surface_spoke_this_turn = False
@@ -1615,6 +1720,12 @@ class RealtimeVoiceSession:
         ).strip()
         # The turn has real text now; the live caption served its purpose.
         self._last_user_text_preview = ""
+        if not self._first_final_monotonic:
+            # Anchor of the user-perceived answer wait: the first audible
+            # provider frame emitted from here on closes the measurement
+            # (``first_final_to_first_audio_ms``). A greeting still draining
+            # can only SHORTEN the reading, never lengthen it.
+            self._first_final_monotonic = time.monotonic()
 
     def _resolve_lang(self, *, text: str, voiced_ms: int = 0) -> str:
         brain = getattr(self._config, "brain", None)
@@ -2330,6 +2441,43 @@ class RealtimeVoiceSession:
                 self._pump(), name=f"rt-pump-{self.session_id}"
             )
 
+    def set_playback_probe(self, probe: Callable[[], bool] | None) -> None:
+        """Install the surface's PHYSICAL playback probe (capability, AP-21).
+
+        The probe answers "is provider audio audible on the output device
+        right now" — e.g. the desktop pipeline's ``level_tap.playback_active``
+        window, stamped by the AudioPlayer at block-write time. The mute
+        release consults it because provider-frame silence only proves the
+        provider stopped SENDING while the surface's jitter reserve and the
+        device drain are still audibly playing; reopening the microphone into
+        that tail feeds the reply's remainder back in as user speech on open
+        speakers. Surfaces whose playback this process cannot observe simply
+        never call this and keep the heuristic release with a drain margin.
+        """
+        self._playback_active_probe = probe if callable(probe) else None
+
+    def _playback_physically_active(self) -> bool | None:
+        """The probe's verdict, or ``None`` when no working probe exists.
+
+        A probe that raises is disabled for the rest of the call (reported,
+        AP-30): the heuristic drain margin then governs, which can only make
+        the release LATER, never a new stuck-mute class.
+        """
+        probe = self._playback_active_probe
+        if probe is None:
+            return None
+        try:
+            return bool(probe())
+        except Exception:  # noqa: BLE001 — degrade to the heuristic release
+            self._playback_active_probe = None
+            log.warning(
+                "realtime[%s] physical playback probe failed — falling back "
+                "to the provider-frame release heuristic for this call",
+                self.session_id,
+                exc_info=True,
+            )
+            return None
+
     def _note_half_duplex_mute(self) -> None:
         """Release, or failing that report, a microphone held shut too long.
 
@@ -2345,6 +2493,14 @@ class RealtimeVoiceSession:
         mute time alone: a long reply that is still playing keeps its
         microphone shut, exactly as half-duplex intends. Only a turn that is
         both overdue AND no longer producing audio is treated as over.
+
+        "No longer producing audio" is judged PHYSICALLY where the surface
+        installed a playback probe: provider-frame silence leaves ~180 ms of
+        jitter reserve plus the device drain still audible, and releasing
+        into that tail re-entered the reply's remainder through the open
+        microphone. The probe's veto is bounded by the alert threshold so a
+        latched probe can only delay the release, never remove it — the
+        emergency exit semantics stay exactly as before.
         """
         now = time.monotonic()
         if self._half_duplex_muted_since is None:
@@ -2355,7 +2511,18 @@ class RealtimeVoiceSession:
             return
         silent_since = self._last_output_audio_at or self._half_duplex_muted_since
         silent_s = now - silent_since
-        if silent_s >= _HALF_DUPLEX_SILENT_RELEASE_S:
+        physically_active = self._playback_physically_active()
+        required_silent_s = _HALF_DUPLEX_SILENT_RELEASE_S
+        if physically_active is None:
+            # No physical probe: the provider-frame heuristic cannot see the
+            # surface's prebuffer/device drain, so cover it with the margin.
+            required_silent_s += _HALF_DUPLEX_NO_PROBE_DRAIN_MARGIN_S
+        elif physically_active and muted_s < _HALF_DUPLEX_MUTE_ALERT_S:
+            # The reply is still audibly on the device — reopening now would
+            # feed its remainder back into the microphone. Bounded veto: past
+            # the alert threshold the release below runs regardless.
+            return
+        if silent_s >= required_silent_s:
             self._mute_emergency_releases += 1
             log.log(
                 # The fast release is the DESIGNED boundary-of-last-resort on
@@ -2366,11 +2533,19 @@ class RealtimeVoiceSession:
                 if muted_s >= _HALF_DUPLEX_MUTE_ALERT_S
                 else logging.INFO,
                 "realtime[%s] releasing a half-duplex mute held %.1fs with no "
-                "provider audio for %.1fs - the turn ended without a boundary, "
-                "so the microphone is reopened rather than left deaf",
+                "provider audio for %.1fs (physical playback: %s) - the turn "
+                "ended without a boundary, so the microphone is reopened "
+                "rather than left deaf",
                 self.session_id,
                 muted_s,
                 silent_s,
+                (
+                    "no probe"
+                    if physically_active is None
+                    else "still active, alert threshold overrides"
+                    if physically_active
+                    else "drained"
+                ),
             )
             self._reset_output_state(reason="half-duplex mute outlived its turn")
             self._half_duplex_muted_since = None
@@ -2758,6 +2933,8 @@ class RealtimeVoiceSession:
                 # the per-turn stall watchdog measures exactly one thing: total
                 # provider silence inside an open turn.
                 self._note_turn_activity()
+                if not await self._accept_provider_response_event(event):
+                    continue
                 if event.type == "input_transcript":
                     transcript = _dictionary_corrected(str(event.text or "").strip())
                     transcription_failed = bool(event.error)
@@ -2968,6 +3145,30 @@ class RealtimeVoiceSession:
                         ):
                             self._handoff_action_turns += 1
                             self._handoff_action_seen_for_turn = True
+                        # Delegate-by-default on ambiguity, tool-less
+                        # transports ONLY (capability read, AP-21): the
+                        # planner is their one action path, so a final that
+                        # tasks the assistant but matches no planner category
+                        # prefers delegation over the far end answering
+                        # unaided — the miss would otherwise only surface as
+                        # a handoff_obligation_misses count after the call.
+                        # Providers with native tools keep today's routing:
+                        # their model can still call the declared function.
+                        ambiguous_action_default = bool(
+                            not turn_plan.requires_orchestrator
+                            and not self._active_provider_supports_direct_tools()
+                            and self._delegate_enabled
+                            and self._last_user_text
+                            and _toolless_ambiguous_action(self._last_user_text)
+                        )
+                        if ambiguous_action_default:
+                            self._handoff_ambiguous_delegations += 1
+                            log.info(
+                                "realtime[%s] tool-less transport: final is "
+                                "action-shaped but ambiguous — delegating by "
+                                "default instead of a native answer",
+                                self.session_id,
+                            )
                         reasons = ",".join(
                             sorted(reason.value for reason in turn_plan.reasons)
                         ) or "none"
@@ -2989,6 +3190,7 @@ class RealtimeVoiceSession:
                             self._delegate_required_for_turn = (
                                 self._delegate_required_for_turn
                                 or turn_plan.requires_orchestrator
+                                or ambiguous_action_default
                                 or self._brain_awaits_voice_confirm()
                                 or self._answers_open_delegate_question()
                             )
@@ -3005,6 +3207,7 @@ class RealtimeVoiceSession:
                             ),
                             delegate_discouraged=(
                                 not turn_plan.requires_orchestrator
+                                and not ambiguous_action_default
                             ),
                         )
                         update_kwargs: dict[str, Any] = {
@@ -3289,7 +3492,12 @@ class RealtimeVoiceSession:
                         self._note_output_withheld("transcript")
                         continue
                     await self._ensure_turn_started()
-                    await self._gate.feed_transcript(event.text)
+                    await self._gate.feed_transcript(
+                        event.text,
+                        response_id=str(
+                            getattr(event, "provider_turn_id", "") or ""
+                        ),
+                    )
                     if self._gate.hard_leak_pending():
                         _actions = ", ".join(self._gate.hard_leak_actions())
                         await self._cancel_unsafe_output(
@@ -3326,7 +3534,12 @@ class RealtimeVoiceSession:
                     if await self._recover_unbacked_action_claim():
                         continue
                     self._mark_latency_named("REALTIME_FIRST_TRANSCRIPT")
-                    display = await self._gate.feed_transcript(event.text)
+                    display = await self._gate.feed_transcript(
+                        event.text,
+                        response_id=str(
+                            getattr(event, "provider_turn_id", "") or ""
+                        ),
+                    )
                     if self._gate.hard_leak_pending():
                         # Name the tripped detectors (safe metadata, never the
                         # flagged content) so a false-positive abort is
@@ -3436,7 +3649,12 @@ class RealtimeVoiceSession:
                     await self._ensure_turn_started()
                     self._mark_latency_named("REALTIME_FIRST_AUDIO")
                     self._output_active = True
-                    released = await self._gate.push_audio(event.audio)
+                    released = await self._gate.push_audio(
+                        event.audio,
+                        response_id=str(
+                            getattr(event, "provider_turn_id", "") or ""
+                        ),
+                    )
                     for chunk in released:
                         await self._emit_audio(chunk)
                     if self._gate.fail_if_pending_exceeds(
@@ -3733,7 +3951,11 @@ class RealtimeVoiceSession:
                         await self._send_json(
                             self._surface_speech_message(fallback_text)
                         )
-                    final_chunks = self._gate.finalize()
+                    final_chunks = self._gate.finalize(
+                        response_id=str(
+                            getattr(event, "provider_turn_id", "") or ""
+                        )
+                    )
                     if self._gate.hard_leak_pending():
                         # Same rendering-failure contract as the pending-buffer
                         # trip above: a delegate readback whose transcription
@@ -3834,7 +4056,9 @@ class RealtimeVoiceSession:
                     # chopped harder than the transport failure requires;
                     # audio without a cleared transcript stays withheld
                     # (fail-closed).
-                    final_chunks = self._gate.finalize()
+                    final_chunks = self._gate.finalize(
+                        response_id=self._active_provider_response_id
+                    )
                     if self._gate.hard_leak_pending():
                         await self._cancel_unsafe_output(
                             reason="output transcript missing at provider error",
@@ -3929,7 +4153,9 @@ class RealtimeVoiceSession:
                             self._output_transcript.append(trusted_reply)
                     await self._complete_surface_turn()
                 elif self._output_active or self._response_requested_for_turn:
-                    final_chunks = self._gate.finalize()
+                    final_chunks = self._gate.finalize(
+                        response_id=self._active_provider_response_id
+                    )
                     if self._gate.hard_leak_pending():
                         await self._cancel_unsafe_output(
                             reason="output transcript missing at provider stream end",
@@ -4401,6 +4627,8 @@ class RealtimeVoiceSession:
             )
             return
         self._scrub_cancelled_for_turn = True
+        self._unsafe_output_cancellations += 1
+        self._retire_active_provider_response()
         self._drop_provider_output_until_new_response = True
         self._mark_latency_named(
             "REALTIME_SCRUB_CANCEL",
@@ -4774,6 +5002,84 @@ class RealtimeVoiceSession:
                 exc_info=True,
             )
             return None
+
+    async def _accept_provider_response_event(self, event: Any) -> bool:
+        """Pair provider audio, transcript and boundary by response identity.
+
+        Empty ids preserve compatibility with adapters that expose only an
+        ordered event stream. Once a non-empty id is present, late events from
+        completed responses are dropped and an unsequenced id change fails
+        closed: transcript from response B can never authorize PCM from A.
+        """
+        if event.type not in {
+            "audio_delta",
+            "output_transcript_delta",
+            "turn_complete",
+        }:
+            return True
+        response_id = str(getattr(event, "provider_turn_id", "") or "").strip()
+        active_id = self._active_provider_response_id
+        if response_id and response_id in self._completed_provider_response_ids:
+            self._response_identity_drops += 1
+            log.warning(
+                "realtime[%s] dropped a late %s event for completed provider "
+                "response %s",
+                self.session_id,
+                event.type,
+                response_id,
+            )
+            return False
+
+        if event.type == "turn_complete":
+            boundary_id = response_id or active_id
+            if response_id and active_id and response_id != active_id:
+                self._response_identity_drops += 1
+                log.warning(
+                    "realtime[%s] dropped a terminal boundary for provider "
+                    "response %s while response %s is active",
+                    self.session_id,
+                    response_id,
+                    active_id,
+                )
+                return False
+            if boundary_id:
+                self._completed_provider_response_ids.append(boundary_id)
+            self._active_provider_response_id = ""
+            return True
+
+        if not response_id:
+            return True
+        if not active_id:
+            self._active_provider_response_id = response_id
+            self._gate.begin_response(response_id)
+            return True
+        if response_id == active_id:
+            return True
+
+        # A new response arrived without a boundary for the one whose PCM is
+        # still in the scrub gate. Drop both the held PCM and this first
+        # mismatched event, cancel the unsafe generation once, then allow
+        # subsequent events of the new identity to start cleanly.
+        self._response_identity_drops += 1
+        await self._cancel_unsafe_output(
+            reason=(
+                "provider response identity changed before the previous "
+                "response boundary"
+            )
+        )
+        if active_id not in self._completed_provider_response_ids:
+            self._completed_provider_response_ids.append(active_id)
+        self._gate.drain()
+        self._active_provider_response_id = response_id
+        self._gate.begin_response(response_id)
+        return False
+
+    def _retire_active_provider_response(self) -> None:
+        """Remember the active response id as closed and clear its owner."""
+        response_id = self._active_provider_response_id
+        if response_id and response_id not in self._completed_provider_response_ids:
+            self._completed_provider_response_ids.append(response_id)
+        self._active_provider_response_id = ""
 
     def _latency_detail(self, detail: str = "") -> str:
         fields = [
@@ -5330,6 +5636,7 @@ class RealtimeVoiceSession:
             log.debug(
                 "realtime[%s] output state reset (%s)", self.session_id, reason
             )
+        self._retire_active_provider_response()
         self._output_active = False
         self._output_samples_sent = 0
         self._response_requested_for_turn = False
@@ -7037,6 +7344,27 @@ class RealtimeVoiceSession:
         audible = _pcm16_peak(pcm) >= _EMBEDDED_SILENCE_PEAK
         if audible:
             self._last_output_audio_at = time.monotonic()
+            if (
+                self._first_final_monotonic
+                and not self._first_final_to_first_audio_ms
+            ):
+                # User-perceived answer wait: first user FINAL → this first
+                # AUDIBLE frame. Floored to 1 ms so a captured value can
+                # never read as the 0 "never measured" sentinel.
+                self._first_final_to_first_audio_ms = max(
+                    1,
+                    int(
+                        (time.monotonic() - self._first_final_monotonic)
+                        * 1000.0
+                    ),
+                )
+                log.info(
+                    "RT-SPAWN span=first_final_to_first_audio ms=%d "
+                    "session=%s provider=%s",
+                    self._first_final_to_first_audio_ms,
+                    self.session_id,
+                    self.active_provider,
+                )
         self._output_samples_sent += len(pcm) // 2
         rate = max(1, int(getattr(chunk, "sample_rate", 0) or 24_000))
         if audible:
@@ -7178,19 +7506,31 @@ class RealtimeVoiceSession:
         return bool(getattr(self._provider, "supports_direct_tools", True))
 
     def _log_handoff_observability(self) -> None:
-        """Emit one content-free summary when handoffs mattered this call."""
-        if self._handoff_action_turns <= 0:
+        """Emit one content-free summary when handoffs mattered this call.
+
+        The counters keep the three action origins apart: ``handoff_requests``
+        are model-initiated, ``delegate_dispatches`` are deterministic
+        planner/session dispatches, and ``ambiguous_delegations`` are the
+        delegate-by-default subset among them (finals the planner routed
+        natively but whose tasking shape delegated anyway).
+        """
+        if (
+            self._handoff_action_turns <= 0
+            and self._handoff_ambiguous_delegations <= 0
+        ):
             return
         misses = max(0, self._handoff_action_turns - self._handoff_requests)
         logger = log.warning if misses else log.info
         logger(
             "realtime[%s] capability-limited action audit: action_turns=%d "
-            "handoff_requests=%d delegate_dispatches=%d declines=%d "
+            "handoff_requests=%d delegate_dispatches=%d "
+            "ambiguous_delegations=%d declines=%d "
             "handoff_obligation_misses=%d",
             self.session_id,
             self._handoff_action_turns,
             self._handoff_requests,
             self._handoff_delegate_dispatches,
+            self._handoff_ambiguous_delegations,
             self._handoff_declines,
             misses,
         )
@@ -7217,6 +7557,7 @@ class RealtimeVoiceSession:
             duration_ms=int((now - start) * 1000.0),
             ready_ms=_since_start_ms(self._ready_monotonic),
             first_audio_ms=_since_start_ms(self._first_audio_emit_monotonic),
+            first_final_to_first_audio_ms=self._first_final_to_first_audio_ms,
             turns_completed=self._turn_index,
             rebuilds=self._rebuild_count,
             stun_retries=diag.get("stun_retries", 0),
@@ -7231,6 +7572,26 @@ class RealtimeVoiceSession:
             terminal_item_turns=diag.get("terminal_item_turns", 0),
             response_splices=diag.get("response_splices", 0),
             sequenced_boundaries=diag.get("sequenced_boundaries", 0),
+            output_shadow_recovery_attempts=diag.get(
+                "output_shadow_recovery_attempts", 0
+            ),
+            output_shadow_recovery_successes=diag.get(
+                "output_shadow_recovery_successes", 0
+            ),
+            output_shadow_recovery_exhausted=diag.get(
+                "output_shadow_recovery_exhausted", 0
+            ),
+            output_terminal_recovery_attempts=diag.get(
+                "output_terminal_recovery_attempts", 0
+            ),
+            output_terminal_recovery_successes=diag.get(
+                "output_terminal_recovery_successes", 0
+            ),
+            output_transcript_recovery_failures=diag.get(
+                "output_transcript_recovery_failures", 0
+            ),
+            response_identity_drops=self._response_identity_drops,
+            unsafe_output_cancellations=self._unsafe_output_cancellations,
             opening_responses_bounded=diag.get("opening_responses_bounded", 0),
             self_dialogue_rebuilds=diag.get("self_dialogue_rebuilds", 0),
             handoff_action_turns=self._handoff_action_turns,
@@ -7240,6 +7601,7 @@ class RealtimeVoiceSession:
             handoff_obligation_misses=max(
                 0, self._handoff_action_turns - self._handoff_requests
             ),
+            handoff_ambiguous_delegations=self._handoff_ambiguous_delegations,
             mute_emergency_releases=self._mute_emergency_releases,
             sender_pacing_resyncs=diag.get("sender_pacing_resyncs", 0),
             sender_shed_frames=diag.get("sender_shed_frames", 0),

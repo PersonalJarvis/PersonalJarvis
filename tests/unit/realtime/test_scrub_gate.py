@@ -568,3 +568,33 @@ async def test_direct_speech_budget_never_clips_a_long_trusted_answer():
     )
     assert await gate.push_audio(one_minute)
     assert await gate.push_audio(one_minute)
+
+
+@pytest.mark.asyncio
+async def test_response_identity_prevents_cross_response_audio_release():
+    """Transcript B must never authorize buffered PCM from response A."""
+    gate = ScrubHoldGate(language="en")
+    assert await gate.push_audio(_chunk(4), response_id="response-a") == []
+
+    display = await gate.feed_transcript(
+        "This belongs to the next answer.",
+        response_id="response-b",
+    )
+
+    assert display == gate.fallback_phrase()
+    assert gate.hard_leak_pending() is True
+    assert gate.hard_leak_actions() == ("response_identity_mismatch",)
+    assert gate.release_available() == []
+
+
+@pytest.mark.asyncio
+async def test_response_identity_is_reusable_after_a_real_boundary():
+    gate = ScrubHoldGate(language="en")
+    await gate.feed_transcript("First answer.", response_id="response-a")
+    assert await gate.push_audio(_chunk(4), response_id="response-a")
+
+    gate.drain()
+
+    assert gate.response_id == ""
+    await gate.feed_transcript("Second answer.", response_id="response-b")
+    assert await gate.push_audio(_chunk(4), response_id="response-b")

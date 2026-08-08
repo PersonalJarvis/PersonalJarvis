@@ -32,6 +32,7 @@ import time
 
 from jarvis.brain.output_filter import FALLBACK_PHRASES, ScrubResult, scrub_for_voice
 from jarvis.core.protocols import AudioChunk
+from jarvis.core.turn_language import validate_output_language
 from jarvis.speech.hangup import END_CALL_SIGNAL
 
 log = logging.getLogger(__name__)
@@ -42,12 +43,13 @@ _HARD_LEAK_ACTIONS = frozenset(
         "replaced_stacktrace",
         "replaced_raw_repr",
         "replaced_shell_command",
+        "output_language_mismatch",
     }
 )
 _RESIDUE_ACTION = "replaced_with_fallback_residue"
 _NON_BLOCKING_SCRUB_ACTIONS = frozenset(
     {
-        "removed_anrede_drift",  # i18n-allow: established telemetry action-name identifier (ADR-0010), not prose
+        "removed_anrede_drift",  # i18n-allow
         "removed_background_action_narration",
         "removed_em_dash",
         "removed_engineering_jargon",
@@ -96,6 +98,14 @@ class ScrubHoldGate:
         del lookahead_ms
         self._pending: list[AudioChunk] = []
         self._pending_audio_ms = 0.0
+        # Provider-neutral identity of the response whose PCM/transcript this
+        # gate currently holds.  Empty means the adapter cannot expose an id
+        # and preserves the legacy ordered-stream contract.  Once an adapter
+        # does expose one, a different id can never clear or release this
+        # response's audio: that would pair text from answer B with PCM from
+        # answer A, the exact synchronization failure this gate exists to
+        # prevent.
+        self._response_id = ""
         self._cleared = False
         self._hard_leak = False
         self._transcript_seen = False
@@ -182,13 +192,42 @@ class ScrubHoldGate:
     def fallback_phrase(self) -> str:
         return FALLBACK_PHRASES.get(self._language, FALLBACK_PHRASES["en"])
 
-    async def feed_transcript(self, text: str) -> str:
+    def begin_response(self, response_id: str = "") -> bool:
+        """Bind this gate to one provider response.
+
+        Adapters that cannot identify responses pass the default empty value
+        and keep the existing ordered-stream behaviour.  A non-empty mismatch
+        fails closed and drops every held chunk; callers then cancel the
+        provider response and speak the ordinary safe fallback.
+        """
+        identity = str(response_id or "").strip()
+        if not identity:
+            return True
+        if not self._response_id:
+            self._response_id = identity
+            return True
+        if identity == self._response_id:
+            return True
+        self._hard_leak = True
+        self._hard_leak_actions = ("response_identity_mismatch",)
+        self._cleared = False
+        self._pending.clear()
+        self._pending_audio_ms = 0.0
+        self._pending_since = None
+        return False
+
+    @property
+    def response_id(self) -> str:
+        """The non-empty provider response currently owned by this gate."""
+        return self._response_id
+
+    async def feed_transcript(self, text: str, *, response_id: str = "") -> str:
         """Scrub a transcript boundary. Returns display-safe text.
 
         Sets the clear flag (audio may flow) on clean text; sets the hard-leak
         flag (audio dropped) on a hard leak.
         """
-        if self._hard_leak:
+        if not self.begin_response(response_id) or self._hard_leak:
             return self.fallback_phrase()
 
         text = self._strip_stream_controls(str(text or ""))
@@ -202,6 +241,18 @@ class ScrubHoldGate:
         self._transcript_seen = True
         aggregate = scrub_for_voice(self._transcript_tail, language=self._language)
         result = scrub_for_voice(text, language=self._language)
+        language_verdict = validate_output_language(
+            aggregate.cleaned,
+            resolved_language=self._language,
+        )
+        if language_verdict.should_block:
+            self._hard_leak = True
+            self._hard_leak_actions = ("output_language_mismatch",)
+            self._cleared = False
+            self._pending.clear()
+            self._pending_audio_ms = 0.0
+            self._pending_since = None
+            return self.fallback_phrase()
         aggregate_is_hard = _is_hard_scrub_result(aggregate)
         result_is_hard = _is_hard_scrub_result(result)
         if aggregate_is_hard or result_is_hard:
@@ -257,7 +308,12 @@ class ScrubHoldGate:
                 break
         return combined
 
-    async def push_audio(self, chunk: AudioChunk) -> list[AudioChunk]:
+    async def push_audio(
+        self,
+        chunk: AudioChunk,
+        *,
+        response_id: str = "",
+    ) -> list[AudioChunk]:
         """Buffer or release an audio delta. Returns chunks safe to play now.
 
         Two states only (maintainer mandate 2026-07-18, BUG-080 follow-up —
@@ -273,7 +329,7 @@ class ScrubHoldGate:
            hard leak in a later delta drops all unplayed audio and cancels
            the response.
         """
-        if self._hard_leak:
+        if not self.begin_response(response_id) or self._hard_leak:
             return []
         self._expire_direct_speech_budget()
         if not self._cleared and not self._coverage_active:
@@ -383,7 +439,7 @@ class ScrubHoldGate:
         self._hard_leak_actions = ("transcript_stalled",)
         return True
 
-    def finalize(self) -> list[AudioChunk]:
+    def finalize(self, *, response_id: str = "") -> list[AudioChunk]:
         """Release the clean transcript-covered tail at the response boundary.
 
         Trust basis: at a genuine response boundary every transcript delta of
@@ -394,6 +450,8 @@ class ScrubHoldGate:
         beyond the estimate means transcription lagged or died mid-turn;
         log it so the next incident names this producer (BUG-069 review).
         """
+        if not self.begin_response(response_id):
+            return []
         self._expire_direct_speech_budget()
         if self.fail_closed() or self._hard_leak:
             return []
@@ -446,6 +504,7 @@ class ScrubHoldGate:
         self._transcript_tail = ""
         self._control_tail = ""
         self._hard_leak_actions = ()
+        self._response_id = ""
         self._pending_since = None
         self.last_hold_ms = 0.0
         self._released_ms = 0.0

@@ -36,6 +36,30 @@ export function requestVoiceHangup(): Promise<VoiceHangupAnswer> {
   return post<VoiceHangupAnswer>("/api/voice/hangup");
 }
 
+/**
+ * Whether the configured realtime transport needs a browser-supplied WebRTC
+ * offer at all (`requires_webrtc_offer` from GET /api/settings/voice-mode).
+ *
+ * A capability, never a provider id (AP-21). `null` means the backend could not
+ * be asked and is NOT the same as `false`: an unknown answer must keep every
+ * genuine failure visible, because hiding a real blocker is the worse failure.
+ */
+export async function fetchRealtimeOfferRequirement(): Promise<boolean | null> {
+  try {
+    const res = await fetch("/api/settings/voice-mode", { cache: "no-store" });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { requires_webrtc_offer?: unknown };
+    return typeof body.requires_webrtc_offer === "boolean"
+      ? body.requires_webrtc_offer
+      : null;
+  } catch (error) {
+    // Deliberately degraded to "unknown" rather than swallowed: the caller
+    // treats null as "cannot rule the requirement out" and still reports.
+    console.info("Realtime offer requirement could not be read.", error);
+    return null;
+  }
+}
+
 export interface TtsVolumeState {
   volume: number;
 }

@@ -1652,6 +1652,13 @@ class RealtimeSessionPostmortem(Event):
     ready_ms: int = 0
     #: audio_start → first provider audio frame emitted to the surface.
     first_audio_ms: int = 0
+    #: First user FINAL of the call → first AUDIBLE provider frame after it.
+    #: This is the user-perceived answer wait; ``first_audio_ms`` stays for
+    #: continuity but counts from session start and therefore includes the
+    #: user's own listening/speaking time (a codex call measured 8 311 ms
+    #: from start while the wait after the utterance was 923 ms, 2026-08-08).
+    #: 0 means "never measured" (no final, or no audible audio after one).
+    first_final_to_first_audio_ms: int = 0
     turns_completed: int = 0
     #: In-place transport rebuilds this session survived (BUG-071 machinery).
     rebuilds: int = 0
@@ -1671,6 +1678,22 @@ class RealtimeSessionPostmortem(Event):
     response_splices: int = 0
     #: Splices converted into clean local boundaries by the sequencing drain.
     sequenced_boundaries: int = 0
+    #: Bounded local-STT passes started before a provider transcript arrived.
+    output_shadow_recovery_attempts: int = 0
+    #: Early local-STT passes that produced gate-only vetting text.
+    output_shadow_recovery_successes: int = 0
+    #: Responses that exhausted their bounded early local-STT attempts.
+    output_shadow_recovery_exhausted: int = 0
+    #: Authoritative local-STT passes started at a response boundary.
+    output_terminal_recovery_attempts: int = 0
+    #: Terminal passes that recovered the missing provider transcript.
+    output_terminal_recovery_successes: int = 0
+    #: Local-STT output recovery attempts that failed or produced no text.
+    output_transcript_recovery_failures: int = 0
+    #: Late/mismatched response events dropped before text could clear PCM.
+    response_identity_drops: int = 0
+    #: Provider responses cancelled by the fail-closed output gate.
+    unsafe_output_cancellations: int = 0
     #: Opening responses cut at the cap because no user question existed yet.
     opening_responses_bounded: int = 0
     #: Self-dialogue verdicts that forced a transport replacement (BUG-124).
@@ -1685,6 +1708,12 @@ class RealtimeSessionPostmortem(Event):
     handoff_declines: int = 0
     #: Action turns where the provider omitted its required handoff event.
     handoff_obligation_misses: int = 0
+    #: Delegate-by-default dispatches on a tool-less transport: finals the
+    #: planner routed natively but whose assistant-tasking shape made the
+    #: session delegate anyway rather than let the far end answer unaided.
+    #: Distinct from ``handoff_delegate_dispatches`` (all deterministic
+    #: dispatches) and ``handoff_requests`` (model-initiated handoffs).
+    handoff_ambiguous_delegations: int = 0
     #: Half-duplex mutes released by the emergency timer, not a turn boundary.
     mute_emergency_releases: int = 0
     #: Microphone sender wall-clock resyncs (mic audio lost to a stall).

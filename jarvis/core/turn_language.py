@@ -25,18 +25,24 @@ This module is the single source of truth for the language of a turn:
 Pure regex / set lookups — no LLM, no IO. Safe on the voice critical path
 (AP-9 / AP-11).
 """
+
 from __future__ import annotations
 
 import re
+import unicodedata
+from dataclasses import dataclass
+from typing import Literal
 
 __all__ = [
     "DEFAULT_LOCALE",
+    "OutputLanguageValidation",
     "detect_text_language",
     "is_substantive_turn",
     "normalize_language_tag",
     "resolve_output_language",
     "resolve_transcript_language",
     "resolve_turn_language",
+    "validate_output_language",
 ]
 
 #: The fallback spoken/written language for a turn whose language cannot be
@@ -60,9 +66,64 @@ _THIN_TURN_MAX_TOKENS = 2
 
 _TOKEN_RE = re.compile(r"\b[\w']+\b", re.UNICODE)
 
-# Strong script signals: umlauts/ß occur in German only; inverted punctuation  # i18n-allow: English comment; literal umlaut/ß characters named for illustration only
-# and accented vowels (minus the pan-European é) point to Spanish.
-_DE_SCRIPT_RE = re.compile(r"[äöüÄÖÜß]")  # i18n-allow: German-script detection regex, matched in logic (core of the language resolver)
+# Output validation deliberately ignores code and links. They frequently carry
+# English keywords or non-Latin identifiers regardless of the language of the
+# surrounding answer, so treating them as prose would create false positives.
+_CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`[^`\r\n]*`")
+_URL_RE = re.compile(r"\b(?:https?://|www\.)\S+", re.IGNORECASE)
+
+# Han text has a unique script signal. A ratio is still required so a German,
+# English, or Spanish sentence containing a Chinese name remains valid.
+_HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_LATIN_LETTER_RE = re.compile(r"[A-Za-z\u00c0-\u024f]")
+
+# Vietnamese uses Latin script, so script alone is insufficient. The validator
+# combines its characteristic letters/tones with a vocabulary signal and only
+# returns a verdict when both make a gross mismatch unambiguous.
+_VI_DISTINCTIVE_CHAR_RE = re.compile(
+    r"[\u0103\u00e2\u0111\u00ea\u00f4\u01a1\u01b0"
+    r"\u1ea3\u1ea1\u1eb1\u1eaf\u1eb3\u1eb5\u1eb7"
+    r"\u1ea7\u1ea5\u1ea9\u1eab\u1ead\u1ebb\u1ebd\u1eb9"
+    r"\u1ec1\u1ebf\u1ec3\u1ec5\u1ec7\u1ec9\u1ecb"
+    r"\u1ecf\u1ecd\u1ed3\u1ed1\u1ed5\u1ed7\u1ed9"
+    r"\u1edd\u1edb\u1edf\u1ee1\u1ee3\u1ee7\u1ee5"
+    r"\u1eeb\u1ee9\u1eed\u1eef\u1ef1\u1ef3\u1ef7\u1ef9\u1ef5]",
+    re.IGNORECASE,
+)
+_VI_TOKENS: frozenset[str] = frozenset(
+    """
+    bạn bằng các chào chúng có của đã được giúp hãy không là một này người
+    những sẽ thể tiếng tôi việt với
+    """.split()
+)
+
+OutputLanguageStatus = Literal["match", "mismatch", "indeterminate"]
+
+
+@dataclass(frozen=True, slots=True)
+class OutputLanguageValidation:
+    """Deterministic verdict for text checked against a resolved turn language.
+
+    ``indeterminate`` is intentionally fail-open: short replies, code, names,
+    numbers, and ambiguous prose do not provide enough evidence to suppress
+    user-facing output. Only ``mismatch`` is safe to block before text/audio
+    release.
+    """
+
+    status: OutputLanguageStatus
+    resolved_language: str
+    detected_language: str
+
+    @property
+    def should_block(self) -> bool:
+        """Whether the caller should suppress this output and retry/fallback."""
+        return self.status == "mismatch"
+
+
+# Strong script signals: German-specific letters and Spanish punctuation or
+# accented vowels (minus the pan-European acute-e) are useful hints.
+_DE_SCRIPT_RE = re.compile(r"[äöüÄÖÜß]")  # i18n-allow: German-script regex
 _ES_SCRIPT_RE = re.compile(r"[áíóúñÁÍÓÚÑ¿¡]")
 
 # Function-word sets, kept mutually disjoint. Words common to more than one of
@@ -144,6 +205,89 @@ def detect_text_language(text: str) -> str:
     if best == 0 or sum(1 for s in scores.values() if s == best) > 1:
         return "unknown"
     return best_code
+
+
+def _prose_for_output_validation(text: str) -> str:
+    """Remove content whose syntax is not evidence of the reply language."""
+    prose = unicodedata.normalize("NFC", text or "")
+    prose = _CODE_FENCE_RE.sub(" ", prose)
+    prose = _INLINE_CODE_RE.sub(" ", prose)
+    return _URL_RE.sub(" ", prose).strip()
+
+
+def _detect_gross_han_output(text: str) -> bool:
+    han_count = len(_HAN_RE.findall(text))
+    if han_count < 4:
+        return False
+    latin_count = len(_LATIN_LETTER_RE.findall(text))
+    script_ratio = han_count / max(1, han_count + latin_count)
+    return script_ratio >= 0.55
+
+
+def _detect_gross_vietnamese_output(text: str, tokens: list[str]) -> bool:
+    if len(tokens) < 5:
+        return False
+    characteristic_chars = len(_VI_DISTINCTIVE_CHAR_RE.findall(text))
+    distinct_vocabulary_hits = len(set(tokens) & _VI_TOKENS)
+    return characteristic_chars >= 2 and distinct_vocabulary_hits >= 2
+
+
+def _detect_strong_supported_output(text: str, tokens: list[str]) -> str:
+    """Return de/en/es only when multiple independent prose signals agree."""
+    if len(tokens) < 4:
+        return "unknown"
+    scores = {
+        code: sum(token in vocabulary for token in tokens)
+        for code, vocabulary in _SETS
+    }
+    if _DE_SCRIPT_RE.search(text):
+        scores["de"] += 2
+    if _ES_SCRIPT_RE.search(text):
+        scores["es"] += 2
+    ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    (best_code, best_score), (_, second_score) = ranked[:2]
+    if best_score < 3 or best_score == second_score:
+        return "unknown"
+    return best_code
+
+
+def validate_output_language(
+    text: str,
+    *,
+    resolved_language: object,
+) -> OutputLanguageValidation:
+    """Validate reply *text* against an already-resolved ``de``/``en``/``es``.
+
+    The target MUST come from :func:`resolve_output_language`; this function
+    never derives or changes the turn language. It only detects high-confidence
+    output corruption before text or audio is released. Detection is regex/set
+    based, has no IO or model call, and treats uncertain content as
+    ``indeterminate`` (non-blocking).
+    """
+    target = normalize_language_tag(resolved_language)
+    if target not in _REPLY_PINS:
+        return OutputLanguageValidation("indeterminate", target, "unknown")
+
+    prose = _prose_for_output_validation(text)
+    if not prose:
+        return OutputLanguageValidation("indeterminate", target, "unknown")
+
+    if _detect_gross_han_output(prose):
+        detected = "zh"
+    else:
+        tokens = [token.lower() for token in _TOKEN_RE.findall(prose)]
+        if _detect_gross_vietnamese_output(prose, tokens):
+            detected = "vi"
+        else:
+            detected = _detect_strong_supported_output(prose, tokens)
+
+    if detected == "unknown":
+        status: OutputLanguageStatus = "indeterminate"
+    elif detected == target:
+        status = "match"
+    else:
+        status = "mismatch"
+    return OutputLanguageValidation(status, target, detected)
 
 
 def resolve_turn_language(

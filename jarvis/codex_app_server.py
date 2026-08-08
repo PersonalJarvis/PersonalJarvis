@@ -52,8 +52,13 @@ log = logging.getLogger(__name__)
 _DEFAULT_REQUEST_TIMEOUT_S: Final = 20.0
 # How long a passed cold-start audit may be ridden by a SECOND thread_start on
 # the same process (the STUN media-path retry). Short on purpose: warm starts
-# minutes later must re-audit in full.
+# minutes later must re-audit in full. ``prime_startup_audit`` mints a wake
+# ride under the same TTL — always from an audit that actually completed.
 _STARTUP_AUDIT_TTL_S: Final = 10.0
+# How long a per-host STUN media-path memory stays valid. Long enough to span
+# a working session on one network, short enough that a laptop moving networks
+# gets a fresh host-candidate attempt within the hour.
+_STUN_MEDIA_PATH_TTL_S: Final = 3600.0
 _SHUTDOWN_TIMEOUT_S: Final = 2.0
 _DEFAULT_SDP_TIMEOUT_S: Final = 15.0
 _DEFAULT_NOTIFICATION_QUEUE_SIZE: Final = 512
@@ -335,6 +340,58 @@ _DECLINE_REQUEST_METHODS: Final = frozenset(
     }
 )
 _DYNAMIC_TOOL_REQUEST_METHODS: Final = frozenset({"item/tool/call"})
+
+# Per-host memory of the WebRTC media path the LAST successful connect needed.
+# In-process only and TTL-bounded on purpose: network topology is a property
+# of this machine on this network right now, so persisting it would replay a
+# stale environment. A host recorded here needed a server-reflexive (STUN)
+# candidate, which means a host-candidates-only first attempt is known to be
+# doomed and would cost a full second open (thread_start bundle included).
+# Guarded by a lock because callers may record from executor threads.
+_stun_media_path_lock = threading.Lock()
+_stun_media_path_memory: dict[str, float] = {}
+
+
+def _stun_media_path_key(host: str) -> str:
+    return str(host or "").strip().lower()
+
+
+def record_media_path_outcome(host: str, *, needed_stun: bool) -> None:
+    """Remember whether the last successful connect to ``host`` needed STUN.
+
+    Call this only after a connect actually succeeded: a successful
+    host-candidate path clears the memory, a successful STUN path arms it so
+    the next open for the same host starts with STUN directly instead of
+    paying a doomed host-only attempt first.
+    """
+    key = _stun_media_path_key(host)
+    if not key:
+        return
+    with _stun_media_path_lock:
+        if needed_stun:
+            _stun_media_path_memory[key] = time.monotonic()
+        else:
+            _stun_media_path_memory.pop(key, None)
+
+
+def media_path_prefers_stun(host: str) -> bool:
+    """Whether the last successful connect to ``host`` needed a STUN candidate.
+
+    Returns ``False`` for unknown hosts and for stale entries — the memory is
+    an optimization, never a gate, so forgetting only restores today's
+    host-candidates-first behavior.
+    """
+    key = _stun_media_path_key(host)
+    if not key:
+        return False
+    with _stun_media_path_lock:
+        recorded_at = _stun_media_path_memory.get(key)
+        if recorded_at is None:
+            return False
+        if time.monotonic() - recorded_at > _STUN_MEDIA_PATH_TTL_S:
+            del _stun_media_path_memory[key]
+            return False
+        return True
 
 
 class CodexAppServerError(RuntimeError):
@@ -1967,6 +2024,73 @@ def _validated_realtime_initial_items(
     return validated
 
 
+def _validated_realtime_audited_optional(
+    *,
+    realtime_start_instructions: str | None,
+    realtime_end_instructions: str | None,
+    codex_responses_as_items: bool | None,
+    codex_response_item_prefix: str | None,
+    codex_response_handoff_mode: str | None,
+    codex_response_handoff_channel_prefixes: Sequence[str] | None,
+) -> dict[str, Any]:
+    """Validate the optional 0.147-audited realtime start fields.
+
+    Field names mirror the upstream ``ThreadRealtimeStartParams`` schema
+    byte-for-byte (verified against the codex-cli 0.147.0 binary's serde name
+    table): ``realtimeStartInstructions``, ``realtimeEndInstructions``,
+    ``codexResponsesAsItems``, ``codexResponseItemPrefix``,
+    ``codexResponseHandoffMode``, ``codexResponseHandoffChannelPrefixes``.
+    Only fields the caller actually provided are returned; empty strings and
+    empty sequences count as not provided.
+    """
+    audited: dict[str, Any] = {}
+    instruction_fields = (
+        ("realtimeStartInstructions", realtime_start_instructions),
+        ("realtimeEndInstructions", realtime_end_instructions),
+    )
+    for field_name, value in instruction_fields:
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise CodexSubscriptionUnavailable("Codex realtime session instructions are invalid.")
+        clean = value.strip()
+        if len(clean.encode("utf-8")) > _MAX_REALTIME_START_PROMPT_BYTES:
+            raise CodexSubscriptionUnavailable("Codex realtime session instructions are too large.")
+        if clean:
+            audited[field_name] = clean
+    if codex_responses_as_items is not None:
+        if not isinstance(codex_responses_as_items, bool):
+            raise CodexSubscriptionUnavailable("Codex realtime handoff routing fields are invalid.")
+        audited["codexResponsesAsItems"] = codex_responses_as_items
+    string_fields = (
+        ("codexResponseItemPrefix", codex_response_item_prefix),
+        ("codexResponseHandoffMode", codex_response_handoff_mode),
+    )
+    for field_name, value in string_fields:
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise CodexSubscriptionUnavailable("Codex realtime handoff routing fields are invalid.")
+        clean = value.strip()
+        if clean:
+            audited[field_name] = clean
+    if codex_response_handoff_channel_prefixes is not None:
+        if isinstance(codex_response_handoff_channel_prefixes, (str, bytes)) or not isinstance(
+            codex_response_handoff_channel_prefixes, Sequence
+        ):
+            raise CodexSubscriptionUnavailable("Codex realtime handoff routing fields are invalid.")
+        prefixes: list[str] = []
+        for prefix in codex_response_handoff_channel_prefixes:
+            if not isinstance(prefix, str) or not prefix.strip():
+                raise CodexSubscriptionUnavailable(
+                    "Codex realtime handoff routing fields are invalid."
+                )
+            prefixes.append(prefix.strip())
+        if prefixes:
+            audited["codexResponseHandoffChannelPrefixes"] = prefixes
+    return audited
+
+
 def _config_layers(result: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
     raw_layers = result.get("layers")
     if not isinstance(raw_layers, list):
@@ -2205,10 +2329,20 @@ class CodexAppServerClient:
         # retry rides the same audit instead of re-running three RPCs and a
         # profile walk. Warm starts minutes later still re-audit in full, so
         # "re-read immediately before EVERY subscription thread" keeps its
-        # meaning.
+        # meaning (the wake ride below is the one TTL-bounded exception, and
+        # it too exists only because a full audit just passed).
         self._startup_audit_process: asyncio.subprocess.Process | None = None
         self._audited_process: asyncio.subprocess.Process | None = None
         self._startup_audit_at = 0.0
+        # Wake ride minted by ``prime_startup_audit``: a warm/verify pass that
+        # just COMPLETED the full startup audit stamps this (process, time)
+        # pair so one wake-word thread start arriving within the same short
+        # TTL can ride that audit instead of repeating it on the identical
+        # process. One-shot — thread_start consumes it on first read — and
+        # never minted without a full audit actually passing, so the audit
+        # itself is not weakened, only de-duplicated.
+        self._warm_audit_process: asyncio.subprocess.Process | None = None
+        self._warm_audit_at = 0.0
 
     def _assert_owner_loop(self) -> asyncio.AbstractEventLoop:
         loop = asyncio.get_running_loop()
@@ -2565,6 +2699,69 @@ class CodexAppServerClient:
                 expected=False,
             )
             raise
+        # The verify pass just proved the account; completing the FULL startup
+        # audit here (off the wake critical path) lets one wake word inside
+        # the ride TTL skip the byte-identical re-audit in ``thread_start``.
+        await self.prime_startup_audit()
+
+    async def prime_startup_audit(self) -> None:
+        """Complete the full startup audit now and mint the one-shot wake ride.
+
+        Runs the byte-identical audit ``thread_start`` performs (profile walk,
+        live ``account/read``, config requirements, effective config) under the
+        same lock that serializes thread starts, then stamps the short-TTL
+        one-shot ride token. A wake word arriving within the TTL rides this
+        just-passed audit instead of paying it again on the same process; a
+        wake word arriving later re-audits in full, so "re-read immediately
+        before EVERY subscription thread" keeps its meaning. The token is only
+        ever minted from an audit that actually completed — this method never
+        skips or weakens any check, it only moves the identical work off the
+        wake critical path.
+        """
+        await self.ensure_started()
+        async with self._thread_start_lock:
+            live_process = self._process
+            if live_process is None or live_process.returncode is not None:
+                raise CodexAppServerDisconnected("Codex app-server is not running.")
+            if (
+                self._audited_process is live_process
+                and time.monotonic() - self._startup_audit_at <= _STARTUP_AUDIT_TTL_S
+            ):
+                # A full audit of this very process passed within the TTL
+                # (cold start or a warm thread_start re-audit). Re-mint the
+                # wake ride from that stamp — its TTL still counts from the
+                # moment the audit actually passed.
+                self._warm_audit_process = live_process
+                self._warm_audit_at = self._startup_audit_at
+                return
+            try:
+                await asyncio.to_thread(
+                    _validated_subscription_home,
+                    create=False,
+                    require_marker=True,
+                    trusted_binary_path=self._trusted_binary_path,
+                )
+                await self._verify_live_chatgpt_account()
+                self._audit_config_requirements(await self._read_config_requirements())
+                self._audit_effective_config(await self._read_effective_config())
+            except CodexSubscriptionUnavailable as exc:
+                if isinstance(exc, CodexSubscriptionPlanUnsupported):
+                    # Same recording rule as the cold-start and warm-call
+                    # paths: the sticky diagnosis is written where the truth
+                    # is discovered.
+                    await asyncio.shield(
+                        asyncio.to_thread(set_codex_subscription_activation_block, str(exc))
+                    )
+                error = type(exc)(str(exc))
+                await self._close_process(
+                    CodexAppServerDisconnected("Codex app-server safety state changed."),
+                    expected=False,
+                )
+                raise error from None
+            self._audited_process = live_process
+            self._startup_audit_at = time.monotonic()
+            self._warm_audit_process = live_process
+            self._warm_audit_at = self._startup_audit_at
 
     async def _read_effective_config(self) -> dict[str, Any]:
         return _result_dict(
@@ -3506,8 +3703,19 @@ class CodexAppServerClient:
             # thread/start frame, so exactly one thread start can ride it and
             # every WARM start still re-audits.
             live_process = self._process
+            # The wake ride minted by ``prime_startup_audit`` is one-shot:
+            # reading it here consumes it whether or not it is still fresh,
+            # so a second wake on the same warm process always re-audits.
+            warm_ride_process = self._warm_audit_process
+            warm_ride_at = self._warm_audit_at
+            self._warm_audit_process = None
+            self._warm_audit_at = 0.0
             audit_is_fresh = live_process is not None and (
                 self._startup_audit_process is live_process
+                or (
+                    warm_ride_process is live_process
+                    and time.monotonic() - warm_ride_at <= _STARTUP_AUDIT_TTL_S
+                )
                 or (
                     ride_recent_audit
                     and getattr(self, "_audited_process", None) is live_process
@@ -3648,6 +3856,12 @@ class CodexAppServerClient:
         model: str | None = None,
         include_startup_context: bool | None = None,
         client_managed_handoffs: bool | None = None,
+        realtime_start_instructions: str | None = None,
+        realtime_end_instructions: str | None = None,
+        codex_responses_as_items: bool | None = None,
+        codex_response_item_prefix: str | None = None,
+        codex_response_handoff_mode: str | None = None,
+        codex_response_handoff_channel_prefixes: Sequence[str] | None = None,
         extra: Mapping[str, Any] | None = None,
         sdp_timeout_s: float = _DEFAULT_SDP_TIMEOUT_S,
     ) -> CodexRealtimeStartResult:
@@ -3671,6 +3885,14 @@ class CodexAppServerClient:
             raise CodexSubscriptionUnavailable(
                 "Codex realtime startup history requires the audited v3 protocol."
             )
+        audited_optional = _validated_realtime_audited_optional(
+            realtime_start_instructions=realtime_start_instructions,
+            realtime_end_instructions=realtime_end_instructions,
+            codex_responses_as_items=codex_responses_as_items,
+            codex_response_item_prefix=codex_response_item_prefix,
+            codex_response_handoff_mode=codex_response_handoff_mode,
+            codex_response_handoff_channel_prefixes=codex_response_handoff_channel_prefixes,
+        )
         params = {
             "clientManagedHandoffs": True,
             "includeStartupContext": False,
@@ -3688,6 +3910,17 @@ class CodexAppServerClient:
             and self._trusted_binary_version == _SUPPORTED_CODEX_VERSION
         ):
             params["delegationAckFiller"] = False
+            # Same 0.147/v3 gate for the caller-provided audited fields: the
+            # start/end instruction slots and the codexResponse* handoff
+            # routing controls. Outside the gate they are omitted (and named
+            # in the log) rather than sent — an older approved binary must
+            # never receive unknown fields.
+            params.update(audited_optional)
+        elif audited_optional:
+            log.info(
+                "Codex realtime start omitted 0.147-audited fields for this binary/protocol: %s",
+                ", ".join(sorted(audited_optional)),
+            )
         optional: dict[str, Any] = {
             "version": version,
             "voice": voice,
@@ -3800,6 +4033,19 @@ class CodexAppServerClient:
             ),
         )
 
+    async def realtime_list_voices(self, thread_id: str) -> dict[str, Any]:
+        """Read the server's realtime voice roster (``RealtimeVoicesList``).
+
+        Same JSON-RPC plumbing as the other realtime methods. A server build
+        without ``thread/realtime/listVoices`` answers with a JSON-RPC error
+        that surfaces as :class:`CodexAppServerRPCError`, so callers can fall
+        back to their audited static roster instead of failing the session.
+        """
+        return _result_dict(
+            "thread/realtime/listVoices",
+            await self.request("thread/realtime/listVoices", {"threadId": thread_id}),
+        )
+
     async def realtime_stop(self, thread_id: str) -> dict[str, Any]:
         return await self._teardown_request(
             "thread/realtime/stop", {"threadId": thread_id}
@@ -3812,6 +4058,8 @@ class CodexAppServerClient:
             self._startup_audit_process = None
             self._audited_process = None
             self._startup_audit_at = 0.0
+            self._warm_audit_process = None
+            self._warm_audit_at = 0.0
             self._close_lifeline()
             if self._profile_transport_epoch is not None:
                 # Epoch first, release off-loop and shielded: a cancellation
@@ -3829,6 +4077,8 @@ class CodexAppServerClient:
         self._startup_audit_process = None
         self._audited_process = None
         self._startup_audit_at = 0.0
+        self._warm_audit_process = None
+        self._warm_audit_at = 0.0
         tree = self._process_tree
         self._process_tree = None
         reader_task = self._reader_task

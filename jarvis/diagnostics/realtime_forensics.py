@@ -21,6 +21,14 @@ from typing import Any
 #: Spawn budgets. The forensics report treats an overrun as a WARN; the live
 #: probe starts at WARN too and flips to FAIL once the latency phase lands
 #: (that flip lives in the probe, deliberately not here).
+#:
+#: The first-audio budget judges ``first_final_to_first_audio_ms`` — the wait
+#: the USER experiences between finishing an utterance and hearing the answer.
+#: It deliberately does NOT judge ``first_audio_ms``: that metric counts from
+#: session start and therefore includes the user's own speaking/listening
+#: time, so a healthy codex call (8 311 ms from start, 923 ms after the
+#: final, live 2026-08-08) read as a budget breach. ``first_audio_ms`` stays
+#: in the payload and the detail line for continuity with old recordings.
 SPAWN_READY_BUDGET_MS = 4_000
 SPAWN_FIRST_AUDIO_BUDGET_MS = 6_000
 
@@ -59,6 +67,39 @@ def evaluate_postmortem(pm: Mapping[str, Any]) -> list[RealtimeFinding]:
                 "splice-seam",
                 f"{splices} back-to-back response(s) spliced into one "
                 "playback stream - audible garble",
+            )
+        )
+
+    identity_drops = _count(pm, "response_identity_drops")
+    if identity_drops:
+        add(
+            RealtimeFinding(
+                "high",
+                "response-identity-mismatch",
+                f"{identity_drops} late or mismatched provider response "
+                "event(s) were dropped before transcript could clear PCM",
+            )
+        )
+
+    unsafe_cancellations = _count(pm, "unsafe_output_cancellations")
+    recovery_failures = _count(pm, "output_transcript_recovery_failures")
+    if unsafe_cancellations or recovery_failures:
+        add(
+            RealtimeFinding(
+                "high",
+                "output-transcript-recovery-failed",
+                f"{recovery_failures} local transcript recovery attempt(s) "
+                f"failed and {unsafe_cancellations} provider response(s) "
+                "were cancelled fail-closed",
+            )
+        )
+    elif _count(pm, "output_shadow_recovery_exhausted"):
+        add(
+            RealtimeFinding(
+                "warn",
+                "output-shadow-recovery-exhausted",
+                "bounded early output-transcript recovery was exhausted; "
+                "the provider transcript or terminal pass still completed",
             )
         )
 
@@ -202,16 +243,21 @@ def evaluate_postmortem(pm: Mapping[str, Any]) -> list[RealtimeFinding]:
 
     ready_ms = _count(pm, "ready_ms")
     first_audio_ms = _count(pm, "first_audio_ms")
+    response_ms = _count(pm, "first_final_to_first_audio_ms")
     over_ready = ready_ms > SPAWN_READY_BUDGET_MS
-    over_first = bool(first_audio_ms) and first_audio_ms > SPAWN_FIRST_AUDIO_BUDGET_MS
+    # 0 means "never measured" (pre-metric recording, no final, or no audible
+    # audio after one) — silence there is reported by other counters, and an
+    # absent metric must not fabricate a budget breach.
+    over_first = bool(response_ms) and response_ms > SPAWN_FIRST_AUDIO_BUDGET_MS
     if over_ready or over_first:
         add(
             RealtimeFinding(
                 "warn",
                 "spawn-over-budget",
                 f"ready {ready_ms} ms (budget {SPAWN_READY_BUDGET_MS}), "
-                f"first audio {first_audio_ms} ms "
-                f"(budget {SPAWN_FIRST_AUDIO_BUDGET_MS})",
+                f"first audio {response_ms} ms after the first user final "
+                f"(budget {SPAWN_FIRST_AUDIO_BUDGET_MS}; "
+                f"{first_audio_ms} ms from session start)",
             )
         )
 

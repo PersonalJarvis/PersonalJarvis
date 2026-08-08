@@ -352,10 +352,61 @@ _NUMBER_WORDS: Final[dict[str, frozenset[str]]] = {
     }),
 }
 
+# i18n-allow: the tables below are speech-input command vocabulary (§1 list
+# #3) — the literal German/Spanish words a dictation speaks to command a mark.
+#
+# The spoken FORMATTING commands, per language: the punctuation the prompt
+# turns into the mark itself ("comma" -> ","), and the layout commands behind
+# paragraphs and bullet lists ("new paragraph", "bullet point", and their
+# input-language equivalents). Two guards read this table:
+#
+# * the rare-token filter treats these words as common, because the licensed
+#   conversion DELETES them — a spoken bullet command has no repaired spelling
+#   in the answer, only the "- " that replaced it, and mourning it rejected
+#   every commanded list;
+# * the word-count band counts them out of both sides of the ratio
+#   (:func:`_ratio_word_count`), because a command becomes a mark and not a
+#   word — a dictation that leans on commands hardest halves its word count
+#   when formatted CORRECTLY, which an unadjusted band reads as a summariser
+#   at work.
+#
+# Carrier words of multi-word commands ride along ("neuer" in "neuer Absatz",  # i18n-allow
+# "nueva" in "nueva linea"): the command vanishes whole, so every word of it  # i18n-allow
+# must be licensed. The cost of listing a homonym here ("Punkt" the content  # i18n-allow
+# word, "mark", "dash") is that the guard no longer mourns it when a model
+# wrongly drops it — accepted, because the words are short, common in speech,
+# and the alternative rejects every dictation that uses the command.
+_FORMAT_COMMAND_WORDS: Final[dict[str, frozenset[str]]] = {
+    "en": frozenset({
+        "period", "comma", "colon", "semicolon", "hyphen", "dash",
+        "quote", "unquote", "quotes", "question", "exclamation", "mark",
+        "bullet", "bullets", "paragraph", "newline", "ellipsis",
+        "parenthesis", "parentheses", "bracket", "brackets", "slash",
+    }),
+    "de": frozenset({  # i18n-allow: German spoken commands (§1 list #3)
+        "punkt", "komma", "doppelpunkt", "semikolon", "strichpunkt",  # i18n-allow
+        "fragezeichen", "ausrufezeichen", "bindestrich", "gedankenstrich",  # i18n-allow
+        "anführungszeichen", "klammer", "klammern", "schrägstrich",  # i18n-allow
+        "absatz", "zeile", "zeilenumbruch", "auslassungspunkte",  # i18n-allow
+        "stichpunkt", "stichpunkte", "spiegelstrich", "aufzählungszeichen",  # i18n-allow
+        "aufzählungspunkt", "neue", "neuer", "neues", "nächste", "nächster",  # i18n-allow
+    }),
+    "es": frozenset({  # i18n-allow: Spanish spoken commands (§1 list #3)
+        "punto", "puntos", "coma", "aparte", "seguido", "interrogación",  # i18n-allow
+        "interrogacion", "exclamación", "exclamacion", "guion", "guión",  # i18n-allow
+        "raya", "comillas", "paréntesis", "parentesis", "párrafo", "parrafo",  # i18n-allow
+        "línea", "linea", "viñeta", "vineta", "salto", "nueva", "nuevo",  # i18n-allow
+        "siguiente",  # i18n-allow
+    }),
+}
+
 #: The lookup the rarity filter actually uses: ordinary vocabulary plus the
-#: number words, per language. Anything absent from here is "rare".
+#: number words and the spoken formatting commands, per language. Anything
+#: absent from here is "rare".
 _COMMON_WORDS: Final[dict[str, frozenset[str]]] = {
-    code: base | _NUMBER_WORDS.get(code, frozenset())
+    code: base
+    | _NUMBER_WORDS.get(code, frozenset())
+    | _FORMAT_COMMAND_WORDS.get(code, frozenset())
     for code, base in _COMMON_WORDS_BASE.items()
 }
 

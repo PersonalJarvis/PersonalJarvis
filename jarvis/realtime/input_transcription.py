@@ -29,8 +29,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -249,6 +250,99 @@ class _NoiseFloor:
         return min(configured, max(k * self._floor, abs_min))
 
 
+@dataclass(slots=True)
+class _SharedRecognizer:
+    """One process-wide recognizer plus the in-flight guard that follows it.
+
+    The guard belongs to the ENGINE rather than to the transcriber holding it:
+    once two sessions can share one cached backend, a per-object flag cannot see
+    the other caller, and entering a native engine twice at once is what wedges
+    it permanently (AP-24).
+    """
+
+    backend: Any
+    busy: bool = False
+
+
+# Building the recognizer is the expensive half of opening a realtime call — a
+# local engine costs seconds and loads weights that are identical for every
+# session asking for the same configuration, so a per-transcriber engine made
+# every call re-pay that inside its own handshake. Keyed by the CONSTRUCTION
+# parameters (the effective STT config, session language pin included), so a
+# config change or a different session language still builds a fresh engine.
+# Bounded, because every retained entry can pin a model in memory.
+_STT_CACHE_MAX = 4
+_stt_cache: OrderedDict[str, _SharedRecognizer] = OrderedDict()
+_stt_cache_lock = threading.Lock()
+
+
+def _shared_recognizer(key: str, build: Any) -> _SharedRecognizer:
+    """The cached recognizer for ``key``, constructed at most once per process.
+
+    ``build`` runs UNDER the lock deliberately: a second concurrent build of the
+    same configuration is precisely the duplicated model load this cache exists
+    to remove, and two DIFFERENT configurations racing on the voice path is not
+    a case worth trading that guarantee for.
+    """
+    with _stt_cache_lock:
+        cached = _stt_cache.get(key)
+        if cached is not None:
+            _stt_cache.move_to_end(key)
+            return cached
+        entry = _SharedRecognizer(backend=build())
+        _stt_cache[key] = entry
+        while len(_stt_cache) > _STT_CACHE_MAX:
+            _stt_cache.popitem(last=False)
+        return entry
+
+
+def _forget_shared_recognizer(entry: _SharedRecognizer) -> None:
+    """Retire a wedged engine so the next session is not handed it back."""
+    with _stt_cache_lock:
+        for key, cached in tuple(_stt_cache.items()):
+            if cached is entry:
+                del _stt_cache[key]
+
+
+def _reset_for_tests() -> None:
+    """Drop the process-wide recognizer cache."""
+    with _stt_cache_lock:
+        _stt_cache.clear()
+
+
+def _language_pinned_stt_config(stt_cfg: Any, language: str | None) -> Any:
+    """``stt_cfg`` with the session's recognition language pinned onto it.
+
+    The configured recognizer takes its language from the STT config, so this is
+    where a session language has to land: from here the value flows through the
+    per-provider gates the STT factory already owns, instead of every backend
+    being probed for a keyword it may not have. A config object that cannot
+    carry a language (a stand-in, an older shape) is returned untouched — the
+    call keeps its configured language rather than losing its recognizer over an
+    attribute.
+    """
+    if not language:
+        return stt_cfg
+    copy = getattr(stt_cfg, "model_copy", None)
+    if not callable(copy) or not hasattr(stt_cfg, "language"):
+        log.debug(
+            "The STT configuration carries no language field, so the local "
+            "input recognizer keeps its configured language instead of %r",
+            language,
+        )
+        return stt_cfg
+    return copy(update={"language": language})
+
+
+def _build_default_stt(language: str | None) -> _SharedRecognizer:
+    """Build (or reuse) the configured recognizer. Blocking — call in a thread."""
+    from jarvis.core.config import load_config  # noqa: PLC0415
+    from jarvis.plugins.stt import build_stt_from_config  # noqa: PLC0415
+
+    stt_cfg = _language_pinned_stt_config(load_config().stt, language)
+    return _shared_recognizer(repr(stt_cfg), lambda: build_stt_from_config(stt_cfg))
+
+
 class LocalInputTranscriber:
     """Turn microphone PCM into ``input_transcript`` events."""
 
@@ -258,14 +352,24 @@ class LocalInputTranscriber:
         sample_rate: int = 24_000,
         stt_factory: Any = None,
         recognizer_sample_rate: int | None = None,
+        language: str | None = None,
     ) -> None:
         self._sample_rate = sample_rate
         self._stt_factory = stt_factory
+        # The session's recognition language. Empty means "whatever the STT
+        # configuration says", which is exactly what callers got before this
+        # parameter existed. Pinning it matters because an ``auto`` recognizer
+        # is the configuration that answers near-silence with caption-style
+        # boilerplate in the wrong language — text this transport would then
+        # treat as something the user said.
+        self._language = (language or "").strip() or None
+        self._factory_language_logged = False
         self._recognizer_rate_override = (
             int(recognizer_sample_rate) if recognizer_sample_rate else None
         )
         self._recognizer_rate: int | None = None
         self._stt: Any = None
+        self._shared: _SharedRecognizer | None = None
         # Control events must survive a stalled consumer, so this is a deque
         # evicted by policy rather than an asyncio.Queue that refuses whatever
         # arrives last (see ``_emit``). Everything here runs on one event loop,
@@ -288,7 +392,9 @@ class LocalInputTranscriber:
         # transcript recovery can overlap the tail of input recognition. The
         # guard is a non-blocking flag, NOT a lock: a second caller skips, so a
         # call that has hung can never make every later call hang behind it.
-        self._recognition_busy = False
+        # Held here only while this transcriber owns its engine alone; a cached
+        # engine carries the flag itself (see ``_recognition_busy``).
+        self._local_recognition_busy = False
         # Serializes only the CONSTRUCTION of the recognizer, so two utterances
         # racing at session start cannot load the model twice. Never held across
         # an inference: a model load inside the inference guard made the first
@@ -472,6 +578,25 @@ class LocalInputTranscriber:
         task.add_done_callback(self._tasks.discard)
 
     # -- recognition ---------------------------------------------------
+    @property
+    def _recognition_busy(self) -> bool:
+        """Whether the recognizer behind this transcriber is inside a call.
+
+        Resolved through the shared cache entry whenever there is one: the
+        ENGINE is what a second concurrent entry wedges, so two sessions on one
+        cached backend have to read and write the same flag.
+        """
+        shared = self._shared
+        return shared.busy if shared is not None else self._local_recognition_busy
+
+    @_recognition_busy.setter
+    def _recognition_busy(self, value: bool) -> None:
+        shared = self._shared
+        if shared is not None:
+            shared.busy = bool(value)
+        else:
+            self._local_recognition_busy = bool(value)
+
     async def warm(self) -> bool:
         """Build (and prime) the recognizer off the first utterance's path.
 
@@ -521,18 +646,24 @@ class LocalInputTranscriber:
             if self._stt is not None:
                 return self._stt
             factory = self._stt_factory
-            if factory is None:
-
-                def factory() -> Any:  # noqa: ANN202 - local default wiring
-                    from jarvis.core.config import load_config  # noqa: PLC0415
-                    from jarvis.plugins.stt import (  # noqa: PLC0415
-                        build_stt_from_config,
+            if factory is not None:
+                # An injected factory owns its own construction, so there is
+                # nothing here that could pin a language onto it. Say so rather
+                # than let a dropped language look like an applied one (AP-30).
+                if self._language and not self._factory_language_logged:
+                    self._factory_language_logged = True
+                    log.debug(
+                        "An injected recognizer factory configures itself, so "
+                        "the session language %r is not applied",
+                        self._language,
                     )
-
-                    return build_stt_from_config(load_config().stt)
-
-            stt = await asyncio.to_thread(factory)
+                shared = None
+                stt = await asyncio.to_thread(factory)
+            else:
+                shared = await asyncio.to_thread(_build_default_stt, self._language)
+                stt = shared.backend
             self._recognizer_rate = self._resolve_recognizer_rate(stt)
+            self._shared = shared
             self._stt = stt
             return self._stt
 
@@ -600,7 +731,15 @@ class LocalInputTranscriber:
         utterance constructs a fresh one.
         """
         stt = self._stt
+        shared = self._shared
+        if shared is not None:
+            # Dropping only this reference would leave the wedged engine in the
+            # process-wide cache, and the next session would be handed it as if
+            # it were healthy — the "deaf for the rest of the call" signature,
+            # now inherited across calls.
+            _forget_shared_recognizer(shared)
         self._stt = None
+        self._shared = None
         self._recognizer_rate = None
         self._consecutive_failures = 0
         self._consecutive_busy = 0

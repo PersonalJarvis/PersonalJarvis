@@ -3,6 +3,7 @@ import {
   publishRealtimeTransportIssue,
   type RealtimeTransportIssue,
 } from "./realtimeTransportIssue";
+import { fetchRealtimeOfferRequirement } from "./voiceApi";
 import { mintWsTicket } from "./ws";
 
 declare global {
@@ -35,6 +36,7 @@ type BrokerDeps = {
   createSocket: (url: string) => WebSocket;
   mintTicket: () => Promise<string | null>;
   readDesktopCapability: () => string;
+  readOfferRequirement: () => Promise<boolean | null>;
   createOfferId: () => string;
   schedule: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   cancelSchedule: (timer: ReturnType<typeof setTimeout>) => void;
@@ -59,6 +61,7 @@ const DEFAULT_DEPS: BrokerDeps = {
   mintTicket: mintWsTicket,
   readDesktopCapability: () =>
     window.__JARVIS_REALTIME_BROKER_TOKEN?.trim() ?? "",
+  readOfferRequirement: fetchRealtimeOfferRequirement,
   createOfferId: defaultOfferId,
   schedule: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
   cancelSchedule: (timer) => globalThis.clearTimeout(timer),
@@ -114,6 +117,31 @@ export class RealtimeTransportBroker {
       this.reconnectTimer = null;
     }
     console.warn(`Realtime transport broker unavailable (${issue}): ${detail}`);
+    void this.publishFailure(issue);
+  }
+
+  /**
+   * Surface a terminal issue only when an offer is genuinely wanted.
+   *
+   * The broker is also mounted during the switch "prepare" window, before this
+   * client can know whether the transport it is switching TO needs a browser
+   * offer — and no built-in provider currently does. A failure published there
+   * accuses a capability nothing uses and sends the reader after the wrong bug.
+   * The backend capability decides (AP-21); an UNKNOWN answer still publishes,
+   * because a hidden real blocker is the worse outcome.
+   */
+  private async publishFailure(issue: RealtimeTransportIssue): Promise<void> {
+    const generation = this.generation;
+    const required = await this.deps.readOfferRequirement();
+    // Any restart or reconnect bumps the generation, so a failure that has
+    // already been superseded must not land on the status row.
+    if (generation !== this.generation) return;
+    if (required === false) {
+      console.info(
+        `Realtime transport broker issue withheld (${issue}): no configured provider needs a browser WebRTC offer.`,
+      );
+      return;
+    }
     publishRealtimeTransportIssue(issue);
   }
 

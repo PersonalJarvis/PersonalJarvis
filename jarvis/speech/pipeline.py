@@ -8511,6 +8511,19 @@ class SpeechPipeline:
                 allow_classic_fallback = bool(
                     getattr(session, "allow_classic_fallback", True)
                 )
+                # Desktop plays provider PCM through the process-local
+                # AudioPlayer, whose write path stamps level_tap's playback
+                # window — a PHYSICAL "audio is audible right now" probe. The
+                # session's half-duplex mute release uses it so the mic stays
+                # shut while the prebuffered/device-drained reply tail is
+                # still audible (provider-frame silence alone reopened into
+                # that tail and fed the reply back in on open speakers).
+                # Capability injection: only this surface owns the player, so
+                # only this surface installs the probe (getattr keeps older
+                # session objects working).
+                probe_setter = getattr(session, "set_playback_probe", None)
+                if callable(probe_setter):
+                    probe_setter(level_tap.playback_active)
                 handshake_started_at = time.monotonic()
                 handshake_task = asyncio.create_task(
                     session.handle_control(

@@ -73,17 +73,21 @@ def realtime_implicit_usage_fallback_allowed(cfg: Any) -> bool:
     return bool(getattr(provider_cls, "implicit_usage_fallback_allowed", True))
 
 
-def _provider_candidates(
+def _identified_provider_candidates(
     cfg: Any, *, defer_external_login_probe: bool = False
-) -> list[Any]:
+) -> list[tuple[str, Any]]:
     """Instantiate every credential-ready plugin in effective fallback order.
 
     API providers declare ``credential_candidates`` and receive the resolved
     key. Providers backed by an external application login may instead expose
     a synchronous ``external_login_ready`` capability probe and a no-argument
     constructor. The factory never infers either path from a provider name.
+
+    Each candidate is paired with the entry-point id it was loaded from, which
+    a caller cannot recover from the instance: ``name`` is a provider-chosen
+    label and may differ from the id the registry knows.
     """
-    candidates: list[Any] = []
+    candidates: list[tuple[str, Any]] = []
     explicit_ids = set(_explicit_provider_ids(cfg))
     for provider_id in _configured_provider_ids(cfg):
         try:
@@ -135,10 +139,20 @@ def _provider_candidates(
                     provider_id,
                 )
                 continue
-            candidates.append(provider)
+            candidates.append((provider_id, provider))
         except Exception as exc:  # noqa: BLE001 — one plugin must not brick others
             log.warning("Realtime plugin %s is unavailable: %s", provider_id, exc)
     return candidates
+
+
+def _provider_candidates(cfg: Any, *, defer_external_login_probe: bool = False) -> list[Any]:
+    """Credential-ready provider instances in effective fallback order."""
+    return [
+        provider
+        for _provider_id, provider in _identified_provider_candidates(
+            cfg, defer_external_login_probe=defer_external_login_probe
+        )
+    ]
 
 
 def _resolve_realtime_provider(cfg: Any) -> Any:
@@ -188,21 +202,35 @@ def realtime_handshake_budget_s(cfg: Any) -> float:
 
     Returns the effective ceiling — never below the shared default — so a
     caller can use the value directly as a timeout budget.
+
+    The budget is read off the INSTANCE the factory would actually open with
+    whenever there is one, because a provider may declare it as a ``property``
+    whose value depends on its own configuration (a self-hosted card asks for
+    more time when it is allowed to revive its server). Reading such a
+    declaration off the class yields the descriptor object, not a number.
+    Every read stays inside the per-provider guard: one plugin that raises
+    must cost only its own budget, never the whole probe — a probe that dies
+    leaves the surface on its historical floor while the transport is still
+    legitimately negotiating.
     """
     from jarvis.realtime.session import _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S
 
     declared = [float(_PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S)]
+    instances: dict[str, Any] = {}
+    try:
+        instances = dict(_identified_provider_candidates(cfg, defer_external_login_probe=True))
+    except Exception as exc:  # noqa: BLE001 - class-level reads still work
+        log.warning("Realtime handshake-budget candidate build failed: %s", exc)
     for provider_id in _configured_provider_ids(cfg):
         try:
-            provider_cls = load(_GROUP, provider_id, protocol=RealtimeProvider)
+            source = instances.get(provider_id)
+            if source is None:
+                source = load(_GROUP, provider_id, protocol=RealtimeProvider)
+                if not bool(getattr(source, "supports_realtime", False)):
+                    continue
+            declared.append(float(getattr(source, "handshake_budget_s", 0.0) or 0.0))
         except Exception as exc:  # noqa: BLE001 - one broken plugin is skipped
-            log.warning(
-                "Realtime handshake-budget probe failed for %s: %s", provider_id, exc
-            )
-            continue
-        if not bool(getattr(provider_cls, "supports_realtime", False)):
-            continue
-        declared.append(float(getattr(provider_cls, "handshake_budget_s", 0.0) or 0.0))
+            log.warning("Realtime handshake-budget probe failed for %s: %s", provider_id, exc)
     return max(declared)
 
 

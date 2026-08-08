@@ -24,6 +24,7 @@ from jarvis.core.turn_language import (
     resolve_output_language,
     resolve_transcript_language,
     resolve_turn_language,
+    validate_output_language,
 )
 
 # ---------------------------------------------------------------------------
@@ -266,3 +267,134 @@ def test_no_tag_at_all_is_answered_from_the_text() -> None:
 def test_no_text_at_all_falls_back_to_the_tag() -> None:
     assert resolve_transcript_language("German", "") == "de"
     assert resolve_transcript_language("", "") == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Deterministic output-language validation. The caller passes the result of
+# resolve_output_language; the validator never chooses a target language.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("resolved_language", "text", "detected_language"),
+    [
+        (
+            "de",
+            "Das Wetter ist heute gut und wir sind bereit.",  # i18n-allow: German output fixture
+            "de",
+        ),
+        ("en", "The weather is good today and we are ready.", "en"),
+        ("es", "El tiempo está muy bien hoy y quiero saber más.", "es"),
+        ("es", "Hoy hay información útil para mí, y está muy bien así.", "es"),
+    ],
+)
+def test_output_language_validator_accepts_supported_languages(
+    resolved_language: str,
+    text: str,
+    detected_language: str,
+) -> None:
+    result = validate_output_language(text, resolved_language=resolved_language)
+
+    assert result.status == "match"
+    assert result.detected_language == detected_language
+    assert result.should_block is False
+
+
+@pytest.mark.parametrize(
+    ("resolved_language", "text", "detected_language"),
+    [
+        ("de", "Xin chào, tôi có thể giúp bạn bằng tiếng Việt.", "vi"),
+        ("en", "这是一个完全错误的中文回答，需要立即阻止。", "zh"),
+        ("es", "The answer is in the wrong language and should not be spoken.", "en"),
+    ],
+)
+def test_output_language_validator_blocks_high_confidence_mismatches(
+    resolved_language: str,
+    text: str,
+    detected_language: str,
+) -> None:
+    result = validate_output_language(text, resolved_language=resolved_language)
+
+    assert result.status == "mismatch"
+    assert result.detected_language == detected_language
+    assert result.should_block is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "Okay.",
+        "Danke.",  # i18n-allow: short German output fixture
+        "HTTP 500, CPU 95%, API v2.1.",
+        "OpenAI GitHub Spotify HTTP Berlin",
+        "```python\nfor item in items:\n    return item\n```",
+        "Use `response.status_code == 500`.",
+    ],
+)
+def test_output_language_validator_keeps_ambiguous_content_non_blocking(
+    text: str,
+) -> None:
+    result = validate_output_language(text, resolved_language="de")
+
+    assert result.status == "indeterminate"
+    assert result.should_block is False
+
+
+def test_output_language_validator_does_not_reject_a_chinese_name() -> None:
+    result = validate_output_language(
+        "The Beijing office uses 北京 for its local label.",
+        resolved_language="en",
+    )
+
+    assert result.should_block is False
+    assert result.detected_language != "zh"
+
+
+def test_output_language_validator_does_not_reject_a_vietnamese_name() -> None:
+    result = validate_output_language(
+        "The meeting with Nguyễn Văn Bình is today.",
+        resolved_language="en",
+    )
+
+    assert result.status == "match"
+    assert result.detected_language == "en"
+    assert result.should_block is False
+
+
+def test_output_language_validator_does_not_misread_repeated_the_as_vietnamese() -> None:
+    text = "The answer is the same as the question, and the result is clear."
+
+    result = validate_output_language(text, resolved_language="en")
+
+    assert result.status == "match"
+    assert result.detected_language == "en"
+    assert result.should_block is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "the the the the the",
+        "ban ban ban ban ban",
+        "bạn bạn bạn bạn bạn",
+    ],
+)
+def test_output_language_validator_does_not_count_repeated_tokens_as_vietnamese(
+    text: str,
+) -> None:
+    result = validate_output_language(text, resolved_language="en")
+
+    assert result.detected_language != "vi"
+    assert result.should_block is False
+
+
+def test_output_language_validator_keeps_unknown_target_non_blocking() -> None:
+    result = validate_output_language(
+        "这是一个很长的中文回答，应当保持安全。",
+        resolved_language="fr",
+    )
+
+    assert result.status == "indeterminate"
+    assert result.resolved_language == "unknown"
+    assert result.should_block is False

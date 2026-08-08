@@ -4,11 +4,7 @@
 // to it (isolatedModules requires every file to be a module or a script; as a
 // script these ambient declarations would otherwise leak into the rest of the
 // app's type-check).
-import {
-  BoundedPcm16Queue,
-  Pcm16Packetizer,
-  playbackBufferSampleCount,
-} from "./pcmWorkletBuffer";
+import { JitterBufferedPcm16Queue, Pcm16Packetizer } from "./pcmWorkletBuffer";
 
 export {};
 
@@ -53,9 +49,7 @@ class PcmCapture extends AudioWorkletProcessor {
 }
 
 class PcmPlayback extends AudioWorkletProcessor {
-  private readonly queue = new BoundedPcm16Queue(
-    playbackBufferSampleCount(sampleRate),
-  );
+  private readonly queue = new JitterBufferedPcm16Queue(sampleRate);
 
   constructor() {
     super();
@@ -74,7 +68,10 @@ class PcmPlayback extends AudioWorkletProcessor {
   process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
     const out = outputs[0]?.[0];
     if (!out) return true;
-    this.queue.dequeueInto(out);
+    // Banks a jitter reserve at a burst start and after an underrun, then
+    // streams at wall clock. Zero-filling a starved quantum instead is what
+    // chopped the voice on this surface.
+    this.queue.render(out);
     return true;
   }
 }

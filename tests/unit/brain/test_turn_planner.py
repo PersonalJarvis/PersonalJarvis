@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from jarvis.brain.turn_planner import TurnPath, TurnReason, plan_turn
+from jarvis.brain.turn_planner import (
+    PUBLIC_FACT_GROUNDING_CAPABILITY,
+    PUBLIC_FACT_GROUNDING_TIMEOUT_S,
+    GroundingFailurePolicy,
+    TurnPath,
+    TurnReason,
+    plan_turn,
+)
 from jarvis.core.capabilities import Capability, CapabilityRegistry
 
 
@@ -137,7 +144,76 @@ def test_temporal_filler_world_knowledge_stays_native(utterance: str) -> None:
     ],
 )
 def test_strong_current_markers_still_use_orchestrator(utterance: str) -> None:
-    assert plan_turn(utterance).path is TurnPath.ORCHESTRATOR
+    plan = plan_turn(utterance)
+
+    assert plan.path is TurnPath.ORCHESTRATOR
+    assert plan.requires_public_fact_grounding is True
+    assert plan.required_capabilities.count(PUBLIC_FACT_GROUNDING_CAPABILITY) == 1
+    assert plan.public_fact_grounding_timeout_s == PUBLIC_FACT_GROUNDING_TIMEOUT_S
+    assert plan.public_fact_grounding_attempt_limit == 1
+    assert plan.grounding_failure_policy is GroundingFailurePolicy.HONEST_UNCERTAINTY
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "How long did Muhammad Ali live?",
+        "Wer ist der Praesident des WBC?",  # i18n-allow: German speech fixture
+        "Quien fundo la NASA?",  # i18n-allow: Spanish speech fixture
+    ],
+)
+def test_declared_small_model_public_facts_ground_once(utterance: str) -> None:
+    plan = plan_turn(
+        utterance,
+        tool_names=(PUBLIC_FACT_GROUNDING_CAPABILITY,),
+        requires_public_fact_grounding=True,
+    )
+
+    assert plan.path is TurnPath.ORCHESTRATOR
+    assert TurnReason.PUBLIC_FACT in plan.reasons
+    assert plan.required_capabilities.count(PUBLIC_FACT_GROUNDING_CAPABILITY) == 1
+    assert plan.requires_evidence is True
+    assert plan.requires_public_fact_grounding is True
+    assert plan.public_fact_grounding_attempt_limit == 1
+
+
+def test_hosted_evergreen_public_fact_keeps_native_fast_path() -> None:
+    plan = plan_turn("Who wrote Hamlet?")
+
+    assert plan.path is TurnPath.NATIVE_REALTIME
+    assert plan.requires_public_fact_grounding is False
+    assert plan.required_capabilities == ()
+    assert plan.public_fact_grounding_timeout_s is None
+    assert plan.public_fact_grounding_attempt_limit == 0
+    assert plan.grounding_failure_policy is None
+
+
+def test_public_search_capability_is_deduplicated() -> None:
+    plan = plan_turn(
+        "Search for the latest Python release.",
+        tool_names=(PUBLIC_FACT_GROUNDING_CAPABILITY,),
+        requires_public_fact_grounding=True,
+    )
+
+    assert plan.required_capabilities.count(PUBLIC_FACT_GROUNDING_CAPABILITY) == 1
+    assert plan.public_fact_grounding_attempt_limit == 1
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "What is in my Gmail inbox?",
+        "Which meetings are in my calendar today?",
+        "What is on my screen?",
+    ],
+)
+def test_private_or_connected_facts_never_leak_to_public_search(
+    utterance: str,
+) -> None:
+    plan = plan_turn(utterance, requires_public_fact_grounding=True)
+
+    assert plan.requires_public_fact_grounding is False
+    assert PUBLIC_FACT_GROUNDING_CAPABILITY not in plan.required_capabilities
 
 
 def test_read_only_dynamic_connector_matches_live_capability(

@@ -27,20 +27,35 @@ log = logging.getLogger(__name__)
 
 _INPUT_RATE = 24_000
 _OUTPUT_RATE = 24_000
-_BROKER_OFFER_WAIT_S = 3.0
 # No audible frame for this long ends the turn. It is a BACKSTOP, not the
 # boundary: the terminal response item ends a turn immediately. Measured
 # in-reply pauses on ChatGPT-Live reach ~720 ms, so a shorter window would
 # split a single answer at every breath.
 _OUTPUT_QUIESCENCE_S = 1.2
-# Cap on a recognizer-LESS host's first (failopen) response. On grounded
-# hosts nothing unsolicited plays before the call's first user final at all
-# (maintainer live test 2026-08-08 killed the bounded-greeting compromise:
-# the opener's remainder re-earned grants and the first final adopted the
-# model's own echo-monologue as "the answer"). A host without any local
-# recognizer cannot ground anything, so its opening keeps only this coarse
-# bound against the 13.9 s demo-monologue class (live 2026-08-06 17:03).
+# Cap on EVERY response granted "failopen", i.e. while no local grounding
+# exists. On grounded hosts nothing unsolicited plays before the call's first
+# user final at all (maintainer live test 2026-08-08 killed the
+# bounded-greeting compromise: the opener's remainder re-earned grants and
+# the first final adopted the model's own echo-monologue as "the answer").
+# An ungrounded host cannot refuse anything, so this coarse bound is the
+# ONLY opposition it has — first observed against the 13.9 s demo-monologue
+# class (live 2026-08-06 17:03). Bounding only the opening response left
+# every later ungrounded response unbounded, and that unbounded regime is
+# why the two-AIs self-talk loop survived every grounded-path fix: a build
+# failure or a mid-call recognizer death handed the far end unlimited
+# responses for the rest of the call. A real answer fits comfortably under
+# the bound; a monologue is cut and the far end re-earns nothing by it.
 _OPENING_RESPONSE_MAX_S = 6.0
+# A dead local recognizer STREAM is rebuilt at most this many times per call
+# before the session accepts the (bounded) ungrounded regime above. The
+# rebuild is cheap by design: the STT backend is cached process-wide in
+# ``jarvis.realtime.input_transcription``, so a rebuild re-attaches to the
+# live engine instead of paying a model load. Two attempts cover a transient
+# stream death without letting a crash-looping engine spin forever.
+_RECOGNIZER_REBUILDS_MAX = 2
+# Backoff before rebuild attempt N (linear in N), so an engine that dies the
+# moment it starts cannot hot-loop build/die inside one call.
+_RECOGNIZER_REBUILD_BACKOFF_S = 0.5
 # A locally DISCARDED utterance (under the endpointer's minimum voiced
 # length) keeps its response window this long. The far end heard the sound
 # regardless of the local verdict and often answers it; consuming the
@@ -150,6 +165,10 @@ _REFUSAL_STORM_WINDOW_S = 10.0
 # non-blocking lock makes a busy engine a skip, never a wedge).
 _OUTPUT_EARLY_RECOVERY_AFTER_S = 1.2
 _OUTPUT_EARLY_RECOVERY_RETRY_S = 1.0
+# The early pass is a latency rescue, not an unbounded retry loop. Two
+# single-flight attempts cover a recognizer that was briefly busy with the
+# microphone; the response boundary owns the one authoritative terminal pass.
+_OUTPUT_EARLY_RECOVERY_MAX_ATTEMPTS = 2
 # The shadow attempt transcribes only this much of the response head: the
 # gate needs SOME clean text, not the whole reply, and the recognizer's own
 # time bound scales with the audio handed in — an uncapped, still-growing
@@ -180,7 +199,10 @@ _SPEECH_DISCARDED = "speech_discarded"
 _LEGACY_V1_MODEL = "gpt-realtime-1.5"
 _DEFAULT_VOICE = "cove"
 # Server-confirmed v3 roster (the refusal for an unknown voice lists exactly
-# these nine, verified live 2026-08-01).
+# these nine, verified live 2026-08-01). Since codex-cli 0.147.0 the server
+# publishes its live roster through ``thread/realtime/listVoices``; this
+# frozenset is the explicit FALLBACK for a client or server build without
+# that method (see ``_live_voice_roster``), never the primary source.
 _V3_VOICES = frozenset(
     {
         "arbor",
@@ -451,9 +473,7 @@ def _history_initial_items(history: Any) -> list[dict[str, str]]:
         if role not in {"user", "assistant"} or not text:
             continue
         records.append({"role": role, "text": text[:2_000]})
-    while sum(len(record["text"]) for record in records) > _HISTORY_MAX_CHARS and len(
-        records
-    ) > 1:
+    while sum(len(record["text"]) for record in records) > _HISTORY_MAX_CHARS and len(records) > 1:
         records.pop(0)
     return records
 
@@ -461,6 +481,91 @@ def _history_initial_items(history: Any) -> list[dict[str, str]]:
 def _safe_error(exc: BaseException, *, max_chars: int = 500) -> str:
     text = " ".join(str(exc).split())
     return (text or type(exc).__name__)[:max_chars]
+
+
+# One process-wide WARNING when the local recognizer's constructor rejects
+# the ``language`` keyword, DEBUG afterwards. The in-tree recognizer accepts
+# it since 2026-08-08, so this fires only against an older out-of-tree
+# module — but a swallowed capability probe at DEBUG is exactly how the
+# un-pinned session language survived unreported for days (AP-30).
+_language_kwarg_rejected_warned = False
+
+
+def _roster_voice_names(result: Any) -> frozenset[str]:
+    """Every voice name found in a ``RealtimeVoicesList`` result.
+
+    The result carries per-protocol lists (``v1``/``v2`` today) plus default
+    fields; which list feeds the live v3 surface is not documented, so every
+    list-valued entry contributes. Validation stays a membership check — an
+    over-broad union can only accept a voice the server itself announced.
+    """
+    if not isinstance(result, dict):
+        return frozenset()
+    names: set[str] = set()
+    for value in result.values():
+        if not isinstance(value, (list, tuple)):
+            continue
+        for entry in value:
+            if isinstance(entry, dict):
+                entry = entry.get("id", "") or entry.get("name", "")
+            name = str(entry or "").strip().lower()
+            if name:
+                names.add(name)
+    return frozenset(names)
+
+
+async def _live_voice_roster(client: Any, thread_id: str) -> frozenset[str]:
+    """The server's own realtime voice roster, or the audited static one.
+
+    Probed as a capability, never a version string (AP-21/AP-22): a client
+    without ``realtime_list_voices``, a server build that rejects the method
+    (a JSON-RPC refusal surfaces with a ``code`` attribute), or an unusable
+    result all degrade to ``_V3_VOICES`` — the roster the server itself
+    confirmed live 2026-08-01. A failure WITHOUT an RPC error code is a
+    transport failure, not a roster verdict, and propagates so the open
+    fails honestly instead of validating against a guess.
+    """
+    lister = getattr(client, "realtime_list_voices", None)
+    if not callable(lister):
+        return _V3_VOICES
+    try:
+        result = await lister(thread_id)
+    except Exception as exc:
+        if getattr(exc, "code", None) is None:
+            raise
+        log.info(
+            "Codex app-server rejected thread/realtime/listVoices (%s); "
+            "using the audited static voice roster",
+            _safe_error(exc),
+        )
+        return _V3_VOICES
+    names = _roster_voice_names(result)
+    if not names:
+        log.info(
+            "Codex app-server returned no usable realtime voice roster; "
+            "using the audited static one"
+        )
+        return _V3_VOICES
+    return names
+
+
+def _client_realtime_start_accepts(client: Any, parameter: str) -> bool:
+    """Whether the client's ``realtime_start`` declares ``parameter`` by name.
+
+    A NAMED-parameter probe rather than the file's usual TypeError probe, and
+    the difference is load-bearing: a client that merely takes ``**kwargs``
+    would swallow the field without ever sending it, and a silently lost
+    startup contract is exactly the failure a capability probe exists to
+    prevent (AP-21/AP-30). Only an explicit declaration counts as support.
+    """
+    method = getattr(client, "realtime_start", None)
+    if not callable(method):
+        return False
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return False
+    return parameter in parameters
 
 
 def _handoff_text(item: dict[str, Any]) -> str:
@@ -601,6 +706,8 @@ class _CodexSubscriptionRealtimeSession:
         answer_sdp: str,
         audio_endpoint: Any = None,
         input_transcriber: Any = None,
+        input_transcriber_factory: Any = None,
+        grounding_unavailable_reason: str = "",
         language: str = "en",
         voice: str = "",
         initial_context: str = "",
@@ -618,6 +725,19 @@ class _CodexSubscriptionRealtimeSession:
         # from silence or speaker echo. Local energy-gated STT is authoritative
         # for the bar and every transcript-driven Jarvis integration.
         self._input_transcriber = input_transcriber
+        # Zero-arg callable producing a replacement recognizer (or ``None``)
+        # for the bounded mid-call rebuild. The build itself is cheap — the
+        # STT backend is cached process-wide — so a dead stream no longer has
+        # to end grounding for the rest of the call.
+        self._input_transcriber_factory = (
+            input_transcriber_factory if callable(input_transcriber_factory) else None
+        )
+        # Why the recognizer BUILD failed, when it did. Non-empty means the
+        # whole call runs ungrounded from the first frame and the receive
+        # loop owes the user one honest surface notice for it — a WARNING in
+        # the log was the only trace before, and a silently disarmed
+        # grounding gate is how the self-talk loop kept coming back (AP-30).
+        self._grounding_unavailable_reason = str(grounding_unavailable_reason or "").strip()
         self._closed = False
         self._last_input_item_id = ""
         self._assistant_delta_text = ""
@@ -662,10 +782,12 @@ class _CodexSubscriptionRealtimeSession:
         self._delivered_turn_directive = ""
         # One INFO line per session for the discarded tool declarations.
         self._tools_discard_noted = False
-        # False once the local recognizer stream DIED. It is the only grounding
-        # source this transport has, so losing it must degrade to the same
-        # fail-open behaviour as a host that never had one — otherwise the gate
-        # refuses and interrupts every remaining answer of the call.
+        # False while the local recognizer stream is DEAD. It is the only
+        # grounding source this transport has, so losing it must degrade to
+        # the same fail-open (now bounded) behaviour as a host that never had
+        # one — otherwise the gate refuses and interrupts every remaining
+        # answer of the call. No longer a one-way latch: a successful bounded
+        # rebuild (see ``_RECOGNIZER_REBUILDS_MAX``) sets it back to True.
         self._local_grounding_ok = True
         # Session-lifetime counters for the end-of-session postmortem event.
         # Bumped at the same sites that already log the condition; the session
@@ -688,9 +810,7 @@ class _CodexSubscriptionRealtimeSession:
         endpoint_diag = getattr(self._audio_endpoint, "diagnostics", None)
         if callable(endpoint_diag):
             try:
-                merged.update(
-                    {k: int(v) for k, v in endpoint_diag().items()}
-                )
+                merged.update({k: int(v) for k, v in endpoint_diag().items()})
             except Exception:  # noqa: BLE001 — diagnostics never break teardown
                 log.debug("audio endpoint diagnostics unavailable", exc_info=True)
         return merged
@@ -837,9 +957,21 @@ class _CodexSubscriptionRealtimeSession:
         # (``_begin_response`` is not a generator and cannot yield).
         self_dialogue_detected = False
         grounding_loss_reported = False
+        # Bounded mid-call recognizer rebuild (see _RECOGNIZER_REBUILDS_MAX):
+        # attempts started so far, and the in-flight background build. The
+        # build runs off this loop — its backoff sleep inside the receive
+        # loop would stall audio pumping for its whole duration.
+        recognizer_rebuilds_started = 0
+        rebuild_task: asyncio.Task[None] | None = None
         assistant_audio = bytearray()
         assistant_audio_active = False
         assistant_transcript_seen = False
+        # Exactly one terminal STT pass is allowed per provider response. A
+        # failed pass must not be repeated by each competing local boundary
+        # (quiescence, sequence drain, terminal item): native inference may
+        # still be finishing in a worker thread, and retrying it here is the
+        # AP-24 wedge class.
+        terminal_recovery_attempted = False
         # Early shadow recovery (see _OUTPUT_EARLY_RECOVERY_AFTER_S): when the
         # response's first audible frame arrived, when recovery last finished,
         # and whether this response already produced its one shadow delta.
@@ -850,6 +982,7 @@ class _CodexSubscriptionRealtimeSession:
         first_audible_at = 0.0
         early_recovery_at = 0.0
         early_shadow_done = False
+        shadow_attempts = 0
         shadow_task: asyncio.Task[None] | None = None
         # True between the local endpointer's speech-start and its final (or
         # failed/discarded) transcript: while the user is mid-utterance the
@@ -878,6 +1011,13 @@ class _CodexSubscriptionRealtimeSession:
         # answer was then refused as ungrounded).
         first_user_final_seen = False
         call_response_index = 0
+        # Local, monotone response identity. ChatGPT-Live media can precede
+        # its sideband turn/started id, so the remote turn id cannot safely
+        # pair early PCM with later transcript. This identity is allocated at
+        # the first observed response evidence and rides audio, transcript and
+        # the terminal boundary together.
+        response_identity = ""
+        sequence_boundary_response_id = ""
         # A discarded utterance's still-open response window (see
         # _DISCARDED_UTTERANCE_GRACE_S): the generation it covers and when
         # the discard happened.
@@ -941,8 +1081,9 @@ class _CodexSubscriptionRealtimeSession:
                 # source, so simply returning left the gate refusing and
                 # interrupting every remaining answer of the call — a silent
                 # mute that looked like the provider had stopped talking
-                # (AP-30). The consumer degrades to the same fail-open path a
-                # host without any recognizer takes, and says so out loud.
+                # (AP-30). The consumer attempts a bounded rebuild first and
+                # only then degrades to the bounded fail-open path a host
+                # without any recognizer takes, saying so out loud.
                 await queue.put(("local_input_failed", exc))
 
         async def _pump_media_audio() -> None:
@@ -970,13 +1111,15 @@ class _CodexSubscriptionRealtimeSession:
         def _reset_assistant_capture() -> None:
             nonlocal assistant_audio_active, assistant_transcript_seen
             nonlocal first_audible_at, early_recovery_at, early_shadow_done
-            nonlocal shadow_task
+            nonlocal shadow_attempts, shadow_task, terminal_recovery_attempted
             assistant_audio.clear()
             assistant_audio_active = False
             assistant_transcript_seen = False
             first_audible_at = 0.0
             early_recovery_at = 0.0
             early_shadow_done = False
+            shadow_attempts = 0
+            terminal_recovery_attempted = False
             # A still-running attempt belongs to the response that just
             # ended; letting it run would only suppress the NEXT response's
             # attempt through the single-flight handle until it delivered a
@@ -993,12 +1136,9 @@ class _CodexSubscriptionRealtimeSession:
                 return
             if (
                 discarded_generation
-                and asyncio.get_running_loop().time() - discarded_at
-                > _DISCARDED_UTTERANCE_GRACE_S
+                and asyncio.get_running_loop().time() - discarded_at > _DISCARDED_UTTERANCE_GRACE_S
             ):
-                consumed_input_generation = max(
-                    consumed_input_generation, discarded_generation
-                )
+                consumed_input_generation = max(consumed_input_generation, discarded_generation)
                 discarded_generation = 0
 
         def _fresh_local_input_exists() -> bool:
@@ -1067,6 +1207,7 @@ class _CodexSubscriptionRealtimeSession:
             nonlocal sequence_boundary_pending
             nonlocal response_grant, call_response_index
             nonlocal silent_line_noted
+            nonlocal response_identity, sequence_boundary_response_id
             _expire_discarded_grace()
             if response_open:
                 if response_allowed or not _rejected_response_is_stale():
@@ -1093,6 +1234,7 @@ class _CodexSubscriptionRealtimeSession:
                     self._diag["response_splices"] += 1
                     if not completion_emitted:
                         sequence_boundary_pending = True
+                        sequence_boundary_response_id = response_identity
                     log.info(
                         "Codex subscription realtime opened a new response "
                         "%d ms after the previous response's audio "
@@ -1108,14 +1250,12 @@ class _CodexSubscriptionRealtimeSession:
             response_rejected_at = 0.0
             active_response_generation = 0
             call_response_index += 1
+            response_identity = f"{self._thread_id}:response:{call_response_index}"
             response_grant = ""
             if not self._local_grounding_active():
                 response_allowed = True
                 response_grant = "failopen"
-            elif (
-                local_input_generation > consumed_input_generation
-                and first_user_final_seen
-            ):
+            elif local_input_generation > consumed_input_generation and first_user_final_seen:
                 # NOTHING unsolicited ever plays before the call's first user
                 # FINAL. The bounded-greeting compromise this replaces lost
                 # its live test (maintainer, 2026-08-08): the greeting's
@@ -1295,14 +1435,19 @@ class _CodexSubscriptionRealtimeSession:
             response start clean.
             """
             nonlocal sequence_boundary_pending, completion_emitted
+            nonlocal sequence_boundary_response_id
             if not sequence_boundary_pending:
                 return []
             sequence_boundary_pending = False
+            boundary_response_id = sequence_boundary_response_id
+            sequence_boundary_response_id = ""
             events: list[_ProviderEvent] = []
             missing_input = _missing_input_boundary()
             if missing_input is not None:
                 events.append(missing_input)
-            recovered = await _recover_output_transcript()
+            recovered = await _recover_output_transcript(
+                response_id=boundary_response_id
+            )
             if recovered is not None:
                 events.append(recovered)
             self._diag["sequenced_boundaries"] += 1
@@ -1310,7 +1455,12 @@ class _CodexSubscriptionRealtimeSession:
                 "Codex subscription realtime sequenced a back-to-back "
                 "response behind a local turn boundary"
             )
-            events.append(_ProviderEvent(type="turn_complete"))
+            events.append(
+                _ProviderEvent(
+                    type="turn_complete",
+                    provider_turn_id=boundary_response_id or None,
+                )
+            )
             _reset_assistant_capture()
             self._assistant_delta_text = ""
             # The boundary belongs to the OLD response; the one just opened
@@ -1354,13 +1504,22 @@ class _CodexSubscriptionRealtimeSession:
                 < _UNGROUNDED_RESPONSE_GRACE_S
             )
 
-        async def _recover_output_transcript() -> _ProviderEvent | None:
-            """Recover text for provider audio whose transcript went missing."""
-            nonlocal assistant_transcript_seen
-            if assistant_transcript_seen or not assistant_audio:
+        async def _recover_output_transcript(
+            *, response_id: str = ""
+        ) -> _ProviderEvent | None:
+            """Run the one terminal STT pass for a missing transcript."""
+            nonlocal assistant_transcript_seen, terminal_recovery_attempted
+            if (
+                assistant_transcript_seen
+                or terminal_recovery_attempted
+                or not assistant_audio
+            ):
                 return None
+            terminal_recovery_attempted = True
+            self._diag["output_terminal_recovery_attempts"] += 1
             recover = getattr(self._input_transcriber, "transcribe_audio", None)
             if not callable(recover):
+                self._diag["output_transcript_recovery_failures"] += 1
                 return None
             try:
                 # No outer wait_for: the recognizer bounds itself in proportion
@@ -1373,15 +1532,18 @@ class _CodexSubscriptionRealtimeSession:
                     await recover(bytes(assistant_audio), sample_rate=_OUTPUT_RATE) or ""
                 ).strip()
             except Exception:  # noqa: BLE001 - the fail-closed gate remains active
+                self._diag["output_transcript_recovery_failures"] += 1
                 log.warning(
                     "Codex subscription output transcript recovery failed",
                     exc_info=True,
                 )
                 return None
             if not text:
+                self._diag["output_transcript_recovery_failures"] += 1
                 log.warning("Codex subscription output transcript recovery returned no text")
                 return None
             assistant_transcript_seen = True
+            self._diag["output_terminal_recovery_successes"] += 1
             log.info(
                 "Recovered a missing Codex subscription output transcript "
                 "from %d bytes of provider audio",
@@ -1391,6 +1553,7 @@ class _CodexSubscriptionRealtimeSession:
                 type="output_transcript_delta",
                 text=text,
                 is_final=True,
+                provider_turn_id=response_id or response_identity or None,
             )
 
         async def _recover_shadow_transcript(head: bytes) -> str:
@@ -1411,9 +1574,7 @@ class _CodexSubscriptionRealtimeSession:
             if not callable(recover):
                 return ""
             try:
-                return str(
-                    await recover(head, sample_rate=_OUTPUT_RATE) or ""
-                ).strip()
+                return str(await recover(head, sample_rate=_OUTPUT_RATE) or "").strip()
             except Exception:  # noqa: BLE001 - the fail-closed hold simply continues
                 log.debug(
                     "Codex subscription early shadow recovery skipped",
@@ -1421,7 +1582,11 @@ class _CodexSubscriptionRealtimeSession:
                 )
                 return ""
 
-        async def _run_shadow_recovery(anchor: float, head: bytes) -> None:
+        async def _run_shadow_recovery(
+            anchor: float,
+            response_id: str,
+            head: bytes,
+        ) -> None:
             """Background shadow attempt; the result rides the ordinary queue.
 
             The anchor is the response's ``first_audible_at`` at task start:
@@ -1429,7 +1594,59 @@ class _CodexSubscriptionRealtimeSession:
             that has since closed and must never vet a different one's audio.
             """
             text = await _recover_shadow_transcript(head)
-            await queue.put(("shadow_transcript", (anchor, text)))
+            await queue.put(("shadow_transcript", (anchor, response_id, text)))
+
+        async def _run_recognizer_rebuild(attempt: int) -> None:
+            """Build a replacement recognizer off the receive loop.
+
+            The linear backoff spaces attempts so an engine that dies on
+            start cannot hot-loop; the result rides the ordinary queue
+            because this loop owns every piece of grounding state. A failed
+            build delivers ``None`` — a counted verdict, never a crash.
+            """
+            await asyncio.sleep(_RECOGNIZER_REBUILD_BACKOFF_S * attempt)
+            # Read once: the scheduler only starts this task with a factory
+            # present, and the local name keeps that invariant checkable.
+            factory = self._input_transcriber_factory
+            replacement: Any = None
+            try:
+                replacement = factory() if factory is not None else None
+                if replacement is not None:
+                    await _warm_input_transcriber(replacement)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - the exhaustion path reports it
+                if replacement is not None:
+                    with suppress(Exception):
+                        await replacement.close()
+                replacement = None
+                log.warning(
+                    "Codex subscription recognizer rebuild attempt %d failed",
+                    attempt,
+                    exc_info=True,
+                )
+            await queue.put(("recognizer_rebuilt", replacement))
+
+        def _grounding_unavailable_notice(detail: str) -> _ProviderEvent:
+            """The ONE honest surface notice for an ungrounded call (AP-30).
+
+            Same shape as every other user-facing degradation this adapter
+            reports: a recoverable error event the session surfaces without
+            ending the call. The caller guards it with
+            ``grounding_loss_reported`` so a call degrades out loud exactly
+            once, whichever path got it there.
+            """
+            self._diag["grounding_unavailable_notices"] += 1
+            return _ProviderEvent(
+                type="error",
+                error=(
+                    f"Local speech recognition is unavailable: {detail} "
+                    "The assistant keeps answering, but every automatic "
+                    f"response is bounded to {_OPENING_RESPONSE_MAX_S:.0f}s "
+                    "and Jarvis-side transcript features stay idle."
+                ),
+                recoverable=True,
+            )
 
         def _missing_input_boundary() -> _ProviderEvent | None:
             """One placeholder per turn when neither source produced text.
@@ -1509,6 +1726,16 @@ class _CodexSubscriptionRealtimeSession:
             name=f"codex-realtime-media-{self._thread_id}",
         )
         try:
+            if self._input_transcriber is None and self._grounding_unavailable_reason:
+                # The recognizer BUILD failed, so the whole call runs in the
+                # bounded ungrounded regime and there is nothing to rebuild.
+                # Degradation is announced at session start, not buried in a
+                # build-time log line: a silently disarmed grounding gate is
+                # THE reason past self-talk fixes did not stick (AP-30). An
+                # injected recognizer of None without a reason is a caller's
+                # explicit choice and stays silent, exactly as before.
+                grounding_loss_reported = True
+                yield _grounding_unavailable_notice(f"{self._grounding_unavailable_reason}.")
             while True:
                 queue_kind, payload = await queue.get()
                 if self_dialogue_detected:
@@ -1523,7 +1750,10 @@ class _CodexSubscriptionRealtimeSession:
                         recoverable=True,
                         reconnect_advised=True,
                     )
-                    yield _ProviderEvent(type="turn_complete")
+                    yield _ProviderEvent(
+                        type="turn_complete",
+                        provider_turn_id=response_identity or None,
+                    )
                     return
                 if _interrupt_barrier_moved():
                     # Barge-in. ChatGPT-Live keeps streaming the rest of the
@@ -1563,16 +1793,18 @@ class _CodexSubscriptionRealtimeSession:
                 if queue_kind == "shadow_transcript":
                     shadow_task = None
                     early_recovery_at = asyncio.get_running_loop().time()
-                    anchor, shadow_text = payload
+                    anchor, shadow_response_id, shadow_text = payload
                     if (
                         shadow_text
                         and anchor == first_audible_at
+                        and shadow_response_id == response_identity
                         and not early_shadow_done
                         and not assistant_transcript_seen
                         and response_open
                         and response_allowed
                     ):
                         early_shadow_done = True
+                        self._diag["output_shadow_recovery_successes"] += 1
                         log.info(
                             "Codex subscription realtime released the opening "
                             "hold with a locally recovered shadow transcript "
@@ -1584,18 +1816,20 @@ class _CodexSubscriptionRealtimeSession:
                             text=shadow_text,
                             is_final=False,
                             shadow=True,
+                            provider_turn_id=shadow_response_id or None,
                         )
                     elif shadow_text:
-                        log.debug(
-                            "Discarding a stale or superseded shadow transcript"
-                        )
+                        log.debug("Discarding a stale or superseded shadow transcript")
+                    elif shadow_attempts >= _OUTPUT_EARLY_RECOVERY_MAX_ATTEMPTS:
+                        self._diag["output_shadow_recovery_exhausted"] += 1
                     continue
                 if queue_kind == "local_input_failed":
-                    # The ONLY grounding source died mid-call. Degrade to the
-                    # same fail-open behaviour a host without any recognizer
-                    # has (``_local_grounding_active``), or the gate would
-                    # refuse and interrupt every remaining answer — a mute the
-                    # user cannot distinguish from a dead provider.
+                    # The ONLY grounding source died mid-call. Until a
+                    # rebuild lands, degrade to the same bounded fail-open
+                    # behaviour a host without any recognizer has
+                    # (``_local_grounding_active``), or the gate would refuse
+                    # and interrupt every remaining answer — a mute the user
+                    # cannot distinguish from a dead provider.
                     if not self._local_grounding_ok:
                         continue
                     self._local_grounding_ok = False
@@ -1605,24 +1839,101 @@ class _CodexSubscriptionRealtimeSession:
                     # work even when the event stream died).
                     user_utterance_open = False
                     _close_response(spent=False)
+                    if (
+                        self._input_transcriber_factory is not None
+                        and recognizer_rebuilds_started < _RECOGNIZER_REBUILDS_MAX
+                        and rebuild_task is None
+                    ):
+                        # Not the one-way latch this used to be: the process-
+                        # wide STT cache makes a rebuild cheap, so a transient
+                        # stream death costs seconds of bounded fail-open
+                        # instead of the whole call's grounding.
+                        recognizer_rebuilds_started += 1
+                        self._diag["recognizer_rebuild_attempts"] += 1
+                        log.warning(
+                            "Local input transcription stream failed; "
+                            "rebuilding the recognizer (attempt %d of %d) — "
+                            "the grounding gate fails OPEN, bounded, until "
+                            "it returns",
+                            recognizer_rebuilds_started,
+                            _RECOGNIZER_REBUILDS_MAX,
+                            exc_info=payload if isinstance(payload, BaseException) else None,
+                        )
+                        rebuild_task = asyncio.create_task(
+                            _run_recognizer_rebuild(recognizer_rebuilds_started),
+                            name=f"codex-recognizer-rebuild-{self._thread_id}",
+                        )
+                        continue
                     log.warning(
-                        "Local input transcription stream failed; the Codex "
-                        "subscription grounding gate now fails OPEN for the "
-                        "rest of this call",
+                        "Local input transcription stream failed with no "
+                        "rebuild left; the Codex subscription grounding gate "
+                        "now fails OPEN (bounded) for the rest of this call",
                         exc_info=payload if isinstance(payload, BaseException) else None,
                     )
                     if not grounding_loss_reported:
                         grounding_loss_reported = True
-                        yield _ProviderEvent(
-                            type="error",
-                            error=(
-                                "Local speech recognition stopped during this call: "
-                                f"{type(payload).__name__}: {_safe_error(payload)}. "
-                                "The assistant keeps answering, but Jarvis-side "
-                                "transcript features stay idle."
-                            ),
-                            recoverable=True,
+                        yield _grounding_unavailable_notice(
+                            "local speech recognition stopped during this "
+                            f"call: {type(payload).__name__}: "
+                            f"{_safe_error(payload)}."
                         )
+                    continue
+                if queue_kind == "recognizer_rebuilt":
+                    rebuild_task = None
+                    replacement = payload
+                    if self._closed and replacement is not None:
+                        with suppress(Exception):
+                            await replacement.close()
+                        continue
+                    if replacement is None:
+                        if (
+                            self._input_transcriber_factory is not None
+                            and recognizer_rebuilds_started < _RECOGNIZER_REBUILDS_MAX
+                        ):
+                            # The dead pump delivers no further failure event,
+                            # so the next attempt starts here, not in the
+                            # failure handler.
+                            recognizer_rebuilds_started += 1
+                            self._diag["recognizer_rebuild_attempts"] += 1
+                            rebuild_task = asyncio.create_task(
+                                _run_recognizer_rebuild(recognizer_rebuilds_started),
+                                name=(f"codex-recognizer-rebuild-{self._thread_id}"),
+                            )
+                            continue
+                        log.warning(
+                            "Codex subscription exhausted its %d recognizer "
+                            "rebuild(s); the grounding gate stays OPEN "
+                            "(bounded) for the rest of this call",
+                            _RECOGNIZER_REBUILDS_MAX,
+                        )
+                        if not grounding_loss_reported:
+                            grounding_loss_reported = True
+                            yield _grounding_unavailable_notice(
+                                "local speech recognition could not be "
+                                "rebuilt after it stopped mid-call."
+                            )
+                        continue
+                    # Success: the new recognizer takes over grounding and
+                    # the local-input pump restarts on it. The old instance
+                    # is closed best-effort — its stream is already dead and
+                    # the shared STT backend outlives any one instance.
+                    retired = self._input_transcriber
+                    self._input_transcriber = replacement
+                    self._local_grounding_ok = True
+                    self._diag["recognizer_rebuilds_restored"] += 1
+                    if retired is not None:
+                        with suppress(Exception):
+                            await retired.close()
+                    input_task = asyncio.create_task(
+                        _pump_local_input(),
+                        name=f"codex-realtime-local-input-{self._thread_id}",
+                    )
+                    log.info(
+                        "Codex subscription restored local grounding with a "
+                        "rebuilt recognizer (attempt %d of %d)",
+                        recognizer_rebuilds_started,
+                        _RECOGNIZER_REBUILDS_MAX,
+                    )
                     continue
                 if queue_kind == "local_input":
                     if payload.kind == _SPEECH_STARTED:
@@ -1675,7 +1986,10 @@ class _CodexSubscriptionRealtimeSession:
                         )
                         if not response_open and not completion_emitted:
                             completion_emitted = True
-                            yield _ProviderEvent(type="turn_complete")
+                            yield _ProviderEvent(
+                                type="turn_complete",
+                                provider_turn_id=response_identity or None,
+                            )
                     elif payload.kind == _TRANSCRIPT_FAILED:
                         # The local recognizer could not deliver this
                         # utterance. A turn the user really spoke must not
@@ -1737,9 +2051,7 @@ class _CodexSubscriptionRealtimeSession:
                             type="input_transcript",
                             text=payload.text,
                             is_final=payload.is_final,
-                            voiced_ms=int(
-                                getattr(payload, "voiced_ms", 0) or 0
-                            ),
+                            voiced_ms=int(getattr(payload, "voiced_ms", 0) or 0),
                         )
                     continue
                 if queue_kind == "media_audio":
@@ -1796,33 +2108,36 @@ class _CodexSubscriptionRealtimeSession:
                         assistant_audio.extend(pcm[:remaining])
                     if audible and assistant_audio_active and not first_audible_at:
                         first_audible_at = asyncio.get_running_loop().time()
-                    if (
-                        response_allowed
-                        and first_audible_at
-                        and not first_user_final_seen
-                        and response_grant == "failopen"
-                        and call_response_index == 1
-                    ):
-                        # A recognizer-less host cannot refuse its opener (no
-                        # grounding exists), so its FIRST response keeps a
-                        # coarse cap against the demo-monologue class. On
-                        # grounded hosts the opener never plays at all.
-                        opening_age = (
-                            asyncio.get_running_loop().time() - first_audible_at
-                        )
+                    if response_allowed and first_audible_at and response_grant == "failopen":
+                        # An ungrounded host cannot refuse ANY response (no
+                        # grounding exists), so EVERY failopen response keeps
+                        # the coarse cap — not just the opener. Bounding only
+                        # response #1 left the far end unbounded from response
+                        # #2 on, which is where the echo-driven two-AIs loop
+                        # ran unopposed whenever the recognizer was absent or
+                        # dead (see _OPENING_RESPONSE_MAX_S). On grounded
+                        # hosts no failopen grant exists at all.
+                        opening_age = asyncio.get_running_loop().time() - first_audible_at
                         if opening_age > _OPENING_RESPONSE_MAX_S:
-                            self._diag["opening_responses_bounded"] += 1
+                            if call_response_index == 1 and not first_user_final_seen:
+                                # Keep the opener's dedicated postmortem key:
+                                # a bounded OPENING still means "monologue
+                                # before any question", a different diagnosis
+                                # than a bounded mid-call response.
+                                self._diag["opening_responses_bounded"] += 1
+                            else:
+                                self._diag["ungrounded_responses_bounded"] += 1
                             log.warning(
-                                "Codex subscription bounded an opening "
-                                "response at %.1fs - no user question exists "
-                                "yet (grant=%s)",
+                                "Codex subscription bounded an ungrounded "
+                                "response at %.1fs - no local grounding "
+                                "exists to judge it (grant=%s, response=%d)",
                                 opening_age,
                                 response_grant,
+                                call_response_index,
                             )
                             await self._interrupt_active_codex_turn()
                             interrupt_grace_until = (
-                                asyncio.get_running_loop().time()
-                                + _POST_INTERRUPT_GRACE_S
+                                asyncio.get_running_loop().time() + _POST_INTERRUPT_GRACE_S
                             )
                             _cancel_completion()
                             completion_emitted = True
@@ -1840,6 +2155,8 @@ class _CodexSubscriptionRealtimeSession:
                         and assistant_audio
                         and shadow_task is None
                         and not user_utterance_open
+                        and shadow_attempts
+                        < _OUTPUT_EARLY_RECOVERY_MAX_ATTEMPTS
                     ):
                         # The session's scrub gate is holding every one of
                         # these chunks fail-closed until SOME transcript
@@ -1853,14 +2170,17 @@ class _CodexSubscriptionRealtimeSession:
                         now = asyncio.get_running_loop().time()
                         if (
                             now - first_audible_at >= _OUTPUT_EARLY_RECOVERY_AFTER_S
-                            and now - early_recovery_at
-                            >= _OUTPUT_EARLY_RECOVERY_RETRY_S
+                            and now - early_recovery_at >= _OUTPUT_EARLY_RECOVERY_RETRY_S
                         ):
-                            head = bytes(
-                                assistant_audio[:_SHADOW_RECOVERY_MAX_BYTES]
-                            )
+                            head = bytes(assistant_audio[:_SHADOW_RECOVERY_MAX_BYTES])
+                            shadow_attempts += 1
+                            self._diag["output_shadow_recovery_attempts"] += 1
                             shadow_task = asyncio.create_task(
-                                _run_shadow_recovery(first_audible_at, head),
+                                _run_shadow_recovery(
+                                    first_audible_at,
+                                    response_identity,
+                                    head,
+                                ),
                                 name=f"codex-shadow-recovery-{self._thread_id}",
                             )
                     yield _ProviderEvent(
@@ -1870,6 +2190,7 @@ class _CodexSubscriptionRealtimeSession:
                             sample_rate=_OUTPUT_RATE,
                             channels=1,
                         ),
+                        provider_turn_id=response_identity or None,
                     )
                     continue
                 if queue_kind == "completion":
@@ -1880,12 +2201,17 @@ class _CodexSubscriptionRealtimeSession:
                         missing_input = _missing_input_boundary()
                         if missing_input is not None:
                             yield missing_input
-                        recovered = await _recover_output_transcript()
+                        recovered = await _recover_output_transcript(
+                            response_id=response_identity
+                        )
                         if recovered is not None:
                             yield recovered
                         completion_emitted = True
                         self._diag["quiescence_boundary_turns"] += 1
-                        yield _ProviderEvent(type="turn_complete")
+                        yield _ProviderEvent(
+                            type="turn_complete",
+                            provider_turn_id=response_identity or None,
+                        )
                         _reset_assistant_capture()
                         _finish_response()
                     if stream_ended:
@@ -2050,6 +2376,7 @@ class _CodexSubscriptionRealtimeSession:
                             type="output_transcript_delta",
                             text=delta,
                             is_final=False,
+                            provider_turn_id=response_identity or None,
                         )
                     continue
 
@@ -2104,10 +2431,7 @@ class _CodexSubscriptionRealtimeSession:
                                 _close_response(spent=True)
                                 continue
                             ungrounded_final_captions += 1
-                            if (
-                                ungrounded_final_captions
-                                >= _UNGROUNDED_CAPTIONS_BEFORE_REBUILD
-                            ):
+                            if ungrounded_final_captions >= _UNGROUNDED_CAPTIONS_BEFORE_REBUILD:
                                 diagnostic = (
                                     "Codex subscription detected %d consecutive "
                                     "automatic server turns without locally "
@@ -2127,7 +2451,10 @@ class _CodexSubscriptionRealtimeSession:
                                     recoverable=True,
                                     reconnect_advised=True,
                                 )
-                                yield _ProviderEvent(type="turn_complete")
+                                yield _ProviderEvent(
+                                    type="turn_complete",
+                                    provider_turn_id=response_identity or None,
+                                )
                                 return
                             self._diag["ungrounded_captions_dropped"] += 1
                             log.info(
@@ -2181,6 +2508,7 @@ class _CodexSubscriptionRealtimeSession:
                                 type="output_transcript_delta",
                                 text=suffix,
                                 is_final=True,
+                                provider_turn_id=response_identity or None,
                             )
                         self._assistant_delta_text = ""
                         # ChatGPT-Live emits this per transcript PART, not per
@@ -2243,6 +2571,7 @@ class _CodexSubscriptionRealtimeSession:
                             sample_rate=sample_rate,
                             channels=channels,
                         ),
+                        provider_turn_id=response_identity or None,
                     )
                     continue
 
@@ -2322,7 +2651,9 @@ class _CodexSubscriptionRealtimeSession:
                             missing_input = _missing_input_boundary()
                             if missing_input is not None:
                                 yield missing_input
-                            recovered = await _recover_output_transcript()
+                            recovered = await _recover_output_transcript(
+                                response_id=response_identity
+                            )
                             if recovered is not None:
                                 yield recovered
                             completion_emitted = True
@@ -2332,7 +2663,10 @@ class _CodexSubscriptionRealtimeSession:
                                 item_type,
                                 self.realtime_version or "unknown",
                             )
-                            yield _ProviderEvent(type="turn_complete")
+                            yield _ProviderEvent(
+                                type="turn_complete",
+                                provider_turn_id=response_identity or None,
+                            )
                             _reset_assistant_capture()
                         # Protocol proof that the response ended: the strongest
                         # boundary there is, so the entitlement retires here.
@@ -2401,11 +2735,14 @@ class _CodexSubscriptionRealtimeSession:
                     task.cancel()
             if shadow_task is not None and not shadow_task.done():
                 shadow_task.cancel()
+            if rebuild_task is not None and not rebuild_task.done():
+                rebuild_task.cancel()
             await asyncio.gather(
                 pump_task,
                 media_task,
                 input_task,
                 *((shadow_task,) if shadow_task is not None else ()),
+                *((rebuild_task,) if rebuild_task is not None else ()),
                 *tuple(timer_tasks),
                 return_exceptions=True,
             )
@@ -2518,8 +2855,7 @@ class _CodexSubscriptionRealtimeSession:
             sections.append(
                 "Current-turn instructions — these REPLACE every earlier "
                 "instruction about how to handle the current turn; apply "
-                "them silently, never acknowledge them aloud:\n"
-                + directive
+                "them silently, never acknowledge them aloud:\n" + directive
             )
         if standing:
             # Re-asserted EVERY delivery, unchanged or not: three live calls
@@ -2686,6 +3022,15 @@ class CodexSubscriptionRealtimeProvider:
     # WebRTC — measured 15-25s on a mid-range desktop. The shared 12s ceiling
     # beheaded every cold call into a pipeline fallback (log 2026-08-01).
     handshake_budget_s = 45.0
+    # A delegate readback on this transport is spoken by ChatGPT-Live, whose
+    # audio measurably lags its own start: the session's scrub gate held a
+    # response's first audible frame 7.4 s (live 2026-08-05 20:42), while the
+    # shared delegate-readback floor is 2.5 s. Undeclared, the watchdog fired
+    # first every time the far end was slow — the surface TTS took the turn
+    # in the wrong voice, or (with no realtime-scoped surface TTS) the real
+    # audio answer was withheld outright and the user heard nothing. Declared
+    # budget, same AP-21 doctrine as handshake_budget_s.
+    readback_render_budget_s = 12.0
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
     credential_candidates: tuple[tuple[str, str | None], ...] = ()
@@ -2805,7 +3150,7 @@ class CodexSubscriptionRealtimeProvider:
         # Built and primed ONCE for both attempts: the recognizer is pure
         # local state, and rebuilding + re-warming it on the STUN retry paid
         # seconds for nothing.
-        input_transcriber = self._build_input_transcriber(cfg)
+        input_transcriber, grounding_unavailable_reason = self._build_input_transcriber_outcome(cfg)
         warm_task: asyncio.Task[Any] | None = None
         if callable(getattr(input_transcriber, "warm", None)):
             warm_task = asyncio.create_task(
@@ -2820,6 +3165,7 @@ class CodexSubscriptionRealtimeProvider:
                         None if ice_factory is None else ice_factory(),
                         input_transcriber=input_transcriber,
                         input_transcriber_warm_task=warm_task,
+                        grounding_unavailable_reason=grounding_unavailable_reason,
                         # The STUN retry may ride the audit that passed seconds
                         # ago on this very open; a first attempt never does.
                         ride_recent_audit=index > 0,
@@ -2847,20 +3193,31 @@ class CodexSubscriptionRealtimeProvider:
             await _cancel_background_task(warm_task)
 
     def _build_input_transcriber(self, cfg: Any = None) -> Any:
-        """Local user-speech recognition, or ``None`` when unavailable.
+        """Local user-speech recognition, or ``None`` when unavailable."""
+        transcriber, _reason = self._build_input_transcriber_outcome(cfg)
+        return transcriber
+
+    def _build_input_transcriber_outcome(self, cfg: Any = None) -> tuple[Any, str]:
+        """(recognizer or ``None``, non-empty degradation reason on failure).
 
         ChatGPT-Live also guesses at user speech, but local energy-gated STT is
         authoritative. Without it silence/echo captions could become commands,
         while transcript-driven Jarvis integrations would have no grounded text.
+        A BUILD failure therefore returns its reason alongside the ``None`` so
+        the session can announce the degraded (bounded fail-open) call on the
+        surface instead of only in this log (AP-30). An injected factory owns
+        its own construction and degradation story — a ``None`` from it is the
+        caller's explicit choice, never a failure to report.
 
         The session's recognition language is handed over when the recognizer
         accepts it. Probed rather than assumed (AP-21): an older recognizer
         without the parameter keeps working on its own configured language
         instead of the whole call losing its only grounding source over a
-        keyword argument.
+        keyword argument. The in-tree recognizer accepts ``language`` since
+        2026-08-08, so the probe protects out-of-tree modules only.
         """
         if self._input_transcriber_factory is not None:
-            return self._input_transcriber_factory()
+            return self._input_transcriber_factory(), ""
         input_language = _normalized_locale(getattr(cfg, "input_language", ""))
         if input_language == "auto":
             input_language = ""
@@ -2868,22 +3225,36 @@ class CodexSubscriptionRealtimeProvider:
             module = importlib.import_module("jarvis.realtime.input_transcription")
             if input_language:
                 try:
-                    return module.LocalInputTranscriber(
-                        sample_rate=_INPUT_RATE, language=input_language
+                    return (
+                        module.LocalInputTranscriber(
+                            sample_rate=_INPUT_RATE, language=input_language
+                        ),
+                        "",
                     )
                 except TypeError:
-                    log.debug(
-                        "Local input transcription does not accept a language "
-                        "yet; using its configured one"
+                    # One WARNING per process, DEBUG afterwards: the dropped
+                    # capability repeats on every call, but swallowing it at
+                    # DEBUG is how the un-pinned session language went
+                    # unnoticed while the recognizer heard the wrong
+                    # language (AP-30).
+                    global _language_kwarg_rejected_warned
+                    already_warned = _language_kwarg_rejected_warned
+                    _language_kwarg_rejected_warned = True
+                    log.log(
+                        logging.DEBUG if already_warned else logging.WARNING,
+                        "Local input transcription does not accept a session "
+                        "language; the call keeps the recognizer's configured "
+                        "language instead of %r",
+                        input_language,
                     )
-            return module.LocalInputTranscriber(sample_rate=_INPUT_RATE)
-        except Exception:  # noqa: BLE001 - the call still works, just deaf
+            return module.LocalInputTranscriber(sample_rate=_INPUT_RATE), ""
+        except Exception as exc:  # noqa: BLE001 - the call still works, just deaf
             log.warning(
                 "Local input transcription could not be started; the voice "
                 "answers but Jarvis-side transcript features stay idle",
                 exc_info=True,
             )
-            return None
+            return None, f"{type(exc).__name__}: {_safe_error(exc)}"
 
     async def _open_session_once(
         self,
@@ -2892,6 +3263,7 @@ class CodexSubscriptionRealtimeProvider:
         *,
         input_transcriber: Any = None,
         input_transcriber_warm_task: asyncio.Task[Any] | None = None,
+        grounding_unavailable_reason: str = "",
         ride_recent_audit: bool = False,
     ) -> _CodexSubscriptionRealtimeSession:
         # Jarvis owns the media path in-process. The UI could only ever broker
@@ -2915,12 +3287,8 @@ class CodexSubscriptionRealtimeProvider:
             if self._audio_endpoint_factory is not None:
                 audio_endpoint = self._audio_endpoint_factory(ice_servers)
             else:
-                transport_module = importlib.import_module(
-                    "jarvis.realtime.webrtc_transport"
-                )
-                audio_endpoint = transport_module.RealtimeWebRtcAudioEndpoint(
-                    ice_servers
-                )
+                transport_module = importlib.import_module("jarvis.realtime.webrtc_transport")
+                audio_endpoint = transport_module.RealtimeWebRtcAudioEndpoint(ice_servers)
             offer_started_at = time.monotonic()
             offer_task = asyncio.create_task(
                 audio_endpoint.create_offer(), name="codex-realtime-create-offer"
@@ -2928,9 +3296,7 @@ class CodexSubscriptionRealtimeProvider:
 
             if client is None:
                 app_server_module = importlib.import_module("jarvis.codex_app_server")
-                client = app_server_module.get_shared_codex_app_server(
-                    self._binary_path
-                )
+                client = app_server_module.get_shared_codex_app_server(self._binary_path)
             # ``thread_start`` lazily calls app-server ``ensure_started``. That
             # performs the authoritative capability probe plus live
             # ``account/read`` verification before accepting this thread.
@@ -2961,7 +3327,12 @@ class CodexSubscriptionRealtimeProvider:
                     configured_model,
                 )
             voice = str(getattr(cfg, "voice", "") or "").strip().lower() or _DEFAULT_VOICE
-            if voice not in _V3_VOICES:
+            # The server's live roster is authoritative when it can be read
+            # (thread/realtime/listVoices, codex-cli 0.147.0); the audited
+            # static frozenset stays the fallback for a client or server
+            # without the method. Capability-probed, never version-gated
+            # here (AP-21/AP-22) — the app-server client owns the wire.
+            if voice not in await _live_voice_roster(client, thread_id):
                 raise RuntimeError(
                     "Codex subscription realtime has an unsupported voice configured"
                 )
@@ -2969,29 +3340,39 @@ class CodexSubscriptionRealtimeProvider:
             start_prompt = _startup_prompt(
                 initial_context,
                 language=getattr(cfg, "language", ""),
-                language_is_pinned=bool(
-                    getattr(cfg, "language_is_pinned", False)
-                ),
+                language_is_pinned=bool(getattr(cfg, "language_is_pinned", False)),
             )
             initial_items = _history_initial_items(getattr(cfg, "history", ()))
             realtime_started_at = time.monotonic()
-            start = await client.realtime_start(
-                thread_id,
-                output_modality="audio",
-                offer_sdp=offer_sdp,
-                prompt="",
-                trusted_prompt=start_prompt,
-                initial_items=initial_items,
+            start_kwargs: dict[str, Any] = {
+                "output_modality": "audio",
+                "offer_sdp": offer_sdp,
+                "prompt": "",
+                "trusted_prompt": start_prompt,
+                "initial_items": initial_items,
                 # v3 (ChatGPT-Live): the server chooses the model; sending a
                 # client model is rejected with "Field `session.model` is not
                 # allowed" (verified live 2026-08-01). The dead v1 protocol
                 # answered every start with 403 since the ChatGPT-Live launch.
-                model=None,
-                voice=voice,
-                version="v3",
-                include_startup_context=False,
-                client_managed_handoffs=True,
-            )
+                "model": None,
+                "voice": voice,
+                "version": "v3",
+                "include_startup_context": False,
+                "client_managed_handoffs": True,
+            }
+            if _client_realtime_start_accepts(client, "realtime_start_instructions"):
+                # codex-cli 0.147.0's realtimeStartInstructions slot carries
+                # the startup contract as SESSION instructions instead of a
+                # trusted first prompt — injected prompt context is what the
+                # model audibly acknowledged mid-open. The client owns the
+                # wire gate and omits the field (naming it in its own log)
+                # for an older approved binary; the thread-level base and
+                # developer instructions from thread_start still hold there
+                # and the persona re-arrives with the first update_session
+                # delivery, so that degradation is honest, never silent.
+                start_kwargs["realtime_start_instructions"] = start_prompt
+                start_kwargs["trusted_prompt"] = ""
+            start = await client.realtime_start(thread_id, **start_kwargs)
             answer_sdp = str(getattr(start, "answer_sdp", "") or "").strip()
             if not answer_sdp:
                 raise RuntimeError("Codex app-server did not return a WebRTC answer SDP")
@@ -3013,6 +3394,11 @@ class CodexSubscriptionRealtimeProvider:
                     if input_transcriber is not None
                     else self._build_input_transcriber(cfg)
                 ),
+                # The bounded mid-call rebuild reuses the ordinary build path,
+                # which reattaches to the process-wide STT cache — so a
+                # rebuild costs a stream restart, not a model load.
+                input_transcriber_factory=lambda: self._build_input_transcriber(cfg),
+                grounding_unavailable_reason=grounding_unavailable_reason,
                 language=str(getattr(cfg, "language", "en") or "en"),
                 voice=voice,
                 initial_context=initial_context,

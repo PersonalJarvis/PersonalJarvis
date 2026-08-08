@@ -73,41 +73,6 @@ Concrete data models live in `skillbook.{module}.models` modules (pydantic v2).
 | Guardrails taxonomy | Enum-driven AgentDoG (Source/FailureMode/Consequence) | ADR-0008 |
 | Survey deviations | See ADR-0009 | ADR-0009 |
 
-## Repo Layout
-
-```
-skillbook/
-├── CLAUDE.md                      ← this file (binding)
-├── CHANGELOG.md                   ← per-commit log
-├── pyproject.toml                 ← uv-managed deps + pytest config
-├── conftest.py                    ← --seeds option, src on path, shared fixtures
-├── README.md                      ← short orientation
-├── docs/
-│   └── adr/                       ← architecture decision records
-│       ├── 0001-repo-layout-and-toolchain.md
-│       ├── 0002-sqlite-storage.md
-│       ├── 0003-embeddings-strategy.md
-│       ├── 0004-llm-provider-strategy.md
-│       ├── 0005-mqtt-stack.md
-│       ├── 0006-p2p-transport.md
-│       ├── 0007-reflector-sandbox.md
-│       ├── 0008-guardrails-taxonomy.md
-│       └── 0009-survey-deviations.md
-├── src/
-│   └── skillbook/
-│       ├── __init__.py
-│       ├── ace_core/              ← Generator, RecursiveReflector, Curator
-│       ├── symcon_bridge/         ← async MQTT + JSON-RPC client
-│       ├── memory_layer/          ← temporal facts + KG + skillbook persistence
-│       ├── guardrails/            ← AgentDoG + LATS
-│       └── p2p_sync/              ← CRDT OR-Set + Merkle-tree gossip
-├── tests/
-│   ├── unit/                      ← module-level unit tests
-│   ├── integration/               ← cross-module
-│   └── test_capstone.py           ← end-to-end ACE loop oracle
-└── data/                          ← per-instance SQLite files (gitignored)
-```
-
 ## Test Pyramid
 
 - **Unit tests** (`tests/unit/{module}/`): one behavior per file, mock at module boundary.

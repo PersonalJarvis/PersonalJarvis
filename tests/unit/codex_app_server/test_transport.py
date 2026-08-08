@@ -1381,7 +1381,7 @@ def _ready_capability(binary_path: str = "codex-test") -> CodexAppServerCapabili
         available=True,
         chatgpt_authenticated=True,
         binary_path=binary_path,
-        version="codex-cli 0.146.0",
+        version="codex-cli 0.147.0",
         reason="ready",
         reason_code="ready",
     )
@@ -1663,6 +1663,16 @@ def test_reaper_launch_failure_releases_guard_and_state(
         transport,
         "_read_codex_capability",
         lambda _binary: _ready_capability(binary_path="codex-test"),
+    )
+    monkeypatch.setattr(
+        transport,
+        "_trusted_codex_targets_for_platform",
+        lambda: (
+            (
+                "codex-cli 0.147.0",
+                ("test", "test", "codex-test", "trusted-test-digest"),
+            ),
+        ),
     )
     monkeypatch.setattr(
         transport,
@@ -3472,7 +3482,7 @@ def test_subscription_login_guard_covers_process_and_reaper(
             available=True,
             chatgpt_authenticated=authenticated,
             binary_path="codex-test",
-            version="codex-cli 0.146.0",
+            version="codex-cli 0.147.0",
             reason="ready",
             reason_code="ready" if authenticated else "login_required",
         )
@@ -3481,6 +3491,16 @@ def test_subscription_login_guard_covers_process_and_reaper(
         transport,
         "_read_codex_capability",
         read_capability,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_trusted_codex_targets_for_platform",
+        lambda: (
+            (
+                "codex-cli 0.147.0",
+                ("test", "test", "codex-test", "trusted-test-digest"),
+            ),
+        ),
     )
     monkeypatch.setattr(
         transport,
@@ -3534,8 +3554,18 @@ def test_subscription_login_spawn_failure_releases_guard(
             True,
             False,
             "codex-test",
-            "codex-cli 0.146.0",
+            "codex-cli 0.147.0",
             "ready",
+        ),
+    )
+    monkeypatch.setattr(
+        transport,
+        "_trusted_codex_targets_for_platform",
+        lambda: (
+            (
+                "codex-cli 0.147.0",
+                ("test", "test", "codex-test", "trusted-test-digest"),
+            ),
         ),
     )
     monkeypatch.setattr(transport, "_subscription_login_in_flight", False)

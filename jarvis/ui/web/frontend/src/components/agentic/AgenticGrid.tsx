@@ -45,6 +45,7 @@ import { useThemeValue } from "@/hooks/useTheme";
 import { useDocumentVisible } from "@/hooks/useDocumentVisible";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { PaneResizer } from "@/components/layout/PaneResizer";
+import { QuickTooltip } from "@/components/ui/tooltip";
 import { useEventStore, type VoiceState } from "@/store/events";
 import { AgenticTerminal, type PaneStatus, type SplitDirection } from "./AgenticTerminal";
 import { AgentMark } from "./AgentMark";
@@ -2550,16 +2551,25 @@ export function AgenticGrid({
                           size="sm"
                           variant="plain"
                         />
-                        <span
-                          data-testid={`chat-rail-title-${term.name}`}
-                          className={cn(
-                            "min-w-0 flex-1 truncate text-[12px]",
-                            active ? "text-foreground" : "text-foreground/75",
-                          )}
-                          title={title}
+                        {/* The app's own bubble, not `title=`: the native
+                            tooltip takes over a second to appear and is drawn
+                            in the OS's grey box — a foreign artifact over a
+                            rail whose whole point is the title. */}
+                        <QuickTooltip
+                          content={title}
+                          side="right"
+                          className="min-w-0 flex-1"
                         >
-                          {title}
-                        </span>
+                          <span
+                            data-testid={`chat-rail-title-${term.name}`}
+                            className={cn(
+                              "block truncate text-[12px]",
+                              active ? "text-foreground" : "text-foreground/75",
+                            )}
+                          >
+                            {title}
+                          </span>
+                        </QuickTooltip>
                       </span>
                       {/* Not "live". Every pane in this list is live, all day —
                           what the user is scanning for is which of them still

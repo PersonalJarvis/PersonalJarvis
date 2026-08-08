@@ -36,10 +36,21 @@ class TurnReason(StrEnum):
     LOCAL_STATE = "local_state"
     MISSION = "mission"
     PRIVATE_DATA = "private_data"
+    PUBLIC_FACT = "public_fact"
     SCREEN_CONTEXT = "screen_context"
     SKILL = "skill"
     UNCERTAIN = "uncertain"
     WORKSPACE = "workspace"
+
+
+class GroundingFailurePolicy(StrEnum):
+    """Required behavior when public-fact evidence cannot be obtained."""
+
+    HONEST_UNCERTAINTY = "honest_uncertainty"
+
+
+PUBLIC_FACT_GROUNDING_CAPABILITY = "search_web"
+PUBLIC_FACT_GROUNDING_TIMEOUT_S = 2.5
 
 
 @dataclass(frozen=True)
@@ -50,6 +61,10 @@ class TurnPlan:
     reasons: frozenset[TurnReason] = frozenset()
     required_capabilities: tuple[str, ...] = ()
     requires_evidence: bool = False
+    requires_public_fact_grounding: bool = False
+    public_fact_grounding_timeout_s: float | None = None
+    public_fact_grounding_attempt_limit: int = 0
+    grounding_failure_policy: GroundingFailurePolicy | None = None
 
     @property
     def requires_orchestrator(self) -> bool:
@@ -132,6 +147,32 @@ _CURRENT_RE = re.compile(
     r"wetter|status|verfuegbar|online|"  # i18n-allow: speech input
     r"actual\w*|ultimo\w*|hoy|manana|ahora|reciente\w*|noticias|"
     r"clima|tiempo|estado|disponible)\b"  # i18n-allow: multilingual speech-input matching data
+)
+
+# Factual question/request shapes are deliberately narrower than the general
+# lookup vocabulary. This boundary is used only when a provider declares that
+# its unaided public-fact recall is not a trustworthy source. It must not turn
+# advice, how-to requests, private data, or connected data into web searches.
+_PUBLIC_FACT_QUESTION_RE = re.compile(
+    r"^\s*(?:(?:hey|hello|hi|hallo|hola|okay|ok|jarvis|please|bitte|"
+    r"por favor)[\s,]+){0,3}(?:"
+    r"who\b|where\b|when\b|which\b|"
+    r"what\s+(?:is|are|was|were|did|does|has|have)\b|"
+    r"how\s+(?:many|much|old|long|large|big|tall|far)\b|"
+    r"wer\b|wo\b|wann\b|welch\w*\b|"
+    r"was\s+(?:ist|sind|war|waren|hat|haben|macht|machte)\b|"  # i18n-allow
+    r"wie\s+(?:viel|viele|alt|lang|gross|weit)\b|"  # i18n-allow: speech input
+    r"quien\b|donde\b|cuando\b|cual\w*\b|cuant\w*\b|"
+    r"que\s+(?:es|son|fue|eran|hizo|hace|tiene|tienen)\b"
+    r")"  # i18n-allow: multilingual speech-input matching data
+)
+_PUBLIC_FACT_REQUEST_RE = re.compile(
+    r"^\s*(?:(?:hey|hello|hi|hallo|hola|okay|ok|jarvis|please|bitte|"
+    r"por favor)[\s,]+){0,3}(?:"
+    r"tell me|give me|look up|search(?: for)?|check|find|"
+    r"sag mir|nenne mir|such\w*|pruef\w*|find\w*|"
+    r"dime|busca|revisa|encuentra"
+    r")\b"  # i18n-allow: multilingual speech-input matching data
 )
 _LOCAL_STATE_RE = re.compile(
     r"\b(?:wiki|mcp\w*|cli\w*|tool\w*|plugin\w*|connector\w*|"
@@ -523,6 +564,22 @@ def is_contextual_follow_up(text: str, context: Sequence[str]) -> bool:
     )
 
 
+def is_public_fact_question(text: str) -> bool:
+    """Return whether ``text`` asks for a concrete public-world fact.
+
+    This is a form classifier, not a freshness or provider decision. Callers
+    must still exclude private, connected, local-state, and action evidence.
+    Keeping it deterministic makes it safe on the voice hot path.
+    """
+    normalized = _normalize(text).strip()
+    if not normalized or _INSTRUCTIONAL_RE.search(normalized):
+        return False
+    return bool(
+        _PUBLIC_FACT_QUESTION_RE.search(normalized)
+        or _PUBLIC_FACT_REQUEST_RE.search(normalized)
+    )
+
+
 def plan_turn(
     text: str,
     *,
@@ -532,6 +589,7 @@ def plan_turn(
     context: Sequence[str] = (),
     skill_index: Any | None = None,
     workspace_names: Sequence[str] = (),
+    requires_public_fact_grounding: bool = False,
 ) -> TurnPlan:
     """Return the conservative shared execution plan for ``text``.
 
@@ -557,6 +615,12 @@ def plan_turn(
     passed IN rather than looked up, so this module keeps holding no registry
     reference; see ``_is_workspace_turn`` for why a runtime-chosen name can
     never be covered by the static vocabularies.
+
+    ``requires_public_fact_grounding`` is a provider capability, never a
+    provider-name check. When true, concrete public-fact turns take the same
+    one-shot ``search_web`` evidence path used for explicitly fresh facts.
+    Hosted providers keep the default false and retain the native evergreen
+    fast path.
     """  # i18n-allow: names the German trigger words the static branch matches
     normalized = _normalize(text).strip()
     if not normalized:
@@ -792,6 +856,47 @@ def plan_turn(
     ):
         reasons.add(TurnReason.UNCERTAIN)
 
+    # Public fact grounding is an evidence contract, not another research
+    # router. Explicitly fresh public facts always ground. Evergreen facts do
+    # so only when the active model declares that requirement. Connected and
+    # private lookups retain their own tools and must never leak into web
+    # search. Set de-duplication gives the execution layer exactly one required
+    # search capability even if the live tool catalog matched it too.
+    non_public_evidence = reasons & {
+        TurnReason.LOCAL_STATE,
+        TurnReason.MISSION,
+        TurnReason.PRIVATE_DATA,
+        TurnReason.SCREEN_CONTEXT,
+        TurnReason.SKILL,
+        TurnReason.WORKSPACE,
+    }
+    required_without_public_search = {
+        item for item in required if item != PUBLIC_FACT_GROUNDING_CAPABILITY
+    }
+    if TurnReason.CAPABILITY in reasons and required_without_public_search:
+        non_public_evidence.add(TurnReason.CAPABILITY)
+    if TurnReason.CONNECTED_DATA in reasons and (
+        required_without_public_search
+        or _CONNECTED_DOMAIN_RE.search(normalized)
+        or _CONTACT_DETAIL_RE.search(normalized)
+        or private
+    ):
+        non_public_evidence.add(TurnReason.CONNECTED_DATA)
+    public_fact_shape = is_public_fact_question(text)
+    fresh_public_fact = (
+        TurnReason.CURRENT_DATA in reasons
+        and (public_fact_shape or lookup)
+        and not non_public_evidence
+    )
+    ground_public_fact = fresh_public_fact or (
+        bool(requires_public_fact_grounding)
+        and public_fact_shape
+        and not non_public_evidence
+    )
+    if ground_public_fact:
+        reasons.add(TurnReason.PUBLIC_FACT)
+        required = tuple(sorted({*required, PUBLIC_FACT_GROUNDING_CAPABILITY}))
+
     if not reasons:
         return TurnPlan(path=TurnPath.NATIVE_REALTIME)
     return TurnPlan(
@@ -806,6 +911,7 @@ def plan_turn(
                 TurnReason.CURRENT_DATA,
                 TurnReason.LOCAL_STATE,
                 TurnReason.PRIVATE_DATA,
+                TurnReason.PUBLIC_FACT,
                 TurnReason.SCREEN_CONTEXT,
                 # What the pane actually printed is evidence the live model
                 # never holds; answering "what has Dana done" without it is
@@ -813,13 +919,27 @@ def plan_turn(
                 TurnReason.WORKSPACE,
             }
         ),
+        requires_public_fact_grounding=ground_public_fact,
+        public_fact_grounding_timeout_s=(
+            PUBLIC_FACT_GROUNDING_TIMEOUT_S if ground_public_fact else None
+        ),
+        public_fact_grounding_attempt_limit=1 if ground_public_fact else 0,
+        grounding_failure_policy=(
+            GroundingFailurePolicy.HONEST_UNCERTAINTY
+            if ground_public_fact
+            else None
+        ),
     )
 
 
 __all__ = [
+    "GroundingFailurePolicy",
+    "PUBLIC_FACT_GROUNDING_CAPABILITY",
+    "PUBLIC_FACT_GROUNDING_TIMEOUT_S",
     "TurnPath",
     "TurnPlan",
     "TurnReason",
     "is_contextual_follow_up",
+    "is_public_fact_question",
     "plan_turn",
 ]

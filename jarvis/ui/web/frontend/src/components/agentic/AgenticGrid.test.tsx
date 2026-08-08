@@ -2613,8 +2613,9 @@ describe("chat view", () => {
     expect(title.textContent).toBe("Fix provider selection priority");
     // The mark LEADS the row and the title follows it, the way a list of
     // conversations reads: the title is the subject, the mark says which CLI
-    // is having it.
-    const mark = title.previousElementSibling;
+    // is having it. The title sits inside its tooltip anchor, so the mark is
+    // the ANCHOR's previous sibling.
+    const mark = title.parentElement?.previousElementSibling;
     expect(mark?.getAttribute("data-testid")).toBe("agent-mark-codex");
     expect(mark?.querySelector("img")?.getAttribute("src")).toBe(
       "/provider-logos/openai.svg",
