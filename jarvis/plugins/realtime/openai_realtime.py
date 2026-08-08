@@ -1261,6 +1261,58 @@ _LOCAL_CONNECT_RETRY_STEP_S = 2.0
 _LOCAL_LAUNCH_MIN_INTERVAL_S = 60.0
 
 
+def _launch_command_target_state(command: str) -> str:
+    """Whether the program a launch command names still exists on this machine.
+
+    ``"missing"`` means the command's first token clearly names something that
+    is gone — a managed install whose tree was deleted while its command stayed
+    in jarvis.toml previously sat out the full patient reconnect window against
+    a spawn that could never succeed (live 2026-08-08: 120 s of "Connecting…"
+    ending in a silent idle). ``"present"`` means the target resolves today.
+    Everything ambiguous returns ``"unknown"`` and behaves exactly as before —
+    fail-open, so a bring-your-own command is never misjudged. Stdlib only.
+    """
+    text = (command or "").strip()
+    if not text:
+        return "unknown"
+    import shlex
+    import shutil
+    from pathlib import Path
+
+    head = ""
+    if text.startswith('"'):
+        # The managed installer always quotes its entry point; a quoted head
+        # is unambiguous on every platform.
+        end = text.find('"', 1)
+        if end > 1:
+            head = text[1:end]
+    elif os.name == "nt":
+        # Raw-string spawn: take the first whitespace token. An UNQUOTED path
+        # containing spaces is handled below (fail-open) because CreateProcess
+        # prefix probing makes it genuinely ambiguous.
+        head = text.split()[0]
+    else:
+        try:
+            head = (shlex.split(text) or [""])[0]
+        except ValueError:
+            return "unknown"
+    if not head:
+        return "unknown"
+    looks_pathlike = "/" in head or "\\" in head or (os.name == "nt" and ":" in head[:3])
+    if looks_pathlike:
+        if Path(head).exists():
+            return "present"
+        if os.name == "nt" and not text.startswith('"') and " " in text:
+            # Unquoted Windows command with spaces: the naive first token may
+            # have cut a spaced path short — cannot tell, so do not judge.
+            return "unknown"
+        return "missing"
+    # A bare program name resolves through PATH. Found → present; not found →
+    # still only "unknown": PATH resolution has too many shells and edge cases
+    # to declare a user-authored command dead on its account.
+    return "present" if shutil.which(head) else "unknown"
+
+
 def _normalize_local_root(url: str) -> str:
     """Normalize a user-entered server address to an ``…/v1`` API root.
 
@@ -1434,10 +1486,15 @@ class LocalRealtimeProvider:
 
         Patient only when patience can pay off: with a ``launch_command``
         Jarvis revives a crashed server itself and the retries bridge its
-        warm-up. Without one nothing will change on the other end, so a
-        short window rides out a hiccup and then reports honestly.
+        warm-up. Without one — or with a command whose program provably no
+        longer exists (deleted managed install) — nothing will change on the
+        other end, so a short window rides out a hiccup and then reports
+        honestly.
         """
-        if self._launch_command:
+        if (
+            self._launch_command
+            and _launch_command_target_state(self._launch_command) != "missing"
+        ):
             return _LOCAL_CONNECT_PATIENT_WINDOW_S
         return _LOCAL_CONNECT_SHORT_WINDOW_S
 
@@ -1589,6 +1646,25 @@ class LocalRealtimeProvider:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise
+                # A connect failure with a launch command whose program no
+                # longer exists can never be retried into success: reviving
+                # would spawn a deleted entry point. Fail NOW with the fixing
+                # action instead of holding the call in "Connecting…" for the
+                # whole patient window (live 2026-08-08: the managed install
+                # tree was gone while jarvis.toml still pointed at it).
+                if (
+                    self._launch_command
+                    and self._server_is_local_process()
+                    and _launch_command_target_state(self._launch_command)
+                    == "missing"
+                ):
+                    raise RuntimeError(
+                        "The local realtime server is not installed anymore: "
+                        "its configured launch command points at a program "
+                        "that does not exist. Reinstall the managed server on "
+                        "the local-realtime provider card, or clear its "
+                        "launch command."
+                    ) from exc
                 # First failure: the server may simply be gone — revive it if
                 # this install owns it, then keep knocking. A server that is
                 # merely warming up needs the same patience either way.

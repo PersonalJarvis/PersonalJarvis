@@ -5960,6 +5960,11 @@ class SpeechPipeline:
                 getattr(self, "_voice_engine_transitioning", False)
                 or getattr(self, "_reopen_after_engine_change", False)
             ),
+            # Why the LAST realtime start attempt failed (None once a session
+            # is up): {provider, message, at}. The surfaces render it when a
+            # connecting window closes without a session instead of falling
+            # silently back to "idle".
+            "last_start_error": getattr(self, "_last_realtime_start_error", None),
         }
 
     def apply_voice_mode(self, mode: str) -> bool:
@@ -7977,6 +7982,8 @@ class SpeechPipeline:
                 )
                 self._active_realtime_model = str(message.get("model", "") or "")
                 self._voice_engine_transitioning = False
+                # A session is up — whatever failed on the way here is history.
+                self._last_realtime_start_error = None
                 log.info(
                     "Realtime desktop session ready: provider=%s model=%s input=%sHz output=%sHz",
                     message.get("provider", "unknown"),
@@ -8016,6 +8023,24 @@ class SpeechPipeline:
                     preserve_echo_tail=speaking,
                 )
                 await self._set_turn_state(TurnTakingState.PROCESSING)
+            elif kind == "provider_fallback":
+                # One provider's handshake failed; the session may still cross
+                # to the next family. Recorded so the status surfaces can name
+                # the reason if nothing comes up — audio_ready clears it.
+                self._last_realtime_start_error = {
+                    "provider": str(message.get("provider", "") or ""),
+                    "message": str(message.get("error", "") or ""),
+                    "at": time.time(),
+                }
+            elif kind == "audio_failed":
+                # Terminal: no provider could open a session. Without this
+                # branch the desktop surfaces watched the connecting window
+                # expire into idle with no reason shown (live 2026-08-08).
+                self._last_realtime_start_error = {
+                    "provider": str(message.get("provider", "") or ""),
+                    "message": str(message.get("error", "") or ""),
+                    "at": time.time(),
+                }
             elif kind == "tts_cancel":
                 _close_output_segment(preserve_echo_tail=False)
                 await _cancel_output_playback()

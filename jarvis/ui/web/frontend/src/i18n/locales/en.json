@@ -399,6 +399,7 @@
     "warming_hint": "Getting ready to listen – one moment, you'll be able to speak shortly.",
     "ready_title": "Ready – you can speak now",
     "connecting": "Connecting…",
+    "connect_failed": "Voice connect failed ({0}): {1}",
     "paused": "Paused",
     "indicator_label": "Voice state"
   },

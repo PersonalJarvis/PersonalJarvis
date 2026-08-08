@@ -39,6 +39,17 @@ type VoiceModeResp = {
   active_session_model: string;
   active_session_model_label?: string | null;
   transitioning: boolean;
+  /**
+   * Why the LAST realtime start attempt failed ({provider, message, at} or
+   * null once a session is up). Rendered when the connecting window closes
+   * without a session — before this field those attempts fell back to the
+   * "no voice session is active" idle line with no reason shown.
+   */
+  last_start_error?: {
+    provider: string;
+    message: string;
+    at: number;
+  } | null;
 };
 
 const REALTIME_DISCOVERY_RETRY_WINDOW_MS = 5 * 60_000;
@@ -311,6 +322,11 @@ export function useVoiceMode() {
     activeSessionModel:
       q.data?.active_session_model_label ?? q.data?.active_session_model ?? "",
     transitioning,
+    /** Failure detail of the last start attempt; null while connecting or live. */
+    lastStartError:
+      !sessionActive && !(transitioning || startPending)
+        ? q.data?.last_start_error ?? null
+        : null,
     setMode: m.mutate,
     isLoading: q.isLoading,
     isSaving: m.isPending,

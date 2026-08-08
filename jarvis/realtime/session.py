@@ -751,9 +751,9 @@ _DELEGATE_BRIDGE_TEXTS: dict[str, tuple[str, ...]] = {
 #: call used to end after the full handshake budget with nothing said at all.
 _HANDSHAKE_FAILURE_MESSAGES: dict[str, dict[str, str]] = {
     "timeout": {
-        "de": (
-            "Die Sprachverbindung kam nicht rechtzeitig zustande, "  # i18n-allow: localized runtime voice output
-            "deshalb habe ich abgebrochen."
+        "de": (  # i18n-allow: localized runtime voice output
+            "Die Sprachverbindung kam nicht rechtzeitig zustande, "  # i18n-allow
+            "deshalb habe ich abgebrochen."  # i18n-allow
         ),
         "en": (
             "The voice connection did not come up in time, so I stopped."
@@ -763,8 +763,8 @@ _HANDSHAKE_FAILURE_MESSAGES: dict[str, dict[str, str]] = {
         ),
     },
     "unavailable": {
-        "de": (
-            "Ich konnte die Sprachverbindung gerade nicht aufbauen."  # i18n-allow: localized runtime voice output
+        "de": (  # i18n-allow: localized runtime voice output
+            "Ich konnte die Sprachverbindung gerade nicht aufbauen."  # i18n-allow
         ),
         "en": "I couldn't establish the voice connection just now.",
         "es": (  # i18n-allow: localized runtime voice output
@@ -2068,6 +2068,7 @@ class RealtimeVoiceSession:
         deadline = loop.time() + max(
             _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S, declared_total
         )
+        last_failed_provider = ""
         for provider in self._providers:
             if not self._provider_is_available(provider):
                 continue
@@ -2153,6 +2154,7 @@ class RealtimeVoiceSession:
             except Exception as exc:  # noqa: BLE001 — cross to the next family
                 provider_id = str(getattr(provider, "name", "unknown") or "unknown")
                 detail = f"{type(exc).__name__}: {safe_preview(exc, max_chars=700)}"
+                last_failed_provider = provider_id
                 self._provider_errors.append(f"{provider_id}: {detail}")
                 status, _alternate_ready = self._prepare_cross_provider_fallback(
                     provider,
@@ -2185,6 +2187,20 @@ class RealtimeVoiceSession:
             return
 
         summary = "; ".join(self._provider_errors) or "no provider could open a session"
+        # Terminal frame for the surfaces: without it the desktop status rows
+        # only ever saw audio_starting and then silence — the connecting look
+        # expired into idle with no reason shown (live 2026-08-08).
+        try:
+            await self._send_json(
+                {
+                    "type": "audio_failed",
+                    "provider": last_failed_provider,
+                    "error": summary,
+                    "recoverable": True,
+                }
+            )
+        except Exception:  # noqa: BLE001, S110 — status is best-effort
+            pass
         await self._publish_error("RealtimeHandshakeError", summary, recoverable=True)
         await self._announce_handshake_failure(summary)
         raise RuntimeError(f"No realtime provider could open a session: {summary}")

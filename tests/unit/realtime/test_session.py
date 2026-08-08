@@ -463,6 +463,36 @@ async def test_handshake_timeout_preserves_budget_for_next_family(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_total_handshake_failure_emits_audio_failed():
+    """When EVERY provider fails, the surfaces get a terminal frame naming
+    the last provider and the reason — before it, the desktop status rows
+    watched their connecting window expire into idle with nothing shown
+    (live 2026-08-08)."""
+    messages = []
+    sess = RealtimeVoiceSession(
+        session_id="all-fail",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: messages.append(message) or asyncio.sleep(0),
+        providers=[FailingProvider([])],
+        config=_cfg(),
+        bus=None,
+    )
+
+    try:
+        await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    except RuntimeError:
+        pass  # the raise stays — only the frame emission is under test
+    await sess.end(reason="test")
+
+    failed = next(
+        message for message in messages if message.get("type") == "audio_failed"
+    )
+    assert failed["provider"] == "failing-family"
+    assert "simulated depleted credits" in failed["error"]
+    assert failed["recoverable"] is True
+
+
+@pytest.mark.asyncio
 async def test_fallback_status_redacts_credentials_from_provider_errors():
     fallback = FakeProvider([])
     messages = []

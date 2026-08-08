@@ -169,6 +169,51 @@ class TestServerStatusFailClosed:
         assert components["venv"] is True  # type: ignore[index]
         assert components["patch"] is False  # type: ignore[index]
 
+    def test_stale_config_earns_the_repair_sentence(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """Install files gone while jarvis.toml still points a launch command
+        at them (live 2026-08-08): the card must say "repair", not the
+        misleading "not installed"."""
+        import json
+
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        command = str(
+            install.install_root() / "venv" / "Scripts" / "speech-to-speech.exe"
+        )
+        quoted = f'"{command}" --mode realtime'
+        cfg = tmp_path / "jarvis.toml"
+        cfg.write_text(
+            "[brain.providers.local-realtime]\n"
+            f"launch_command = {json.dumps(quoted)}\n",
+            encoding="utf-8",
+        )
+        import jarvis.core.config as config_module
+
+        monkeypatch.setattr(config_module, "resolve_config_path", lambda: cfg)
+        status = install.server_status()
+        assert status["ready"] is False
+        assert status["stale"] is True
+        assert "reinstall to repair" in str(status["sentence"])
+
+    def test_a_foreign_launch_command_is_never_called_stale(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """A bring-your-own command (docker, another tree) must keep the
+        plain "not installed" sentence — staleness is a MANAGED concept."""
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        cfg = tmp_path / "jarvis.toml"
+        cfg.write_text(
+            '[brain.providers.local-realtime]\nlaunch_command = "docker run my-server"\n',
+            encoding="utf-8",
+        )
+        import jarvis.core.config as config_module
+
+        monkeypatch.setattr(config_module, "resolve_config_path", lambda: cfg)
+        status = install.server_status()
+        assert status["stale"] is False
+        assert status["sentence"] == "Managed server not installed."
+
     def test_uninstall_refuses_while_running(self, monkeypatch) -> None:
         class _Alive:
             @staticmethod

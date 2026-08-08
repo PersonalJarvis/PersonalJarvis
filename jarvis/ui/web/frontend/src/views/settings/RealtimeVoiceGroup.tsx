@@ -29,6 +29,7 @@ export function RealtimeVoiceGroup() {
     activeSessionProvider,
     activeSessionModel,
     transitioning,
+    lastStartError,
     setMode,
     isLoading,
     isSaving,
@@ -83,6 +84,17 @@ export function RealtimeVoiceGroup() {
           <p className="mt-1.5 text-[11px] text-muted-foreground" aria-live="polite">
             {runtimeText}
           </p>
+          {on && lastStartError && (
+            <p
+              data-testid="realtime-last-start-error"
+              className="mt-1 text-[11px] leading-snug text-amber-600 dark:text-amber-400"
+              aria-live="polite"
+            >
+              {t("voice_state.connect_failed")
+                .replace("{0}", lastStartError.provider || "?")
+                .replace("{1}", lastStartError.message)}
+            </p>
+          )}
           {offerDetail && (
             <p
               data-testid="realtime-transport-offer-detail"

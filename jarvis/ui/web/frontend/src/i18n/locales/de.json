@@ -399,6 +399,7 @@
     "warming_hint": "Das Zuhören wird vorbereitet – einen Moment, gleich kannst du sprechen.",
     "ready_title": "Bereit – du kannst jetzt sprechen",
     "connecting": "Verbinde…",
+    "connect_failed": "Sprachverbindung fehlgeschlagen ({0}): {1}",
     "paused": "Pausiert",
     "indicator_label": "Sprachstatus"
   },

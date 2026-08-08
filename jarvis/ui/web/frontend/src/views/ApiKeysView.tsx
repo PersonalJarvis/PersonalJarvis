@@ -96,6 +96,7 @@ export function ApiKeysView() {
     activeSessionProvider,
     activeSessionModel,
     transitioning,
+    lastStartError,
     setMode: setVoiceMode,
     isLoading: liveModeLoading,
   } = useVoiceMode();
@@ -171,6 +172,7 @@ export function ApiKeysView() {
           activeSessionProvider={activeSessionProvider}
           activeSessionModel={activeSessionModel}
           transitioning={transitioning}
+          lastStartError={lastStartError}
           liveMode={liveMode}
           onOpenRecommendedTab={openRecommendedTab}
         />

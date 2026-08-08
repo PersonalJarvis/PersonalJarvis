@@ -318,6 +318,10 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
             session_provider, session_model
         ),
         "transitioning": bool(runtime.get("transitioning", False)),
+        # Why the last realtime start attempt failed ({provider, message, at}
+        # or null): rendered by the surfaces when a connecting window closes
+        # without a session instead of a silent fall-back to "idle".
+        "last_start_error": runtime.get("last_start_error"),
     }
 
 

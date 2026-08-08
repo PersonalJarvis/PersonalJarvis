@@ -426,3 +426,88 @@ def test_declared_handshake_budget_covers_the_patient_window() -> None:
         base_url="http://localhost:8765", launch_command="serve"
     )
     assert patient.handshake_budget_s > patient._connect_retry_window_s()
+
+
+# ── Stale launch commands (deleted managed install) ──────────────────────
+def test_launch_command_state_missing_for_a_deleted_path(tmp_path) -> None:
+    """A quoted path whose target is gone is exactly the deleted managed
+    install of 2026-08-08 — the one case that must be judged decisively."""
+    from jarvis.plugins.realtime import openai_realtime as module
+
+    gone = tmp_path / "venv" / "Scripts" / "speech-to-speech.exe"
+    assert (
+        module._launch_command_target_state(f'"{gone}" --mode realtime') == "missing"
+    )
+
+
+def test_launch_command_state_present_for_an_existing_path(tmp_path) -> None:
+    from jarvis.plugins.realtime import openai_realtime as module
+
+    exe = tmp_path / "server"
+    exe.write_bytes(b"")
+    assert module._launch_command_target_state(f'"{exe}" --flag') == "present"
+
+
+def test_launch_command_state_fails_open_on_ambiguity() -> None:
+    """Bare names and empty commands are never judged: a bring-your-own
+    command must keep exactly the pre-fix behavior."""
+    from jarvis.plugins.realtime import openai_realtime as module
+
+    assert module._launch_command_target_state("serve --flag") == "unknown"
+    assert module._launch_command_target_state("") == "unknown"
+    assert module._launch_command_target_state('"unclosed --flag') == "unknown"
+
+
+def test_a_stale_install_shrinks_the_retry_window(tmp_path) -> None:
+    """Patience only pays when the revive could ever succeed; a deleted
+    entry point earns the short window, not 120 s of knocking."""
+    from jarvis.plugins.realtime import openai_realtime as module
+
+    gone = tmp_path / "venv" / "Scripts" / "speech-to-speech.exe"
+    stale = LocalRealtimeProvider(
+        base_url="http://localhost:8765", launch_command=f'"{gone}" --mode realtime'
+    )
+    assert stale._connect_retry_window_s() == module._LOCAL_CONNECT_SHORT_WINDOW_S
+
+
+async def test_a_stale_install_fails_fast_with_the_fixing_action(
+    monkeypatch, tmp_path
+) -> None:
+    """The first refused connect against a deleted install must end the
+    attempt with the fixing action — not sit out any retry window (live
+    2026-08-08: 120 s of "Connecting…" ending in a silent idle)."""
+    from jarvis.plugins.realtime import openai_realtime as module
+
+    monkeypatch.setattr(module, "_LOCAL_CONNECT_RETRY_STEP_S", 0.0)
+    gone = tmp_path / "venv" / "Scripts" / "speech-to-speech.exe"
+    provider = LocalRealtimeProvider(
+        base_url="http://localhost:8765", launch_command=f'"{gone}" --mode realtime'
+    )
+    attempts = 0
+
+    async def refused(cfg: Any) -> str:
+        nonlocal attempts
+        attempts += 1
+        raise ConnectionError("refused")
+
+    monkeypatch.setattr(provider, "_open_session_once", refused)
+    with pytest.raises(RuntimeError, match="not installed anymore"):
+        await provider.open_session(SimpleNamespace(model="m"))
+    assert attempts == 1
+
+
+async def test_a_running_orphan_still_connects_despite_a_stale_command(
+    monkeypatch, tmp_path
+) -> None:
+    """A server that outlived its deleted install keeps serving; the stale
+    check must only fire once a connect actually FAILED."""
+    gone = tmp_path / "venv" / "Scripts" / "speech-to-speech.exe"
+    provider = LocalRealtimeProvider(
+        base_url="http://localhost:8765", launch_command=f'"{gone}" --mode realtime'
+    )
+
+    async def healthy(cfg: Any) -> str:
+        return "session"
+
+    monkeypatch.setattr(provider, "_open_session_once", healthy)
+    assert await provider.open_session(SimpleNamespace(model="m")) == "session"

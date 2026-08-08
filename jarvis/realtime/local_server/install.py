@@ -152,13 +152,43 @@ def snapshot() -> dict[str, object]:
         }
 
 
+def _configured_launch_command() -> str:
+    """The persisted local-realtime launch command, read cheaply and safely.
+
+    A plain TOML read (no full config model) because this runs inside status
+    probes: the only question is whether jarvis.toml still points a launch
+    command at the managed tree. Any read problem answers "" — the status then
+    simply reports without the staleness refinement (fail-open).
+    """
+    try:
+        import tomllib
+
+        from jarvis.core.config import resolve_config_path
+
+        path = resolve_config_path()
+        if not path.exists():
+            return ""
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+        providers = (data.get("brain") or {}).get("providers") or {}
+        block = providers.get("local-realtime") or {}
+        return str(block.get("launch_command") or "").strip()
+    except Exception:  # noqa: BLE001 — a status probe must never raise
+        log.debug("local-realtime: launch-command read failed", exc_info=True)
+        return ""
+
+
 def server_status() -> dict[str, object]:
     """Fail-closed readiness of the managed install (read-only, no network).
 
     Ready means ALL of: venv python present, server entry point present,
     vendored patch applied, and a recorded successful smoke boot. Each
     component is reported separately so the card can say exactly what is
-    missing, in the server's words.
+    missing, in the server's words. ``stale`` flags the poisonous variant:
+    jarvis.toml still carries a launch command pointing into this tree while
+    the install files are gone (live 2026-08-08 — every call then chased a
+    deleted entry point), which deserves a repair sentence, not "not
+    installed".
     """
     components = {
         "venv": _venv_python().exists(),
@@ -167,17 +197,30 @@ def server_status() -> dict[str, object]:
         "smoke_boot": _smoke_marker().exists(),
     }
     ready = all(components.values())
+    command = _configured_launch_command()
+    root_needle = str(install_root()).lower() if os.name == "nt" else str(install_root())
+    command_probe = command.lower() if os.name == "nt" else command
+    stale = (
+        not components["entrypoint"]
+        and bool(command)
+        and root_needle in command_probe.replace("/", os.sep)
+    )
     if ready:
         sentence = (
             f"Managed server installed (speech-to-speech {PATCH_TARGET_VERSION}, "
             "patched) and smoke-booted."
+        )
+    elif stale:
+        sentence = (
+            "Install files are missing but the launch command still points at "
+            "them — reinstall to repair, or remove the local server."
         )
     elif not components["venv"] and not components["entrypoint"]:
         sentence = "Managed server not installed."
     else:
         missing = ", ".join(name for name, present in components.items() if not present)
         sentence = f"Managed server incomplete: {missing} missing — reinstall to repair."
-    return {"ready": ready, "components": components, "sentence": sentence}
+    return {"ready": ready, "stale": stale, "components": components, "sentence": sentence}
 
 
 def derive_launch_command(brain: BrainResolution, *, memory_source: str) -> str:

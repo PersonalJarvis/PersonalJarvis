@@ -399,6 +399,7 @@
     "warming_hint": "Preparando la escucha – un momento, podrás hablar en breve.",
     "ready_title": "Listo – ya puedes hablar",
     "connecting": "Conectando…",
+    "connect_failed": "La conexión de voz falló ({0}): {1}",
     "paused": "En pausa",
     "indicator_label": "Estado de voz"
   },
