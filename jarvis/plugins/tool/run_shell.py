@@ -5,40 +5,58 @@ confirmation is needed. The whitelist/blacklist matching runs on the FULL
 command string inside ``ToolExecutor`` before this tool executes, so it is
 independent of how the string is executed below.
 
-POSIX keeps the historical no-``shell=True`` contract: commands are parsed
-through ``shlex.split`` and exec'd directly.
+Shell choice (redesign 2026-08-08): the brain writes commands for the shell it
+ASSUMES, so the tool must (a) run a shell the model expects and (b) declare
+that shell in its description. Session forensics (2026-08-04/06/07) showed the
+model emitting PowerShell (``Add-Type``, ``Start-Process``) and POSIX
+(``head``) commands into the previous ``cmd.exe`` backend — roughly half of
+all first attempts failed with "command not found" and only succeeded after a
+blind reformulation retry.
 
-Windows hands the ORIGINAL string to ``cmd.exe`` instead. Tokenizing with
-``shlex.split(posix=False)`` KEPT the surrounding quotes inside the tokens,
-so ``powershell -Command "X"`` received a string LITERAL and echoed it back
-with exit 0 — the tool reported success with garbage output, which sent the
-delegated brain into a retry loop until its iteration budget died (forensic
-2026-07-13 18:15). cmd builtins (``dir``, ``type``, ``copy``) additionally
-failed with WinError 2 because they are not programs. ``cmd.exe`` parses its
-own quoting and provides the builtins.
+- Windows: ``powershell.exe -EncodedCommand`` (Windows PowerShell 5.1, present
+  on every supported Windows). Base64-encoding the script sidesteps the
+  quoting bugs entirely (forensic 2026-07-13: ``shlex.split(posix=False)``
+  kept surrounding quotes, so quoted payloads were echoed back as literals
+  with exit 0). A wrapper propagates the native exit code, because
+  ``powershell -Command``/-EncodedCommand`` otherwise reports 0 even when the
+  last native command failed.
+- macOS/Linux: ``/bin/sh -c`` so pipes, ``&&`` and redirects work — the
+  historical no-shell exec could not run ``ls | grep foo`` at all. Safety is
+  unaffected: pattern matching happens upstream on the raw string.
 """
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
-import shlex
 import sys
 from typing import Any
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.core.protocols import ExecutionContext, ToolResult
 
-_CMD_PATH_LIMIT = 8191
+if sys.platform == "win32":
+    _SHELL_LABEL = "Windows PowerShell 5.1"
+    _SHELL_HINT = (
+        "PowerShell cmdlets, aliases (ls, dir, cat) and pipes work. "
+        "POSIX tools like head/grep/awk and cmd-only syntax like 'dir /b' "
+        "do NOT work unless explicitly installed."
+    )
+else:
+    _SHELL_LABEL = "/bin/sh (POSIX)"
+    _SHELL_HINT = (
+        "POSIX sh syntax with pipes, && and redirects works. "
+        "Write portable sh, not bash-isms; PowerShell cmdlets do NOT exist."
+    )
 
 
 def _windows_subprocess_env() -> dict[str, str]:
-    """Return an environment whose PATH remains usable by ``cmd.exe``.
+    """Return an environment with a deduplicated PATH.
 
-    Windows accepts an environment block containing a PATH longer than the
-    legacy command-processor limit, but ``cmd.exe`` then exposes an empty PATH
-    to the command it launches.  Desktop integrations commonly append the same
-    native-runtime directories repeatedly, so remove duplicates while keeping
-    the original lookup order.  Other platforms never use this helper.
+    Desktop integrations commonly append the same native-runtime directories
+    repeatedly, inflating PATH towards the per-variable limit. Remove
+    duplicates while keeping the original lookup order. Other platforms never
+    use this helper.
     """
     env = dict(os.environ)
     path_key = next((key for key in env if key.lower() == "path"), "PATH")
@@ -54,27 +72,71 @@ def _windows_subprocess_env() -> dict[str, str]:
             continue
         seen.add(identity)
         deduplicated.append(entry)
-    compact_path = os.pathsep.join(deduplicated)
-    if len(compact_path) > _CMD_PATH_LIMIT:
-        raise ValueError(
-            "Windows PATH remains too long for cmd.exe after deduplication "
-            f"({len(compact_path)} characters; limit {_CMD_PATH_LIMIT})."
-        )
-    env[path_key] = compact_path
+    env[path_key] = os.pathsep.join(deduplicated)
     return env
+
+
+def _powershell_argv(command: str) -> list[str]:
+    """Build the ``powershell.exe`` invocation for ``command``.
+
+    The wrapper script exists for three reasons:
+    - ``[Console]::OutputEncoding`` makes native tool output decode as UTF-8
+      (guarded: under CREATE_NO_WINDOW there may be no console to configure).
+    - PowerShell's process exit code is 0 even when the command inside failed
+      (both for native commands and for cmdlet errors — verified by test),
+      so failures must be surfaced explicitly: cmdlet errors become
+      terminating via ``$ErrorActionPreference = 'Stop'`` and are caught,
+      native exit codes propagate via ``$LASTEXITCODE``. Otherwise a failing
+      command reports success and sends the brain into the false-success
+      retry loop documented in the module docstring.
+    - Caught errors are written with ``[Console]::Error.WriteLine`` — raw
+      text. Letting them reach PowerShell's own error stream would serialize
+      them as CLIXML noise on stderr, which the brain cannot read.
+      ``$ProgressPreference`` suppresses progress records for the same reason.
+    """
+    script = (
+        "try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}\n"
+        "$ProgressPreference = 'SilentlyContinue'\n"
+        "$ErrorActionPreference = 'Stop'\n"
+        "try {\n"
+        "  & { " + command + " }\n"
+        "} catch {\n"
+        "  [Console]::Error.WriteLine($_.ToString())\n"
+        "  exit 1\n"
+        "}\n"
+        "if ($LASTEXITCODE -ne $null) { exit $LASTEXITCODE }\n"
+        "exit 0\n"
+    )
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        encoded,
+    ]
 
 
 class RunShellTool:
     name: str = "run_shell"
     risk_tier: str = "monitor"
     description: str = (
-        "Runs a shell command. Commands are matched against the whitelist/"
-        "blacklist. Default timeout 30s."
+        f"Runs a shell command via {_SHELL_LABEL} on this machine. "
+        f"{_SHELL_HINT} "
+        "Commands are matched against the whitelist/blacklist. "
+        "Default timeout 30s."
     )
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "command": {"type": "string", "description": "The command (incl. arguments)"},
+            "command": {
+                "type": "string",
+                "description": (
+                    f"The command (incl. arguments), written for {_SHELL_LABEL}"
+                ),
+            },
             "timeout_s": {"type": "number", "default": 30},
             "cwd": {"type": "string", "description": "Working directory", "default": ""},
         },
@@ -88,18 +150,10 @@ class RunShellTool:
         if not command:
             return ToolResult(success=False, output=None, error="command is missing")
 
-        if sys.platform != "win32":
-            try:
-                parts = shlex.split(command)
-            except ValueError as exc:
-                return ToolResult(
-                    success=False, output=None, error=f"Command parse error: {exc}"
-                )
-
         try:
             if sys.platform == "win32":
-                proc = await asyncio.create_subprocess_shell(
-                    command,
+                proc = await asyncio.create_subprocess_exec(
+                    *_powershell_argv(command),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=cwd,
@@ -108,7 +162,9 @@ class RunShellTool:
                 )
             else:
                 proc = await asyncio.create_subprocess_exec(
-                    *parts,
+                    "/bin/sh",
+                    "-c",
+                    command,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=cwd,
