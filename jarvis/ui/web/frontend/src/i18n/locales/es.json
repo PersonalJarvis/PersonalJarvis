@@ -3861,6 +3861,22 @@
       "waiting": "Esperando Enter",
       "unconfirmed": "Entrega sin confirmar"
     },
+    "conversation": {
+      "title": "Historial de {0}",
+      "description": "La conversación tal como la registró este agente — con una barra de desplazamiento real.",
+      "open": "Abrir el historial de {0}",
+      "close": "Cerrar historial",
+      "refresh": "Recargar historial",
+      "load_failed": "No se pudo cargar el historial.",
+      "retry": "Reintentar",
+      "empty_title": "Aún sin historial",
+      "empty_detail": "Cuando este agente haya intercambiado mensajes, la conversación completa aparecerá aquí.",
+      "you": "Tú",
+      "agent": "Agente",
+      "steps_one": "1 paso de herramienta",
+      "steps_many": "{0} pasos de herramienta",
+      "grip_hint": "Clic: abrir historial · arrastrar: desplazar"
+    },
     "selection": {
       "start": "Seleccionar terminales",
       "finish": "Terminar selección",

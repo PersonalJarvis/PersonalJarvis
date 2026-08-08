@@ -3861,6 +3861,22 @@
       "waiting": "Waiting for Enter",
       "unconfirmed": "Delivery unconfirmed"
     },
+    "conversation": {
+      "title": "History of {0}",
+      "description": "The conversation as this agent recorded it — with a real scrollbar.",
+      "open": "Open the history of {0}",
+      "close": "Close history",
+      "refresh": "Reload history",
+      "load_failed": "The history could not be loaded.",
+      "retry": "Try again",
+      "empty_title": "No history yet",
+      "empty_detail": "Once this agent has exchanged messages, the full conversation appears here.",
+      "you": "You",
+      "agent": "Agent",
+      "steps_one": "1 tool step",
+      "steps_many": "{0} tool steps",
+      "grip_hint": "Click: open history · drag: scroll"
+    },
     "selection": {
       "start": "Select terminals",
       "finish": "Done selecting",

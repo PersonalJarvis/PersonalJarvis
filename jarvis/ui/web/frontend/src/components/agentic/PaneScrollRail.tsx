@@ -30,6 +30,7 @@ import {
   type RefObject,
 } from "react";
 import type { Terminal } from "@xterm/xterm";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { PANE_CHROME, type TerminalAppearance } from "./terminalThemes";
 import {
@@ -53,8 +54,16 @@ interface DragSession {
   /** Where the pointer went down — the grip's visual travel is measured from
    * here so it can spring back to centre on release. Application rails only. */
   originY: number;
+  /** Did this gesture start on the grip capsule itself? */
+  grabbedGrip: boolean;
+  /** Farthest the pointer travelled — a release under the click threshold
+   * opens the pane's conversation history instead of having scrolled. */
+  movedPx: number;
   captured: boolean;
 }
+
+/** Pointer travel below which a grip press-and-release counts as a click. */
+const GRIP_CLICK_PX = 5;
 
 /** Height of the application grip capsule, in px. Must match the render. */
 const GRIP_PX = 28;
@@ -71,6 +80,9 @@ interface PaneScrollRailProps {
   epoch: number;
   appearance: TerminalAppearance;
   onFocus?: () => void;
+  /** A click (not a drag) on the application grip asks for the pane's
+   * recorded conversation — the owner of that dialog lives in the pane. */
+  onOpenHistory?: () => void;
 }
 
 function sameView(
@@ -94,9 +106,12 @@ export function PaneScrollRail({
   epoch,
   appearance,
   onFocus,
+  onOpenHistory,
 }: PaneScrollRailProps) {
+  const t = useT();
   const trackRef = useRef<HTMLDivElement | null>(null);
   const thumbRef = useRef<HTMLDivElement | null>(null);
+  const gripRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragSession | null>(null);
   const frameRef = useRef<number | null>(null);
   const [view, setView] = useState<TerminalScrollView | null>(null);
@@ -260,6 +275,10 @@ export function PaneScrollRail({
         grabOffset,
         lastY: event.clientY,
         originY: event.clientY,
+        grabbedGrip:
+          gripRef.current !== null &&
+          gripRef.current.contains(event.target as Node),
+        movedPx: 0,
         captured: false,
       };
       setDragging(true);
@@ -289,6 +308,10 @@ export function PaneScrollRail({
       if (!drag || !term || drag.pointerId !== event.pointerId) return;
       event.preventDefault();
       const current = readTerminalScrollView(term);
+      drag.movedPx = Math.max(
+        drag.movedPx,
+        Math.abs(event.clientY - drag.originY),
+      );
       if (drag.owner === "terminal" && current.owner === "terminal") {
         moveExact(current, event.clientY, drag.grabOffset);
       } else {
@@ -330,14 +353,25 @@ export function PaneScrollRail({
 
   const onPointerUp = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
+      const drag = dragRef.current;
+      // A press-and-release on the grip that never really moved is a CLICK,
+      // and a click on the grip opens the one history that can honestly show
+      // a position: the pane's own recorded conversation.
+      const clickedGrip =
+        drag !== null &&
+        drag.pointerId === event.pointerId &&
+        drag.owner === "application" &&
+        drag.grabbedGrip &&
+        drag.movedPx < GRIP_CLICK_PX;
       finishDrag(event.pointerId);
       try {
         event.currentTarget.releasePointerCapture(event.pointerId);
       } catch {
         // No capture was available; the drag still completed on this event.
       }
+      if (clickedGrip) onOpenHistory?.();
     },
-    [finishDrag],
+    [finishDrag, onOpenHistory],
   );
 
   const onKeyDown = useCallback(
@@ -484,8 +518,10 @@ export function PaneScrollRail({
       */}
       {!exact && (
         <div
+          ref={gripRef}
           data-testid={`pane-scroll-grip-${name}`}
-          aria-hidden="true"
+          role="presentation"
+          title={t("agentic_grid.conversation.grip_hint")}
           className={cn(
             "absolute left-1/2 top-1/2 w-2 rounded-full bg-[#e7c46e]/45",
             "shadow-[0_0_0_1px_rgba(0,0,0,0.18)]",

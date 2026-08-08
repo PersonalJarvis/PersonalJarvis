@@ -121,7 +121,15 @@ function fakeTerminal({
   };
 }
 
-function RailHarness({ name, term }: { name: string; term: Terminal }) {
+function RailHarness({
+  name,
+  term,
+  onOpenHistory,
+}: {
+  name: string;
+  term: Terminal;
+  onOpenHistory?: () => void;
+}) {
   const regionRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(term);
@@ -138,6 +146,7 @@ function RailHarness({ name, term }: { name: string; term: Terminal }) {
         terminalRef={terminalRef}
         epoch={1}
         appearance="dark"
+        onOpenHistory={onOpenHistory}
       />
     </div>
   );
@@ -263,6 +272,32 @@ describe("PaneScrollRail", () => {
     // read as "you are here". The thumb testid stays application-free.
     expect(grip.style.transform).toBe("translate(-50%, calc(-50% + 0px))");
     expect(screen.queryByTestId("pane-scroll-thumb-Rex")).toBeNull();
+  });
+
+  it("opens the recorded conversation on a grip click, but not after a drag", () => {
+    const harness = fakeTerminal({ owner: "mouse-app" });
+    const onOpenHistory = vi.fn();
+    render(
+      <RailHarness name="Uma" term={harness.term} onOpenHistory={onOpenHistory} />,
+    );
+    const rail = giveTrackGeometry("Uma");
+    const grip = screen.getByTestId("pane-scroll-grip-Uma");
+
+    // A real drag scrolls; it must NOT also open the history on release.
+    fireEvent.pointerDown(grip, { button: 0, clientY: 100, pointerId: 11 });
+    fireEvent.pointerMove(rail, { clientY: 60, pointerId: 11 });
+    fireEvent.pointerUp(rail, { clientY: 60, pointerId: 11 });
+    expect(onOpenHistory).not.toHaveBeenCalled();
+
+    // A press-and-release that never moved is a click, and a click opens it.
+    fireEvent.pointerDown(grip, { button: 0, clientY: 100, pointerId: 12 });
+    fireEvent.pointerUp(rail, { clientY: 101, pointerId: 12 });
+    expect(onOpenHistory).toHaveBeenCalledTimes(1);
+
+    // Pressing the empty track is a stroke gesture, never a click-open.
+    fireEvent.pointerDown(rail, { button: 0, clientY: 40, pointerId: 13 });
+    fireEvent.pointerUp(rail, { clientY: 40, pointerId: 13 });
+    expect(onOpenHistory).toHaveBeenCalledTimes(1);
   });
 
   it("pages the application from the visible arrow caps", () => {

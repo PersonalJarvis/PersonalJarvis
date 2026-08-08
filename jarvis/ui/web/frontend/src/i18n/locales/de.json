@@ -3861,6 +3861,22 @@
       "waiting": "Wartet auf Enter",
       "unconfirmed": "Zustellung unbestätigt"
     },
+    "conversation": {
+      "title": "Verlauf von {0}",
+      "description": "Die Unterhaltung, wie dieser Agent sie selbst aufgezeichnet hat — mit echter Scrollbar.",
+      "open": "Verlauf von {0} öffnen",
+      "close": "Verlauf schließen",
+      "refresh": "Verlauf neu laden",
+      "load_failed": "Der Verlauf konnte nicht geladen werden.",
+      "retry": "Erneut versuchen",
+      "empty_title": "Noch kein Verlauf",
+      "empty_detail": "Sobald dieser Agent Nachrichten ausgetauscht hat, erscheint hier die komplette Unterhaltung.",
+      "you": "Du",
+      "agent": "Agent",
+      "steps_one": "1 Arbeitsschritt",
+      "steps_many": "{0} Arbeitsschritte",
+      "grip_hint": "Klicken: Verlauf öffnen · Ziehen: scrollen"
+    },
     "selection": {
       "start": "Terminals auswählen",
       "finish": "Auswahl beenden",

@@ -56,6 +56,7 @@ import { CanvasAddon } from "@xterm/addon-canvas";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
 import {
+  BookOpenText,
   Check,
   Columns2,
   Loader2,
@@ -122,6 +123,8 @@ import {
 } from "./paneSocket";
 import { PromptReceipt } from "./PromptReceipt";
 import { PromptHistoryButton } from "./PromptHistoryButton";
+import { PaneConversationDialog } from "./PaneConversationDialog";
+import { useT } from "@/i18n";
 
 /**
  * How old a delivery may be and still raise its receipt on a fresh connection.
@@ -420,6 +423,10 @@ export function AgenticTerminal({
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
   /** Briefly true right after a delivery — draws the eye to the right pane. */
   const [justDelivered, setJustDelivered] = useState(false);
+  /** The pane's recorded conversation, opened from the header book button or
+   * a click on the scroll rail's grip. Lives HERE and not in the rail so the
+   * entry point survives the CLI flipping its scroll-owner mode mid-session. */
+  const [historyOpen, setHistoryOpen] = useState(false);
   // Latest callbacks/appearance without re-running the connect effect.
   const onStatusRef = useRef(onStatus);
   const onAttachErrorRef = useRef(onAttachError);
@@ -1409,6 +1416,7 @@ export function AgenticTerminal({
         onRename={onRename}
         onClose={onClose}
         splitDisabled={splitDisabled}
+        onOpenConversation={() => setHistoryOpen(true)}
       />
       {/*
         Keep the visual inset OUTSIDE xterm's measured host. FitAddon reads the
@@ -1445,6 +1453,12 @@ export function AgenticTerminal({
           epoch={terminalEpoch}
           appearance={appearance}
           onFocus={onFocus}
+          onOpenHistory={() => setHistoryOpen(true)}
+        />
+        <PaneConversationDialog
+          terminal={name}
+          open={historyOpen}
+          onOpenChange={setHistoryOpen}
         />
         {/*
           The pane says it is starting, instead of being a black rectangle.
@@ -1540,6 +1554,7 @@ function PaneHeader({
   onRestart,
   onArrangeStart,
   arranging = false,
+  onOpenConversation,
 }: {
   workspaceId?: string;
   name: string;
@@ -1565,7 +1580,10 @@ function PaneHeader({
   /** Press on the header picks the pane up; absent leaves it undraggable. */
   onArrangeStart?: (event: React.PointerEvent) => void;
   arranging?: boolean;
+  /** Opens the pane's recorded conversation — the mode-proof scroll history. */
+  onOpenConversation?: () => void;
 }) {
+  const t = useT();
   const light = appearance === "light";
   // Which split button opened the CLI picker, if any.
   const [picking, setPicking] = useState<SplitDirection | null>(null);
@@ -1824,6 +1842,17 @@ function PaneHeader({
           count={promptCount}
           light={light}
         />
+        {/* The one scroll-history entry point that cannot flicker away: the
+            CLI may flip its scroll-owner mode mid-session (Claude Code does),
+            but the pane's recorded conversation is always openable. */}
+        <PaneAction
+          label={t("agentic_grid.conversation.open").replace("{0}", name)}
+          testId={`pane-conversation-${name}`}
+          light={light}
+          onClick={onOpenConversation}
+        >
+          <BookOpenText className="h-3.5 w-3.5" aria-hidden="true" />
+        </PaneAction>
         <PaneAction
           label={maximized ? `Restore ${name}` : `Maximize ${name}`}
           testId={`pane-maximize-${name}`}

@@ -591,6 +591,41 @@ export function fetchPromptHistory(
   );
 }
 
+export interface ConversationStep {
+  tool: string;
+  target: string;
+  detail: string;
+}
+
+export interface ConversationTurn {
+  role: "user" | "assistant" | string;
+  text: string;
+  steps: ConversationStep[];
+}
+
+export interface ConversationResponse {
+  terminal: string;
+  agent: string;
+  /** False when this CLI's session records exist but cannot be parsed. */
+  readable: boolean;
+  /** False when this CLI keeps no session record to read at all. */
+  available: boolean;
+  turns: ConversationTurn[];
+}
+
+/**
+ * The pane's conversation as the CLI itself recorded it on disk — the one
+ * scroll-history source that does not depend on what the TUI happens to be
+ * painting, which is why the pane history view is built on it.
+ */
+export function fetchTerminalConversation(
+  name: string,
+): Promise<ConversationResponse> {
+  return getJson<ConversationResponse>(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/conversation`,
+  );
+}
+
 function recapUrl(name: string, workspaceId?: string, suffix = ""): string {
   const query = workspaceId
     ? `?workspace_id=${encodeURIComponent(workspaceId)}`
