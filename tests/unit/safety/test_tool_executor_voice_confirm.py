@@ -124,6 +124,77 @@ async def test_broken_describe_args_never_blocks_the_deferral() -> None:
     assert "impact" not in result.output
 
 
+class _IntentTool(_AskTool):
+    """Ask-tier tool whose ``intent_confirms_args`` mirrors run_shell's."""
+
+    name = "run_shell"
+
+    def intent_confirms_args(self, args: dict[str, Any], utterance: str) -> bool:
+        return "lösch" in utterance.lower()  # i18n-allow — speech-input stem
+
+
+@pytest.mark.asyncio
+async def test_explicit_intent_skips_the_confirmation() -> None:
+    # Claude-Code permission model: the user asked for the deletion themselves —
+    # the ask-tier action runs immediately, recorded as explicit-intent.
+    executor, approval, _bus = _executor()
+    tool = _IntentTool()
+    result = await executor.execute(
+        tool, args={"command": "rm -rf x"},
+        user_utterance="Lösch den Ordner x.",  # i18n-allow — spoken German turn
+        config_snapshot={"voice_confirm": True},
+    )
+    assert result.success is True
+    assert tool.calls == 1
+    assert approval.wait_calls == 0
+    assert tool.last_ctx is not None
+    assert tool.last_ctx.approved_by == "explicit-intent"
+
+
+@pytest.mark.asyncio
+async def test_brain_initiated_destruction_still_defers() -> None:
+    # Same tool, but the utterance never asked for a deletion — the two-turn
+    # confirmation flow stays.
+    executor, _approval, _bus = _executor()
+    tool = _IntentTool()
+    result = await executor.execute(
+        tool, args={"command": "rm -rf x"},
+        user_utterance="mach das Projekt startklar",
+        config_snapshot={"voice_confirm": True},
+    )
+    assert result.error == VOICE_CONFIRM_SENTINEL
+    assert tool.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_empty_utterance_never_skips_the_confirmation() -> None:
+    # API/mission calls carry no spoken turn — explicit intent cannot apply.
+    executor, _approval, _bus = _executor()
+    tool = _IntentTool()
+    result = await executor.execute(
+        tool, args={"command": "rm -rf x"},
+        config_snapshot={"voice_confirm": True},
+    )
+    assert result.error == VOICE_CONFIRM_SENTINEL
+    assert tool.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_broken_intent_hook_keeps_the_confirmation() -> None:
+    class _BrokenIntentTool(_AskTool):
+        def intent_confirms_args(self, args: dict[str, Any], utterance: str) -> bool:
+            raise RuntimeError("boom")
+
+    executor, _approval, _bus = _executor()
+    tool = _BrokenIntentTool()
+    result = await executor.execute(
+        tool, args={}, user_utterance="lösch alles",  # i18n-allow
+        config_snapshot={"voice_confirm": True},
+    )
+    assert result.error == VOICE_CONFIRM_SENTINEL
+    assert tool.calls == 0
+
+
 @pytest.mark.asyncio
 async def test_execute_confirmed_runs_the_stashed_action() -> None:
     executor, _approval, bus = _executor()

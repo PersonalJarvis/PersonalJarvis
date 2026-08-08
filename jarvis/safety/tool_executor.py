@@ -210,9 +210,31 @@ class ToolExecutor:
         # TaskAutoApprover may answer synchronously from that event; registering
         # afterward loses the answer and turns a valid grant into a timeout.
         approved_by = decision.approved_by or "auto"
-        needs_confirm = self._evaluator.needs_user_confirmation(decision) or (
-            plaus is not None and plaus.require_confirmation
-        )
+        tier_confirm = self._evaluator.needs_user_confirmation(decision)
+        plaus_confirm = plaus is not None and plaus.require_confirmation
+        # Explicit intent (Claude-Code permission model, mandate 2026-08-08):
+        # a consequential action the user's own utterance already asked for by
+        # name ("delete the folder X") skips the redundant confirmation. Only
+        # the TIER requirement may be waived — a plausibility-forced
+        # confirmation (low STT confidence, stale wake) stays binding, because
+        # the whole doubt there is whether the utterance was heard right.
+        if tier_confirm and not plaus_confirm and user_utterance:
+            confirms = getattr(tool, "intent_confirms_args", None)
+            if callable(confirms):
+                try:
+                    if confirms(args, user_utterance):
+                        tier_confirm = False
+                        approved_by = "explicit-intent"
+                        log.info(
+                            "explicit-intent: %s authorized by the utterance, "
+                            "skipping confirmation", tool.name,
+                        )
+                except Exception as exc:  # noqa: BLE001 — keep the confirmation on a broken hook
+                    log.warning(
+                        "intent_confirms_args on %r raised %r — keeping confirmation",
+                        tool.name, exc,
+                    )
+        needs_confirm = tier_confirm or plaus_confirm
         voice_confirm = bool((config_snapshot or {}).get("voice_confirm"))
         approval_ticket = None
         if needs_confirm and not voice_confirm:

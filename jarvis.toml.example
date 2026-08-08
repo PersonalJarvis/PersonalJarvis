@@ -125,9 +125,15 @@ always_confirm_tiers = ["ask"]
 always_block_tiers = ["block"]
 
 [safety.whitelist]
-# fnmatch patterns against "<tool_name> <args>"; a match downgrades to "safe".
+# fnmatch patterns against "<tool_name> <args>" or the bare "<args>"; a match
+# downgrades to "safe". Do NOT add "run_shell *": shell commands come with a
+# tiered model out of the box (Claude-Code permission style) — commands that
+# only read or modify run without confirmation, destructive commands (rm,
+# del, format, Remove-Item, ...) ask first UNLESS the user's own request
+# already named the destruction ("delete the folder X"). A blanket
+# "run_shell *" entry would switch all of that off.
 commands = [
-    "open_app *", "type_text *", "run_shell *", "search_web *", "remember *",
+    "open_app *", "type_text *", "search_web *", "remember *",
     "dispatch_to_harness *", "screenshot *",
     "git status", "git log *", "git diff *",
 ]

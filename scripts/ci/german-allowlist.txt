@@ -257,6 +257,12 @@ tests/unit/voice/test_echo_confirmation_es.py
 #     jarvis/voice/action_phrases.py) ---
 jarvis/voice/tool_confirmation.py
 
+# --- Explicit-intent vocabulary: German speech-input stems ("lösch",
+#     "entfern", ...) that mark a destruction the user asked for HIMSELF —
+#     de/en/es, same speech-input-vocabulary rationale as the wake words ---
+jarvis/safety/explicit_intent.py
+tests/unit/safety/test_explicit_intent.py
+
 # --- awareness-recall tool: forensic comments quote the German runtime phrase
 #     ("der lokale Verlaufsspeicher ist nicht verfügbar") the DI fix addresses ---
 jarvis/plugins/tool/awareness_recall.py

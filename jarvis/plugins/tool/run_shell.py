@@ -35,6 +35,7 @@ from typing import Any
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.safety.command_impact import DESTRUCTIVE, classify_command
+from jarvis.safety.explicit_intent import utterance_confirms_destruction
 
 if sys.platform == "win32":
     _SHELL_LABEL = "Windows PowerShell 5.1"
@@ -165,6 +166,21 @@ class RunShellTool:
         if classify_command(command).level == DESTRUCTIVE:
             return "ask"
         return None
+
+    def intent_confirms_args(self, args: dict[str, Any], utterance: str) -> bool:
+        """True when the user's own words already authorize this command.
+
+        Claude-Code permission model: a destructive command the USER asked
+        for by name ("delete the folder Urlaub") needs no second question —
+        the ToolExecutor consults this hook before arming a confirmation.
+        Only the destruction verb-class is matched (deterministic vocabulary,
+        no entity matching — STT garbles names); a brain-initiated deletion
+        whose utterance never mentioned deleting still confirms.
+        """
+        command = (args.get("command") or "").strip()
+        if not command or classify_command(command).level != DESTRUCTIVE:
+            return False
+        return utterance_confirms_destruction(utterance)
 
     def describe_args(self, args: dict[str, Any]) -> dict[str, str] | None:
         """Plain-language impact summary for the confirmation question.
