@@ -115,6 +115,24 @@ _CLOUD_STORAGE_RE = re.compile(
     r"sharepoint|nextcloud|cloud)\b"
 )
 
+# A foreign-domain noun makes the generic FS noun AMBIENT, not the target:
+# "Verschieb die Mail in einen anderen Ordner" is a mailbox operation on a
+# mail FOLDER, not a disk folder — the plugin/calendar/contact flows own it.
+# Unconditional co-occurrence stand-down (code-review finding 2026-08-08):
+# ``requires_external_integration`` alone cannot catch these because it needs
+# a DISPATCH verb (schick/sende/…), and the outcome verbs this gate matches
+# (verschieb/loesch/kopier/…) are deliberately not dispatch verbs.
+_FOREIGN_DOMAIN_RE = re.compile(
+    r"\b(?:"
+    r"mails?|e-?mails?|gmail|outlook|postfach|posteingang|inbox|"  # i18n-allow
+    r"nachrichten?|messages?|chats?|"  # i18n-allow
+    r"whatsapp|telegram|discord|slack|signal|"
+    r"termine?|kalender\w*|calendar|events?|"  # i18n-allow
+    r"kontakte?|contacts?|adressbuch|"  # i18n-allow
+    r"spotify|playlists?|wiki|notizen?"  # i18n-allow
+    r")\b"
+)
+
 # Per-turn directive injected into the system prompt when the mandate fires
 # (English — LLM-facing, mirrors CONTACT_WRITE_DIRECTIVE / the read gate).
 RUN_SHELL_OUTCOME_DIRECTIVE = (
@@ -153,6 +171,8 @@ def resolve_local_outcome_mandate(utterance: str) -> tuple[str, str] | None:
     if _GUI_VEHICLE_RE.search(t) or _OTHER_VEHICLE_RE.search(t):
         return None
     if _CLOUD_STORAGE_RE.search(t):
+        return None
+    if _FOREIGN_DOMAIN_RE.search(t):
         return None
     # External dispatch ("schick … per Mail") — checked on the RAW text,
     # the detector does its own normalisation.

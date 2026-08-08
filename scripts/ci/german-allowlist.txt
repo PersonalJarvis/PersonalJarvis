@@ -135,6 +135,7 @@ tests/unit/brain/test_local_action_gate.py
 #     fixtures — content under test ---
 jarvis/brain/local_outcome_gate.py
 tests/unit/brain/test_local_outcome_gate.py
+tests/unit/brain/test_image_turn_tool_override.py
 
 # --- DIRECT-path acknowledgement language test: proves the German open_app
 #     launch ack is localized for English/Spanish turns and preserved for German

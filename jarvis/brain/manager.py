@@ -5483,6 +5483,27 @@ class BrainManager:
             if n in allowed
         }
 
+    def _image_turn_tool_override(self) -> dict[str, Tool]:
+        """Tool surface for a turn that carries an attached image.
+
+        Historically hard ``{}`` — an image turn answers from the pixels, so
+        the tool loop was withheld entirely. But a WRITE mandate must survive
+        it (code-review finding 2026-08-08): "erstell einen Ordner hier auf
+        dem Desktop" matches the screen-intent phrase "hier auf dem", the
+        explicit screen-context path attaches a screenshot, and zeroing the
+        surface would blind the very run_shell call the local-outcome mandate
+        requires — the honest "never ran" fallback would fire instead of the
+        action. Mirrors the mandated-tool exemption in the smalltalk override
+        above: ONLY the mandated write tool stays visible, every other tool
+        keeps the historical image-turn hide.
+        """
+        if self._evidence_required_is_write and self._evidence_required_tool:
+            return {
+                n: t for n, t in self._tools.items()
+                if n == self._evidence_required_tool
+            }
+        return {}
+
     def _gate_screen_tool(
         self,
         tools: dict[str, Tool],
@@ -9879,9 +9900,12 @@ class BrainManager:
         # Mirror the save mandate above: deterministically mandate run_shell so
         # the directive + honest write backstop turn "sometimes works" into
         # "always works or fails honestly". Never overrides an earlier mandate
-        # (read evidence / save — those are more specific), and degrades to no
-        # mandate when run_shell is not registered (§3 open-source).
-        if not self._evidence_required_tool:
+        # (read evidence / save — those are more specific), stands down on a
+        # skill-matched turn (AD-S3/AD-S9: a matched skill IS the capability
+        # and must not be steamrolled by a generic shell mandate), and
+        # degrades to no mandate when run_shell is not registered (§3
+        # open-source).
+        if not self._evidence_required_tool and self._skill_turn_match is None:
             from jarvis.brain.local_outcome_gate import resolve_local_outcome_mandate
 
             _local_mandate = resolve_local_outcome_mandate(user_text)
@@ -10212,7 +10236,9 @@ class BrainManager:
                 vision_capable_seen = True
 
             _turn_tools = (
-                {}
+                # Image turn: pixels answer the turn — tools withheld, EXCEPT
+                # a mandated write tool (see _image_turn_tool_override).
+                self._image_turn_tool_override()
                 if screen_context.has_image
                 else self._smalltalk_tool_override() if is_smalltalk_turn
                 # Non-smalltalk turn: drop plugin tools irrelevant to this

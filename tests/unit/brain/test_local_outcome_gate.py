@@ -46,6 +46,12 @@ NO_MANDATE_UTTERANCES = [
     "How do I create a folder on Windows?",
     # External dispatch — the integration machinery owns it.
     "Schick die Datei bitte per Mail an Harald",
+    # Foreign-domain noun alongside a generic FS noun (code-review finding
+    # 2026-08-08): a mail FOLDER is a mailbox operation, not a disk folder.
+    "Verschieb die Mail in einen anderen Ordner",
+    "move the email to a different folder",
+    "Lösch die WhatsApp-Nachrichten in dem Ordner",
+    "Kopier den Termin in den Kalender-Ordner",
     # Cloud storage — not the local disk.
     "Lad die Datei in mein Google Drive hoch",
     # Explicit GUI vehicle — computer-use owns the screen.
