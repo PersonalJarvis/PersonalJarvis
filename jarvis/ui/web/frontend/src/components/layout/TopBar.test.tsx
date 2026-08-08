@@ -10,7 +10,11 @@ vi.mock("@/hooks/useUpdate", () => ({
 // The bar is section-aware now, so every test below states which screen it is
 // on rather than inheriting whatever a previous one left behind.
 beforeEach(() =>
-  useEventStore.setState({ activeSection: "chats", solo: false }),
+  useEventStore.setState({
+    activeSection: "chats",
+    solo: false,
+    detachedViews: [],
+  }),
 );
 afterEach(() => vi.restoreAllMocks());
 
@@ -155,6 +159,18 @@ describe("TopBar in the classic terminal grid", () => {
 
     render(<TopBarActions />);
 
+    expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
+  });
+
+  it("restores the global bar in the main window while the IDE is detached", () => {
+    useEventStore.setState({
+      activeSection: "agentic-ide-classic",
+      detachedViews: ["agentic-ide"],
+    });
+
+    const { container } = render(<TopBar />);
+
+    expect(container.firstChild).not.toBeNull();
     expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
   });
 

@@ -167,7 +167,17 @@ export default function App() {
   const navRevealed = useEventStore((s) => s.navRevealed);
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
-  const codingSurface = CODING_SECTIONS.has(activeSection);
+  /*
+   * A detached IDE leaves a placeholder in the main window, not a coding
+   * surface. The actual IDE normally carries its own menu-reveal control, but
+   * it is deliberately unmounted while detached to protect the PTY streams.
+   * Treating the placeholder like the IDE therefore hid the only navigation
+   * with no control left to bring it back. Give that state the regular shell
+   * so every other section remains reachable while the IDE stays detached.
+   */
+  const codingDetached =
+    !solo && detachedViews.some((view) => CODING_SECTIONS.has(view));
+  const codingSurface = CODING_SECTIONS.has(activeSection) && !codingDetached;
   const railHidden = codingSurface && !navRevealed;
 
   /*

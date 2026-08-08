@@ -39,17 +39,25 @@ import { openExternalUrl } from "@/lib/openExternal";
  */
 const CONFIRM_TIMEOUT_MS = 4000;
 
+const CODING_SECTIONS = new Set<SectionId>([
+  "agentic-ide",
+  "agentic-ide-classic",
+  "chat-workspace",
+]);
+
 export function TopBar() {
   const activeSection = useEventStore((s) => s.activeSection);
+  const solo = useEventStore((s) => s.solo);
+  const detachedViews = useEventStore((s) => s.detachedViews);
   // The coding workspace takes the actions into its own toolbar row, under
   // every id that reaches it. The rule is "the section carries the actions
   // itself" — a section that does not would lose Restart, which is the one
-  // control a frontend change is reached through.
-  if (
-    activeSection === "agentic-ide" ||
-    activeSection === "agentic-ide-classic" ||
-    activeSection === "chat-workspace"
-  ) {
+  // control a frontend change is reached through. Once detached, that toolbar
+  // lives in the solo window and the main window only has a placeholder, so
+  // the main shell must provide the global bar again.
+  const codingDetached =
+    !solo && detachedViews.some((view) => CODING_SECTIONS.has(view));
+  if (CODING_SECTIONS.has(activeSection) && !codingDetached) {
     return null;
   }
 
