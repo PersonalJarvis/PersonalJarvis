@@ -66,6 +66,30 @@ DRIFT_REASONS: Final[tuple[str, ...]] = (
     "lost_term",
 )
 
+#: Every reason :func:`precision_drift_reason` can return, plus ``""``.
+#:
+#: A STRICT SUBSET of :data:`DRIFT_REASONS` — same checks, same codes, same
+#: meanings, minus ``lost_term``'s rare-token half. Declared as its own tuple
+#: anyway, rather than reusing the one above, because the difference is the
+#: entire point of the mode: precision mode REPLACES uncommon words on purpose,
+#: so a guard that rejects an answer for having done so rejects the feature. A
+#: reader who sees this vocabulary knows immediately which protection was traded
+#: away, and a test can pin that the trade is exactly one check wide.
+#:
+#: ``lost_term`` survives, because it still fires for PROTECTED terms — names,
+#: the wake word, the STT dictionary. Those come from the user, not from a
+#: frequency table, and no amount of "sharpen the wording" licenses touching
+#: them.
+PRECISION_DRIFT_REASONS: Final[tuple[str, ...]] = (
+    "empty",
+    "meta_output",
+    "ratio_shrink",
+    "ratio_growth",
+    "language_flip",
+    "lost_number",
+    "lost_term",
+)
+
 #: Every reason :func:`translate_drift_reason` can return, plus ``""``.
 #:
 #: Deliberately a SEPARATE vocabulary rather than an extension of the tuple
@@ -317,6 +341,48 @@ _COMMON_WORDS: Final[dict[str, frozenset[str]]] = {
     for code, base in _COMMON_WORDS_BASE.items()
 }
 
+# i18n-allow: number-word DATA (§1 list #3), same category as the tables above.
+#
+# The number words that mean a QUANTITY and nothing else — the only ones a guard
+# may insist on. Every member of ``_NUMBER_WORDS`` that also has a common
+# non-numeric sense is deliberately absent, because this check has no way to
+# tell the two apart and the module's rule is that silence beats a veto:
+#
+# * ordinals ("first", "erste", "primero") — a rewrite legitimately drops them
+#   ("the first thing we need" -> "the requirement");
+# * fractions and vague amounts ("half", "quarter", "dozen", "halb", "viertel")
+#   — "a quarter of the team" survives as "some of the team" in any faithful
+#   sharpening, and "quarter" is also a period of the year;
+# * "one" / "uno" — far more often an impersonal pronoun or an article than the
+#   number 1 ("one of the things", "one never knows").
+#
+# What is left is unambiguous: a speaker who said "three" and got back a text
+# with no three in it, in digits or in words, lost information.
+_QUANTITY_WORDS: Final[dict[str, frozenset[str]]] = {
+    "en": frozenset({
+        "zero", "two", "three", "four", "five", "six", "seven", "eight",
+        "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+        "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty",
+        "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred",
+        "thousand", "million", "billion",
+    }),
+    "de": frozenset({  # i18n-allow: German quantity words (§1 list #3)
+        "null", "zwei", "drei", "vier", "fünf", "sechs", "sieben",  # i18n-allow
+        "acht", "neun", "zehn", "elf", "zwölf", "dreizehn", "vierzehn",  # i18n-allow
+        "fünfzehn", "sechzehn", "siebzehn", "achtzehn", "neunzehn",  # i18n-allow
+        "zwanzig", "dreißig", "dreissig", "vierzig", "fünfzig",  # i18n-allow
+        "sechzig", "siebzig", "achtzig", "neunzig", "hundert", "tausend",  # i18n-allow
+        "million", "millionen",  # i18n-allow
+    }),
+    "es": frozenset({  # i18n-allow: Spanish quantity words (§1 list #3)
+        "cero", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho",  # i18n-allow
+        "nueve", "diez", "once", "doce", "trece", "catorce", "quince",  # i18n-allow
+        "dieciséis", "diecisiete", "dieciocho", "diecinueve", "veinte",  # i18n-allow
+        "treinta", "cuarenta", "cincuenta", "sesenta", "setenta", "ochenta",  # i18n-allow
+        "noventa", "cien", "ciento", "mil", "millón", "millones",  # i18n-allow
+    }),
+}
+
 
 def normalize_for_compare(text: str) -> str:
     """Collapse *text* to the form used to decide "did anything change at all".
@@ -469,6 +535,49 @@ def _digit_runs(text: str) -> frozenset[str]:
     return frozenset(_DIGIT_RUN_RE.findall(_DIGIT_SEPARATOR_RE.sub("", str(text or ""))))
 
 
+def _lost_quantity_word(raw: str, out: str, *, language: str) -> bool:
+    """Whether a spoken QUANTITY vanished without a digit taking its place.
+
+    The gap :func:`_digit_runs` cannot see. That check compares digits, so a
+    speaker who said "send it to three people" and got back "send it to the
+    team" loses the three silently: there was never a digit to miss, and
+    "three" is common vocabulary so the rare-token filter waves it through too.
+
+    Used ONLY by :func:`precision_drift_reason`, and that narrowness is the
+    point rather than an omission. In the ordinary polish pass the model is
+    forbidden from replacing words at all, so this failure needs a prompt
+    violation AND a second guard to already have missed it; in precision mode
+    replacing words is the licensed behaviour and the rare-token check that
+    backstopped it is gone, which is exactly when a quantity can walk out
+    unnoticed. Adding it to both would also change the verdict on transcripts
+    the ordinary guard has been passing correctly for months, for a failure it
+    is not exposed to.
+
+    A quantity is NOT lost when the answer carries it as a digit — "seven" ->
+    "7" is the normalization the whole feature exists to perform, so any digit
+    at all in the output excuses a vanished number word. That is deliberately
+    coarse: pairing each word with its value would need a spelled-number parser
+    per language, and getting it wrong rejects a correct answer.
+
+    Returns ``False`` for any language with no quantity table, like every other
+    frequency-driven check here.
+    """
+    quantities = _QUANTITY_WORDS.get(_language_key(language))
+    if not quantities:
+        return False
+    spoken = {token for token in _compare_tokens(raw) if token in quantities}
+    if not spoken:
+        return False
+    survivors = set(_compare_tokens(out))
+    vanished = spoken - survivors
+    if not vanished:
+        return False
+    # Any digit in the answer that the transcript did not already carry is a
+    # spelled number written out as a numeral. Which word became which digit is
+    # not worth resolving — see the docstring.
+    return not (_digit_runs(out) - _digit_runs(raw))
+
+
 def _echoes_delimiter(raw: str, polished: str) -> bool:
     """True when the answer repeats the fence the transcript was sent inside.
 
@@ -502,6 +611,10 @@ def drift_reason(
 ) -> str:
     """``""`` when *polished* is safe to deliver; otherwise a short reason code.
 
+    The guard for the ORDINARY polish pass, where the model was told to change
+    how the text is written and nothing about which words it is made of. Every
+    check runs, the rare-token half of ``lost_term`` included.
+
     The checks run cheapest-and-most-unambiguous first, and the returned code is
     the FIRST one that fired — it is stored on the history row, so it has to name
     the most informative cause rather than the last one evaluated. In particular
@@ -510,6 +623,88 @@ def drift_reason(
     deliberately precedes the token checks.
 
     Every returned value is a member of :data:`DRIFT_REASONS`.
+    """
+    return _polish_drift_reason(
+        raw,
+        polished,
+        language=language,
+        protected=protected,
+        max_shrink=max_shrink,
+        max_growth=max_growth,
+        preserve_rare_tokens=True,
+    )
+
+
+def precision_drift_reason(
+    raw: str,
+    polished: str,
+    *,
+    language: str,
+    protected: Sequence[str],
+    max_shrink: float,
+    max_growth: float,
+) -> str:
+    """The guard for a polish run with PRECISION MODE on.
+
+    Identical to :func:`drift_reason` in every check but one: the rare-token
+    half of ``lost_term`` is skipped. That check rejects an answer in which an
+    uncommon word from the transcript is gone and nothing in the output is a
+    repaired spelling of it — which is the exact shape of the substitution
+    precision mode exists to make ("the program is broken" -> "the application
+    is faulty" loses both ``program`` and ``broken``). Running precision answers
+    through the ordinary guard does not make them safer; it rejects nearly all
+    of them, and the user sees a switch that changes nothing.
+
+    What is traded away is real and worth naming: the rare-token check is the
+    strongest defence against a model quietly replacing a word it did not
+    understand. Everything that survives is what still means something once
+    substitution is licensed —
+
+    * ``empty`` / ``meta_output`` — the model started talking instead of writing;
+    * the word-count band — it may sharpen a sentence, not write a new one;
+    * ``language_flip`` — precision is not a licence to translate;
+    * ``lost_number`` — a quantity is never a wording choice;
+    * ``lost_term`` for PROTECTED terms — names, the wake word and the STT
+      dictionary come from the user, and no register change touches them.
+
+    That is also why the mode ships off and is a deliberate switch: the trade is
+    the user's to make, not ours to make for them.
+
+    Every returned value is a member of :data:`PRECISION_DRIFT_REASONS`.
+    """
+    return _polish_drift_reason(
+        raw,
+        polished,
+        language=language,
+        protected=protected,
+        max_shrink=max_shrink,
+        max_growth=max_growth,
+        preserve_rare_tokens=False,
+    )
+
+
+def _polish_drift_reason(
+    raw: str,
+    polished: str,
+    *,
+    language: str,
+    protected: Sequence[str],
+    max_shrink: float,
+    max_growth: float,
+    preserve_rare_tokens: bool,
+) -> str:
+    """The shared body of the two polish guards above.
+
+    Written once with a flag — deliberately unlike the polish/translate split,
+    which is two functions because those two disagree about what the job IS
+    (a language change is the defect in one and the whole point in the other).
+    These two agree about everything and differ by one check, so a second copy
+    would be an invitation for the checks to drift apart silently: the pair that
+    matters most, ``language_flip`` and the protected-term half of
+    ``lost_term``, must stay byte-identical in both modes.
+
+    The flag is keyword-only and has no default on purpose. Both callers state
+    which contract they want, at the call site, where a reader can see it.
     """
     if not str(polished or "").strip():
         return "empty"
@@ -537,6 +732,14 @@ def drift_reason(
     if _digit_runs(raw) - _digit_runs(polished):
         return "lost_number"
 
+    # The spelled-out twin of the check above, and precision-only — see
+    # ``_lost_quantity_word`` for why the ordinary pass is not exposed to this
+    # failure and must not inherit the check.
+    if not preserve_rare_tokens and _lost_quantity_word(
+        raw, polished, language=raw_language if raw_language != "unknown" else language
+    ):
+        return "lost_number"
+
     haystack = _token_haystack(polished)
     raw_haystack = _token_haystack(raw)
     for term in protected or ():
@@ -547,29 +750,38 @@ def drift_reason(
         if needle in raw_haystack and needle not in haystack:
             return "lost_term"
 
-    # The frequency list has to describe the TEXT, not its label. Where the two
-    # disagree the label loses, because trusting it fails silently and
-    # completely: an English transcript looked up against the German word list
-    # makes every ordinary English word "rare", so the guard fires on any
-    # wording change at all and the dictation is delivered unpolished with
-    # `rejected_drift` on the row and nothing saying why.
-    #
-    # The disagreement is real and has its own cause upstream — a segment-sized
-    # upload lets Whisper re-decide the language, and on a short segment it
-    # sometimes TRANSLATES rather than transcribes, so a row can carry a German
-    # tag and an English transcript. That is fixed where it happens; this is the
-    # guard declining to compound it. `raw_language` is already computed above,
-    # so the correction costs nothing.
-    lookup = raw_language if raw_language != "unknown" else language
-    vanished = rare_tokens(raw, language=lookup) - rare_tokens(polished, language=lookup)
-    if vanished:
-        # A vanished rare token is only a LOSS when nothing in the answer stands
-        # where it was. Where a corrected spelling does, it is the repair this
-        # pass exists to make — see ``_was_repaired`` for why conflating the two
-        # disarmed the guard on precisely the transcripts that needed it.
-        out_tokens = _compare_tokens(polished)
-        if any(not _was_repaired(token, out_tokens) for token in vanished):
-            return "lost_term"
+    # Skipped entirely in precision mode, where replacing an uncommon word with
+    # a more precise one is the job rather than the defect. See
+    # :func:`precision_drift_reason` for what is traded away and what still
+    # covers it.
+    if preserve_rare_tokens:
+        # The frequency list has to describe the TEXT, not its label. Where the
+        # two disagree the label loses, because trusting it fails silently and
+        # completely: an English transcript looked up against the German word
+        # list makes every ordinary English word "rare", so the guard fires on
+        # any wording change at all and the dictation is delivered unpolished
+        # with `rejected_drift` on the row and nothing saying why.
+        #
+        # The disagreement is real and has its own cause upstream — a
+        # segment-sized upload lets Whisper re-decide the language, and on a
+        # short segment it sometimes TRANSLATES rather than transcribes, so a row
+        # can carry a German tag and an English transcript. That is fixed where
+        # it happens; this is the guard declining to compound it.
+        # `raw_language` is already computed above, so the correction costs
+        # nothing.
+        lookup = raw_language if raw_language != "unknown" else language
+        vanished = rare_tokens(raw, language=lookup) - rare_tokens(
+            polished, language=lookup
+        )
+        if vanished:
+            # A vanished rare token is only a LOSS when nothing in the answer
+            # stands where it was. Where a corrected spelling does, it is the
+            # repair this pass exists to make — see ``_was_repaired`` for why
+            # conflating the two disarmed the guard on precisely the transcripts
+            # that needed it.
+            out_tokens = _compare_tokens(polished)
+            if any(not _was_repaired(token, out_tokens) for token in vanished):
+                return "lost_term"
 
     return ""
 
@@ -691,9 +903,11 @@ def translate_drift_reason(
 
 __all__ = [
     "DRIFT_REASONS",
+    "PRECISION_DRIFT_REASONS",
     "TRANSLATE_DRIFT_REASONS",
     "drift_reason",
     "normalize_for_compare",
+    "precision_drift_reason",
     "rare_tokens",
     "translate_drift_reason",
 ]

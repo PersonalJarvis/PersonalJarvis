@@ -2982,6 +2982,27 @@ class DictationConfig(BaseModel):
     #: ever licenses a change of meaning.
     polish_style: Literal["neutral", "messaging", "email"] = "neutral"
 
+    #: Also sharpen the WORD CHOICE, not just the writing. With this on the
+    #: pass may replace a vague placeholder with the specific word that was
+    #: meant ("the thing that holds the pipe" -> "the bracket") and collapse
+    #: padding into the plain verb ("make a decision" -> "decide"). The prompt
+    #: spends more words forbidding the ornate register than requesting
+    #: precision, because that is the documented failure direction: a model
+    #: asked to "improve wording" reaches for *utilize* and *facilitate*, which
+    #: is the opposite of the goal. Simple and exact, never impressive.
+    #:
+    #: Ships OFF, and unlike ``polish_style`` this is not a matter of taste —
+    #: it TRADES A GUARD. Rare-token preservation, the check that rejects an
+    #: answer in which an uncommon word silently vanished, cannot survive a
+    #: mode whose whole job is replacing uncommon words, so precision runs
+    #: against ``precision_drift_reason`` with that one check dropped. Every
+    #: other guard stands, protected terms included. A trade like that is the
+    #: user's to make deliberately, never one they inherit from a default.
+    #:
+    #: Applies to the translate pass too, through the same prompt clause, so
+    #: one switch means one thing whichever pass runs.
+    polish_precision: bool = False
+
     # ------------------------------------------------------------------
     # The translate pass — speak one language, deliver another
     # ------------------------------------------------------------------

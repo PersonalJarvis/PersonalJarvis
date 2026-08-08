@@ -37,11 +37,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Final
 
-from jarvis.dictation.polish_prompt import build_protected_block, style_line
+from jarvis.dictation.polish_prompt import (
+    build_protected_block,
+    precision_block,
+    style_line,
+)
 
 #: Bumped whenever the wording below changes in a way that could change model
 #: behaviour, exactly like ``POLISH_PROMPT_VERSION``.
-TRANSLATE_PROMPT_VERSION: Final[int] = 1
+TRANSLATE_PROMPT_VERSION: Final[int] = 2
 
 #: English names for every code ``[dictation].translate_target`` accepts.
 #:
@@ -115,6 +119,15 @@ HARD RULES — a violation makes your answer unusable:
 4. WRITE IT, DO NOT GLOSS IT. Produce the natural {target} sentence a native
    speaker would use to say the same thing, not a word-by-word rendering.
    Keep the speaker's register: casual stays casual, formal stays formal.
+   RESTRUCTURE FREELY to get there. The word order, clause order and sentence
+   boundaries of the input carry no meaning and must not survive into {target}
+   when {target} would order them differently — split a long spoken sentence,
+   join two short ones, move the verb, drop a particle that has no {target}
+   equivalent. A sentence that is individually correct but still audibly
+   arranged like the source language has not been translated, only converted.
+   Read your answer back as if you had never seen the input: if it does not
+   sound like something a {target} speaker would have written unprompted,
+   write it again.
 5. RETURN ONLY THE {target} TEXT. No preamble, no quotes, no explanation, no
    markdown fences, no "Here is", and never the original text alongside it.
 
@@ -154,6 +167,7 @@ def build_translate_prompt(
     target_language: str,
     style: str,
     protected_terms: Sequence[str],
+    precision: bool = False,
 ) -> str:
     """Assemble the system prompt for one translate call.
 
@@ -161,6 +175,13 @@ def build_translate_prompt(
     whether a translation is wanted at all
     (:func:`jarvis.dictation.polish.resolve_translate_target`), so by the time it
     gets here the answer is always "yes, into this".
+
+    ``precision`` appends the SAME word-choice clause the polish prompt uses
+    (:func:`jarvis.dictation.polish_prompt.precision_block`), so one switch
+    means one thing whether or not a translation is involved. It needs no guard
+    change here, unlike on the polish side: ``translate_drift_reason`` already
+    drops rare-token preservation, because every content word is supposed to
+    change in a translation anyway.
 
     The SOURCE language is deliberately not mentioned. The recognizer's tag is
     documented-unreliable (it echoes a configured pin back at us, see
@@ -174,6 +195,9 @@ def build_translate_prompt(
     """
     target = language_display_name(target_language)
     parts: list[str] = [_SYSTEM_PROMPT.format(target=target)]
+
+    if precision:
+        parts.append(precision_block())
 
     register = style_line(style)
     if register:

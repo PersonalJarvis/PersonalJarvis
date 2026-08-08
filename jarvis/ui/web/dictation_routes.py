@@ -500,6 +500,17 @@ class SettingsBody(BaseModel):
         default=None,
         description="Register the polished text is written in",
     )
+    polish_precision: bool | None = Field(
+        default=None,
+        description=(
+            "Also sharpen the word choice, not just the writing: a vague "
+            "placeholder becomes the specific word you meant, padding collapses "
+            "into the plain verb. Simple and exact, never ornate — it will not "
+            "reach for a longer synonym to sound impressive. In exchange it "
+            "relaxes one safety check (a rare word may now be replaced), so it "
+            "is off unless you turn it on. Applies to translated dictations too."
+        ),
+    )
     # The translate pass. Same FastAPI trap as the polish keys above: an
     # undeclared body key is dropped before the handler ever sees it.
     translate: bool | None = Field(
@@ -1166,6 +1177,25 @@ _POLISH_SAMPLE = (
     "about the rest tomorrow"
 )
 
+#: The sample used INSTEAD when precision mode is on. The one above exercises
+#: the formatter and nothing else — it is already made of plain, specific words,
+#: so a precision run returns the same sentence the ordinary run does, and the
+#: user reads that as "the switch I just turned on does nothing" (AP-31). A dry
+#: run has to show the thing it is testing.
+#:
+#: Shaped like the defect precision mode exists for, and it still carries every
+#: defect the sample above does so the test never gets WEAKER when the mode is
+#: on: fillers, a lower-case restart, no punctuation, a spoken number. On top of
+#: those it adds what only precision may touch — two hedges ("basically",
+#: "kind of"), two padding constructions ("make a decision", "give an
+#: explanation") and one circumlocution for a thing that has a name ("the thing
+#: that stores all our customer data").
+_POLISH_PRECISION_SAMPLE = (
+    "so um i basically want to make a decision about the thing that stores "
+    "all our customer data and i think we should kind of give an explanation "
+    "to the three people who are in charge of it tomorrow"
+)
+
 
 @router.post("/polish/test")
 async def test_polish(request: Request) -> dict[str, Any]:
@@ -1186,6 +1216,7 @@ async def test_polish(request: Request) -> dict[str, Any]:
     from jarvis.dictation.polish import (
         polish_enabled,
         polish_transcript,
+        precision_enabled,
         resolve_translate_target,
     )
 
@@ -1195,6 +1226,11 @@ async def test_polish(request: Request) -> dict[str, Any]:
     # fixed sample is English, so a target of English exercises the
     # already-in-target path, which is the honest answer for that setup.
     translate_to = resolve_translate_target(cfg)
+    # The sample follows the mode, so the dry run always demonstrates the
+    # settings actually in force rather than a fixed subset of them.
+    sample = (
+        _POLISH_PRECISION_SAMPLE if precision_enabled(cfg) else _POLISH_SAMPLE
+    )
     if not polish_enabled(cfg) and not translate_to:
         # Reported rather than refused: "you switched it off" is a complete
         # answer to "why is my dictation not being polished", and a 409 here
@@ -1205,8 +1241,8 @@ async def test_polish(request: Request) -> dict[str, Any]:
             "model": "",
             "latency_ms": 0,
             "reason": "",
-            "sample_in": _POLISH_SAMPLE,
-            "sample_out": _POLISH_SAMPLE,
+            "sample_in": sample,
+            "sample_out": sample,
         }
 
     pipeline = _pipeline()
@@ -1219,7 +1255,7 @@ async def test_polish(request: Request) -> dict[str, Any]:
             log.debug("polish test protected terms unavailable: %s", exc)
 
     result = await polish_transcript(
-        _POLISH_SAMPLE,
+        sample,
         language="en",
         cfg=cfg,
         protected_terms=terms,
@@ -1235,6 +1271,6 @@ async def test_polish(request: Request) -> dict[str, Any]:
         # next to the status because "rejected_drift" without "lost_term" tells
         # a user nothing they can act on.
         "reason": result.reason,
-        "sample_in": _POLISH_SAMPLE,
+        "sample_in": sample,
         "sample_out": result.text,
     }

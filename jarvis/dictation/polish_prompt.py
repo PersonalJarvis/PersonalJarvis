@@ -38,7 +38,7 @@ from typing import Final
 #: Bumped whenever the wording below changes in a way that could change model
 #: behaviour. Stored alongside a polished transcript so a later quality
 #: regression can be attributed to a prompt revision rather than a provider.
-POLISH_PROMPT_VERSION: Final[int] = 2
+POLISH_PROMPT_VERSION: Final[int] = 3
 
 #: The delimiters that fence the untrusted transcript inside the user message.
 #: Deliberately ugly and unlikely to be dictated by accident; deliberately
@@ -108,6 +108,63 @@ WHAT YOU MAY DO:
 WHEN IN DOUBT, CHANGE NOTHING. Returning the input unchanged is always a
 correct answer. Rewriting is the exception, not the default."""
 
+# ---------------------------------------------------------------------------
+# Precision mode — the OPTIONAL word-choice pass on top of the formatter
+# ---------------------------------------------------------------------------
+# The formatter above repairs how a sentence is WRITTEN and is forbidden from
+# touching which words it is made of. This block licenses exactly one further
+# step: replacing a word with a more precise one that means the same thing.
+#
+# It is appended, never merged, and it ships OFF. Two reasons, and both are the
+# whole design:
+#
+# 1. It weakens a guard. The ``lost_term`` rare-token check throws away any
+#    answer in which an uncommon word from the transcript vanished — which is
+#    precisely what a word replacement looks like from the outside. Precision
+#    mode therefore runs against ``precision_drift_reason`` instead, which drops
+#    that one check and keeps every other. A user who has not asked for this
+#    must not silently lose the stronger guard.
+# 2. The failure direction is known and it is not subtle. Every model asked to
+#    "improve wording" reaches for the ornate register — utilize, facilitate,
+#    leverage, commence — because that is what its training data marks as
+#    "better writing". That is the OPPOSITE of the goal here. So the block
+#    spends more words forbidding ornamentation than requesting precision, and
+#    the forbidden swaps are named literally rather than described: a model
+#    given the rule "prefer plain words" still writes "utilize", and a model
+#    given "'use' does not become 'utilize'" does not.
+#
+# The examples are English because the prompt is; the RULES are language-neutral
+# and the model applies them in whatever language it was handed (hard rule 2
+# above still governs, and precision mode never licenses a language change).
+_PRECISION_BLOCK: Final[str] = """\
+PRECISION MODE IS ON. On top of the rules above you may now also sharpen the
+WORD CHOICE:
+- Replace a vague placeholder with the specific word the speaker plainly meant
+  ("the thing that holds the pipe" -> "the bracket").
+- Replace a description of a thing that has an established name with that name
+  ("the list of stuff it needs to run" -> "its dependencies").
+- Cut hedges and empty intensifiers that carry no information ("kind of",
+  "sort of", "basically", "really", "very", "I mean", "you know").
+- Collapse padding into the plain verb ("make a decision" -> "decide",
+  "give an explanation" -> "explain", "is able to" -> "can").
+
+PLAIN, NOT ORNATE — this is the half that goes wrong, so it is a rule and not a
+preference:
+- NEVER swap a common word for a rarer one that means the same thing. "use"
+  does not become "utilize". "help" does not become "facilitate". "start" does
+  not become "commence". "about" does not become "regarding". "so" does not
+  become "consequently". A longer synonym is not a more precise word.
+- NEVER add adjectives, adverbs, metaphors, imagery or flourish. No sentence
+  becomes longer because the result sounds more impressive.
+- Keep the speaker's voice and register. Casual stays casual. Short sentences
+  stay short. You are making them CLEAR, not making them sound clever.
+
+MEANING STILL NEVER CHANGES, and that outranks every line above. A word is only
+more precise if it means the same thing. Where you are not certain what the
+speaker meant, keep their word exactly as they said it — a plain word the
+reader understands beats a sharp one that is wrong."""
+
+
 # The language hint is phrased as a WEAK signal on purpose. The tag comes from
 # a recognizer that is documented to echo a configured pin back at us (see
 # jarvis/core/turn_language.py), so a hard "the input is German" line would tell
@@ -152,6 +209,19 @@ def style_line(style: object) -> str:
     return _STYLE_LINES[normalize_style(style)]
 
 
+def precision_block() -> str:
+    """The precision-mode clause, ready to append to a system prompt.
+
+    Public and shared with the translate prompt for the same reason
+    :func:`build_protected_block` and :func:`style_line` are: what "sharpen the
+    wording" means to a model is ONE decision. A second copy is how the setting
+    ends up meaning something subtly different depending on whether a
+    translation was involved — and the user would have no way to tell, because
+    both paths report the same status on the same history row.
+    """
+    return _PRECISION_BLOCK
+
+
 def build_protected_block(protected_terms: Sequence[str]) -> str:
     """The ``<protected terms>`` block, ready to append to a system prompt.
 
@@ -166,6 +236,7 @@ def build_polish_prompt(
     language: str,
     style: str,
     protected_terms: Sequence[str],
+    precision: bool = False,
 ) -> str:
     """Assemble the system prompt for one polish call.
 
@@ -176,8 +247,20 @@ def build_polish_prompt(
     ``protected_terms`` are spellings the model must not "correct": the user's
     STT dictionary, the wake word, their own name. They are listed, never
     described, so the model has nothing to interpret.
+
+    ``precision`` appends the word-choice clause. It defaults to ``False`` so
+    that every existing caller keeps the strict formatter contract it was
+    written against — and so that a caller who forgets the argument gets the
+    SAFER prompt rather than the looser one. The caller that passes ``True``
+    must also switch to
+    :func:`jarvis.dictation.polish_guards.precision_drift_reason`; the two are
+    one decision, and the ordinary guard rejects most precision answers by
+    construction.
     """
     parts: list[str] = [_SYSTEM_PROMPT]
+
+    if precision:
+        parts.append(_PRECISION_BLOCK)
 
     hint_language = str(language or "").strip()
     if hint_language and hint_language.lower() not in ("auto", "unknown"):
@@ -241,5 +324,6 @@ __all__ = [
     "build_polish_user_message",
     "build_protected_block",
     "normalize_style",
+    "precision_block",
     "style_line",
 ]

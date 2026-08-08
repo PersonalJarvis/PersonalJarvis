@@ -20,6 +20,18 @@ guard set (``translate_drift_reason``) differ, and formatting happens inside the
 SAME call so a translation costs one round trip, not two. ``translate_to``
 selects the mode; :func:`resolve_translate_target` decides it.
 
+Precision mode rides on top of both
+-----------------------------------
+``[dictation].polish_precision`` licenses ONE further step in either pass:
+replacing a word with a more precise one that means the same thing. It is a
+prompt clause (:func:`jarvis.dictation.polish_prompt.precision_block`, shared by
+both prompts so the switch means one thing) plus a matched guard
+(``precision_drift_reason``), and the two must always travel together — the
+ordinary guard rejects a substitution as ``lost_term``, which is the answer this
+mode is built to produce. That guard trade is why it ships OFF: everything else
+in this module can be defaulted on because it only ever costs a formatting pass,
+and this one costs a check.
+
 The contract, in one sentence
 -----------------------------
 **This pass can only ever be a no-op; it can never be a loss.**
@@ -99,6 +111,7 @@ from jarvis.dictation.polish_client import (
 from jarvis.dictation.polish_guards import (
     drift_reason,
     normalize_for_compare,
+    precision_drift_reason,
     translate_drift_reason,
 )
 from jarvis.dictation.polish_prompt import (
@@ -155,6 +168,25 @@ _DEFAULT_MAX_GROWTH = 1.20
 # answered the transcript instead of translating it.
 _DEFAULT_TRANSLATE_MAX_SHRINK = 0.40
 _DEFAULT_TRANSLATE_MAX_GROWTH = 2.50
+
+# Precision mode's own word-count band, and the reason it is not the polish one.
+# Substitution moves the count in BOTH directions and further than repunctuation
+# does: collapsing padding into a verb shortens ("make a decision" -> "decide",
+# "the list of stuff it needs to run" -> "its dependencies"), while naming a
+# thing the speaker described in a placeholder can lengthen. The polish ceiling
+# of 1.20 is tuned for a pass that may only ever shrink or stay flat, so reusing
+# it would reject correct answers by construction — the same mistake as running
+# a translation through the polish band.
+#
+# Still deliberately tight, and tighter than the translate band: growth is what
+# an answer, an explanation or a model that started embellishing looks like, and
+# ornamentation is precisely this mode's documented failure direction. Module
+# constants rather than config keys on purpose — the drift band is a safety
+# floor, not a preference, and this feature already asks the user to give up one
+# guard. Handing them a dial that quietly widens what is left would turn one
+# understood trade into an unbounded one (AP-31: no unread config switch).
+_DEFAULT_PRECISION_MAX_SHRINK = 0.45
+_DEFAULT_PRECISION_MAX_GROWTH = 1.35
 
 #: The value ``[dictation].translate_target`` uses to mean "no fixed target".
 #: Shared spelling with ``[dictation].language`` so one word means one thing
@@ -258,6 +290,24 @@ def polish_enabled(cfg: Any) -> bool:
     predates the feature must not silently acquire it.
     """
     return bool(getattr(cfg, "polish", False))
+
+
+def precision_enabled(cfg: Any) -> bool:
+    """Whether the pass may also sharpen the WORD CHOICE. No I/O.
+
+    Ships OFF, and an absent key reads as OFF, for a stronger reason than the
+    translate switch has: this one trades away a guard. The rare-token check
+    that rejects an answer in which an uncommon word silently vanished cannot
+    coexist with a mode whose job is replacing uncommon words, so precision runs
+    against :func:`~jarvis.dictation.polish_guards.precision_drift_reason` with
+    that check dropped. Inheriting that from a default nobody chose is exactly
+    the class of surprise this package refuses to ship.
+
+    Read independently of :func:`polish_enabled` so the answer is the SAME
+    whichever pass is running — with the formatter off and a translation on,
+    precision still applies to the translation.
+    """
+    return bool(getattr(cfg, "polish_precision", False))
 
 
 def translate_enabled(cfg: Any) -> bool:
@@ -419,13 +469,25 @@ async def polish_transcript(
 
         budget_s = _timeout_budget(cfg, timeout_s)
         attempt = _Attempt()
+        # Resolved ONCE and used for both the prompt and the guard below. Those
+        # two are a matched pair — the precision prompt licenses substitutions
+        # that the ordinary guard rejects — so reading the switch twice is how
+        # they end up disagreeing and the mode silently rejects its own correct
+        # answers.
+        precision = precision_enabled(cfg)
         if translating:
             system = build_translate_prompt(
-                target_language=target, style=style, protected_terms=protected_terms
+                target_language=target,
+                style=style,
+                protected_terms=protected_terms,
+                precision=precision,
             )
         else:
             system = build_polish_prompt(
-                language=language, style=style, protected_terms=protected_terms
+                language=language,
+                style=style,
+                protected_terms=protected_terms,
+                precision=precision,
             )
         # The SAME fenced user message either way — the delimiter and the
         # ``meta_output`` guard that watches for it are one mechanism, and a
@@ -567,6 +629,20 @@ async def polish_transcript(
                     lo=1.0,
                     hi=10.0,
                 ),
+            )
+        elif precision:
+            # The matched guard for the precision prompt. Same checks as
+            # ``drift_reason`` minus rare-token preservation, which a mode built
+            # to replace uncommon words would fail on nearly every correct
+            # answer, and with its own word-count band — substitution moves the
+            # count in both directions where repunctuation only ever shrinks it.
+            reason = precision_drift_reason(
+                source,
+                polished,
+                language=language,
+                protected=protected_terms,
+                max_shrink=_DEFAULT_PRECISION_MAX_SHRINK,
+                max_growth=_DEFAULT_PRECISION_MAX_GROWTH,
             )
         else:
             reason = drift_reason(
@@ -830,6 +906,7 @@ __all__ = [
     "aclose",
     "polish_enabled",
     "polish_transcript",
+    "precision_enabled",
     "reset_polish_state",
     "resolve_translate_target",
     "translate_enabled",
