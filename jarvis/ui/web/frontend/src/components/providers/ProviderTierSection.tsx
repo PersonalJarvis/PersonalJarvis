@@ -13,6 +13,7 @@ import {
   loginAntigravity,
   localInstallStatus,
   logoutAntigravity,
+  managedServerBrain,
   managedServerInstall,
   managedServerPreflight,
   managedServerStart,
@@ -1913,6 +1914,7 @@ function ManagedServerPanel({
   const [preflight, setPreflight] = useState<ManagedPreflight | null>(null);
   const [progress, setProgress] = useState<ManagedInstallProgress | null>(null);
   const [runtime, setRuntime] = useState<ManagedServerRuntime | null>(null);
+  const [brainNote, setBrainNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [lifecycleBusy, setLifecycleBusy] = useState(false);
@@ -2036,6 +2038,20 @@ function ManagedServerPanel({
     }
   };
 
+  const refreshBrain = async () => {
+    setError(null);
+    setBrainNote(null);
+    setLifecycleBusy(true);
+    try {
+      const result = await managedServerBrain();
+      setBrainNote(result.brain.note);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLifecycleBusy(false);
+    }
+  };
+
   const stopServer = async () => {
     setError(null);
     setLifecycleBusy(true);
@@ -2131,7 +2147,24 @@ function ManagedServerPanel({
               {t("apikeys_view.managed_stop_cta")}
             </Button>
           )}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={refreshBrain}
+            disabled={lifecycleBusy}
+            className="h-6 gap-1.5 px-2 text-[11px]"
+            title={t("apikeys_view.managed_brain_recheck_hint")}
+          >
+            <Brain className="h-3 w-3" />
+            {t("apikeys_view.managed_brain_recheck")}
+          </Button>
         </div>
+      )}
+
+      {brainNote && (
+        <p className="text-[11px] text-muted-foreground" aria-live="polite">
+          {brainNote}
+        </p>
       )}
 
       {running && (

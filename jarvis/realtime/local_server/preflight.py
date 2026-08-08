@@ -74,20 +74,57 @@ def _disk_free_gb(root: Path) -> float:
         return 0.0
 
 
+def _preferred_brain_model() -> str:
+    """The user's configured Ollama brain model, read cheaply and fail-open.
+
+    A plain TOML read (no full config model) because this runs inside a
+    read-only probe; any problem answers "" and the resolver simply applies
+    its curated preference order.
+    """
+    try:
+        import tomllib
+
+        from jarvis.core.config import resolve_config_path
+
+        path = resolve_config_path()
+        if not path.exists():
+            return ""
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+        providers = (data.get("brain") or {}).get("providers") or {}
+        return str((providers.get("ollama") or {}).get("model") or "").strip()
+    except Exception:  # noqa: BLE001 — a probe must never raise
+        log.debug("preflight: preferred-brain-model read failed", exc_info=True)
+        return ""
+
+
 def run_preflight(install_root: Path) -> PreflightReport:
     """The full go/no-go report for a managed install under ``install_root``."""
     usable_gb, source = _usable_accelerator_gb()
     disk_free = _disk_free_gb(install_root)
     tier = pick_tier(usable_gb)
     if tier is None:
-        return PreflightReport(
-            ok=False,
-            blocker=(
+        if source == "none":
+            # "0 GB accelerator memory" is factually WRONG on a machine with
+            # a 24 GB Radeon or an Arc card — the honest statement is that
+            # the managed stack does not support that hardware (yet), and
+            # the same sentence covers a headless box without nvidia-smi.
+            blocker = (
+                "No supported accelerator was found: the managed stack "
+                "currently needs an NVIDIA GPU (CUDA) or Apple Silicon. "
+                "AMD and Intel GPUs are not supported by it yet, and a "
+                "missing nvidia-smi hides an NVIDIA card."
+            )
+        else:
+            blocker = (
                 f"This machine has {usable_gb:.0f} GB of usable accelerator "
                 f"memory — under the {FLOOR_GB:.0f} GB minimum for a good "
                 "local realtime experience, so the managed install is not "
                 "offered here."
-            ),
+            )
+        return PreflightReport(
+            ok=False,
+            blocker=blocker,
             actions=(
                 "Use a cloud realtime provider on this machine (same card list).",
                 "Or point this card at a self-hosted server on a stronger machine.",
@@ -110,7 +147,9 @@ def run_preflight(install_root: Path) -> PreflightReport:
             disk_free_gb=disk_free,
             tier=tier,
         )
-    brain = resolve_brain()
+    brain = resolve_brain(
+        preferred_model=_preferred_brain_model(), usable_gb=usable_gb
+    )
     if not brain.ok:
         return PreflightReport(
             ok=False,

@@ -39,14 +39,53 @@ class TestTierLadder:
 
 class TestBrainResolution:
     def test_prefers_the_pinned_model(self) -> None:
-        assert brain_link._pick_model(["llama3.1:8b", "qwen2.5:7b"]) == "qwen2.5:7b"
+        chosen, note = brain_link._pick_model(
+            [("llama3.1:8b", 4.9), ("qwen2.5:7b", 4.7)]
+        )
+        assert chosen == "qwen2.5:7b"
+        assert note == ""
 
     def test_skips_non_chat_models(self) -> None:
-        assert brain_link._pick_model(["nomic-embed-text:latest"]) == ""
-        assert brain_link._pick_model(["nomic-embed-text:latest", "mistral:7b"]) == "mistral:7b"
+        assert brain_link._pick_model([("nomic-embed-text:latest", 0.3)])[0] == ""
+        assert (
+            brain_link._pick_model(
+                [("nomic-embed-text:latest", 0.3), ("mistral:7b", 4.4)]
+            )[0]
+            == "mistral:7b"
+        )
+
+    def test_a_configured_model_wins_when_it_fits(self) -> None:
+        chosen, note = brain_link._pick_model(
+            [("qwen2.5:7b", 4.7), ("mistral:7b", 4.4)],
+            preferred_model="mistral:7b",
+            usable_gb=16.0,
+        )
+        assert chosen == "mistral:7b"
+        assert note == ""
+
+    def test_an_oversized_model_is_skipped_with_the_reason(self) -> None:
+        """A 24 GB tag on a 16 GB card would OOM at the first turn next to
+        the TTS; the resolver must pick a fitting model and SAY why."""
+        chosen, note = brain_link._pick_model(
+            [("nemotron-cascade-2:latest", 24.0), ("qwen2.5:7b", 4.7)],
+            preferred_model="nemotron-cascade-2:latest",
+            usable_gb=16.0,
+        )
+        assert chosen == "qwen2.5:7b"
+        assert "does not fit" in note
+
+    def test_unknown_sizes_never_veto(self) -> None:
+        """A tags payload without sizes must behave exactly as before the
+        fit check existed (fail-open)."""
+        chosen, _note = brain_link._pick_model(
+            [("mystery-model:latest", 0.0)], usable_gb=16.0
+        )
+        assert chosen == "mystery-model:latest"
 
     def test_running_ollama_with_model_is_fully_local(self, monkeypatch) -> None:
-        monkeypatch.setattr(brain_link, "_ollama_tags", lambda base, timeout: ["qwen2.5:7b"])
+        monkeypatch.setattr(
+            brain_link, "_ollama_models", lambda base, timeout: [("qwen2.5:7b", 4.7)]
+        )
         resolution = brain_link.resolve_brain()
         assert resolution.kind == "ollama"
         assert resolution.ok
@@ -54,13 +93,13 @@ class TestBrainResolution:
         assert resolution.model == "qwen2.5:7b"
 
     def test_empty_ollama_blocks_with_pull_action(self, monkeypatch) -> None:
-        monkeypatch.setattr(brain_link, "_ollama_tags", lambda base, timeout: [])
+        monkeypatch.setattr(brain_link, "_ollama_models", lambda base, timeout: [])
         resolution = brain_link.resolve_brain()
         assert resolution.kind == "blocked"
         assert any("ollama pull" in action for action in resolution.actions)
 
     def test_no_ollama_with_key_goes_cloud_with_honest_note(self, monkeypatch) -> None:
-        monkeypatch.setattr(brain_link, "_ollama_tags", lambda base, timeout: None)
+        monkeypatch.setattr(brain_link, "_ollama_models", lambda base, timeout: None)
         monkeypatch.setattr(brain_link, "_openai_key", lambda: "sk-test")
         resolution = brain_link.resolve_brain()
         assert resolution.kind == "cloud-openai"
@@ -68,7 +107,7 @@ class TestBrainResolution:
         assert resolution.base_url == ""  # server default; key stays out of commands
 
     def test_nothing_available_blocks_with_actions(self, monkeypatch) -> None:
-        monkeypatch.setattr(brain_link, "_ollama_tags", lambda base, timeout: None)
+        monkeypatch.setattr(brain_link, "_ollama_models", lambda base, timeout: None)
         monkeypatch.setattr(brain_link, "_openai_key", lambda: "")
         resolution = brain_link.resolve_brain()
         assert resolution.kind == "blocked"
@@ -97,7 +136,7 @@ class TestPreflight:
         monkeypatch.setattr(
             preflight,
             "resolve_brain",
-            lambda: brain_link.BrainResolution(
+            lambda **kwargs: brain_link.BrainResolution(
                 kind="ollama", base_url="http://127.0.0.1:11434/v1", model="qwen2.5:7b"
             ),
         )
@@ -114,7 +153,9 @@ class TestPreflight:
         monkeypatch.setattr(
             preflight,
             "resolve_brain",
-            lambda: brain_link.BrainResolution(kind="blocked", note="no brain", actions=("x",)),
+            lambda **kwargs: brain_link.BrainResolution(
+                kind="blocked", note="no brain", actions=("x",)
+            ),
         )
         report = preflight.run_preflight(tmp_path)
         assert not report.ok
@@ -310,6 +351,102 @@ class TestReviewFixes:
         assert not root.exists()
         # Idempotent on an already-gone tree.
         install._rmtree_tolerant(root)
+
+
+class TestCrossPlatformHonesty:
+    """Contracts from the 2026-08-08 hardening plan (Wave 4)."""
+
+    def test_unsupported_gpu_gets_the_vendor_sentence_not_zero_gb(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """"0 GB accelerator memory" is factually wrong on an AMD/Intel box
+        (and on a headless NVIDIA host without nvidia-smi); the blocker must
+        name the real situation."""
+        monkeypatch.setattr(preflight, "_usable_accelerator_gb", lambda: (0.0, "none"))
+        report = preflight.run_preflight(tmp_path)
+        assert not report.ok
+        assert "No supported accelerator" in report.blocker
+        assert "0 GB" not in report.blocker
+
+    @pytest.mark.skipif(
+        __import__("os").name == "nt", reason="exercises the POSIX venv layout"
+    )
+    def test_site_packages_globs_the_venv_not_the_host(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """POSIX: the venv may have been created by a different Python than
+        the one running Jarvis; the real directory wins over the host's
+        sys.version_info guess."""
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        site = install.install_root() / "venv" / "lib" / "python3.9" / "site-packages"
+        site.mkdir(parents=True)
+        assert install._site_packages() == site
+
+    def test_launch_model_rewrite_changes_only_the_model_token(
+        self, tmp_path: Path
+    ) -> None:
+        from jarvis.core.config_writer import update_local_realtime_launch_model
+
+        managed = tmp_path / "data" / "local_realtime"
+        entrypoint = (managed / "venv" / "s.exe").as_posix()
+        cfg = tmp_path / "jarvis.toml"
+        cfg.write_text(
+            "[brain.providers.local-realtime]\n"
+            f"launch_command = \"'{entrypoint}' --mode realtime "
+            "--model_name qwen2.5:7b "
+            '--responses_api_base_url http://127.0.0.1:11434/v1"\n',
+            encoding="utf-8",
+        )
+        changed = update_local_realtime_launch_model(
+            "llama3.1:8b", only_if_under=str(managed), path=cfg
+        )
+        assert changed is True
+        text = cfg.read_text(encoding="utf-8")
+        assert "--model_name llama3.1:8b" in text
+        assert "qwen2.5:7b" not in text
+        assert "--responses_api_base_url http://127.0.0.1:11434/v1" in text
+        assert "--mode realtime" in text
+
+    def test_launch_model_rewrite_spares_a_bring_your_own_command(
+        self, tmp_path: Path
+    ) -> None:
+        from jarvis.core.config_writer import update_local_realtime_launch_model
+
+        cfg = tmp_path / "jarvis.toml"
+        original = '[brain.providers.local-realtime]\nlaunch_command = "/opt/run --model_name x"\n'
+        cfg.write_text(original, encoding="utf-8")
+        changed = update_local_realtime_launch_model(
+            "y", only_if_under=str(tmp_path / "data" / "local_realtime"), path=cfg
+        )
+        assert changed is False
+        assert "--model_name x" in cfg.read_text(encoding="utf-8")
+
+    def test_launch_model_rewrite_is_a_noop_without_the_flag(
+        self, tmp_path: Path
+    ) -> None:
+        from jarvis.core.config_writer import update_local_realtime_launch_model
+
+        cfg = tmp_path / "jarvis.toml"
+        cfg.write_text(
+            '[brain.providers.local-realtime]\nlaunch_command = "serve --mode realtime"\n',
+            encoding="utf-8",
+        )
+        assert update_local_realtime_launch_model("m", path=cfg) is False
+
+    def test_command_root_match_is_case_sensitive_on_posix(self) -> None:
+        """Lowercasing both sides everywhere made two DISTINCT case-sensitive
+        POSIX paths compare equal; only Windows folds case."""
+        from jarvis.core import config_writer
+
+        assert not config_writer._command_references_root(
+            '"/home/User/Data/tree/run" --x', "/home/user/data/tree", windows=False
+        )
+        assert config_writer._command_references_root(
+            '"/home/user/data/tree/run" --x', "/home/user/data/tree", windows=False
+        )
+        assert config_writer._command_references_root(
+            '"C:\\Data\\Tree\\run.exe" --x', "c:\\data\\tree", windows=True
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

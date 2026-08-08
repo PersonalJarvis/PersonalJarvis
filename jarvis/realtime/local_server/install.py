@@ -98,6 +98,14 @@ def _server_entrypoint() -> Path:
 def _site_packages() -> Path:
     if os.name == "nt":
         return _venv_dir() / "Lib" / "site-packages"
+    # The VENV's own layout, not the host interpreter's: deriving the folder
+    # from this process's sys.version_info breaks the moment the venv was
+    # created by a different Python than the one running Jarvis (containered
+    # installs, pyenv hosts). Glob the real directory; fall back to the host
+    # figure only while the venv does not exist yet.
+    candidates = sorted((_venv_dir() / "lib").glob("python*/site-packages"))
+    if candidates:
+        return candidates[0]
     version = f"python{sys.version_info.major}.{sys.version_info.minor}"
     return _venv_dir() / "lib" / version / "site-packages"
 
@@ -317,7 +325,13 @@ def _run(cmd: list[str], *, timeout: int, cwd: Path | None = None) -> None:
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
-    """Terminate a step's whole process tree, not just the launcher."""
+    """Terminate a step's whole process tree, not just the launcher.
+
+    POSIX: the smoke boot spawns with ``start_new_session=True``, so the pid
+    is its process-group leader — SIGTERM the group, grace, then SIGKILL what
+    remains. Terminating only the launcher (the old behavior) orphaned the
+    server's worker processes, which then kept the GPU and the smoke port.
+    """
     try:
         if os.name == "nt":
             subprocess.run(
@@ -327,8 +341,20 @@ def _kill_tree(proc: subprocess.Popen) -> None:
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
         else:
-            proc.terminate()
-            proc.wait(timeout=10)
+            import signal
+
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError, OSError):
+                    proc.kill()
+                proc.wait(timeout=10)
     except Exception:  # pragma: no cover — best-effort teardown
         log.warning("local-realtime install: process-tree teardown incomplete", exc_info=True)
 
@@ -369,6 +395,10 @@ def _smoke_boot(launch_command: str, brain: BrainResolution) -> None:
     env = hardened_child_env(inject_openai_key=False)
     if brain.kind == "cloud-openai" and brain.api_key:
         env.setdefault("OPENAI_API_KEY", brain.api_key)
+    popen_kwargs: dict[str, object] = {}
+    if os.name != "nt":
+        # Its own process group so _kill_tree's killpg reaches every worker.
+        popen_kwargs["start_new_session"] = True
     with open(smoke_log, "ab") as sink:
         proc = subprocess.Popen(
             cmd,
@@ -377,6 +407,7 @@ def _smoke_boot(launch_command: str, brain: BrainResolution) -> None:
             stderr=sink,
             env=env,
             creationflags=NO_WINDOW_CREATIONFLAGS,
+            **popen_kwargs,  # type: ignore[arg-type]
         )
     try:
         deadline = time.monotonic() + _SMOKE_TIMEOUT_S

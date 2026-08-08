@@ -61,8 +61,20 @@ def _ollama_base() -> str:
     return host.rstrip("/")
 
 
-def _ollama_tags(base: str, timeout: float) -> list[str] | None:
-    """Model tags of a running Ollama, or ``None`` when it is unreachable."""
+#: Memory the brain model must leave free on the accelerator, in GiB: the
+#: managed stack co-hosts the Qwen3-TTS (bfloat16 + CUDA graphs) and the KV
+#: cache on the SAME device, so a model whose weights alone approach the
+#: card's capacity OOMs at the first turn. Applied only when both the model
+#: size and the usable memory are known — unknown stays permitted (fail-open).
+_BRAIN_HEADROOM_GB = 6.0
+
+
+def _ollama_models(base: str, timeout: float) -> list[tuple[str, float]] | None:
+    """(tag, size_gb) of a running Ollama's models; ``None`` when unreachable.
+
+    ``size_gb`` is 0.0 when the tags payload carries no usable size — the
+    caller then skips the fit check rather than guessing.
+    """
     url = f"{base}/api/tags"
     if not url.startswith(("http://", "https://")):  # scheme is normalized above
         return None
@@ -72,18 +84,63 @@ def _ollama_tags(base: str, timeout: float) -> list[str] | None:
     except (urllib.error.URLError, OSError, ValueError):
         return None
     models = payload.get("models") or []
-    return [str(m.get("name", "")) for m in models if m.get("name")]
+    out: list[tuple[str, float]] = []
+    for entry in models:
+        name = str(entry.get("name", "") or "")
+        if not name:
+            continue
+        try:
+            size_gb = float(entry.get("size", 0) or 0) / (1024**3)
+        except (TypeError, ValueError):
+            size_gb = 0.0
+        out.append((name, size_gb))
+    return out
 
 
-def _pick_model(tags: list[str]) -> str:
+def _usable_tag(tag: str) -> bool:
+    lowered = tag.lower()
+    return not any(marker in lowered for marker in _UNUSABLE_MARKERS)
+
+
+def _fits(size_gb: float, usable_gb: float) -> bool:
+    if size_gb <= 0.0 or usable_gb <= 0.0:
+        return True  # unknown figures never veto (fail-open)
+    return size_gb + _BRAIN_HEADROOM_GB <= usable_gb
+
+
+def _pick_model(
+    models: list[tuple[str, float]],
+    *,
+    preferred_model: str = "",
+    usable_gb: float = 0.0,
+) -> tuple[str, str]:
+    """(chosen tag, honest note) — the note explains a surprising choice.
+
+    Order: the user's configured model when it is served AND fits; then the
+    curated preference list; then the first usable tag that fits. A model
+    whose weights would not leave the TTS and KV cache any room is skipped
+    with the reason in the note instead of OOMing at the first turn.
+    """
+    by_name = {name: size for name, size in models}
+    note = ""
+    if preferred_model:
+        size = by_name.get(preferred_model)
+        if size is not None and _usable_tag(preferred_model):
+            if _fits(size, usable_gb):
+                return preferred_model, ""
+            note = (
+                f"Your configured model {preferred_model} (~{size:.0f} GB) "
+                f"does not fit next to the voice stack on {usable_gb:.0f} GB "
+                "of accelerator memory; picked a smaller one instead."
+            )
     for preferred in _PREFERRED_MODELS:
-        if preferred in tags:
-            return preferred
-    for tag in tags:
-        lowered = tag.lower()
-        if not any(marker in lowered for marker in _UNUSABLE_MARKERS):
-            return tag
-    return ""
+        size = by_name.get(preferred)
+        if size is not None and _fits(size, usable_gb):
+            return preferred, note
+    for name, size in models:
+        if _usable_tag(name) and _fits(size, usable_gb):
+            return name, note
+    return "", note
 
 
 def _openai_key() -> str:
@@ -96,19 +153,32 @@ def _openai_key() -> str:
         return ""
 
 
-def resolve_brain(*, timeout: float = 2.5) -> BrainResolution:
-    """Resolve the best brain endpoint available on THIS machine right now."""
+def resolve_brain(
+    *, timeout: float = 2.5, preferred_model: str = "", usable_gb: float = 0.0
+) -> BrainResolution:
+    """Resolve the best brain endpoint available on THIS machine right now.
+
+    ``preferred_model`` is the user's configured Ollama model (wins when it
+    is served and fits); ``usable_gb`` enables the VRAM fit check — a 24 GB
+    tag on a 16 GB card must be skipped with the reason said out loud, not
+    selected and OOMed at the first turn.
+    """
     base = _ollama_base()
-    tags = _ollama_tags(base, timeout)
-    if tags is not None:
-        model = _pick_model(tags)
+    models = _ollama_models(base, timeout)
+    if models is not None:
+        model, note = _pick_model(
+            models, preferred_model=preferred_model, usable_gb=usable_gb
+        )
         if model:
+            sentence = f"Fully local: reasoning runs on your Ollama ({model})."
+            if note:
+                sentence = f"{sentence} {note}"
             return BrainResolution(
                 kind="ollama",
                 base_url=f"{base}/v1",
                 api_key="ollama",
                 model=model,
-                note=f"Fully local: reasoning runs on your Ollama ({model}).",
+                note=sentence,
             )
         return BrainResolution(
             kind="blocked",

@@ -870,6 +870,7 @@ DICTATION_SETTING_KEYS = (
     "polish_drift_max_growth",
     "polish_style",
     "polish_precision",
+    "polish_conversation",
     # The translate pass. Same rule as the polish keys above: a key missing here
     # is a switch the UI appears to save and loses on the next restart.
     "translate",
@@ -2055,6 +2056,77 @@ def set_local_realtime_launch_command(
         _atomic_write(path, out)
 
 
+def _command_references_root(
+    command: str, root: str, *, windows: bool | None = None
+) -> bool:
+    """Whether a launch command points into the given directory.
+
+    Separator-normalized on every platform; case-INSENSITIVE only on
+    Windows — lowercasing both sides everywhere (the old behavior) made two
+    distinct case-sensitive POSIX paths compare equal. ``windows`` exists so
+    tests can pin the other platform's semantics without patching the global
+    ``os`` module (which breaks pathlib mid-session).
+    """
+    import os as _os
+
+    if windows is None:
+        windows = _os.name == "nt"
+    sep = "\\" if windows else "/"
+    needle = root.replace("/", sep).replace("\\", sep)
+    haystack = command.replace("/", sep).replace("\\", sep)
+    if windows:
+        needle = needle.lower()
+        haystack = haystack.lower()
+    return needle in haystack
+
+
+def update_local_realtime_launch_model(
+    model: str, *, only_if_under: str = "", path: Path = DEFAULT_CONFIG_FILE
+) -> bool:
+    """Rewrite ONLY the ``--model_name`` value of the persisted launch command.
+
+    The model choice is baked into the derived command string, and before
+    this helper existed changing it meant a full reinstall of a
+    multi-gigabyte stack. ``only_if_under`` keeps the same autonomy guard as
+    the clear path: a bring-your-own command is never rewritten. Returns
+    ``True`` when the command was changed.
+    """
+    path = _ensure_writable_config_path(path)
+    cleaned = (model or "").strip()
+    if not cleaned:
+        return False
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+
+        block = doc.get("brain", {}).get("providers", {}).get("local-realtime")
+        if block is None:
+            return False
+        command = str(block.get("launch_command", "") or "")
+        if not command or "--model_name " not in command:
+            return False
+        if only_if_under and not _command_references_root(command, only_if_under):
+            return False
+        prefix, _, tail = command.partition("--model_name ")
+        old_value, _, rest = tail.partition(" ")
+        if old_value == cleaned:
+            return False
+        rewritten = f"{prefix}--model_name {cleaned}"
+        if rest:
+            rewritten = f"{rewritten} {rest}"
+        block["launch_command"] = rewritten
+
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+        return True
+
+
 def clear_local_realtime_launch_command(
     *, only_if_under: str = "", path: Path = DEFAULT_CONFIG_FILE
 ) -> None:
@@ -2082,11 +2154,8 @@ def clear_local_realtime_launch_command(
         command = str(block.get("launch_command", "") or "")
         if not command:
             return
-        if only_if_under:
-            needle = only_if_under.replace("/", "\\").lower()
-            haystack = command.replace("/", "\\").lower()
-            if needle not in haystack:
-                return
+        if only_if_under and not _command_references_root(command, only_if_under):
+            return
         block["launch_command"] = ""
         if str(block.get("base_url", "") or "").strip() == "http://localhost:8765":
             block["base_url"] = ""

@@ -921,6 +921,26 @@ export async function managedServerStart(): Promise<ManagedServerRuntime | null>
   return (body.runtime ?? null) as ManagedServerRuntime | null;
 }
 
+/** Re-resolve the Ollama brain model and rewrite the launch command in place. */
+export async function managedServerBrain(model?: string): Promise<{
+  ok: boolean;
+  changed: boolean;
+  brain: { kind: string; model: string; note: string };
+}> {
+  const res = await fetch("/api/providers/local-realtime/managed-server/brain", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: model ?? "" }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
+  return body as {
+    ok: boolean;
+    changed: boolean;
+    brain: { kind: string; model: string; note: string };
+  };
+}
+
 export async function managedServerStop(): Promise<ManagedServerRuntime | null> {
   const res = await fetch("/api/providers/local-realtime/managed-server/stop", {
     method: "POST",

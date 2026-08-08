@@ -50,7 +50,7 @@ def test_preflight_reports_tier_and_brain_when_ok(
     monkeypatch.setattr(
         preflight,
         "resolve_brain",
-        lambda: brain_link.BrainResolution(
+        lambda **kwargs: brain_link.BrainResolution(
             kind="ollama", base_url="http://127.0.0.1:11434/v1", model="qwen2.5:7b"
         ),
     )
@@ -174,6 +174,57 @@ def test_start_spawns_and_warms_the_brain(
     assert body["outcome"] == "spawned"
     assert calls == ["start", "warm"]
     assert body["runtime"]["reachable"] is True
+
+
+def test_brain_route_rewrites_the_model_without_reinstall(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from jarvis.core.config_writer import set_local_realtime_launch_command
+
+    cfg_file = tmp_path / "jarvis.toml"
+    cfg_file.write_text("", encoding="utf-8")
+    entrypoint = (install.install_root() / "venv" / "s.exe").as_posix()
+    set_local_realtime_launch_command(
+        f"'{entrypoint}' --mode realtime --model_name qwen2.5:7b", path=cfg_file
+    )
+    monkeypatch.setattr(preflight, "_usable_accelerator_gb", lambda: (16.0, "nvidia-smi"))
+    monkeypatch.setattr(
+        brain_link, "_ollama_models", lambda base, timeout: [("llama3.1:8b", 4.9)]
+    )
+    # Route writes through config_writer against the real DEFAULT_CONFIG_FILE;
+    # redirect it at the writer level for the test.
+    import jarvis.core.config_writer as config_writer
+
+    original = config_writer.update_local_realtime_launch_model
+
+    def redirected(model: str, *, only_if_under: str = "", path=None) -> bool:
+        return original(model, only_if_under=only_if_under, path=cfg_file)
+
+    monkeypatch.setattr(
+        config_writer, "update_local_realtime_launch_model", redirected
+    )
+    with TestClient(server.app) as client:
+        resp = client.post(
+            "/api/providers/local-realtime/managed-server/brain",
+            json={"model": "llama3.1:8b"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["changed"] is True
+    assert body["brain"]["model"] == "llama3.1:8b"
+    assert "--model_name llama3.1:8b" in cfg_file.read_text(encoding="utf-8")
+
+
+def test_brain_route_answers_409_without_a_local_brain(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(preflight, "_usable_accelerator_gb", lambda: (16.0, "nvidia-smi"))
+    monkeypatch.setattr(brain_link, "_ollama_models", lambda base, timeout: None)
+    monkeypatch.setattr(brain_link, "_openai_key", lambda: "")
+    with TestClient(server.app) as client:
+        resp = client.post("/api/providers/local-realtime/managed-server/brain")
+    assert resp.status_code == 409
 
 
 def test_stop_answers_409_when_nothing_is_owned(

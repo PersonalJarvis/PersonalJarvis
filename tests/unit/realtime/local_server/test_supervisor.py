@@ -20,13 +20,21 @@ from jarvis.realtime.local_server import supervisor
 
 
 def _spawn_ready(monkeypatch, tmp_path: Path) -> list[dict[str, Any]]:
-    """Common arrangement: closed port, no pidfile, fake Popen, tmp data dir."""
+    """Common arrangement: closed port, no pidfile, fake Popen, tmp data dir.
+
+    Only launch commands starting with "serve" are recorded: the hardened
+    child env's keyring lookup can shell out on its own (a `ver` subprocess
+    on Windows), and counting those as server spawns failed the rate-limit
+    assertion for the wrong reason.
+    """
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(supervisor, "_port_open", lambda port, timeout=1.0: False)
     spawned: list[dict[str, Any]] = []
 
     def fake_popen(command: Any, **kwargs: Any) -> SimpleNamespace:
-        spawned.append({"command": command, **kwargs})
+        head = command if isinstance(command, str) else " ".join(command)
+        if head.startswith("serve"):
+            spawned.append({"command": command, **kwargs})
         return SimpleNamespace(pid=4711)
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)

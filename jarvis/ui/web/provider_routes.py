@@ -2791,6 +2791,60 @@ async def managed_server_stop(request: Request) -> dict[str, Any]:
     return {"ok": True, "message": message, "runtime": runtime}
 
 
+@router.post("/providers/local-realtime/managed-server/brain")
+async def managed_server_brain(request: Request) -> dict[str, Any]:
+    """Re-resolve the brain model and rewrite the launch command in place.
+
+    The model choice is baked into the persisted command; before this route
+    changing it meant a full multi-gigabyte reinstall. Optional body
+    ``{"model": "..."}`` names an explicit Ollama tag (else the configured
+    ollama-card model, else the curated preference order). Only the managed
+    command is ever rewritten (`only_if_under` autonomy guard); the running
+    server keeps its old brain until the next start.
+    """
+    from jarvis.core.config_writer import update_local_realtime_launch_model
+    from jarvis.realtime.local_server.brain_link import resolve_brain
+    from jarvis.realtime.local_server.install import install_root
+    from jarvis.realtime.local_server.preflight import (
+        _preferred_brain_model,
+        _usable_accelerator_gb,
+    )
+
+    requested = ""
+    try:
+        body = await request.json()
+        requested = str((body or {}).get("model", "") or "").strip()
+    except Exception:  # noqa: BLE001 — an empty/absent body is the normal case
+        requested = ""
+
+    def _resolve() -> Any:
+        usable_gb, _source = _usable_accelerator_gb()
+        return resolve_brain(
+            preferred_model=requested or _preferred_brain_model(),
+            usable_gb=usable_gb,
+        )
+
+    brain = await asyncio.to_thread(_resolve)
+    if not brain.ok or brain.kind != "ollama":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                brain.note
+                or "no usable local brain was found — install one via Ollama first"
+            ),
+        )
+    changed = await asyncio.to_thread(
+        lambda: update_local_realtime_launch_model(
+            brain.model, only_if_under=str(install_root())
+        )
+    )
+    return {
+        "ok": True,
+        "changed": changed,
+        "brain": {"kind": brain.kind, "model": brain.model, "note": brain.note},
+    }
+
+
 @router.delete(
     "/providers/local-realtime/managed-server",
     openapi_extra={"x-jarvis-dangerous": True},
