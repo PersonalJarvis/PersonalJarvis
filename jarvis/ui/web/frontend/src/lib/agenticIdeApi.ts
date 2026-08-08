@@ -720,6 +720,30 @@ export async function openNativePicker(
   return (await res.json()) as NativePickResult;
 }
 
+export interface OpenTerminalTargetResult {
+  opened: boolean;
+  kind: "file" | "directory";
+  path: string;
+}
+
+/** Open a modifier-clicked path from one terminal's own workspace. */
+export async function openTerminalTarget(
+  workspaceId: string,
+  target: string,
+): Promise<OpenTerminalTargetResult> {
+  const res = await fetch("/api/agentic-ide/terminal-target/open", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspace_id: workspaceId, target }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  const result = (await res.json()) as OpenTerminalTargetResult;
+  if (!result.opened) {
+    throw new Error("Could not open that file or folder on this computer.");
+  }
+  return result;
+}
+
 /**
  * Turn a drag-and-drop payload into a folder path.
  *

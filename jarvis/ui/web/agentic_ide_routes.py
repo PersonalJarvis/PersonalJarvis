@@ -11,6 +11,7 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``GET    /folders``                    → browse folders (no path = start points)
 * ``GET    /folders/native``             → can this machine show the OS folder window?
 * ``POST   /folders/native``             → open it and return what was picked
+* ``POST   /terminal-target/open``       → open a path printed by one terminal
 * ``GET    /workspaces``                 → every open workspace, in tab order
 * ``PUT    /workspaces/active``          → bring one to the front (null = wizard)
 * ``PATCH  /workspaces/{workspace_id}``  → rename one workspace tab
@@ -51,6 +52,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import asdict
 from pathlib import Path
 
@@ -605,6 +607,23 @@ class NativePickResponse(BaseModel):
         default=False, description="True when the user closed the window without choosing."
     )
     error: str | None = Field(default=None, description="Why no folder came back.")
+
+
+class OpenTerminalTargetRequest(BaseModel):
+    """A path explicitly activated in one Agentic-IDE terminal."""
+
+    workspace_id: str = Field(
+        min_length=1,
+        max_length=160,
+        description="Workspace whose root relative paths are resolved against.",
+    )
+    target: str = Field(
+        min_length=1,
+        max_length=4096,
+        description=(
+            "Printed file/folder path or file URI, optionally followed by a line and column suffix."
+        ),
+    )
 
 
 class ResolveRequest(BaseModel):
@@ -1208,6 +1227,105 @@ async def open_native_picker(request: Request, req: NativePickRequest) -> Native
     async with _native_picker_lock:
         result = await asyncio.to_thread(native_picker.choose_folder, start=req.start)
     return NativePickResponse(path=result.path, cancelled=result.cancelled, error=result.error)
+
+
+_TERMINAL_LOCATION_SUFFIX = re.compile(
+    r"(?:#L[1-9]\d*(?::[1-9]\d*)?|:[1-9]\d*(?::[1-9]\d*)?|"
+    r"\([1-9]\d*(?:,[1-9]\d*)?\))$",
+    re.IGNORECASE,
+)
+
+
+def _resolve_terminal_target(workspace_folder: str, printed: str) -> Path:
+    """Resolve a printed path without letting terminal output escape its workspace.
+
+    Coding-CLI output is untrusted. A modifier-click is deliberate, but it must
+    still not turn an OSC-8 payload into an arbitrary local file launcher.
+    Relative and absolute paths must therefore resolve inside the pane's own
+    workspace, including after symlinks are followed. Common line/column
+    locators are accepted because compilers and agents routinely print them.
+    """
+    value = printed.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'", "`"}:
+        value = value[1:-1].strip()
+    value = _TERMINAL_LOCATION_SUFFIX.sub("", value)
+    if not value or any(ord(char) < 32 for char in value):
+        raise ValueError("invalid terminal target")
+
+    if value.lower().startswith("file:"):
+        from urllib.parse import unquote, urlparse
+
+        parsed = urlparse(value)
+        if parsed.scheme.lower() != "file" or parsed.query or parsed.fragment:
+            raise ValueError("invalid file URI")
+        if parsed.netloc and parsed.netloc.casefold() != "localhost":
+            raise ValueError("remote file URI")
+        value = unquote(parsed.path)
+        # Local Windows file URIs are written as file:///C:/path.
+        if len(value) > 2 and value[0] == "/" and value[2] == ":":
+            value = value[1:]
+        if not value or any(ord(char) < 32 for char in value):
+            raise ValueError("invalid file URI")
+    elif "://" in value:
+        raise ValueError("unsupported URI scheme")
+
+    root = Path(workspace_folder).expanduser().resolve(strict=True)
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    target = candidate.resolve(strict=True)
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("terminal target escapes workspace") from exc
+    if not (target.is_file() or target.is_dir()):
+        raise ValueError("terminal target is not openable")
+    return target
+
+
+@router.post(
+    "/terminal-target/open",
+    summary="Open a file or folder linked in an Agentic-IDE terminal",
+)
+async def open_terminal_target(
+    request: Request, req: OpenTerminalTargetRequest
+) -> dict[str, object]:
+    """Open a modifier-clicked workspace path with the operating-system default.
+
+    This is local-desktop-only: a remote browser would otherwise act on the
+    server's screen. Resolution is confined to the addressed open workspace
+    before the shared cross-platform opener sees the path.
+    """
+    if not is_loopback_request(request.scope):
+        raise HTTPException(
+            status_code=403,
+            detail="Terminal paths can only be opened on the computer running Jarvis.",
+        )
+    if not getattr(request.app.state, "native_file_actions", False):
+        raise HTTPException(status_code=404, detail="native file actions unavailable")
+
+    session = get_registry().get(req.workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="That workspace is not open.")
+    try:
+        target = await asyncio.to_thread(_resolve_terminal_target, session.folder, req.target)
+    except (OSError, RuntimeError, ValueError) as exc:
+        # One answer for missing, malformed and outside-workspace paths: never
+        # disclose through a crafted terminal payload which local file exists.
+        raise HTTPException(status_code=404, detail="That workspace path is unavailable.") from exc
+
+    from jarvis.platform import open_path
+
+    opened = await asyncio.to_thread(open_path.open_file, target)
+    kind = "directory" if target.is_dir() else "file"
+    log.info(
+        "Agentic IDE terminal target: workspace=%s kind=%s opened=%s path=%s",
+        req.workspace_id,
+        kind,
+        opened,
+        target,
+    )
+    return {"opened": bool(opened), "kind": kind, "path": str(target)}
 
 
 @router.get("/recents", response_model=RecentsResponse, summary="Recently opened workspaces")

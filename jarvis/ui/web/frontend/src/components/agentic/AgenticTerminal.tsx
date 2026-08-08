@@ -98,8 +98,9 @@ import {
   syncTerminalFont,
 } from "@/lib/terminalFont";
 import {
-  activateTerminalLink,
-  TERMINAL_OSC_LINK_HANDLER,
+  createTerminalLinkActivator,
+  createTerminalOscLinkHandler,
+  TerminalPathLinksAddon,
 } from "@/lib/terminalLinks";
 import { installPasteBridge } from "./terminalPaste";
 import { installCopyBridge } from "./terminalCopy";
@@ -467,6 +468,11 @@ export function AgenticTerminal({
     // the user the same "it is coming up" answer it owed on its first mount.
     setPainted(false);
 
+    const linkOptions = {
+      workspaceId,
+      onError: (message: string) => onAttachErrorRef.current?.(message),
+    };
+    const activateLink = createTerminalLinkActivator(linkOptions);
     const term = new Terminal({
       convertEol: false,
       // Shared with the measurement in ./../../lib/terminalFont: a pane that
@@ -494,7 +500,7 @@ export function AgenticTerminal({
       // Plain clicks belong to text selection. xterm otherwise treats an
       // ordinary click on an OSC-8 link as navigation and shows a native
       // warning dialog inside the desktop WebView.
-      linkHandler: TERMINAL_OSC_LINK_HANDLER,
+      linkHandler: createTerminalOscLinkHandler(linkOptions),
       // Windows only. ConPTY re-emits and re-wraps lines in a way a POSIX pty
       // never does; without telling xterm which backend it is talking to, those
       // re-emitted lines pile up as duplicated, half-overwritten rows. Harmless
@@ -513,7 +519,10 @@ export function AgenticTerminal({
     const disposeQuerySuppression = installQuerySuppression(term.parser);
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.loadAddon(new WebLinksAddon(activateTerminalLink));
+    term.loadAddon(new WebLinksAddon(activateLink));
+    if (workspaceId) {
+      term.loadAddon(new TerminalPathLinksAddon(activateLink));
+    }
     // Character WIDTH, not appearance: without this xterm measures emoji and
     // many box/symbol glyphs as one cell while the agent on the other side
     // counted two, and every such glyph shifts the rest of the line one column
@@ -1141,7 +1150,7 @@ export function AgenticTerminal({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see file header:
     // appearance/fontSize must NOT rebuild the pane (it would kill the agent).
-  }, [name, restartToken, geometryReady]);
+  }, [name, workspaceId, restartToken, geometryReady]);
 
   /*
    * A chat-stage switch changes a pane from `display:none` to the full canvas
