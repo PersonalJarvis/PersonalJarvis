@@ -4,6 +4,12 @@ Loaded from `data/plugin_catalog.json` at server startup and re-served to
 the frontend via `/api/marketplace/plugins`. Five auth modes are modelled
 today; each is its own Pydantic submodel and `AuthConfig` is a
 discriminated union over the `mode` field.
+
+Packaging policy: new marketplace plugins are submitted in the Agent
+Plugins v1.0.0 format (https://agent-plugins.org/) and the existing
+entries migrate to it — see docs/marketplace/agent-plugins-standard.md
+for the field mapping and the per-plugin migration tracker before adding
+or changing a catalog entry.
 """
 
 from __future__ import annotations

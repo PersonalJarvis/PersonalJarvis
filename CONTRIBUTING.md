@@ -123,6 +123,15 @@ The most common design question. Pick the smallest thing that fits:
 A swappable backend is a plugin. A single action the brain can call is a tool. A multi-step
 workflow somebody wrote down is a skill.
 
+> [!IMPORTANT]
+> **Marketplace plugins** (the connectors in the app's Plugins store — GitHub, Notion,
+> Slack, …) are a separate, fourth thing, and every NEW submission must be packaged per the
+> vendor-neutral [Agent Plugins standard v1.0.0](https://agent-plugins.org/): a directory
+> with a `plugin.json`, an `mcp.json` when the service has an MCP server, and everything
+> Jarvis-specific under the `io.github.personaljarvis` extension namespace. The field
+> mapping and the migration tracker for the existing catalog live in
+> [`docs/marketplace/agent-plugins-standard.md`](docs/marketplace/agent-plugins-standard.md).
+
 ## Conventions
 
 Most of these are enforced in CI, so you will find out either way. Better to know first:
