@@ -1101,14 +1101,6 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — pydantic ValidationError and friends
         raise HTTPException(status_code=400, detail=f"Invalid setting: {exc}") from exc
 
-    # In-memory first so a running pipeline sees the change even if the write
-    # fails (a read-only config file must not silently drop the setting).
-    for key in updates:
-        try:
-            setattr(dictation, key, getattr(validated, key))
-        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
-            log.debug("in-memory dictation.%s update skipped: %s", key, exc)
-
     persisted = False
     if body.persist:
         from jarvis.core import config_writer
@@ -1122,6 +1114,23 @@ async def put_settings(body: SettingsBody, request: Request) -> dict[str, Any]:
             persisted = True
         except Exception as exc:  # noqa: BLE001
             log.warning("dictation settings persist failed: %s", exc)
+            # A live-only change looks successful until the next restart, when
+            # the old value returns from disk. That is worse than refusing the
+            # save: the settings screen would explicitly promise durability it
+            # did not achieve. Apply nothing live and make the failure visible
+            # to every client (desktop, CLI, or another REST consumer).
+            raise HTTPException(
+                status_code=500,
+                detail="Dictation settings could not be saved. No live setting was changed.",
+            ) from exc
+
+    # Apply only after the durable write succeeds. ``persist=false`` remains a
+    # deliberate live-only API operation; the desktop always sends true.
+    for key in updates:
+        try:
+            setattr(dictation, key, getattr(validated, key))
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory dictation.%s update skipped: %s", key, exc)
 
     # The polish pass caches what it learned about this host: the resolved
     # provider chain, every credential it read, the local endpoints that did not

@@ -581,3 +581,63 @@ def test_a_saved_translation_setting_survives_the_restart_too(
     assert body.status_code == 200
     assert ("translate", True) in written
     assert ("translate_target", "zh") in written
+
+
+def test_switching_translation_off_round_trips_through_disk_and_reload(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The false value is data, not an omitted optional field.
+
+    This is the restart regression in its complete shape: start from an enabled
+    file, send the same payload as the desktop switch, then construct a fresh
+    config from disk. Mocking the writer or asserting only the live object would
+    miss the exact failure the user sees after relaunching the app.
+    """
+    from jarvis.core import config_writer
+    from jarvis.core.config import load_config
+
+    config_file = tmp_path / "jarvis.toml"
+    config_file.write_text("[dictation]\ntranslate = true\n", encoding="utf-8")
+    real_set = config_writer.set_dictation_setting
+    monkeypatch.setattr(
+        config_writer,
+        "set_dictation_setting",
+        lambda key, value, **_kw: real_set(key, value, path=config_file),
+    )
+    app.state.config.dictation.translate = True
+
+    response = TestClient(app).put(
+        "/api/dictation/settings", json={"translate": False}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["persisted"] is True
+    assert response.json()["settings"]["translate"] is False
+    assert load_config(config_file).dictation.translate is False
+
+
+def test_failed_translation_save_is_not_applied_only_until_restart(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed disk write must not masquerade as a successful switch.
+
+    Previously the live config changed first and the write failure was reduced
+    to ``persisted=false`` in an otherwise successful response. The UI ignored
+    that flag, so the toggle looked off until restart loaded the still-on file.
+    """
+    from jarvis.core import config_writer
+
+    app.state.config.dictation.translate = True
+
+    def _fail_write(*_args: Any, **_kwargs: Any) -> None:
+        raise PermissionError("simulated write denial")
+
+    monkeypatch.setattr(config_writer, "set_dictation_setting", _fail_write)
+
+    response = TestClient(app).put(
+        "/api/dictation/settings", json={"translate": False}
+    )
+
+    assert response.status_code == 500
+    assert "could not be saved" in response.json()["detail"]
+    assert app.state.config.dictation.translate is True
