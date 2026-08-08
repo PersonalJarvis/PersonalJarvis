@@ -3737,7 +3737,24 @@
     "in_use": "in use",
     "sign_in": "Sign in",
     "rename": "Rename",
-    "remove": "Remove"
+    "remove": "Remove",
+    "flow": {
+      "starting": "Starting the sign-in…",
+      "waiting_browser": "Waiting for the sign-in to finish in the browser…",
+      "link_hint": "Open this link in the browser where the RIGHT account is signed in — for a second subscription use a private window or another browser profile, otherwise the browser silently reuses the account you are already signed in with.",
+      "copy": "Copy link",
+      "copied": "Link copied.",
+      "copy_failed": "Copying failed — select the link and copy it by hand.",
+      "open": "Open",
+      "code_placeholder": "Paste the code from the browser here",
+      "paste": "Paste from clipboard",
+      "submit": "Confirm code",
+      "success": "Signed in.",
+      "retry": "Try again",
+      "fallback": "Use a terminal window instead",
+      "cancel": "Cancel sign-in",
+      "show_cli": "Show what the CLI displays"
+    }
   },
   "agentic_grid": {
     "continue": {

@@ -3737,7 +3737,24 @@
     "in_use": "en uso",
     "sign_in": "Iniciar sesión",
     "rename": "Renombrar",
-    "remove": "Eliminar"
+    "remove": "Eliminar",
+    "flow": {
+      "starting": "Iniciando el inicio de sesión…",
+      "waiting_browser": "Esperando a que el inicio de sesión termine en el navegador…",
+      "link_hint": "Abre este enlace en el navegador donde esté conectada la cuenta CORRECTA — para una segunda suscripción usa una ventana privada u otro perfil del navegador; de lo contrario, el navegador reutiliza en silencio la cuenta ya conectada.",
+      "copy": "Copiar enlace",
+      "copied": "Enlace copiado.",
+      "copy_failed": "No se pudo copiar — selecciona el enlace y cópialo a mano.",
+      "open": "Abrir",
+      "code_placeholder": "Pega aquí el código del navegador",
+      "paste": "Pegar desde el portapapeles",
+      "submit": "Confirmar código",
+      "success": "Sesión iniciada.",
+      "retry": "Intentar de nuevo",
+      "fallback": "Usar una ventana de terminal en su lugar",
+      "cancel": "Cancelar el inicio de sesión",
+      "show_cli": "Mostrar lo que muestra la CLI"
+    }
   },
   "agentic_grid": {
     "continue": {

@@ -145,6 +145,7 @@ def _display(platform: Platform) -> str:
     entry = workspace_agents.get_agent(platform)
     return entry.display_name if entry is not None else platform
 
+
 #: Bumped when the stored shape changes incompatibly. An unknown version reads
 #: as "no added accounts": half-understanding a newer build's file would offer
 #: accounts whose directories this build cannot interpret, and a pane would then
@@ -514,9 +515,7 @@ def delete_account(account_id: str, *, remove_files: bool = False) -> AgentAccou
             if not (isinstance(entry, dict) and entry.get("id") == account_id)
         ]
         state["active"] = {
-            platform: value
-            for platform, value in state["active"].items()
-            if value != account_id
+            platform: value for platform, value in state["active"].items() if value != account_id
         }
         _write_store(state)
     if remove_files:
@@ -932,9 +931,7 @@ def _describe_claude(account: AgentAccount) -> AccountSnapshot:
             account=account,
             connected=True,
             mode="subscription",
-            message=(
-                f"Signed in via {label} ({email})." if email else f"Signed in via {label}."
-            ),
+            message=(f"Signed in via {label} ({email})." if email else f"Signed in via {label}."),
             email=email,
             tier=tier,
         )
@@ -1000,9 +997,7 @@ def _not_signed_in_message(account: AgentAccount) -> str:
     """
     if account.builtin:
         return f"Not signed in — use Sign in to connect this {_display(account.platform)} plan."
-    return (
-        "Not signed in yet — use Sign in, and finish the flow in the window that opens."
-    )
+    return "Not signed in yet — use Sign in, and finish the flow in the window that opens."
 
 
 def _duplicate_warning(label: str) -> str:
@@ -1085,28 +1080,20 @@ def _generic_login_argv(account: AgentAccount) -> list[str]:
     if binary is None:
         hint = workspace_agents.install_command(entry.name)
         raise FileNotFoundError(
-            f"{entry.display_name} is not installed"
-            + (f" (run: {hint})." if hint else ".")
+            f"{entry.display_name} is not installed" + (f" (run: {hint})." if hint else ".")
         )
     return [binary, *login_argv]
 
 
-def start_login(account: AgentAccount) -> Any:
-    """Open the CLI's own sign-in flow POINTED AT this account's directory.
+def login_command(account: AgentAccount) -> tuple[list[str], str]:
+    """The CLI's own sign-in argv for *account*, plus a display title.
 
-    Nothing about the flow itself is reimplemented — it is each CLI's real
-    interactive login, in a real visible terminal, with one environment variable
-    set. That is what makes a second subscription cost a sign-in rather than a
-    credential-handling scheme of our own, and it is why the first account is
-    untouched while the second is being added.
-
-    Raises ``FileNotFoundError`` when the CLI is absent and
-    ``InteractiveTerminalUnavailable`` on a headless host — both honest
-    capability answers rather than an invisible process nobody can complete.
+    Shared by the two ways a sign-in can be presented — the external terminal
+    window (:func:`start_login`) and the in-app guided flow
+    (:mod:`jarvis.agent_login_flow`) — so the command they run can never drift
+    apart. Raises ``FileNotFoundError`` when the CLI is absent and
+    ``AccountError`` when the platform declares no login command.
     """
-    from jarvis.core.interactive_terminal import launch_interactive_terminal
-
-    env = env_overrides(account.platform, account.id)
     if account.platform == "claude":
         from jarvis.claude_auth import (
             ClaudeAuthService,
@@ -1132,9 +1119,7 @@ def start_login(account: AgentAccount) -> Any:
         service_codex = CodexAuthService()
         binary = service_codex._resolve_binary()  # noqa: SLF001 — the module's own seam
         if binary is None:
-            raise FileNotFoundError(
-                "Codex CLI is not installed (run: npm i -g @openai/codex)."
-            )
+            raise FileNotFoundError("Codex CLI is not installed (run: npm i -g @openai/codex).")
         argv = [binary, "login"]
         title = f"Codex sign-in — {account.label}"
     else:
@@ -1144,12 +1129,39 @@ def start_login(account: AgentAccount) -> Any:
         # directory, and report success.
         argv = _generic_login_argv(account)
         title = f"{_display(account.platform)} sign-in — {account.label}"
-    # The directory must exist before the CLI writes into it; a login that fails
-    # on a missing folder looks to the user like a rejected account.
+    return list(argv), title
+
+
+def ensure_config_dir(account: AgentAccount) -> None:
+    """Create the account directory a sign-in is about to write into.
+
+    The directory must exist before the CLI writes into it; a login that fails
+    on a missing folder looks to the user like a rejected account.
+    """
     try:
         account.config_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise AccountError(f"The account folder is not usable: {exc}") from exc
+
+
+def start_login(account: AgentAccount) -> Any:
+    """Open the CLI's own sign-in flow POINTED AT this account's directory.
+
+    Nothing about the flow itself is reimplemented — it is each CLI's real
+    interactive login, in a real visible terminal, with one environment variable
+    set. That is what makes a second subscription cost a sign-in rather than a
+    credential-handling scheme of our own, and it is why the first account is
+    untouched while the second is being added.
+
+    Raises ``FileNotFoundError`` when the CLI is absent and
+    ``InteractiveTerminalUnavailable`` on a headless host — both honest
+    capability answers rather than an invisible process nobody can complete.
+    """
+    from jarvis.core.interactive_terminal import launch_interactive_terminal
+
+    argv, title = login_command(account)
+    ensure_config_dir(account)
+    env = env_overrides(account.platform, account.id)
     logger.info("Agent accounts: starting sign-in for {!r}", account.label)
     return launch_interactive_terminal(argv, title=title, env=env)
 
@@ -1170,10 +1182,12 @@ __all__ = [
     "create_account",
     "delete_account",
     "describe",
+    "ensure_config_dir",
     "env_overrides",
     "env_var",
     "inherit_default_mode",
     "list_accounts",
+    "login_command",
     "mode_file_name",
     "native_dir",
     "platforms",

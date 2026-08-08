@@ -3737,7 +3737,24 @@
     "in_use": "aktiv",
     "sign_in": "Anmelden",
     "rename": "Umbenennen",
-    "remove": "Entfernen"
+    "remove": "Entfernen",
+    "flow": {
+      "starting": "Anmeldung wird gestartet…",
+      "waiting_browser": "Warte darauf, dass die Anmeldung im Browser abgeschlossen wird…",
+      "link_hint": "Öffne diesen Link in dem Browser, in dem das RICHTIGE Konto angemeldet ist — für ein zweites Abo ein privates Fenster oder ein anderes Browser-Profil verwenden, sonst nutzt der Browser stillschweigend das bereits angemeldete Konto.",
+      "copy": "Link kopieren",
+      "copied": "Link kopiert.",
+      "copy_failed": "Kopieren fehlgeschlagen — markiere den Link und kopiere ihn von Hand.",
+      "open": "Öffnen",
+      "code_placeholder": "Code aus dem Browser hier einfügen",
+      "paste": "Aus der Zwischenablage einfügen",
+      "submit": "Code bestätigen",
+      "success": "Angemeldet.",
+      "retry": "Erneut versuchen",
+      "fallback": "Stattdessen Terminal-Fenster verwenden",
+      "cancel": "Anmeldung abbrechen",
+      "show_cli": "Anzeigen, was das CLI ausgibt"
+    }
   },
   "agentic_grid": {
     "continue": {

@@ -14,6 +14,7 @@ Mount alongside the other routers::
 Nothing here returns a credential. The snapshots carry booleans, the display
 email, and the tier — never a token, and never the contents of a config file.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -23,8 +24,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from jarvis import agent_accounts
+from jarvis import agent_accounts, agent_login_flow
 from jarvis.agent_accounts import MAX_LABEL_CHARS, AccountError, platforms
+from jarvis.agent_login_flow import GuidedLoginUnavailable
 from jarvis.core.interactive_terminal import InteractiveTerminalUnavailable
 
 log = logging.getLogger(__name__)
@@ -47,16 +49,13 @@ class AccountCreateRequest(BaseModel):
 
 
 class AccountRenameRequest(BaseModel):
-    label: str = Field(
-        max_length=MAX_LABEL_CHARS, description="New display name for the account."
-    )
+    label: str = Field(max_length=MAX_LABEL_CHARS, description="New display name for the account.")
 
 
 class ActiveRequest(BaseModel):
     platform: str = Field(
         description=(
-            "Which coding CLI to switch. GET this endpoint for the accepted "
-            "values on this build."
+            "Which coding CLI to switch. GET this endpoint for the accepted values on this build."
         )
     )
     account_id: str = Field(description="Id of the account new terminals should use.")
@@ -121,9 +120,7 @@ async def create_account(req: AccountCreateRequest) -> dict[str, Any]:
     """
     platform = _platform(req.platform)
     try:
-        account = await asyncio.to_thread(
-            agent_accounts.create_account, platform, req.label
-        )
+        account = await asyncio.to_thread(agent_accounts.create_account, platform, req.label)
     except AccountError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     snapshot = await asyncio.to_thread(agent_accounts.describe, account)
@@ -140,9 +137,7 @@ async def set_active(req: ActiveRequest) -> dict[str, Any]:
     """
     platform = _platform(req.platform)
     try:
-        account = await asyncio.to_thread(
-            agent_accounts.set_active, platform, req.account_id
-        )
+        account = await asyncio.to_thread(agent_accounts.set_active, platform, req.account_id)
     except AccountError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
@@ -188,13 +183,85 @@ async def login(account_id: str) -> dict[str, Any]:
     }
 
 
+class LoginFlowCodeRequest(BaseModel):
+    code: str = Field(
+        max_length=4096,
+        description="The code the browser showed after approving the sign-in.",
+    )
+
+
+def _flow_or_404(state: dict[str, Any] | None) -> dict[str, Any]:
+    if state is None:
+        raise HTTPException(
+            status_code=404,
+            detail="That sign-in is no longer running — start it again.",
+        )
+    return {"ok": True, "flow": state}
+
+
+@router.post(
+    "/{account_id}/login-flow",
+    summary="Start an in-app sign-in for one subscription",
+)
+async def start_login_flow(account_id: str) -> dict[str, Any]:
+    """Run the CLI's own sign-in hidden in-app, surfaced as URL + code field.
+
+    The browser link is returned as data so the user can open it in ANY
+    browser profile or private window — the default browser is usually signed
+    in as the wrong account when a second subscription is being added. 409
+    when the CLI is missing or the host has no PTY capability; the external
+    terminal-window sign-in remains the stated fallback.
+    """
+    account = await asyncio.to_thread(agent_accounts.resolve, account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="That account no longer exists.")
+    try:
+        state = await asyncio.to_thread(agent_login_flow.start_flow, account)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except GuidedLoginUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AccountError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"ok": True, "flow": state}
+
+
+@router.get(
+    "/login-flow/{flow_id}",
+    summary="State of a running in-app sign-in",
+)
+async def get_login_flow(flow_id: str) -> dict[str, Any]:
+    """Polled by the sign-in dialog: status, the sign-in URL, and what the CLI
+    is currently showing. Never carries a credential."""
+    return _flow_or_404(await asyncio.to_thread(agent_login_flow.flow_state, flow_id))
+
+
+@router.post(
+    "/login-flow/{flow_id}/code",
+    summary="Hand the pasted code to a running in-app sign-in",
+)
+async def submit_login_flow_code(flow_id: str, req: LoginFlowCodeRequest) -> dict[str, Any]:
+    """The code goes straight into the CLI's stdin, exactly as typing it would."""
+    try:
+        state = await asyncio.to_thread(agent_login_flow.submit_code, flow_id, req.code)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _flow_or_404(state)
+
+
+@router.delete(
+    "/login-flow/{flow_id}",
+    summary="Cancel a running in-app sign-in",
+)
+async def cancel_login_flow(flow_id: str) -> dict[str, Any]:
+    return _flow_or_404(await asyncio.to_thread(agent_login_flow.cancel_flow, flow_id))
+
+
 @router.patch("/{account_id}", summary="Rename a subscription")
 async def rename(account_id: str, req: AccountRenameRequest) -> dict[str, Any]:
     """Give an added subscription a different display name."""
     try:
-        account = await asyncio.to_thread(
-            agent_accounts.rename_account, account_id, req.label
-        )
+        account = await asyncio.to_thread(agent_accounts.rename_account, account_id, req.label)
     except AccountError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"ok": True, "account": account.to_dict(), **await asyncio.to_thread(_collect)}

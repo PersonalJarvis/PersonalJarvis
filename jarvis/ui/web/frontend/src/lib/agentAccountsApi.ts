@@ -112,6 +112,75 @@ export function loginAgentAccount(accountId: string): Promise<{ message: string 
   );
 }
 
+/**
+ * One in-app guided sign-in, as the backend reports it.
+ *
+ * `url` is the point of the whole flow: shown as data so the user can copy it
+ * into ANY browser profile or private window — the default browser is usually
+ * signed in as the wrong account when a second subscription is being added.
+ * `tail` is what the CLI is showing right now, for transparency when a flow
+ * asks something unexpected. Nothing here ever carries a credential.
+ */
+export interface LoginFlowState {
+  flow_id: string;
+  account_id: string;
+  platform: AccountPlatform;
+  label: string;
+  /** starting | awaiting_input | verifying | success | failed | cancelled */
+  status: string;
+  url: string | null;
+  /** True once the CLI asked for a code — show the input then. */
+  code_expected: boolean;
+  message: string;
+  tail: string;
+  finished: boolean;
+}
+
+interface LoginFlowEnvelope {
+  flow: LoginFlowState;
+}
+
+/** Begin the in-app sign-in; any previous flow for this account is cancelled. */
+export async function startLoginFlow(accountId: string): Promise<LoginFlowState> {
+  const body = await send<LoginFlowEnvelope>(
+    `/api/agent-accounts/${encodeURIComponent(accountId)}/login-flow`,
+    { method: "POST" },
+  );
+  return body.flow;
+}
+
+export async function getLoginFlow(flowId: string): Promise<LoginFlowState> {
+  const body = await send<LoginFlowEnvelope>(
+    `/api/agent-accounts/login-flow/${encodeURIComponent(flowId)}`,
+    { method: "GET", cache: "no-store" },
+  );
+  return body.flow;
+}
+
+/** Hand the pasted code to the CLI, exactly as typing it into the terminal would. */
+export async function submitLoginFlowCode(
+  flowId: string,
+  code: string,
+): Promise<LoginFlowState> {
+  const body = await send<LoginFlowEnvelope>(
+    `/api/agent-accounts/login-flow/${encodeURIComponent(flowId)}/code`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    },
+  );
+  return body.flow;
+}
+
+export async function cancelLoginFlow(flowId: string): Promise<LoginFlowState> {
+  const body = await send<LoginFlowEnvelope>(
+    `/api/agent-accounts/login-flow/${encodeURIComponent(flowId)}`,
+    { method: "DELETE" },
+  );
+  return body.flow;
+}
+
 export function renameAgentAccount(
   accountId: string,
   label: string,

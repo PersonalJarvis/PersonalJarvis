@@ -11,10 +11,14 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 
 import { AgentAccountsPanel } from "@/components/AgentAccountsPanel";
 import {
+  type LoginFlowState,
   createAgentAccount,
   fetchAgentAccounts,
+  getLoginFlow,
   loginAgentAccount,
   setActiveAgentAccount,
+  startLoginFlow,
+  submitLoginFlowCode,
 } from "@/lib/agentAccountsApi";
 
 vi.mock("@/lib/agentAccountsApi", async () => {
@@ -29,6 +33,10 @@ vi.mock("@/lib/agentAccountsApi", async () => {
     loginAgentAccount: vi.fn(),
     deleteAgentAccount: vi.fn(),
     renameAgentAccount: vi.fn(),
+    startLoginFlow: vi.fn(),
+    getLoginFlow: vi.fn(),
+    submitLoginFlowCode: vi.fn(),
+    cancelLoginFlow: vi.fn(),
   };
 });
 
@@ -77,12 +85,31 @@ const secondSeat = account({
   email: "two@example.com",
 });
 
+function flowState(over: Partial<LoginFlowState> = {}): LoginFlowState {
+  return {
+    flow_id: "flow-1",
+    account_id: "claude:new1",
+    platform: "claude",
+    label: "Fresh seat",
+    status: "awaiting_input",
+    url: "https://claude.ai/oauth/authorize?client_id=abc&state=xyz",
+    code_expected: true,
+    message: "",
+    tail: "Paste code here if prompted:",
+    finished: false,
+    ...over,
+  };
+}
+
 afterEach(cleanup);
 beforeEach(() => {
   vi.mocked(fetchAgentAccounts).mockReset();
   vi.mocked(setActiveAgentAccount).mockReset();
   vi.mocked(createAgentAccount).mockReset();
   vi.mocked(loginAgentAccount).mockReset();
+  vi.mocked(startLoginFlow).mockReset();
+  vi.mocked(getLoginFlow).mockReset();
+  vi.mocked(submitLoginFlowCode).mockReset();
 });
 
 describe("AgentAccountsPanel", () => {
@@ -132,27 +159,91 @@ describe("AgentAccountsPanel", () => {
     });
   });
 
-  it("shows a registered-but-unsigned account honestly, with a way in", async () => {
+  it("signs in IN-APP: link to copy, code field, code handed to the flow", async () => {
+    /*
+     * The old path opened a raw console window, and that console is where the
+     * flow kept dying: the pasted OAuth code rendered late or not at all, and
+     * the single-use code was burned. Sign in must therefore start the guided
+     * flow — the external window survives only as the failure fallback below.
+     */
     const fresh = account({
       id: "claude:new1",
       label: "Fresh seat",
       builtin: false,
       connected: false,
       mode: "unknown",
-      message: "Not signed in yet — use Sign in, and finish the flow in the window that opens.",
+      message: "Not signed in yet.",
       email: null,
       tier: null,
     });
     vi.mocked(fetchAgentAccounts).mockResolvedValue(
       response([account(), fresh]) as never,
     );
-    vi.mocked(loginAgentAccount).mockResolvedValue({ message: "Sign-in started" } as never);
+    vi.mocked(startLoginFlow).mockResolvedValue(flowState());
+    vi.mocked(getLoginFlow).mockResolvedValue(flowState());
+    vi.mocked(submitLoginFlowCode).mockResolvedValue(
+      flowState({ status: "verifying", code_expected: true }),
+    );
     render(<AgentAccountsPanel />);
     await waitFor(() => expect(screen.getByText("Fresh seat")).toBeTruthy());
 
     const row = screen.getByText("Fresh seat").closest("li")!;
-    expect(row.textContent).toContain("Not signed in yet");
+    expect(row.textContent).toContain("Not signed in");
     fireEvent.click(screen.getByText("Sign in"));
+
+    await waitFor(() => {
+      expect(startLoginFlow).toHaveBeenCalledWith("claude:new1");
+    });
+    // The link is shown as DATA — with a second subscription the default
+    // browser is signed in as the wrong account, so the URL must be copyable
+    // into a private window, not auto-opened and gone.
+    const url = await screen.findByTestId("login-flow-url");
+    expect(url.textContent).toContain("claude.ai/oauth/authorize");
+
+    fireEvent.change(
+      screen.getByPlaceholderText("Paste the code from the browser here"),
+      { target: { value: "  code#state  " } },
+    );
+    fireEvent.click(screen.getByText("Confirm code"));
+    await waitFor(() => {
+      expect(submitLoginFlowCode).toHaveBeenCalledWith("flow-1", "code#state");
+    });
+  });
+
+  it("falls back to the terminal window only after the in-app flow failed", async () => {
+    const fresh = account({
+      id: "claude:new1",
+      label: "Fresh seat",
+      builtin: false,
+      connected: false,
+      mode: "unknown",
+      message: "Not signed in yet.",
+      email: null,
+      tier: null,
+    });
+    vi.mocked(fetchAgentAccounts).mockResolvedValue(
+      response([account(), fresh]) as never,
+    );
+    vi.mocked(startLoginFlow).mockResolvedValue(
+      flowState({
+        status: "failed",
+        finished: true,
+        code_expected: false,
+        url: null,
+        message: "OAuth error: Invalid code",
+      }),
+    );
+    vi.mocked(loginAgentAccount).mockResolvedValue({
+      message: "Sign-in started",
+    } as never);
+    render(<AgentAccountsPanel />);
+    await waitFor(() => expect(screen.getByText("Fresh seat")).toBeTruthy());
+
+    fireEvent.click(screen.getByText("Sign in"));
+    await waitFor(() =>
+      expect(screen.getByText("OAuth error: Invalid code")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByText("Use a terminal window instead"));
     await waitFor(() => {
       expect(loginAgentAccount).toHaveBeenCalledWith("claude:new1");
     });
