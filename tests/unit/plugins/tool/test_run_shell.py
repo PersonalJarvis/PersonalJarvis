@@ -151,3 +151,16 @@ async def test_posix_exit_code_propagates() -> None:
     result = await RunShellTool().execute({"command": "exit 7"}, None)
     assert result.success is False
     assert result.output["exit_code"] == 7
+
+
+@posix_only
+@pytest.mark.asyncio
+async def test_posix_missing_command_is_readable_failure() -> None:
+    """sh reports 127 with the command name on stderr — the brain needs that
+    text to reformulate instead of retrying blindly."""
+    result = await RunShellTool().execute(
+        {"command": "definitely-missing-cmd-xyz"}, None
+    )
+    assert result.success is False
+    assert result.output["exit_code"] == 127
+    assert "definitely-missing-cmd-xyz" in result.output["stderr"]
