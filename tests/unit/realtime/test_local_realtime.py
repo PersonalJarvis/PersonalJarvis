@@ -236,6 +236,21 @@ async def test_a_pinned_model_skips_the_probe(fake_models) -> None:
     assert fake_models.last_url is None
 
 
+async def test_the_managed_server_skips_its_unsupported_models_route(
+    fake_models, monkeypatch
+) -> None:
+    from jarvis.realtime.local_server import supervisor
+
+    monkeypatch.setattr(supervisor, "is_managed_launch_command", lambda command: True)
+    provider = LocalRealtimeProvider(
+        base_url="http://localhost:8080",
+        launch_command="managed-server --mode realtime",
+    )
+
+    assert await provider._resolve_model()
+    assert fake_models.last_url is None
+
+
 async def test_a_server_without_a_model_list_still_connects(fake_models) -> None:
     """The probe is a convenience, not a gate: the connect that follows carries
     the honest failure if there is one."""
@@ -391,6 +406,8 @@ def _fresh_launch_state(monkeypatch) -> list[dict[str, Any]]:
     from jarvis.realtime.local_server import supervisor
 
     monkeypatch.setattr(supervisor, "_port_open", lambda port, timeout=1.0: False)
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: None)
+    monkeypatch.setattr(supervisor, "_process_create_time", lambda pid: 1000.0)
     monkeypatch.setattr(LocalRealtimeProvider, "_last_launch_at", float("-inf"))
     spawned: list[dict[str, Any]] = []
 
@@ -415,6 +432,27 @@ def test_revive_spawns_windowless_and_rate_limited(monkeypatch, tmp_path) -> Non
     assert provider._maybe_launch_server() is False
     assert len(spawned) == 1
     assert spawned[0]["creationflags"] == NO_WINDOW_CREATIONFLAGS  # AP-1
+
+
+def test_transient_lifecycle_refusal_is_immediately_retryable(monkeypatch) -> None:
+    from jarvis.realtime.local_server import supervisor
+
+    monkeypatch.setattr(LocalRealtimeProvider, "_last_launch_at", float("-inf"))
+    outcomes = iter(["refused:spawn-in-progress", "spawned"])
+    calls: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "ensure_running",
+        lambda **kwargs: calls.append(kwargs["reason"]) or next(outcomes),
+    )
+    provider = LocalRealtimeProvider(
+        base_url="http://127.0.0.1:8765",
+        launch_command="serve --mode realtime",
+    )
+
+    assert provider._maybe_launch_server() is False
+    assert provider._maybe_launch_server() is True
+    assert calls == ["connect-revive", "connect-revive"]
 
 
 def test_revive_refuses_remote_servers(monkeypatch) -> None:
@@ -611,6 +649,12 @@ async def test_warm_transport_prewarms_via_the_supervisor(
         "ensure_running",
         lambda **kwargs: calls.append(f"run:{kwargs['reason']}") or "spawned",
     )
+    monkeypatch.setattr(supervisor, "is_managed_launch_command", lambda command: True)
+    monkeypatch.setattr(
+        supervisor,
+        "wait_until_ready",
+        lambda *args, **kwargs: calls.append("ready") or True,
+    )
     monkeypatch.setattr(
         supervisor, "warm_brain", lambda **kwargs: calls.append("warm") or True
     )
@@ -618,7 +662,55 @@ async def test_warm_transport_prewarms_via_the_supervisor(
     exe.write_bytes(b"")
     cfg = _warm_cfg("http://localhost:8765", f'"{exe}" --model_name m')
     assert await LocalRealtimeProvider.warm_transport(cfg) is True
-    assert calls == ["run:prewarm", "warm"]
+    assert calls == ["run:prewarm", "ready", "warm"]
+
+
+async def test_warm_transport_never_warms_the_brain_before_speech_is_ready(
+    monkeypatch, tmp_path
+) -> None:
+    from jarvis.realtime.local_server import supervisor
+
+    calls: list[str] = []
+    monkeypatch.setattr(supervisor, "ensure_running", lambda **kwargs: "spawned")
+    monkeypatch.setattr(supervisor, "is_managed_launch_command", lambda command: True)
+    monkeypatch.setattr(supervisor, "wait_until_ready", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        supervisor, "warm_brain", lambda **kwargs: calls.append("warm") or True
+    )
+    exe = tmp_path / "server"
+    exe.write_bytes(b"")
+    cfg = _warm_cfg("http://127.0.0.1:8765", f'"{exe}" --model_name m')
+    assert await LocalRealtimeProvider.warm_transport(cfg) is False
+    assert calls == []
+
+
+async def test_byo_warm_transport_does_not_require_the_private_pool(
+    monkeypatch, tmp_path
+) -> None:
+    from jarvis.realtime.local_server import supervisor
+
+    calls: list[str] = []
+    monkeypatch.setattr(supervisor, "ensure_running", lambda **kwargs: "already-running")
+    monkeypatch.setattr(supervisor, "is_managed_launch_command", lambda command: False)
+
+    def forbidden_wait(*args: Any, **kwargs: Any) -> bool:
+        raise AssertionError("BYO servers do not promise /v1/pool")
+
+    monkeypatch.setattr(supervisor, "wait_until_ready", forbidden_wait)
+    monkeypatch.setattr(
+        supervisor, "warm_brain", lambda **kwargs: calls.append("warm") or False
+    )
+
+    async def resolved_model(_provider: LocalRealtimeProvider) -> str:
+        return "m"
+
+    monkeypatch.setattr(LocalRealtimeProvider, "_resolve_model", resolved_model)
+    exe = tmp_path / "server"
+    exe.write_bytes(b"")
+    cfg = _warm_cfg("http://127.0.0.1:8765", f'"{exe}" --model_name m')
+
+    assert await LocalRealtimeProvider.warm_transport(cfg) is True
+    assert calls == ["warm"]
 
 
 async def test_warm_transport_skips_a_deleted_install(monkeypatch, tmp_path) -> None:

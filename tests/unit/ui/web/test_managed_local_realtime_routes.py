@@ -9,12 +9,15 @@ cards carry None.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 from fastapi.testclient import TestClient
 
 from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
 from jarvis.realtime.local_server import brain_link, install, preflight
+from jarvis.ui.web import provider_routes
 from jarvis.ui.web.server import WebServer
 
 
@@ -115,6 +118,9 @@ def test_status_pairs_progress_with_failclosed_probe(
     # The live half says what the disk cannot: nothing serves, nothing owned.
     assert body["runtime"] == {
         "reachable": False,
+        "ready": False,
+        "available": False,
+        "pool": None,
         "port": 8765,
         "pid": None,
         "owned": False,
@@ -147,7 +153,7 @@ def test_start_forwards_the_supervisor_refusal(
     assert resp.json()["detail"] == "refused:rate-limited"
 
 
-def test_start_spawns_and_warms_the_brain(
+def test_start_spawns_and_schedules_the_brain_warm(
     server: WebServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from jarvis.core.config import BrainProviderConfig
@@ -163,17 +169,86 @@ def test_start_spawns_and_warms_the_brain(
         lambda **kwargs: calls.append("start") or "spawned",
     )
     monkeypatch.setattr(
-        supervisor, "warm_brain", lambda **kwargs: calls.append("warm") or True
+        provider_routes,
+        "_schedule_managed_server_warm",
+        lambda *args: calls.append("schedule"),
     )
     monkeypatch.setattr(supervisor, "_port_open", lambda port, timeout=1.0: True)
+    monkeypatch.setattr(
+        supervisor,
+        "probe_runtime",
+        lambda *args, **kwargs: {
+            "size": 1,
+            "in_use": 0,
+            "available": 1,
+            "stuck": 0,
+        },
+    )
     with TestClient(server.app) as client:
         resp = client.post("/api/providers/local-realtime/managed-server/start")
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
     assert body["outcome"] == "spawned"
-    assert calls == ["start", "warm"]
+    assert calls == ["start", "schedule"]
     assert body["runtime"]["reachable"] is True
+    assert body["runtime"]["ready"] is True
+
+
+def test_start_does_not_compete_for_gpu_while_speech_is_still_loading(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.core.config import BrainProviderConfig
+    from jarvis.realtime.local_server import supervisor
+
+    server.app.state.config.brain.providers["local-realtime"] = BrainProviderConfig(
+        launch_command="serve --flag"
+    )
+    monkeypatch.setattr(supervisor, "ensure_running", lambda **kwargs: "spawned")
+    monkeypatch.setattr(supervisor, "_port_open", lambda *args, **kwargs: False)
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: None)
+    scheduled: list[str] = []
+    monkeypatch.setattr(
+        provider_routes,
+        "_schedule_managed_server_warm",
+        lambda *args: scheduled.append("warm-worker"),
+    )
+    with TestClient(server.app) as client:
+        resp = client.post("/api/providers/local-realtime/managed-server/start")
+    assert resp.status_code == 200
+    assert resp.json()["runtime"]["ready"] is False
+    assert scheduled == ["warm-worker"]
+
+
+async def test_background_warm_waits_for_managed_pool_before_brain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.realtime.local_server import supervisor
+
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(supervisor, "is_managed_launch_command", lambda command: True)
+
+    def ready(*args, **kwargs) -> bool:
+        calls.append(("ready", kwargs))
+        return True
+
+    monkeypatch.setattr(supervisor, "wait_until_ready", ready)
+    monkeypatch.setattr(
+        supervisor,
+        "warm_brain",
+        lambda **kwargs: calls.append(("brain", kwargs)) or True,
+    )
+
+    await provider_routes._finish_managed_server_warm(
+        "http://127.0.0.1:8765",
+        "managed-server --mode realtime",
+        threading.Event(),
+    )
+
+    assert [name for name, _payload in calls] == ["ready", "brain"]
+    ready_kwargs = calls[0][1]
+    assert isinstance(ready_kwargs, dict)
+    assert ready_kwargs["cleanup_on_timeout"] is True
 
 
 def test_brain_route_rewrites_the_model_without_reinstall(
@@ -245,12 +320,23 @@ def test_stop_reports_success(
 ) -> None:
     from jarvis.realtime.local_server import supervisor
 
-    monkeypatch.setattr(supervisor, "stop", lambda **kwargs: (True, "stopped pid 4711"))
+    calls: list[str] = []
+
+    async def cancel_warm(_request) -> None:
+        calls.append("cancel")
+
+    monkeypatch.setattr(provider_routes, "_cancel_managed_server_warm", cancel_warm)
+    monkeypatch.setattr(
+        supervisor,
+        "stop",
+        lambda **kwargs: calls.append("stop") or (True, "stopped pid 4711"),
+    )
     monkeypatch.setattr(supervisor, "_port_open", lambda port, timeout=1.0: False)
     with TestClient(server.app) as client:
         resp = client.post("/api/providers/local-realtime/managed-server/stop")
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
+    assert calls == ["cancel", "stop"]
 
 
 def test_uninstall_refuses_while_running(

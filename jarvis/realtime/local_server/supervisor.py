@@ -8,11 +8,12 @@ minutes so the first turn after a pause paid a cold model load.
 
 Design decisions (plan 2026-08-08):
 
-- **Ownership is the pidfile**, ``local_realtime_server.pid.json`` in the data
-  dir: ``{pid, create_time, port, command, spawned_at}`` — never environment
-  or secrets. A port probe answers "is something serving" (reachability) and
-  is NEVER a kill criterion: a foreign listener on our port must not die for
-  standing there.
+- **Ownership is an atomically replaced pidfile** plus an exclusive
+  cross-process spawn lock. A thread lock cannot serialize two Jarvis
+  processes. Neither file stores environment variables or secrets.
+- **Readiness is the model-pool probe**, not a TCP accept. ``/v1/pool`` exists
+  only after the speech pipelines are constructed. Port reachability remains
+  diagnostic and is NEVER a kill criterion.
 - **The server intentionally survives app exit.** Instant next connect is the
   entire point of supervising it; ownership exists for deliberate stop /
   uninstall / reinstall, not for exit cleanup.
@@ -29,11 +30,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import socket
 import subprocess
 import threading
 import time
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import BinaryIO
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +48,14 @@ log = logging.getLogger(__name__)
 #: its refusals, not hammered back up (AP-24 doctrine). Mirrors the provider's
 #: historical revive rate limit.
 SPAWN_MIN_INTERVAL_S = 60.0
+
+# Installed checkpoints are already local after the mandatory smoke boot;
+# 120 seconds still covers the measured 90-second CUDA graph cold start.
+RUNTIME_READY_TIMEOUT_S = 120.0
+RUNTIME_READY_POLL_S = 0.5
+OWNED_STARTUP_TIMEOUT_S = RUNTIME_READY_TIMEOUT_S
+
+_MAX_POOL_RESPONSE_BYTES = 64 * 1024
 
 #: How long the Ollama brain model stays resident after a warm ping. Slides on
 #: every warm call (the desktop warm worker re-arms after each voice session),
@@ -73,21 +88,31 @@ def _server_log() -> Path:
     return _data_dir() / "local_realtime_server.log"
 
 
+def _spawn_lock() -> Path:
+    return _data_dir() / "local_realtime_server.spawn.lock"
+
+
 # ── Address handling ─────────────────────────────────────────────────────
 
 
+def _split_base_url(base_url: str) -> SplitResult:
+    """Parse a local endpoint without DNS work and normalize WS schemes."""
+    text = (base_url or "").strip() or f"http://127.0.0.1:{_DEFAULT_PORT}"
+    if "://" not in text:
+        text = f"http://{text}"
+    parsed = urlsplit(text)
+    scheme = {"ws": "http", "wss": "https"}.get(parsed.scheme.lower(), parsed.scheme.lower())
+    return parsed._replace(scheme=scheme or "http")
+
+
 def _host_port(base_url: str) -> tuple[str, int]:
-    """Host and port of a configured server address, defaults preserved."""
-    text = (base_url or "").strip()
-    if "://" in text:
-        text = text.split("://", 1)[1]
-    text = text.split("/", 1)[0]
-    host, _, port_text = text.partition(":")
+    """Host and port of a configured server address, IPv6-safe."""
+    parsed = _split_base_url(base_url)
     try:
-        port = int(port_text) if port_text else _DEFAULT_PORT
+        port = parsed.port or _DEFAULT_PORT
     except ValueError:
         port = _DEFAULT_PORT
-    return host or "localhost", port
+    return parsed.hostname or "127.0.0.1", port
 
 
 def _is_loopback(host: str) -> bool:
@@ -100,6 +125,153 @@ def _port_open(port: int, timeout: float = 1.0) -> bool:
             return True
     except OSError:
         return False
+
+
+def _pool_url(base_url: str) -> str:
+    """Return the pinned server's HTTP model-pool endpoint."""
+    parsed = _split_base_url(base_url)
+    host = parsed.hostname or "127.0.0.1"
+    if host.lower() == "localhost":
+        host = "127.0.0.1"
+    host_text = f"[{host}]" if ":" in host else host
+    try:
+        port = parsed.port or _DEFAULT_PORT
+    except ValueError:
+        port = _DEFAULT_PORT
+    default_port = 443 if parsed.scheme == "https" else 80
+    netloc = host_text if port == default_port else f"{host_text}:{port}"
+    path = parsed.path.rstrip("/")
+    if path.endswith("/realtime"):
+        path = path[: -len("/realtime")].rstrip("/")
+    if not path.endswith("/v1"):
+        path = f"{path}/v1" if path else "/v1"
+    return urlunsplit((parsed.scheme, netloc, f"{path}/pool", "", ""))
+
+
+def probe_runtime(base_url: str, timeout: float = 0.75) -> dict[str, int] | None:
+    """Return a sanitized live pool snapshot, or ``None`` when not ready.
+
+    A TCP accept only proves that a socket exists. The pinned server mounts
+    ``/v1/pool`` after constructing every speech pipeline, so a valid response
+    is the first point at which a realtime handshake can actually succeed.
+    Session identifiers and arbitrary server payload fields are deliberately
+    discarded before anything reaches logs or the UI.
+    """
+    parsed = _split_base_url(base_url)
+    host, _port = _host_port(base_url)
+    if parsed.scheme not in {"http", "https"} or not _is_loopback(host):
+        return None
+    import http.client
+
+    url = _pool_url(base_url)
+    target = urlsplit(url)
+    target_host = target.hostname
+    if target_host is None:
+        return None
+    connection_type = (
+        http.client.HTTPSConnection
+        if target.scheme == "https"
+        else http.client.HTTPConnection
+    )
+    connection = connection_type(
+        target_host,
+        target.port,
+        timeout=max(0.05, timeout),
+    )
+    try:
+        connection.request("GET", target.path, headers={"Accept": "application/json"})
+        response = connection.getresponse()
+        if response.status != 200:
+            return None
+        raw = response.read(_MAX_POOL_RESPONSE_BYTES + 1)
+    except (http.client.HTTPException, OSError, TimeoutError, ValueError):
+        return None
+    finally:
+        connection.close()
+    if len(raw) > _MAX_POOL_RESPONSE_BYTES:
+        return None
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    size = payload.get("size")
+    in_use = payload.get("in_use")
+    units = payload.get("units")
+    if (
+        type(size) is not int
+        or type(in_use) is not int
+        or size < 1
+        or not 0 <= in_use <= size
+        or not isinstance(units, list)
+        or len(units) != size
+    ):
+        return None
+    allowed_states = {"idle", "active", "draining", "stuck"}
+    states: list[str] = []
+    for unit in units:
+        if not isinstance(unit, dict):
+            return None
+        state = unit.get("state")
+        if not isinstance(state, str) or state not in allowed_states:
+            return None
+        states.append(state)
+    return {
+        "size": size,
+        "in_use": in_use,
+        "available": size - in_use,
+        "stuck": states.count("stuck"),
+    }
+
+
+def wait_until_ready(
+    base_url: str,
+    *,
+    timeout: float = RUNTIME_READY_TIMEOUT_S,
+    poll_interval: float = RUNTIME_READY_POLL_S,
+    launch_command: str = "",
+    cleanup_on_timeout: bool = False,
+    cancel_event: threading.Event | None = None,
+) -> bool:
+    """Wait until the managed model pool, not merely TCP, answers.
+
+    A timed-out managed child is torn down when requested so it cannot remain
+    as an owned-but-never-ready zombie. Cancellation is different from a
+    timeout: callers stopping the server set ``cancel_event`` and no second
+    lifecycle operation is started from this waiter.
+    """
+    cleanup_root = managed_install_root(launch_command) if cleanup_on_timeout else None
+    expected_generation = _owned_generation() if cleanup_root is not None else None
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        if cancel_event is not None and cancel_event.is_set():
+            return False
+        if probe_runtime(base_url, timeout=min(0.75, max(0.05, timeout))) is not None:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            if cancel_event is not None and cancel_event.is_set():
+                return False
+            if cleanup_root is not None and expected_generation is not None:
+                outcome, message = _cleanup_timed_out_generation(
+                    base_url=base_url,
+                    install_root=cleanup_root,
+                    expected_generation=expected_generation,
+                )
+                if outcome == "ready":
+                    return True
+                log.warning(
+                    "local-realtime supervisor: readiness timed out; cleanup %s (%s)",
+                    outcome,
+                    message,
+                )
+            return False
+        delay = min(max(0.01, poll_interval), remaining)
+        if cancel_event is None:
+            time.sleep(delay)
+        elif cancel_event.wait(delay):
+            return False
 
 
 # ── Ownership (pidfile) ──────────────────────────────────────────────────
@@ -115,6 +287,24 @@ def _read_pidfile() -> dict[str, object] | None:
     except ValueError:
         return None
     return data if isinstance(data, dict) else None
+
+
+def _json_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _json_float(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 def _process_create_time(pid: int) -> float | None:
@@ -141,38 +331,173 @@ def _owned_process() -> tuple[int | None, bool]:
     record = _read_pidfile()
     if record is None:
         return None, False
-    try:
-        pid = int(record.get("pid", 0) or 0)
-    except (TypeError, ValueError):
+    pid = _json_int(record.get("pid"))
+    if pid is None:
         return None, False
     if pid <= 0:
         return None, False
     live_created = _process_create_time(pid)
     if live_created is None:
         return pid, False
-    recorded = record.get("create_time")
-    try:
-        recorded_f = float(recorded) if recorded is not None else None
-    except (TypeError, ValueError):
-        recorded_f = None
+    recorded_f = _json_float(record.get("create_time"))
     if recorded_f is None:
         return pid, False
     return pid, abs(live_created - recorded_f) < 1.0
 
 
-def _write_pidfile(pid: int, port: int, command: str) -> None:
+def _owned_generation() -> tuple[int, float, str] | None:
+    """Verified identity of the exact child generation in the pidfile."""
+    record = _read_pidfile()
+    if record is None:
+        return None
+    pid = _json_int(record.get("pid"))
+    created = _json_float(record.get("create_time"))
+    token = record.get("spawn_token")
+    if pid is None or pid <= 0 or created is None or not isinstance(token, str) or not token:
+        return None
+    live_created = _process_create_time(pid)
+    if live_created is None or abs(live_created - created) >= 1.0:
+        return None
+    return pid, created, token
+
+
+def _verified_owned_command() -> str | None:
+    """Launch command for the exact live process recorded in the pidfile."""
+    record = _read_pidfile()
+    if record is None:
+        return None
+    pid = _json_int(record.get("pid"))
+    created = _json_float(record.get("create_time"))
+    command = record.get("command")
+    if (
+        pid is None
+        or pid <= 0
+        or created is None
+        or not isinstance(command, str)
+        or not command.strip()
+    ):
+        return None
+    live_created = _process_create_time(pid)
+    if live_created is None or abs(live_created - created) >= 1.0:
+        return None
+    return command.strip()
+
+
+def _atomic_write_json(path: Path, payload: dict[str, object]) -> bool:
+    """Durably replace one small ownership file without partial JSON."""
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with temporary.open("x", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        return True
+    except OSError:
+        log.warning("local-realtime supervisor: atomic ownership write failed", exc_info=True)
+        return False
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            log.debug("supervisor: temporary ownership cleanup failed", exc_info=True)
+
+
+def _write_pidfile(pid: int, port: int, command: str) -> bool:
+    create_time = _process_create_time(pid)
+    if create_time is None:
+        log.error(
+            "local-realtime supervisor: cannot verify create time for spawned pid %s",
+            pid,
+        )
+        return False
     payload = {
         "pid": pid,
-        "create_time": _process_create_time(pid),
+        "create_time": create_time,
         "port": port,
         "command": command,
         "spawned_at": time.time(),
+        "spawn_token": uuid.uuid4().hex,
     }
+    return _atomic_write_json(_pidfile(), payload)
+
+
+def _try_lock_file(handle: BinaryIO) -> bool:
+    """Acquire one non-blocking OS lock, automatically released on death."""
     try:
-        _pidfile().parent.mkdir(parents=True, exist_ok=True)
-        _pidfile().write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+            os.fsync(handle.fileno())
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt  # lazy, Windows only
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl  # lazy, POSIX only
+
+            fcntl.flock(  # type: ignore[attr-defined]
+                handle.fileno(),
+                fcntl.LOCK_EX | fcntl.LOCK_NB,  # type: ignore[attr-defined]
+            )
+        return True
     except OSError:
-        log.warning("local-realtime supervisor: pidfile write failed", exc_info=True)
+        return False
+
+
+def _unlock_file(handle: BinaryIO) -> None:
+    handle.seek(0)
+    if os.name == "nt":
+        import msvcrt  # lazy, Windows only
+
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl  # lazy, POSIX only
+
+        fcntl.flock(  # type: ignore[attr-defined]
+            handle.fileno(),
+            fcntl.LOCK_UN,  # type: ignore[attr-defined]
+        )
+
+
+@contextmanager
+def _exclusive_spawn_guard() -> Iterator[bool]:
+    """Cross-process lifecycle lease backed by a kernel-held file lock."""
+    path = _spawn_lock()
+    handle: BinaryIO | None = None
+    acquired = False
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = path.open("a+b")
+        acquired = _try_lock_file(handle)
+    except OSError:
+        log.warning("supervisor: lifecycle lease creation failed", exc_info=True)
+    try:
+        yield acquired
+    finally:
+        if handle is not None:
+            if acquired:
+                try:
+                    _unlock_file(handle)
+                except OSError:
+                    log.warning("supervisor: lifecycle lease release failed", exc_info=True)
+            handle.close()
+
+
+@contextmanager
+def lifecycle_guard() -> Iterator[bool]:
+    """Non-blocking in-process and cross-process lifecycle single-flight."""
+    if not _LOCK.acquire(blocking=False):
+        yield False
+        return
+    try:
+        with _exclusive_spawn_guard() as acquired:
+            yield acquired
+    finally:
+        _LOCK.release()
 
 
 def clear_pidfile() -> None:
@@ -221,17 +546,16 @@ def hardened_child_env(*, inject_openai_key: bool) -> dict[str, str]:
 
 
 def status(base_url: str = "") -> dict[str, object]:
-    """Live runtime view: ``{reachable, port, pid, owned, stale}``.
-
-    ``reachable`` is the port probe (something answers), ``owned`` whether the
-    recorded pid verifiably runs, ``stale`` whether a pidfile exists whose
-    process is gone. ``reachable and not owned`` is the honest "another
-    process serves this port" signal the UI can render.
-    """
-    _host, port = _host_port(base_url)
+    """Live ownership plus distinct TCP and model-readiness verdicts."""
+    host, port = _host_port(base_url)
     pid, alive = _owned_process()
+    reachable = _is_loopback(host) and _port_open(port, timeout=0.25)
+    pool = probe_runtime(base_url, timeout=0.5) if reachable else None
     return {
-        "reachable": _port_open(port),
+        "reachable": reachable,
+        "ready": pool is not None,
+        "available": bool(pool and pool["available"] > 0),
+        "pool": pool,
         "port": port,
         "pid": pid,
         "owned": alive,
@@ -240,6 +564,98 @@ def status(base_url: str = "") -> dict[str, object]:
 
 
 # ── Spawn ────────────────────────────────────────────────────────────────
+
+
+def _recorded_spawn_age() -> float | None:
+    record = _read_pidfile()
+    if record is None:
+        return None
+    started_at = _json_float(record.get("spawned_at"))
+    if started_at is None:
+        started_at = _json_float(record.get("create_time"))
+    if started_at is None:
+        return None
+    age = time.time() - started_at
+    return age if age >= 0.0 else None
+
+
+def _recorded_spawn_is_recent() -> bool:
+    age = _recorded_spawn_age()
+    return age is not None and age < SPAWN_MIN_INTERVAL_S
+
+
+def _command_references_root(command: str, root: Path) -> bool:
+    """Whether a launch token resolves inside the managed install tree."""
+    try:
+        import shlex
+
+        tokens = shlex.split(command, posix=os.name != "nt")
+        resolved_root = root.resolve()
+    except (OSError, ValueError):
+        return False
+    for token in tokens:
+        candidate = token.split("=", 1)[-1].strip("\"'")
+        if not candidate or not Path(candidate).is_absolute():
+            continue
+        try:
+            if Path(candidate).resolve().is_relative_to(resolved_root):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def managed_install_root(launch_command: str) -> Path | None:
+    """Return the managed install root referenced by a launch command."""
+    command = (launch_command or "").strip()
+    if not command:
+        return None
+    try:
+        from jarvis.realtime.local_server import install  # lazy (AP-26)
+
+        root = install.install_root()
+    except Exception:  # noqa: BLE001 - optional install state is advisory
+        log.debug("supervisor: managed install root unavailable", exc_info=True)
+        return None
+    return root if _command_references_root(command, root) else None
+
+
+def is_managed_launch_command(launch_command: str) -> bool:
+    """Whether the command belongs to Jarvis's pinned managed server."""
+    return managed_install_root(launch_command) is not None
+
+
+_WS_HOST_FLAG = re.compile(
+    r"(?<!\S)--ws_host(?:\s+|=)(?:\"[^\"]*\"|'[^']*'|\S+)",
+    re.IGNORECASE,
+)
+
+
+def _force_loopback_bind(command: str) -> str:
+    """Migrate legacy managed commands to a loopback-only server bind."""
+    if _WS_HOST_FLAG.search(command):
+        return _WS_HOST_FLAG.sub("--ws_host 127.0.0.1", command)
+    return f"{command.rstrip()} --ws_host 127.0.0.1"
+
+
+def _uses_loopback_bind(command: str) -> bool:
+    """Whether the effective managed-server bind is explicitly loopback-only."""
+    try:
+        import shlex
+
+        tokens = shlex.split(command, posix=os.name != "nt")
+    except ValueError:
+        return False
+    host: str | None = None
+    for index, token in enumerate(tokens):
+        lowered = token.lower()
+        if lowered == "--ws_host":
+            if index + 1 >= len(tokens):
+                return False
+            host = tokens[index + 1]
+        elif lowered.startswith("--ws_host="):
+            host = token.split("=", 1)[1]
+    return host is not None and _is_loopback(host.strip().strip("[]"))
 
 
 def ensure_running(*, launch_command: str, base_url: str, reason: str) -> str:
@@ -256,33 +672,100 @@ def ensure_running(*, launch_command: str, base_url: str, reason: str) -> str:
     host, port = _host_port(base_url)
     if not _is_loopback(host):
         return "refused:not-local"
-    with _LOCK:
-        if _port_open(port):
-            return "already-running"
-        pid, alive = _owned_process()
-        if alive:
-            # Our server process exists but has not bound its port yet: it is
-            # mid-boot (models loading). A second spawn would fight it for
-            # the GPU and the port.
-            return "already-running"
-        try:
-            from jarvis.realtime.local_server import install  # lazy (AP-26)
+    with lifecycle_guard() as guarded:
+        if not guarded:
+            return "refused:spawn-in-progress"
 
-            if install.snapshot().get("running"):
-                # Spawning a half-installed venv mid-install proves nothing
-                # and locks files the installer is about to replace.
-                return "refused:install-running"
-        except Exception:  # noqa: BLE001 — install state is advisory here
-            log.debug("supervisor: install snapshot unavailable", exc_info=True)
+        managed_root = managed_install_root(command)
+        if managed_root is not None:
+            # Existing installs predate the loopback flag. Normalize at the
+            # actual spawn boundary so they become safe without a reinstall.
+            command = _force_loopback_bind(command)
+            try:
+                from jarvis.realtime.local_server import install  # lazy (AP-26)
+
+                if install.snapshot().get("running"):
+                    return "refused:install-running"
+            except Exception:  # noqa: BLE001 - install state is advisory here
+                log.debug("supervisor: install snapshot unavailable", exc_info=True)
+
+        pool = probe_runtime(base_url, timeout=0.25)
+        port_open = pool is not None or _port_open(port, timeout=0.25)
+        _pid, alive = _owned_process()
+        if managed_root is not None and alive:
+            owned_command = _verified_owned_command()
+            owned_root = (
+                managed_install_root(owned_command) if owned_command is not None else None
+            )
+            if owned_root is not None and not _uses_loopback_bind(owned_command):
+                # Managed servers survive app exits, so an upgrade can inherit
+                # a healthy but LAN-bound legacy generation. Only a verified
+                # owned process is eligible for this one-time migration.
+                changed, message = _stop_owned_unlocked(
+                    owned_only=True,
+                    install_root=owned_root,
+                )
+                if not changed:
+                    log.warning(
+                        "local-realtime supervisor: unsafe legacy bind migration failed (%s)",
+                        message,
+                    )
+                    return "refused:stuck-process"
+                pool = None
+                alive = False
+                port_open = _port_open(port, timeout=0.25)
+        if pool is not None:
+            return "already-running"
+        if alive:
+            age = _recorded_spawn_age()
+            if managed_root is None or age is None or age < OWNED_STARTUP_TIMEOUT_S:
+                # The child may still be loading. A second process would fight
+                # it for GPU memory and corrupt the readiness signal.
+                return "already-running"
+            changed, message = _stop_owned_unlocked(
+                owned_only=True,
+                install_root=managed_root,
+            )
+            if not changed:
+                log.warning(
+                    "local-realtime supervisor: stale owned process cleanup failed (%s)",
+                    message,
+                )
+                return "refused:stuck-process"
+            port_open = _port_open(port, timeout=0.25)
+        if port_open:
+            # The managed stack has a pinned readiness contract, so an
+            # unowned non-protocol listener is a collision. Bring-your-own
+            # servers are not required to implement /v1/pool.
+            return "refused:port-in-use" if managed_root is not None else "already-running"
+
         global _last_spawn_at
         now = time.monotonic()
-        if now - _last_spawn_at < SPAWN_MIN_INTERVAL_S:
+        if now - _last_spawn_at < SPAWN_MIN_INTERVAL_S or _recorded_spawn_is_recent():
             return "refused:rate-limited"
-        _last_spawn_at = now
+
+        # A crash between Popen and the old non-atomic pidfile write left an
+        # untracked model process. Sweep only OUR managed install tree and
+        # only while the cross-process guard is held.
+        if managed_root is not None:
+            killed, survivors = _kill_by_install_root(managed_root)
+            if survivors:
+                return "refused:managed-process-survived"
+            if killed:
+                log.warning(
+                    "local-realtime supervisor: removed %s orphan process(es) before spawn",
+                    killed,
+                )
+        clear_pidfile()
         spawned_pid = _spawn(command, reason=reason)
         if spawned_pid is None:
             return "refused:spawn-failed"
-        _write_pidfile(spawned_pid, port, command)
+        _last_spawn_at = now
+        if not _write_pidfile(spawned_pid, port, command):
+            _kill_pid_tree(spawned_pid)
+            if managed_root is not None:
+                _kill_by_install_root(managed_root)
+            return "refused:ownership-failed"
         log.info(
             "local-realtime supervisor: spawned server pid=%s (%s)",
             spawned_pid,
@@ -345,28 +828,78 @@ def _spawn(command: str, *, reason: str) -> int | None:
 
 
 def stop(*, owned_only: bool = True, install_root: Path | None = None) -> tuple[bool, str]:
+    """Serialize a deliberate stop against every start and cleanup."""
+    with lifecycle_guard() as guarded:
+        if not guarded:
+            return False, "server lifecycle operation already in progress"
+        return _stop_owned_unlocked(owned_only=owned_only, install_root=install_root)
+
+
+def _stop_owned_unlocked(
+    *,
+    owned_only: bool = True,
+    install_root: Path | None = None,
+) -> tuple[bool, str]:
     """Stop the server this install owns. ``(changed, message)``.
 
-    Kill order: the pidfile's verified pid (create_time match) first; when
-    that cannot answer and ``install_root`` is given, fall back to the
-    install-tree needle scan (kills only processes running out of the managed
-    venv). A port match is never a kill criterion. With ``owned_only`` there
-    is no further escalation — a foreign listener stays untouched.
+    Kill order: the pidfile's verified pid tree (create-time match) first,
+    followed by an install-root sweep even when that kill succeeded. The
+    second step catches a model process orphaned before ownership was written.
+    A port match is never a kill criterion, so a foreign listener survives.
     """
     pid, alive = _owned_process()
+    owner_stopped = False
     if alive and pid is not None:
-        ok = _kill_pid_tree(pid)
+        owner_stopped = _kill_pid_tree(pid)
+    elif pid is not None:
         clear_pidfile()
-        return ok, f"stopped pid {pid}" if ok else f"could not stop pid {pid}"
-    if pid is not None and not alive:
+
+    # Always sweep after the parent-tree kill. A failed bind can leave a
+    # second managed process alive even though the recorded parent stopped;
+    # returning early here was the orphan leak seen in the live incident.
+    swept, survivors = (
+        _kill_by_install_root(install_root) if install_root is not None else (0, 0)
+    )
+    if survivors:
+        if owner_stopped:
+            clear_pidfile()
+        return False, f"could not stop {survivors} managed process(es)"
+    if owner_stopped or swept:
         clear_pidfile()
-    if install_root is not None:
-        killed = _kill_by_install_root(install_root)
-        if killed:
-            return True, f"stopped {killed} process(es) from {install_root}"
+        details: list[str] = []
+        if owner_stopped and pid is not None:
+            details.append(f"pid {pid}")
+        if swept:
+            details.append(f"{swept} managed process(es)")
+        return True, f"stopped {' and '.join(details)}"
+    if alive and pid is not None:
+        return False, f"could not stop pid {pid}"
     if not owned_only:
         log.info("supervisor: no owned server process found to stop")
     return False, "no owned server process found"
+
+
+def _cleanup_timed_out_generation(
+    *,
+    base_url: str,
+    install_root: Path,
+    expected_generation: tuple[int, float, str],
+) -> tuple[str, str]:
+    """Conditionally stop only the exact child a readiness waiter observed."""
+    with lifecycle_guard() as guarded:
+        if not guarded:
+            return "deferred", "another lifecycle operation is in progress"
+        # Both checks occur while the lifecycle lease is held. No newer spawn
+        # can slip between the readiness verdict, generation compare and stop.
+        if probe_runtime(base_url, timeout=0.75) is not None:
+            return "ready", "model pool became ready at the timeout boundary"
+        if _owned_generation() != expected_generation:
+            return "skipped", "owned server generation changed"
+        changed, message = _stop_owned_unlocked(
+            owned_only=True,
+            install_root=install_root,
+        )
+        return ("completed" if changed else "failed"), message
 
 
 def _kill_pid_tree(pid: int) -> bool:
@@ -374,13 +907,26 @@ def _kill_pid_tree(pid: int) -> bool:
         if os.name == "nt":
             from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # lazy
 
-            subprocess.run(
+            result = subprocess.run(
                 ["taskkill", "/PID", str(pid), "/T", "/F"],
                 capture_output=True,
                 timeout=30,
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
-            return True
+            if result.returncode == 0:
+                deadline = time.monotonic() + 5.0
+                while time.monotonic() < deadline and _pid_exists(pid):
+                    time.sleep(0.1)
+            if not _pid_exists(pid):
+                return True
+            stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
+            log.warning(
+                "supervisor: taskkill did not terminate pid %s (exit %s): %s",
+                pid,
+                result.returncode,
+                stderr.strip()[:300],
+            )
+            return False
         import signal
 
         # The spawn used start_new_session, so the pid IS the group leader:
@@ -422,26 +968,94 @@ def _pid_exists(pid: int) -> bool:
     return True
 
 
-def _kill_by_install_root(root: Path) -> int:
-    """Kill processes running out of the managed tree. Needs psutil; else 0."""
+def _path_is_within_root(value: str, root: Path) -> bool:
+    text = (value or "").strip().strip("\"'")
+    if "=" in text:
+        text = text.split("=", 1)[1].strip().strip("\"'")
+    if not text or not Path(text).is_absolute():
+        return False
+    try:
+        candidate = Path(text).resolve()
+    except OSError:
+        return False
+    return candidate == root or candidate.is_relative_to(root)
+
+
+def _lexical_path_is_within_root(value: str, root: Path) -> bool:
+    """Containment without dereferencing a POSIX venv interpreter symlink."""
+    text = (value or "").strip().strip("\"'")
+    if not text or not Path(text).is_absolute():
+        return False
+    candidate = os.path.normcase(os.path.abspath(text))
+    root_text = os.path.normcase(os.path.abspath(root))
+    try:
+        return os.path.commonpath((candidate, root_text)) == root_text
+    except ValueError:
+        return False
+
+
+def _process_identity_is_managed(exe: str, cmdline: tuple[str, ...], root: Path) -> bool:
+    """Match only executable identity, never arbitrary opened-file arguments."""
+    return _lexical_path_is_within_root(exe, root) or bool(
+        cmdline and _lexical_path_is_within_root(cmdline[0], root)
+    )
+
+
+def _kill_by_install_root(root: Path) -> tuple[int, int]:
+    """Return ``(stopped, survivors)`` for processes in OUR managed tree."""
+    try:
+        resolved_root = root.resolve()
+    except OSError:
+        return 0, 0
+    if resolved_root.name.lower() != "local_realtime" or not resolved_root.exists():
+        log.warning("supervisor: refused unsafe install-root sweep of %s", resolved_root)
+        return 0, 0
     try:
         import psutil  # type: ignore[import-untyped]
     except ImportError:
         log.debug("supervisor: psutil unavailable — skipping needle scan")
-        return 0
-    needle = str(root).lower()
-    killed = 0
+        return 0, 0
+
+    protected = {os.getpid()}
+    try:
+        protected.update(parent.pid for parent in psutil.Process().parents())
+    except psutil.Error:
+        log.debug("supervisor: process-parent protection lookup failed", exc_info=True)
+
+    matches = []
     for proc in psutil.process_iter(["pid", "exe", "cmdline"]):
         try:
-            exe = (proc.info.get("exe") or "").lower()
-            cmdline = " ".join(proc.info.get("cmdline") or ()).lower()
-            if needle in exe or needle in cmdline:
-                proc.kill()
-                proc.wait(timeout=10)
-                killed += 1
-        except (psutil.Error, OSError):  # pragma: no cover — best effort
-            continue
-    return killed
+            if int(proc.info.get("pid") or 0) in protected:
+                continue
+            exe = str(proc.info.get("exe") or "")
+            cmdline = tuple(str(item) for item in (proc.info.get("cmdline") or ()))
+            if _process_identity_is_managed(exe, cmdline, resolved_root):
+                matches.append(proc)
+        except (psutil.Error, OSError, TypeError, ValueError):
+            log.debug("supervisor: managed process inspection failed", exc_info=True)
+
+    signalled = []
+    vanished = 0
+    failed = 0
+    for proc in matches:
+        try:
+            proc.kill()
+            signalled.append(proc)
+        except psutil.NoSuchProcess:
+            vanished += 1
+        except (psutil.Error, OSError):
+            failed += 1
+            log.warning(
+                "supervisor: could not kill managed pid %s",
+                getattr(proc, "pid", "?"),
+                exc_info=True,
+            )
+    if not signalled:
+        return vanished, failed
+    gone, alive = psutil.wait_procs(signalled, timeout=10)
+    for proc in alive:
+        log.warning("supervisor: managed pid %s survived forced stop", proc.pid)
+    return vanished + len(gone), failed + len(alive)
 
 
 # ── Brain warm-up ────────────────────────────────────────────────────────

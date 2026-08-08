@@ -1504,6 +1504,26 @@ class LocalRealtimeProvider:
         """
         if self._model:
             return self._model
+        if self._launch_command:
+            import importlib  # lazy (AP-26)
+
+            try:
+                supervisor = importlib.import_module(
+                    "jarvis.realtime.local_server.supervisor"
+                )
+                if supervisor.is_managed_launch_command(self._launch_command):
+                    # The pinned speech-to-speech server implements the
+                    # realtime protocol and /v1/pool, but not /v1/models.
+                    # Probing a known-unsupported route delayed every cold
+                    # connect and turned an expected 404 into misleading log
+                    # noise.
+                    LocalRealtimeProvider._model_cache[self._base_url] = (
+                        _MODEL,
+                        time.monotonic() + LocalRealtimeProvider._MODEL_CACHE_TTL_S,
+                    )
+                    return _MODEL
+            except Exception:  # noqa: BLE001 - generic BYO discovery remains available
+                log.debug("local-realtime: managed-command detection failed", exc_info=True)
         cached = LocalRealtimeProvider._model_cache.get(self._base_url)
         if cached is not None and cached[1] > time.monotonic():
             return cached[0]
@@ -1588,16 +1608,15 @@ class LocalRealtimeProvider:
         2026-08-06 19:57: its log ends mid-request, the call died with it,
         and nothing owned bringing it back). The actual spawn lives in the
         supervisor module — ONE code path shared with the boot-time prewarm,
-        so the two can never double-spawn. The provider-level rate limit
-        stays as the first gate (AP-24 doctrine: a crash-looping server is
-        not hammered).
+        so the two can never double-spawn. This cheap provider gate advances
+        only after a real spawn; transient lifecycle contention must remain
+        immediately retryable. The supervisor owns the durable rate limit.
         """
         if not self._launch_command or not self._server_is_local_process():
             return False
         now = time.monotonic()
         if now - LocalRealtimeProvider._last_launch_at < _LOCAL_LAUNCH_MIN_INTERVAL_S:
             return False
-        LocalRealtimeProvider._last_launch_at = now
         import importlib  # lazy (AP-26)
 
         # importlib, not a literal ``from jarvis...``: the plugin-module
@@ -1622,6 +1641,7 @@ class LocalRealtimeProvider:
             )
             return False
         if outcome == "spawned":
+            LocalRealtimeProvider._last_launch_at = now
             log.info(
                 "local-realtime: server unreachable — launched the configured "
                 "server command; waiting for it to come up"
@@ -1661,6 +1681,9 @@ class LocalRealtimeProvider:
                 supervisor = importlib.import_module(
                     "jarvis.realtime.local_server.supervisor"
                 )
+                managed = bool(
+                    supervisor.is_managed_launch_command(provider._launch_command)
+                )
                 outcome = str(
                     supervisor.ensure_running(
                         launch_command=provider._launch_command,
@@ -1668,8 +1691,29 @@ class LocalRealtimeProvider:
                         reason="prewarm",
                     )
                 )
+                if outcome not in ("spawned", "already-running"):
+                    return False
+                if managed:
+                    ready = bool(
+                        supervisor.wait_until_ready(
+                            provider._base_url,
+                            timeout=provider._connect_retry_window_s(),
+                            launch_command=provider._launch_command,
+                            cleanup_on_timeout=True,
+                        )
+                    )
+                    if not ready:
+                        log.warning(
+                            "local-realtime: prewarm timed out before the model pool "
+                            "was ready"
+                        )
+                        return False
+                # Only the pinned managed stack promises /v1/pool. A BYO
+                # OpenAI-compatible server remains valid without that private
+                # endpoint. For managed launches, the wait above also ensures
+                # the speech pipeline loads before Ollama competes for VRAM.
                 supervisor.warm_brain(launch_command=provider._launch_command)
-                return outcome in ("spawned", "already-running")
+                return True
 
             warmed = await asyncio.to_thread(_warm)
             if warmed:
@@ -1688,7 +1732,7 @@ class LocalRealtimeProvider:
         if not self._base_url:
             raise RuntimeError(
                 "No server URL configured for the self-hosted realtime provider "
-                "— set it on the provider card first (e.g. http://localhost:8080)."
+                "— set it on the provider card first (e.g. http://127.0.0.1:8080)."
             )
         deadline = time.monotonic() + self._connect_retry_window_s()
         attempt = 0
