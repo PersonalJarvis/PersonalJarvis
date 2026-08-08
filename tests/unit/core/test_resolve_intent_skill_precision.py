@@ -53,5 +53,17 @@ def test_generic_verb_without_gmail_noun_does_not_hijack():
 
 def test_seed_harness_caps_unchanged_by_skill_rules():
     reg = _reg_with_gmail()
+    # A screen-operation request still resolves to the computer-use harness —
+    # skill registration must not alter seed harness resolutions.
+    cap = reg.resolve_intent("Klick auf das Fenster am Bildschirm")  # i18n-allow
+    assert cap is not None and cap.source == "harness", f"-> {cap}"
+
+
+def test_file_read_resolves_to_run_shell():
+    # Shell-consistency rework (2026-08-08): natural file phrasings resolve to
+    # tool.run-shell now — reading a file is a shell command (cat/Get-Content),
+    # not a python-script harness job. This deliberately supersedes the old
+    # "Lies die Datei" -> harness expectation.  # i18n-allow
+    reg = _reg_with_gmail()
     cap = reg.resolve_intent("Lies die Datei foo.txt")  # i18n-allow
-    assert cap is not None and cap.source == "harness"
+    assert cap is not None and cap.id == "tool.run-shell", f"-> {cap}"

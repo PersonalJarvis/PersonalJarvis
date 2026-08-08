@@ -81,9 +81,33 @@ _SEED_CAPABILITIES: list[Capability] = [
     Capability(
         id="tool.run-shell",
         source="router_tool",
-        verbs=_ACTION_VERBS + ("fuehre", "fuehr", "fuehren"),
-        objects=_SHELL_OBJECTS,
-        description="Run arbitrary shell commands (PowerShell / bash) on the host.",
+        verbs=_ACTION_VERBS + (
+            "fuehre", "fuehr", "fuehren",
+            # Outcome verbs (shell-consistency rework 2026-08-08): users name
+            # the OUTCOME ("erstell einen Ordner"), not the vehicle ("shell").
+            # Without these the capability only resolved for users who talk
+            # like developers, and natural file requests fell through to the
+            # dictated "no tool" refusal (maintainer report 2026-08-08).
+            "erstell", "erstelle", "anleg", "anlege", "anlegen",  # i18n-allow
+            "loesch", "loesche", "entfern", "entferne",  # i18n-allow
+            "umbenenn", "umbenenne", "benenn", "benenne",  # i18n-allow
+            "verschieb", "verschiebe", "kopier", "kopiere",  # i18n-allow
+            "entpack", "entpacke", "komprimier", "komprimiere",  # i18n-allow
+            "create", "delete", "remove", "rename", "move", "copy",
+            "unzip", "zip", "extract", "list", "liste",  # i18n-allow
+        ),
+        objects=_SHELL_OBJECTS + (
+            # Outcome objects: the file-system nouns natural requests name.
+            "ordner", "unterordner", "verzeichnis", "verzeichnisse",  # i18n-allow
+            "datei", "dateien", "folder", "folders", "directory",  # i18n-allow
+            "directories", "file", "files", "desktop", "download",
+            "downloads", "papierkorb", "archiv", "zip",  # i18n-allow
+        ),
+        description=(
+            "Run shell commands for local computer tasks: create/delete/"
+            "rename/move files and folders, list directories, start "
+            "programs, timers, system queries."
+        ),
         risk_tier="ask",
         requires_evidence=True,
     ),

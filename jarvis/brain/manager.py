@@ -1602,6 +1602,22 @@ _ACTION_UNFULFILLED_PHRASES: dict[str, dict[str, str]] = {
             "Todavía no lo he anotado en tu wiki — dímelo otra vez y lo escribo."
         ),
     },
+    # Local-outcome mandate (shell-consistency rework 2026-08-08): a mandated
+    # run_shell that never ran must not degrade to the contact wording.
+    "run_shell": {
+        "de": (
+            "Das hab ich noch nicht ausgeführt — der Befehl ist nicht "  # i18n-allow: German TTS
+            "gelaufen. Sag's noch mal, dann mache ich es direkt."  # i18n-allow: German TTS
+        ),
+        "en": (
+            "I haven't actually done that yet — the command never ran. "
+            "Say it once more and I'll do it right away."
+        ),
+        "es": (
+            "Todavía no lo he hecho — el comando no llegó a ejecutarse. "
+            "Dímelo otra vez y lo hago directamente."
+        ),
+    },
 }
 # A write tool with no bespoke table reuses the contact wording's shape.
 _ACTION_UNFULFILLED_DEFAULT = _ACTION_UNFULFILLED_PHRASES["contact-upsert"]
@@ -9852,6 +9868,34 @@ class BrainManager:
                     _save_mandate[0],
                 )
 
+        # Say-do guard for LOCAL OUTCOMES (shell-consistency rework 2026-08-08).
+        # A natural file/folder/system request ("erstell einen Ordner auf dem
+        # Desktop") used to reach the LLM with run_shell merely OPTIONAL:
+        # whether the model mapped the outcome onto a shell command was model
+        # whim, and the capability block's "never invent tools" rule biased it
+        # towards the dictated refusal ("mir fehlt das passende Werkzeug")
+        # although the tool was registered and visible (maintainer report
+        # 2026-08-08 — a timer request worked, a folder request refused).
+        # Mirror the save mandate above: deterministically mandate run_shell so
+        # the directive + honest write backstop turn "sometimes works" into
+        # "always works or fails honestly". Never overrides an earlier mandate
+        # (read evidence / save — those are more specific), and degrades to no
+        # mandate when run_shell is not registered (§3 open-source).
+        if not self._evidence_required_tool:
+            from jarvis.brain.local_outcome_gate import resolve_local_outcome_mandate
+
+            _local_mandate = resolve_local_outcome_mandate(user_text)
+            if _local_mandate is not None and _local_mandate[0] in (
+                getattr(self, "_tools", None) or {}
+            ):
+                self._evidence_directive = _local_mandate[1]
+                self._evidence_required_tool = _local_mandate[0]
+                self._evidence_required_is_write = True
+                log.info(
+                    "Local-outcome guard: file/system intent — mandating %s this turn",
+                    _local_mandate[0],
+                )
+
         # Phase 5 / ADR-0006: pre-call budget gate. Block rather than request
         # when cooldown is active or the task/daily budget is exhausted.
         trace_uuid = turn_trace_id
@@ -10793,6 +10837,18 @@ class BrainManager:
             injected = pending.pop(trace_id, None)
             if injected:
                 return injected
+
+        # A turn under a WRITE mandate is an ACTION turn, not a vision turn
+        # (shell-consistency rework 2026-08-08): an attached image zeroes the
+        # tool surface downstream (screen_context.has_image → tools={}), which
+        # would blind the very tool the mandate requires. "erstell einen Ordner
+        # hier auf dem Desktop" carries the visual marker "hier auf" yet wants
+        # a shell action, not a screen answer — same for a mandated contact/
+        # wiki write. Read mandates are untouched (they never attach anyway:
+        # their data comes from the mandated tool, not the screen).
+        if getattr(self, "_evidence_required_is_write", False):
+            log.info("Vision-Inject skipped: write-mandate action turn")
+            return ()
 
         vision = getattr(self, "_vision_provider", None)
         vision_none = vision is None

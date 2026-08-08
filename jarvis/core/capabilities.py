@@ -88,6 +88,13 @@ _UNIVERSAL_ACTION_VERBS: frozenset[str] = frozenset({
     # "stop"/"stoppe" (also matches "stopp"/"stoppen") and "anhalt"/"anhalte".
     "anhalt", "anhalte", "halte", "stop", "stoppe",
     "loesch", "loesche", "loescht", "delete", "remove",
+    # Outcome verbs for local file/folder actions (shell-consistency rework
+    # 2026-08-08): "erstell einen Ordner" carried no action verb at all, so
+    # has_action_intent returned False and the turn was treated as signalless.
+    "erstell", "erstelle", "anleg", "anlege", "create",
+    "umbenenn", "umbenenne", "benenn", "benenne", "rename",
+    "kopier", "kopiere", "copy", "verschieb", "verschiebe", "move",
+    "entpack", "entpacke", "unzip",
     "speichere", "speicher", "speichert", "save",
     "frag", "frage", "fragt", "ask",
     "antwort", "antworte", "antwortet", "reply", "respond",
