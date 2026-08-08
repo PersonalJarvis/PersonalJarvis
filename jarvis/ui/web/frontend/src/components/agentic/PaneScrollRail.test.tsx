@@ -255,7 +255,7 @@ describe("PaneScrollRail", () => {
     expect(deltas.some((delta) => delta > 0)).toBe(true);
   });
 
-  it("says plainly why an application rail has no position, and hides at rest", () => {
+  it("says plainly why an application rail has no position, and stays visible", () => {
     const harness = fakeTerminal({ owner: "mouse-app" });
     render(<RailHarness name="Ida" term={harness.term} />);
     const rail = giveTrackGeometry("Ida");
@@ -263,10 +263,12 @@ describe("PaneScrollRail", () => {
     expect(rail.title).toBe(
       "Scroll Ida: this app keeps its own history, so there is no position to show",
     );
-    // Carrying no information, it stays out of the way until the pointer is in
-    // the pane. An exact rail keeps its resting visibility — it IS information.
-    expect(rail.className).toContain("opacity-0");
-    expect(rail.className).toContain("group-hover/pane:opacity-70");
+    // The regression this pins: the application rail once hid at rest, and an
+    // invisible control next to a sibling pane's always-visible thumb was read
+    // as "the scrollbar is broken in this CLI". Both rail kinds now share the
+    // same resting visibility.
+    expect(rail.className).not.toContain("opacity-0");
+    expect(rail.className).toContain("opacity-65");
   });
 
   it("notices a mouse-tracking flip that arrives without any buffer event", () => {

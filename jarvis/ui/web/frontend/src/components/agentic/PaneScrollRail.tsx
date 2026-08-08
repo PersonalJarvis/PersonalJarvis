@@ -406,10 +406,11 @@ export function PaneScrollRail({
       className={cn(
         "group absolute inset-y-1 right-0 z-10 w-3 touch-none select-none rounded-full outline-none",
         "transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-within:opacity-100",
-        // An exact rail is an INDICATOR and stays legible at rest. An
-        // application rail is only a control, so it keeps out of the way until
-        // the pointer is in the pane that owns it.
-        exact ? "opacity-65" : "opacity-0 group-hover/pane:opacity-70",
+        // BOTH rail kinds stay legible at rest, at the same level. The
+        // application rail used to hide until the pointer entered its pane,
+        // and a control that is invisible next to a sibling pane's visible
+        // thumb reads as "the scrollbar is broken in this CLI".
+        "opacity-65",
         "focus-visible:ring-1 focus-visible:ring-[#e7c46e]/80 focus-within:ring-1 focus-within:ring-[#e7c46e]/80",
         // `!` so a stroke that carries the pointer out of the pane does not
         // fade the rail out from under the hand still holding it.
