@@ -117,6 +117,48 @@ class TranscriptionUpdate(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class TranscriptPolished(Event):
+    """A finished voice turn, re-read and written out as prose.
+
+    The AFTERMATH of a turn, never part of it. The brain has already been given
+    ``text`` verbatim and is already answering by the time this fires — that is
+    the entire design. The polish pass costs up to its latency ceiling, and
+    spending that between the user finishing a sentence and Jarvis starting to
+    answer would trade the thing that makes a voice assistant feel alive for a
+    comma. So the turn runs unpolished at full speed and this arrives a moment
+    later, for the surfaces that DISPLAY and STORE the turn rather than act on
+    it: the transcription view, the session record.
+
+    Separate from ``DictationTranscript`` (a dictation is text on its way into a
+    document, and it is polished BEFORE delivery because nothing is waiting on
+    it) and from ``TranscriptFinal`` (which is the turn itself, and must never
+    be delayed). Three events because there are three different deadlines.
+
+    Fail-open like every other part of the pass: when it does not arrive — no
+    key, a timeout, a guard that fired — the raw transcript simply stands, which
+    is what every consumer already has.
+    """
+
+    #: The polished text. Never empty: this event is not published at all when
+    #: the pass returned anything other than a usable rewrite.
+    text: str = ""
+    #: The exact string this replaces, so a consumer can match it to the turn it
+    #: belongs to without depending on event ordering, and can keep the original
+    #: alongside rather than over-writing it.
+    raw_text: str = ""
+    #: The pass's own status vocabulary (``jarvis.dictation.polish``), carried
+    #: so a recorder can store WHY a turn is unpolished instead of leaving the
+    #: absence of an event as the only evidence.
+    status: str = ""
+    #: The model family that answered, "" when none did.
+    provider: str = ""
+    #: What the pass cost in wall-clock time. Off the critical path by
+    #: construction, and worth measuring precisely because that claim has to
+    #: stay true.
+    latency_ms: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class DictationTranscript(Event):
     """Live transcript of a dictation, as it is recognized.
 

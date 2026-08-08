@@ -3003,6 +3003,40 @@ class DictationConfig(BaseModel):
     #: one switch means one thing whichever pass runs.
     polish_precision: bool = False
 
+    #: Also re-read the transcripts of ordinary VOICE TURNS — the ones produced
+    #: by talking to the assistant, not by dictating into a document.
+    #:
+    #: It lives in ``[dictation]`` despite not being about dictation, because it
+    #: switches on the SAME pass with the same provider, ceiling, style and
+    #: precision setting. A block of its own would mean configuring the wording
+    #: model twice and letting the two answers drift; one switch reading one
+    #: block is the smaller surprise (AP-4).
+    #:
+    #: **It never delays a turn.** The brain is handed the raw transcript and is
+    #: already answering before this runs; the polished text arrives afterwards
+    #: as ``TranscriptPolished``, for the surfaces that display and store the
+    #: turn. Spending the latency ceiling between a finished sentence and the
+    #: start of the answer would trade the responsiveness that makes a voice
+    #: assistant usable for a comma in a log nobody was reading yet.
+    #:
+    #: Ships OFF, and the reason is cost rather than safety: a dictation is a
+    #: deliberate act a few times an hour, while a conversation produces a turn
+    #: every few seconds, and each one would spend a model call. Someone who
+    #: wants readable transcripts should say so.
+    #:
+    #: Requires ``polish`` above — it extends that pass rather than being a
+    #: second one, so with the formatter off there is nothing for it to extend.
+    #: The UI reflects that by showing it inside the formatter's own block, so
+    #: the dependency is visible instead of being a switch that reads as on and
+    #: does nothing (AP-31).
+    #:
+    #: Never translates, even with ``translate`` on. That switch is about text
+    #: on its way into a document; a conversation transcript is a RECORD of what
+    #: was said, and rewriting the record into another language than the one the
+    #: brain answered in would make the session history unreadable as a
+    #: conversation.
+    polish_conversation: bool = False
+
     # ------------------------------------------------------------------
     # The translate pass — speak one language, deliver another
     # ------------------------------------------------------------------

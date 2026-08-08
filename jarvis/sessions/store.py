@@ -162,6 +162,18 @@ class SessionStore:
                 "ADD COLUMN voice_provider TEXT NOT NULL DEFAULT ''"
             )
             log.info("SessionStore migration: added voice_turns.voice_provider")
+        if "user_text_polished" not in existing:
+            # A NEW column rather than a rewrite of ``user_text``, and that is
+            # the whole point: the transcript of what was actually said is the
+            # record, and a model's reading of it is a convenience laid beside
+            # it. Overwriting would leave no way to check the polish afterwards
+            # — the same rule the dictation history already follows by keeping
+            # the raw text next to the polished one.
+            self._conn.execute(
+                "ALTER TABLE voice_turns "
+                "ADD COLUMN user_text_polished TEXT NOT NULL DEFAULT ''"
+            )
+            log.info("SessionStore migration: added voice_turns.user_text_polished")
 
     def close(self) -> None:
         with self._lock:
@@ -352,6 +364,26 @@ class SessionStore:
                     json.dumps(tool_calls),
                     turn_id,
                 ),
+            )
+
+    def set_turn_polished(self, *, turn_id: str, text: str) -> None:
+        """Attach the polished reading of a turn's user text.
+
+        Its own statement rather than a parameter on :meth:`finalize_turn`
+        because it does not share that method's timing. The polish pass runs
+        beside the brain and lands whenever it lands — usually while the turn is
+        still open, sometimes after it has been finalized, and occasionally not
+        at all. A single UPDATE keyed on the row id is correct in all three
+        cases; threading it through finalize would only be correct in the middle
+        one, and would silently drop the polish in the others.
+
+        ``user_text`` is never touched. What was said is the record; this is a
+        reading of it laid alongside.
+        """
+        with self._lock:
+            self._c.execute(
+                "UPDATE voice_turns SET user_text_polished = ? WHERE id = ?",
+                (text, turn_id),
             )
 
     def update_turn_voice(
@@ -790,6 +822,12 @@ def _row_to_turn(r: sqlite3.Row) -> VoiceTurnRow:
         started_ms=r["started_ms"],
         ended_ms=r["ended_ms"],
         user_text=r["user_text"],
+        # Read through the row's own keys rather than indexed, so a database
+        # that predates the migration (or a SELECT that does not list it) yields
+        # "" instead of raising on a missing column.
+        user_text_polished=(
+            r["user_text_polished"] if "user_text_polished" in r.keys() else ""
+        ),
         user_lang=r["user_lang"],
         jarvis_text=r["jarvis_text"],
         jarvis_lang=r["jarvis_lang"],

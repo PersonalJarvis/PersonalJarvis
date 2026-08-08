@@ -3935,6 +3935,100 @@ class SpeechPipeline:
         except RuntimeError as exc:
             log.debug("%s publish scheduling failed: %s", type(event).__name__, exc)
 
+    def _spawn_turn_polish(self, raw: str, *, language: str) -> None:
+        """Re-read a finished voice turn as prose, AFTER the turn has moved on.
+
+        Returns immediately, always. The brain already has ``raw`` verbatim and
+        is already answering; this schedules the polish pass beside that work and
+        publishes ``TranscriptPolished`` if a usable rewrite comes back. Nothing
+        in the turn waits for it, and nothing in the turn changes because of it —
+        the polished text is for the surfaces that DISPLAY and STORE the turn.
+
+        Putting the pass in front of the brain instead would be the obvious
+        implementation and the wrong one: it spends the whole latency ceiling
+        between the user finishing a sentence and Jarvis starting to answer,
+        every single turn, to improve a transcript nobody is reading yet.
+
+        Deliberately does NOT translate, even with ``[dictation].translate`` on.
+        That switch is about dictated text on its way into a document. A
+        conversation transcript is a record of what was said, and a record in a
+        different language from the one the assistant answered in is not a
+        readable conversation.
+
+        Fail-open twice, like the dictation call site: ``polish_transcript``
+        never raises and returns the raw text on every non-``applied`` status,
+        and the task additionally swallows anything the import or the publish
+        surfaces. A wording pass may never cost a turn.
+        """
+        text = str(raw or "").strip()
+        if not text:
+            return
+        cfg = getattr(self._config, "dictation", None)
+        # Both switches, because this EXTENDS the formatter rather than being a
+        # second one. Checked here rather than inside the task so the common
+        # case — the feature is off — costs one attribute read and no task.
+        if not getattr(cfg, "polish", False):
+            return
+        if not getattr(cfg, "polish_conversation", False):
+            return
+
+        async def _run() -> None:
+            try:
+                from jarvis.core.events import TranscriptPolished
+                from jarvis.dictation.polish import polish_transcript
+
+                result = await polish_transcript(
+                    text,
+                    language=language,
+                    cfg=cfg,
+                    protected_terms=self._dictation_protected_terms(),
+                    style=str(getattr(cfg, "polish_style", "neutral") or "neutral"),
+                )
+                log.debug(
+                    "turn polish: %s (%s, %d ms%s).",
+                    result.status,
+                    result.provider or "no provider",
+                    result.latency_ms,
+                    f", {result.reason}" if result.reason else "",
+                )
+                # ``applied`` is the only status that carries a DIFFERENT string;
+                # every other one hands back exactly what went in, and publishing
+                # that would make every consumer re-render the text it already
+                # has and log a change that never happened.
+                if result.status != "applied":
+                    return
+                await self._publish_event(
+                    TranscriptPolished(
+                        source_layer="speech.stt",
+                        text=result.text,
+                        raw_text=text,
+                        status=result.status,
+                        provider=result.provider,
+                        latency_ms=result.latency_ms,
+                    )
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — a wording pass never costs a turn
+                log.debug("turn polish failed; the raw transcript stands.",
+                          exc_info=True)
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No loop means no turn in flight either; nothing to polish.
+            return
+        # Same strong-reference discipline as ``_publish_detached``: the loop
+        # holds only a weak one, so a fire-and-forget task can be collected
+        # mid-flight and the polish would simply never happen.
+        pending = getattr(self, "_turn_polish_tasks", None)
+        if pending is None:
+            pending = set()
+            self._turn_polish_tasks = pending
+        task = loop.create_task(_run(), name="turn-polish")
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+
     async def _publish_utterance_captured(self, pcm: bytes) -> None:
         duration_ms = int((len(pcm) / 2) / 16_000 * 1000)
         audio_ref = hashlib.sha256(pcm).hexdigest()[:16]
@@ -12218,6 +12312,18 @@ class SpeechPipeline:
                 is_final=True,
             )
         )
+
+        # Re-read this turn as prose, beside the brain rather than in front of
+        # it. Deliberately HERE and not next to the ``TranscriptFinal`` publish
+        # above: everything between the two is a gate that decides this
+        # utterance is not worth answering — a bare wake word, a hangup, a
+        # Whisper hallucination, our own speaker echo — and polishing text we
+        # just decided to throw away spends a model call on nothing.
+        #
+        # ``transcript.text`` rather than the recombined ``text``, so the string
+        # published for matching is the one the session recorder stored as this
+        # turn's ``user_text``.
+        self._spawn_turn_polish(transcript.text, language=lang)
 
         # Continuation-Buffer (Spec: incomplete-prompt completion). If this
         # utterance ends open (trailing comma / conjunction / determiner /

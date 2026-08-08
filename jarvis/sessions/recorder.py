@@ -58,6 +58,7 @@ from jarvis.core.events import (
     ToolCallStarted,
     TranscriptFinal,
     TranscriptionUpdate,
+    TranscriptPolished,
     VoiceSessionEnded,
     VoiceSessionStarted,
     VoiceTurnCompleted,
@@ -337,6 +338,8 @@ class SessionRecorder:
             self._on_transcript_final(event)
         elif isinstance(event, TranscriptionUpdate):
             self._on_transcription_update(event)
+        elif isinstance(event, TranscriptPolished):
+            self._on_transcript_polished(event)
         elif isinstance(event, BrainTurnStarted):
             self._on_brain_started(event)
         elif isinstance(event, BrainTurnCompleted):
@@ -775,6 +778,53 @@ class SessionRecorder:
             "turn",
             self._state.session_id,
             recovered.turn_id,
+        )
+
+    def _on_transcript_polished(self, event: TranscriptPolished) -> None:
+        """Attach a polished reading to the turn whose words it re-reads.
+
+        The event arrives on its OWN clock — the pass runs beside the brain, so
+        it lands while the turn is still open, or after it was finalized, or
+        after the next turn has already opened. Which is why the turn is found
+        by MATCHING the text rather than by assuming "the current one": stamping
+        a late arrival onto whatever turn happens to be open is how one user's
+        sentence ends up attributed to the next (the BUG-090 shape, which
+        ``last_final_turn`` exists for).
+
+        Two candidates are considered and no more: the open turn and the last
+        finalized one. Anything older has scrolled out of the window this pass
+        can possibly still be answering for — its ceiling is a second or two —
+        and searching further would trade a correct miss for a possible
+        mis-attribution.
+
+        Written straight through to the store rather than held on the in-memory
+        turn, because for the already-finalized candidate there is no finalize
+        left to carry it. ``user_text`` is never touched.
+        """
+        if self._state is None:
+            return
+        polished = str(event.text or "").strip()
+        raw = str(event.raw_text or "").strip()
+        if not polished or not raw or polished == raw:
+            return
+
+        for candidate in (self._state.current_turn, self._state.last_final_turn):
+            if candidate is None:
+                continue
+            if str(candidate.user_text or "").strip() != raw:
+                continue
+            try:
+                self._store.set_turn_polished(
+                    turn_id=candidate.turn_id, text=polished
+                )
+            except Exception as exc:  # noqa: BLE001 — never break the recorder
+                log.debug("SessionRecorder: polished text not stored: %s", exc)
+            return
+
+        log.debug(
+            "SessionRecorder: a polished transcript matched no recent turn "
+            "(session=%s) — the raw transcript stands.",
+            self._state.session_id,
         )
 
     def _on_system_state(self, event: SystemStateChanged) -> None:

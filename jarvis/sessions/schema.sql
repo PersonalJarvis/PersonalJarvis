@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS voice_turns (
     started_ms         INTEGER NOT NULL,         -- turn start (user starts speaking)
     ended_ms           INTEGER,                  -- AudioOutFirst (Jarvis finished)
     user_text          TEXT NOT NULL DEFAULT '',
+    -- The wording pass's reading of user_text, '' when it never ran or was
+    -- refused. A SEPARATE column on purpose: what was said is the record, and a
+    -- model's reading of it is a convenience laid beside it, never over it.
+    user_text_polished TEXT NOT NULL DEFAULT '',
     user_lang          TEXT NOT NULL DEFAULT 'de',
     jarvis_text        TEXT NOT NULL DEFAULT '',
     jarvis_lang        TEXT NOT NULL DEFAULT 'de',

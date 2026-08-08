@@ -111,6 +111,11 @@ class VoiceTurnRow(BaseModel):
     started_ms: int
     ended_ms: int | None = None
     user_text: str = ""
+    #: The wording pass's reading of ``user_text``; "" when it never ran, was
+    #: switched off, or was refused by a guard. Never replaces ``user_text`` —
+    #: what was said is the record, this is a convenience laid beside it, and a
+    #: consumer that wants the original can always still have it.
+    user_text_polished: str = ""
     user_lang: str = "de"
     jarvis_text: str = ""
     jarvis_lang: str = "de"

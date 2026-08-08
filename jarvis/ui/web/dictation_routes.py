@@ -511,6 +511,16 @@ class SettingsBody(BaseModel):
             "is off unless you turn it on. Applies to translated dictations too."
         ),
     )
+    polish_conversation: bool | None = Field(
+        default=None,
+        description=(
+            "Also tidy up the transcripts of ordinary conversations, not just "
+            "dictation. It never slows a reply down: the assistant answers your "
+            "raw words and the tidied version arrives afterwards, for the "
+            "transcript view and the session record. What was actually said is "
+            "always kept alongside. Needs the wording clean-up above."
+        ),
+    )
     # The translate pass. Same FastAPI trap as the polish keys above: an
     # undeclared body key is dropped before the handler ever sees it.
     translate: bool | None = Field(
