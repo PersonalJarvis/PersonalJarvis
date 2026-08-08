@@ -960,6 +960,63 @@ export async function managedServerUninstall(): Promise<void> {
   }
 }
 
+/** Live picture of the Ollama runtime itself (mirror of ollama_runtime). */
+export interface OllamaRuntimeStatus {
+  installed: boolean;
+  binary: string;
+  running: boolean;
+  version: string;
+  /** One honest backend sentence — render verbatim. */
+  detail: string;
+}
+
+/** Poll-shaped progress of the Ollama runtime installer. */
+export interface OllamaRuntimeInstallProgress {
+  phase: string;
+  percent: number;
+  detail: string;
+  error: string;
+  running: boolean;
+  log_tail: string[];
+  started?: boolean;
+  message?: string;
+}
+
+export async function ollamaRuntime(providerId: string): Promise<{
+  status: OllamaRuntimeStatus;
+  install: OllamaRuntimeInstallProgress;
+}> {
+  const res = await fetch(`/api/providers/${providerId}/ollama-runtime`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
+  return body as {
+    status: OllamaRuntimeStatus;
+    install: OllamaRuntimeInstallProgress;
+  };
+}
+
+export async function ollamaRuntimeInstall(
+  providerId: string,
+): Promise<OllamaRuntimeInstallProgress> {
+  const res = await fetch(`/api/providers/${providerId}/ollama-runtime/install`, {
+    method: "POST",
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
+  return body as OllamaRuntimeInstallProgress;
+}
+
+export async function ollamaRuntimeStart(
+  providerId: string,
+): Promise<OllamaRuntimeStatus | null> {
+  const res = await fetch(`/api/providers/${providerId}/ollama-runtime/start`, {
+    method: "POST",
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
+  return (body.status ?? null) as OllamaRuntimeStatus | null;
+}
+
 /** The job a local model fills — mirror of `ollama_pull.Role`. */
 export type PullableRole = "chat" | "vision" | "coder" | "embedding";
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import threading
 import time
 from collections.abc import Mapping
 from types import SimpleNamespace
@@ -2725,6 +2726,81 @@ def _local_realtime_card(request: Request) -> tuple[str, str]:
     )
 
 
+_MANAGED_WARM_TASK_ATTR = "_managed_local_realtime_warm_task"
+_MANAGED_WARM_CANCEL_ATTR = "_managed_local_realtime_warm_cancel"
+
+
+async def _finish_managed_server_warm(
+    base_url: str,
+    command: str,
+    cancel_event: threading.Event,
+) -> None:
+    """Wait off-request for managed readiness, then warm its brain."""
+    from jarvis.realtime.local_server import supervisor
+
+    try:
+        managed = await asyncio.to_thread(
+            supervisor.is_managed_launch_command,
+            command,
+        )
+        if not managed or cancel_event.is_set():
+            return
+        ready = await asyncio.to_thread(
+            lambda: supervisor.wait_until_ready(
+                base_url,
+                timeout=supervisor.RUNTIME_READY_TIMEOUT_S,
+                launch_command=command,
+                cleanup_on_timeout=True,
+                cancel_event=cancel_event,
+            )
+        )
+        if ready and not cancel_event.is_set():
+            await asyncio.to_thread(
+                lambda: supervisor.warm_brain(launch_command=command)
+            )
+    except asyncio.CancelledError:
+        cancel_event.set()
+        raise
+    except Exception:  # noqa: BLE001 - background warming is best-effort
+        log.warning("managed local-realtime warm-up failed", exc_info=True)
+
+
+def _schedule_managed_server_warm(request: Request, base_url: str, command: str) -> None:
+    """Keep exactly one background readiness/warm task per web app."""
+    state = request.app.state
+    active = getattr(state, _MANAGED_WARM_TASK_ATTR, None)
+    if active is not None and not active.done():
+        return
+    cancel_event = threading.Event()
+    task = asyncio.create_task(
+        _finish_managed_server_warm(base_url, command, cancel_event),
+        name="managed-local-realtime-warm",
+    )
+    setattr(state, _MANAGED_WARM_TASK_ATTR, task)
+    setattr(state, _MANAGED_WARM_CANCEL_ATTR, cancel_event)
+
+    def _clear(done: asyncio.Task[None]) -> None:
+        if getattr(state, _MANAGED_WARM_TASK_ATTR, None) is done:
+            setattr(state, _MANAGED_WARM_TASK_ATTR, None)
+            setattr(state, _MANAGED_WARM_CANCEL_ATTR, None)
+
+    task.add_done_callback(_clear)
+
+
+async def _cancel_managed_server_warm(request: Request) -> None:
+    """Join the warm worker before a deliberate server stop."""
+    state = request.app.state
+    cancel_event = getattr(state, _MANAGED_WARM_CANCEL_ATTR, None)
+    if cancel_event is not None:
+        cancel_event.set()
+    task = getattr(state, _MANAGED_WARM_TASK_ATTR, None)
+    if task is not None and not task.done():
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
 @router.get("/providers/local-realtime/managed-server/status")
 async def managed_server_status(request: Request) -> dict[str, Any]:
     """Install progress, the fail-closed readiness probe, AND the live runtime.
@@ -2768,10 +2844,11 @@ async def managed_server_start(request: Request) -> dict[str, Any]:
     )
     if outcome.startswith("refused:"):
         raise HTTPException(status_code=409, detail=outcome)
-    # Make the brain model resident too — a started server whose brain still
-    # cold-loads on the first sentence is only half a start.
-    await asyncio.to_thread(lambda: supervisor.warm_brain(launch_command=command))
     runtime = await asyncio.to_thread(supervisor.status, base_url)
+    # Return immediately even on a cold spawn. The background task waits for
+    # the speech pool before warming Ollama, preserving GPU load order without
+    # making the REST request pay a 120-second startup window.
+    _schedule_managed_server_warm(request, base_url, command)
     return {"ok": True, "outcome": outcome, "runtime": runtime}
 
 
@@ -2782,6 +2859,7 @@ async def managed_server_stop(request: Request) -> dict[str, Any]:
     from jarvis.realtime.local_server.install import install_root
 
     base_url, _command = _local_realtime_card(request)
+    await _cancel_managed_server_warm(request)
     changed, message = await asyncio.to_thread(
         lambda: supervisor.stop(owned_only=True, install_root=install_root())
     )
@@ -2927,6 +3005,58 @@ async def get_model_pull_status(provider_id: str, model: str) -> dict[str, Any]:
     from jarvis.brain.ollama_pull import pull_status
 
     return await pull_status(model)
+
+
+@router.get("/providers/{provider_id}/ollama-runtime")
+async def get_ollama_runtime(provider_id: str) -> dict[str, Any]:
+    """The Ollama runtime picture behind a pull-capable card.
+
+    Three honest states — not installed / installed but stopped / running —
+    each needing a DIFFERENT button (install vs start), which a pure HTTP
+    reachability probe cannot distinguish. Pairs the live status with the
+    poll-shaped install progress so one fetch drives the whole panel.
+    """
+    _require_pull_capable(provider_id)
+    from jarvis.brain.ollama_runtime import install_snapshot, runtime_status
+
+    status = await asyncio.to_thread(runtime_status)
+    return {"status": status, "install": install_snapshot()}
+
+
+@router.post(
+    "/providers/{provider_id}/ollama-runtime/install",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def start_ollama_runtime_install(provider_id: str) -> dict[str, Any]:
+    """Install Ollama itself, without a terminal (§3: recoverable in-app).
+
+    Dangerous-flagged: this installs third-party software (from official
+    ollama.com artifacts only) and sits behind an explicit confirm in the
+    UI. Returns immediately with the poll snapshot; a second call while an
+    install runs joins it instead of duplicating it. Platforms where no
+    silent install exists answer honestly through the snapshot's error.
+    """
+    _require_pull_capable(provider_id)
+    from jarvis.brain.ollama_runtime import install_snapshot, start_install
+
+    started, message = await asyncio.to_thread(start_install)
+    payload = install_snapshot()
+    payload["started"] = started
+    payload["message"] = message
+    return payload
+
+
+@router.post("/providers/{provider_id}/ollama-runtime/start")
+async def start_ollama_runtime(provider_id: str) -> dict[str, Any]:
+    """Start an installed-but-stopped Ollama and wait for its port."""
+    _require_pull_capable(provider_id)
+    from jarvis.brain.ollama_runtime import runtime_status, start_server
+
+    ok, detail = await asyncio.to_thread(start_server)
+    if not ok:
+        raise HTTPException(status_code=409, detail=detail)
+    status = await asyncio.to_thread(runtime_status)
+    return {"ok": True, "detail": detail, "status": status}
 
 
 @router.get("/providers/{provider_id}/cu-model")
