@@ -70,6 +70,14 @@ DETACHABLE_VIEWS: dict[str, str] = {
     "agentic-ide-classic": "Agents",
     "chat-workspace": "Agents",
     "chats": "Voice",
+    # The Voice hub family (one VoiceHubView with internal tabs). Each id keeps
+    # its own label so two detached voice windows can never share a title —
+    # the title is the Win32 window handle for focus and the taskbar icon.
+    "dictation": "Dictation",
+    "dictionary": "Dictionary",
+    "voice-shortcuts": "Voice Shortcuts",
+    "voice-language": "Dictation Language",
+    "voice-api-keys": "Voice Input Keys",
 }
 META_FILE_PATH = DATA_DIR / ".jarvis-running"
 #: Timeout for the initial lock acquire, in seconds. 0 = non-blocking,

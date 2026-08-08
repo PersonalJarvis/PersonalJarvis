@@ -91,6 +91,11 @@ const DETACHABLE_SECTIONS = new Set<SectionId>([
   "agentic-ide-classic",
   "chat-workspace",
   "chats",
+  "dictation",
+  "dictionary",
+  "voice-shortcuts",
+  "voice-language",
+  "voice-api-keys",
 ]);
 
 /**

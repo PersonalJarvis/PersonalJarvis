@@ -368,12 +368,25 @@ def test_publish_without_backend_loop_is_honest_noop() -> None:
 
 
 def test_detachable_views_have_distinct_titles_per_label() -> None:
-    # Every view must produce a title distinct from the main window's.
+    # Every view must produce a title distinct from the main window's, and no
+    # two views that can be detached AT THE SAME TIME may share a title —
+    # FindWindowW-by-title would focus/icon the wrong window. The coding family
+    # shares one label deliberately: only one coding view can be live at once
+    # (single-IDE rule), so their titles can never coexist.
     app = DesktopApp.__new__(DesktopApp)
+    coding = {"agentic-ide", "agentic-ide-classic", "chat-workspace"}
+    seen: dict[str, str] = {}
     for view in DETACHABLE_VIEWS:
         title = app._detached_title(view)
         assert title != WINDOW_TITLE
         assert title.startswith(WINDOW_TITLE)
+        clash = seen.get(title)
+        if clash is not None:
+            assert view in coding and clash in coding, (
+                f"'{view}' and '{clash}' share the title '{title}' but can be "
+                "detached simultaneously"
+            )
+        seen[title] = view
 
 
 # --- routes ------------------------------------------------------------------
