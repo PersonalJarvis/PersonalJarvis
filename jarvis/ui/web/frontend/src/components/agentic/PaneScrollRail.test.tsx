@@ -52,6 +52,8 @@ interface TerminalHarness {
   scrollLines: ReturnType<typeof vi.fn>;
   input: ReturnType<typeof vi.fn>;
   setOwner: (owner: "terminal" | "mouse-app" | "page-app") => void;
+  /** Repaint every visible row, which is what a moved application looks like. */
+  repaint: () => void;
 }
 
 function fakeTerminal({
@@ -66,10 +68,14 @@ function fakeTerminal({
   const scroll = signal<number>();
   const parsed = signal<void>();
   const changed = signal<unknown>();
+  let generation = 0;
   const active = {
     type: owner === "terminal" ? "normal" : "alternate",
     baseY: maxLine,
     viewportY: line,
+    getLine: (index: number) => ({
+      translateToString: () => `row ${index} of paint ${generation}`,
+    }),
   };
   const modes = {
     mouseTrackingMode: owner === "mouse-app" ? "any" : "none",
@@ -103,7 +109,16 @@ function fakeTerminal({
     modes.mouseTrackingMode = next === "mouse-app" ? "any" : "none";
     changed.fire(active);
   };
-  return { term, scrollToLine, scrollLines, input, setOwner };
+  return {
+    term,
+    scrollToLine,
+    scrollLines,
+    input,
+    setOwner,
+    repaint: () => {
+      generation += 1;
+    },
+  };
 }
 
 function RailHarness({ name, term }: { name: string; term: Terminal }) {
@@ -182,7 +197,7 @@ describe("PaneScrollRail", () => {
     ).toBe("terminal-Mika");
   });
 
-  it("moves a mouse-aware full-screen IDE both up and down without a fake position", () => {
+  it("moves a mouse-aware full-screen IDE both up and down and keeps the measured position", () => {
     const harness = fakeTerminal({ owner: "mouse-app" });
     render(<RailHarness name="Aria" term={harness.term} />);
     const rail = giveTrackGeometry("Aria");
@@ -190,7 +205,9 @@ describe("PaneScrollRail", () => {
     const xtermScreen = screen.getByTestId("xterm-screen-Aria");
     const deltas: number[] = [];
     xtermScreen.addEventListener("wheel", (event) => deltas.push(event.deltaY));
-    const restingTop = thumb.style.top;
+    // Nothing has been relayed yet, so the grip rests in the middle and says so.
+    expect(thumb.style.top).toBe("82px");
+    expect(rail.dataset.scrollPosition).toBe("unmeasured");
 
     fireEvent.pointerDown(thumb, { button: 0, clientY: 100, pointerId: 2 });
     fireEvent.pointerMove(rail, { clientY: 65, pointerId: 2 });
@@ -199,7 +216,8 @@ describe("PaneScrollRail", () => {
 
     expect(deltas.some((delta) => delta < 0)).toBe(true);
     expect(deltas.some((delta) => delta > 0)).toBe(true);
-    expect(thumb.style.top).toBe(restingTop);
+    expect(thumb.style.top).not.toBe("82px");
+    expect(rail.dataset.scrollPosition).toBe("measuring");
     expect(rail.dataset.scrollMode).toBe("application");
     expect(rail.hasAttribute("aria-valuemin")).toBe(false);
     expect(rail.hasAttribute("aria-valuemax")).toBe(false);
@@ -234,6 +252,51 @@ describe("PaneScrollRail", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Scroll newer in Odo" }));
     expect(deltas.some((delta) => delta > 0)).toBe(true);
+  });
+
+  it("parks the grip at whichever end the application stopped repainting at", () => {
+    vi.useFakeTimers({
+      toFake: [
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+      ],
+    });
+    try {
+      const harness = fakeTerminal({ owner: "mouse-app" });
+      render(<RailHarness name="Ida" term={harness.term} />);
+      const rail = giveTrackGeometry("Ida");
+      const thumb = screen.getByTestId("pane-scroll-thumb-Ida");
+      const older = screen.getByRole("button", { name: "Scroll older in Ida" });
+      const newer = screen.getByRole("button", { name: "Scroll newer in Ida" });
+      const settle = () => act(() => vi.advanceTimersByTime(400));
+
+      // A page the application answers with a repaint is real movement.
+      fireEvent.click(older);
+      harness.repaint();
+      settle();
+      expect(Number.parseFloat(thumb.style.top)).toBeLessThan(164);
+      expect(rail.dataset.scrollPosition).toBe("measuring");
+
+      // A page it answers with nothing is the oldest end, which also fixes the
+      // scale: the distance counted so far IS the whole history.
+      fireEvent.click(older);
+      settle();
+      expect(thumb.style.top).toBe("0px");
+      expect(rail.dataset.scrollPosition).toBe("calibrated");
+      expect(rail.title).toBe("Application history, at the oldest end");
+
+      // And the newest end is the newest end, not the middle.
+      fireEvent.click(newer);
+      settle();
+      expect(thumb.style.top).toBe("164px");
+      expect(rail.title).toBe("Application history, at the newest end");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("notices a mouse-tracking flip that arrives without any buffer event", () => {
@@ -271,13 +334,17 @@ describe("PaneScrollRail", () => {
     render(<RailHarness name="Iris" term={harness.term} />);
     const rail = giveTrackGeometry("Iris");
     const thumb = screen.getByTestId("pane-scroll-thumb-Iris");
+    expect(rail.dataset.scrollMode).toBe("terminal");
 
     fireEvent.pointerDown(thumb, { button: 0, clientY: 100, pointerId: 5 });
     harness.setOwner("mouse-app");
-    fireEvent.pointerMove(rail, { clientY: 40, pointerId: 5 });
-    fireEvent.pointerUp(rail, { clientY: 40, pointerId: 5 });
+    fireEvent.pointerMove(rail, { clientY: 190, pointerId: 5 });
+    fireEvent.pointerUp(rail, { clientY: 190, pointerId: 5 });
 
-    expect(thumb.style.top).toBe("82px");
+    // The release belongs to the application that took over mid-gesture, so the
+    // grip lands on the application scale, dragged to its newest end. The exact
+    // xterm thumb the drag started on would have rested at 142.86px.
+    expect(thumb.style.top).toBe("164px");
   });
 
   it("cancels an uncaptured drag when the pointer leaves the rail", () => {

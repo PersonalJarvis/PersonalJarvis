@@ -1,14 +1,19 @@
 import type { Terminal } from "@xterm/xterm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  applicationOffsetAtThumbTop,
   applicationPageNotches,
+  ApplicationScrollTracker,
   bindTerminalScrollRegion,
   forwardWheelToTerminal,
   lineAtThumbTop,
   readTerminalScrollView,
+  screenMoved,
+  screenSignature,
   scrollApplication,
   scrollThumbGeometry,
   terminalScrollOwner,
+  wheelNotches,
 } from "./terminalScrollSurface";
 
 function write(term: Terminal, data: string): Promise<void> {
@@ -92,6 +97,110 @@ describe("terminalScrollSurface", () => {
     expect(view).toEqual({ owner: "application", rows: 24, maxLine: 0, line: 0 });
     expect(thumb.height).toBe(36);
     expect(thumb.top).toBe(82);
+  });
+
+  it("draws a measured application position at both ends of the rail", () => {
+    const view = readTerminalScrollView(terminalDouble("any", "alternate"));
+    const tracker = new ApplicationScrollTracker();
+
+    // Nothing measured: the grip rests in the middle and says it is not a
+    // position, which is the only honest answer before the first scroll.
+    expect(scrollThumbGeometry(view, 200).top).toBe(82);
+
+    // Ten units of older, answered by a repaint.
+    tracker.advance(-1, 10);
+    tracker.settle(-1, 10, true);
+    const moving = tracker.estimate();
+    expect(moving.calibrated).toBe(false);
+    expect(scrollThumbGeometry(view, 200, { estimate: moving }).top).toBeCloseTo(
+      164 * (1 - 10 / 40),
+      5,
+    );
+
+    // Ten more the application does not answer: that is the oldest end, and it
+    // fixes the scale at the ten units that did move.
+    tracker.advance(-1, 10);
+    tracker.settle(-1, 10, false);
+    const top = tracker.estimate();
+    expect(top).toMatchObject({ offset: 10, span: 10, calibrated: true, atTop: true });
+    expect(scrollThumbGeometry(view, 200, { estimate: top }).top).toBe(0);
+
+    // Back down until it stops answering again: the newest end, not the middle.
+    tracker.advance(1, 4);
+    tracker.settle(1, 4, false);
+    const bottom = tracker.estimate();
+    expect(bottom).toMatchObject({ offset: 0, span: 10, atBottom: true });
+    expect(scrollThumbGeometry(view, 200, { estimate: bottom }).top).toBe(164);
+  });
+
+  it("maps a dragged application grip back to the offset it points at", () => {
+    const tracker = new ApplicationScrollTracker();
+    tracker.advance(-1, 60);
+    tracker.settle(-1, 60, true);
+    tracker.advance(-1, 10);
+    tracker.settle(-1, 10, false);
+    const estimate = tracker.estimate();
+
+    expect(estimate.span).toBe(60);
+    expect(applicationOffsetAtThumbTop(estimate, 0, 200)).toBe(60);
+    expect(applicationOffsetAtThumbTop(estimate, 164, 200)).toBe(0);
+    expect(applicationOffsetAtThumbTop(estimate, 82, 200)).toBe(30);
+    // Past either end of the track still means that end.
+    expect(applicationOffsetAtThumbTop(estimate, -50, 200)).toBe(60);
+    expect(applicationOffsetAtThumbTop(estimate, 900, 200)).toBe(0);
+  });
+
+  it("tells a ticking status line apart from a screen that actually moved", () => {
+    const before = Array.from({ length: 24 }, (_, row) => `row ${row}`);
+    const ticked = [...before];
+    ticked[23] = "esc to interrupt · 12s";
+
+    expect(screenMoved(before, ticked)).toBe(false);
+    expect(screenMoved(before, before.map((row) => `${row} scrolled`))).toBe(true);
+    expect(screenMoved([], [])).toBe(false);
+  });
+
+  it("reads the visible rows of the current viewport as the screen signature", () => {
+    const term = {
+      rows: 3,
+      modes: { mouseTrackingMode: "none" },
+      buffer: {
+        active: {
+          type: "normal",
+          baseY: 5,
+          viewportY: 2,
+          getLine: (index: number) => ({
+            translateToString: () => `line ${index}`,
+          }),
+        },
+      },
+    } as unknown as Terminal;
+
+    expect(screenSignature(term)).toEqual(["line 2", "line 3", "line 4"]);
+  });
+
+  it("counts a wheel in the whole rows xterm reports to the application", () => {
+    const host = document.createElement("div");
+    const screen = document.createElement("div");
+    screen.className = "xterm-screen";
+    screen.getBoundingClientRect = () => ({ height: 480 }) as DOMRect;
+    host.append(screen);
+    const term = terminalDouble("any", "alternate");
+
+    const line = new WheelEvent("wheel", {
+      deltaMode: WheelEvent.DOM_DELTA_LINE,
+      deltaY: -3,
+    });
+    const pixels = new WheelEvent("wheel", {
+      deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+      deltaY: 100,
+    });
+    const still = new WheelEvent("wheel", { deltaY: 0 });
+
+    expect(wheelNotches(term, host, line)).toBe(3);
+    // 480px over 24 rows is a 20px cell, so 100px is five rows.
+    expect(wheelNotches(term, host, pixels)).toBe(5);
+    expect(wheelNotches(term, host, still)).toBe(0);
   });
 
   it("relays standard wheel reports through xterm for a mouse-aware coding TUI", () => {

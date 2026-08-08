@@ -2,12 +2,15 @@
  * One honest scroll rail for one Agentic-IDE terminal pane.
  *
  * Normal terminal history gets a conventional absolute thumb. Full-screen
- * coding TUIs keep their history inside the application, so no absolute
- * position exists to draw; instead of a thumb pretending to be one, the rail
- * becomes a visible controller — arrow caps that page the application and a
- * grip that relays drags as the application's own wheel protocol. The grip
- * springs back to centre on release because claiming a position would be a
- * guess.
+ * coding TUIs keep their history inside the application, where no position can
+ * be read — so this rail measures one instead: it counts every unit of scroll
+ * that reaches the terminal, from its own grip and from the user's wheel alike,
+ * and lets the two ends announce themselves by refusing to repaint. See
+ * ./terminalScrollSurface for why that is a measurement and not a guess.
+ *
+ * The grip therefore travels for both owners. It only rests in the middle
+ * before the first scroll of an application-owned screen, which is the one
+ * moment nothing has been measured yet.
  */
 import {
   useCallback,
@@ -24,24 +27,44 @@ import type { Terminal } from "@xterm/xterm";
 import { cn } from "@/lib/utils";
 import { PANE_CHROME, type TerminalAppearance } from "./terminalThemes";
 import {
+  applicationOffsetAtThumbTop,
   applicationPageNotches,
+  ApplicationScrollTracker,
   bindTerminalScrollRegion,
   forwardWheelToTerminal,
   lineAtThumbTop,
   readTerminalScrollView,
+  screenMoved,
+  screenSignature,
   scrollApplication,
   scrollThumbGeometry,
+  terminalScrollOwner,
+  wheelNotches,
+  type ApplicationScrollEstimate,
   type TerminalScrollView,
 } from "./terminalScrollSurface";
 
-const MOUSE_DRAG_STEP_PX = 7;
+/**
+ * How long a run of relays may stay open before the screen is compared.
+ *
+ * The application answers over a PTY, so it is never synchronous. Long enough
+ * that a busy agent has repainted, short enough that letting go of the wheel at
+ * the top of the history feels like an immediate stop.
+ */
+const SETTLE_MS = 180;
 
 interface DragSession {
   pointerId: number;
   owner: TerminalScrollView["owner"];
   grabOffset: number;
-  lastY: number;
   captured: boolean;
+}
+
+interface PendingMeasure {
+  direction: -1 | 1;
+  notches: number;
+  before: string[];
+  timer: number;
 }
 
 interface PaneScrollRailProps {
@@ -82,9 +105,22 @@ export function PaneScrollRail({
   const thumbRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragSession | null>(null);
   const frameRef = useRef<number | null>(null);
+  const trackerRef = useRef<ApplicationScrollTracker>(
+    new ApplicationScrollTracker(),
+  );
+  const measureRef = useRef<PendingMeasure | null>(null);
   const [view, setView] = useState<TerminalScrollView | null>(null);
+  const [estimate, setEstimate] = useState<ApplicationScrollEstimate | null>(null);
   const [trackPx, setTrackPx] = useState(0);
   const [dragging, setDragging] = useState(false);
+
+  const forgetMeasurements = useCallback(() => {
+    const pending = measureRef.current;
+    measureRef.current = null;
+    if (pending) window.clearTimeout(pending.timer);
+    trackerRef.current.reset();
+    setEstimate((current) => (current === null ? current : null));
+  }, []);
 
   const sync = useCallback(() => {
     frameRef.current = null;
@@ -96,13 +132,109 @@ export function PaneScrollRail({
     }
     const next = readTerminalScrollView(term);
     if (host) host.dataset.scrollOwner = next.owner;
+    // Leaving the alternate screen ends the history this rail was counting;
+    // whatever it measured belongs to a screen that no longer exists.
+    if (next.owner !== "application") forgetMeasurements();
     setView((current) => (sameView(current, next) ? current : next));
-  }, [hostRef, terminalRef]);
+  }, [forgetMeasurements, hostRef, terminalRef]);
 
   const scheduleSync = useCallback(() => {
     if (frameRef.current !== null) return;
     frameRef.current = requestAnimationFrame(sync);
   }, [sync]);
+
+  /**
+   * Close the open run of relays.
+   *
+   * `assumeMoved` covers a reversal: the user turned around before the
+   * application had time to answer, so the screen in front of us proves
+   * nothing. Only a run the user actually stopped is allowed to declare an end.
+   */
+  const flushMeasure = useCallback(
+    (assumeMoved: boolean) => {
+      const pending = measureRef.current;
+      measureRef.current = null;
+      if (!pending) return;
+      window.clearTimeout(pending.timer);
+      const term = terminalRef.current;
+      if (!term) return;
+      const moved =
+        assumeMoved || screenMoved(pending.before, screenSignature(term));
+      trackerRef.current.settle(pending.direction, pending.notches, moved);
+      setEstimate(trackerRef.current.estimate());
+    },
+    [terminalRef],
+  );
+
+  /**
+   * Count scroll that has just been handed to an application-owned screen.
+   *
+   * Every route ends up here — this rail's grip, its arrow caps, its keys and
+   * the wheel the user rolls over the terminal itself — because a position
+   * measured from only some of them would be wrong the first time the user
+   * touched the other.
+   */
+  const noteRelay = useCallback(
+    (direction: -1 | 1, notches: number) => {
+      const term = terminalRef.current;
+      if (!term || notches <= 0) return;
+      if (terminalScrollOwner(term) !== "application") return;
+      trackerRef.current.advance(direction, notches);
+      setEstimate(trackerRef.current.estimate());
+
+      const pending = measureRef.current;
+      if (pending && pending.direction === direction) {
+        pending.notches += notches;
+        window.clearTimeout(pending.timer);
+        pending.timer = window.setTimeout(() => flushMeasure(false), SETTLE_MS);
+        return;
+      }
+      if (pending) flushMeasure(true);
+      measureRef.current = {
+        direction,
+        notches,
+        // Taken now, while the report is still travelling down the PTY: the
+        // screen cannot have answered inside this handler.
+        before: screenSignature(term),
+        timer: window.setTimeout(() => flushMeasure(false), SETTLE_MS),
+      };
+    },
+    [flushMeasure, terminalRef],
+  );
+
+  /** Relay to the application and count it, whichever protocol it speaks. */
+  const relayApplication = useCallback(
+    (direction: -1 | 1, notches: number) => {
+      const term = terminalRef.current;
+      if (!term) return;
+      const sent = scrollApplication(term, hostRef.current, direction, notches);
+      // Mouse-mode relays are wheel events on the terminal, so the listener
+      // below already counted them. The page-key fallback emits nothing a
+      // listener could see, so it reports itself here, converted to the same
+      // unit the wheel path counts in.
+      if ((term.modes?.mouseTrackingMode ?? "none") === "none" && sent > 0) {
+        noteRelay(direction, sent * applicationPageNotches(term.rows));
+      }
+    },
+    [hostRef, noteRelay, terminalRef],
+  );
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const count = (event: WheelEvent) => {
+      const term = terminalRef.current;
+      if (!term) return;
+      const notches = wheelNotches(term, host, event);
+      if (notches > 0) noteRelay(event.deltaY < 0 ? -1 : 1, notches);
+    };
+    // Passive and on the host: every wheel that reaches this terminal — real or
+    // synthesised — is dispatched on the screen inside it and bubbles here.
+    host.addEventListener("wheel", count, { passive: true });
+    return () => host.removeEventListener("wheel", count);
+  }, [hostRef, noteRelay, terminalRef]);
+
+  useEffect(() => forgetMeasurements, [epoch, forgetMeasurements]);
 
   useEffect(() => {
     const term = terminalRef.current;
@@ -189,39 +321,40 @@ export function PaneScrollRail({
     [liveTrack, scheduleSync, terminalRef],
   );
 
+  /**
+   * Drag an application grip to an absolute offset.
+   *
+   * The gesture states where the user wants to be and this sends the exact
+   * difference from where the count says they are — the same contract as the
+   * exact thumb, over a measured scale instead of a read one.
+   */
   const moveApplication = useCallback(
     (current: TerminalScrollView, clientY: number) => {
       const drag = dragRef.current;
       const term = terminalRef.current;
       if (!drag || !term) return;
-      const delta = clientY - drag.lastY;
-      const tracking = term.modes?.mouseTrackingMode ?? "none";
-      const step =
-        tracking === "none"
-          ? Math.max(24, liveTrack().height / 5)
-          : MOUSE_DRAG_STEP_PX;
-      const notches = Math.floor(Math.abs(delta) / Math.max(1, step));
-      if (notches > 0) {
-        const direction: -1 | 1 = delta < 0 ? -1 : 1;
-        scrollApplication(term, hostRef.current, direction, notches);
-        drag.lastY += direction * notches * step;
-      }
-
-      // During the gesture the grip follows the hand. It returns to the centre
-      // on release, which is the visual contract that this is movement rather
-      // than a guessed position.
       const track = liveTrack();
+      if (track.height <= 0) return;
+      const measured = trackerRef.current.estimate();
+      const geometry = scrollThumbGeometry(current, track.height, {
+        estimate: measured,
+      });
+      const top = Math.min(
+        Math.max(0, track.height - geometry.height),
+        Math.max(0, clientY - track.top - drag.grabOffset),
+      );
+      const delta =
+        applicationOffsetAtThumbTop(measured, top, track.height) -
+        measured.offset;
+      if (delta !== 0) relayApplication(delta > 0 ? -1 : 1, Math.abs(delta));
+
+      // The grip follows the hand for the length of the gesture; on release the
+      // measured position takes the thumb back, which is where the count and
+      // the hand agree unless the application ran out of history on the way.
       const thumb = thumbRef.current;
-      if (thumb && track.height > 0) {
-        const geometry = scrollThumbGeometry(current, track.height);
-        const top = Math.min(
-          track.height - geometry.height,
-          Math.max(0, clientY - track.top - geometry.height / 2),
-        );
-        thumb.style.top = `${top}px`;
-      }
+      if (thumb) thumb.style.top = `${top}px`;
     },
-    [hostRef, liveTrack, terminalRef],
+    [liveTrack, relayApplication, terminalRef],
   );
 
   const onPointerDown = useCallback(
@@ -236,7 +369,9 @@ export function PaneScrollRail({
       event.stopPropagation();
       onFocus?.();
 
-      const geometry = scrollThumbGeometry(current, track.height);
+      const geometry = scrollThumbGeometry(current, track.height, {
+        estimate: trackerRef.current.estimate(),
+      });
       const grabbedThumb = event.target === thumbRef.current;
       const grabOffset = grabbedThumb
         ? event.clientY - track.top - geometry.top
@@ -245,7 +380,6 @@ export function PaneScrollRail({
         pointerId: event.pointerId,
         owner: current.owner,
         grabOffset,
-        lastY: event.clientY,
         captured: false,
       };
       setDragging(true);
@@ -261,18 +395,11 @@ export function PaneScrollRail({
         if (!grabbedThumb) moveExact(current, event.clientY, grabOffset);
         return;
       }
-      if (!grabbedThumb) {
-        const direction: -1 | 1 =
-          event.clientY - track.top < track.height / 2 ? -1 : 1;
-        scrollApplication(
-          term,
-          hostRef.current,
-          direction,
-          applicationPageNotches(current.rows),
-        );
-      }
+      // A click beside the grip means the same thing it means on any scrollbar
+      // now that there is a scale to aim at: go there.
+      if (!grabbedThumb) moveApplication(current, event.clientY);
     },
-    [hostRef, liveTrack, moveExact, onFocus, terminalRef],
+    [liveTrack, moveApplication, moveExact, onFocus, terminalRef],
   );
 
   const onPointerMove = useCallback(
@@ -304,7 +431,9 @@ export function PaneScrollRail({
       const track = liveTrack();
       if (term && thumb && track.height > 0) {
         const current = readTerminalScrollView(term);
-        const geometry = scrollThumbGeometry(current, track.height);
+        const geometry = scrollThumbGeometry(current, track.height, {
+          estimate: trackerRef.current.estimate(),
+        });
         thumb.style.top = `${geometry.top}px`;
       }
     },
@@ -338,23 +467,13 @@ export function PaneScrollRail({
         else if (event.key === "End") term.scrollToBottom();
         else handled = false;
       } else if (event.key === "ArrowUp") {
-        scrollApplication(term, hostRef.current, -1, 1);
+        relayApplication(-1, 1);
       } else if (event.key === "ArrowDown") {
-        scrollApplication(term, hostRef.current, 1, 1);
+        relayApplication(1, 1);
       } else if (event.key === "PageUp") {
-        scrollApplication(
-          term,
-          hostRef.current,
-          -1,
-          applicationPageNotches(current.rows),
-        );
+        relayApplication(-1, applicationPageNotches(current.rows));
       } else if (event.key === "PageDown") {
-        scrollApplication(
-          term,
-          hostRef.current,
-          1,
-          applicationPageNotches(current.rows),
-        );
+        relayApplication(1, applicationPageNotches(current.rows));
       } else {
         handled = false;
       }
@@ -364,7 +483,7 @@ export function PaneScrollRail({
       onFocus?.();
       scheduleSync();
     },
-    [hostRef, onFocus, scheduleSync, terminalRef],
+    [onFocus, relayApplication, scheduleSync, terminalRef],
   );
 
   const scrollApplicationPage = useCallback(
@@ -373,30 +492,35 @@ export function PaneScrollRail({
       if (!term) return;
       const current = readTerminalScrollView(term);
       if (current.owner !== "application") return;
-      scrollApplication(
-        term,
-        hostRef.current,
-        direction,
-        applicationPageNotches(current.rows),
-      );
+      relayApplication(direction, applicationPageNotches(current.rows));
       onFocus?.();
       scheduleSync();
     },
-    [hostRef, onFocus, scheduleSync, terminalRef],
+    [onFocus, relayApplication, scheduleSync, terminalRef],
   );
 
   const geometry = useMemo(
-    () => (view ? scrollThumbGeometry(view, trackPx) : { top: 0, height: 0 }),
-    [trackPx, view],
+    () =>
+      view ? scrollThumbGeometry(view, trackPx, { estimate }) : { top: 0, height: 0 },
+    [estimate, trackPx, view],
   );
   if (!view) return null;
 
   const exact = view.owner === "terminal";
+  const applicationText = !estimate
+    ? "Application history; drag up or down to scroll"
+    : estimate.atBottom
+      ? "Application history, at the newest end"
+      : estimate.atTop
+        ? "Application history, at the oldest end"
+        : estimate.calibrated
+          ? `Application history, ${Math.round((1 - estimate.offset / estimate.span) * 100)}% from the oldest end`
+          : "Application history, position measured so far";
   const valueText = exact
     ? view.maxLine === 0
       ? "No terminal history yet"
       : `Terminal line ${view.line} of ${view.maxLine}`
-    : "Application history; drag up or down to scroll";
+    : applicationText;
   const shell = PANE_CHROME[appearance].shell;
 
   return (
@@ -413,6 +537,15 @@ export function PaneScrollRail({
       tabIndex={exact ? 0 : undefined}
       data-testid={`pane-scroll-rail-${name}`}
       data-scroll-mode={view.owner}
+      data-scroll-position={
+        exact
+          ? "exact"
+          : !estimate
+            ? "unmeasured"
+            : estimate.calibrated
+              ? "calibrated"
+              : "measuring"
+      }
       title={valueText}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
