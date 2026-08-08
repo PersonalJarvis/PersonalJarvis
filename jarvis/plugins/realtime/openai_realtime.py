@@ -1395,6 +1395,15 @@ class LocalRealtimeProvider:
     # with the distilled persona and a prefix-cache-friendly static-first
     # ordering (AP-21: a declared capability, never a provider-name check).
     prefers_compact_instructions = True
+    # A delegate readback on this card is rendered by the server's own LLM +
+    # TTS (4-8 s live on the dev box), not by a hosted realtime model that
+    # starts audio in under a second. The shared 2.5 s readback window
+    # guaranteed the surface fallback fired first — and this card has no
+    # realtime-scoped surface TTS, so that fallback is TEXT-ONLY and then
+    # withheld the real audio answer arriving seconds later: the user heard
+    # nothing at all (live 2026-08-08 15:24). Declared budget, same AP-21
+    # doctrine as handshake_budget_s.
+    readback_render_budget_s = 12.0
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
     # EMPTY, not absent. The keyless path is chosen by this tuple being empty

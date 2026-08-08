@@ -6671,7 +6671,7 @@ class RealtimeVoiceSession:
         # delegate reply natively, and the surface TTS speaks only when the
         # provider stays mute past the wait window. Do not re-add an
         # immediate surface claim keyed on a provider capability flag.
-        deadline = time.monotonic() + _DELEGATE_READBACK_WAIT_S
+        deadline = time.monotonic() + self._delegate_readback_budget_s()
         while True:
             if (
                 self._ended
@@ -6702,9 +6702,26 @@ class RealtimeVoiceSession:
             "delegate result within %.1fs; speaking it through the "
             "surface TTS fallback",
             self.session_id,
-            _DELEGATE_READBACK_WAIT_S,
+            self._delegate_readback_budget_s(),
         )
         await self._send_json(self._surface_speech_message(reply))
+
+    def _delegate_readback_budget_s(self) -> float:
+        """How long a delivered delegate result may wait for provider audio.
+
+        The 2.5 s floor was measured against hosted providers that start
+        readback audio well under one second. A SELF-HOSTED server renders
+        the readback through its own LLM + TTS (4-8 s live on the dev box),
+        so 2.5 s guaranteed the fallback fired first — and for a card with
+        no realtime-scoped surface TTS that fallback is text-only, which
+        then WITHHELD the real audio answer arriving seconds later: the
+        user heard nothing at all (live 2026-08-08 15:24). A declared
+        capability, never a provider-name check (AP-21).
+        """
+        declared = float(
+            getattr(self._provider, "readback_render_budget_s", 0.0) or 0.0
+        )
+        return max(_DELEGATE_READBACK_WAIT_S, declared)
 
     def _start_delegate(
         self,
