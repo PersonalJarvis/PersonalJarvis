@@ -95,6 +95,8 @@ _SEED_CAPABILITIES: list[Capability] = [
             "entpack", "entpacke", "komprimier", "komprimiere",  # i18n-allow
             "create", "delete", "remove", "rename", "move", "copy",
             "unzip", "zip", "extract", "list", "liste",  # i18n-allow
+            # Timer verbs (2026-08-08 follow-up): "stell/setz einen Timer".
+            "stell", "setz", "set",  # i18n-allow
         ),
         objects=_SHELL_OBJECTS + (
             # Outcome objects: the file-system nouns natural requests name.
@@ -102,6 +104,9 @@ _SEED_CAPABILITIES: list[Capability] = [
             "datei", "dateien", "folder", "folders", "directory",  # i18n-allow
             "directories", "file", "files", "desktop", "download",
             "downloads", "papierkorb", "archiv", "zip",  # i18n-allow
+            # Timers ride run_shell as a detached background process — no
+            # dedicated timer feature exists (checked 2026-08-08).
+            "timer", "wecker", "alarm", "countdown", "stoppuhr",  # i18n-allow
         ),
         description=(
             "Run shell commands for local computer tasks: create/delete/"

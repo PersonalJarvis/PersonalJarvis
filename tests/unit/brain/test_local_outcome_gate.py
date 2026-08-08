@@ -13,6 +13,7 @@ import pytest
 
 from jarvis.brain.local_outcome_gate import (
     RUN_SHELL_OUTCOME_DIRECTIVE,
+    RUN_SHELL_TIMER_DIRECTIVE,
     resolve_local_outcome_mandate,
 )
 
@@ -67,6 +68,26 @@ NO_MANDATE_UTTERANCES = [
 ]
 
 
+# Timer class (2026-08-08 follow-up): "stell einen Timer" was the maintainer's
+# original positive surprise — and the next day it was refused again.
+TIMER_UTTERANCES = [
+    "Stell einen Timer auf 10 Minuten",
+    "Setz mir bitte einen Timer für 5 Minuten",
+    "Kannst du einen Timer auf 20 Minuten stellen?",
+    "Timer 10 Minuten",
+    "Mach mir einen Wecker für 7 Uhr",
+    "Stopp den Timer bitte",
+    "set a timer for 15 minutes",
+    "start a 5 minute countdown",
+]
+
+TIMER_NO_MANDATE = [
+    "Was ist ein Timer?",              # definition
+    "Wie funktioniert ein Timer?",     # no set/stop verb, no duration
+    "Der Timer gestern war praktisch", # remark, no verb/duration
+]
+
+
 @pytest.mark.parametrize("utterance", MANDATE_UTTERANCES)
 def test_local_outcome_mandates_run_shell(utterance: str) -> None:
     mandate = resolve_local_outcome_mandate(utterance)
@@ -74,6 +95,29 @@ def test_local_outcome_mandates_run_shell(utterance: str) -> None:
     tool, directive = mandate
     assert tool == "run_shell"
     assert directive == RUN_SHELL_OUTCOME_DIRECTIVE
+
+
+@pytest.mark.parametrize("utterance", TIMER_UTTERANCES)
+def test_timer_requests_mandate_run_shell_with_detach_directive(utterance: str) -> None:
+    mandate = resolve_local_outcome_mandate(utterance)
+    assert mandate is not None, f"expected a timer mandate for: {utterance!r}"
+    tool, directive = mandate
+    assert tool == "run_shell"
+    assert directive == RUN_SHELL_TIMER_DIRECTIVE
+
+
+@pytest.mark.parametrize("utterance", TIMER_NO_MANDATE)
+def test_timer_questions_and_remarks_do_not_mandate(utterance: str) -> None:
+    assert resolve_local_outcome_mandate(utterance) is None, (
+        f"expected NO mandate for: {utterance!r}"
+    )
+
+
+def test_timer_directive_forces_detached_process() -> None:
+    # The tool call times out after ~30s — a blocking sleep would fail every
+    # timer, so the directive must demand a detached background process.
+    assert "DETACHED" in RUN_SHELL_TIMER_DIRECTIVE
+    assert "run_shell" in RUN_SHELL_TIMER_DIRECTIVE
 
 
 @pytest.mark.parametrize("utterance", NO_MANDATE_UTTERANCES)

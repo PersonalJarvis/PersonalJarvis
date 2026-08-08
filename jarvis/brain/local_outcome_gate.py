@@ -28,7 +28,10 @@ Matching contract
 A mandate needs BOTH an outcome verb ("erstell", "loesch", "rename", …) AND a
 file-system object ("ordner", "datei", "folder", "desktop", …) — the noun is
 what separates "erstell einen Ordner" (shell) from "erstell einen
-Kalendereintrag" (plugin/calendar flow, untouched).
+Kalendereintrag" (plugin/calendar flow, untouched). A second, independent
+class covers timers/alarms/countdowns ("stell einen Timer auf 10 Minuten"):
+a timer noun plus a set/stop verb or a bare duration, with its own directive
+that forces a DETACHED background process (the tool call times out at ~30s).
 
 Stand-downs (each defers to the flow that owns the turn):
   - external-integration dispatch ("schick die Datei per Mail") — the
@@ -133,6 +136,31 @@ _FOREIGN_DOMAIN_RE = re.compile(
     r")\b"
 )
 
+# Timer/alarm/countdown nouns — the second mandate class (maintainer report
+# 2026-08-08, follow-up): "stell einen Timer" worked one day and was refused
+# the next, because a timer utterance carries no file-system noun and thus no
+# mandate. No dedicated timer feature exists in Jarvis (checked 2026-08-08:
+# every "timer" hit in the tree is an internal code timer), so run_shell is
+# the only vehicle and mandating it hijacks nothing.
+_TIMER_OBJECT_RE = re.compile(
+    r"\b(?:timers?|wecker|alarme?|countdowns?|stoppuhr)\b"  # i18n-allow
+)
+
+# A timer turn needs a set/start/stop verb OR a bare duration ("Timer 10
+# Minuten" is common verbless voice phrasing).
+_TIMER_VERB_RE = re.compile(
+    r"\b(?:"
+    r"stell\w*|setz\w*|start\w*|mach\w*|leg\w*|aktivier\w*|erstell\w*|"  # i18n-allow
+    r"set|create|"
+    r"stopp\w*|stop|beende\w*|abbrech\w*|cancel|loesch\w*|entfern\w*|"  # i18n-allow
+    r"delete|remove"
+    r")\b"
+)
+_DURATION_RE = re.compile(
+    r"\b\d+\s*(?:sekunden?|minuten?|stunden?|seconds?|minutes?|hours?|"  # i18n-allow
+    r"sek|min|std|s|m|h)\b"  # i18n-allow
+)
+
 # Per-turn directive injected into the system prompt when the mandate fires
 # (English — LLM-facing, mirrors CONTACT_WRITE_DIRECTIVE / the read gate).
 RUN_SHELL_OUTCOME_DIRECTIVE = (
@@ -149,6 +177,20 @@ RUN_SHELL_OUTCOME_DIRECTIVE = (
     "success, state the concrete error on failure. Only for an irreversible "
     "bulk delete/overwrite whose target is ambiguous, ask ONE short "
     "clarifying question instead of guessing."
+)
+
+RUN_SHELL_TIMER_DIRECTIVE = (
+    "MANDATORY THIS TURN: the user asks for a local timer/alarm/countdown on "
+    "THIS computer. You MUST arrange it NOW by calling the `run_shell` tool. "
+    "CRITICAL: the tool call itself times out after ~30 seconds, so NEVER "
+    "block with a plain sleep — start a DETACHED background process that "
+    "waits and then notifies audibly/visibly (Windows: Start-Process "
+    "powershell -WindowStyle Hidden with a Start-Sleep + beep/toast/msg "
+    "script, or schtasks for clock times; POSIX: nohup sh -c 'sleep …; "
+    "notify-send/afplay …' & ). To cancel a timer, find and kill that "
+    "process honestly. NEVER claim you lack a timer tool — run_shell IS the "
+    "tool. Confirm from the tool result only: the spawn must have succeeded; "
+    "on failure say exactly what failed."
 )
 
 
@@ -178,6 +220,12 @@ def resolve_local_outcome_mandate(utterance: str) -> tuple[str, str] | None:
     # the detector does its own normalisation.
     if requires_external_integration(raw):
         return None
+    # Timer class first: a timer noun plus a set/stop verb or a bare duration
+    # ("Timer 10 Minuten"). Independent of the file-system nouns below.
+    if _TIMER_OBJECT_RE.search(t) and (
+        _TIMER_VERB_RE.search(t) or _DURATION_RE.search(t)
+    ):
+        return ("run_shell", RUN_SHELL_TIMER_DIRECTIVE)
     if not _FS_OBJECT_RE.search(t):
         return None
     if not _FS_VERB_RE.search(t):
@@ -187,5 +235,6 @@ def resolve_local_outcome_mandate(utterance: str) -> tuple[str, str] | None:
 
 __all__ = [
     "RUN_SHELL_OUTCOME_DIRECTIVE",
+    "RUN_SHELL_TIMER_DIRECTIVE",
     "resolve_local_outcome_mandate",
 ]
