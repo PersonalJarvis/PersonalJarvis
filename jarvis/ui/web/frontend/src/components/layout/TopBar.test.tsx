@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TopBar, TopBarActions } from "./TopBar";
 import { useEventStore } from "@/store/events";
@@ -9,8 +9,28 @@ vi.mock("@/hooks/useUpdate", () => ({
 
 // The bar is section-aware now, so every test below states which screen it is
 // on rather than inheriting whatever a previous one left behind.
-beforeEach(() => useEventStore.setState({ activeSection: "chats" }));
+beforeEach(() =>
+  useEventStore.setState({ activeSection: "chats", solo: false }),
+);
 afterEach(() => vi.restoreAllMocks());
+
+describe("TopBar detach button", () => {
+  it("offers 'own window' on the detachable sections only", () => {
+    render(<TopBar />);
+    expect(screen.getByTestId("detach-view-button")).toBeTruthy();
+
+    cleanup();
+    useEventStore.setState({ activeSection: "settings" });
+    render(<TopBar />);
+    expect(screen.queryByTestId("detach-view-button")).toBeNull();
+  });
+
+  it("never renders inside a solo window (no detaching a detached view)", () => {
+    useEventStore.setState({ solo: true });
+    render(<TopBarActions />);
+    expect(screen.queryByTestId("detach-view-button")).toBeNull();
+  });
+});
 
 describe("TopBar restart button", () => {
   it("renders a restart button labelled in the active locale", () => {

@@ -13,6 +13,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   initialSectionFromSearch,
+  soloWindowFromSearch,
   useEventStore,
   type ChatMessage,
 } from "@/store/events";
@@ -21,6 +22,36 @@ describe("initial section deep links", () => {
   it("opens Docs when a guide slug is present", () => {
     expect(initialSectionFromSearch("?doc=voice-conversations")).toBe("docs");
     expect(initialSectionFromSearch("")).toBe("chats");
+  });
+
+  it("honors ?view= for any known section (the solo-window deep link)", () => {
+    expect(initialSectionFromSearch("?view=agentic-ide&solo=1")).toBe(
+      "agentic-ide",
+    );
+    expect(initialSectionFromSearch("?view=chats")).toBe("chats");
+    expect(initialSectionFromSearch("?view=settings")).toBe("settings");
+  });
+
+  it("falls through an invalid ?view= to the older rules", () => {
+    // Unknown section id: never crash, never trust the URL.
+    expect(initialSectionFromSearch("?view=nope")).toBe("chats");
+    // ...and the ?doc shortcut still applies behind it.
+    expect(initialSectionFromSearch("?view=nope&doc=x")).toBe("docs");
+  });
+
+  it("prefers ?view= over ?doc when both are present", () => {
+    // Pinned: the explicit deep link wins over the docs shortcut.
+    expect(initialSectionFromSearch("?view=tasks&doc=x")).toBe("tasks");
+  });
+});
+
+describe("solo window flag (?solo=1)", () => {
+  it("is set only by the exact solo=1 value", () => {
+    expect(soloWindowFromSearch("?view=chats&solo=1")).toBe(true);
+    expect(soloWindowFromSearch("?solo=1")).toBe(true);
+    expect(soloWindowFromSearch("?solo=0")).toBe(false);
+    expect(soloWindowFromSearch("?solo=true")).toBe(false);
+    expect(soloWindowFromSearch("")).toBe(false);
   });
 });
 
