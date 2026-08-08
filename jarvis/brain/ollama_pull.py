@@ -57,52 +57,151 @@ _COMFORTABLE_SHARE = 0.6
 _OVERHEAD_GB = 2.0
 
 
+#: The jobs a local install has to fill. Each one is a separate decision — a
+#: machine needs a chat model AND an embedder, they do not substitute for each
+#: other — so the shortlist offers a best pick per role rather than one ranked
+#: list where the embedder looks like a weak chat model.
+Role = Literal["chat", "vision", "coder", "embedding"]
+
+#: Display order of the roles, most-load-bearing first.
+ROLE_ORDER: tuple[Role, ...] = ("chat", "vision", "coder", "embedding")
+
+
 @dataclass(frozen=True, slots=True)
 class RecommendedModel:
     """One curated pull suggestion.
 
-    ``size_gb`` is the approximate download size (the server reports the exact
-    one during the pull). ``tools`` / ``vision`` are the capabilities the model
-    line is known for — the same two gates the brain applies per turn, so the
-    card can say WHY a pull matters instead of listing names.
+    ``size_gb`` is the fallback download size, used only until the registry
+    answers with the real one (see :func:`registry_size_gb`). ``tools`` /
+    ``vision`` are the capabilities the model line is known for — the same two
+    gates the brain applies per turn, so the card can say WHY a pull matters
+    instead of listing names.
     """
 
     id: str
     label: str
     size_gb: float
     purpose: str
+    role: Role = "chat"
     tools: bool = True
     vision: bool = False
 
 
-#: The shortlist. Kept small on purpose — a wall of names is not a choice. One
-#: general model per memory class, one multimodal, one embedder for UltraWiki,
-#: because those are the three roles a local-only install actually needs.
+#: The shortlist, spread across memory classes rather than pinned to one.
+#:
+#: The old list held one small chat model, one mid one, one multimodal and one
+#: embedder — the same four names on a 8 GB laptop and on a workstation with a
+#: 48 GB card, so the workstation was told to run a 4B model and the laptop was
+#: shown nothing it could not also have found itself. The classes below exist so
+#: :func:`recommendations` can pick the LARGEST entry per role that this
+#: particular machine runs well, which is the whole point of a recommendation.
+#:
+#: Every id here is verified to exist in the Ollama library (see
+#: ``tests/integration/test_ollama_catalog_is_current.py``, which asks the
+#: registry). That test is also the guard against the list going stale: a tag
+#: that is retired fails it rather than reaching a user as "Ollama does not know
+#: a model called …". Sizes are the registry's own, refreshed at request time.
 RECOMMENDED_MODELS: tuple[RecommendedModel, ...] = (
+    # ── chat / voice / tools ────────────────────────────────────────────────
+    RecommendedModel(
+        id="qwen3.5:2b",
+        label="Qwen 3.5 2B",
+        size_gb=2.7,
+        purpose="Chat and voice on a small laptop. Calls tools.",
+    ),
     RecommendedModel(
         id="qwen3.5:4b",
         label="Qwen 3.5 4B",
-        size_gb=2.6,
-        purpose="Chat and voice on a small machine. Calls tools.",
+        size_gb=3.4,
+        purpose="Chat and voice with more headroom, still light on memory.",
     ),
     RecommendedModel(
         id="qwen3.5",
-        label="Qwen 3.5 (default size)",
-        size_gb=5.2,
+        label="Qwen 3.5 9B",
+        size_gb=6.6,
         purpose="The balanced default: chat, voice, and reliable tool calling.",
     ),
     RecommendedModel(
-        id="qwen3-vl",
-        label="Qwen 3 VL",
-        size_gb=6.0,
-        purpose="Sees images — needed for Screen Context and Computer-Use.",
+        id="gpt-oss:20b",
+        label="GPT-OSS 20B",
+        size_gb=13.8,
+        purpose="Noticeably stronger reasoning; wants a GPU or plenty of memory.",
+    ),
+    RecommendedModel(
+        id="gemma3:27b",
+        label="Gemma 3 27B",
+        size_gb=17.4,
+        purpose="A second strong option at this size, with a different style.",
+    ),
+    RecommendedModel(
+        id="gpt-oss:120b",
+        label="GPT-OSS 120B",
+        size_gb=65.4,
+        purpose="Frontier-class answers, for a workstation-sized accelerator.",
+    ),
+    # ── vision (Screen Context / Computer-Use) ──────────────────────────────
+    RecommendedModel(
+        id="qwen3-vl:2b",
+        label="Qwen 3 VL 2B",
+        size_gb=1.9,
+        purpose="Sees your screen on a small machine.",
+        role="vision",
         vision=True,
+    ),
+    RecommendedModel(
+        id="qwen3-vl:4b",
+        label="Qwen 3 VL 4B",
+        size_gb=3.3,
+        purpose="Sees your screen, with more detail than the 2B.",
+        role="vision",
+        vision=True,
+    ),
+    RecommendedModel(
+        id="qwen3-vl",
+        label="Qwen 3 VL 8B",
+        size_gb=6.1,
+        purpose="The balanced choice for Screen Context and Computer-Use.",
+        role="vision",
+        vision=True,
+    ),
+    RecommendedModel(
+        id="qwen3-vl:32b",
+        label="Qwen 3 VL 32B",
+        size_gb=20.9,
+        purpose="Reads dense screens and small text most reliably.",
+        role="vision",
+        vision=True,
+    ),
+    # ── coding worker (the Agents tab's heavy-task model) ───────────────────
+    RecommendedModel(
+        id="devstral",
+        label="Devstral",
+        size_gb=14.3,
+        purpose="Built for agentic coding work — a local heavy-task worker.",
+        role="coder",
+    ),
+    RecommendedModel(
+        id="qwen3-coder",
+        label="Qwen 3 Coder",
+        size_gb=18.6,
+        purpose="The stronger local coding worker where memory allows.",
+        role="coder",
+    ),
+    # ── embeddings (UltraWiki search) ───────────────────────────────────────
+    RecommendedModel(
+        id="embeddinggemma",
+        label="EmbeddingGemma",
+        size_gb=0.6,
+        purpose="Embeddings for search on any machine. Not a chat model.",
+        role="embedding",
+        tools=False,
     ),
     RecommendedModel(
         id="bge-m3",
         label="BGE-M3",
         size_gb=1.2,
-        purpose="Embeddings for UltraWiki search. Not a chat model.",
+        purpose="Multilingual embeddings for UltraWiki. Not a chat model.",
+        role="embedding",
         tools=False,
     ),
 )
@@ -146,24 +245,66 @@ def total_memory_gb() -> float | None:
     9 GB model look safe on a 4 GB box.
     """
     try:
-        import psutil  # noqa: PLC0415 — lazy (AP-26)
+        from jarvis.hardware.detection import system_ram_gb  # noqa: PLC0415 — lazy (AP-26)
 
-        return round(psutil.virtual_memory().total / (1024**3), 1)
+        return system_ram_gb()
     except Exception:  # noqa: BLE001 — an unreadable host is not an error
         log.debug("ollama-pull: total memory could not be read")
         return None
 
 
-def fit_verdict(size_gb: float, memory_gb: float | None) -> tuple[str, str]:
+def accelerator_gb() -> tuple[float, str]:
+    """``(GiB, source)`` of GPU memory this machine can give a model.
+
+    ``(0.0, "none")`` means "no accelerator I can vouch for" — a CPU-only box,
+    but equally an AMD or Intel card this probe cannot read. It is never read as
+    "cannot run models": system RAM still runs them, just slower, which is
+    exactly what :func:`fit_verdict` then says.
+    """
+    try:
+        from jarvis.hardware.detection import (  # noqa: PLC0415 — lazy (AP-26)
+            usable_accelerator_gb,
+        )
+
+        return usable_accelerator_gb()
+    except Exception:  # noqa: BLE001 — a probe failure is not an error state
+        log.debug("ollama-pull: accelerator probe unavailable", exc_info=True)
+        return 0.0, "none"
+
+
+def fit_verdict(
+    size_gb: float,
+    memory_gb: float | None,
+    accel_gb: float = 0.0,
+) -> tuple[str, str]:
     """``(verdict, English sentence)`` for running ``size_gb`` on this machine.
 
     Verdicts: ``comfortable`` | ``tight`` | ``unknown``. Never "impossible" —
-    Ollama offloads to GPU memory this probe cannot see, and a hard no would be
-    wrong on exactly the machines that run local models best.
+    a hard no would be wrong on exactly the machines that run local models best.
+
+    GPU memory decides first when it is known. The RAM rule alone called a 14 GB
+    model "tight" on a box with a 24 GB card that runs it at full speed, and
+    "comfortable" on a 64 GB CPU-only server where it crawls — both backwards.
+    Whichever memory answers, the sentence names it, so the verdict can be
+    checked against the machine rather than taken on faith.
     """
+    needed = size_gb + _OVERHEAD_GB
+    if accel_gb > 0:
+        if needed <= accel_gb:
+            return (
+                "comfortable",
+                f"Fits in the {accel_gb:.0f} GB of graphics memory on this "
+                "machine — it will run at full speed.",
+            )
+        if memory_gb is not None and needed <= memory_gb * _COMFORTABLE_SHARE:
+            return (
+                "tight",
+                f"Bigger than the {accel_gb:.0f} GB of graphics memory, so part "
+                f"of it runs on the CPU out of {memory_gb:g} GB of RAM. It "
+                "works, just slower.",
+            )
     if memory_gb is None:
         return "unknown", "This machine's memory could not be read."
-    needed = size_gb + _OVERHEAD_GB
     if needed <= memory_gb * _COMFORTABLE_SHARE:
         return "comfortable", f"Runs comfortably in {memory_gb:g} GB of memory."
     return (
@@ -215,31 +356,137 @@ def _is_installed(model: str, installed: set[str]) -> bool:
     return False
 
 
+#: Real download sizes from the public Ollama registry, cached for the process.
+#: Sizes drift as a tag is re-quantised, and the hardcoded estimates were up to
+#: a third off — enough to turn "fits in my card" into an eviction at load time.
+_registry_sizes: dict[str, float] = {}
+
+#: The registry is a nice-to-have: without it the curated estimates are used.
+#: Short timeout because it sits in front of a UI panel, not a download.
+_REGISTRY_TIMEOUT = httpx.Timeout(connect=2.0, read=6.0, write=6.0, pool=6.0)
+_REGISTRY_ROOT = "https://registry.ollama.ai/v2/library"
+_MANIFEST_ACCEPT = "application/vnd.docker.distribution.manifest.v2+json"
+
+
+async def registry_size_gb(client: httpx.AsyncClient, model: str) -> float | None:
+    """The real download size of ``model`` in GB, or ``None`` if unknown.
+
+    Sums the manifest's layer sizes — what the pull actually transfers. Any
+    failure (offline, proxy, retired tag) answers ``None`` and the caller keeps
+    the curated estimate, so an air-gapped machine still sees a usable panel.
+    """
+    if model in _registry_sizes:
+        return _registry_sizes[model]
+    name, _, tag = model.partition(":")
+    try:
+        resp = await client.get(
+            f"{_REGISTRY_ROOT}/{name}/manifests/{tag or 'latest'}",
+            headers={"Accept": _MANIFEST_ACCEPT},
+        )
+        if resp.status_code != 200:
+            return None
+        layers = resp.json().get("layers") or []
+        total = sum(int(layer.get("size") or 0) for layer in layers)
+    except Exception:  # noqa: BLE001 — an unreachable registry is a normal state
+        log.debug("ollama-pull: registry size unavailable for %s", model)
+        return None
+    if total <= 0:
+        return None
+    size = round(total / 1e9, 1)
+    _registry_sizes[model] = size
+    return size
+
+
+async def _real_sizes() -> dict[str, float]:
+    """Registry sizes for the whole shortlist, fetched concurrently."""
+    async with httpx.AsyncClient(timeout=_REGISTRY_TIMEOUT) as client:
+        results = await asyncio.gather(
+            *(registry_size_gb(client, entry.id) for entry in RECOMMENDED_MODELS),
+            return_exceptions=True,
+        )
+    sizes: dict[str, float] = {}
+    for entry, result in zip(RECOMMENDED_MODELS, results, strict=True):
+        if isinstance(result, float):
+            sizes[entry.id] = result
+    return sizes
+
+
+def _pick_recommended(rows: list[dict[str, Any]]) -> None:
+    """Mark the best pick per role on ``rows``, in place.
+
+    The best pick is the LARGEST model of that role this machine still runs
+    comfortably — bigger is better right up to the point where it stops fitting,
+    and that point is the only thing the hardware probe is for. If nothing in a
+    role fits comfortably, the SMALLEST one is marked instead: a machine that
+    cannot run any of them still deserves a starting point rather than four
+    entries all flagged "tight" and no answer to "so which one?".
+
+    A role whose model is already installed marks nothing: the user has made
+    that choice, and re-recommending a different size over the top of it is how
+    a panel starts nagging.
+    """
+    for role in ROLE_ORDER:
+        in_role = [r for r in rows if r["role"] == role]
+        if not in_role or any(r["installed"] for r in in_role):
+            continue
+        comfortable = [r for r in in_role if r["fit"] == "comfortable"]
+        pick = (
+            max(comfortable, key=lambda r: r["size_gb"])
+            if comfortable
+            else min(in_role, key=lambda r: r["size_gb"])
+        )
+        pick["recommended"] = True
+
+
 async def recommendations() -> dict[str, Any]:
-    """The curated shortlist, annotated with what THIS machine already has."""
+    """The curated shortlist, ranked for THIS machine.
+
+    Three things happen here that a static list cannot do: sizes come from the
+    registry (so the fit verdict is judged against the real download), the
+    verdict weighs GPU memory ahead of RAM, and each role gets exactly one
+    "recommended" entry — the largest one this box runs well.
+    """
     installed, error = await installed_models()
     memory_gb = total_memory_gb()
+    accel, accel_source = accelerator_gb()
+    real_sizes = await _real_sizes()
+
     models: list[dict[str, Any]] = []
     for entry in RECOMMENDED_MODELS:
-        verdict, note = fit_verdict(entry.size_gb, memory_gb)
+        size = real_sizes.get(entry.id, entry.size_gb)
+        verdict, note = fit_verdict(size, memory_gb, accel)
         models.append(
             {
                 "id": entry.id,
                 "label": entry.label,
-                "size_gb": entry.size_gb,
+                "size_gb": size,
                 "purpose": entry.purpose,
+                "role": entry.role,
                 "tools": entry.tools,
                 "vision": entry.vision,
                 "installed": _is_installed(entry.id, installed),
                 "fit": verdict,
                 "fit_note": note,
+                "recommended": False,
             }
         )
+    _pick_recommended(models)
+    # Within a role, largest first: the strongest option a machine can take is
+    # the interesting one, and the recommended entry lands at or near the top
+    # instead of below three smaller models the user has to scroll past.
+    models.sort(key=lambda r: (ROLE_ORDER.index(r["role"]), -r["size_gb"]))
+
     return {
         "server": server_root(),
         "server_reachable": error is None,
         "message": error or "",
         "memory_gb": memory_gb,
+        # The accelerator the verdicts were judged against. 0 with source
+        # "none" means "none I could read" — the panel says so rather than
+        # implying the machine has no GPU at all.
+        "accelerator_gb": round(accel, 1),
+        "accelerator_source": accel_source,
+        "roles": list(ROLE_ORDER),
         "models": models,
         "installed": sorted(installed),
     }
@@ -374,11 +621,15 @@ async def pull_status(model: str) -> dict[str, Any]:
 __all__ = [
     "PULL_CAPABLE_PROVIDERS",
     "RECOMMENDED_MODELS",
+    "ROLE_ORDER",
     "RecommendedModel",
+    "Role",
+    "accelerator_gb",
     "fit_verdict",
     "installed_models",
     "pull_status",
     "recommendations",
+    "registry_size_gb",
     "server_root",
     "start_pull",
     "total_memory_gb",

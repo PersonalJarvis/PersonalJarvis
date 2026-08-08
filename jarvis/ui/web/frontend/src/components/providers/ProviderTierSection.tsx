@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Bot, Brain, Check, Copy, Download, HardDrive, Loader2, LogIn, LogOut, Mic, PlugZap, Radio, Sparkles, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
+import { AlertCircle, Bot, Brain, Check, Copy, Download, HardDrive, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Sparkles, Square, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
@@ -15,8 +15,11 @@ import {
   logoutAntigravity,
   managedServerInstall,
   managedServerPreflight,
+  managedServerStart,
   managedServerStatus,
+  managedServerStop,
   managedServerUninstall,
+  type ManagedServerRuntime,
   modelPullStatus,
   pullableModels,
   startLocalInstall,
@@ -27,6 +30,7 @@ import {
   type ModelPullProgress,
   type ProviderDescriptor,
   type PullableModel,
+  type PullableRole,
   type PullableModels,
   type ProviderTestResult,
   type ProviderTestStatus,
@@ -1908,8 +1912,10 @@ function ManagedServerPanel({
   const status = descriptor.managed_server;
   const [preflight, setPreflight] = useState<ManagedPreflight | null>(null);
   const [progress, setProgress] = useState<ManagedInstallProgress | null>(null);
+  const [runtime, setRuntime] = useState<ManagedServerRuntime | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const running = Boolean(progress?.running);
 
@@ -1921,6 +1927,7 @@ function ManagedServerPanel({
         const next = await managedServerStatus();
         if (cancelled) return;
         setProgress(next.progress);
+        setRuntime(next.runtime ?? null);
         if (!next.progress.running) {
           window.clearInterval(timer);
           if (next.progress.phase === "error") {
@@ -1940,6 +1947,29 @@ function ManagedServerPanel({
       window.clearInterval(timer);
     };
   }, [running, onChanged]);
+
+  // Idle runtime poll: the panel used to only look at the server DURING an
+  // install, so a crashed/stopped/foreign server rendered as whatever the
+  // last install left behind. One fetch on mount, then a slow heartbeat.
+  const installed = Boolean(status?.ready);
+  useEffect(() => {
+    if (running || !installed) return;
+    let cancelled = false;
+    const read = async () => {
+      try {
+        const next = await managedServerStatus();
+        if (!cancelled) setRuntime(next.runtime ?? null);
+      } catch {
+        if (!cancelled) setRuntime(null);
+      }
+    };
+    void read();
+    const timer = window.setInterval(read, 20_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [running, installed]);
 
   if (!status) return null;
 
@@ -1987,11 +2017,49 @@ function ManagedServerPanel({
       await managedServerUninstall();
       setPreflight(null);
       setProgress(null);
+      setRuntime(null);
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
   };
+
+  const startServer = async () => {
+    setError(null);
+    setLifecycleBusy(true);
+    try {
+      setRuntime(await managedServerStart());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLifecycleBusy(false);
+    }
+  };
+
+  const stopServer = async () => {
+    setError(null);
+    setLifecycleBusy(true);
+    try {
+      setRuntime(await managedServerStop());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLifecycleBusy(false);
+    }
+  };
+
+  // Live server verdict, honest about ownership: reachable-and-not-ours is a
+  // port conflict (or an orphan of a removed install), never claimed as ours.
+  const runtimeBadge =
+    runtime === null
+      ? null
+      : runtime.reachable && (runtime.owned || status.ready)
+        ? { key: "apikeys_view.managed_server_running", tone: "ok" as const }
+        : runtime.reachable
+          ? { key: "apikeys_view.managed_server_port_conflict", tone: "warn" as const }
+          : runtime.owned
+            ? { key: "apikeys_view.managed_server_starting", tone: "warn" as const }
+            : { key: "apikeys_view.managed_server_stopped", tone: "muted" as const };
 
   const failed = progress?.phase === "error";
   return (
@@ -2006,6 +2074,65 @@ function ManagedServerPanel({
           {running ? (progress?.detail ?? status.sentence) : status.sentence}
         </span>
       </div>
+
+      {!running && installed && runtimeBadge && (
+        <div
+          className="flex items-center gap-2 text-[11px]"
+          data-testid="managed-server-runtime"
+          aria-live="polite"
+        >
+          <span
+            aria-hidden="true"
+            className={cn(
+              "h-1.5 w-1.5 shrink-0 rounded-full",
+              runtimeBadge.tone === "ok"
+                ? "bg-emerald-400"
+                : runtimeBadge.tone === "warn"
+                  ? "animate-pulse bg-amber-400 motion-reduce:animate-none"
+                  : "bg-muted-foreground/40",
+            )}
+          />
+          <span
+            className={cn(
+              runtimeBadge.tone === "warn" ? "text-amber-400" : "text-muted-foreground",
+            )}
+          >
+            {t(runtimeBadge.key)}
+          </span>
+          {runtime && !runtime.reachable && !runtime.owned && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={startServer}
+              disabled={lifecycleBusy}
+              className="h-6 gap-1.5 px-2 text-[11px]"
+            >
+              {lifecycleBusy ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Play className="h-3 w-3" />
+              )}
+              {t("apikeys_view.managed_start_cta")}
+            </Button>
+          )}
+          {runtime?.owned && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={stopServer}
+              disabled={lifecycleBusy}
+              className="h-6 gap-1.5 px-2 text-[11px]"
+            >
+              {lifecycleBusy ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Square className="h-3 w-3" />
+              )}
+              {t("apikeys_view.managed_stop_cta")}
+            </Button>
+          )}
+        </div>
+      )}
 
       {running && (
         <div className="space-y-1">
@@ -2101,11 +2228,17 @@ function ManagedServerPanel({
  * advisory — a GPU runs models the RAM rule calls tight, so it never disables
  * the button.
  */
-function LocalModelDownloadPanel({
+export function LocalModelDownloadPanel({
   descriptor,
   onChanged,
 }: {
-  descriptor: ProviderDescriptor;
+  /**
+   * Only the two fields the panel actually uses. Widened from
+   * `ProviderDescriptor` so the Subagents tab — whose rows come from a
+   * different endpoint with a different shape — can render the very same panel
+   * instead of dead-ending a local-only user at an empty model dropdown.
+   */
+  descriptor: { id: string; supports_model_pull?: boolean };
   onChanged: () => void;
 }) {
   const t = useT();
@@ -2186,6 +2319,31 @@ function LocalModelDownloadPanel({
 
   const percent = progress?.percent ?? 0;
   const rows: PullableModel[] = catalog?.models ?? [];
+  // Roles come from the backend, in its order. A payload without them (an older
+  // server) collapses into one unlabelled group, which is exactly how this
+  // panel looked before roles existed — no empty headings, no crash.
+  const roles: PullableRole[] = catalog?.roles ?? [];
+  const groups: { role: PullableRole | null; rows: PullableModel[] }[] = roles.length
+    ? roles
+        .map((role) => ({
+          role,
+          rows: rows.filter((r) => (r.role ?? "chat") === role),
+        }))
+        .filter((g) => g.rows.length > 0)
+    : [{ role: null, rows }];
+  // What the fit verdicts were judged against, in one short phrase. Naming the
+  // GPU matters: "18 GB is tight" is confusing on a box with 64 GB of RAM until
+  // you know the number being compared is the graphics card's.
+  const hardwareNote = catalog
+    ? (catalog.accelerator_gb ?? 0) > 0
+      ? t("apikeys_model_pull.hardware_gpu").replace(
+          "{0}",
+          String(Math.round(catalog.accelerator_gb ?? 0)),
+        )
+      : catalog.memory_gb
+        ? t("apikeys_model_pull.memory").replace("{0}", String(catalog.memory_gb))
+        : ""
+    : "";
 
   return (
     <div
@@ -2194,12 +2352,12 @@ function LocalModelDownloadPanel({
     >
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-medium">{t("apikeys_model_pull.title")}</p>
-        {catalog?.memory_gb ? (
-          <span className="text-[11px] text-muted-foreground">
-            {t("apikeys_model_pull.memory").replace(
-              "{0}",
-              String(catalog.memory_gb),
-            )}
+        {hardwareNote ? (
+          <span
+            data-testid="model-pull-hardware"
+            className="text-[11px] text-muted-foreground"
+          >
+            {hardwareNote}
           </span>
         ) : null}
       </div>
@@ -2208,11 +2366,24 @@ function LocalModelDownloadPanel({
         <p className="text-[11px] text-amber-500">{catalog.message}</p>
       )}
 
-      <div className="space-y-1.5">
-        {rows.map((row) => (
+      {groups.map((group) => (
+        <div key={group.role ?? "all"} className="space-y-1.5">
+          {group.role && (
+            <p className="pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+              {t(`apikeys_model_pull.role_${group.role}`)}
+            </p>
+          )}
+          {group.rows.map((row) => (
           <div
             key={row.id}
-            className="flex items-start justify-between gap-2 rounded border border-border/50 bg-background/50 px-2 py-1.5"
+            data-testid={`model-pull-row-${row.id}`}
+            data-recommended={row.recommended ? "true" : "false"}
+            className={cn(
+              "flex items-start justify-between gap-2 rounded border bg-background/50 px-2 py-1.5",
+              row.recommended
+                ? "border-primary/40 bg-primary/[0.04]"
+                : "border-border/50",
+            )}
           >
             <div className="min-w-0">
               <p className="truncate text-xs font-medium">
@@ -2223,12 +2394,25 @@ function LocalModelDownloadPanel({
                     String(row.size_gb),
                   )}
                 </span>
+                {row.recommended && (
+                  <span className="ml-1.5 whitespace-nowrap rounded-full bg-primary/15 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-primary">
+                    {t("apikeys_model_pull.best_for_machine")}
+                  </span>
+                )}
               </p>
               <p className="text-[11px] leading-snug text-muted-foreground">
                 {row.purpose}
               </p>
-              {row.fit === "tight" && (
-                <p className="text-[11px] leading-snug text-amber-500">
+              {/* The honest half of a recommendation: the comfortable note
+                  explains why THIS one was picked, the tight note explains what
+                  a bigger one would cost. Both are the server's wording. */}
+              {(row.fit === "tight" || row.recommended) && (
+                <p
+                  className={cn(
+                    "text-[11px] leading-snug",
+                    row.fit === "tight" ? "text-amber-500" : "text-muted-foreground/80",
+                  )}
+                >
                   {row.fit_note}
                 </p>
               )}
@@ -2241,7 +2425,7 @@ function LocalModelDownloadPanel({
             ) : (
               <Button
                 size="sm"
-                variant="secondary"
+                variant={row.recommended ? "default" : "secondary"}
                 className="shrink-0 gap-1.5"
                 disabled={running || !catalog?.server_reachable}
                 onClick={() => void pull(row.id)}
@@ -2255,8 +2439,9 @@ function LocalModelDownloadPanel({
               </Button>
             )}
           </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      ))}
 
       {/* Any name the library knows — the shortlist is a starting point, not a
           gate, and a user who wants a specific model should not have to leave

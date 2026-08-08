@@ -14,9 +14,7 @@ anything (the same doctrine as ``jarvis/speech/local_models.py``).
 from __future__ import annotations
 
 import logging
-import platform
 import shutil
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -50,37 +48,20 @@ class PreflightReport:
 def _usable_accelerator_gb() -> tuple[float, str]:
     """Usable accelerator memory in GiB and the source of that figure.
 
-    Dedicated NVIDIA VRAM counts as-is. On Apple Silicon the GPU shares the
-    unified memory, so total RAM is the honest figure (the probe measures
-    what is THERE; whether the OS grants it is the smoke boot's job).
-    Anything else reports 0 — and 0 is below the floor, which is exactly
-    the honest outcome for a GPU-less host.
+    Delegates to the shared probe in :mod:`jarvis.hardware.detection`, which is
+    where this logic now lives: the local-model recommender asks the very same
+    question ("how much can this machine actually run?"), and two copies would
+    eventually give one box two different verdicts. Behaviour is unchanged —
+    largest single NVIDIA device, Apple Silicon unified memory, otherwise 0,
+    and 0 is below the floor, which is the honest outcome for a GPU-less host.
     """
     try:
-        from jarvis.hardware.detection import _detect_nvidia_gpus  # read-only probe
+        from jarvis.hardware.detection import usable_accelerator_gb
 
-        gpus = _detect_nvidia_gpus()
-    except Exception:  # pragma: no cover — nvidia-smi quirks must not crash preflight
-        log.debug("preflight: NVIDIA probe failed", exc_info=True)
-        gpus = []
-    # The LARGEST single device, never the fleet sum: the whole stack runs
-    # on one GPU (--num_pipelines 1, one TTS device), so two 8 GB cards are
-    # an 8 GB machine for this feature — summing them would defeat the
-    # 12 GB floor and OOM at first call (review 2026-08-07).
-    vram_mb = max((g.vram_mb for g in gpus), default=0)
-    if vram_mb > 0:
-        return vram_mb / 1024.0, "nvidia-smi"
-    if sys.platform == "darwin" and platform.machine() == "arm64":
-        try:
-            from jarvis.hardware.detection import _detect_ram
-
-            total_mb, _available = _detect_ram()
-        except Exception:  # pragma: no cover
-            log.debug("preflight: RAM probe failed", exc_info=True)
-            total_mb = 0
-        if total_mb > 0:
-            return total_mb / 1024.0, "apple-unified"
-    return 0.0, "none"
+        return usable_accelerator_gb()
+    except Exception:  # pragma: no cover — probe quirks must not crash preflight
+        log.debug("preflight: accelerator probe failed", exc_info=True)
+        return 0.0, "none"
 
 
 def _disk_free_gb(root: Path) -> float:

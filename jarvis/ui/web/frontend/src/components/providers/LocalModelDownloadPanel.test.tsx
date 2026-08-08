@@ -27,6 +27,12 @@ vi.mock("@/i18n", () => ({
       "apikeys_model_pull.installed": "Installed",
       "apikeys_model_pull.download": "Download",
       "apikeys_model_pull.custom_placeholder": "Any model name",
+      "apikeys_model_pull.hardware_gpu": "{0} GB graphics memory",
+      "apikeys_model_pull.best_for_machine": "Best for your machine",
+      "apikeys_model_pull.role_chat": "Chat and voice",
+      "apikeys_model_pull.role_vision": "Sees your screen",
+      "apikeys_model_pull.role_coder": "Coding worker",
+      "apikeys_model_pull.role_embedding": "Search embeddings",
     })[key] ?? key,
 }));
 
@@ -190,5 +196,133 @@ describe("local model download panel", () => {
     for (const button of screen.getAllByRole("button", { name: /download/i })) {
       expect((button as HTMLButtonElement).disabled).toBe(true);
     }
+  });
+});
+
+/**
+ * Hardware-aware ranking.
+ *
+ * The shortlist used to be the same four names on every machine. These pin the
+ * three things that replaced it: the panel groups by the job a model does, it
+ * marks the server's pick for THIS machine, and it says which memory figure the
+ * verdicts were judged against — because "18 GB is tight" is bewildering on a
+ * box with 64 GB of RAM until you know the number being compared is the card's.
+ */
+const RANKED_CATALOG = {
+  server: "http://localhost:11434",
+  server_reachable: true,
+  message: "",
+  memory_gb: 64,
+  accelerator_gb: 24,
+  accelerator_source: "nvidia-smi",
+  roles: ["chat", "vision", "embedding"],
+  installed: [],
+  models: [
+    {
+      id: "gpt-oss:120b",
+      label: "GPT-OSS 120B",
+      size_gb: 65.4,
+      purpose: "Frontier-class answers.",
+      role: "chat",
+      tools: true,
+      vision: false,
+      installed: false,
+      fit: "tight",
+      fit_note: "Bigger than the 24 GB of graphics memory.",
+      recommended: false,
+    },
+    {
+      id: "gpt-oss:20b",
+      label: "GPT-OSS 20B",
+      size_gb: 13.8,
+      purpose: "Noticeably stronger reasoning.",
+      role: "chat",
+      tools: true,
+      vision: false,
+      installed: false,
+      fit: "comfortable",
+      fit_note: "Fits in the 24 GB of graphics memory on this machine.",
+      recommended: true,
+    },
+    {
+      id: "qwen3-vl",
+      label: "Qwen 3 VL 8B",
+      size_gb: 6.1,
+      purpose: "Screen Context and Computer-Use.",
+      role: "vision",
+      tools: true,
+      vision: true,
+      installed: false,
+      fit: "comfortable",
+      fit_note: "Fits in the 24 GB of graphics memory on this machine.",
+      recommended: true,
+    },
+    {
+      id: "bge-m3",
+      label: "BGE-M3",
+      size_gb: 1.2,
+      purpose: "Multilingual embeddings.",
+      role: "embedding",
+      tools: false,
+      vision: false,
+      installed: false,
+      fit: "comfortable",
+      fit_note: "Fits in the 24 GB of graphics memory on this machine.",
+      recommended: false,
+    },
+  ],
+};
+
+describe("local model download panel — hardware-aware ranking", () => {
+  it("marks the server's pick for this machine, one per role", async () => {
+    installFetchMock(() => RANKED_CATALOG);
+
+    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText("GPT-OSS 20B")).toBeTruthy());
+    const recommended = document.querySelectorAll('[data-recommended="true"]');
+    expect(recommended).toHaveLength(2);
+    expect(
+      screen.getByTestId("model-pull-row-gpt-oss:20b").getAttribute("data-recommended"),
+    ).toBe("true");
+    // The biggest model is NOT the pick — it does not fit this card.
+    expect(
+      screen
+        .getByTestId("model-pull-row-gpt-oss:120b")
+        .getAttribute("data-recommended"),
+    ).toBe("false");
+  });
+
+  it("names the graphics memory the verdicts were judged against", async () => {
+    installFetchMock(() => RANKED_CATALOG);
+
+    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId("model-pull-hardware")).toBeTruthy());
+    expect(screen.getByTestId("model-pull-hardware").textContent).toContain("24");
+  });
+
+  it("falls back to the RAM figure when no accelerator could be read", async () => {
+    installFetchMock(() => ({
+      ...RANKED_CATALOG,
+      accelerator_gb: 0,
+      accelerator_source: "none",
+    }));
+
+    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+
+    await waitFor(() => expect(screen.getByTestId("model-pull-hardware")).toBeTruthy());
+    expect(screen.getByTestId("model-pull-hardware").textContent).toContain("64");
+  });
+
+  it("keeps working on a payload with no roles at all", async () => {
+    // An older backend: one unlabelled group, exactly as the panel looked
+    // before roles existed. No empty headings, no crash.
+    installFetchMock(() => CATALOG);
+
+    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
+    expect(document.querySelectorAll('[data-recommended="true"]')).toHaveLength(0);
   });
 });

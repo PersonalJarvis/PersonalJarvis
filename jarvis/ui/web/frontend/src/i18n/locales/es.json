@@ -1157,6 +1157,12 @@
     "managed_latency": "Latencia de respuesta esperada",
     "managed_uninstall": "Quitar el servidor local",
     "managed_uninstall_confirm": "Haz clic de nuevo para confirmar",
+    "managed_server_running": "Servidor en marcha",
+    "managed_server_stopped": "Servidor detenido",
+    "managed_server_starting": "Servidor iniciándose — cargando los modelos de voz…",
+    "managed_server_port_conflict": "Otro proceso está sirviendo en este puerto",
+    "managed_start_cta": "Iniciar servidor",
+    "managed_stop_cta": "Detener servidor",
     "shared_delete_prefix": "Esta clave también la usan:",
     "shared_delete_suffix": "Al eliminarla, esos proveedores también se desactivan.",
     "delete_anyway": "Eliminar de todos modos",
@@ -1331,7 +1337,13 @@
     "size": "~{0} GB",
     "installed": "Instalado",
     "download": "Descargar",
-    "custom_placeholder": "Cualquier nombre de modelo, p. ej. mistral"
+    "custom_placeholder": "Cualquier nombre de modelo, p. ej. mistral",
+    "hardware_gpu": "{0} GB de memoria gráfica",
+    "best_for_machine": "Lo mejor para tu equipo",
+    "role_chat": "Chat y voz",
+    "role_vision": "Ve tu pantalla",
+    "role_coder": "Worker de programación",
+    "role_embedding": "Embeddings de búsqueda"
   },
   "apikeys_model": {
     "heading": "Modelo",

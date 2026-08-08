@@ -279,7 +279,12 @@ export function useProviders(options: UseProvidersOptions = {}) {
       const data: ProvidersResponse = await res.json();
       if (version === requestVersion.current) {
         retryAttempt.current = 0;
-        setProviders(data.providers);
+        // A 200 whose body is not the expected shape (a proxy's error page, a
+        // partially-written response) must leave an EMPTY list, never
+        // `undefined`: every consumer maps or filters this, so one malformed
+        // payload would take the whole provider console down with a TypeError
+        // instead of showing the honest "no providers" state.
+        setProviders(Array.isArray(data?.providers) ? data.providers : []);
       }
     } catch (e) {
       if ((e as Error).name !== "AbortError" && version === requestVersion.current) {
@@ -819,8 +824,22 @@ export async function localInstallStatus(
 /** Fail-closed readiness of the managed local realtime server. */
 export interface ManagedServerStatus {
   ready: boolean;
+  /** Install files gone while jarvis.toml still points a launch command at them. */
+  stale?: boolean;
   components: Record<string, boolean>;
   sentence: string;
+}
+
+/** Live runtime view of the managed server (what the disk cannot know). */
+export interface ManagedServerRuntime {
+  /** Something answers on the configured port right now. */
+  reachable: boolean;
+  port: number;
+  pid: number | null;
+  /** The recorded server process verifiably runs (PID-reuse safe). */
+  owned: boolean;
+  /** A pidfile exists but its process is gone. */
+  stale: boolean;
 }
 
 /** Honest go/no-go report for the one-click managed install. */
@@ -881,11 +900,34 @@ export async function managedServerInstall(
 export async function managedServerStatus(): Promise<{
   progress: ManagedInstallProgress;
   server: ManagedServerStatus;
+  runtime?: ManagedServerRuntime;
 }> {
   const res = await fetch("/api/providers/local-realtime/managed-server/status");
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
-  return body as { progress: ManagedInstallProgress; server: ManagedServerStatus };
+  return body as {
+    progress: ManagedInstallProgress;
+    server: ManagedServerStatus;
+    runtime?: ManagedServerRuntime;
+  };
+}
+
+export async function managedServerStart(): Promise<ManagedServerRuntime | null> {
+  const res = await fetch("/api/providers/local-realtime/managed-server/start", {
+    method: "POST",
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
+  return (body.runtime ?? null) as ManagedServerRuntime | null;
+}
+
+export async function managedServerStop(): Promise<ManagedServerRuntime | null> {
+  const res = await fetch("/api/providers/local-realtime/managed-server/stop", {
+    method: "POST",
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
+  return (body.runtime ?? null) as ManagedServerRuntime | null;
 }
 
 export async function managedServerUninstall(): Promise<void> {
@@ -898,18 +940,30 @@ export async function managedServerUninstall(): Promise<void> {
   }
 }
 
+/** The job a local model fills — mirror of `ollama_pull.Role`. */
+export type PullableRole = "chat" | "vision" | "coder" | "embedding";
+
 /** One curated model a local server can download, annotated for THIS machine. */
 export interface PullableModel {
   id: string;
   label: string;
+  /** The registry's real download size when it answered, else the estimate. */
   size_gb: number;
   purpose: string;
+  /** Which slot this fills. Absent on older payloads — treated as "chat". */
+  role?: PullableRole;
   tools: boolean;
   vision: boolean;
   installed: boolean;
   /** "comfortable" | "tight" | "unknown" — advisory, never a block. */
   fit: string;
   fit_note: string;
+  /**
+   * The backend's pick for THIS machine in this role: the largest model it
+   * runs comfortably. At most one per role, and none at all once the role has
+   * something installed. Presentation hint — it never gates the pull button.
+   */
+  recommended?: boolean;
 }
 
 export interface PullableModels {
@@ -917,6 +971,12 @@ export interface PullableModels {
   server_reachable: boolean;
   message: string;
   memory_gb: number | null;
+  /** GPU memory the fit verdicts were judged against; 0 = none readable. */
+  accelerator_gb?: number;
+  /** "nvidia-smi" | "apple-unified" | "none" — where that figure came from. */
+  accelerator_source?: string;
+  /** Role display order from the backend; the UI never invents its own. */
+  roles?: PullableRole[];
   models: PullableModel[];
   installed: string[];
 }

@@ -7,6 +7,7 @@ All checks are read-only; nothing is installed or modified.
 """
 from __future__ import annotations
 
+import logging
 import platform
 import shutil
 import subprocess
@@ -14,6 +15,8 @@ import sys
 from dataclasses import dataclass, field
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+log = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------
 # DataClasses
@@ -128,8 +131,9 @@ def _detect_nvidia_gpus() -> list[GPUInfo]:
             )
         pynvml.nvmlShutdown()
         return gpus
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:  # noqa: BLE001 — no pynvml / no driver is a normal state
+        log.debug("hardware: pynvml probe unavailable, falling back to nvidia-smi",
+                  exc_info=True)
 
     # Fallback: nvidia-smi
     out = _run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])
@@ -337,7 +341,8 @@ def _format_report(report: HardwareReport, rec: WhisperRecommendation) -> str:
         "║  Jarvis Hardware Analysis                                ║",
         "╚══════════════════════════════════════════════════════════╝",
         "",
-        f"OS:            {report.os_name} {report.os_version.split()[0] if report.os_version else ''}",
+        f"OS:            {report.os_name} "
+        f"{report.os_version.split()[0] if report.os_version else ''}",
         f"Python:        {report.python_version} ({report.python_executable})",
         f"CPU:           {report.cpu_name}",
         f"               {report.cpu_cores_physical} phys / {report.cpu_cores_logical} log cores",
@@ -404,6 +409,56 @@ def cuda_inference_verified() -> bool | None:
         return wake_gpu_probe_cached()
     except Exception:  # noqa: BLE001 — the recommender must stay CPU-first on any error
         return None
+
+
+def usable_accelerator_gb() -> tuple[float, str]:
+    """Usable accelerator memory in GiB and where that figure came from.
+
+    ``(gb, source)`` with source ``"nvidia-smi"`` | ``"apple-unified"`` |
+    ``"none"``. Dedicated NVIDIA VRAM counts as-is; on Apple Silicon the GPU
+    shares the unified memory, so total RAM is the honest figure. Every other
+    host reports ``0.0`` — a GPU-less box, a machine with an AMD or Intel card
+    this probe cannot read, and a locked-down host are all "no accelerator
+    memory I can vouch for", and callers must treat 0 as *unknown accelerator*
+    rather than *no memory* (system RAM still runs the model, just slower).
+
+    The LARGEST single device, never the fleet sum: inference runs on one GPU,
+    so two 8 GB cards are an 8 GB machine.
+
+    Shared on purpose. The realtime-server preflight and the local-model
+    recommender both have to answer "how much can this machine actually run?",
+    and two probes drifting apart would show a user two different verdicts
+    about one box.
+    """
+    try:
+        gpus = _detect_nvidia_gpus()
+    except Exception:  # noqa: BLE001 — nvidia-smi quirks must not crash a caller
+        gpus = []
+    vram_mb = max((g.vram_mb for g in gpus), default=0)
+    if vram_mb > 0:
+        return vram_mb / 1024.0, "nvidia-smi"
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        try:
+            total_mb, _available = _detect_ram()
+        except Exception:  # noqa: BLE001
+            total_mb = 0
+        if total_mb > 0:
+            return total_mb / 1024.0, "apple-unified"
+    return 0.0, "none"
+
+
+def system_ram_gb() -> float | None:
+    """Total system memory in GiB, or ``None`` when it cannot be read.
+
+    ``None`` stays a real answer on a locked-down host: a caller then says
+    "unknown" instead of inventing a number that would make a 14 GB model look
+    safe on a 4 GB box.
+    """
+    try:
+        total_mb, _available = _detect_ram()
+    except Exception:  # noqa: BLE001
+        return None
+    return round(total_mb / 1024.0, 1) if total_mb > 0 else None
 
 
 def main() -> int:

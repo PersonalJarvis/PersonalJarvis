@@ -15,6 +15,7 @@ import {
   startCodexLogin,
   switchSubagentProvider,
   testAgentCli,
+  useProviders,
   type AgentCliTestResult,
   type AntigravityStatus,
   type Billing,
@@ -24,7 +25,10 @@ import {
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { AgentAccountsPanel } from "@/components/AgentAccountsPanel";
-import { LocalModeNotice } from "@/components/providers/ProviderTierSection";
+import {
+  LocalModeNotice,
+  LocalModelDownloadPanel,
+} from "@/components/providers/ProviderTierSection";
 import { filterForLocalMode, useLocalMode } from "@/lib/localMode";
 
 /**
@@ -429,6 +433,13 @@ function SubagentModelCard({
   // "openai-codex" maps to the catalog's "codex"; all others match 1:1).
   const catalogProvider =
     status.brain_primary === "openai-codex" ? "codex" : status.brain_primary;
+  // Whether the ACTIVE worker's server can be told to download a model. Read
+  // off the provider catalog rather than a provider name, so a second local
+  // server type that ships a puller lights this up on its own (AP-21).
+  const { providers } = useProviders();
+  const pullable = providers.find(
+    (p) => p.id === catalogProvider && p.supports_model_pull,
+  );
   return (
     <div className="card-outline space-y-3 p-4">
       <p className="text-[11px] leading-relaxed text-muted-foreground">
@@ -462,6 +473,13 @@ function SubagentModelCard({
         {t("subagent_model.model_hint")}
         {status.model_resolved ? ` (${status.model_resolved})` : ""}
       </p>
+
+      {/* The download panel, for a worker whose server can be told to fetch a
+          model. Without it this tab dead-ended a local-only install: the picker
+          above lists what the server HOLDS, so on a fresh Ollama it is empty,
+          and the one screen that could fix that was three tabs away under
+          Brain. Same panel, same endpoints — the capability flag decides. */}
+      {pullable && <LocalModelDownloadPanel descriptor={pullable} onChanged={onSaved} />}
     </div>
   );
 }
