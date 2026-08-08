@@ -16,7 +16,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from jarvis.core.events import Event
+from jarvis.core.events import ActionProposed, Event
+from jarvis.safety.command_impact import classify_command
 
 # ----------------------------------------------------------------------
 # Outgoing (Server → Client)
@@ -126,6 +127,33 @@ def _jsonable(value: Any) -> Any:
     return str(value)
 
 
+def _enrich_shell_impact(event: Event, payload: dict[str, Any]) -> None:
+    """Attach the command-impact classification to run_shell ActionProposed.
+
+    Display metadata for the live command activity UI: the frontend shows a
+    plain-language badge (reads / modifies / deletes) next to the running
+    command. Classified HERE, at the UI boundary, with the same
+    ``jarvis.safety.command_impact`` module the risk-tier hook and the voice
+    confirmation use — one source of truth, no TypeScript twin to drift
+    (the five-layer-enum lesson). Best-effort: display metadata must never
+    break the WS feed, and the event itself stays untouched (frozen).
+    """
+    if not isinstance(event, ActionProposed) or payload.get("tool_name") != "run_shell":
+        return
+    try:
+        args = payload.get("args")
+        command = args.get("command") if isinstance(args, dict) else None
+        if not isinstance(command, str) or not command.strip():
+            return
+        impact = classify_command(command)
+        payload["impact"] = {
+            "level": impact.level,
+            "commands": ", ".join(dict.fromkeys(impact.commands)),
+        }
+    except Exception:  # noqa: BLE001 — cosmetic enrichment only
+        return
+
+
 def event_to_ws_envelope(event: Event) -> dict[str, Any]:
     """Serializes a bus event into a JSON-able `WSEventEnvelope` dict.
 
@@ -144,6 +172,8 @@ def event_to_ws_envelope(event: Event) -> dict[str, Any]:
         if k in _ENVELOPE_FIELDS:
             continue
         payload[k] = _jsonable(v)
+
+    _enrich_shell_impact(event, payload)
 
     envelope = WSEventEnvelope(
         event_name=type(event).__name__,

@@ -19,6 +19,7 @@ import { InputIsolationBanner } from "@/components/layout/InputIsolationBanner";
 import { VoiceWarmingBanner } from "@/components/layout/VoiceWarmingBanner";
 import { MainView } from "@/components/layout/MainView";
 import { ToastLayer } from "@/components/ToastLayer";
+import { CommandActivityLayer } from "@/components/CommandActivityLayer";
 import { EditContextMenu } from "@/components/EditContextMenu";
 import { JarvisDock } from "@/components/JarvisDock";
 import { CliConnectPoller } from "@/components/CliConnectPoller";
@@ -210,6 +211,7 @@ export default function App() {
           </div>
         </main>
         <ToastLayer />
+        <CommandActivityLayer />
         <EditContextMenu />
       </div>
     );
@@ -264,6 +266,7 @@ export default function App() {
       </main>
 
       <ToastLayer />
+      <CommandActivityLayer />
       {/* Right-click Cut/Copy/Paste. The desktop WebView ships with its own
           context menu disabled, so without this there is no mouse-driven paste
           anywhere in the app — including the IDE terminals. */}

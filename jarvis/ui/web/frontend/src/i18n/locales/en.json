@@ -486,6 +486,17 @@
     "group_earlier": "Earlier",
     "resize_hint": "Drag to resize · double-click to reset"
   },
+  "command_activity": {
+    "level_read": "Reads only",
+    "level_modify": "Changes something",
+    "level_destructive": "Deletes something",
+    "level_unknown": "Shell command",
+    "running": "running…",
+    "done": "Done",
+    "failed": "Failed",
+    "blocked": "Blocked",
+    "dismiss": "Dismiss"
+  },
   "thinking": {
     "label": "Thinking",
     "thought_for": "Thought for",

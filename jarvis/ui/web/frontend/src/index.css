@@ -1271,6 +1271,47 @@
     background-size: 48px 48px;
   }
 
+  /*
+   * Live command activity (CommandActivityLayer) — the indeterminate sweep
+   * under a RUNNING shell command. `currentColor` inherits the impact accent
+   * from the card (sky = reads, amber = modifies, red = deletes), so the bar
+   * and the badge can never disagree. Transform-only, like every loop in
+   * this file, and reduced-motion collapses it to a calm static strip.
+   */
+  .command-activity-progress {
+    position: relative;
+    background: currentColor;
+    opacity: 0.14;
+  }
+
+  .command-activity-progress::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      currentColor 45%,
+      currentColor 55%,
+      transparent
+    );
+    transform: translateX(-100%);
+    animation: command-activity-sweep 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+
+  @keyframes command-activity-sweep {
+    to {
+      transform: translateX(100%);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .command-activity-progress::after {
+      animation: none;
+      transform: none;
+    }
+  }
+
   :root:not(.dark) .uw-stage {
     background-image:
       linear-gradient(rgb(var(--accent-rgb) / 0.07) 1px, transparent 1px),

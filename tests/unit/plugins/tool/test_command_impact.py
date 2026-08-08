@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import pytest
 
-from jarvis.plugins.tool.command_impact import (
+from jarvis.plugins.tool.run_shell import RunShellTool
+from jarvis.safety.command_impact import (
     DESTRUCTIVE,
     MODIFY,
     READ,
     classify_command,
 )
-from jarvis.plugins.tool.run_shell import RunShellTool
 
 
 @pytest.mark.parametrize(

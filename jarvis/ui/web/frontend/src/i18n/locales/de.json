@@ -486,6 +486,17 @@
     "group_earlier": "Früher",
     "resize_hint": "Zum Verändern ziehen · Doppelklick zum Zurücksetzen"
   },
+  "command_activity": {
+    "level_read": "Liest nur",
+    "level_modify": "Verändert etwas",
+    "level_destructive": "Löscht etwas",
+    "level_unknown": "Shell-Befehl",
+    "running": "läuft…",
+    "done": "Fertig",
+    "failed": "Fehlgeschlagen",
+    "blocked": "Blockiert",
+    "dismiss": "Ausblenden"
+  },
   "thinking": {
     "label": "Denkt nach",
     "thought_for": "Denkzeit",

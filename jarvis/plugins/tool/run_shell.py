@@ -34,7 +34,7 @@ from typing import Any
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.core.protocols import ExecutionContext, ToolResult
-from jarvis.plugins.tool.command_impact import DESTRUCTIVE, classify_command
+from jarvis.safety.command_impact import DESTRUCTIVE, classify_command
 
 if sys.platform == "win32":
     _SHELL_LABEL = "Windows PowerShell 5.1"

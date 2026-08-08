@@ -486,6 +486,17 @@
     "group_earlier": "Antes",
     "resize_hint": "Arrastra para redimensionar · doble clic para restablecer"
   },
+  "command_activity": {
+    "level_read": "Solo lee",
+    "level_modify": "Cambia algo",
+    "level_destructive": "Borra algo",
+    "level_unknown": "Comando de shell",
+    "running": "en curso…",
+    "done": "Listo",
+    "failed": "Falló",
+    "blocked": "Bloqueado",
+    "dismiss": "Ocultar"
+  },
   "thinking": {
     "label": "Pensando",
     "thought_for": "Pensó durante",

@@ -17,6 +17,10 @@ import {
   type VoiceState,
 } from "@/store/events";
 import { useSubAgentStore, SUB_AGENT_EVENT_NAMES } from "@/store/jarvisAgents";
+import {
+  useCommandActivityStore,
+  COMMAND_ACTIVITY_EVENTS,
+} from "@/store/commandActivity";
 import { WSAudioLevel, WSEventEnvelope, WSWelcome } from "@/schema/ws";
 import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from "@/i18n";
 import { hydrateUiTheme } from "@/hooks/useTheme";
@@ -160,6 +164,20 @@ export function useWebSocket(): void {
             env.payload,
             Math.floor(env.timestamp_ns / 1_000_000),
           );
+
+        // Live shell-command activity: the ToolExecutor's run_shell events
+        // become visible cards (CommandActivityLayer). Pre-filtered on the
+        // three action event names; the store ignores every other tool.
+        if (COMMAND_ACTIVITY_EVENTS.has(env.event_name)) {
+          useCommandActivityStore
+            .getState()
+            .ingest(
+              env.event_name,
+              env.trace_id,
+              env.payload,
+              Math.floor(env.timestamp_ns / 1_000_000),
+            );
+        }
 
         // Jarvis-Agents dashboard: build the live tree from the Phase-5.5 events.
         if (SUB_AGENT_EVENT_NAMES.has(env.event_name)) {
