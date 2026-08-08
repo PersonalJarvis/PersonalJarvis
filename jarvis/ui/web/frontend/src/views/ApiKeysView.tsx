@@ -13,6 +13,7 @@ import {
   CategoryHero,
   EngineModeSwitch,
   GuidancePanel,
+  LocalModeSwitch,
   makeProviderCategories,
   ProviderCategory,
   useTierHealth,
@@ -29,6 +30,7 @@ import {
   useProviders,
 } from "@/hooks/useProviders";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
+import { useLocalMode } from "@/lib/localMode";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
@@ -97,6 +99,10 @@ export function ApiKeysView() {
     setMode: setVoiceMode,
     isLoading: liveModeLoading,
   } = useVoiceMode();
+  // Show only providers that run on the user's own hardware. A per-machine view
+  // preference (localStorage), deliberately NOT a config switch: it hides cards,
+  // it never changes what the app runs on. See lib/localMode.ts.
+  const { localMode, setLocalMode } = useLocalMode();
 
   // Reset the selected tab to the mode's first tab whenever the mode changes,
   // so switching Pipeline→Realtime never leaves `active` pointing at a tab
@@ -132,13 +138,16 @@ export function ApiKeysView() {
         title={t("apikeys_view.title")}
         subtitle={t("apikeys_view.subtitle")}
         right={
-          <EngineModeSwitch
-            mode={engineMode}
-            liveMode={liveMode}
-            realtimeAvailable={realtimeAvailable}
-            onSelect={setEngineMode}
-            onSetVoiceMode={setVoiceMode}
-          />
+          <div className="flex items-start gap-2">
+            <LocalModeSwitch enabled={localMode} onToggle={setLocalMode} />
+            <EngineModeSwitch
+              mode={engineMode}
+              liveMode={liveMode}
+              realtimeAvailable={realtimeAvailable}
+              onSelect={setEngineMode}
+              onSetVoiceMode={setVoiceMode}
+            />
+          </div>
         }
       />
 
@@ -183,6 +192,8 @@ export function ApiKeysView() {
             onChanged={refetch}
             onActivateOptimistic={setActiveOptimistic}
             health={health[active]}
+            localMode={localMode}
+            onDisableLocalMode={() => setLocalMode(false)}
           />
         )}
         {active === "realtime" && (
@@ -194,6 +205,8 @@ export function ApiKeysView() {
             onChanged={refetch}
             onActivateOptimistic={setActiveOptimistic}
             health={health.realtime}
+            localMode={localMode}
+            onDisableLocalMode={() => setLocalMode(false)}
           />
         )}
         {active === "computer-use" && (
@@ -205,6 +218,8 @@ export function ApiKeysView() {
             onChanged={refetch}
             onActivateOptimistic={setActiveOptimistic}
             health={health["computer-use"]}
+            localMode={localMode}
+            onDisableLocalMode={() => setLocalMode(false)}
           />
         )}
         {active === "subagents" && <SubagentCategory />}
@@ -397,6 +412,8 @@ function RealtimeCategory({
   onChanged,
   onActivateOptimistic,
   health,
+  localMode = false,
+  onDisableLocalMode,
 }: {
   meta: CategoryMeta;
   providers: ProviderDescriptor[];
@@ -405,6 +422,8 @@ function RealtimeCategory({
   onChanged: () => void;
   onActivateOptimistic: (tier: ProviderTier, id: string) => void;
   health?: SectionHealth;
+  localMode?: boolean;
+  onDisableLocalMode?: () => void;
 }) {
   const t = useT();
   return (
@@ -417,6 +436,8 @@ function RealtimeCategory({
       onChanged={onChanged}
       onActivateOptimistic={onActivateOptimistic}
       health={health}
+      localMode={localMode}
+      onDisableLocalMode={onDisableLocalMode}
       intro={
         <GuidancePanel
           title={t("apikeys_view.guide_realtime_title")}
@@ -450,6 +471,8 @@ function ComputerUseCategory({
   onChanged,
   onActivateOptimistic,
   health,
+  localMode = false,
+  onDisableLocalMode,
 }: {
   meta: CategoryMeta;
   providers: ProviderDescriptor[];
@@ -458,6 +481,8 @@ function ComputerUseCategory({
   onChanged: () => void;
   onActivateOptimistic: (tier: ProviderTier, id: string) => void;
   health?: SectionHealth;
+  localMode?: boolean;
+  onDisableLocalMode?: () => void;
 }) {
   const t = useT();
   const cuProviders: ProviderDescriptor[] = providers
@@ -474,6 +499,8 @@ function ComputerUseCategory({
       onChanged={onChanged}
       onActivateOptimistic={onActivateOptimistic}
       health={health}
+      localMode={localMode}
+      onDisableLocalMode={onDisableLocalMode}
       intro={
         <GuidancePanel
           title={t("apikeys_view.guide_computer_use_title")}

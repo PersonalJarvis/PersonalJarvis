@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, HardDrive, KeyRound, Radio, Waypoints } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { switchBrainProvider } from "@/hooks/useProviders";
+import { setLocalMode } from "@/lib/localMode";
 import { putVoiceMode } from "@/lib/voiceEngineMode";
 import { useT } from "@/i18n";
 import type { StepProps } from "../OnboardingFlow";
@@ -56,6 +57,12 @@ function LocalPathCard() {
       // realtime cards with their choice having changed nothing audible.
       // Persisted, because onboarding ends in a restart.
       await putVoiceMode("pipeline");
+      // Somebody who picks the local path here lands in a provider console
+      // whose cards are almost entirely hosted accounts they just declined.
+      // Local Mode opens it on the handful that need no key. A view preference,
+      // reversible with one click on the switch in that view's header — never a
+      // state the user has to hunt for a way out of.
+      setLocalMode(true);
       setActive(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

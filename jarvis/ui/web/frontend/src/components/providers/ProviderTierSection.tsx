@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Bot, Brain, Check, Copy, Download, Loader2, LogIn, LogOut, Mic, PlugZap, Radio, Sparkles, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
+import { AlertCircle, Bot, Brain, Check, Copy, Download, HardDrive, Loader2, LogIn, LogOut, Mic, PlugZap, Radio, Sparkles, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
@@ -48,6 +48,7 @@ import {
 import { useEventStore } from "@/store/events";
 import { agentBrand, agentsBrand } from "@/lib/agentBrand";
 import { robustCopy } from "@/lib/clipboard";
+import { filterForLocalMode } from "@/lib/localMode";
 import {
   realtimeTransportIssueKey,
   requestRealtimeTransportOffer,
@@ -340,6 +341,108 @@ export function EngineModeSwitch({
         className="mt-1 text-right text-[10px] leading-tight text-muted-foreground/70"
       >
         {t("apikeys_view.mode_pick_one_hint")}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The Local Mode toggle that sits next to the engine switch in the header.
+ *
+ * One button, two legible states, and an explicit on/off word rather than a
+ * lit-versus-unlit icon: the whole complaint this answers is that the previous
+ * local path felt like something that happened TO the user and could not be
+ * clearly turned back off. A control you can read the state of, and click once
+ * to reverse, is the fix.
+ *
+ * Presentation only — see `lib/localMode.ts`. It never switches a provider and
+ * never writes config, so leaving it on can't break an install.
+ */
+export function LocalModeSwitch({
+  enabled,
+  onToggle,
+}: {
+  enabled: boolean;
+  onToggle: (next: boolean) => void;
+}) {
+  const t = useT();
+  return (
+    <div className="shrink-0">
+      <button
+        type="button"
+        data-testid="local-mode-switch"
+        aria-pressed={enabled}
+        onClick={() => onToggle(!enabled)}
+        title={t(
+          enabled ? "apikeys_view.local_mode_title_on" : "apikeys_view.local_mode_title_off",
+        )}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-[0.4375rem] text-xs font-medium transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          enabled
+            ? "border-primary/40 bg-primary/15 text-primary"
+            : "border-border bg-card/40 text-muted-foreground hover:text-foreground",
+        )}
+      >
+        <HardDrive aria-hidden="true" className="h-3.5 w-3.5" />
+        <span className="whitespace-nowrap">{t("apikeys_view.local_mode_label")}</span>
+        <span
+          className={cn(
+            "whitespace-nowrap rounded-full px-1 py-px text-[8px] font-semibold uppercase tracking-wide",
+            enabled
+              ? "bg-primary/25 text-primary"
+              : "border border-border bg-background/60 text-muted-foreground/80",
+          )}
+        >
+          {t(enabled ? "apikeys_view.local_mode_on" : "apikeys_view.local_mode_off")}
+        </span>
+      </button>
+      {/* Mirrors the engine switch's one-line hint so the two controls sit on
+          the same baseline and the header stays a single tidy row. */}
+      <p
+        data-testid="local-mode-hint"
+        className="mt-1 text-right text-[10px] leading-tight text-muted-foreground/70"
+      >
+        {t("apikeys_view.local_mode_hint")}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The one line that explains a shorter card list. Without it, a user who
+ * forgot the switch is on reads the missing hosted cards as a broken install —
+ * so the notice states the count, and carries the switch-off action itself.
+ */
+export function LocalModeNotice({
+  hiddenCount,
+  keptActiveHosted,
+  onDisable,
+}: {
+  hiddenCount: number;
+  keptActiveHosted: boolean;
+  onDisable: () => void;
+}) {
+  const t = useT();
+  return (
+    <div
+      data-testid="local-mode-notice"
+      className="mb-3 flex items-start gap-2.5 rounded-xl border border-primary/25 bg-primary/[0.05] px-3 py-2"
+    >
+      <HardDrive aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+      <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
+        <span className="font-medium text-foreground">
+          {t("apikeys_view.local_mode_label")}
+        </span>{" "}
+        · {t("apikeys_view.local_mode_notice").replace("{0}", String(hiddenCount))}
+        {keptActiveHosted && ` ${t("apikeys_view.local_mode_notice_active")}`}{" "}
+        <button
+          type="button"
+          onClick={onDisable}
+          className="font-medium text-primary underline-offset-2 hover:underline"
+        >
+          {t("apikeys_view.local_mode_show_all")}
+        </button>
       </p>
     </div>
   );
@@ -658,6 +761,8 @@ export function ProviderCategory({
   onActivateOptimistic,
   health,
   intro,
+  localMode = false,
+  onDisableLocalMode,
 }: {
   meta: CategoryMeta;
   tier: ProviderTier;
@@ -671,15 +776,35 @@ export function ProviderCategory({
   health?: SectionHealth;
   /** Optional guidance band rendered between the hero and the card list. */
   intro?: React.ReactNode;
+  /** Show only cards that run on the user's own hardware. Presentation only —
+   *  defaults off so every existing caller renders the full catalog. */
+  localMode?: boolean;
+  /** Turns Local Mode back off from the notice above the list. */
+  onDisableLocalMode?: () => void;
 }) {
   const t = useT();
-  const tierProviders = providers.filter(
+  const allTierProviders = providers.filter(
     (p) => p.tier === tier && p.brain_switchable !== false,
   );
+  const {
+    visible: tierProviders,
+    hiddenCount,
+    keptActiveHosted,
+  } = filterForLocalMode(allTierProviders, localMode);
 
   return (
     <div role="tabpanel">
       <CategoryHero icon={meta.icon} title={meta.title} description={meta.description} />
+
+      {/* Above the guidance band: the shorter list has to be explained before
+          the user starts scanning it, not after. */}
+      {localMode && hiddenCount > 0 && (
+        <LocalModeNotice
+          hiddenCount={hiddenCount}
+          keptActiveHosted={keptActiveHosted}
+          onDisable={() => onDisableLocalMode?.()}
+        />
+      )}
 
       {intro}
 
