@@ -307,6 +307,17 @@ export interface DictationSettings {
    *  meaning. */
   polish_style: string;
   /**
+   * Also sharpen the WORD CHOICE, not just the writing: a vague placeholder
+   * becomes the specific word that was meant, padding collapses into the plain
+   * verb. Simple and exact, never ornate.
+   *
+   * Ships OFF, and unlike `polish_style` this is not a matter of taste — it
+   * relaxes the guard that rejects an answer in which an uncommon word
+   * vanished, because replacing uncommon words is exactly what it licenses.
+   * Applies to a translated dictation too, through the same prompt clause.
+   */
+  polish_precision: boolean;
+  /**
    * Deliver every dictation in `translate_target`, whatever language was
    * spoken. Ships OFF: it changes which words come out, not just how they are
    * written, so it is never acquired by an install that did not ask for it.

@@ -511,6 +511,68 @@ describe("LanguageTab — the wording pass", () => {
   });
 
   // ------------------------------------------------------------------
+  // Precision mode — the word-choice switch that relaxes a guard
+  // ------------------------------------------------------------------
+
+  it("keeps precision off until it is asked for", async () => {
+    installFetchMock(routes());
+    render(<LanguageTab hideHeader />);
+
+    const toggle = await waitFor(() =>
+      screen.getByTestId("dictation-precision-toggle"),
+    );
+    // Off by default, unlike the wording switch above it: this one relaxes the
+    // check that rejects an answer in which an uncommon word vanished, and a
+    // trade like that is never inherited from a default.
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    // And the card says so, rather than leaving the user to discover it.
+    expect(screen.getByTestId("dictation-precision-tradeoff").textContent).toBeTruthy();
+  });
+
+  it("saves the precision switch", async () => {
+    const calls = installFetchMock(
+      routes({
+        "PUT /api/dictation/settings": () => ({
+          body: { settings: { ...SETTINGS, polish_precision: true }, persisted: true },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    fireEvent.click(
+      await waitFor(() => screen.getByTestId("dictation-precision-toggle")),
+    );
+
+    await waitFor(() => {
+      const put = calls.find(
+        (c) => c.method === "PUT" && c.url === "/api/dictation/settings",
+      );
+      expect(JSON.parse(put?.body ?? "{}")).toMatchObject({
+        polish_precision: true,
+        persist: true,
+      });
+    });
+  });
+
+  it("still shows the precision switch when the formatter is off", async () => {
+    // It governs a TRANSLATED dictation too, and a translation runs with the
+    // formatter switched off. Hiding it there would leave a switch silently in
+    // force with no way to see or reach it (AP-31).
+    installFetchMock(
+      routes({
+        "GET /api/dictation/settings": () => ({
+          body: { settings: { ...SETTINGS, polish: false }, choices: CHOICES },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("dictation-precision-toggle")).toBeTruthy(),
+    );
+  });
+
+  // ------------------------------------------------------------------
   // Translation — same tab, and the switch that changes which words come out
   // ------------------------------------------------------------------
 

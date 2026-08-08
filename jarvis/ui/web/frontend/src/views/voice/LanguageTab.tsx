@@ -5,6 +5,7 @@ import {
   Languages,
   Loader2,
   PlugZap,
+  Scissors,
   Wand2,
 } from "lucide-react";
 
@@ -111,6 +112,19 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
     }
   }
 
+  async function onTogglePrecision(next: boolean) {
+    // Clearing matters more here than on the other switches: the dry run uses a
+    // DIFFERENT sample in precision mode, so a stale result would sit next to
+    // the switch showing a sentence the new setting would never produce.
+    setTestResult(null);
+    try {
+      await saveSettings({ polish_precision: next });
+      pushToast("success", t("dictation.saved"));
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    }
+  }
+
   async function onToggleTranslate(next: boolean) {
     setTestResult(null);
     try {
@@ -150,6 +164,9 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
   // chain comes back empty, the pass reports "unavailable" and the raw
   // transcript is delivered — byte-identical to a build without the feature.
   const polishOn = settings?.polish ?? true;
+  // Default OFF, unlike the switch above, and the card says why: this one
+  // relaxes a guard rather than only costing a formatting pass.
+  const precisionOn = settings?.polish_precision ?? false;
   const polishProvider = settings?.polish_provider ?? "auto";
   const served = choices?.polish_provider ?? ["auto"];
   // A pin the served list does not contain would otherwise render as the first
@@ -265,6 +282,46 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                 onCheckedChange={(next) => void onTogglePolish(next)}
                 aria-label={t("voice.polish.title")}
                 data-testid="dictation-polish-toggle"
+              />
+            </div>
+
+            {/* Deliberately OUTSIDE the `polishOn` block below. Precision also
+                governs a TRANSLATED dictation, which runs with the formatter
+                switched off — hiding the switch there would leave it silently
+                in force with no way to see or reach it (AP-31). */}
+            <div
+              className="mt-3 flex items-start justify-between gap-4 border-t border-border/60 pt-3"
+              data-testid="dictation-precision-row"
+            >
+              <div className="min-w-0">
+                <h5 className="flex items-center gap-2 text-xs font-semibold">
+                  <Scissors aria-hidden="true" className="h-3 w-3 text-primary" />
+                  {t("voice.polish.precision_title")}
+                </h5>
+                <p
+                  className="mt-1 text-[11px] text-muted-foreground"
+                  data-testid="dictation-precision-description"
+                >
+                  {t("voice.polish.precision_description")}
+                </p>
+                {/* The trade, said out loud. This switch is not a matter of
+                    taste like the register is — it relaxes the check that
+                    rejects an answer in which an uncommon word vanished, which
+                    is the difference between "off by default" and "on by
+                    default" for everything else on this card. */}
+                <p
+                  className="mt-1.5 text-[11px] text-muted-foreground"
+                  data-testid="dictation-precision-tradeoff"
+                >
+                  {t("voice.polish.precision_tradeoff")}
+                </p>
+              </div>
+              <Switch
+                checked={precisionOn}
+                disabled={loading}
+                onCheckedChange={(next) => void onTogglePrecision(next)}
+                aria-label={t("voice.polish.precision_title")}
+                data-testid="dictation-precision-toggle"
               />
             </div>
 
