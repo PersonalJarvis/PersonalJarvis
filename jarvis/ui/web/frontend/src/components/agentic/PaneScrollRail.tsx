@@ -5,15 +5,18 @@
  * line and the extent, so the thumb is the truth and dragging it is a seek.
  *
  * A full-screen coding TUI keeps its history inside the application, and this
- * rail then draws NO THUMB AT ALL. It becomes what it can honestly be — arrow
- * caps that page, a strip that scrolls while stroked, and the wheel passing
- * through. Two attempts to show a position there were built and reverted after
- * the maintainer used them; ./terminalScrollSurface records both and why. The
- * short version: any shape sitting in that track gets read as "you are here",
- * and being slightly wrong about that is worse than saying nothing.
+ * rail then draws NO POSITION AT ALL. It becomes what it can honestly be —
+ * arrow caps that page, a strip that scrolls while stroked, the wheel passing
+ * through, and a GRIP that makes the stroke visible and grabbable: it rests in
+ * the middle, follows the hand while dragging, and springs back to the middle
+ * on release. The spring-back is the honesty — a handle that always returns to
+ * centre cannot be read as "you are here".
  *
- * Because it carries no information at rest, the application rail also stays
- * invisible until the pointer is over the pane or the rail has focus.
+ * Two attempts to show an actual position there were built and reverted after
+ * the maintainer used them; ./terminalScrollSurface records both and why. The
+ * short version: any shape that STAYS where the drag left it gets read as
+ * "you are here", and being slightly wrong about that is worse than saying
+ * nothing.
  */
 import {
   useCallback,
@@ -47,8 +50,16 @@ interface DragSession {
   grabOffset: number;
   /** Where the stroke was last accounted for. Application rails only. */
   lastY: number;
+  /** Where the pointer went down — the grip's visual travel is measured from
+   * here so it can spring back to centre on release. Application rails only. */
+  originY: number;
   captured: boolean;
 }
+
+/** Height of the application grip capsule, in px. Must match the render. */
+const GRIP_PX = 28;
+/** Height of one arrow cap, which the grip must never slide under. */
+const CAP_PX = 16;
 
 interface PaneScrollRailProps {
   name: string;
@@ -91,6 +102,8 @@ export function PaneScrollRail({
   const [view, setView] = useState<TerminalScrollView | null>(null);
   const [trackPx, setTrackPx] = useState(0);
   const [dragging, setDragging] = useState(false);
+  /** The application grip's travel from centre while a stroke is held. */
+  const [gripOffset, setGripOffset] = useState(0);
 
   const sync = useCallback(() => {
     frameRef.current = null;
@@ -246,6 +259,7 @@ export function PaneScrollRail({
         owner: current.owner,
         grabOffset,
         lastY: event.clientY,
+        originY: event.clientY,
         captured: false,
       };
       setDragging(true);
@@ -279,9 +293,15 @@ export function PaneScrollRail({
         moveExact(current, event.clientY, drag.grabOffset);
       } else {
         strokeApplication(event.clientY);
+        // The grip follows the hand, clamped so it never slides under an
+        // arrow cap. finishDrag springs it back to centre.
+        const travel = Math.max(0, liveTrack().height / 2 - CAP_PX - GRIP_PX / 2);
+        setGripOffset(
+          Math.max(-travel, Math.min(travel, event.clientY - drag.originY)),
+        );
       }
     },
-    [moveExact, strokeApplication, terminalRef],
+    [liveTrack, moveExact, strokeApplication, terminalRef],
   );
 
   const finishDrag = useCallback(
@@ -290,6 +310,9 @@ export function PaneScrollRail({
       if (!drag || (pointerId !== undefined && pointerId !== drag.pointerId)) return;
       dragRef.current = null;
       setDragging(false);
+      // The grip is a control, not an indicator: it always returns to centre,
+      // which is what keeps it from ever being read as a position.
+      setGripOffset(0);
       // Restore from the current owner, not the owner at pointer-down. A TUI
       // may enter or leave its alternate buffer while the gesture is active,
       // and an exact thumb left where the hand dropped it would be a lie about
@@ -453,9 +476,44 @@ export function PaneScrollRail({
         </>
       )}
       {/*
-        The thumb exists only where a position does. In an application pane the
-        track between the caps stays deliberately empty — see the module
-        docstring for the two reverted attempts at filling it.
+        The application grip: grabbable, but positionless. It rests in the
+        middle, rides along while a stroke is held, and springs back on
+        release — see the module docstring for why it must never stay where
+        the drag left it. Pointer events bubble to the track's stroke
+        handlers; the grip itself adds nothing but a place to hold.
+      */}
+      {!exact && (
+        <div
+          data-testid={`pane-scroll-grip-${name}`}
+          aria-hidden="true"
+          className={cn(
+            "absolute left-1/2 top-1/2 w-2 rounded-full bg-[#e7c46e]/45",
+            "shadow-[0_0_0_1px_rgba(0,0,0,0.18)]",
+            "group-hover:bg-[#e7c46e]/80 group-focus-within:bg-[#e7c46e]/80",
+            dragging
+              ? "bg-[#e7c46e] transition-none"
+              : "transition-transform duration-200",
+          )}
+          style={{
+            height: GRIP_PX,
+            transform: `translate(-50%, calc(-50% + ${gripOffset}px))`,
+          }}
+        >
+          <svg
+            viewBox="0 0 8 28"
+            className="h-full w-full fill-[#141210]/70"
+            aria-hidden="true"
+          >
+            <circle cx="4" cy="10" r="1.1" />
+            <circle cx="4" cy="14" r="1.1" />
+            <circle cx="4" cy="18" r="1.1" />
+          </svg>
+        </div>
+      )}
+      {/*
+        The thumb exists only where a position does — an application pane gets
+        the self-centring grip above instead, never a shape that stays where
+        the drag left it.
       */}
       {exact && (
         <div

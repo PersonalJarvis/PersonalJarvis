@@ -7,10 +7,13 @@
  * * a full-screen application owns an alternate/mouse-tracking buffer, so the
  *   only truthful operation is to relay scroll input to that application.
  *
- * In the second case there is NO POSITION AND NO THUMB. Not a centred one, not
- * an estimated one — none, so that nothing on screen can be read as an answer to
- * "where am I". The rail there is a control: arrow caps that page, a strip that
- * scrolls when stroked, and the wheel passing through.
+ * In the second case there is NO POSITION. Not an estimated one — none, so
+ * that nothing on screen can be read as an answer to "where am I". The rail
+ * there is a control: arrow caps that page, a strip that scrolls when stroked,
+ * the wheel passing through, and a self-centring grip that makes the stroke
+ * grabbable. The grip is allowed precisely because it ALWAYS springs back to
+ * centre on release — a handle that never stays put cannot be read as a
+ * position, where both reverted attempts below drew shapes that did stay put.
  *
  * Two attempts to show a position anyway are on record, both reverted after the
  * maintainer used them:

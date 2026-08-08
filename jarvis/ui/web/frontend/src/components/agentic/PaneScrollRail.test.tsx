@@ -236,6 +236,35 @@ describe("PaneScrollRail", () => {
     ).toBe("terminal-Aria");
   });
 
+  it("drags the application grip to stroke, and it springs back to centre", () => {
+    const harness = fakeTerminal({ owner: "mouse-app" });
+    render(<RailHarness name="Rex" term={harness.term} />);
+    const rail = giveTrackGeometry("Rex");
+    const grip = screen.getByTestId("pane-scroll-grip-Rex");
+    const deltas: number[] = [];
+    screen
+      .getByTestId("xterm-screen-Rex")
+      .addEventListener("wheel", (event) => deltas.push(event.deltaY));
+
+    // At rest the grip sits dead centre — it carries no position.
+    expect(grip.style.transform).toBe("translate(-50%, calc(-50% + 0px))");
+
+    fireEvent.pointerDown(grip, { button: 0, clientY: 100, pointerId: 9 });
+    fireEvent.pointerMove(rail, { clientY: 60, pointerId: 9 });
+
+    // The drag strokes the application and the grip rides along with it.
+    expect(deltas.length).toBeGreaterThan(0);
+    expect(deltas.every((delta) => delta < 0)).toBe(true);
+    expect(grip.style.transform).toBe("translate(-50%, calc(-50% + -40px))");
+
+    fireEvent.pointerUp(rail, { clientY: 60, pointerId: 9 });
+
+    // Released, it returns to centre: a handle that never stays put cannot be
+    // read as "you are here". The thumb testid stays application-free.
+    expect(grip.style.transform).toBe("translate(-50%, calc(-50% + 0px))");
+    expect(screen.queryByTestId("pane-scroll-thumb-Rex")).toBeNull();
+  });
+
   it("pages the application from the visible arrow caps", () => {
     const harness = fakeTerminal({ owner: "mouse-app" });
     render(<RailHarness name="Odo" term={harness.term} />);
