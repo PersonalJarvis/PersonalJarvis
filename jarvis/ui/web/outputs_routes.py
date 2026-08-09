@@ -505,6 +505,13 @@ async def list_outputs(request: Request) -> OutputsResponse:
         raise HTTPException(status_code=500, detail=f"Outputs root not readable: {exc}") from exc
     entries = sorted(entries_by_name.values(), key=lambda path: path.name, reverse=True)
 
+    # Artifact archives can contain entire generated projects.  Walking them is
+    # blocking filesystem work and must never run on the ASGI event-loop thread:
+    # a live 2026-08-09 trace caught this glob freezing every HTTP route and
+    # WebSocket for 15 seconds.  Keep the walk sequential (one disk worker, not
+    # one per mission) so a large archive cannot turn into an I/O stampede.
+    artifact_counts = await asyncio.to_thread(_count_all_deliverables, entries)
+
     sessions: list[dict[str, Any]] = []
     # Map dir-name → mission-id prefix derived from the dir-name itself.
     # Persistent ``mission_<short>`` dirs encode the mission_id prefix
@@ -606,7 +613,7 @@ async def list_outputs(request: Request) -> OutputsResponse:
                         0.0,
                         (end_ms - mission_row["created_ms"]) / 1000.0,
                     )
-        artifact_count = _count_deliverables(entry)
+        artifact_count = artifact_counts.get(entry, 0)
         summary["artifact_count"] = artifact_count
         summary["has_partial_output"] = (
             artifact_count > 0 and summary["status"] in ("error", "cancelled")
@@ -621,6 +628,11 @@ async def list_outputs(request: Request) -> OutputsResponse:
         sessions.append(summary)
 
     return OutputsResponse.model_validate({"sessions": sessions})
+
+
+def _count_all_deliverables(entries: list[Path]) -> dict[Path, int]:
+    """Count archived deliverables sequentially on a worker thread."""
+    return {entry: _count_deliverables(entry) for entry in entries}
 
 
 def _count_deliverables(session_dir: Path) -> int:

@@ -18,6 +18,7 @@ design).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
@@ -243,6 +244,37 @@ async def test_list_outputs_empty_root(app: FastAPI) -> None:
         r = client.get("/api/outputs")
     assert r.status_code == 200
     assert r.json() == {"sessions": []}
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_counts_artifacts_off_the_event_loop(
+    app: FastAPI,
+    db_conn: aiosqlite.Connection,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deep archive walk must not freeze HTTP and WebSocket handling."""
+    mission_id = "019e3600-a84e-7000-8000-000000000123"
+    session = _make_mission_dir(tmp_path, mission_id)
+    _seed(session / "tasks" / "task-1" / "artifacts" / "files" / "report.md")
+    await _insert_mission(db_conn, mission_id=mission_id, state="completed")
+
+    from jarvis.ui.web import outputs_routes
+
+    original = outputs_routes._count_deliverables
+
+    def assert_worker_thread(path: Path) -> int:
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        return original(path)
+
+    monkeypatch.setattr(outputs_routes, "_count_deliverables", assert_worker_thread)
+
+    with TestClient(app) as client:
+        response = client.get("/api/outputs")
+
+    assert response.status_code == 200
+    assert response.json()["sessions"][0]["artifact_count"] == 1
 
 
 @pytest.mark.asyncio
