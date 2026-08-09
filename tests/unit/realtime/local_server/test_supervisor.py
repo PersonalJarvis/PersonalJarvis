@@ -656,6 +656,10 @@ def test_legacy_managed_ollama_command_uses_non_reasoning_chat_backend_at_spawn(
     assert "--llm_backend chat-completions" in spawned[0]
     assert spawned[0].count("--responses_api_reasoning_effort") == 1
     assert "--responses_api_reasoning_effort none" in spawned[0]
+    assert "--no_enable_live_transcription" in spawned[0]
+    assert "--min_silence_ms 320" in spawned[0]
+    assert "--smart_turn_incomplete_delay_ms 2000" in spawned[0]
+    assert "--unanswered_reopen_ms 2000" in spawned[0]
 
 
 def test_ollama_backend_normalizer_replaces_legacy_equals_flags_once() -> None:
@@ -674,6 +678,25 @@ def test_ollama_backend_normalizer_replaces_legacy_equals_flags_once() -> None:
     assert migrated.count("--responses_api_reasoning_effort") == 1
     assert "--responses_api_reasoning_effort none" in migrated
     assert supervisor._force_low_latency_ollama_backend(migrated) == migrated
+
+
+def test_turn_detection_normalizer_replaces_legacy_aliases_once() -> None:
+    command = (
+        "serve --enable-live-transcription=true --min-silence-ms=64 "
+        "--smart_turn_incomplete_delay_ms=600 --unanswered-reopen-ms 7000"
+    )
+
+    migrated = supervisor._force_stable_turn_detection(command)
+
+    assert migrated.count("--no_enable_live_transcription") == 1
+    assert "--enable-live-transcription" not in migrated
+    assert migrated.count("--min_silence_ms") == 1
+    assert "--min_silence_ms 320" in migrated
+    assert migrated.count("--smart_turn_incomplete_delay_ms") == 1
+    assert "--smart_turn_incomplete_delay_ms 2000" in migrated
+    assert migrated.count("--unanswered_reopen_ms") == 1
+    assert "--unanswered_reopen_ms 2000" in migrated
+    assert supervisor._force_stable_turn_detection(migrated) == migrated
 
 
 def test_a_ready_owned_legacy_bind_is_migrated_to_loopback(monkeypatch, tmp_path) -> None:
@@ -888,7 +911,11 @@ def test_a_ready_owned_loopback_bind_is_not_restarted(monkeypatch, tmp_path) -> 
         "--responses_api_base_url http://127.0.0.1:11434/v1 "
         "--responses_api_api_key ollama "
         "--llm_backend chat-completions "
-        "--responses_api_reasoning_effort none"
+        "--responses_api_reasoning_effort none "
+        "--min_silence_ms 320 "
+        "--smart_turn_incomplete_delay_ms 2000 "
+        "--unanswered_reopen_ms 2000 "
+        "--no_enable_live_transcription"
     )
     (tmp_path / "local_realtime_server.pid.json").write_text(
         json.dumps(
@@ -967,7 +994,7 @@ def test_an_abandoned_owned_pool_is_replaced_generation_safely(
 
     assert outcome == "spawned"
     assert stopped == [root]
-    assert spawned == [command]
+    assert spawned == [supervisor._force_stable_turn_detection(command)]
 
 
 def test_unavailable_pool_replacement_skips_a_newer_generation(

@@ -373,6 +373,15 @@ def derive_launch_command(brain: BrainResolution, *, memory_source: str) -> str:
         "--qwen3_tts_backend torch",
         "--qwen3_tts_speaker Aiden",
         "--parakeet_tdt_device cpu",
+        # Jarvis consumes only final input transcripts. Progressive Parakeet
+        # passes therefore contend with the final pass without improving the
+        # product surface. A short acoustic silence gate removes breath-sized
+        # splits; Smart Turn still keeps semantically incomplete speech open
+        # for its full two-second window before any final can escape.
+        "--no_enable_live_transcription",
+        "--min_silence_ms 320",
+        "--smart_turn_incomplete_delay_ms 2000",
+        "--unanswered_reopen_ms 2000",
         "--num_pipelines 1",
         f"--model_name {brain.model}",
     ]

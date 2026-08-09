@@ -238,6 +238,10 @@ class TestDeriveLaunchCommand:
         assert "--qwen3_tts_device cuda" in cmd
         assert "--model_name qwen2.5:7b" in cmd
         assert "--ws_host 127.0.0.1" in cmd
+        assert "--no_enable_live_transcription" in cmd
+        assert "--min_silence_ms 320" in cmd
+        assert "--smart_turn_incomplete_delay_ms 2000" in cmd
+        assert "--unanswered_reopen_ms 2000" in cmd
 
     def test_cloud_command_never_carries_the_secret(self) -> None:
         brain = brain_link.BrainResolution(
@@ -248,6 +252,8 @@ class TestDeriveLaunchCommand:
         assert "--responses_api_api_key" not in cmd
         assert "--llm_backend chat-completions" not in cmd
         assert "--responses_api_reasoning_effort" not in cmd
+        assert "--no_enable_live_transcription" in cmd
+        assert "--smart_turn_incomplete_delay_ms 2000" in cmd
 
     def test_apple_unified_memory_maps_to_mps(self) -> None:
         cmd = install.derive_launch_command(self._brain(), memory_source="apple-unified")

@@ -690,6 +690,25 @@ _REASONING_EFFORT_FLAG = re.compile(
     r"(?<!\S)--responses_api_reasoning_effort(?:\s+|=)(?:\"[^\"]*\"|'[^']*'|\S+)",
     re.IGNORECASE,
 )
+_MIN_SILENCE_FLAG = re.compile(
+    r"(?<!\S)--min(?:_|-)silence(?:_|-)ms(?:\s+|=)(?:\"[^\"]*\"|'[^']*'|\S+)",
+    re.IGNORECASE,
+)
+_SMART_TURN_INCOMPLETE_DELAY_FLAG = re.compile(
+    r"(?<!\S)--smart(?:_|-)turn(?:_|-)incomplete(?:_|-)delay(?:_|-)ms"
+    r"(?:\s+|=)(?:\"[^\"]*\"|'[^']*'|\S+)",
+    re.IGNORECASE,
+)
+_UNANSWERED_REOPEN_FLAG = re.compile(
+    r"(?<!\S)--unanswered(?:_|-)reopen(?:_|-)ms(?:\s+|=)"
+    r"(?:\"[^\"]*\"|'[^']*'|\S+)",
+    re.IGNORECASE,
+)
+_LIVE_TRANSCRIPTION_FLAG = re.compile(
+    r"(?<!\S)--(?:no(?:_|-))?enable(?:_|-)live(?:_|-)transcription"
+    r"(?:=(?:true|false|0|1)|\s+(?:true|false|0|1))?",
+    re.IGNORECASE,
+)
 
 
 def _force_loopback_bind(command: str) -> str:
@@ -758,6 +777,43 @@ def _force_low_latency_ollama_backend(command: str) -> str:
     )
 
 
+def _needs_stable_turn_detection_migration(command: str) -> bool:
+    """Whether the managed server can publish premature/repeated finals."""
+    return (
+        _cli_flag_value(command, "--min_silence_ms") != "320"
+        or _cli_flag_value(command, "--smart_turn_incomplete_delay_ms") != "2000"
+        or _cli_flag_value(command, "--unanswered_reopen_ms") != "2000"
+        or not re.search(
+            r"(?<!\S)--no(?:_|-)enable(?:_|-)live(?:_|-)transcription(?!\S)",
+            command,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _force_stable_turn_detection(command: str) -> str:
+    """Canonicalize the managed VAD/STT profile used by Jarvis."""
+    if not _needs_stable_turn_detection_migration(command):
+        return command
+    command = _replace_cli_flag(
+        command,
+        _MIN_SILENCE_FLAG,
+        "--min_silence_ms 320",
+    )
+    command = _replace_cli_flag(
+        command,
+        _SMART_TURN_INCOMPLETE_DELAY_FLAG,
+        "--smart_turn_incomplete_delay_ms 2000",
+    )
+    command = _replace_cli_flag(
+        command,
+        _UNANSWERED_REOPEN_FLAG,
+        "--unanswered_reopen_ms 2000",
+    )
+    without_live_transcription = _LIVE_TRANSCRIPTION_FLAG.sub("", command).rstrip()
+    return f"{without_live_transcription} --no_enable_live_transcription"
+
+
 def _uses_loopback_bind(command: str) -> bool:
     """Whether the effective managed-server bind is explicitly loopback-only."""
     try:
@@ -811,6 +867,7 @@ def ensure_running(
             # both security and latency migrations without a reinstall.
             command = _force_loopback_bind(command)
             command = _force_low_latency_ollama_backend(command)
+            command = _force_stable_turn_detection(command)
             try:
                 from jarvis.realtime.local_server import install  # lazy (AP-26)
 
@@ -831,8 +888,13 @@ def ensure_running(
             slow_ollama_backend = bool(
                 owned_command and _needs_ollama_backend_migration(owned_command)
             )
+            unstable_turn_detection = bool(
+                owned_command
+                and _needs_stable_turn_detection_migration(owned_command)
+            )
+            latency_migration = slow_ollama_backend or unstable_turn_detection
             if (
-                slow_ollama_backend
+                latency_migration
                 and not unsafe_bind
                 and (
                     pool is None
@@ -843,7 +905,13 @@ def ensure_running(
                 # live call or a generation whose state cannot be proven. The
                 # next verified-idle connect can replace this generation.
                 return "already-running"
-            if owned_root is not None and (unsafe_bind or slow_ollama_backend):
+            if owned_root is not None and (
+                unsafe_bind
+                or (
+                    latency_migration
+                    and replace_unavailable_generation is None
+                )
+            ):
                 # Managed servers survive app exits, so an upgrade can inherit
                 # a healthy legacy generation. Only a verified owned process
                 # is eligible for these one-time migrations.
