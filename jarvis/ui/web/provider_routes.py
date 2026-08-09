@@ -731,13 +731,6 @@ def _active_realtime(request: Request) -> str | None:
     """
     try:
         cfg = _resolve_cfg(request)
-        from jarvis.voice.subscription_profile import (  # noqa: PLC0415
-            LEGACY_CODEX_REALTIME_PROVIDER,
-            subscription_voice_selected,
-        )
-
-        if cfg is not None and subscription_voice_selected(cfg):
-            return LEGACY_CODEX_REALTIME_PROVIDER
         realtime_cfg = getattr(getattr(cfg, "brain", None), "realtime", None)
         provider = (getattr(realtime_cfg, "provider", None) or "").strip()
         if provider:
@@ -3353,21 +3346,6 @@ async def get_realtime_options(provider_id: str, request: Request) -> RealtimeOp
     dicts directly rather than going through ``catalog_spec``.
     """
     _require_realtime_provider(provider_id)
-    if provider_id == "codex-subscription-realtime":
-        # The visible id is a compatibility alias. This profile no longer uses
-        # ChatGPT-Live's server-selected model or voices: Codex streams text and
-        # the configured Jarvis TTS owns synthesis. Keep the existing generic
-        # control honest without coupling this backend fix to a frontend build.
-        return RealtimeOptionsResponse(
-            provider=provider_id,
-            models=[RealtimeOptionInfo(id="auto", label="Codex App Server (subscription text)")],
-            voices=[
-                RealtimeOptionInfo(id="configured-tts", label="Configured Jarvis voice output")
-            ],
-            current_model="auto",
-            current_voice="configured-tts",
-            preview_available=True,
-        )
     from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
 
     cfg = _resolve_cfg(request)
@@ -3617,54 +3595,39 @@ async def _openai_realtime_voice_sample(
 async def _codex_subscription_voice_sample(
     api_key: str, *, model: str, voice: str, text: str, language: str
 ) -> tuple[bytes, int]:
-    """Exercise the stable subscription-text -> configured-TTS voice path."""
-    del api_key, model, voice
-    from jarvis.core.protocols import BrainMessage, BrainRequest  # noqa: PLC0415
-    from jarvis.plugins.brain.codex import CodexBrain  # noqa: PLC0415
-    from jarvis.plugins.tts import build_tts_from_config  # noqa: PLC0415
-    from jarvis.voice.subscription_profile import (  # noqa: PLC0415
-        subscription_language_directive,
+    """Sample the subscription voice through its ChatGPT-Live transport."""
+    del api_key, model
+    from jarvis.plugins.realtime.codex_subscription import (  # noqa: PLC0415
+        CodexSubscriptionRealtimeProvider,
     )
+    from jarvis.realtime.protocol import RealtimeSessionConfig  # noqa: PLC0415
 
-    brain = CodexBrain(prefer_subscription=True)
-    request = BrainRequest(
-        messages=(
-            BrainMessage(
-                "user",
-                f"Reply with one short, natural spoken sentence matching this message: {text}",
-            ),
-        ),
-        system=subscription_language_directive(language),
-        stream=True,
+    provider = CodexSubscriptionRealtimeProvider(
+        binary_path=_codex_binary_path(),
+        # A preview sends no microphone audio and needs no input recognizer.
+        input_transcriber_factory=lambda: None,
     )
-    answer_parts: list[str] = []
-    async for delta in brain.complete(request):
-        if delta.content:
-            answer_parts.append(delta.content)
-    answer = "".join(answer_parts).strip()
-    if not answer:
-        raise RuntimeError("The subscription text transport returned no sample.")
-
-    active_config = cfg_mod.load_config()
-    tts = build_tts_from_config(active_config.tts)
+    session = await provider.open_session(
+        RealtimeSessionConfig(
+            instructions="Speak only the trusted sample text supplied by the client.",
+            language=language,
+            voice=voice,
+        )
+    )
     pcm = bytearray()
-    sample_rate = 0
-    language_code = {"de": "de-DE", "en": "en-US", "es": "es-ES"}.get(language, language)
+    sample_rate = int(getattr(provider, "output_sample_rate", 24_000) or 24_000)
     try:
-        async for chunk in tts.synthesize(answer, language_code=language_code):
-            rate = int(chunk.sample_rate or 0)
-            if sample_rate and rate != sample_rate:
-                raise RuntimeError("The configured voice changed sample rate mid-sample.")
-            sample_rate = rate
-            pcm += bytes(chunk.pcm)
+        await session.send_speech(text)
+        async for event in session.receive():
+            if event.type == "audio_delta" and event.audio is not None:
+                pcm += bytes(event.audio.pcm)
+                sample_rate = int(event.audio.sample_rate or sample_rate)
+            elif event.type == "error":
+                raise RuntimeError(str(event.error or "subscription preview failed"))
+            elif event.type == "turn_complete":
+                break
     finally:
-        close = getattr(tts, "aclose", None)
-        if callable(close):
-            closed = close()
-            if inspect.isawaitable(closed):
-                await closed
-    if not pcm or sample_rate <= 0:
-        raise RuntimeError("The configured voice produced no audible sample.")
+        await session.close()
     return bytes(pcm), sample_rate
 
 
@@ -3710,14 +3673,11 @@ async def realtime_voice_preview(provider_id: str, body: RealtimeVoicePreviewBod
     voice = body.voice.strip()
     if not voice:
         raise HTTPException(status_code=400, detail="A voice id is required.")
-    allowed_voices = {option.id for option in REALTIME_VOICES.get(provider_id, ())}
-    if provider_id == "codex-subscription-realtime":
-        allowed_voices.add("configured-tts")
     _validate_realtime_option(
         provider_id=provider_id,
         field="voice",
         value=voice,
-        allowed=allowed_voices,
+        allowed={option.id for option in REALTIME_VOICES.get(provider_id, ())},
     )
     model = body.model.strip()
     _validate_realtime_option(
@@ -4692,79 +4652,13 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 "Connect or configure this provider first."
             ),
         )
-    if spec.id == "codex-subscription-realtime":
-        from jarvis.codex_app_server import (
-            get_shared_codex_app_server,
-            set_codex_subscription_activation_block,
-        )
-        from jarvis.voice.subscription_profile import (
-            CODEX_SUBSCRIPTION_VOICE_PROFILE,
-        )
-
-        # A previous stable-text session or the retired duplex adapter may be
-        # warm on another event loop. Provider selection is an explicit
-        # handoff: release that old owner before the activation probe acquires
-        # the single subscription-profile lease.
-        if not codex_transport_released:
-            await _release_codex_transports_for_voice_switch()
-        client = None
-        try:
-            client = get_shared_codex_app_server(_codex_binary_path(request), purpose="text")
-            await asyncio.wait_for(client.require_chatgpt_login(), timeout=45.0)
-        except TimeoutError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail="The ChatGPT subscription text check timed out. Try again.",
-            ) from exc
-        except Exception as exc:  # noqa: BLE001 - safe activation refusal
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        finally:
-            close = getattr(client, "close", None)
-            if callable(close):
-                try:
-                    await asyncio.shield(close())
-                except Exception as cleanup_exc:  # noqa: BLE001
-                    log.warning(
-                        "Codex subscription activation transport cleanup failed",
-                        exc_info=True,
-                    )
-                    raise HTTPException(
-                        status_code=409,
-                        detail=(
-                            "The ChatGPT subscription check could not release its "
-                            "voice transport. Try activation again."
-                        ),
-                    ) from cleanup_exc
-        await asyncio.to_thread(set_codex_subscription_activation_block, None)
-
-        if body.persist:
-            try:
-                from jarvis.core.config_writer import set_voice_profile
-
-                set_voice_profile(CODEX_SUBSCRIPTION_VOICE_PROFILE, mode="pipeline")
-            except Exception as exc:  # noqa: BLE001
-                raise HTTPException(status_code=500, detail=f"TOML write failed: {exc}") from exc
-
-        cfg = _resolve_cfg(request)
-        voice_cfg = getattr(cfg, "voice", None) if cfg is not None else None
-        if voice_cfg is not None:
-            voice_cfg.profile = CODEX_SUBSCRIPTION_VOICE_PROFILE
-            voice_cfg.mode = "pipeline"
-        await _emit(request, SecretConfigured(key="voice.profile", action="set"))
-
-        from jarvis.ui.web.voice_runtime import apply_voice_profile
-
-        session_restarted = apply_voice_profile(request, CODEX_SUBSCRIPTION_VOICE_PROFILE)
-        _invalidate_section_health_state(request)
-        return {
-            "ok": True,
-            "active": body.provider,
-            "profile": CODEX_SUBSCRIPTION_VOICE_PROFILE,
-            "mode": "pipeline",
-            "persisted": body.persist,
-            "restart_required": False,
-            "session_restarted": session_restarted,
-        }
+    if spec.id == "codex-subscription-realtime" and not codex_transport_released:
+        # The realtime activation probe needs the same single-profile App Server
+        # lease as a warm classic subscription session. Release the old owner
+        # first, then let the actual realtime provider verify and keep its own
+        # transport warm.
+        await _release_codex_transports_for_voice_switch()
+        codex_transport_released = True
     try:
         from jarvis.core.registry import load
         from jarvis.realtime.protocol import RealtimeProvider
@@ -4791,10 +4685,12 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         # A refused plan already recorded its sticky diagnosis where it was
         # discovered (require_chatgpt_login) — the live call path shares it.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    # The replacement provider is viable. Release any stable or legacy Codex
-    # voice client before persisting/reopening the new session so switching
-    # away and back never leaves an invisible subscription-profile owner.
-    await _release_codex_transports_for_voice_switch()
+    # The replacement provider is viable. A non-Codex replacement must release
+    # any warm subscription transport before the active call is reopened. The
+    # Codex branch already released the previous owner before its live probe;
+    # closing again here would throw away the newly verified warm transport.
+    if spec.id != "codex-subscription-realtime":
+        await _release_codex_transports_for_voice_switch()
     if spec.id == "codex-subscription-realtime":
         from jarvis.codex_app_server import set_codex_subscription_activation_block
 
@@ -4803,33 +4699,48 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         # across filesystem work.
         await asyncio.to_thread(set_codex_subscription_activation_block, None)
 
+    cfg = _resolve_cfg(request)
+    from jarvis.voice.subscription_profile import subscription_voice_selected
+
+    stale_subscription_profile = bool(
+        spec.id == "codex-subscription-realtime"
+        and cfg is not None
+        and subscription_voice_selected(cfg)
+    )
+    configured_mode = str(
+        getattr(getattr(cfg, "voice", None), "mode", "pipeline") or "pipeline"
+    ).strip().lower()
+    # Releases that routed this Realtime card through the classic composition
+    # persisted both the profile and Pipeline mode. That pair is repairable
+    # migration damage, not a user choice: selecting the same Realtime provider
+    # once restores Realtime. Ordinary provider switches preserve the mode.
+    effective_mode = "realtime" if stale_subscription_profile else configured_mode
+
     if body.persist:
         try:
             from jarvis.core.config_writer import (
                 set_realtime_provider,
-                set_voice_profile,
+                set_realtime_voice_selection,
             )
 
-            set_realtime_provider(body.provider)
-            cfg_now = _resolve_cfg(request)
-            from jarvis.voice.subscription_profile import (
-                subscription_voice_selected,
-            )
-
-            if cfg_now is not None and subscription_voice_selected(cfg_now):
-                current_mode = str(
-                    getattr(getattr(cfg_now, "voice", None), "mode", "pipeline") or "pipeline"
+            if cfg is not None and subscription_voice_selected(cfg):
+                set_realtime_voice_selection(
+                    body.provider,
+                    profile="",
+                    mode=effective_mode,
                 )
-                set_voice_profile("", mode=current_mode)
+            else:
+                set_realtime_provider(body.provider)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"TOML write failed: {exc}") from exc
 
-    cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "voice", None) is not None:
         try:
             cfg.voice.profile = ""
+            if stale_subscription_profile:
+                cfg.voice.mode = "realtime"
         except Exception as exc:  # noqa: BLE001 - detached config is harmless
             log.debug("In-memory voice.profile update skipped: %s", exc)
     if cfg is not None and getattr(cfg, "brain", None) is not None:
@@ -4877,6 +4788,8 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     return {
         "ok": True,
         "active": body.provider,
+        "profile": "",
+        "mode": effective_mode,
         "persisted": body.persist,
         "restart_required": False,
         "session_restarted": session_restarted,

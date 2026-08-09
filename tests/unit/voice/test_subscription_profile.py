@@ -22,24 +22,23 @@ def _config(*, profile: str = "", realtime_provider: str = "") -> SimpleNamespac
     )
 
 
-def test_canonical_and_legacy_selections_resolve_to_stable_profile() -> None:
+def test_only_explicit_profile_selects_the_classic_subscription_composition() -> None:
     assert (
         configured_voice_profile(profile := _config(profile=CODEX_SUBSCRIPTION_VOICE_PROFILE))
         == CODEX_SUBSCRIPTION_VOICE_PROFILE
     )
     assert profile.voice.mode == "realtime"
-    assert (
-        configured_voice_profile(_config(realtime_provider="codex-subscription-realtime"))
-        == CODEX_SUBSCRIPTION_VOICE_PROFILE
-    )
+    assert configured_voice_profile(
+        _config(realtime_provider="codex-subscription-realtime")
+    ) == ""
     assert configured_voice_profile(_config()) == ""
 
 
-def test_legacy_selection_forces_classic_pipeline_engine() -> None:
+def test_realtime_provider_pin_does_not_change_the_selected_engine() -> None:
     pipeline = SpeechPipeline.__new__(SpeechPipeline)
     pipeline._config = _config(realtime_provider="codex-subscription-realtime")
 
-    assert pipeline._configured_voice_mode() == "pipeline"
+    assert pipeline._configured_voice_mode() == "realtime"
 
 
 def test_profile_can_be_applied_and_removed_without_process_restart() -> None:

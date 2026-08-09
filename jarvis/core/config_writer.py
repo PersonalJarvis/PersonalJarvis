@@ -1248,6 +1248,107 @@ def set_voice_profile(
     )
 
 
+def set_realtime_voice_selection(
+    provider: str,
+    *,
+    profile: str,
+    mode: str,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist one Realtime provider and its compatible voice state atomically.
+
+    This is the migration-safe writer for a Realtime provider switch that also
+    has to retire a classic voice profile. Keeping all three values in one TOML
+    replacement prevents a crash or write failure from leaving the selected
+    provider paired with a stale Pipeline-only profile.
+    """
+    path = _ensure_writable_config_path(path)
+    normalized_provider = str(provider or "").strip()
+    normalized_profile = str(profile or "").strip()
+    normalized_mode = str(mode or "").strip().lower()
+    if not normalized_provider:
+        raise ValueError("A Realtime provider id is required.")
+    if normalized_mode not in {"pipeline", "realtime"}:
+        raise ValueError("Voice mode must be 'pipeline' or 'realtime'.")
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+
+        brain = doc.get("brain")
+        if brain is None:
+            brain = tomlkit.table()
+            doc["brain"] = brain
+        realtime = brain.get("realtime")
+        if realtime is None:
+            realtime = tomlkit.table()
+            brain["realtime"] = realtime
+        realtime["provider"] = normalized_provider
+
+        voice = doc.get("voice")
+        if voice is None:
+            voice = tomlkit.table()
+            doc["voice"] = voice
+        voice["profile"] = normalized_profile
+        voice["mode"] = normalized_mode
+
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+
+def migrate_legacy_codex_realtime_selection(
+    *, path: Path = DEFAULT_CONFIG_FILE
+) -> bool:
+    """Repair the exact Realtime-to-Pipeline state written by the old switch.
+
+    Older builds represented the Codex Realtime card as the classic
+    ``codex-subscription-voice`` profile and persisted Pipeline mode. The card
+    then appeared active while the Realtime mode control refused to switch,
+    leaving no in-app recovery path. Only that exact three-key legacy state is
+    changed; explicit Pipeline configurations using any other provider remain
+    untouched.
+    """
+    if path == DEFAULT_CONFIG_FILE:
+        from jarvis.core.config import resolve_config_path
+
+        path = resolve_config_path()
+    if not path.exists():
+        return False
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+        brain = doc.get("brain")
+        realtime = brain.get("realtime") if brain is not None else None
+        voice = doc.get("voice")
+        if (
+            realtime is None
+            or voice is None
+            or str(realtime.get("provider") or "").strip()
+            != "codex-subscription-realtime"
+            or str(voice.get("profile") or "").strip()
+            != "codex-subscription-voice"
+            or str(voice.get("mode") or "").strip().lower() != "pipeline"
+        ):
+            return False
+
+        voice["profile"] = ""
+        voice["mode"] = "realtime"
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+    return True
+
+
 def set_realtime_provider(provider: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the active realtime-voice provider to ``[brain.realtime] provider``.
 

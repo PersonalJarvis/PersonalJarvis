@@ -2468,8 +2468,8 @@ class VoiceConfig(BaseModel):
     # normal brain. ``codex-subscription-voice`` keeps the proven local
     # microphone/STT/TTS/playback pipeline and replaces only conversational
     # text generation with the stable Codex App Server subscription transport.
-    # The legacy realtime provider id is migrated at read time by
-    # ``jarvis.voice.subscription_profile``.
+    # This must be selected explicitly: choosing the similarly named Realtime
+    # provider never implies this classic-pipeline profile.
     profile: str = ""
     # Realtime tool exposure. "delegate" (default) gives the live model one
     # compact jarvis_action function and hands action turns to the key-aware
@@ -3947,6 +3947,29 @@ def _migrate_worker_env_vars() -> None:
 #: process. The on-disk marker is the durable guard; this only keeps a hot
 #: ``load_config`` loop from re-reading the file for a migration that is done.
 _DICTATION_HOTKEY_HEALED: set[Path] = set()
+_LEGACY_CODEX_REALTIME_HEALED: set[Path] = set()
+
+
+def _heal_legacy_codex_realtime_once(path: Path) -> None:
+    """Retire the Pipeline profile accidentally persisted by old Realtime UI."""
+    if path in _LEGACY_CODEX_REALTIME_HEALED:
+        return
+    _LEGACY_CODEX_REALTIME_HEALED.add(path)
+    try:
+        from jarvis.core.config_writer import migrate_legacy_codex_realtime_selection
+
+        migrated = migrate_legacy_codex_realtime_selection(path=path)
+    except Exception:  # noqa: BLE001 - a boot migration must not block startup
+        logging.getLogger(__name__).warning(
+            "Could not repair the legacy Codex Realtime voice selection.",
+            exc_info=True,
+        )
+        return
+    if migrated:
+        logging.getLogger(__name__).warning(
+            "Repaired legacy Codex Realtime configuration: removed the "
+            "Pipeline-only voice profile and restored Realtime mode."
+        )
 
 
 def _heal_dictation_hotkeys_once(path: Path) -> None:
@@ -3984,6 +4007,10 @@ def load_config(
     """
     if config_file is None:
         config_file = resolve_config_path()
+        # An earlier Codex-subscription implementation silently rewrote the
+        # Realtime selection as a Pipeline profile. Heal the exact persisted
+        # triple before the first parse so the UI and runtime see one state.
+        _heal_legacy_codex_realtime_once(config_file)
         # One-time dictation-shortcut backfill BEFORE the file is read, so the
         # very first boot after the update already sees the healed values
         # (BUG-010 config drift; see config_writer for why a marker and not an

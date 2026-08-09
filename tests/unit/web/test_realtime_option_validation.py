@@ -120,10 +120,9 @@ def test_get_realtime_options_reports_preview_capability(
     body = subscription_response.json()
     assert body["preview_available"] is True
     assert body["models"] == [
-        {"id": "auto", "label": "Codex App Server (subscription text)"}
+        {"id": "auto", "label": "ChatGPT-Live (model chosen by OpenAI)"}
     ]
-    assert body["voices"] == [
-        {"id": "configured-tts", "label": "Configured Jarvis voice output"}
-    ]
-    assert body["current_model"] == "auto"
-    assert body["current_voice"] == "configured-tts"
+    assert body["voices"][0] == {"id": "cove", "label": "cove"}
+    assert "configured-tts" not in {voice["id"] for voice in body["voices"]}
+    assert body["current_model"] == ""
+    assert body["current_voice"] == ""

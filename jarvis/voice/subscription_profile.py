@@ -98,15 +98,15 @@ def subscription_voice_capability(
 
 
 def configured_voice_profile(config: object) -> str:
-    """Return the canonical profile, including the legacy selection alias."""
+    """Return only an explicitly selected classic-pipeline voice profile.
+
+    A realtime provider pin is not a profile alias. Treating the Codex
+    subscription provider as one silently changed ``voice.mode`` to pipeline
+    after a user selected it in the Realtime section.
+    """
     voice = getattr(config, "voice", None)
     profile = str(getattr(voice, "profile", "") or "").strip().lower()
     if profile == CODEX_SUBSCRIPTION_VOICE_PROFILE:
-        return CODEX_SUBSCRIPTION_VOICE_PROFILE
-    brain = getattr(config, "brain", None)
-    realtime = getattr(brain, "realtime", None)
-    provider = str(getattr(realtime, "provider", "") or "").strip().lower()
-    if provider == LEGACY_CODEX_REALTIME_PROVIDER:
         return CODEX_SUBSCRIPTION_VOICE_PROFILE
     return ""
 

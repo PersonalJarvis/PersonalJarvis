@@ -52,6 +52,63 @@ def test_set_subscription_voice_profile_persists_compatible_mode_atomically(
     assert 'profile = "codex-subscription-voice"' in content
 
 
+def test_realtime_voice_selection_persists_all_three_values_once(
+    tmp_path: Path,
+    monkeypatch,
+):
+    toml = tmp_path / "jarvis.toml"
+    toml.write_text(
+        '[brain.realtime]\nprovider = "codex-subscription-realtime"\n\n'
+        '[voice]\nmode = "pipeline"\nprofile = "codex-subscription-voice"\n',
+        encoding="utf-8",
+    )
+    writes: list[str] = []
+    original_atomic_write = config_writer._atomic_write
+
+    def counted_write(path: Path, content: str) -> None:
+        writes.append(content)
+        original_atomic_write(path, content)
+
+    monkeypatch.setattr(config_writer, "_atomic_write", counted_write)
+
+    config_writer.set_realtime_voice_selection(
+        "codex-subscription-realtime",
+        profile="",
+        mode="realtime",
+        path=toml,
+    )
+
+    content = toml.read_text(encoding="utf-8")
+    assert len(writes) == 1
+    assert 'provider = "codex-subscription-realtime"' in content
+    assert 'profile = ""' in content
+    assert 'mode = "realtime"' in content
+
+
+def test_load_config_repairs_already_active_legacy_codex_realtime_state(
+    tmp_path: Path,
+    monkeypatch,
+):
+    toml = tmp_path / "jarvis.toml"
+    toml.write_text(
+        '[brain.realtime]\nprovider = "codex-subscription-realtime"\n\n'
+        '[voice]\nmode = "pipeline"\nprofile = "codex-subscription-voice"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cfg_mod, "resolve_config_path", lambda: toml)
+    cfg_mod._LEGACY_CODEX_REALTIME_HEALED.discard(toml)
+
+    loaded = cfg_mod.load_config()
+
+    assert loaded.brain.realtime is not None
+    assert loaded.brain.realtime.provider == "codex-subscription-realtime"
+    assert loaded.voice.mode == "realtime"
+    assert loaded.voice.profile == ""
+    content = toml.read_text(encoding="utf-8")
+    assert 'mode = "realtime"' in content
+    assert 'profile = ""' in content
+
+
 def test_realtime_tier_field_accepts_brain_tier_config():
     cfg = cfg_mod.JarvisConfig.model_validate(
         {"brain": {"realtime": {"provider": "openai"}}}

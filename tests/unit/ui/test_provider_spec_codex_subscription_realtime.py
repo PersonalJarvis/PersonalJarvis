@@ -32,7 +32,7 @@ def test_codex_subscription_realtime_spec_has_no_api_key_path() -> None:
     assert spec.auth_mode == "codex"
     assert spec.secret_keys == ()
     assert provider_billing(spec) == "subscription"
-    assert spec.experimental is False
+    assert spec.experimental is True
 
 
 @pytest.mark.parametrize(
@@ -260,7 +260,7 @@ async def test_plan_unsupported_activation_retries_the_live_gate(
             request,
         )
 
-    assert gate_calls, "the stable text gate must re-judge a plan-blocked account"
+    assert gate_calls, "the realtime provider gate must re-judge a plan-blocked account"
     assert close_calls == gate_calls
     assert caught.value.status_code == 409
     detail = str(caught.value.detail)
@@ -377,11 +377,13 @@ async def test_realtime_activation_reclaims_a_warm_transport_before_retry(
         routes.SwitchBody(
             provider="codex-subscription-realtime",
             persist=False,
+            accept_experimental=True,
         ),
         SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(config=config))),
     )
 
-    assert response["profile"] == "codex-subscription-voice"
+    assert response["profile"] == ""
+    assert response["mode"] == "realtime"
     assert release_calls == ["released"]
     assert snapshots == []
 
@@ -883,10 +885,11 @@ def test_reason_code_vocabulary_is_pinned() -> None:
 
 
 @pytest.mark.asyncio
-async def test_subscription_profile_no_longer_requires_experimental_acknowledgement(
+async def test_subscription_realtime_activation_preserves_realtime_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from jarvis import codex_app_server
+    from jarvis.core import config_writer
 
     monkeypatch.setattr(
         routes,
@@ -928,6 +931,12 @@ async def test_subscription_profile_no_longer_requires_experimental_acknowledgem
         "_release_codex_transports_for_voice_switch",
         release_previous_transport,
     )
+    persisted: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        config_writer,
+        "set_realtime_provider",
+        lambda provider: persisted.append(("provider", provider)),
+    )
     config = SimpleNamespace(
         codex=SimpleNamespace(binary_path="codex"),
         voice=SimpleNamespace(profile="", mode="realtime"),
@@ -936,15 +945,93 @@ async def test_subscription_profile_no_longer_requires_experimental_acknowledgem
     response = await routes.realtime_switch(
         routes.SwitchBody(
             provider="codex-subscription-realtime",
-            persist=False,
+            persist=True,
+            accept_experimental=True,
         ),
         SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(config=config))),
     )
 
-    assert response["profile"] == "codex-subscription-voice"
-    assert response["mode"] == "pipeline"
-    assert len(close_calls) == 1
+    assert response["profile"] == ""
+    assert response["mode"] == "realtime"
+    assert config.voice.mode == "realtime"
+    assert config.brain.realtime.provider == "codex-subscription-realtime"
+    assert close_calls == []
     assert release_calls == ["released"]
+    assert persisted == [("provider", "codex-subscription-realtime")]
+
+
+@pytest.mark.asyncio
+async def test_subscription_realtime_activation_repairs_the_old_pipeline_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis import codex_app_server
+    from jarvis.core import config_writer
+
+    monkeypatch.setattr(
+        routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": True,
+            "connected": True,
+            "mode": "chatgpt",
+            "message": "ready",
+            "reason_code": "ready",
+        },
+    )
+
+    class _Client:
+        async def require_chatgpt_login(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        codex_app_server,
+        "get_shared_codex_app_server",
+        lambda *_args, **_kwargs: _Client(),
+    )
+    monkeypatch.setattr(
+        codex_app_server,
+        "set_codex_subscription_activation_block",
+        lambda _value: None,
+    )
+
+    async def release_previous_transport() -> None:
+        return None
+
+    monkeypatch.setattr(
+        routes,
+        "_release_codex_transports_for_voice_switch",
+        release_previous_transport,
+    )
+
+    writes: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        config_writer,
+        "set_realtime_voice_selection",
+        lambda provider, *, profile, mode: writes.append(
+            (provider, profile, mode)
+        ),
+    )
+    config = SimpleNamespace(
+        codex=SimpleNamespace(binary_path="codex"),
+        voice=SimpleNamespace(profile="codex-subscription-voice", mode="pipeline"),
+        brain=SimpleNamespace(realtime=SimpleNamespace(provider="openai-realtime")),
+    )
+
+    response = await routes.realtime_switch(
+        routes.SwitchBody(
+            provider="codex-subscription-realtime",
+            persist=True,
+            accept_experimental=True,
+        ),
+        SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(config=config))),
+    )
+
+    assert response["mode"] == "realtime"
+    assert response["profile"] == ""
+    assert config.voice.mode == "realtime"
+    assert config.voice.profile == ""
+    assert config.brain.realtime.provider == "codex-subscription-realtime"
+    assert writes == [("codex-subscription-realtime", "", "realtime")]
 
 
 @pytest.mark.asyncio
