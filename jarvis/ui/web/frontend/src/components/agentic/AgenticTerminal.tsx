@@ -171,6 +171,39 @@ function restoreTerminalViewport(
 }
 
 /**
+ * How long a rebuilding pane must see NO further output before it is revealed.
+ *
+ * A replay is only HALF of a rebuild. Handing the recorded bytes over cannot
+ * repair a tail that lost its opening frame, nor one whose cursor moves belong
+ * to another geometry — so the server follows it by asking the agent to paint
+ * its interface again, with a one-row window-size change held for 80 ms and put
+ * back (`SessionRegistry._nudge_repaint`). That answer is a SECOND full screen
+ * and it lands AFTER the replay has parsed, which is where the pane used to be
+ * revealed: the repaint then played out in front of the reader (reported
+ * 2026-08-09 — every switch onto a Codex pane opened on the top of its history
+ * and raced down, with the replay curtain already in place and working).
+ *
+ * Only a normal-buffer CLI shows it. An alternate-screen agent (Claude Code)
+ * repaints over itself, so nothing travels and nothing is there to hide.
+ *
+ * So the reveal waits for the pane's output to go QUIET rather than for one
+ * write to finish. Comfortably past the nudge's own 80 ms plus a loopback round
+ * trip, and short enough that nobody can time it.
+ */
+export const REBUILD_QUIET_MS = 140;
+
+/**
+ * The longest a pane may stay hidden while it rebuilds, however talkative.
+ *
+ * The quiet window assumes the redraw ENDS. An agent midway through streaming
+ * an answer never goes quiet at all, and waiting on it would trade a visible
+ * scroll for a pane that simply does not come back. Past this the pane is shown
+ * mid-stream — which is what every other terminal in the app looks like while
+ * an agent is talking.
+ */
+export const REBUILD_SETTLE_MAX_MS = 450;
+
+/**
  * How long a call-sign may be — the same cap the backend enforces
  * (`MAX_TERMINAL_NAME`), so the field stops where the save would have failed
  * rather than letting somebody type a name that comes back rejected.
@@ -463,6 +496,20 @@ export function AgenticTerminal({
   // "B is still rebuilding", so an old callback could otherwise reveal B.
   const replayGenerationRef = useRef(0);
   const replayRevealFrameRef = useRef<number | undefined>(undefined);
+  /**
+   * Hold a finished rebuild back until the pane has stopped being redrawn.
+   *
+   * Owned by the connect effect, because only that scope sees every byte this
+   * pane draws. Reached from the stage-switch effect below as well: taking the
+   * stage also announces a new size, and an agent answers a size the same way
+   * it answers the server's nudge — by painting its whole screen again.
+   *
+   * Null before the terminal exists; the caller then reveals straight away,
+   * which is right for a pane that has nothing to rebuild yet.
+   */
+  const settleRebuildRef = useRef<
+    ((generation: number, reveal: () => void) => void) | null
+  >(null);
   /**
    * The delivery this pane is currently showing a receipt for, if any.
    *
@@ -822,11 +869,75 @@ export function AgenticTerminal({
       revealIfOnScreen();
     };
 
+    /*
+     * Reveal a rebuilt pane on QUIET, not on one write having finished.
+     *
+     * Two timers, and the difference between them is the whole contract. The
+     * quiet timer is restarted by every chunk that arrives while the curtain is
+     * down, so the repaint the server asks for after a replay plays out behind
+     * it. The deadline is armed once and NEVER restarted by output — it is the
+     * promise that the pane comes back even if the agent never stops talking.
+     */
+    let quietTimer: number | undefined;
+    let deadlineTimer: number | undefined;
+    /** What to run once the rebuild has settled; null while none is pending. */
+    let settleReveal: (() => void) | null = null;
+    /** The rebuild being waited out, so a superseded one cannot reveal. */
+    let settlingFor = 0;
+
+    const clearSettleTimers = () => {
+      if (quietTimer !== undefined) window.clearTimeout(quietTimer);
+      if (deadlineTimer !== undefined) window.clearTimeout(deadlineTimer);
+      quietTimer = undefined;
+      deadlineTimer = undefined;
+    };
+
+    const finishSettle = () => {
+      const reveal = settleReveal;
+      const generation = settlingFor;
+      clearSettleTimers();
+      settlingFor = 0;
+      settleReveal = null;
+      // Before the guards, deliberately: a settle abandoned because the pane
+      // went away must not leave the curtain flag raised, or the next stage
+      // switch would refuse to lift a curtain nobody owns any more.
+      replayCurtainRef.current = false;
+      if (
+        disposed ||
+        !activeRef.current ||
+        generation !== replayGenerationRef.current
+      ) {
+        return;
+      }
+      reveal?.();
+    };
+
+    /** Something is still being drawn — push the reveal back one quiet window. */
+    const noteRebuildOutput = () => {
+      if (settlingFor === 0) return;
+      if (quietTimer !== undefined) window.clearTimeout(quietTimer);
+      quietTimer = window.setTimeout(finishSettle, REBUILD_QUIET_MS);
+    };
+
+    const settleRebuild = (generation: number, reveal: () => void) => {
+      if (disposed || generation !== replayGenerationRef.current) return;
+      clearSettleTimers();
+      settlingFor = generation;
+      settleReveal = reveal;
+      deadlineTimer = window.setTimeout(finishSettle, REBUILD_SETTLE_MAX_MS);
+      noteRebuildOutput();
+    };
+    settleRebuildRef.current = settleRebuild;
+
     // Everything this pane draws goes through here, not just the agent's
     // stream: an exit banner written straight to xterm while output is parked
     // would appear ABOVE the output it is supposed to follow.
     const writeToPane = (text: string, afterWrite?: () => void) => {
       if (!text) return;
+      // Anything drawn while a rebuild settles belongs to that rebuild. The
+      // viewport is deliberately NOT touched here — where the pane opens is
+      // the reveal's decision, and it restores what the reader was looking at.
+      noteRebuildOutput();
       // The first byte is what retires the "starting" overlay — and it is taken
       // HERE rather than at the socket, so a pane whose output is parked
       // offscreen still counts as painted. It has a screen; nobody is looking
@@ -923,33 +1034,39 @@ export function AgenticTerminal({
       // counts as the pane having painted.
       writeToPane(text, () => {
         if (generation !== replayGenerationRef.current) return;
-        // Cleared unconditionally: a callback that fired while the pane was
-        // away must not leave the stage-switch settle step refusing to lift
-        // the curtain forever.
-        replayCurtainRef.current = false;
-        if (disposed || !activeRef.current) return;
+        if (disposed || !activeRef.current) {
+          // A callback that fired while the pane was away must not leave the
+          // stage-switch settle step refusing to lift the curtain forever.
+          replayCurtainRef.current = false;
+          return;
+        }
         restoreTerminalViewport(term, replayViewport);
         if (!curtain) {
+          replayCurtainRef.current = false;
           if (preservedViewportRef.current === replayViewport) {
             preservedViewportRef.current = null;
           }
           return;
         }
-        replayRevealFrameRef.current = requestAnimationFrame(() => {
-          replayRevealFrameRef.current = undefined;
-          if (
-            disposed ||
-            !activeRef.current ||
-            generation !== replayGenerationRef.current
-          ) {
-            return;
-          }
-          restoreTerminalViewport(term, replayViewport);
-          setTailReady(true);
-          container.style.removeProperty("visibility");
-          if (preservedViewportRef.current === replayViewport) {
-            preservedViewportRef.current = null;
-          }
+        // The bytes have parsed; the REPAINT they provoke has not arrived yet.
+        // Stay hidden until this pane stops being drawn — see REBUILD_QUIET_MS.
+        settleRebuild(generation, () => {
+          replayRevealFrameRef.current = requestAnimationFrame(() => {
+            replayRevealFrameRef.current = undefined;
+            if (
+              disposed ||
+              !activeRef.current ||
+              generation !== replayGenerationRef.current
+            ) {
+              return;
+            }
+            restoreTerminalViewport(term, replayViewport);
+            setTailReady(true);
+            container.style.removeProperty("visibility");
+            if (preservedViewportRef.current === replayViewport) {
+              preservedViewportRef.current = null;
+            }
+          });
         });
       });
     };
@@ -1257,6 +1374,14 @@ export function AgenticTerminal({
         replayRevealFrameRef.current = undefined;
       }
       container.style.removeProperty("visibility");
+      // A pending reveal would fire into a disposed terminal, and its timers
+      // would outlive the pane that armed them.
+      clearSettleTimers();
+      settleReveal = null;
+      settlingFor = 0;
+      if (settleRebuildRef.current === settleRebuild) {
+        settleRebuildRef.current = null;
+      }
       // Before the terminal is disposed below: a deadline flush one tick later
       // would write into it after it is gone.
       cancelHoldTimer();
@@ -1347,13 +1472,21 @@ export function AgenticTerminal({
         // A replay mid-rebuild keeps the curtain: lifting it here would show
         // the rest of its history printing. Its own completion reveals the
         // pane (see `replayToPane`).
-        if (!replayCurtainRef.current) {
+        if (replayCurtainRef.current) return;
+        const reveal = () => {
+          restoreViewport();
           setTailReady(true);
           containerRef.current?.style.removeProperty("visibility");
           if (preservedViewportRef.current === returningViewport) {
             preservedViewportRef.current = null;
           }
-        }
+        };
+        // Taking the stage announces a new size, and an agent answers a size
+        // by painting its whole screen again — the same redraw the replay path
+        // waits out, arriving just as late. Reveal once this pane is quiet.
+        const settleFn = settleRebuildRef.current;
+        if (settleFn) settleFn(replayGenerationRef.current, reveal);
+        else reveal();
       });
     };
     const afterFlush = () => {

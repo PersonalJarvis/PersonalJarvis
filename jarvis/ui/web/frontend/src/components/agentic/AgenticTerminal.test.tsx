@@ -174,7 +174,14 @@ vi.mock("./paneFileDrag", () => ({
 vi.mock("@/lib/editActions", () => ({ attachTerminalBridge: () => undefined }));
 vi.mock("@/lib/agenticIdeApi", () => ({ attachToTerminal: vi.fn() }));
 
-import { AgenticTerminal } from "./AgenticTerminal";
+import { AgenticTerminal, REBUILD_QUIET_MS } from "./AgenticTerminal";
+
+/**
+ * Past the quiet window a rebuilt pane waits out, plus the reveal frame behind
+ * it. Bound to the real constant so tuning the window cannot silently turn
+ * these assertions into "revealed eventually".
+ */
+const PAST_REBUILD = REBUILD_QUIET_MS + 40;
 
 class ResizeObserverHarness implements ResizeObserver {
   constructor(_callback: ResizeObserverCallback) {}
@@ -444,7 +451,7 @@ describe("AgenticTerminal layout", () => {
 
     act(() => {
       terminalHarness.writeCallbacks.shift()?.();
-      vi.advanceTimersByTime(20);
+      vi.advanceTimersByTime(PAST_REBUILD);
     });
 
     expect(terminalHarness.scrollToBottom).toHaveBeenCalled();
@@ -490,11 +497,87 @@ describe("AgenticTerminal layout", () => {
 
     act(() => {
       terminalHarness.writeCallbacks.shift()?.();
-      vi.advanceTimersByTime(20);
+      vi.advanceTimersByTime(PAST_REBUILD);
     });
 
     expect(terminalHarness.scrollToBottom).toHaveBeenCalled();
     expect(screen.getByTestId("agentic-terminal-host-Dana").style.visibility).toBe("");
+    expect(region?.className).not.toContain("invisible");
+  });
+
+  it("stays hidden while the post-replay repaint is still arriving", () => {
+    // The replay is only half the rebuild: the server answers a truncated or
+    // re-based one by nudging the agent into painting its whole screen again
+    // (`SessionRegistry._nudge_repaint`), and that second screen lands AFTER
+    // the replay parsed. Revealing in between is what still put the repaint in
+    // front of the reader — a Codex pane opening on the top of its history and
+    // racing down — even with the replay curtain working exactly as designed.
+    vi.useFakeTimers();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+    const region = screen.getByTestId("agentic-terminal-host-Dana").parentElement;
+    act(() => vi.advanceTimersByTime(PAST_REBUILD));
+
+    terminalHarness.deferWrite = true;
+    act(() => {
+      terminalHarness.handlers.current?.onReplay?.("recorded session" as never);
+      terminalHarness.writeCallbacks.shift()?.();
+    });
+    expect(region?.className).toContain("invisible");
+
+    // The repaint arrives mid-window and restarts it — the pane keeps waiting
+    // rather than revealing on the schedule the replay alone would have set.
+    act(() => {
+      vi.advanceTimersByTime(REBUILD_QUIET_MS - 20);
+      terminalHarness.handlers.current?.onOutput?.("the repainted screen" as never);
+      vi.advanceTimersByTime(REBUILD_QUIET_MS - 20);
+    });
+    expect(region?.className).toContain("invisible");
+
+    act(() => vi.advanceTimersByTime(PAST_REBUILD));
+    expect(region?.className).not.toContain("invisible");
+  });
+
+  it("reveals a pane whose agent never stops talking", () => {
+    // The quiet window assumes the redraw ends. An agent streaming an answer
+    // never goes quiet, and waiting on it would trade a visible scroll for a
+    // pane that simply does not come back.
+    vi.useFakeTimers();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+    const region = screen.getByTestId("agentic-terminal-host-Dana").parentElement;
+    act(() => vi.advanceTimersByTime(PAST_REBUILD));
+
+    terminalHarness.deferWrite = true;
+    act(() => {
+      terminalHarness.handlers.current?.onReplay?.("recorded session" as never);
+      terminalHarness.writeCallbacks.shift()?.();
+    });
+    expect(region?.className).toContain("invisible");
+
+    act(() => {
+      // Chatty enough that the quiet window never once elapses.
+      for (let tick = 0; tick < 12; tick += 1) {
+        vi.advanceTimersByTime(REBUILD_QUIET_MS - 40);
+        terminalHarness.handlers.current?.onOutput?.("still working…" as never);
+      }
+      vi.advanceTimersByTime(40);
+    });
+
     expect(region?.className).not.toContain("invisible");
   });
 
@@ -555,13 +638,13 @@ describe("AgenticTerminal layout", () => {
 
     act(() => {
       terminalHarness.writeCallbacks.shift()?.();
-      vi.advanceTimersByTime(20);
+      vi.advanceTimersByTime(PAST_REBUILD);
     });
     expect(region?.className).toContain("invisible");
 
     act(() => {
       terminalHarness.writeCallbacks.shift()?.();
-      vi.advanceTimersByTime(20);
+      vi.advanceTimersByTime(PAST_REBUILD);
     });
     expect(region?.className).not.toContain("invisible");
   });
@@ -607,12 +690,12 @@ describe("AgenticTerminal layout", () => {
     );
     expect(terminalHarness.writeCallbacks).toHaveLength(1);
 
-    act(() => vi.advanceTimersByTime(20));
+    act(() => vi.advanceTimersByTime(PAST_REBUILD));
     expect(region?.className).toContain("invisible");
 
     act(() => {
       terminalHarness.writeCallbacks.shift()?.();
-      vi.advanceTimersByTime(20);
+      vi.advanceTimersByTime(PAST_REBUILD);
     });
     expect(region?.className).not.toContain("invisible");
   });
