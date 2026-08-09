@@ -81,11 +81,13 @@ def test_runtime_probe_requires_a_valid_loaded_pool(monkeypatch) -> None:
             return self._payload[:limit]
 
     payload = {
-        "size": 2,
-        "in_use": 1,
+        "size": 4,
+        "in_use": 3,
         "units": [
             {"index": 0, "state": "active", "session_id": "private"},
             {"index": 1, "state": "idle", "session_id": None},
+            {"index": 2, "state": "draining", "session_id": "private"},
+            {"index": 3, "state": "stuck", "session_id": "private"},
         ],
     }
     class _Connection:
@@ -103,14 +105,52 @@ def test_runtime_probe_requires_a_valid_loaded_pool(monkeypatch) -> None:
 
     monkeypatch.setattr(http.client, "HTTPConnection", _Connection)
     assert supervisor.probe_runtime("http://localhost:8765") == {
-        "size": 2,
-        "in_use": 1,
+        "size": 4,
+        "in_use": 3,
         "available": 1,
-        "stuck": 0,
+        "active": 1,
+        "draining": 1,
+        "stuck": 1,
     }
 
+    payload["in_use"] = 2
+    assert supervisor.probe_runtime("http://localhost:8765") is None
+    payload["in_use"] = 3
     payload["units"] = []
     assert supervisor.probe_runtime("http://localhost:8765") is None
+
+
+def test_only_an_abandoned_full_pool_has_no_usable_capacity() -> None:
+    assert supervisor._pool_has_no_usable_capacity(
+        {
+            "size": 1,
+            "in_use": 1,
+            "available": 0,
+            "active": 0,
+            "draining": 1,
+            "stuck": 0,
+        }
+    )
+    assert not supervisor._pool_has_no_usable_capacity(
+        {
+            "size": 1,
+            "in_use": 1,
+            "available": 0,
+            "active": 1,
+            "draining": 0,
+            "stuck": 0,
+        }
+    )
+    assert not supervisor._pool_has_no_usable_capacity(
+        {
+            "size": 2,
+            "in_use": 1,
+            "available": 1,
+            "active": 0,
+            "draining": 0,
+            "stuck": 1,
+        }
+    )
 
 
 def test_wait_until_ready_ignores_tcp_and_waits_for_the_pool(monkeypatch) -> None:
@@ -658,6 +698,174 @@ def test_a_ready_owned_loopback_bind_is_not_restarted(monkeypatch, tmp_path) -> 
     )
 
 
+def test_an_abandoned_owned_pool_is_replaced_generation_safely(
+    monkeypatch, tmp_path
+) -> None:
+    from jarvis.realtime.local_server import install
+
+    supervisor._reset_for_tests()
+    root = tmp_path / "local_realtime"
+    command = f'"{root / "venv" / "server.exe"}" --mode realtime --ws_host 127.0.0.1'
+    generation = (4711, 1000.0, "generation-a")
+    pool = {
+        "size": 1,
+        "in_use": 1,
+        "available": 0,
+        "active": 0,
+        "draining": 1,
+        "stuck": 0,
+    }
+    monkeypatch.setattr(supervisor, "managed_install_root", lambda value: root)
+    monkeypatch.setattr(install, "snapshot", lambda: {"running": False})
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: pool)
+    monkeypatch.setattr(supervisor, "_port_open", lambda *args, **kwargs: False)
+    monkeypatch.setattr(supervisor, "_owned_process", lambda: (4711, True))
+    monkeypatch.setattr(supervisor, "_owned_generation", lambda: generation)
+    monkeypatch.setattr(supervisor, "_verified_owned_command", lambda: command)
+    stopped: list[Path] = []
+    monkeypatch.setattr(
+        supervisor,
+        "_stop_owned_unlocked",
+        lambda **kwargs: stopped.append(kwargs["install_root"]) or (True, "stopped"),
+    )
+    monkeypatch.setattr(supervisor, "_kill_by_install_root", lambda root: (0, 0))
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "_spawn",
+        lambda candidate, **kwargs: spawned.append(candidate) or 7331,
+    )
+    monkeypatch.setattr(supervisor, "_write_pidfile", lambda *args: True)
+
+    outcome = supervisor.ensure_running(
+        launch_command=command,
+        base_url="http://127.0.0.1:8765",
+        reason="watchdog-unavailable",
+        replace_unavailable_generation=generation,
+    )
+
+    assert outcome == "spawned"
+    assert stopped == [root]
+    assert spawned == [command]
+
+
+def test_unavailable_pool_replacement_skips_a_newer_generation(
+    monkeypatch, tmp_path
+) -> None:
+    from jarvis.realtime.local_server import install
+
+    root = tmp_path / "local_realtime"
+    command = f'"{root / "venv" / "server.exe"}" --mode realtime --ws_host 127.0.0.1'
+    expected = (4711, 1000.0, "generation-a")
+    pool = {
+        "size": 1,
+        "in_use": 1,
+        "available": 0,
+        "active": 0,
+        "draining": 0,
+        "stuck": 1,
+    }
+    monkeypatch.setattr(supervisor, "managed_install_root", lambda value: root)
+    monkeypatch.setattr(install, "snapshot", lambda: {"running": False})
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: pool)
+    monkeypatch.setattr(supervisor, "_port_open", lambda *args, **kwargs: True)
+    monkeypatch.setattr(supervisor, "_owned_process", lambda: (7331, True))
+    monkeypatch.setattr(
+        supervisor,
+        "_owned_generation",
+        lambda: (7331, 2000.0, "generation-b"),
+    )
+    monkeypatch.setattr(supervisor, "_verified_owned_command", lambda: command)
+
+    def forbidden_stop(**kwargs):
+        raise AssertionError("a stale monitor must not stop a newer child")
+
+    monkeypatch.setattr(supervisor, "_stop_owned_unlocked", forbidden_stop)
+    assert (
+        supervisor.ensure_running(
+            launch_command=command,
+            base_url="http://127.0.0.1:8765",
+            reason="watchdog-unavailable",
+            replace_unavailable_generation=expected,
+        )
+        == "refused:generation-changed"
+    )
+
+
+def test_active_full_pool_is_never_replaced(monkeypatch, tmp_path) -> None:
+    from jarvis.realtime.local_server import install
+
+    root = tmp_path / "local_realtime"
+    command = f'"{root / "venv" / "server.exe"}" --mode realtime --ws_host 127.0.0.1'
+    generation = (4711, 1000.0, "generation-a")
+    pool = {
+        "size": 1,
+        "in_use": 1,
+        "available": 0,
+        "active": 1,
+        "draining": 0,
+        "stuck": 0,
+    }
+    monkeypatch.setattr(supervisor, "managed_install_root", lambda value: root)
+    monkeypatch.setattr(install, "snapshot", lambda: {"running": False})
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: pool)
+    monkeypatch.setattr(supervisor, "_port_open", lambda *args, **kwargs: True)
+    monkeypatch.setattr(supervisor, "_owned_process", lambda: (4711, True))
+    monkeypatch.setattr(supervisor, "_verified_owned_command", lambda: command)
+
+    def forbidden_stop(**kwargs):
+        raise AssertionError("a connected client must never be stopped")
+
+    monkeypatch.setattr(supervisor, "_stop_owned_unlocked", forbidden_stop)
+    assert (
+        supervisor.ensure_running(
+            launch_command=command,
+            base_url="http://127.0.0.1:8765",
+            reason="watchdog-unavailable",
+            replace_unavailable_generation=generation,
+        )
+        == "already-running"
+    )
+
+
+def test_recovered_pool_is_not_stopped_by_a_stale_unavailable_observation(
+    monkeypatch, tmp_path
+) -> None:
+    from jarvis.realtime.local_server import install
+
+    root = tmp_path / "local_realtime"
+    command = f'"{root / "venv" / "server.exe"}" --mode realtime --ws_host 127.0.0.1'
+    generation = (4711, 1000.0, "generation-a")
+    pool = {
+        "size": 1,
+        "in_use": 0,
+        "available": 1,
+        "active": 0,
+        "draining": 0,
+        "stuck": 0,
+    }
+    monkeypatch.setattr(supervisor, "managed_install_root", lambda value: root)
+    monkeypatch.setattr(install, "snapshot", lambda: {"running": False})
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: pool)
+    monkeypatch.setattr(supervisor, "_port_open", lambda *args, **kwargs: True)
+    monkeypatch.setattr(supervisor, "_owned_process", lambda: (4711, True))
+    monkeypatch.setattr(supervisor, "_verified_owned_command", lambda: command)
+
+    def forbidden_stop(**kwargs):
+        raise AssertionError("a pool that recovered under the lease must stay alive")
+
+    monkeypatch.setattr(supervisor, "_stop_owned_unlocked", forbidden_stop)
+    assert (
+        supervisor.ensure_running(
+            launch_command=command,
+            base_url="http://127.0.0.1:8765",
+            reason="watchdog-unavailable",
+            replace_unavailable_generation=generation,
+        )
+        == "already-running"
+    )
+
+
 def test_pid_reuse_is_never_trusted(monkeypatch, tmp_path) -> None:
     """A rebooted machine can hand the recorded pid to an innocent process;
     a create_time mismatch must read as NOT ours."""
@@ -843,6 +1051,91 @@ def test_runtime_monitor_restarts_and_rewarms_a_dead_owned_server(
 
     assert outcome == "ready"
     assert calls == ["ensure:watchdog-exit", "ready", "marker", "brain"]
+
+
+def test_runtime_monitor_replaces_an_abandoned_pool_after_the_grace(
+    monkeypatch, tmp_path
+) -> None:
+    root = tmp_path / "local_realtime"
+    command = f'"{root / "server.exe"}" --mode realtime'
+    generation = (4711, 1000.0, "generation-a")
+    pool = {
+        "size": 1,
+        "in_use": 1,
+        "available": 0,
+        "active": 0,
+        "draining": 1,
+        "stuck": 0,
+    }
+    monkeypatch.setattr(supervisor, "RUNTIME_MONITOR_POLL_S", 0.0)
+    monkeypatch.setattr(supervisor, "RUNTIME_MONITOR_POOL_INTERVAL_S", 0.0)
+    monkeypatch.setattr(supervisor, "RUNTIME_MONITOR_UNREADY_GRACE_S", 0.0)
+    monkeypatch.setattr(supervisor, "managed_install_root", lambda value: root)
+    monkeypatch.setattr(supervisor, "_owned_process", lambda: (4711, True))
+    monkeypatch.setattr(supervisor, "_owned_generation", lambda: generation)
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: pool)
+    stop_event = threading.Event()
+    revives: list[dict[str, Any]] = []
+
+    def revive(**kwargs: Any) -> str:
+        revives.append(kwargs)
+        stop_event.set()
+        return "ready"
+
+    monkeypatch.setattr(supervisor, "_revive_from_monitor", revive)
+
+    supervisor._runtime_monitor(
+        command,
+        "http://127.0.0.1:8765",
+        stop_event,
+        (command, "http://127.0.0.1:8765/v1/pool"),
+    )
+
+    assert len(revives) == 1
+    assert revives[0]["reason"] == "watchdog-unavailable"
+    assert revives[0]["unavailable_generation"] == generation
+
+
+def test_runtime_monitor_does_not_replace_a_connected_full_pool(
+    monkeypatch, tmp_path
+) -> None:
+    root = tmp_path / "local_realtime"
+    command = f'"{root / "server.exe"}" --mode realtime'
+    pool = {
+        "size": 1,
+        "in_use": 1,
+        "available": 0,
+        "active": 1,
+        "draining": 0,
+        "stuck": 0,
+    }
+
+    class _OneIterationEvent(threading.Event):
+        def __init__(self) -> None:
+            super().__init__()
+            self._waits = 0
+
+        def wait(self, timeout: float) -> bool:
+            del timeout
+            self._waits += 1
+            return self._waits > 1
+
+    monkeypatch.setattr(supervisor, "RUNTIME_MONITOR_POOL_INTERVAL_S", 0.0)
+    monkeypatch.setattr(supervisor, "managed_install_root", lambda value: root)
+    monkeypatch.setattr(supervisor, "_owned_process", lambda: (4711, True))
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: pool)
+    monkeypatch.setattr(
+        supervisor,
+        "_revive_from_monitor",
+        lambda **kwargs: pytest.fail("an active call must never be replaced"),
+    )
+
+    supervisor._runtime_monitor(
+        command,
+        "http://127.0.0.1:8765",
+        _OneIterationEvent(),
+        (command, "http://127.0.0.1:8765/v1/pool"),
+    )
 
 
 def test_runtime_monitor_is_singleton_for_one_managed_generation(

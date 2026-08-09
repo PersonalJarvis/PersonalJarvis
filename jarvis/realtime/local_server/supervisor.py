@@ -61,10 +61,12 @@ OWNED_STARTUP_TIMEOUT_S = RUNTIME_READY_TIMEOUT_S
 
 # The managed process is meant to be warm before a user calls. Poll its
 # ownership cheaply once a second so an idle native crash starts recovering
-# immediately; probe the full model pool less often to catch a live-but-wedged
-# child without filling the server log with health requests.
+# immediately; probe the full model pool often enough that an abandoned
+# capacity-one session cannot make the next caller wait minutes.  Replacement
+# still requires 30 seconds of continuously unavailable capacity and a second
+# generation-bound probe under the lifecycle lease.
 RUNTIME_MONITOR_POLL_S = 1.0
-RUNTIME_MONITOR_POOL_INTERVAL_S = 30.0
+RUNTIME_MONITOR_POOL_INTERVAL_S = 5.0
 RUNTIME_MONITOR_UNREADY_GRACE_S = 30.0
 
 _MAX_POOL_RESPONSE_BYTES = 64 * 1024
@@ -251,12 +253,29 @@ def probe_runtime(base_url: str, timeout: float = 0.75) -> dict[str, int] | None
         if not isinstance(state, str) or state not in allowed_states:
             return None
         states.append(state)
+    idle = states.count("idle")
+    active = states.count("active")
+    draining = states.count("draining")
+    stuck = states.count("stuck")
+    if in_use != active + draining + stuck:
+        return None
     return {
         "size": size,
         "in_use": in_use,
-        "available": size - in_use,
-        "stuck": states.count("stuck"),
+        "available": idle,
+        "active": active,
+        "draining": draining,
+        "stuck": stuck,
     }
+
+
+def _pool_has_no_usable_capacity(pool: dict[str, int]) -> bool:
+    """Whether every slot is abandoned and no client is still connected."""
+    return (
+        pool.get("available") == 0
+        and pool.get("active") == 0
+        and pool.get("draining", 0) + pool.get("stuck", 0) == pool.get("size")
+    )
 
 
 def wait_until_ready(
@@ -692,13 +711,22 @@ def _uses_loopback_bind(command: str) -> bool:
     return host is not None and _is_loopback(host.strip().strip("[]"))
 
 
-def ensure_running(*, launch_command: str, base_url: str, reason: str) -> str:
+def ensure_running(
+    *,
+    launch_command: str,
+    base_url: str,
+    reason: str,
+    replace_unavailable_generation: tuple[int, float, str] | None = None,
+) -> str:
     """Start the server if — and only if — starting can help.
 
     Returns ``"already-running"`` (port served, or our recorded process is
     alive and presumably booting), ``"spawned"``, or ``"refused:<why>"``.
     The single spawn path for BOTH the boot-time prewarm and the connect-time
-    revive, which is what makes their race harmless.
+    revive, which is what makes their race harmless. The monitor may also pass
+    the exact generation it observed with no usable capacity; replacement then
+    happens only after the pool and ownership are verified again under the
+    lifecycle lease.
     """
     command = (launch_command or "").strip()
     if not command:
@@ -752,6 +780,39 @@ def ensure_running(*, launch_command: str, base_url: str, reason: str) -> str:
                 pool = None
                 alive = False
                 port_open = _port_open(port, timeout=0.25)
+        if (
+            pool is not None
+            and replace_unavailable_generation is not None
+            and _pool_has_no_usable_capacity(pool)
+        ):
+            if managed_root is None:
+                return "refused:not-managed"
+            if _owned_generation() != replace_unavailable_generation:
+                return "refused:generation-changed"
+            owned_command = _verified_owned_command()
+            if (
+                not alive
+                or owned_command is None
+                or managed_install_root(owned_command) != managed_root
+            ):
+                return "refused:unverified-owner"
+            changed, message = _stop_owned_unlocked(
+                owned_only=True,
+                install_root=managed_root,
+            )
+            if not changed:
+                log.warning(
+                    "local-realtime supervisor: unavailable pool cleanup failed (%s)",
+                    message,
+                )
+                return "refused:stuck-process"
+            log.warning(
+                "local-realtime supervisor: replaced an owned runtime whose "
+                "entire pool remained unavailable without an active client"
+            )
+            pool = None
+            alive = False
+            port_open = _port_open(port, timeout=0.25)
         if pool is not None:
             return "already-running"
         if alive:
@@ -961,6 +1022,7 @@ def _revive_from_monitor(
     base_url: str,
     reason: str,
     cancel_event: threading.Event,
+    unavailable_generation: tuple[int, float, str] | None = None,
 ) -> str:
     """Run one generation-bound revive and return its explicit outcome."""
     try:
@@ -975,6 +1037,7 @@ def _revive_from_monitor(
         launch_command=launch_command,
         base_url=base_url,
         reason=reason,
+        replace_unavailable_generation=unavailable_generation,
     )
     if outcome != "spawned":
         return outcome
@@ -1004,6 +1067,7 @@ def _runtime_monitor(
     """Detect an idle process exit promptly and a wedged pool conservatively."""
     next_pool_probe = time.monotonic() + RUNTIME_MONITOR_POOL_INTERVAL_S
     unready_since: float | None = None
+    unhealthy_kind = ""
     last_outcome = ""
     try:
         while not stop_event.wait(RUNTIME_MONITOR_POLL_S):
@@ -1029,6 +1093,7 @@ def _runtime_monitor(
                     if outcome == "ready":
                         log.info("local-realtime monitor: crashed runtime recovered")
                         unready_since = None
+                        unhealthy_kind = ""
                         next_pool_probe = (
                             time.monotonic() + RUNTIME_MONITOR_POOL_INTERVAL_S
                         )
@@ -1044,28 +1109,59 @@ def _runtime_monitor(
                 if now < next_pool_probe:
                     continue
                 next_pool_probe = now + RUNTIME_MONITOR_POOL_INTERVAL_S
-                if probe_runtime(base_url, timeout=0.75) is not None:
+                pool = probe_runtime(base_url, timeout=0.75)
+                kind = (
+                    "unready"
+                    if pool is None
+                    else "unavailable"
+                    if _pool_has_no_usable_capacity(pool)
+                    else ""
+                )
+                if not kind:
                     unready_since = None
+                    unhealthy_kind = ""
                     last_outcome = ""
                     continue
-                if unready_since is None:
+                if unready_since is None or unhealthy_kind != kind:
                     unready_since = now
+                    unhealthy_kind = kind
+                    last_outcome = ""
                     log.warning(
-                        "local-realtime monitor: owned process stopped reporting "
-                        "a ready model pool; waiting for a second failed probe"
+                        "local-realtime monitor: owned process has %s; waiting "
+                        "for the recovery grace period",
+                        (
+                            "no usable pool capacity and no active client"
+                            if kind == "unavailable"
+                            else "stopped reporting a ready model pool"
+                        ),
                     )
                     continue
                 if now - unready_since < RUNTIME_MONITOR_UNREADY_GRACE_S:
                     continue
+                unavailable_generation = None
+                if kind == "unavailable":
+                    unavailable_generation = _owned_generation()
+                    if unavailable_generation is None:
+                        outcome = "refused:unverified-generation"
+                        if outcome != last_outcome:
+                            log.warning(
+                                "local-realtime monitor: unavailable recovery "
+                                "deferred (%s)",
+                                outcome,
+                            )
+                        last_outcome = outcome
+                        continue
                 outcome = _revive_from_monitor(
                     launch_command=launch_command,
                     base_url=base_url,
-                    reason="watchdog-unready",
+                    reason=f"watchdog-{kind}",
                     cancel_event=stop_event,
+                    unavailable_generation=unavailable_generation,
                 )
                 if outcome == "ready":
                     log.info("local-realtime monitor: wedged runtime recovered")
                     unready_since = None
+                    unhealthy_kind = ""
                     next_pool_probe = (
                         time.monotonic() + RUNTIME_MONITOR_POOL_INTERVAL_S
                     )
