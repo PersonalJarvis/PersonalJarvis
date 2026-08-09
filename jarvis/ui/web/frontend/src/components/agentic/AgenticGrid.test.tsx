@@ -24,7 +24,10 @@ if (typeof globalThis.ResizeObserver === "undefined") {
  * Through `vi.hoisted` because `vi.mock` factories are lifted above ordinary
  * module code and would otherwise reach a `const` that does not exist yet.
  */
-const { paneRenders } = vi.hoisted(() => ({ paneRenders: new Map<string, number>() }));
+const { paneRenders, paneActiveHistory } = vi.hoisted(() => ({
+  paneRenders: new Map<string, number>(),
+  paneActiveHistory: new Map<string, boolean[]>(),
+}));
 
 const pushToast = vi.fn();
 vi.mock("@/store/events", () => ({
@@ -129,6 +132,7 @@ vi.mock("./AgenticTerminal", () => ({
     arranging,
     layoutBusy,
     fontSize,
+    active,
   }: {
     name: string;
     maximized?: boolean;
@@ -146,8 +150,13 @@ vi.mock("./AgenticTerminal", () => ({
     arranging?: boolean;
     layoutBusy?: boolean;
     fontSize?: number;
+    active?: boolean;
   }) => {
     paneRenders.set(name, (paneRenders.get(name) ?? 0) + 1);
+    paneActiveHistory.set(name, [
+      ...(paneActiveHistory.get(name) ?? []),
+      active ?? true,
+    ]);
     return (
     <div
       data-testid={`pane-${name}`}
@@ -163,6 +172,7 @@ vi.mock("./AgenticTerminal", () => ({
       // The real pane stops refitting its terminal while this is on. Read here
       // because it is the grid's job to say WHEN the geometry is in motion.
       data-layout-busy={layoutBusy ? "yes" : "no"}
+      data-active={active ? "yes" : "no"}
       // The size the terminal text is drawn at. Read here because the point of
       // remembering it is that the PANES come back at that size.
       data-font-size={String(fontSize ?? "")}
@@ -287,6 +297,7 @@ beforeEach(() => {
   // hand its sizes to the next one and the layout assertions would depend on
   // the order the tests happen to run in.
   window.localStorage.clear();
+  paneActiveHistory.clear();
   window.localStorage.setItem("jarvis.agenticIde.composerHeight.v2", "176");
   vi.mocked(api.addTerminal).mockResolvedValue(
     sessionWith([
@@ -2653,6 +2664,29 @@ describe("chat view", () => {
     fireEvent.click(screen.getByTestId("chat-rail-Aria"));
     expect(cellClass("Aria")).not.toContain("hidden");
     expect(cellClass("Mika")).toContain("hidden");
+  });
+
+  it("activates an externally added pane on its first chat-stage render", () => {
+    const { rerender } = renderGrid(FOUR);
+    toChat();
+    paneActiveHistory.clear();
+
+    rerender({
+      session: sessionWith([
+        ["Mika", 0],
+        ["Nova", 1],
+        ["Aria", 2],
+        ["Kai", 3],
+        ["Fresh", 4],
+      ]),
+    });
+
+    // Connecting once while inactive gives the PTY the narrow hidden-grid
+    // geometry. The pane must own the full stage before its first effect runs.
+    expect(paneActiveHistory.get("Fresh")?.[0]).toBe(true);
+    expect(screen.getByTestId("pane-Fresh").getAttribute("data-active")).toBe(
+      "yes",
+    );
   });
 
   it("swaps two rail positions by dragging without moving or remounting the panes", async () => {

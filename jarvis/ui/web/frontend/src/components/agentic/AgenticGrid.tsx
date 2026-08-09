@@ -791,6 +791,12 @@ export function AgenticGrid({
    * effects, so a pane closed by another client simply falls back.
    */
   const [chatPane, setChatPane] = useState<string | null>(null);
+  // Null until the first render has been seen: on mount every pane is "new",
+  // and announcing a restored workspace's eight panes would be a light show.
+  // Kept beside the stage selection because a newly arrived pane must be
+  // selected during render, before its terminal's connection effect measures
+  // the otherwise-hidden grid cell.
+  const knownPanes = useRef<Set<string> | null>(null);
   const [chatOrder, setChatOrder] = useState<{
     workspaceId: string;
     keys: readonly string[];
@@ -1461,13 +1467,29 @@ export function AgenticGrid({
     setChatOrder({ workspaceId: session.id, keys: stableChatKeys });
   }, [chatOrder, session.id, stableChatKeys]);
 
-  /** The pane on the chat stage: the chosen one while it lives, else a fallback. */
+  /*
+   * A pane can arrive through voice, the CLI, or another client. Effects run
+   * after child effects, which is too late to put that pane on the chat stage:
+   * its terminal would already have connected from a hidden, grid-sized cell
+   * and handed the PTY a tiny column count. Derive the arrival synchronously so
+   * the new terminal's first measurement is the full stage.
+   */
+  const knownBeforeRender = knownPanes.current;
+  const arrivingChatPane =
+    chatView && knownBeforeRender !== null
+      ? (session.terminals
+          .filter((term) => !knownBeforeRender.has(term.name))
+          .at(-1)?.name ?? null)
+      : null;
+
+  /** The pane on the chat stage: the newest arrival, chosen pane, then fallback. */
   const chatSelected = useMemo(() => {
     const names = session.terminals.map((term) => term.name);
+    if (arrivingChatPane && names.includes(arrivingChatPane)) return arrivingChatPane;
     if (chatPane && names.includes(chatPane)) return chatPane;
     if (target && names.includes(target)) return target;
     return names[0] ?? null;
-  }, [chatPane, target, session.terminals]);
+  }, [arrivingChatPane, chatPane, target, session.terminals]);
 
   // The browser is the only layer that knows which pane fills the one-pane
   // chat stage. Hand that fact to the backend so voice and chat can resolve
@@ -1672,9 +1694,6 @@ export function AgenticGrid({
    * expires on its own — a permanent marker would become furniture.
    */
   const [justOpened, setJustOpened] = useState<Set<string>>(() => new Set());
-  // Null until the first render has been seen: on mount every pane is "new",
-  // and announcing a restored workspace's eight panes would be a light show.
-  const knownPanes = useRef<Set<string> | null>(null);
   useEffect(() => {
     const names = session.terminals.map((term) => term.name);
     const known = knownPanes.current;
