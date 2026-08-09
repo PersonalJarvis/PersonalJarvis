@@ -24,11 +24,14 @@ from typing import Any
 #:
 #: The first-audio budget judges ``first_final_to_first_audio_ms`` — the wait
 #: the USER experiences between finishing an utterance and hearing the answer.
-#: It deliberately does NOT judge ``first_audio_ms``: that metric counts from
+#: It prefers that metric over ``first_audio_ms``: the latter counts from
 #: session start and therefore includes the user's own speaking/listening
 #: time, so a healthy codex call (8 311 ms from start, 923 ms after the
-#: final, live 2026-08-08) read as a budget breach. ``first_audio_ms`` stays
-#: in the payload and the detail line for continuity with old recordings.
+#: final, live 2026-08-08) read as a budget breach. When the newer metric is
+#: absent — pre-metric recordings, adapters that never stamp it, calls whose
+#: audio never followed a user final — the budget falls back to
+#: ``first_audio_ms`` so that no recording class escapes it unjudged. The
+#: finding names which of the two was judged.
 SPAWN_READY_BUDGET_MS = 4_000
 SPAWN_FIRST_AUDIO_BUDGET_MS = 6_000
 
@@ -245,19 +248,33 @@ def evaluate_postmortem(pm: Mapping[str, Any]) -> list[RealtimeFinding]:
     first_audio_ms = _count(pm, "first_audio_ms")
     response_ms = _count(pm, "first_final_to_first_audio_ms")
     over_ready = ready_ms > SPAWN_READY_BUDGET_MS
-    # 0 means "never measured" (pre-metric recording, no final, or no audible
-    # audio after one) — silence there is reported by other counters, and an
-    # absent metric must not fabricate a budget breach.
-    over_first = bool(response_ms) and response_ms > SPAWN_FIRST_AUDIO_BUDGET_MS
+    # The user-perceived wait is judged whenever the adapter stamped it. Where
+    # it is missing (pre-metric recording, no user final, or no audible audio
+    # after one) the legacy session-start measurement is judged instead, so a
+    # 30 s first audio can never pass unjudged just because the newer metric
+    # is absent. 0 in BOTH means "never measured" — that silence is reported
+    # by other counters and must not fabricate a budget breach here.
+    if response_ms:
+        over_first = response_ms > SPAWN_FIRST_AUDIO_BUDGET_MS
+        judged = (
+            f"first audio {response_ms} ms after the first user final "
+            f"(budget {SPAWN_FIRST_AUDIO_BUDGET_MS}; "
+            f"{first_audio_ms} ms from session start)"
+        )
+    else:
+        over_first = first_audio_ms > SPAWN_FIRST_AUDIO_BUDGET_MS
+        judged = (
+            f"first audio {first_audio_ms} ms from session start "
+            f"(budget {SPAWN_FIRST_AUDIO_BUDGET_MS}; this recording carries "
+            "no wait-after-final measurement)"
+        )
     if over_ready or over_first:
         add(
             RealtimeFinding(
                 "warn",
                 "spawn-over-budget",
                 f"ready {ready_ms} ms (budget {SPAWN_READY_BUDGET_MS}), "
-                f"first audio {response_ms} ms after the first user final "
-                f"(budget {SPAWN_FIRST_AUDIO_BUDGET_MS}; "
-                f"{first_audio_ms} ms from session start)",
+                + judged,
             )
         )
 
