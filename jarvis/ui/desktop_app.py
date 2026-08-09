@@ -436,6 +436,14 @@ def _install_desktop_log_sink(log_path: Path) -> None:
         root.setLevel(_logging.INFO)
 
     logger.info("Desktop log sink active: {}", log_path)
+    # Which interpreter is running the app is the first question a boot failure
+    # raises, and the log never answered it. A machine carries several Python
+    # installations, and a shortcut, scheduled task or launcher that resolves to
+    # a different one than the app was installed into looks exactly like "it
+    # suddenly stopped starting" (forensic 2026-08-09: a Start-menu shortcut
+    # pointed at an interpreter without pywebview, so the window import died
+    # 8 ms into boot). One line, every platform, no imports.
+    logger.info("Interpreter: {} (Python {}.{}.{})", sys.executable, *sys.version_info[:3])
 
 
 _CRASH_HOOKS_INSTALLED = False
@@ -4480,7 +4488,25 @@ class DesktopApp:
         )
 
         enable_webview_accessibility_tree()
-        import webview  # type: ignore[import-not-found]
+        try:
+            import webview  # type: ignore[import-not-found]
+        except ModuleNotFoundError as exc:
+            # pywebview is missing from THIS interpreter — which does not mean
+            # it is missing from the machine. With several Python installations
+            # around, a shortcut, scheduled task or launcher that resolves to
+            # the wrong one lands here (forensic 2026-08-09), as does an install
+            # that skipped the ``[desktop]`` extra. Crashing would also kill the
+            # backend thread that is already booting, so take the same honest
+            # degradation the missing-native-backend case takes, and name the
+            # interpreter — that name IS the diagnosis.
+            return self._degrade_to_browser_ui(
+                exc,
+                remedy=(
+                    "  - Or install the desktop dependencies into the "
+                    "interpreter that is running the app:\n"
+                    f"      {sys.executable} -m pip install -e \".[desktop]\"\n"
+                ),
+            )
 
         if not self._wait_for_backend():
             sys.stderr.write("Backend did not start within 45s — aborting.\n")
@@ -4605,15 +4631,22 @@ class DesktopApp:
             os._exit(code)
         return code
 
-    def _degrade_to_browser_ui(self, exc: BaseException) -> int:
+    def _degrade_to_browser_ui(
+        self, exc: BaseException, *, remedy: str | None = None
+    ) -> int:
         """Fallback when no native desktop-window backend is available.
 
-        Reached only when pywebview cannot open a native window — in practice a
-        Linux host missing the system GTK+WebKit packages (``gi`` +
-        ``webkit2gtk``) that pip cannot install. The backend thread is already
-        running and serving the full UI over HTTP, so instead of crashing (which
-        would also kill that daemon thread) we keep it alive and point the user
-        at the local URL, the packages to install, or the ``--headless`` mode.
+        Reached when pywebview cannot open a native window: a Linux host missing
+        the system GTK+WebKit packages (``gi`` + ``webkit2gtk``) that pip cannot
+        install, or an interpreter that does not have pywebview at all. The
+        backend thread is already running and serving the full UI over HTTP, so
+        instead of crashing (which would also kill that daemon thread) we keep it
+        alive and point the user at the local URL, the fix, or ``--headless``.
+
+        ``remedy`` replaces the default install hint with one that fits the
+        actual cause; the caller knows which of the two it hit, and a GTK
+        instruction on a Windows box with the wrong interpreter would send the
+        user chasing the wrong problem.
 
         Blocks the main thread on the backend thread so the server keeps serving
         until the user stops it (Ctrl+C) or it exits. Windows/macOS never reach
@@ -4623,6 +4656,20 @@ class DesktopApp:
 
         url = f"http://127.0.0.1:{self.cfg.ui.admin_api_port}"
         _logger.warning("Native desktop window unavailable: {}", exc)
+        # The message below goes to stderr, which a windowless launch (pythonw,
+        # a shortcut, the tray) throws away — so the log has to carry the two
+        # facts on its own: where the UI still is, and which interpreter failed.
+        _logger.warning(
+            "Browser-UI fallback: UI stays reachable at {} (interpreter: {}).",
+            url,
+            sys.executable,
+        )
+        default_remedy = (
+            "  - Or install the system GTK 3 + WebKit2GTK packages pywebview "
+            "needs and restart\n"
+            "    (Debian/Ubuntu, for example: "
+            "'sudo apt install python3-gi gir1.2-webkit2-4.1').\n"
+        )
         message = (
             "\n"
             "Personal Jarvis could not open a native desktop window.\n"
@@ -4630,10 +4677,7 @@ class DesktopApp:
             "\n"
             "The backend is running and already serving the full UI. To use it:\n"
             f"  - Open this address in a web browser:  {url}\n"
-            "  - Or install the system GTK 3 + WebKit2GTK packages pywebview "
-            "needs and restart\n"
-            "    (Debian/Ubuntu, for example: "
-            "'sudo apt install python3-gi gir1.2-webkit2-4.1').\n"
+            f"{remedy or default_remedy}"
             "  - Or re-run without a window using the '--headless' flag.\n"
             "\n"
             "Press Ctrl+C to stop the server.\n"
