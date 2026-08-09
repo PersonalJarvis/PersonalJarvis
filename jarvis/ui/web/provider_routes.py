@@ -4572,6 +4572,35 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     }
 
 
+async def _release_codex_transports_for_voice_switch() -> None:
+    """Release warm/previous Codex voice leases before changing providers."""
+    from jarvis.codex_app_server import (  # noqa: PLC0415
+        close_shared_codex_app_servers,
+    )
+
+    try:
+        await asyncio.wait_for(
+            asyncio.shield(close_shared_codex_app_servers()),
+            timeout=15.0,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The previous ChatGPT subscription voice transport is still "
+                "stopping. Try the provider switch again in a moment."
+            ),
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - a leaked lease must block the switch
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The previous ChatGPT subscription voice transport could not "
+                "be stopped safely. Try the provider switch again."
+            ),
+        ) from exc
+
+
 @router.post("/realtime/switch")
 async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     """Switch the active realtime provider.
@@ -4601,6 +4630,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 "the experimental transport before activating it."
             ),
         )
+    codex_transport_released = False
     if spec.id == "codex-subscription-realtime":
         # One snapshot call answers both "configured?" and "busy?". A busy
         # window is transient — telling the user to "connect first" while the
@@ -4609,12 +4639,25 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             _codex_subscription_status_payload, _codex_binary_path(request)
         )
         if codex_payload.get("reason_code") == "busy":
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "The ChatGPT subscription voice status is being checked. Try again in a moment."
-                ),
+            # A warm transport reports the shared profile as busy. During an
+            # explicit provider switch that is the resource to hand off, not
+            # a reason to dead-end the button. Release it and judge the fresh
+            # post-handoff status once; a real login/profile mutation remains
+            # busy and still fails honestly below.
+            await _release_codex_transports_for_voice_switch()
+            codex_transport_released = True
+            codex_payload = await asyncio.to_thread(
+                _codex_subscription_status_payload,
+                _codex_binary_path(request),
             )
+            if codex_payload.get("reason_code") == "busy":
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "The ChatGPT subscription voice status is being checked. "
+                        "Try again in a moment."
+                    ),
+                )
         if codex_payload.get("reason_code") == "login_in_progress":
             raise HTTPException(
                 status_code=409,
@@ -4658,6 +4701,12 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             CODEX_SUBSCRIPTION_VOICE_PROFILE,
         )
 
+        # A previous stable-text session or the retired duplex adapter may be
+        # warm on another event loop. Provider selection is an explicit
+        # handoff: release that old owner before the activation probe acquires
+        # the single subscription-profile lease.
+        if not codex_transport_released:
+            await _release_codex_transports_for_voice_switch()
         client = None
         try:
             client = get_shared_codex_app_server(_codex_binary_path(request), purpose="text")
@@ -4742,6 +4791,10 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         # A refused plan already recorded its sticky diagnosis where it was
         # discovered (require_chatgpt_login) — the live call path shares it.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # The replacement provider is viable. Release any stable or legacy Codex
+    # voice client before persisting/reopening the new session so switching
+    # away and back never leaves an invisible subscription-profile owner.
+    await _release_codex_transports_for_voice_switch()
     if spec.id == "codex-subscription-realtime":
         from jarvis.codex_app_server import set_codex_subscription_activation_block
 

@@ -72,9 +72,13 @@ _PLUGINS = {
 }
 
 
-def _cfg(mode: str = "realtime", provider: str = "openai-realtime") -> SimpleNamespace:
+def _cfg(
+    mode: str = "realtime",
+    provider: str = "openai-realtime",
+    profile: str = "",
+) -> SimpleNamespace:
     return SimpleNamespace(
-        voice=SimpleNamespace(mode=mode),
+        voice=SimpleNamespace(mode=mode, profile=profile),
         brain=SimpleNamespace(
             reply_language="en",
             providers={},
@@ -447,10 +451,43 @@ async def test_warm_selected_transports_still_warms_the_realtime_install(
     )
 
     await factory.realtime_warm_selected_transports(
-        _cfg(mode="realtime", provider="codex-subscription-realtime")
+        _cfg(mode="realtime", provider="openai-realtime")
     )
 
     assert warm.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("profile", "provider"),
+    [
+        ("codex-subscription-voice", "openai-realtime"),
+        ("", "codex-subscription-realtime"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_warm_selected_transports_skips_the_subscription_pipeline_profile(
+    monkeypatch,
+    profile: str,
+    provider: str,
+) -> None:
+    """Neither the canonical profile nor its legacy pin may warm duplex Codex."""
+    warm = _WarmProbe()
+    monkeypatch.setattr(
+        factory,
+        "_explicit_provider_ids",
+        lambda _cfg: ["warm-me"],
+    )
+    monkeypatch.setattr(
+        factory,
+        "load",
+        lambda _group, _pid, protocol=None: warm,
+    )
+
+    await factory.realtime_warm_selected_transports(
+        _cfg(mode="realtime", provider=provider, profile=profile)
+    )
+
+    assert warm.calls == 0
 
 
 def test_declared_handshake_budget_reaches_the_surface(monkeypatch) -> None:

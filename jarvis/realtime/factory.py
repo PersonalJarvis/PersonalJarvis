@@ -242,6 +242,17 @@ def _realtime_is_the_configured_voice_mode(cfg: Any) -> bool:
     CONFIGURATION, not about a live call: a warm transport is worth having
     BEFORE the first wake word, which is the entire point of warming.
     """
+    # The stable ChatGPT-subscription composition intentionally runs through
+    # SpeechPipeline even when an older install still carries
+    # ``voice.mode = realtime`` or the legacy realtime-provider pin. Warming
+    # that retired duplex adapter starts a second App Server and holds the one
+    # subscription-profile lease before the text voice path can answer.
+    from jarvis.voice.subscription_profile import (  # noqa: PLC0415
+        subscription_voice_selected,
+    )
+
+    if subscription_voice_selected(cfg):
+        return False
     return getattr(getattr(cfg, "voice", None), "mode", "pipeline") == "realtime"
 
 

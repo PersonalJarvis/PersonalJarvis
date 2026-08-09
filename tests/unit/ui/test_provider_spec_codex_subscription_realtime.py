@@ -273,6 +273,11 @@ async def test_realtime_activation_reports_busy_instead_of_demanding_reconnect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A transient busy window must not tell the user to redo a working login."""
+    release_calls: list[str] = []
+
+    async def release_previous_transport() -> None:
+        release_calls.append("released")
+
     monkeypatch.setattr(routes, "_codex_binary_path", lambda *_args: "codex")
     monkeypatch.setattr(
         routes,
@@ -284,6 +289,11 @@ async def test_realtime_activation_reports_busy_instead_of_demanding_reconnect(
             "message": "Dedicated subscription voice status is being checked or changed.",
             "reason_code": "busy",
         },
+    )
+    monkeypatch.setattr(
+        routes,
+        "_release_codex_transports_for_voice_switch",
+        release_previous_transport,
     )
 
     with pytest.raises(HTTPException) as caught:
@@ -300,6 +310,80 @@ async def test_realtime_activation_reports_busy_instead_of_demanding_reconnect(
     detail = str(caught.value.detail)
     assert "being checked" in detail
     assert "Connect or configure" not in detail
+    assert release_calls == ["released"]
+
+
+@pytest.mark.asyncio
+async def test_realtime_activation_reclaims_a_warm_transport_before_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis import codex_app_server
+
+    snapshots = [
+        {
+            "installed": True,
+            "connected": False,
+            "mode": "not_connected",
+            "message": "Subscription voice is busy.",
+            "reason_code": "busy",
+        },
+        {
+            "installed": True,
+            "connected": True,
+            "mode": "chatgpt",
+            "message": "ready",
+            "reason_code": "ready",
+        },
+    ]
+    release_calls: list[str] = []
+
+    async def release_previous_transport() -> None:
+        release_calls.append("released")
+
+    class _Client:
+        async def require_chatgpt_login(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        routes,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: snapshots.pop(0),
+    )
+    monkeypatch.setattr(
+        routes,
+        "_release_codex_transports_for_voice_switch",
+        release_previous_transport,
+    )
+    monkeypatch.setattr(
+        codex_app_server,
+        "get_shared_codex_app_server",
+        lambda *_args, **_kwargs: _Client(),
+    )
+    monkeypatch.setattr(
+        codex_app_server,
+        "set_codex_subscription_activation_block",
+        lambda _value: None,
+    )
+    config = SimpleNamespace(
+        codex=SimpleNamespace(binary_path="codex"),
+        voice=SimpleNamespace(profile="", mode="realtime"),
+        brain=SimpleNamespace(realtime=None),
+    )
+
+    response = await routes.realtime_switch(
+        routes.SwitchBody(
+            provider="codex-subscription-realtime",
+            persist=False,
+        ),
+        SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(config=config))),
+    )
+
+    assert response["profile"] == "codex-subscription-voice"
+    assert release_calls == ["released"]
+    assert snapshots == []
 
 
 def test_spec_payload_preserves_the_isolated_snapshot_diagnosis(
@@ -817,6 +901,10 @@ async def test_subscription_profile_no_longer_requires_experimental_acknowledgem
     )
 
     close_calls: list[object] = []
+    release_calls: list[str] = []
+
+    async def release_previous_transport() -> None:
+        release_calls.append("released")
 
     class _Client:
         async def require_chatgpt_login(self) -> None:
@@ -835,6 +923,11 @@ async def test_subscription_profile_no_longer_requires_experimental_acknowledgem
         "set_codex_subscription_activation_block",
         lambda _value: None,
     )
+    monkeypatch.setattr(
+        routes,
+        "_release_codex_transports_for_voice_switch",
+        release_previous_transport,
+    )
     config = SimpleNamespace(
         codex=SimpleNamespace(binary_path="codex"),
         voice=SimpleNamespace(profile="", mode="realtime"),
@@ -851,6 +944,87 @@ async def test_subscription_profile_no_longer_requires_experimental_acknowledgem
     assert response["profile"] == "codex-subscription-voice"
     assert response["mode"] == "pipeline"
     assert len(close_calls) == 1
+    assert release_calls == ["released"]
+
+
+@pytest.mark.asyncio
+async def test_switching_away_releases_the_subscription_voice_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.core.registry as registry
+
+    spec = SimpleNamespace(
+        id="replacement-realtime",
+        tier="realtime",
+        experimental=False,
+    )
+    release_calls: list[str] = []
+
+    class Provider:
+        requires_webrtc_offer = False
+
+        @classmethod
+        async def verify_activation(cls, _cfg: object) -> None:
+            return None
+
+    async def credential_present(*_args, **_kwargs) -> bool:
+        return True
+
+    async def release_previous_transport() -> None:
+        release_calls.append("released")
+
+    monkeypatch.setattr(routes, "get_spec", lambda _provider: spec)
+    monkeypatch.setattr(
+        routes,
+        "_provider_credential_present_async",
+        credential_present,
+    )
+    monkeypatch.setattr(registry, "load", lambda *_args, **_kwargs: Provider)
+    monkeypatch.setattr(
+        routes,
+        "_release_codex_transports_for_voice_switch",
+        release_previous_transport,
+    )
+    config = SimpleNamespace(
+        voice=SimpleNamespace(
+            profile="codex-subscription-voice",
+            mode="pipeline",
+        ),
+        brain=SimpleNamespace(
+            realtime=SimpleNamespace(provider="codex-subscription-realtime")
+        ),
+    )
+
+    response = await routes.realtime_switch(
+        routes.SwitchBody(provider=spec.id, persist=False),
+        SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(config=config))),
+    )
+
+    assert response["active"] == spec.id
+    assert release_calls == ["released"]
+    assert config.voice.profile == ""
+
+
+@pytest.mark.asyncio
+async def test_voice_switch_release_closes_shared_codex_transports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis import codex_app_server
+
+    calls: list[str] = []
+
+    async def close_shared() -> None:
+        calls.append("closed")
+
+    monkeypatch.setattr(
+        codex_app_server,
+        "close_shared_codex_app_servers",
+        close_shared,
+    )
+
+    await routes._release_codex_transports_for_voice_switch()
+
+    assert calls == ["closed"]
 
 
 @pytest.mark.asyncio
