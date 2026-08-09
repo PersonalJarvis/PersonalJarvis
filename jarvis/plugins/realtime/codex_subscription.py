@@ -184,7 +184,11 @@ _SHADOW_RECOVERY_MAX_BYTES = _OUTPUT_RATE * 2 * 4
 # was never answered cannot authorize an unrelated response later in the call.
 _TRUSTED_PERMIT_GRACE_S = 15.0
 _HISTORY_MAX_ITEMS = 12
-_HISTORY_MAX_CHARS = 12_000
+# Startup-history budget in UTF-8 BYTES, because the app server validates
+# ``initialItems`` by encoded byte length (32_768 there) and not by character
+# count. Kept well under that ceiling so an encoding surprise cannot turn a
+# silent mid-call rebuild into "startup history is too large".
+_HISTORY_MAX_BYTES = 12_000
 # Local-recognizer event kinds, mirrored from
 # ``jarvis.realtime.input_transcription`` rather than imported, because this
 # plugin module must stay free of ``jarvis.*`` imports so plugin discovery
@@ -466,7 +470,17 @@ def _thread_id_from_result(result: Any) -> str:
 
 
 def _history_initial_items(history: Any) -> list[dict[str, str]]:
-    """Return bounded role-bearing history for the atomic v3 session start."""
+    """Return bounded role-bearing history for the atomic v3 session start.
+
+    The size bound is measured on the ENCODED text, because that is what the
+    app server validates: it sums ``len(text.encode("utf-8"))`` per item and
+    refuses the start above its own byte ceiling. A character bound let CJK
+    or emoji history pass locally at up to four bytes per character and then
+    fail ``realtime_start`` with "startup history is too large" — worst of
+    all on the mid-call rebuild whose whole job is to restore a call quietly.
+    Oldest items are dropped first, exactly as before; the per-item character
+    cap keeps the last surviving item far below the budget on its own.
+    """
     if not isinstance(history, (list, tuple)):
         return []
     records: list[dict[str, str]] = []
@@ -478,7 +492,10 @@ def _history_initial_items(history: Any) -> list[dict[str, str]]:
         if role not in {"user", "assistant"} or not text:
             continue
         records.append({"role": role, "text": text[:2_000]})
-    while sum(len(record["text"]) for record in records) > _HISTORY_MAX_CHARS and len(records) > 1:
+    while (
+        sum(len(record["text"].encode("utf-8")) for record in records) > _HISTORY_MAX_BYTES
+        and len(records) > 1
+    ):
         records.pop(0)
     return records
 
@@ -519,28 +536,39 @@ def _roster_voice_names(result: Any) -> frozenset[str]:
     return frozenset(names)
 
 
+# One process-wide WARNING when the optional roster refresh cannot be read,
+# DEBUG afterwards. The read is advisory, so it must never fail an open — but
+# a permanently unreadable roster must not vanish unreported either (AP-30).
+_voice_roster_probe_warned = False
+
+
 async def _live_voice_roster(client: Any, thread_id: str) -> frozenset[str]:
     """The server's own realtime voice roster, or the audited static one.
 
     Probed as a capability, never a version string (AP-21/AP-22): a client
-    without ``realtime_list_voices``, a server build that rejects the method
-    (a JSON-RPC refusal surfaces with a ``code`` attribute), or an unusable
-    result all degrade to ``_V3_VOICES`` — the roster the server itself
-    confirmed live 2026-08-01. A failure WITHOUT an RPC error code is a
-    transport failure, not a roster verdict, and propagates so the open
-    fails honestly instead of validating against a guess.
+    without ``realtime_list_voices``, a server build that rejects the method,
+    a transport hiccup, or an unusable result all degrade to ``_V3_VOICES`` —
+    the roster the server itself confirmed live 2026-08-01.
+
+    This refresh is ADVISORY, without exception. It only ever WIDENS a roster
+    that already works, so no failure of it may abort a session open that is
+    already under way (the thread is started by then). A voice the server
+    really refuses still fails loudly at ``realtime_start`` — that is the
+    honest failure site, and it is the server's verdict rather than ours.
     """
     lister = getattr(client, "realtime_list_voices", None)
     if not callable(lister):
         return _V3_VOICES
     try:
         result = await lister(thread_id)
-    except Exception as exc:
-        if getattr(exc, "code", None) is None:
-            raise
-        log.info(
-            "Codex app-server rejected thread/realtime/listVoices (%s); "
-            "using the audited static voice roster",
+    except Exception as exc:  # noqa: BLE001 - advisory read, never fatal
+        global _voice_roster_probe_warned
+        already_warned = _voice_roster_probe_warned
+        _voice_roster_probe_warned = True
+        log.log(
+            logging.DEBUG if already_warned else logging.WARNING,
+            "Codex app-server could not answer thread/realtime/listVoices "
+            "(%s); using the audited static voice roster",
             _safe_error(exc),
         )
         return _V3_VOICES
@@ -571,6 +599,33 @@ def _client_realtime_start_accepts(client: Any, parameter: str) -> bool:
     except (TypeError, ValueError):
         return False
     return parameter in parameters
+
+
+def _client_transmits_realtime_start_instructions(client: Any) -> bool:
+    """Whether the client really puts ``realtimeStartInstructions`` on the wire.
+
+    Declaring the keyword is not the same as sending the field: the in-tree
+    client declares it unconditionally but withholds it for an app-server
+    binary whose schema does not carry it. Deciding on the declaration alone
+    therefore blanked the fallback prompt for a call that then started with
+    NO startup contract at all. The client answers this as a cheap capability
+    probe (a version string it may consult internally is its own business;
+    this layer never reads one, AP-21/AP-22). An absent or unusable probe
+    counts as NOT transmitted, so the proven trusted-prompt path stays.
+    """
+    probe = getattr(client, "realtime_start_instructions_supported", None)
+    if not callable(probe):
+        return False
+    try:
+        return bool(probe())
+    except Exception as exc:  # noqa: BLE001 - an unusable probe means "no"
+        log.warning(
+            "Codex app-server client could not answer the "
+            "realtimeStartInstructions capability probe (%s); the startup "
+            "contract keeps the trusted-prompt path",
+            _safe_error(exc),
+        )
+        return False
 
 
 def _handoff_text(item: dict[str, Any]) -> str:
@@ -3389,16 +3444,21 @@ class CodexSubscriptionRealtimeProvider:
                 "include_startup_context": False,
                 "client_managed_handoffs": True,
             }
-            if _client_realtime_start_accepts(client, "realtime_start_instructions"):
+            if _client_realtime_start_accepts(
+                client, "realtime_start_instructions"
+            ) and _client_transmits_realtime_start_instructions(client):
                 # codex-cli 0.147.0's realtimeStartInstructions slot carries
                 # the startup contract as SESSION instructions instead of a
                 # trusted first prompt — injected prompt context is what the
-                # model audibly acknowledged mid-open. The client owns the
-                # wire gate and omits the field (naming it in its own log)
-                # for an older approved binary; the thread-level base and
-                # developer instructions from thread_start still hold there
-                # and the persona re-arrives with the first update_session
-                # delivery, so that degradation is honest, never silent.
+                # model audibly acknowledged mid-open. BOTH halves must hold:
+                # the client has to DECLARE the parameter (a ``**kwargs`` sink
+                # would swallow it) and to confirm it actually TRANSMITS the
+                # field for the binary it is bound to. Where the field would
+                # be withheld, the trusted prompt has to stay — the persona
+                # does NOT arrive later: ``initial_context`` pre-marks the
+                # session's delivered-context baseline, so the per-turn line
+                # diff finds every persona line "already sent" and the call
+                # would run to its end with no context whatsoever.
                 start_kwargs["realtime_start_instructions"] = start_prompt
                 start_kwargs["trusted_prompt"] = ""
             start = await client.realtime_start(thread_id, **start_kwargs)

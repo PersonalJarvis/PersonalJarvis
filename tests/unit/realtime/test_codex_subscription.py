@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 import jarvis.plugins.realtime.codex_subscription as codex_subscription_mod
+from jarvis.codex_app_server import _MAX_REALTIME_INITIAL_TEXT_BYTES
 from jarvis.plugins.realtime.codex_subscription import (
     CodexSubscriptionRealtimeProvider,
 )
@@ -3725,18 +3726,50 @@ async def test_a_rejected_list_voices_falls_back_to_the_static_roster() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_transport_failure_during_list_voices_propagates() -> None:
-    """A failure WITHOUT an RPC code is a dead transport, not a roster
-    verdict; validating against a guess would open a session that cannot
-    work."""
-    with pytest.raises(RuntimeError, match="transport is gone"):
+async def test_a_transport_failure_during_list_voices_is_not_fatal(monkeypatch, caplog) -> None:
+    """The roster refresh is ADVISORY: it only ever widens a roster that
+    already works, so a timeout or a dead transport must fall back to the
+    audited static set instead of aborting an open whose thread is already
+    running. A voice the SERVER refuses still fails loudly at realtime_start."""
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setattr(codex_subscription_mod, "_voice_roster_probe_warned", False)
+
+    session = await _provider(_RosterDeadTransportClient()).open_session(
+        RealtimeSessionConfig(voice="cove")
+    )
+    await session.close()
+
+    second = await _provider(_RosterDeadTransportClient()).open_session(
+        RealtimeSessionConfig(voice="cove")
+    )
+    await second.close()
+
+    failures = [
+        record
+        for record in caplog.records
+        if "could not answer thread/realtime/listVoices" in record.getMessage()
+    ]
+    assert [record.levelno for record in failures] == [
+        logging.WARNING,
+        logging.DEBUG,
+    ], "one-shot warning, then quiet — advisory, but never swallowed (AP-30)"
+
+
+@pytest.mark.asyncio
+async def test_a_transport_failure_during_list_voices_keeps_the_static_bound() -> None:
+    """Falling back is not the same as accepting anything: a voice outside
+    the audited static roster is still refused when the live one is unreadable."""
+    with pytest.raises(RuntimeError, match="unsupported voice"):
         await _provider(_RosterDeadTransportClient()).open_session(
-            RealtimeSessionConfig(voice="cove")
+            RealtimeSessionConfig(voice="nova")
         )
 
 
 class _InstructionSlotClient(_Client):
-    """Client that declares the 0.147 realtimeStartInstructions lever."""
+    """Client that declares AND transmits the 0.147 realtimeStartInstructions."""
+
+    def realtime_start_instructions_supported(self) -> bool:
+        return True
 
     async def realtime_start(
         self,
@@ -3753,12 +3786,25 @@ class _InstructionSlotClient(_Client):
         )
 
 
+class _WithheldInstructionSlotClient(_InstructionSlotClient):
+    """Declares the keyword but is bound to a binary that never sends it."""
+
+    def realtime_start_instructions_supported(self) -> bool:
+        return False
+
+
+class _UnprobedInstructionSlotClient(_InstructionSlotClient):
+    """Declares the keyword and offers no capability probe at all."""
+
+    realtime_start_instructions_supported = None
+
+
 @pytest.mark.asyncio
-async def test_startup_contract_rides_the_instruction_slot_when_declared() -> None:
-    """When the client declares realtime_start_instructions, the startup
-    contract travels as SESSION instructions instead of a trusted first
-    prompt — injected prompt context is what the model audibly acknowledged
-    mid-open."""
+async def test_startup_contract_rides_the_instruction_slot_when_transmitted() -> None:
+    """When the client declares realtime_start_instructions AND confirms it
+    transmits the field, the startup contract travels as SESSION instructions
+    instead of a trusted first prompt — injected prompt context is what the
+    model audibly acknowledged mid-open."""
     client = _InstructionSlotClient()
     session = await _provider(client).open_session(
         RealtimeSessionConfig(instructions="You are Nova.")
@@ -3768,6 +3814,30 @@ async def test_startup_contract_rides_the_instruction_slot_when_declared() -> No
     assert start["trusted_prompt"] == ""
     assert "You are Nova." in start["realtime_start_instructions"]
     assert "Speak only the assistant side" in start["realtime_start_instructions"]
+    await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "client_factory",
+    [_WithheldInstructionSlotClient, _UnprobedInstructionSlotClient],
+    ids=["probe-says-withheld", "no-probe-at-all"],
+)
+async def test_startup_contract_stays_on_the_prompt_when_not_transmitted(
+    client_factory,
+) -> None:
+    """Declaration is not transmission. A client bound to a binary that drops
+    the field — and one that cannot even answer the question — must keep the
+    trusted prompt: blanking it there left the whole call with no persona,
+    because the pre-marked context baseline suppresses every later re-send."""
+    client = client_factory()
+    session = await _provider(client).open_session(
+        RealtimeSessionConfig(instructions="You are Nova.")
+    )
+
+    _thread_id, start = client.realtime_starts[0]
+    assert start["realtime_start_instructions"] is None
+    assert "You are Nova." in start["trusted_prompt"]
     await session.close()
 
 
@@ -3785,3 +3855,43 @@ async def test_startup_contract_stays_on_the_prompt_without_the_slot() -> None:
     assert "realtime_start_instructions" not in start
     assert "You are Nova." in start["trusted_prompt"]
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_multibyte_startup_history_stays_under_the_server_byte_limit() -> None:
+    """The app server bounds ``initialItems`` by UTF-8 BYTES, so the adapter
+    must trim by bytes too. Trimming by characters let CJK history pass here
+    at up to four bytes per character and then fail realtime_start with
+    "startup history is too large" — precisely on the mid-call rebuild whose
+    job is to restore a call quietly."""
+    history = tuple(
+        {"role": "user" if index % 2 == 0 else "assistant", "text": "\u5b9f\u884c" * 1_000}
+        for index in range(codex_subscription_mod._HISTORY_MAX_ITEMS)
+    )
+    client = _Client()
+    session = await _provider(client).open_session(RealtimeSessionConfig(history=history))
+
+    _thread_id, start = client.realtime_starts[0]
+    items = start["initial_items"]
+    assert items, "the newest turns must still be seeded, not dropped wholesale"
+    total_bytes = sum(len(item["text"].encode("utf-8")) for item in items)
+    assert total_bytes <= _MAX_REALTIME_INITIAL_TEXT_BYTES, (
+        "the emitted history must fit the limit the server itself validates"
+    )
+    assert total_bytes <= codex_subscription_mod._HISTORY_MAX_BYTES
+    assert all(item["text"] == history[0]["text"][:2_000] for item in items)
+    await session.close()
+
+
+def test_ascii_startup_history_keeps_its_proven_bound() -> None:
+    """The byte bound is the same number the character bound used to be, so
+    plain-ASCII history is trimmed exactly as before — no silent regression
+    in how much context a normal call carries."""
+    history = tuple(
+        {"role": "user", "text": "a" * 2_000}
+        for _ in range(codex_subscription_mod._HISTORY_MAX_ITEMS)
+    )
+
+    items = codex_subscription_mod._history_initial_items(history)
+
+    assert len(items) == codex_subscription_mod._HISTORY_MAX_BYTES // 2_000
