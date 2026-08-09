@@ -1396,6 +1396,34 @@ _LOCAL_CONNECT_RETRY_STEP_S = 2.0
 #: before the child even exists. Interactive readiness waits only this long;
 #: the same supervisor operation then continues on its worker thread.
 _LOCAL_MANAGED_PREFLIGHT_WAIT_S = 0.75
+#: The cheap proof that a RUNNING server can take this call. Deliberately its
+#: own budget rather than the tail of the revive above: a healthy pool answers
+#: in milliseconds, while a cold revive spends ~1 s preparing its bounded
+#: Ollama model before it even spawns. Sharing one window made a running
+#: server inherit the cold server's bill and lose the call to it.
+_LOCAL_POOL_PROBE_TIMEOUT_S = 0.35
+#: Why the managed server cannot take a call, in the words the USER needs.
+#: This text reaches a toast (and the handshake summary) verbatim, so it names
+#: the situation and the next step — the internal "duplex capability probe
+#: reported unavailable" told nobody what to do (live 2026-08-09 11:50:47).
+#: English on purpose: these are backend strings, and the spoken failure
+#: sentence is localized separately by the session's language resolver.
+_LOCAL_REASON_STARTING = (
+    "The local voice server is not answering yet — it is starting in the "
+    "background. Try the call again in about a minute."
+)
+_LOCAL_REASON_BUSY = (
+    "The local voice server is still serving another call — its pipeline pool has no free slot."
+)
+_LOCAL_REASON_NO_CAPACITY = (
+    "The local voice server has no usable pipeline — it is still loading "
+    "its models, or the pool is wedged and needs a restart."
+)
+#: Phrased around the existing "needs a server url" marker so the shared
+#: classifier lands on NOT_CONFIGURED (a setup gap) instead of a red error.
+_LOCAL_REASON_NO_ADDRESS = (
+    "The local realtime provider needs a server URL — enter the address on its provider card."
+)
 #: A managed pool that just reported an idle slot should accept the first
 #: interactive handshake promptly. If that readiness becomes stale, bound the
 #: race here instead of falling back to the 120-second recovery window. Long
@@ -1592,6 +1620,7 @@ class LocalRealtimeProvider:
         self._model = (model or "").strip()
         self._launch_command = (launch_command or "").strip()
         self._managed_interactive_preflight = False
+        self._duplex_unavailable_reason = ""
 
     # -- factory wiring ----------------------------------------------------
 
@@ -1632,8 +1661,19 @@ class LocalRealtimeProvider:
 
     # -- session -----------------------------------------------------------
 
+    @property
+    def duplex_unavailable_reason(self) -> str:
+        """Why the last probe said no, in a sentence a user can act on.
+
+        Optional capability, read defensively by the session (AP-21: never a
+        provider-name check). Empty whenever the last probe said yes.
+        """
+        return self._duplex_unavailable_reason
+
     async def can_open_duplex_session(self) -> bool:
+        self._duplex_unavailable_reason = ""
         if not self._base_url:
+            self._duplex_unavailable_reason = _LOCAL_REASON_NO_ADDRESS
             return False
         if not self._launch_command or not self._server_is_local_process():
             return True
@@ -1654,6 +1694,32 @@ class LocalRealtimeProvider:
             return True
 
         self._managed_interactive_preflight = True
+
+        def _pool_can_take_this_call() -> bool:
+            """The running server's own verdict, asked directly.
+
+            Separate from the revive below so a healthy pool never waits
+            behind a spawn it does not need.
+            """
+            try:
+                pool = supervisor.probe_runtime(self._base_url, timeout=_LOCAL_POOL_PROBE_TIMEOUT_S)
+            except Exception:  # noqa: BLE001 - a probe never breaks voice startup
+                log.warning(
+                    "local-realtime: pool capacity probe failed",
+                    exc_info=True,
+                )
+                self._duplex_unavailable_reason = _LOCAL_REASON_STARTING
+                return False
+            if pool is None:
+                self._duplex_unavailable_reason = _LOCAL_REASON_STARTING
+                return False
+            if int(pool.get("available", 0)) > 0:
+                self._duplex_unavailable_reason = ""
+                return True
+            self._duplex_unavailable_reason = (
+                _LOCAL_REASON_BUSY if int(pool.get("in_use", 0)) > 0 else _LOCAL_REASON_NO_CAPACITY
+            )
+            return False
 
         def _ready_or_warming() -> bool:
             try:
@@ -1700,19 +1766,29 @@ class LocalRealtimeProvider:
                 )
 
         task.add_done_callback(_consume_background_start)
+
+        # A server that is already serving answers for itself, in its own
+        # budget. Before this the verdict came only from the tail of the
+        # revive above, so a running-but-briefly-slow pool was judged by a
+        # clock sized for a cold start and lost the call to it.
+        if await asyncio.to_thread(_pool_can_take_this_call):
+            return True
         try:
-            return bool(
+            if bool(
                 await asyncio.wait_for(
                     asyncio.shield(task),
                     timeout=_LOCAL_MANAGED_PREFLIGHT_WAIT_S,
                 )
-            )
+            ):
+                self._duplex_unavailable_reason = ""
+                return True
         except TimeoutError:
             log.info(
                 "local-realtime: managed server is still starting in the "
                 "background; refusing to hold this call on Connecting"
             )
-            return False
+            self._duplex_unavailable_reason = _LOCAL_REASON_STARTING
+        return False
 
     async def _resolve_model(self) -> str:
         """The configured model, else the first one the server serves.

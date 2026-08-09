@@ -58,7 +58,7 @@ from jarvis.core.turn_language import (
     validate_output_language,
 )
 from jarvis.realtime.audio import StreamingPcm16Resampler
-from jarvis.realtime.protocol import RealtimeSessionConfig
+from jarvis.realtime.protocol import RealtimeSessionConfig, RealtimeUnavailableError
 from jarvis.realtime.scrub_gate import ScrubHoldGate
 from jarvis.sessions.constants import (
     HANGUP_CLIENT_STOP,
@@ -2441,8 +2441,14 @@ class RealtimeVoiceSession:
                 ) -> Any:
                     probe = getattr(candidate, "can_open_duplex_session", None)
                     if callable(probe) and not bool(await probe()):
-                        raise RuntimeError(
-                            "duplex capability probe reported unavailable"
+                        # A provider MAY explain its own refusal (capability,
+                        # never a provider-name check — AP-21). Whatever it
+                        # says lands in a user-facing toast verbatim, which is
+                        # why the generic fallback is a sentence too.
+                        declared = getattr(candidate, "duplex_unavailable_reason", "")
+                        raise RealtimeUnavailableError(
+                            str(declared or "").strip()
+                            or "The voice engine reported no free capacity right now."
                         )
                     return await candidate.open_session(candidate_config)
 
@@ -2458,7 +2464,14 @@ class RealtimeVoiceSession:
                     ) from exc
             except Exception as exc:  # noqa: BLE001 — cross to the next family
                 provider_id = str(getattr(provider, "name", "unknown") or "unknown")
-                detail = f"{type(exc).__name__}: {safe_preview(exc, max_chars=700)}"
+                # A provider that already phrased its refusal for a human keeps
+                # that phrasing whole: prefixing it with the exception class
+                # turned an actionable sentence back into a stack trace.
+                detail = (
+                    safe_preview(exc, max_chars=700)
+                    if isinstance(exc, RealtimeUnavailableError)
+                    else f"{type(exc).__name__}: {safe_preview(exc, max_chars=700)}"
+                )
                 last_failed_provider = provider_id
                 self._provider_errors.append(f"{provider_id}: {detail}")
                 status, _alternate_ready = self._prepare_cross_provider_fallback(

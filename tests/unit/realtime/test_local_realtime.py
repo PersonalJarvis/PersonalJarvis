@@ -232,6 +232,111 @@ async def test_ready_managed_pool_opens_only_with_idle_capacity(monkeypatch) -> 
     assert await provider.can_open_duplex_session() is False
 
 
+async def test_a_serving_pool_is_never_judged_by_the_cold_start_clock(
+    monkeypatch,
+) -> None:
+    """A running server answers for itself, in its own budget.
+
+    Live 2026-08-09 11:50:47: the verdict came only from the tail of the
+    revive attempt, so a healthy pool waited behind a spawn that first spends
+    ~1 s preparing its Ollama model — and lost the 0.75 s interactive window
+    to work it did not need.
+    """
+    import asyncio
+    import time
+
+    from jarvis.plugins.realtime import openai_realtime as module
+    from jarvis.realtime.local_server import supervisor
+
+    monkeypatch.setattr(module, "_LOCAL_MANAGED_PREFLIGHT_WAIT_S", 0.05)
+    monkeypatch.setattr(
+        supervisor, "is_managed_launch_command", lambda command: True
+    )
+
+    def slow_revive(**kwargs: Any) -> str:
+        time.sleep(0.5)
+        return "already-running"
+
+    monkeypatch.setattr(supervisor, "ensure_running", slow_revive)
+    monkeypatch.setattr(supervisor, "start_runtime_monitor", lambda **kwargs: True)
+    monkeypatch.setattr(
+        supervisor,
+        "probe_runtime",
+        lambda *args, **kwargs: {
+            "size": 1,
+            "in_use": 0,
+            "available": 1,
+            "active": 0,
+        },
+    )
+    provider = LocalRealtimeProvider(
+        base_url="http://127.0.0.1:8765",
+        launch_command="managed-server --mode realtime",
+    )
+
+    assert (
+        await asyncio.wait_for(provider.can_open_duplex_session(), timeout=0.3)
+        is True
+    )
+    assert provider.duplex_unavailable_reason == ""
+    await asyncio.gather(*LocalRealtimeProvider._background_start_tasks)
+
+
+async def test_a_refusal_explains_itself_in_words_a_user_can_act_on(
+    monkeypatch,
+) -> None:
+    """Each refusal names a DIFFERENT next step, so it may not be one text."""
+    from jarvis.plugins.realtime import openai_realtime as module
+    from jarvis.realtime.local_server import supervisor
+
+    monkeypatch.setattr(
+        supervisor, "is_managed_launch_command", lambda command: True
+    )
+    monkeypatch.setattr(
+        supervisor, "ensure_running", lambda **kwargs: "already-running"
+    )
+    monkeypatch.setattr(supervisor, "start_runtime_monitor", lambda **kwargs: True)
+
+    pool: dict[str, int] | None = None
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: pool)
+    provider = LocalRealtimeProvider(
+        base_url="http://127.0.0.1:8765",
+        launch_command="managed-server --mode realtime",
+    )
+
+    # No pool at all: the server is cold and somebody is starting it.
+    assert await provider.can_open_duplex_session() is False
+    assert provider.duplex_unavailable_reason == module._LOCAL_REASON_STARTING
+
+    # Every slot in use: healthy, just occupied — a different situation.
+    pool = {"size": 1, "in_use": 1, "available": 0, "active": 1}
+    assert await provider.can_open_duplex_session() is False
+    assert provider.duplex_unavailable_reason == module._LOCAL_REASON_BUSY
+
+    # Slots exist, none usable, nobody served: loading or wedged.
+    pool = {"size": 1, "in_use": 0, "available": 0, "active": 0}
+    assert await provider.can_open_duplex_session() is False
+    assert provider.duplex_unavailable_reason == module._LOCAL_REASON_NO_CAPACITY
+
+    # Recovery clears the explanation instead of leaving a stale one behind.
+    pool = {"size": 1, "in_use": 0, "available": 1, "active": 0}
+    assert await provider.can_open_duplex_session() is True
+    assert provider.duplex_unavailable_reason == ""
+
+
+async def test_a_missing_address_reads_as_a_setup_gap_not_an_outage() -> None:
+    from jarvis.brain.provider_test import NOT_CONFIGURED, classify_provider_error
+
+    provider = LocalRealtimeProvider()
+
+    assert await provider.can_open_duplex_session() is False
+    reason = provider.duplex_unavailable_reason
+    assert "server URL" in reason
+    # The shared classifier must read this as "finish the setup", which is
+    # what routes it to the actionable amber instead of a red error.
+    assert classify_provider_error(reason) == NOT_CONFIGURED
+
+
 async def test_byo_server_never_requires_the_private_pool(monkeypatch) -> None:
     from jarvis.realtime.local_server import supervisor
 

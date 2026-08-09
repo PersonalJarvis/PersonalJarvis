@@ -203,6 +203,18 @@ class RealtimeSession(Protocol):
     async def close(self) -> None: ...
 
 
+class RealtimeUnavailableError(RuntimeError):
+    """A provider declined the call and already said why, in plain words.
+
+    Carries a sentence written for the USER, not a stack-trace fragment: the
+    handshake summary reaches a toast verbatim, and the internal wording
+    ("duplex capability probe reported unavailable") named the mechanism
+    instead of the situation (live 2026-08-09). The session prints this
+    message WITHOUT its exception class name — that is the whole point of
+    the distinct type.
+    """
+
+
 @runtime_checkable
 class RealtimeProvider(Protocol):
     """The plugin entry-point class."""
@@ -213,5 +225,11 @@ class RealtimeProvider(Protocol):
     output_sample_rate: int
     credential_candidates: tuple[tuple[str, str | None], ...]
 
+    #: OPTIONAL capability, deliberately NOT part of this Protocol's required
+    #: surface (a data member would tighten every ``isinstance`` check and
+    #: break third-party adapters): a provider MAY expose a
+    #: ``duplex_unavailable_reason`` string explaining its last ``False``.
+    #: The session reads it with ``getattr`` and falls back to a generic
+    #: sentence — never a provider-name check (AP-21).
     async def can_open_duplex_session(self) -> bool: ...
     async def open_session(self, cfg: RealtimeSessionConfig) -> RealtimeSession: ...

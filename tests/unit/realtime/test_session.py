@@ -493,6 +493,87 @@ async def test_total_handshake_failure_emits_audio_failed():
     assert failed["recoverable"] is True
 
 
+class UnavailableWithReasonProvider(FakeProvider):
+    """Declines and says why — the optional explanation capability."""
+
+    name = "explaining-family"
+    duplex_unavailable_reason = (
+        "The local voice server is not answering yet — it is starting in the "
+        "background. Try the call again in about a minute."
+    )
+
+    async def can_open_duplex_session(self):
+        return False
+
+
+class MuteUnavailableProvider(FakeProvider):
+    """Declines without explaining — the generic sentence must cover it."""
+
+    name = "mute-family"
+
+    async def can_open_duplex_session(self):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_declined_probe_surfaces_the_providers_own_sentence():
+    """The handshake summary reaches a user-facing toast verbatim.
+
+    Live 2026-08-09: a cold managed server ended the call with "RuntimeError:
+    duplex capability probe reported unavailable" — the mechanism, not the
+    situation, and no next step. A provider that phrases its own refusal keeps
+    that phrasing whole, exception class name included nowhere.
+    """
+    messages = []
+    sess = RealtimeVoiceSession(
+        session_id="explained-decline",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: messages.append(message) or asyncio.sleep(0),
+        providers=[UnavailableWithReasonProvider([])],
+        config=_cfg(),
+        bus=None,
+    )
+
+    try:
+        await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    except RuntimeError:
+        pass  # the raise stays — only the wording is under test
+    await sess.end(reason="test")
+
+    failed = next(
+        message for message in messages if message.get("type") == "audio_failed"
+    )
+    assert "starting in the background" in failed["error"]
+    assert "Try the call again" in failed["error"]
+    assert "RuntimeError" not in failed["error"]
+    assert "duplex" not in failed["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_silent_decline_still_reads_as_a_sentence():
+    messages = []
+    sess = RealtimeVoiceSession(
+        session_id="mute-decline",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: messages.append(message) or asyncio.sleep(0),
+        providers=[MuteUnavailableProvider([])],
+        config=_cfg(),
+        bus=None,
+    )
+
+    try:
+        await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    except RuntimeError:
+        pass
+    await sess.end(reason="test")
+
+    failed = next(
+        message for message in messages if message.get("type") == "audio_failed"
+    )
+    assert "no free capacity" in failed["error"]
+    assert "RuntimeError" not in failed["error"]
+
+
 @pytest.mark.asyncio
 async def test_fallback_status_redacts_credentials_from_provider_errors():
     fallback = FakeProvider([])
