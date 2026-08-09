@@ -62,6 +62,7 @@ _STUN_MEDIA_PATH_TTL_S: Final = 3600.0
 _SHUTDOWN_TIMEOUT_S: Final = 2.0
 _DEFAULT_SDP_TIMEOUT_S: Final = 15.0
 _DEFAULT_NOTIFICATION_QUEUE_SIZE: Final = 512
+CodexAppServerPurpose = Literal["realtime", "text"]
 _MAX_REALTIME_START_PROMPT_BYTES: Final = 64_000
 _MAX_REALTIME_INITIAL_ITEMS: Final = 128
 _MAX_REALTIME_INITIAL_TEXT_BYTES: Final = 32_768
@@ -312,6 +313,17 @@ _TRANSPORT_DEVELOPER_INSTRUCTIONS: Final = (
     "plugins, skills, web search, MCP servers, or other agents. Do not read or "
     "write the filesystem. Yield all realtime handoffs to the client."
 )
+_TEXT_BASE_INSTRUCTIONS: Final = (
+    "This ephemeral thread serves a conversational voice assistant. Answer the "
+    "user directly in plain text. Never use tools, inspect files, access the "
+    "workspace, run commands, browse, or perform actions."
+)
+_TEXT_DEVELOPER_INSTRUCTIONS: Final = (
+    "Conversational text-only boundary: return only the assistant reply. Do not "
+    "call tools, shell commands, applications, plugins, skills, web search, MCP "
+    "servers, or other agents. Do not read or write the filesystem."
+)
+_TEXT_MODEL_PROVIDER: Final = "openai"
 
 _OFFICIAL_OPENAI_API_BASE: Final = "https://api.openai.com/v1"
 _OFFICIAL_OPENAI_REALTIME_BASE: Final = "https://api.openai.com/v1"
@@ -1866,14 +1878,19 @@ def _subscription_environment(
     return environment
 
 
-def _create_safe_transport_workspace() -> _SafeTransportWorkspace:
+def _create_safe_transport_workspace(
+    purpose: CodexAppServerPurpose = "realtime",
+) -> _SafeTransportWorkspace:
     from jarvis.core.private_directory import (  # noqa: PLC0415
         ensure_owner_only_directory,
     )
 
     try:
         temporary_root = Path(tempfile.gettempdir()).resolve(strict=True)
-        root = temporary_root / f"jarvis-codex-voice-{secrets.token_hex(16)}"
+        workspace_label = "voice" if purpose == "realtime" else "text"
+        root = temporary_root / (
+            f"jarvis-codex-{workspace_label}-{secrets.token_hex(16)}"
+        )
         ensure_owner_only_directory(root, create=True)
         root = root.resolve(strict=True)
         if root.parent != temporary_root:
@@ -1892,8 +1909,13 @@ def _create_safe_transport_workspace() -> _SafeTransportWorkspace:
     child_local_appdata = root / "local-appdata"
     child_tmp = root / "tmp"
     try:
-        instructions.write_text(_TRANSPORT_BASE_INSTRUCTIONS, encoding="utf-8")
-        compact_prompt.write_text(_TRANSPORT_BASE_INSTRUCTIONS, encoding="utf-8")
+        instruction_floor = (
+            _TEXT_BASE_INSTRUCTIONS
+            if purpose == "text"
+            else _TRANSPORT_BASE_INSTRUCTIONS
+        )
+        instructions.write_text(instruction_floor, encoding="utf-8")
+        compact_prompt.write_text(instruction_floor, encoding="utf-8")
         for directory in (
             sqlite_home,
             log_dir,
@@ -1918,7 +1940,7 @@ def _create_safe_transport_workspace() -> _SafeTransportWorkspace:
                             "priority": 0,
                             "availability_nux": None,
                             "upgrade": None,
-                            "base_instructions": _TRANSPORT_BASE_INSTRUCTIONS,
+                            "base_instructions": instruction_floor,
                             "model_messages": None,
                             "support_verbosity": False,
                             "default_verbosity": None,
@@ -2287,8 +2309,13 @@ class CodexAppServerClient:
         self,
         binary_path: str | None = None,
         request_timeout_s: float = _DEFAULT_REQUEST_TIMEOUT_S,
+        *,
+        purpose: CodexAppServerPurpose = "realtime",
     ) -> None:
+        if purpose not in ("realtime", "text"):
+            raise ValueError("purpose must be 'realtime' or 'text'")
         self._binary_path = (binary_path or "").strip() or None
+        self._purpose: CodexAppServerPurpose = purpose
         self._request_timeout_s = max(0.1, float(request_timeout_s))
         self._child_environment: dict[str, str] = {}
         self._process: asyncio.subprocess.Process | None = None
@@ -2559,13 +2586,14 @@ class CodexAppServerClient:
                 )
                 if self._workspace is None:
                     self._workspace = await asyncio.to_thread(
-                        _create_safe_transport_workspace
+                        _create_safe_transport_workspace, self._purpose
                     )
                 self._child_environment = _subscription_environment(
                     codex_home,
                     self._workspace,
                 )
-                await self._ensure_sink_started()
+                if self._purpose == "realtime":
+                    await self._ensure_sink_started()
                 _stamp("home_workspace_sink")
                 await asyncio.to_thread(
                     _verify_spawn_binary, capability.binary_path
@@ -2642,7 +2670,7 @@ class CodexAppServerClient:
                     "version": __version__,
                 },
                 "capabilities": {
-                    "experimentalApi": True,
+                    "experimentalApi": self._purpose == "realtime",
                     "mcpServerOpenaiFormElicitation": False,
                     "requestAttestation": False,
                 },
@@ -2888,16 +2916,6 @@ class CodexAppServerClient:
             ("approval_policy",): "never",
             ("cli_auth_credentials_store",): "file",
             ("chatgpt_base_url",): _OFFICIAL_CHATGPT_BASE,
-            ("experimental_realtime_webrtc_call_base_url",): (
-                _OFFICIAL_CHATGPT_CODEX_BASE
-            ),
-            ("experimental_realtime_start_instructions",): "",
-            ("experimental_realtime_ws_backend_prompt",): (
-                ""
-            ),
-            ("experimental_realtime_ws_base_url",): (
-                _OFFICIAL_OPENAI_REALTIME_BASE
-            ),
             ("history", "persistence"): "none",
             ("include_apps_instructions",): False,
             ("include_collaboration_mode_instructions",): False,
@@ -2906,10 +2924,7 @@ class CodexAppServerClient:
             ("memories", "dedicated_tools"): False,
             ("memories", "generate_memories"): False,
             ("memories", "use_memories"): False,
-            ("model_provider",): self._transport_provider_id,
-            ("experimental_compact_prompt_file",): self._compact_prompt_file(),
             ("log_dir",): self._log_dir(),
-            ("model_catalog_json",): self._model_catalog_file(),
             ("model_instructions_file",): self._safe_instructions_file(),
             ("notify",): [],
             ("openai_base_url",): _OFFICIAL_OPENAI_API_BASE,
@@ -2928,20 +2943,45 @@ class CodexAppServerClient:
         }
         for feature in _DISABLED_APP_SERVER_FEATURES:
             expected_paths[("features", feature)] = False
-        expected_paths[("features", "realtime_conversation")] = True
-        provider_prefix = ("model_providers", self._transport_provider_id)
-        expected_paths.update(
-            {
-                (*provider_prefix, "base_url"): self._provider_sink_base_url(),
-                (*provider_prefix, "name"): "OpenAI ChatGPT subscription voice",
-                (*provider_prefix, "requires_openai_auth"): True,
-                (*provider_prefix, "request_max_retries"): 0,
-                (*provider_prefix, "supports_standalone_web_search"): False,
-                (*provider_prefix, "supports_websockets"): False,
-                (*provider_prefix, "stream_max_retries"): 0,
-                (*provider_prefix, "wire_api"): "responses",
-            }
-        )
+        if self._purpose == "realtime":
+            expected_paths.update(
+                {
+                    ("experimental_realtime_webrtc_call_base_url",): (
+                        _OFFICIAL_CHATGPT_CODEX_BASE
+                    ),
+                    ("experimental_realtime_start_instructions",): "",
+                    ("experimental_realtime_ws_backend_prompt",): "",
+                    ("experimental_realtime_ws_base_url",): (
+                        _OFFICIAL_OPENAI_REALTIME_BASE
+                    ),
+                    ("model_provider",): self._transport_provider_id,
+                    ("experimental_compact_prompt_file",): (
+                        self._compact_prompt_file()
+                    ),
+                    ("model_catalog_json",): self._model_catalog_file(),
+                    ("features", "realtime_conversation"): True,
+                }
+            )
+            provider_prefix = ("model_providers", self._transport_provider_id)
+            expected_paths.update(
+                {
+                    (*provider_prefix, "base_url"): self._provider_sink_base_url(),
+                    (*provider_prefix, "name"): "OpenAI ChatGPT subscription voice",
+                    (*provider_prefix, "requires_openai_auth"): True,
+                    (*provider_prefix, "request_max_retries"): 0,
+                    (*provider_prefix, "supports_standalone_web_search"): False,
+                    (*provider_prefix, "supports_websockets"): False,
+                    (*provider_prefix, "stream_max_retries"): 0,
+                    (*provider_prefix, "wire_api"): "responses",
+                }
+            )
+        else:
+            expected_paths.update(
+                {
+                    ("model_provider",): _TEXT_MODEL_PROVIDER,
+                    ("features", "realtime_conversation"): False,
+                }
+            )
         if sys.platform == "win32":
             expected_paths[("windows", "sandbox")] = "unelevated"
         for path, expected in expected_paths.items():
@@ -3027,7 +3067,11 @@ class CodexAppServerClient:
         public_expected = {
             "analytics": {"enabled": False},
             "approval_policy": "never",
-            "model_provider": self._transport_provider_id,
+            "model_provider": (
+                self._transport_provider_id
+                if self._purpose == "realtime"
+                else _TEXT_MODEL_PROVIDER
+            ),
             "sandbox_mode": "read-only",
         }
         for key, expected in public_expected.items():
@@ -3040,13 +3084,13 @@ class CodexAppServerClient:
         self,
         binary_path: str,
     ) -> None:
-        command = [
-            binary_path,
-            "app-server",
-            "--strict-config",
-            "--enable",
-            "realtime_conversation",
-        ]
+        command = [binary_path, "app-server", "--strict-config"]
+        command.extend(
+            (
+                "--enable" if self._purpose == "realtime" else "--disable",
+                "realtime_conversation",
+            )
+        )
         for feature in _DISABLED_APP_SERVER_FEATURES:
             command.extend(("--disable", feature))
         command.extend(
@@ -3057,23 +3101,6 @@ class CodexAppServerClient:
                 'openai_base_url="https://api.openai.com/v1"',
                 "-c",
                 'chatgpt_base_url="https://chatgpt.com/backend-api/"',
-                "-c",
-                (
-                    'experimental_realtime_ws_base_url='
-                    '"https://api.openai.com/v1"'
-                ),
-                "-c",
-                (
-                    'experimental_realtime_webrtc_call_base_url='
-                    '"https://chatgpt.com/backend-api/codex"'
-                ),
-                "-c",
-                'experimental_realtime_start_instructions=""',
-                "-c",
-                (
-                    "experimental_realtime_ws_backend_prompt="
-                    '""'
-                ),
                 "-c",
                 "tools.web_search=false",
                 "-c",
@@ -3106,14 +3133,7 @@ class CodexAppServerClient:
                     f"{json.dumps(self._safe_instructions_file())}"
                 ),
                 "-c",
-                (
-                    "experimental_compact_prompt_file="
-                    f"{json.dumps(self._compact_prompt_file())}"
-                ),
-                "-c",
                 f"log_dir={json.dumps(self._log_dir())}",
-                "-c",
-                f"model_catalog_json={json.dumps(self._model_catalog_file())}",
                 "-c",
                 f"sqlite_home={json.dumps(self._sqlite_home())}",
                 "-c",
@@ -3136,9 +3156,28 @@ class CodexAppServerClient:
                 'sandbox_mode="read-only"',
             )
         )
-        provider = f"model_providers.{self._transport_provider_id}"
-        command.extend(
-            (
+        if self._purpose == "realtime":
+            command.extend(
+                (
+                    "-c",
+                    'experimental_realtime_ws_base_url="https://api.openai.com/v1"',
+                    "-c",
+                    "experimental_realtime_webrtc_call_base_url="
+                    '"https://chatgpt.com/backend-api/codex"',
+                    "-c",
+                    'experimental_realtime_start_instructions=""',
+                    "-c",
+                    'experimental_realtime_ws_backend_prompt=""',
+                    "-c",
+                    "experimental_compact_prompt_file="
+                    f"{json.dumps(self._compact_prompt_file())}",
+                    "-c",
+                    f"model_catalog_json={json.dumps(self._model_catalog_file())}",
+                )
+            )
+            provider = f"model_providers.{self._transport_provider_id}"
+            command.extend(
+                (
                 "-c",
                 f'{provider}.name="OpenAI ChatGPT subscription voice"',
                 "-c",
@@ -3157,8 +3196,10 @@ class CodexAppServerClient:
                 f"{provider}.stream_max_retries=0",
                 "-c",
                 f'model_provider="{self._transport_provider_id}"',
+                )
             )
-        )
+        else:
+            command.extend(("-c", f'model_provider="{_TEXT_MODEL_PROVIDER}"'))
         if sys.platform == "win32":
             command.extend(("-c", 'windows.sandbox="unelevated"'))
         kwargs: dict[str, Any] = {
@@ -3594,6 +3635,193 @@ class CodexAppServerClient:
                 "Codex returned an unsafe or unverifiable voice thread boundary."
             )
 
+    def _audit_text_thread_start_response(
+        self,
+        result: Mapping[str, Any],
+        *,
+        expected_model: str | None,
+    ) -> None:
+        """Verify the stable text thread kept the subscription safety floor."""
+        thread = result.get("thread")
+        sandbox = result.get("sandbox")
+        expected_cwd = os.path.normcase(os.path.abspath(self._safe_thread_cwd()))
+        response_cwd = result.get("cwd")
+        thread_cwd = thread.get("cwd") if isinstance(thread, Mapping) else None
+        response_model = result.get("model")
+        thread_model = thread.get("model") if isinstance(thread, Mapping) else None
+        model_ok = (
+            isinstance(response_model, str)
+            and bool(response_model)
+            and isinstance(thread_model, str)
+            and bool(thread_model)
+        )
+        if expected_model:
+            model_ok = (
+                model_ok
+                and response_model == expected_model
+                and thread_model == expected_model
+            )
+        if (
+            not isinstance(thread, Mapping)
+            or not isinstance(thread.get("id"), str)
+            or not thread["id"]
+            or thread.get("ephemeral") is not True
+            or thread.get("modelProvider") != _TEXT_MODEL_PROVIDER
+            or not isinstance(response_cwd, str)
+            or os.path.normcase(os.path.abspath(response_cwd)) != expected_cwd
+            or not isinstance(thread_cwd, str)
+            or os.path.normcase(os.path.abspath(thread_cwd)) != expected_cwd
+            or result.get("approvalPolicy") != "never"
+            or result.get("modelProvider") != _TEXT_MODEL_PROVIDER
+            or not model_ok
+            or sandbox != {"type": "readOnly", "networkAccess": False}
+            or result.get("instructionSources", []) != []
+        ):
+            raise CodexSubscriptionUnavailable(
+                "Codex returned an unsafe or unverifiable text thread boundary."
+            )
+
+    async def text_thread_start(
+        self,
+        *,
+        base_instructions: str | None = None,
+        developer_instructions: str | None = None,
+        model: str | None = None,
+    ) -> dict[str, Any]:
+        """Start one isolated stable App Server text thread for subscription voice."""
+        if self._purpose != "text":
+            raise CodexSubscriptionUnavailable(
+                "A realtime Codex transport cannot create text-generation threads."
+            )
+        selected_model = str(model or "").strip()
+        if selected_model and not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", selected_model
+        ):
+            raise CodexSubscriptionUnavailable(
+                "Codex subscription model id contains unsupported characters."
+            )
+        await self.ensure_started()
+        session_config: dict[str, Any] = {
+            "analytics": {"enabled": False},
+            "cli_auth_credentials_store": "file",
+            "chatgpt_base_url": _OFFICIAL_CHATGPT_BASE,
+            "features": {
+                **{feature: False for feature in _DISABLED_APP_SERVER_FEATURES},
+                "realtime_conversation": False,
+            },
+            "history": {"persistence": "none"},
+            "include_apps_instructions": False,
+            "include_collaboration_mode_instructions": False,
+            "include_environment_context": False,
+            "include_permissions_instructions": False,
+            "memories": {
+                "dedicated_tools": False,
+                "generate_memories": False,
+                "use_memories": False,
+            },
+            "log_dir": self._log_dir(),
+            "model_instructions_file": self._safe_instructions_file(),
+            "model_provider": _TEXT_MODEL_PROVIDER,
+            "notify": [],
+            "openai_base_url": _OFFICIAL_OPENAI_API_BASE,
+            "orchestrator": {
+                "mcp": {"enabled": False},
+                "skills": {"enabled": False},
+            },
+            "otel": {
+                "exporter": "none",
+                "log_user_prompt": False,
+                "metrics_exporter": "none",
+                "trace_exporter": "none",
+            },
+            "project_doc_max_bytes": 0,
+            "sandbox_mode": "read-only",
+            "skills": {
+                "bundled": {"enabled": False},
+                "include_instructions": False,
+            },
+            "sqlite_home": self._sqlite_home(),
+            "tools": {"web_search": False},
+        }
+        params: dict[str, Any] = {
+            "allowProviderModelFallback": False,
+            "approvalPolicy": "never",
+            "baseInstructions": (
+                str(base_instructions or "").strip() or _TEXT_BASE_INSTRUCTIONS
+            ),
+            "config": session_config,
+            "cwd": self._safe_thread_cwd(),
+            "developerInstructions": (
+                str(developer_instructions or "").strip()
+                or _TEXT_DEVELOPER_INSTRUCTIONS
+            ),
+            "dynamicTools": None,
+            "environments": [],
+            "ephemeral": True,
+            "modelProvider": _TEXT_MODEL_PROVIDER,
+            "runtimeWorkspaceRoots": [],
+            "sandbox": "read-only",
+            "selectedCapabilityRoots": [],
+        }
+        if selected_model:
+            params["model"] = selected_model
+
+        async with self._thread_start_lock:
+            await self.ensure_started()
+            live_process = self._process
+            audit_is_fresh = (
+                live_process is not None
+                and self._startup_audit_process is live_process
+            )
+            self._startup_audit_process = None
+            try:
+                if not audit_is_fresh:
+                    await asyncio.to_thread(
+                        _validated_subscription_home,
+                        create=False,
+                        require_marker=True,
+                        trusted_binary_path=self._trusted_binary_path,
+                    )
+                    await self._verify_live_chatgpt_account()
+                    self._audit_config_requirements(
+                        await self._read_config_requirements()
+                    )
+                    self._audit_effective_config(await self._read_effective_config())
+            except CodexSubscriptionUnavailable as exc:
+                if isinstance(exc, CodexSubscriptionPlanUnsupported):
+                    await asyncio.shield(
+                        asyncio.to_thread(
+                            set_codex_subscription_activation_block, str(exc)
+                        )
+                    )
+                error = type(exc)(str(exc))
+                await self._close_process(
+                    CodexAppServerDisconnected(
+                        "Codex app-server safety state changed."
+                    ),
+                    expected=False,
+                )
+                raise error from None
+            result = _result_dict(
+                "thread/start",
+                await self._request_live(
+                    "thread/start", params, timeout_s=self._request_timeout_s
+                ),
+            )
+            try:
+                self._audit_text_thread_start_response(
+                    result, expected_model=selected_model or None
+                )
+            except CodexSubscriptionUnavailable:
+                await self._close_process(
+                    CodexAppServerDisconnected(
+                        "Codex app-server returned an unsafe text thread boundary."
+                    ),
+                    expected=False,
+                )
+                raise
+            return result
+
     async def thread_start(
         self,
         *,
@@ -3611,6 +3839,10 @@ class CodexAppServerClient:
         ride_recent_audit: bool = False,
     ) -> dict[str, Any]:
         """Start a verified ChatGPT-only transport thread outside the workspace."""
+        if self._purpose != "realtime":
+            raise CodexSubscriptionUnavailable(
+                "A text Codex transport cannot create realtime voice threads."
+            )
         # cwd/model/ephemeral stay caller-proof: the audit below pins them to
         # the safe values, so a caller cannot widen the boundary. Instructions
         # are different — they are the voice's identity, one-speaker rule and
@@ -4266,7 +4498,7 @@ class CodexAppServerClient:
 # app-server child bound to it), so a per-loop client could only ever be a
 # client that can never reserve the profile — the second loop got one and
 # every call from it failed with "already owned by another client".
-_shared_clients: dict[str, CodexAppServerClient] = {}
+_shared_clients: dict[tuple[str, CodexAppServerPurpose], CodexAppServerClient] = {}
 _shared_clients_lock = threading.Lock()
 # Invariant: WORKER threads may hold this lock across filesystem work (the
 # cross-process profile lock is acquired under it: mkdir, resolve, ACL
@@ -4644,10 +4876,13 @@ def _evict_shared_codex_app_server(client: CodexAppServerClient) -> None:
 
 def get_shared_codex_app_server(
     binary_path: str | None = None,
+    *,
+    purpose: CodexAppServerPurpose = "realtime",
 ) -> CodexAppServerClient:
-    """Return the shared client for Jarvis's fixed subscription-voice identity.
+    """Return a shared client for Jarvis's fixed subscription identity.
 
-    One client per binary, process-wide. A caller on a different event loop is
+    One client per binary and purpose, process-wide. The dedicated profile still
+    permits only one live child at a time. A caller on a different event loop is
     refused HERE with an actionable message rather than being handed a client
     that cannot reserve the single-owner profile and fails deep inside a call.
     """
@@ -4657,7 +4892,9 @@ def get_shared_codex_app_server(
         raise CodexSubscriptionUnavailable(
             "The shared Codex app-server must be acquired from its owning event loop."
         ) from exc
-    key = (binary_path or "").strip() or "<default>"
+    if purpose not in ("realtime", "text"):
+        raise ValueError("purpose must be 'realtime' or 'text'")
+    key = ((binary_path or "").strip() or "<default>", purpose)
     with _shared_clients_lock:
         client = _shared_clients.get(key)
         if client is not None:
@@ -4678,7 +4915,7 @@ def get_shared_codex_app_server(
                 "Replacing a Codex app-server client whose owner loop is closed"
             )
             _shared_clients.pop(key, None)
-        client = CodexAppServerClient(binary_path=binary_path)
+        client = CodexAppServerClient(binary_path=binary_path, purpose=purpose)
         client._owner_loop = loop
         _shared_clients[key] = client
     return client
@@ -5330,6 +5567,7 @@ async def close_shared_codex_app_servers() -> None:
 
 
 __all__ = [
+    "CodexAppServerPurpose",
     "CodexAppServerCapability",
     "CodexAppServerClient",
     "CodexAppServerDisconnected",

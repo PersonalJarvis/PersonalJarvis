@@ -9,7 +9,9 @@ unfulfillable by instruction. These tests pin both fixes.
 """
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -80,7 +82,13 @@ def _arm_api_and_oauth(
         yield BrainDelta(content="cli-answer")
         yield BrainDelta(finish_reason="stop")
 
+    async def _fake_app_server(self: CodexBrain, req: BrainRequest):
+        calls.append("app-server")
+        yield BrainDelta(content="app-server-answer")
+        yield BrainDelta(finish_reason="stop")
+
     monkeypatch.setattr(CodexBrain, "_complete_via_cli", _fake_cli)
+    monkeypatch.setattr(CodexBrain, "_complete_via_app_server", _fake_app_server)
     return calls
 
 
@@ -107,8 +115,133 @@ async def test_explicit_subscription_choice_bypasses_a_stored_api_key(
 
     answer = await _collect(brain.complete(_wiki_request()))
 
-    assert answer == "cli-answer"
-    assert calls == ["cli"]
+    assert answer == "app-server-answer"
+    assert calls == ["app-server"]
+
+
+class _TextSubscription:
+    def __init__(self, notifications: list[object]) -> None:
+        self._notifications = list(notifications)
+        self.closed = False
+        self.waiting = asyncio.Event()
+
+    async def get(self, timeout_s: float | None = None) -> object:
+        del timeout_s
+        if self._notifications:
+            return self._notifications.pop(0)
+        self.waiting.set()
+        await asyncio.Future()
+        raise AssertionError("unreachable")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _TextClient:
+    def __init__(self, notifications: list[object]) -> None:
+        self.subscription = _TextSubscription(notifications)
+        self.interrupts: list[tuple[str, str]] = []
+        self.unsubscribed: list[str] = []
+
+    async def text_thread_start(self) -> dict[str, object]:
+        return {"thread": {"id": "thread-voice"}}
+
+    def subscribe(self, thread_id: str) -> _TextSubscription:
+        assert thread_id == "thread-voice"
+        return self.subscription
+
+    async def turn_start(self, thread_id: str, prompt: str) -> dict[str, object]:
+        assert thread_id == "thread-voice"
+        assert prompt
+        return {"turn": {"id": "turn-voice"}}
+
+    async def turn_interrupt(self, thread_id: str, turn_id: str) -> dict[str, object]:
+        self.interrupts.append((thread_id, turn_id))
+        return {}
+
+    async def thread_unsubscribe(self, thread_id: str) -> dict[str, object]:
+        self.unsubscribed.append(thread_id)
+        return {}
+
+
+def _notification(method: str, **params: object) -> object:
+    return SimpleNamespace(method=method, params=params)
+
+
+@pytest.mark.asyncio
+async def test_app_server_subscription_streams_deltas_without_repeating_final(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _TextClient(
+        [
+            _notification(
+                "item/agentMessage/delta",
+                threadId="thread-voice",
+                turnId="turn-voice",
+                delta="Hello ",
+            ),
+            _notification(
+                "item/agentMessage/delta",
+                threadId="thread-voice",
+                turnId="turn-voice",
+                delta="there.",
+            ),
+            _notification(
+                "item/completed",
+                threadId="thread-voice",
+                turnId="turn-voice",
+                item={"type": "agentMessage", "text": "Hello there."},
+            ),
+            _notification(
+                "turn/completed",
+                threadId="thread-voice",
+                turn={"id": "turn-voice", "status": "completed"},
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        "jarvis.codex_app_server.get_shared_codex_app_server",
+        lambda *_a, **_k: client,
+    )
+    brain = CodexBrain(prefer_subscription=True)
+
+    answer = await _collect(brain._complete_via_app_server(_wiki_request()))
+
+    assert answer == "Hello there."
+    assert client.unsubscribed == ["thread-voice"]
+
+
+@pytest.mark.asyncio
+async def test_app_server_subscription_interrupts_exact_turn_on_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _TextClient(
+        [
+            _notification(
+                "item/agentMessage/delta",
+                threadId="thread-voice",
+                turnId="turn-voice",
+                delta="Starting",
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        "jarvis.codex_app_server.get_shared_codex_app_server",
+        lambda *_a, **_k: client,
+    )
+    stream = CodexBrain(prefer_subscription=True)._complete_via_app_server(
+        _wiki_request()
+    )
+    assert (await stream.__anext__()).content == "Starting"
+    pending = asyncio.create_task(stream.__anext__())
+    await asyncio.wait_for(client.subscription.waiting.wait(), timeout=1.0)
+
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    assert client.interrupts == [("thread-voice", "turn-voice")]
+    assert client.unsubscribed == ["thread-voice"]
 
 
 def test_subscription_cli_command_carries_the_selected_model() -> None:

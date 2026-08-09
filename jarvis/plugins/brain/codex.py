@@ -4,12 +4,10 @@ Codex can back the conversational *brain* two ways:
 
 * **API key** (``codex_openai_api_key`` / ``openai_api_key``): the fast, cheap
   path — a normal OpenAI chat-completions stream via ``_openai_base``.
-* **ChatGPT login (OAuth)**: when no API key is configured but ``codex login``
-  has stored a ChatGPT subscription token, we drive the ``codex`` CLI
-  (``codex exec``) directly — no per-call billing. This is SLOW (the codex agent
-  spins up per turn, ~15-20 s, and burns many tokens) and tool-limited, so it is
-  a deliberate fallback the user opts into, not the default. A chat-completions
-  endpoint genuinely cannot run on the subscription; the CLI is the only bridge.
+* **ChatGPT login (OAuth)**: the explicit subscription voice profile uses the
+  persistent ``codex app-server`` stable text protocol and streams assistant
+  deltas. The ordinary Codex OAuth fallback retains ``codex exec`` for
+  compatibility with the user's non-isolated CLI profile.
 
 The CLI path runs ``codex exec`` in a throwaway temp dir with ``--sandbox
 read-only`` (no writes, no dangerous commands), a light "answer conversationally"
@@ -28,7 +26,7 @@ import shutil
 import sys
 import tempfile
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import suppress
 from typing import Any
 
@@ -57,6 +55,49 @@ DEFAULT_MODEL = "gpt-5.5"
 _CLI_TIMEOUT_S: float = 90.0
 
 _CLI_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+
+
+def _app_server_id(value: object, key: str) -> str:
+    if not isinstance(value, Mapping):
+        return ""
+    direct = value.get(key)
+    if isinstance(direct, str):
+        return direct
+    nested_name = "turn" if key == "turnId" else "thread"
+    nested = value.get(nested_name)
+    if isinstance(nested, Mapping) and isinstance(nested.get("id"), str):
+        return str(nested["id"])
+    return ""
+
+
+def _agent_message_text(params: Mapping[str, Any]) -> str:
+    item = params.get("item")
+    if not isinstance(item, Mapping):
+        return ""
+    item_type = str(item.get("type") or "").replace("_", "").lower()
+    if item_type != "agentmessage":
+        return ""
+    text = item.get("text")
+    if isinstance(text, str):
+        return text
+    content = item.get("content")
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, Mapping) and isinstance(block.get("text"), str):
+            parts.append(str(block["text"]))
+    return "".join(parts)
+
+
+def _completed_turn_status(params: Mapping[str, Any]) -> str:
+    turn = params.get("turn")
+    status: object = turn.get("status") if isinstance(turn, Mapping) else None
+    if isinstance(status, Mapping):
+        status = status.get("type")
+    if not isinstance(status, str):
+        status = params.get("status")
+    return str(status or "").strip().lower()
 
 
 def _resolve_codex_binary() -> str | None:
@@ -222,7 +263,7 @@ def _build_cli_command(binary: str, model: str | None) -> list[str]:
 # ``--sandbox read-only`` so it physically cannot write files or run risky
 # commands even if it tries.
 _CLI_SYSTEM = (
-    "You are Jarvis, a concise and friendly voice assistant. Answer the user's "
+    "You are the user's concise and friendly voice assistant. Answer the user's "
     "message directly in one to three short sentences. Reply in plain text only "
     "— do not run any commands, do not read or edit files, do not use tools."
 )
@@ -355,6 +396,120 @@ class CodexBrain:
         if self._structured_prompts:
             return render_structured_prompt(req)
         return _build_cli_prompt(req)
+
+    async def _complete_via_app_server(
+        self, req: BrainRequest
+    ) -> AsyncIterator[BrainDelta]:
+        """Stream a ChatGPT-subscription turn over the stable App Server API."""
+        from jarvis.codex_app_server import (  # noqa: PLC0415
+            CodexAppServerDisconnected,
+            CodexAppServerTimeout,
+            get_shared_codex_app_server,
+        )
+
+        binary_path = (
+            str(getattr(getattr(cfg.load_config(), "codex", None), "binary_path", ""))
+            .strip()
+            or None
+        )
+        client = get_shared_codex_app_server(binary_path, purpose="text")
+        prompt = self._render_prompt(req)
+        started = await client.text_thread_start()
+        thread_id = _app_server_id(started, "threadId")
+        if not thread_id:
+            raise RuntimeError("Codex App Server returned no text thread id.")
+
+        subscription = client.subscribe(thread_id)
+        turn_id = ""
+        emitted = ""
+        authoritative = ""
+        finished = False
+        started_at = time.monotonic()
+        try:
+            turn_result = await client.turn_start(thread_id, prompt)
+            turn_id = _app_server_id(turn_result, "turnId")
+            deadline = started_at + self._cli_timeout_s
+            while not finished:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError
+                notification = await subscription.get(timeout_s=remaining)
+                params = notification.params
+                event_turn_id = _app_server_id(params, "turnId")
+                if turn_id and event_turn_id and event_turn_id != turn_id:
+                    continue
+                if notification.method == "turn/started":
+                    turn_id = turn_id or event_turn_id
+                    continue
+                if notification.method == "item/agentMessage/delta":
+                    delta = params.get("delta")
+                    if isinstance(delta, str) and delta:
+                        emitted += delta
+                        yield BrainDelta(content=delta)
+                    continue
+                if notification.method == "item/completed":
+                    final_text = _agent_message_text(params)
+                    if not final_text:
+                        continue
+                    authoritative += final_text
+                    if final_text.startswith(emitted):
+                        suffix = final_text[len(emitted) :]
+                        if suffix:
+                            emitted += suffix
+                            yield BrainDelta(content=suffix)
+                    elif not emitted:
+                        emitted = final_text
+                        yield BrainDelta(content=final_text)
+                    else:
+                        log.warning(
+                            "Codex App Server final text diverged from streamed deltas; "
+                            "keeping the already delivered stream to avoid duplicate speech"
+                        )
+                    continue
+                if notification.method == "turn/completed":
+                    status = _completed_turn_status(params)
+                    if status and status not in {"completed", "interrupted"}:
+                        raise RuntimeError(
+                            f"Codex App Server text turn ended with status {status}."
+                        )
+                    if status == "interrupted":
+                        raise RuntimeError("Codex App Server text turn was interrupted.")
+                    finished = True
+                elif notification.method in {"error", "turn/failed"}:
+                    raise RuntimeError("Codex App Server text turn failed.")
+        except asyncio.CancelledError:
+            if turn_id:
+                with suppress(Exception):
+                    await asyncio.shield(client.turn_interrupt(thread_id, turn_id))
+            raise
+        except (TimeoutError, CodexAppServerTimeout) as exc:
+            if turn_id:
+                with suppress(Exception):
+                    await asyncio.shield(client.turn_interrupt(thread_id, turn_id))
+            raise RuntimeError(
+                "Codex App Server did not finish the subscription turn within "
+                f"{self._cli_timeout_s:.0f}s."
+            ) from exc
+        finally:
+            subscription.close()
+            try:
+                await asyncio.shield(
+                    asyncio.wait_for(client.thread_unsubscribe(thread_id), timeout=3.0)
+                )
+            except (TimeoutError, CodexAppServerDisconnected):
+                log.warning("Codex App Server text thread cleanup did not complete")
+            except Exception:
+                log.debug("Codex App Server text thread cleanup failed", exc_info=True)
+
+        answer = (authoritative or emitted).strip()
+        if not answer:
+            raise RuntimeError("Codex App Server returned no subscription answer.")
+        log.info(
+            "Codex App Server text turn ok: %d chars in %.1fs via ChatGPT login",
+            len(answer),
+            time.monotonic() - started_at,
+        )
+        yield BrainDelta(finish_reason="stop")
 
     async def _complete_via_cli(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         """Drive ``codex exec`` over the ChatGPT login and stream its answer.
@@ -544,17 +699,12 @@ class CodexBrain:
                 raise RuntimeError(
                     "Codex ChatGPT subscription mode cannot execute brain tools."
                 )
-            oauth = await asyncio.to_thread(_codex_oauth_connected)
-            if not oauth:
-                raise RuntimeError(
-                    "Codex ChatGPT subscription login is not connected."
-                )
             log.info(
                 "CodexBrain.complete: explicit ChatGPT-subscription path "
                 "(model=%s)",
                 self._model,
             )
-            async for delta in self._complete_via_cli(req):
+            async for delta in self._complete_via_app_server(req):
                 yield delta
             return
 

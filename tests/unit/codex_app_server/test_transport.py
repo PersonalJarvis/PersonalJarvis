@@ -215,6 +215,55 @@ def _default_responder(process: FakeProcess, message: dict[str, Any]) -> None:
         _respond(process, request_id, {})
 
 
+@pytest.mark.asyncio
+async def test_text_transport_uses_stable_app_server_without_realtime_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(monkeypatch)
+    client = CodexAppServerClient(purpose="text")
+
+    await client.ensure_started()
+
+    argv, _kwargs = harness.calls[0]
+    argv_text = "\n".join(str(value) for value in argv)
+    assert "--disable\nrealtime_conversation" in argv_text
+    assert "--enable\nrealtime_conversation" not in argv_text
+    assert "experimental_realtime_" not in argv_text
+    assert f'model_provider="{transport._TEXT_MODEL_PROVIDER}"' in argv
+    assert client._sink_server is None
+    initialize = harness.processes[0].stdin.messages[0]
+    assert initialize["params"]["capabilities"]["experimentalApi"] is False
+
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_text_thread_is_ephemeral_read_only_and_uses_managed_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(monkeypatch)
+    client = CodexAppServerClient(purpose="text")
+    monkeypatch.setattr(client, "_audit_text_thread_start_response", lambda *_a, **_k: None)
+
+    result = await client.text_thread_start()
+
+    assert result == {"thread": {"id": "thread-1"}}
+    params = next(
+        message["params"]
+        for message in harness.processes[0].stdin.messages
+        if message.get("method") == "thread/start"
+    )
+    assert params["modelProvider"] == transport._TEXT_MODEL_PROVIDER
+    assert "model" not in params
+    assert params["ephemeral"] is True
+    assert params["sandbox"] == "read-only"
+    assert params["dynamicTools"] is None
+    assert params["runtimeWorkspaceRoots"] == []
+    assert params["config"]["features"]["realtime_conversation"] is False
+
+    await client.close()
+
+
 class SpawnHarness:
     def __init__(
         self,
