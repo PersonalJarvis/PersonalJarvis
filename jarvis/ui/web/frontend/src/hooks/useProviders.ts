@@ -885,6 +885,8 @@ export async function managedServerPreflight(): Promise<ManagedPreflight> {
 
 export async function managedServerInstall(
   confirmedBrain?: string,
+  brainModel?: string,
+  voiceModel?: string,
 ): Promise<ManagedInstallProgress> {
   const res = await fetch("/api/providers/local-realtime/managed-server/install", {
     method: "POST",
@@ -892,7 +894,11 @@ export async function managedServerInstall(
     // The brain kind the user just confirmed in the preflight — the engine
     // fails the install if it re-resolves differently (no silent
     // local→cloud swap).
-    body: JSON.stringify({ confirmed_brain: confirmedBrain ?? "" }),
+    body: JSON.stringify({
+      confirmed_brain: confirmedBrain ?? "",
+      brain_model: brainModel ?? "",
+      voice_model: voiceModel ?? "",
+    }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
@@ -936,6 +942,47 @@ export interface ManagedBrainChoice {
   current: boolean;
 }
 
+export interface ManagedVoiceChoice {
+  id: string;
+  label: string;
+  backend: string;
+  model: string;
+  languages: string[];
+  selectable: boolean;
+  recommended: boolean;
+  note: string;
+  speaker: string;
+  current: boolean;
+  platform: string;
+}
+
+export interface ManagedModelCatalog {
+  brain: {
+    reachable: boolean;
+    usable_gb: number;
+    current: string;
+    models: ManagedBrainChoice[];
+  };
+  current: string;
+  models: ManagedVoiceChoice[];
+  hearing: { id: string; label: string; note: string };
+}
+
+export interface ManagedSetupResult {
+  ok: boolean;
+  changed: boolean;
+  brain: { kind: string; model: string; note: string };
+  voice: { id: string; label: string };
+  smoke: {
+    ok: boolean;
+    language: string;
+    audio_bytes: number;
+    first_audio_ms: number | null;
+    transcript_chars: number;
+  };
+  runtime?: ManagedServerRuntime;
+}
+
 export async function managedServerBrainModels(): Promise<{
   reachable: boolean;
   usable_gb: number;
@@ -953,6 +1000,29 @@ export async function managedServerBrainModels(): Promise<{
     current: string;
     models: ManagedBrainChoice[];
   };
+}
+
+export async function managedServerModelCatalog(): Promise<ManagedModelCatalog> {
+  const res = await fetch(
+    "/api/providers/local-realtime/managed-server/model-catalog",
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
+  return body as ManagedModelCatalog;
+}
+
+export async function managedServerSetup(
+  brainModel: string,
+  voiceModel: string,
+): Promise<ManagedSetupResult> {
+  const res = await fetch("/api/providers/local-realtime/managed-server/setup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ brain_model: brainModel, voice_model: voiceModel }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ?? `HTTP ${res.status}`);
+  return body as ManagedSetupResult;
 }
 
 /** Re-resolve the Ollama brain model and rewrite the launch command in place. */

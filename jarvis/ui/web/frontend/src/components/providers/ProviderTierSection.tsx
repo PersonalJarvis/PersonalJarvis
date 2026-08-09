@@ -13,10 +13,10 @@ import {
   loginAntigravity,
   localInstallStatus,
   logoutAntigravity,
-  managedServerBrain,
-  managedServerBrainModels,
   managedServerInstall,
+  managedServerModelCatalog,
   managedServerPreflight,
+  managedServerSetup,
   managedServerStart,
   managedServerStatus,
   managedServerStop,
@@ -27,7 +27,7 @@ import {
   ollamaRuntimeInstall,
   ollamaRuntimeStart,
   startModelPull,
-  type ManagedBrainChoice,
+  type ManagedModelCatalog,
   type ManagedServerRuntime,
   type OllamaRuntimeInstallProgress,
   type OllamaRuntimeStatus,
@@ -1925,11 +1925,12 @@ function ManagedServerPanel({
   const [preflight, setPreflight] = useState<ManagedPreflight | null>(null);
   const [progress, setProgress] = useState<ManagedInstallProgress | null>(null);
   const [runtime, setRuntime] = useState<ManagedServerRuntime | null>(null);
-  const [brainNote, setBrainNote] = useState<string | null>(null);
-  const [brainModels, setBrainModels] = useState<Awaited<
-    ReturnType<typeof managedServerBrainModels>
-  > | null>(null);
-  const [brainBusy, setBrainBusy] = useState<string | null>(null);
+  const [catalog, setCatalog] = useState<ManagedModelCatalog | null>(null);
+  const [selectedBrain, setSelectedBrain] = useState("");
+  const [selectedVoice, setSelectedVoice] = useState("");
+  const [setupBusy, setSetupBusy] = useState(false);
+  const [setupNote, setSetupNote] = useState<string | null>(null);
+  const [libraryBusy, setLibraryBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [lifecycleBusy, setLifecycleBusy] = useState(false);
@@ -2014,6 +2015,8 @@ function ManagedServerPanel({
       // up first and its post-setup re-check must match this confirmation.
       const first = await managedServerInstall(
         preflight?.brain_fixable ? "ollama" : preflight?.brain?.kind,
+        selectedBrain,
+        selectedVoice,
       );
       setProgress(first);
       // A failure BEFORE the first poll tick (fast preflight error inside
@@ -2057,66 +2060,100 @@ function ManagedServerPanel({
     }
   };
 
-  const refreshBrain = async () => {
-    setError(null);
-    setBrainNote(null);
-    setLifecycleBusy(true);
+  const loadCatalog = useCallback(async () => {
     try {
-      const result = await managedServerBrain();
-      setBrainNote(result.brain.note);
-      void loadBrainModels();
+      const next = await managedServerModelCatalog();
+      setCatalog(next);
+      setSelectedBrain((current) =>
+        current ||
+        next.brain.current ||
+        next.brain.models.find((choice) => choice.recommended && choice.fits)?.id ||
+        next.brain.models.find((choice) => choice.fits)?.id ||
+        "",
+      );
+      setSelectedVoice((current) =>
+        current ||
+        next.current ||
+        next.models.find((choice) => choice.recommended && choice.selectable)?.id ||
+        next.models.find((choice) => choice.selectable)?.id ||
+        "",
+      );
     } catch (err) {
+      setCatalog(null);
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLifecycleBusy(false);
-    }
-  };
-
-  const loadBrainModels = useCallback(async () => {
-    try {
-      setBrainModels(await managedServerBrainModels());
-    } catch {
-      setBrainModels(null);
     }
   }, []);
 
   useEffect(() => {
-    if (!installed || running) return;
-    void loadBrainModels();
-  }, [installed, running, loadBrainModels]);
+    if (running) return;
+    void loadCatalog();
+  }, [running, loadCatalog]);
 
-  const chooseBrain = async (choice: ManagedBrainChoice) => {
+  const downloadBrain = async (model: string) => {
+    await startModelPull("ollama", model);
+    for (;;) {
+      const pull = await modelPullStatus("ollama", model);
+      if (pull.state === "done") return;
+      if (pull.state === "error") {
+        throw new Error(pull.message || "model download failed");
+      }
+      setSetupNote(`${model}: ${Math.round(pull.percent ?? 0)}%`);
+      await new Promise((resolve) => window.setTimeout(resolve, 2500));
+    }
+  };
+
+  const applySetup = async (
+    brainModel = selectedBrain,
+    downloadFirst = false,
+  ) => {
+    if (!brainModel || !selectedVoice) return;
     setError(null);
-    setBrainNote(null);
-    setBrainBusy(choice.id);
+    setSetupNote(null);
+    setSetupBusy(true);
     try {
-      if (!choice.installed) {
+      const choice = catalog?.brain.models.find((item) => item.id === brainModel);
+      if (downloadFirst || (choice && !choice.installed)) {
         // Download through the SAME pull machinery the Ollama card uses,
         // then adopt — never adopt a model the server cannot serve yet.
-        await startModelPull("ollama", choice.id);
-        for (;;) {
-          const pull = await modelPullStatus("ollama", choice.id);
-          if (pull.state === "done") break;
-          if (pull.state === "error") {
-            throw new Error(pull.message || "model download failed");
-          }
-          setBrainNote(
-            `${choice.label}: ${Math.round(pull.percent ?? 0)}%`,
-          );
-          await new Promise((resolve) => window.setTimeout(resolve, 2500));
-        }
+        await downloadBrain(brainModel);
       }
-      const result = await managedServerBrain(choice.id);
-      setBrainNote(
-        `${result.brain.note} ${t("apikeys_view.managed_brain_next_start")}`,
+      const result = await managedServerSetup(brainModel, selectedVoice);
+      const latency = result.smoke.first_audio_ms;
+      setSelectedBrain(brainModel);
+      setSetupNote(
+        latency === null
+          ? t("apikeys_view.managed_setup_complete")
+          : t("apikeys_view.managed_setup_complete_ms").replace(
+              "{0}",
+              String(latency),
+            ),
       );
-      await loadBrainModels();
+      await loadCatalog();
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBrainBusy(null);
+      setSetupBusy(false);
+      setLibraryBusy(null);
     }
+  };
+
+  const applyCatalogModel = async (model: string, installedModel: boolean) => {
+    setLibraryBusy(model);
+    setSelectedBrain(model);
+    if (!installed) {
+      try {
+        if (!installedModel) await downloadBrain(model);
+        setSetupNote(t("apikeys_view.managed_catalog_selected"));
+        await loadCatalog();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLibraryBusy(null);
+      }
+      return;
+    }
+    await applySetup(model, !installedModel);
   };
 
   const stopServer = async () => {
@@ -2214,84 +2251,108 @@ function ManagedServerPanel({
               {t("apikeys_view.managed_stop_cta")}
             </Button>
           )}
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={refreshBrain}
-            disabled={lifecycleBusy}
-            className="h-6 gap-1.5 px-2 text-[11px]"
-            title={t("apikeys_view.managed_brain_recheck_hint")}
-          >
-            <Brain className="h-3 w-3" />
-            {t("apikeys_view.managed_brain_recheck")}
-          </Button>
         </div>
       )}
 
-      {brainNote && (
+      {setupNote && (
         <p className="text-[11px] text-muted-foreground" aria-live="polite">
-          {brainNote}
+          {setupNote}
         </p>
       )}
 
-      {!running && installed && brainModels && brainModels.models.length > 0 && (
-        <div className="space-y-1" data-testid="managed-brain-picker">
-          <p className="text-[11px] font-medium text-foreground">
-            {t("apikeys_view.managed_brain_picker_title")}
-          </p>
-          <ul className="space-y-1">
-            {brainModels.models.map((choice) => (
-              <li
-                key={choice.id}
-                className="flex items-center gap-2 text-[11px] text-muted-foreground"
+      {!running && catalog && (
+        <div className="space-y-3" data-testid="managed-model-picker">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <label className="space-y-1 rounded-md border border-border/60 bg-background/50 p-2">
+              <span className="flex items-center gap-1.5 text-[11px] font-medium">
+                <Mic className="h-3.5 w-3.5 text-muted-foreground" />
+                {t("apikeys_view.managed_hearing_title")}
+              </span>
+              <span className="block text-xs">{catalog.hearing.label}</span>
+              <span className="block text-[10px] leading-snug text-muted-foreground">
+                {t("apikeys_view.managed_hearing_note")}
+              </span>
+            </label>
+
+            <label className="space-y-1 rounded-md border border-border/60 bg-background/50 p-2">
+              <span className="flex items-center gap-1.5 text-[11px] font-medium">
+                <Brain className="h-3.5 w-3.5 text-muted-foreground" />
+                {t("apikeys_view.managed_thinking_title")}
+              </span>
+              <select
+                aria-label={t("apikeys_view.managed_thinking_title")}
+                value={selectedBrain}
+                onChange={(event) => setSelectedBrain(event.target.value)}
+                disabled={setupBusy}
+                className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
               >
-                <span className="min-w-0 flex-1 truncate">
-                  {choice.label}
-                  <span className="text-muted-foreground/70">
-                    {" "}
-                    · ~{choice.size_gb} GB
-                  </span>
-                  {choice.current && (
-                    <span className="ml-1.5 text-emerald-400">
-                      {t("apikeys_view.managed_brain_current")}
-                    </span>
-                  )}
-                  {!choice.current && choice.recommended && choice.fits && (
-                    <span className="ml-1.5 text-primary/80">
-                      {t("apikeys_view.managed_brain_recommended")}
-                    </span>
-                  )}
-                </span>
-                {!choice.fits ? (
-                  <span
-                    className="shrink-0 text-amber-500/90"
-                    title={choice.note}
+                {catalog.brain.models.map((choice) => (
+                  <option key={choice.id} value={choice.id} disabled={!choice.fits}>
+                    {choice.label} · ~{choice.size_gb} GB
+                    {choice.recommended ? ` · ${t("apikeys_view.managed_brain_recommended")}` : ""}
+                    {!choice.fits ? ` · ${t("apikeys_view.managed_brain_no_fit")}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="space-y-1 rounded-md border border-border/60 bg-background/50 p-2">
+              <span className="flex items-center gap-1.5 text-[11px] font-medium">
+                <Volume2 className="h-3.5 w-3.5 text-muted-foreground" />
+                {t("apikeys_view.managed_speaking_title")}
+              </span>
+              <select
+                aria-label={t("apikeys_view.managed_speaking_title")}
+                value={selectedVoice}
+                onChange={(event) => setSelectedVoice(event.target.value)}
+                disabled={setupBusy}
+                className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+              >
+                {catalog.models.map((choice) => (
+                  <option
+                    key={choice.id}
+                    value={choice.id}
+                    disabled={!choice.selectable}
                   >
-                    {t("apikeys_view.managed_brain_no_fit")}
-                  </span>
-                ) : choice.current ? null : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => void chooseBrain(choice)}
-                    disabled={brainBusy !== null}
-                    className="h-6 shrink-0 gap-1.5 px-2 text-[11px]"
-                  >
-                    {brainBusy === choice.id ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : choice.installed ? (
-                      <Check className="h-3 w-3" />
-                    ) : (
-                      <Download className="h-3 w-3" />
-                    )}
-                    {choice.installed
-                      ? t("apikeys_view.managed_brain_use")
-                      : t("apikeys_view.managed_brain_pull_use")}
-                  </Button>
-                )}
-              </li>
-            ))}
-          </ul>
+                    {choice.label}
+                    {choice.recommended ? ` · ${t("apikeys_view.managed_brain_recommended")}` : ""}
+                    {!choice.selectable ? ` · ${t("apikeys_view.managed_voice_unavailable")}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {installed && (
+            <Button
+              size="sm"
+              onClick={() => void applySetup()}
+              disabled={setupBusy || !selectedBrain || !selectedVoice}
+              className="gap-2"
+            >
+              {setupBusy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Volume2 className="h-3.5 w-3.5" />
+              )}
+              {t("apikeys_view.managed_apply_test")}
+            </Button>
+          )}
+
+          <details className="rounded-md border border-border/50 bg-background/30 p-2">
+              <summary className="cursor-pointer text-[11px] font-medium">
+                {t("apikeys_view.managed_full_catalog")}
+              </summary>
+              <LibraryBrowser
+                providerId="ollama"
+                onPull={(model) => void applyCatalogModel(model, false)}
+                onInstalledSelect={(model) => void applyCatalogModel(model, true)}
+                disabled={setupBusy}
+                pullingModel={libraryBusy}
+                actionLabel={t("apikeys_view.managed_download_test")}
+                installedActionLabel={t("apikeys_view.managed_use_test")}
+              />
+          </details>
         </div>
       )}
 
@@ -2563,15 +2624,21 @@ function OllamaRuntimePanel({
 function LibraryBrowser({
   providerId,
   onPull,
+  onInstalledSelect,
   disabled,
   pullingModel,
+  actionLabel,
+  installedActionLabel,
 }: {
   providerId: string;
   onPull: (model: string) => void;
+  onInstalledSelect?: (model: string) => void;
   /** The local server is unreachable — nothing can be downloaded into it. */
   disabled: boolean;
   /** Id of the download in flight, so its row shows the spinner. */
   pullingModel: string | null;
+  actionLabel?: string;
+  installedActionLabel?: string;
 }) {
   const t = useT();
   const [query, setQuery] = useState("");
@@ -2664,10 +2731,10 @@ function LibraryBrowser({
         <Button
           size="sm"
           variant="secondary"
-          disabled={disabled || !query.trim()}
+          disabled={disabled || pullingModel !== null || !query.trim()}
           onClick={() => onPull(query)}
         >
-          {t("apikeys_model_pull.download")}
+          {actionLabel ?? t("apikeys_model_pull.download")}
         </Button>
       </div>
 
@@ -2787,6 +2854,21 @@ function LibraryBrowser({
                         <span className="shrink-0 text-[10px] text-muted-foreground">
                           {t("apikeys_model_pull.library_hosted")}
                         </span>
+                      ) : tag.installed && onInstalledSelect ? (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="h-6 shrink-0 gap-1 px-2 text-[10px]"
+                          disabled={disabled || pullingModel !== null}
+                          onClick={() => onInstalledSelect(tag.id)}
+                        >
+                          {pullingModel === tag.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Check className="h-3 w-3" />
+                          )}
+                          {installedActionLabel ?? t("apikeys_model_pull.installed")}
+                        </Button>
                       ) : tag.installed ? (
                         <span className="flex shrink-0 items-center gap-1 text-[10px] text-emerald-500">
                           <Check className="h-3 w-3" />
@@ -2805,7 +2887,7 @@ function LibraryBrowser({
                           ) : (
                             <Download className="h-3 w-3" />
                           )}
-                          {t("apikeys_model_pull.download")}
+                          {actionLabel ?? t("apikeys_model_pull.download")}
                         </Button>
                       )}
                     </div>
@@ -3117,7 +3199,17 @@ export function AuthWidget({
       )}
       <LocalRuntimePanel descriptor={descriptor} onChanged={onChanged} />
       <ManagedServerPanel descriptor={descriptor} onChanged={onChanged} />
-      {descriptor.supports_base_url && (
+      {descriptor.supports_base_url && descriptor.managed_server && (
+        <details className="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
+          <summary className="cursor-pointer text-xs text-muted-foreground">
+            {t("apikeys_view.managed_advanced_connection")}
+          </summary>
+          <div className="pt-2">
+            <BaseUrlField descriptor={descriptor} onChanged={onChanged} />
+          </div>
+        </details>
+      )}
+      {descriptor.supports_base_url && !descriptor.managed_server && (
         <BaseUrlField descriptor={descriptor} onChanged={onChanged} />
       )}
       {/* The runtime itself comes before the model list: pull buttons are

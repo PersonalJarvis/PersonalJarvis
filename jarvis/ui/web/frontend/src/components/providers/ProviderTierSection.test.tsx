@@ -922,3 +922,127 @@ describe("ProviderCard — an unavailable card does not build a warning wall", (
     expect(calls.some((c) => c.url.includes("/api/realtime/switch"))).toBe(false);
   });
 });
+
+describe("managed local realtime model setup", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+    useI18nStore.getState().setUi("en", { push: false });
+  });
+
+  afterEach(() => cleanup());
+
+  function localRealtimeCard(): ProviderDescriptor {
+    return {
+      ...dictationCard(),
+      id: "local-realtime",
+      label: "Self-hosted realtime",
+      tier: "realtime",
+      auth_mode: "none",
+      secret_keys: [],
+      secrets_set: {},
+      billing: "local",
+      configured: true,
+      active: true,
+      optional: false,
+      polish_family: null,
+      supports_base_url: true,
+      base_url: "http://127.0.0.1:8765",
+      managed_server: {
+        ready: false,
+        components: {},
+        sentence: "Managed server not installed.",
+      },
+    };
+  }
+
+  it("shows hear, think, and speak choices before installation", async () => {
+    const calls: Call[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({
+        url,
+        method: (init?.method ?? "GET").toUpperCase(),
+        body: (init?.body as string | undefined) ?? null,
+      });
+      const body = url.endsWith("/model-catalog")
+        ? {
+            brain: {
+              reachable: true,
+              usable_gb: 16,
+              current: "qwen3.5:4b",
+              models: [
+                {
+                  id: "qwen3.5:4b",
+                  label: "qwen3.5:4b",
+                  size_gb: 3.4,
+                  installed: true,
+                  fits: true,
+                  note: "",
+                  recommended: true,
+                  current: true,
+                },
+              ],
+            },
+            current: "qwen3-tts-1.7b",
+            models: [
+              {
+                id: "qwen3-tts-1.7b",
+                label: "Qwen3-TTS 1.7B",
+                backend: "qwen3",
+                model: "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+                languages: ["de", "en"],
+                selectable: true,
+                recommended: true,
+                note: "tested",
+                speaker: "Aiden",
+                current: true,
+                platform: "all",
+              },
+              {
+                id: "chattts",
+                label: "ChatTTS",
+                backend: "chatTTS",
+                model: "2Noise/ChatTTS",
+                languages: ["en", "zh"],
+                selectable: false,
+                recommended: false,
+                note: "not tested",
+                speaker: "",
+                current: false,
+                platform: "all",
+              },
+            ],
+            hearing: {
+              id: "parakeet-tdt",
+              label: "Parakeet TDT",
+              note: "wake-word is separate",
+            },
+          }
+        : {};
+      return {
+        ok: true,
+        status: 200,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      } as Response;
+    }));
+
+    renderCard(localRealtimeCard());
+
+    await waitFor(() =>
+      expect(screen.getByTestId("managed-model-picker")).toBeTruthy(),
+    );
+    expect(screen.getByText("Hear")).toBeTruthy();
+    expect(screen.getByText("Think")).toBeTruthy();
+    expect(screen.getByText("Speak")).toBeTruthy();
+    expect(screen.getByText("Parakeet TDT")).toBeTruthy();
+    expect(screen.getByText("Browse the full Ollama catalog")).toBeTruthy();
+    expect(screen.getByText("Advanced connection settings")).toBeTruthy();
+    const unavailable = screen.getByRole("option", {
+      name: /ChatTTS.*not voice-tested yet/,
+    }) as HTMLOptionElement;
+    expect(unavailable.disabled).toBe(true);
+    expect(calls.some((call) => call.url.endsWith("/model-catalog"))).toBe(true);
+  });
+});
