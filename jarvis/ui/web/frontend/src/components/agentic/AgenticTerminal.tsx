@@ -211,23 +211,39 @@ export const REBUILD_SETTLE_MAX_MS = 450;
 const MAX_TERMINAL_NAME = 40;
 
 /**
- * The narrowest geometry a REAL pane can measure.
+ * The narrowest geometry that may be announced to a pane's REAL terminal.
  *
- * The grid never lays a pane out below `MIN_SEAM_PANE_PX` (120 px), which is
- * at least ~10 columns even at the largest font — so a fit that comes back
- * with fewer than this many columns did not measure a pane, it measured a
- * moment: a grid cell mid-animation, a layout that has not settled, a
- * container the browser reported before flexbox finished. Announcing such a
- * size resizes the shared PTY to a sliver and the agent then prints its whole
- * screen one character per line — output that stays wrecked in the scrollback
- * long after the geometry recovers, because the agent will not repaint what it
- * already said. Both the resize path and the connect-time handshake below
- * refuse to report anything under these floors; the backend enforces the same
- * ones (`jarvis/agentic_ide/session.py`), so a stale or older client cannot
- * do the damage either.
+ * Not a plausibility check on the measurement — a floor on what a coding CLI
+ * can still be asked to work in. Those are two different questions, and
+ * answering only the first is what this constant used to do at 8x2: a grid of
+ * a dozen panes measures 17 columns per cell perfectly correctly, sails past a
+ * floor of 8, and resizes the shared PTY to a strip the agent cannot lay its
+ * interface out in. Measured on the maintainer's own workspace (2026-08-09,
+ * thirteen panes): one pane printed its whole answer ONE CHARACTER PER LINE,
+ * and six others simply stopped drawing — a Claude Code holding `Discombobu-
+ * lating…` on screen, its process visibly burning CPU, while not one byte
+ * reached the app for five minutes.
+ *
+ * That silence is also what broke the status badge. The badge reads whether a
+ * pane's screen is moving (`jarvis/agentic_ide/activity.py`), so an agent that
+ * has been squeezed out of drawing reads as one that has finished — the
+ * "working panes shown as done" the maintainer kept reporting. The badge was
+ * telling the truth; this floor is what makes the truth worth reading.
+ *
+ * 60x15 is where both installed coding CLIs still render a usable frame, with
+ * room under the 80x24 the handshake already falls back to when nothing has
+ * been measured yet. Below it a size is REFUSED rather than clamped: the PTY
+ * keeps its last honest geometry and the viewer shows as much of it as fits,
+ * which costs a clipped line in a narrow tile and keeps the agent alive. A
+ * clamp would instead hand the agent a size no window is actually showing.
+ *
+ * Both the resize path and the connect-time handshake below refuse anything
+ * under these floors; the backend enforces the same ones
+ * (`jarvis/agentic_ide/session.py`), so a stale or older client cannot do the
+ * damage either.
  */
-const MIN_REAL_COLS = 8;
-const MIN_REAL_ROWS = 2;
+const MIN_REAL_COLS = 60;
+const MIN_REAL_ROWS = 15;
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
 

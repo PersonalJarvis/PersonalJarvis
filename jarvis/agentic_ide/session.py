@@ -213,18 +213,35 @@ MAX_TERMINALS = 100
 # pane header that may be a quarter of a screen wide. Long enough for "Frontend
 # rewrite", short enough that it stays a name rather than a description.
 MAX_TERMINAL_NAME = 40
-# The narrowest geometry a viewer can honestly have measured. The grid never
-# lays a real pane out under 120 px (`MIN_SEAM_PANE_PX` in the frontend), which
-# is at least ~10 columns even at the largest font — so a reported size below
-# these floors is a mid-layout measurement artifact (a grid cell caught before
-# flexbox settled), not a pane anybody is looking at. Resizing the shared PTY
-# to such a sliver makes the agent print its entire screen one character per
-# line, and that output stays wrecked in the scrollback long after the
-# geometry recovers. Attach and resize both refuse sizes under these floors,
-# because the viewer that sent one will report its real size the moment its
-# cell settles.
-MIN_VIEWER_COLS = 8
-MIN_VIEWER_ROWS = 2
+# The narrowest geometry the shared PTY may be asked to work in.
+#
+# A floor on what a coding CLI can still lay its interface out in — NOT a
+# plausibility check on the viewer's measurement, which is the question these
+# floors used to answer at 8x2 and the reason they never fired. A grid of a
+# dozen panes measures 17 columns per cell entirely correctly, clears a floor
+# of 8, and squeezes the agent into a strip it cannot draw in.
+#
+# Measured on the maintainer's own workspace (2026-08-09, thirteen panes): one
+# pane had printed its whole answer ONE CHARACTER PER LINE, and six more had
+# simply stopped drawing — a Claude Code holding "Discombobulating…" on screen,
+# its process visibly burning CPU, with not one byte reaching the app for five
+# minutes. Their last outputs shared a millisecond, which is a single layout
+# change squeezing every pane at once rather than agents falling quiet.
+#
+# That silence is also what made the status badge lie. The badge reads whether
+# a pane's screen MOVES (:mod:`.activity`), so an agent squeezed out of drawing
+# reads as one that finished — the "working panes shown as done" reported over
+# and over. The detector was honest; this floor is what gives it something
+# honest to read.
+#
+# 60x15 is where both installed coding CLIs still render a usable frame, under
+# the 80x24 a viewer already falls back to before it has measured anything.
+# Sizes below are REFUSED rather than clamped: the PTY keeps its last honest
+# geometry and the narrow viewer shows as much of it as fits, which costs a
+# clipped line and keeps the agent alive. Clamping would instead hand the agent
+# a geometry no window is showing.
+MIN_VIEWER_COLS = 60
+MIN_VIEWER_ROWS = 15
 # Where a pane may land when it is dragged onto another one, in the same two
 # axes the grid is built from (columns of stacked panes). "swap" is listed first
 # because it is the one a user reaches for most: two panes are the wrong way
@@ -2561,15 +2578,20 @@ class Registry:
             raise SessionError(f"Unknown terminal: {key}")
         session, term = found
         if cols < MIN_VIEWER_COLS or rows < MIN_VIEWER_ROWS:
-            # The handshake geometry is a best effort measured before the grid
-            # cell settled, and a sliver slipping through here is how a whole
-            # conversation ends up printed one character per line (the resize
-            # path already refuses these — see the floors' comment). Fall back
-            # to the geometry the pane already has: for a live agent that means
-            # "no geometry change", for a fresh spawn the transcript's default,
-            # and either way the viewer reports its real size right after
-            # mounting.
-            cols, rows = term.transcript.cols, term.transcript.rows
+            # A handshake tile too narrow for the agent to draw in, which is how
+            # a whole conversation ends up printed one character per line (the
+            # resize path refuses the same sizes — see the floors' comment).
+            # Fall back to the geometry the pane already has: for a live agent
+            # that means "no geometry change", for a fresh spawn the
+            # transcript's default.
+            #
+            # Floored, because that fallback is not always sound: a pane
+            # squeezed by an earlier crowded grid carries a broken geometry of
+            # its own, and handing it back here would reconnect the agent to
+            # the very strip it stopped drawing in. Reattaching is the moment
+            # such a pane can be put right.
+            cols = max(term.transcript.cols, MIN_VIEWER_COLS)
+            rows = max(term.transcript.rows, MIN_VIEWER_ROWS)
         if appearance in THEME_COLOURS:
             term.queries.appearance = appearance
 
@@ -3376,16 +3398,40 @@ class Registry:
         Passing nothing keeps the old unconditional behaviour, which is what an
         internal caller (a repaint nudge, a test) means by it.
         """
-        if cols < MIN_VIEWER_COLS or rows < MIN_VIEWER_ROWS:
-            # A sliver is a measurement artifact, never a request (see the
-            # floors' comment). Refusing it — rather than clamping — keeps the
-            # PTY at the last honest size; the viewer re-reports the real one
-            # as soon as its grid cell settles.
-            logger.debug(
-                "Agentic IDE: refused an implausible {}x{} resize for {}", cols, rows, key
-            )
-            return False
         found = self._locate(key, workspace_id)
+        if cols < MIN_VIEWER_COLS or rows < MIN_VIEWER_ROWS:
+            # A tile too narrow for the agent to draw in (see the floors). The
+            # PTY keeps whatever working geometry it already has, and the tile
+            # shows as much of that frame as fits.
+            #
+            # Unless the PTY is ALREADY under the floor, which is the state a
+            # crowded grid used to leave behind and the one nothing else can
+            # get a pane out of: every later measurement of the same small tile
+            # is refused by this very branch, so a pane squeezed once stayed
+            # squeezed for its whole life — agent silent, badge reading that
+            # silence as "done". A pane below the floor is therefore lifted TO
+            # the floor rather than left there. It is the one place a clamp is
+            # right: no window is showing a workable frame anyway, so there is
+            # no honest geometry left to preserve.
+            current = found[1].transcript if found is not None else None
+            if current is None or (
+                current.cols >= MIN_VIEWER_COLS and current.rows >= MIN_VIEWER_ROWS
+            ):
+                logger.debug(
+                    "Agentic IDE: kept {}'s working geometry instead of a {}x{} tile",
+                    key,
+                    cols,
+                    rows,
+                )
+                return False
+            logger.info(
+                "Agentic IDE: lifting {} off a {}x{} terminal its agent cannot draw in",
+                key,
+                current.cols,
+                current.rows,
+            )
+            cols = max(cols, MIN_VIEWER_COLS)
+            rows = max(rows, MIN_VIEWER_ROWS)
         if found is None:
             return False
         term = found[1]

@@ -1167,6 +1167,41 @@ describe("pane refit", () => {
     });
   });
 
+  it("never hands the agent a tile too narrow to draw in", () => {
+    // The failure behind "working panes are shown as done" (maintainer,
+    // 2026-08-09, thirteen panes open). A crowded grid measures ~17 columns
+    // per cell — a CORRECT measurement, which is why the old 8x2 floor waved
+    // it through. The agent, squeezed into a strip it cannot lay its
+    // interface out in, stops drawing altogether; the status badge reads that
+    // silence as a finished job, because movement is all it can read.
+    //
+    // So the size is refused and the PTY keeps the last one a viewer really
+    // had. The narrow tile shows a clipped frame; the agent stays alive.
+    const view = render(pane(false));
+    settle();
+    terminalHarness.send.mockClear();
+
+    terminalHarness.size = { cols: 17, rows: 6 };
+    view.rerender(pane(true));
+    settle();
+
+    expect(terminalHarness.send).not.toHaveBeenCalledWith(
+      expect.objectContaining({ cols: 17 }),
+    );
+
+    // A tile the agent can work in is still announced, or this floor would
+    // have swapped a broken pane for a frozen one.
+    terminalHarness.size = { cols: 90, rows: 30 };
+    view.rerender(pane(false));
+    settle();
+
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "r",
+      cols: 90,
+      rows: 30,
+    });
+  });
+
   it("tells a fresh socket the pane's size whatever the last one heard", () => {
     render(pane(false));
     settle();

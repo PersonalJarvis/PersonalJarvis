@@ -354,6 +354,75 @@ async def test_a_geometry_change_rebases_an_intact_replay_and_repaints(
     assert sizes == [(100, 30), (100, 29), (100, 30)]
 
 
+async def test_a_crowded_grid_never_squeezes_the_agent_out_of_drawing(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """A dozen panes side by side must not shrink the PTY below working size.
+
+    The failure this pins is the one behind "working panes are shown as done"
+    (maintainer, 2026-08-09, thirteen panes open). A crowded grid measures ~17
+    columns per cell — a perfectly CORRECT measurement, which is why the old
+    8x2 plausibility floor let it straight through. The agent, handed a strip
+    it cannot lay its interface out in, stops drawing: one pane printed its
+    whole answer a character per line, six others fell silent for five minutes
+    while their processes visibly burned CPU.
+
+    The status badge then reads that silence as a finished job, because it
+    reads screen MOVEMENT (:mod:`jarvis.agentic_ide.activity`) and there is
+    none. So the badge cannot be fixed where it is wrong — the geometry has to
+    stop lying to the agent first, which is what this test holds.
+
+    Refused, not clamped: the PTY keeps the last size a viewer really measured,
+    so the agent goes on drawing a frame some window is actually showing.
+    """
+    session = await _open(registry, tmp_path, [{"agent": "claude"}])
+    term = session.terminals[0]
+    await registry.attach(term.name, 120, 40, _noop_output, _noop_exit)
+    pty = term.pty_id
+    fake_pty.resizes.clear()
+
+    # Thirteen panes across a laptop screen. Nothing here is an artifact — this
+    # is what the cell honestly measures.
+    assert registry.resize(term.name, 17, 6) is False
+
+    assert fake_pty.resizes == [], "the agent must never be told it has 17 columns"
+    assert (term.transcript.cols, term.transcript.rows) == (120, 40), (
+        "the pane keeps the last geometry a viewer really had"
+    )
+
+    # And a size the agent CAN work in still gets through, or the floor would
+    # have replaced a broken pane with a frozen one.
+    assert registry.resize(term.name, 90, 30) is True
+    assert (pty, 90, 30) in fake_pty.resizes
+
+
+async def test_a_pane_already_squeezed_is_lifted_back_to_a_workable_size(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """A pane stuck under the floor must not be trapped there by the floor.
+
+    The state a crowded grid leaves behind, and the one nothing else gets a
+    pane out of: the PTY is already a strip, so every later measurement of that
+    same small tile is refused for keeping "the last honest geometry" — which
+    here is the broken one. The pane stays silent and the badge goes on reading
+    that silence as a finished job.
+    """
+    session = await _open(registry, tmp_path, [{"agent": "claude"}])
+    term = session.terminals[0]
+    await registry.attach(term.name, 120, 40, _noop_output, _noop_exit)
+    pty = term.pty_id
+    # However it got there — an older client, a session that predates the floor.
+    term.transcript.resize(20, 5)
+    fake_pty.resizes.clear()
+
+    assert registry.resize(term.name, 17, 6) is True
+
+    assert (term.transcript.cols, term.transcript.rows) == (60, 15), (
+        "a pane below the floor is lifted to it, not left there"
+    )
+    assert (pty, 60, 15) in fake_pty.resizes, "the agent must be told it has room again"
+
+
 async def test_closing_a_workspace_stops_only_its_own_agents(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
