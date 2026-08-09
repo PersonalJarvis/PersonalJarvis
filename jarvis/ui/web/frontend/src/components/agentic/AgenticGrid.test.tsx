@@ -95,6 +95,24 @@ vi.mock("@/lib/agenticIdeApi", () => ({
     default: 13,
   })),
   syncAgenticIdeSurface: vi.fn(async () => undefined),
+  // The Command Deck's report lane. Polled only while the deck is the view on
+  // screen, so the grid and chat suites never reach it — it answers "nothing
+  // waiting" by default and the deck tests give it real rows.
+  fetchDeckQueue: vi.fn(async () => ({
+    sleeping: false,
+    in_conversation: false,
+    on_air: null,
+    pending: [],
+    reports: [],
+  })),
+  ackDeckReport: vi.fn(async () => ({
+    sleeping: false,
+    in_conversation: false,
+    on_air: null,
+    pending: [],
+    reports: [],
+  })),
+  setDeckHold: vi.fn(async (_name: string, held: boolean) => held),
 }));
 
 // The grid follows the app theme for its terminal colours; these tests render

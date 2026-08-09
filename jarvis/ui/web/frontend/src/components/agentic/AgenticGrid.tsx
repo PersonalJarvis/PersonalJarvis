@@ -68,6 +68,9 @@ import {
 } from "./paneLayout";
 import { loadStoredArrangement, saveStoredArrangement, usePaneWeights } from "./usePaneWeights";
 import { ContinueInterrupted } from "./ContinueInterrupted";
+import { DeckStage, type DeckAgent } from "./deck/DeckStage";
+import type { CardState } from "./deck/AgentCard";
+import { useDeckQueue } from "./deck/useDeckQueue";
 import { NavRevealButton } from "@/components/layout/NavRevealButton";
 import { PaneNotifications } from "./PaneNotifications";
 import { isVoiceActive } from "./VoiceBubble";
@@ -106,6 +109,7 @@ import {
   renameTerminal,
   saveTerminalFontSize,
   syncAgenticIdeSurface,
+  setDeckHold,
   setTerminalRecap,
   promptTerminal,
   type ComposedPreview,
@@ -418,6 +422,16 @@ const MAXIMIZED_BOX: React.CSSProperties = {
   position: "absolute",
   inset: 0,
 };
+
+/**
+ * The strip above an unfolded terminal on the Command Deck.
+ *
+ * Small, and load-bearing: the deck's terminals are folded away by default, so
+ * the one that is open needs a visible way back to the room. A pane covering
+ * the whole surface with no exit is how a mode that is meant to feel calm
+ * starts feeling like a trap.
+ */
+const DECK_HEADER_PX = 40;
 
 /** True when a fraction is at an edge of the workspace, allowing for float drift. */
 function atEdge(value: number): boolean {
@@ -820,17 +834,30 @@ export function AgenticGrid({
    * screen, not workspace state worth a round-trip.
    */
   const [viewMode, setViewModeState] = useState<WorkspaceView>(() => storedViewMode() ?? "grid");
+  /**
+   * Which agent's terminal is unfolded on the deck, if any.
+   *
+   * The deck's default is that no terminal is on screen at all — that is what
+   * makes it a different mode rather than a chat view with bigger cards. This
+   * is the one exception the user asks for, and it is one at a time: two
+   * unfolded terminals is the grid, and the grid is one button away.
+   */
+  const [deckExpanded, setDeckExpanded] = useState<string | null>(null);
   const setViewMode = useCallback((next: WorkspaceView) => {
     setViewModeState(next);
     rememberViewMode(next);
-    // Chat shows exactly one pane already; a leftover maximize from the grid
-    // would silently pin the stage to a pane the rail no longer highlights.
-    if (next === "chat") setMaximized(null);
+    // Chat and the deck show one pane at most; a leftover maximize from the
+    // grid would silently pin the stage to a pane neither of them highlights.
+    if (next !== "grid") setMaximized(null);
+    // Leaving the deck folds its terminal away. Coming back to a workspace
+    // with one pane already open would be the deck quietly not being the deck.
+    if (next !== "deck") setDeckExpanded(null);
     // An open CLI picker belongs to the button that opened it, and that button
     // just left the screen — it must not be waiting there on the way back.
     setPicking(null);
   }, []);
   const chatView = viewMode === "chat";
+  const deckView = viewMode === "deck";
 
   /*
    * Which pane the chat stage shows. Kept apart from `target` (the pane the
@@ -1078,6 +1105,86 @@ export function AgenticGrid({
       detail: undefined,
     };
   };
+
+  /*
+   * The Command Deck's own two feeds: the report lane, and the cards.
+   *
+   * Both are derived rather than held. A card is exactly what the pane already
+   * reports — its recap, its activity, its hold — read through the same
+   * `activityOf` every other surface uses, so the deck cannot end up
+   * describing a terminal differently from the grid beside it.
+   */
+  const deck = useDeckQueue(deckView && onScreen);
+  /*
+   * The orb's state, read straight from the store the voice pipeline feeds.
+   *
+   * Subscribed in this very large component only because the deck's orb is
+   * ON it — the floating bubble keeps its own subscription for exactly the
+   * opposite reason (see VoiceBubble: it exists so voice state does not
+   * re-render every terminal). The cost is paid back by the selector being a
+   * single string: it changes a handful of times per turn, not per frame.
+   */
+  const voiceState = (useEventStore((s) => s.voiceState) ?? "idle") as VoiceState;
+  const deckAgents: DeckAgent[] = useMemo(() => {
+    if (!deckView) return [];
+    return session.terminals
+      .filter(takesPrompts)
+      .map((term) => {
+        const { activity } = activityOf(term);
+        const status = statusOf(term).status;
+        // The order matters: a held pane says so whatever it is doing, because
+        // the hold is about who is DRIVING rather than about the agent's
+        // state — and it is the one thing the user set themselves.
+        let state: CardState;
+        if (term.deck_hold) state = "held";
+        else if (status === "exited" || status === "error") state = "dead";
+        else if (activity === "asking") state = "asking";
+        else if (activity === "working") state = "working";
+        else state = "waiting";
+        return {
+          name: term.name,
+          agent: term.agent,
+          agentLabel: term.display_name,
+          // The polled recap first, the one the workspace state carried until
+          // then — a card opens with a sentence rather than with a blank.
+          task: recaps[term.name]?.recap ?? term.recap ?? "",
+          state,
+        };
+      });
+    // `recaps`/`liveActivity`/`sentAt` are read through activityOf, which is
+    // re-created every render; listing them keeps the memo honest about what
+    // it actually depends on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deckView, session.terminals, recaps, liveActivity, statuses, sentAt]);
+
+  const toggleDeckHold = useCallback(
+    (name: string) => {
+      const term = session.terminals.find((t) => t.name === name);
+      if (!term) return;
+      const next = !term.deck_hold;
+      void setDeckHold(name, next)
+        .then(() => {
+          // Re-read rather than patching the pane locally: the hold changes
+          // what the backend will DO with this pane, and a client that shows
+          // it as held while the server disagrees is the worse of the two
+          // failures — the user would stop watching a pane Jarvis still uses.
+          onSessionChanged?.({
+            ...session,
+            terminals: session.terminals.map((t) =>
+              t.name === name ? { ...t, deck_hold: next } : t,
+            ),
+          });
+        })
+        .catch((error: unknown) => {
+          pushToast("error", error instanceof Error ? error.message : String(error));
+        });
+    },
+    [onSessionChanged, pushToast, session],
+  );
+
+  const toggleDeckExpand = useCallback((name: string) => {
+    setDeckExpanded((current) => (current === name ? null : name));
+  }, []);
 
   /*
    * The three things a user may do about a pane's recap.
@@ -1551,7 +1658,7 @@ export function AgenticGrid({
    * and reports none — guessing among a dozen visible terminals would be less
    * honest than making the user name one.
    */
-  const stagedPane = chatView ? chatSelected : null;
+  const stagedPane = chatView ? chatSelected : deckView ? deckExpanded : null;
   useEffect(() => {
     void syncAgenticIdeSurface({
       workspaceId: session.id,
@@ -2737,7 +2844,12 @@ export function AgenticGrid({
         {session.terminals.map((term, index) => {
           const box = layout.boxes[index];
           const isMaximized = maximized === term.name;
-          const onStage = chatView && chatSelected === term.name;
+          // The one pane a single-pane view is showing. Both views stage one
+          // and hide the rest — the difference is which pane and why, not what
+          // happens to the others, which are hidden and NEVER unmounted.
+          const onStage =
+            (chatView && chatSelected === term.name) ||
+            (deckView && deckExpanded === term.name);
           return (
             <div
               key={term.key}
@@ -2752,6 +2864,7 @@ export function AgenticGrid({
                 // pointer, not ease after it — and off for the stage/maximize
                 // style, which swaps to `inset` and cannot tween from here.
                 !chatView &&
+                  !deckView &&
                   !isMaximized &&
                   !layoutBusy &&
                   "transition-[left,top,width,height] duration-300 ease-out motion-reduce:transition-none",
@@ -2768,13 +2881,29 @@ export function AgenticGrid({
                 justMoved?.name === term.name &&
                   !selectedTerminals.has(term.name) &&
                   "ring-2 ring-primary/70 ring-offset-2 ring-offset-background",
-                chatView
+                chatView || deckView
                   ? onStage
-                    ? "rounded-xl border border-border shadow-lg"
+                    ? // On the deck the unfolded terminal sits ABOVE the room
+                      // it came from (`z-20` over the stage's own layer), so
+                      // the cards stay where they were and folding it away
+                      // puts the user back exactly where they left off.
+                      cn(
+                        "rounded-xl border border-border shadow-lg",
+                        deckView && "z-20",
+                      )
                         : "hidden"
                       : maximized !== null && !isMaximized && "hidden",
                   )}
-                  style={chatView || isMaximized ? MAXIMIZED_BOX : paneBoxStyle(box)}
+                  style={
+                    isMaximized || chatView
+                      ? MAXIMIZED_BOX
+                      : deckView
+                        // Under the deck's own header strip, which carries the
+                        // way back — an unfolded terminal covering the whole
+                        // surface would have no visible exit.
+                        ? { ...MAXIMIZED_BOX, top: DECK_HEADER_PX }
+                        : paneBoxStyle(box)
+                  }
                 >
                   <AgenticTerminal
                     name={term.name}
@@ -2929,6 +3058,7 @@ export function AgenticGrid({
           and, naturally, when there is only one pane.
         */}
         {!chatView &&
+          !deckView &&
           maximized === null &&
           !selectionMode &&
           arrange.held === null &&
@@ -2952,7 +3082,10 @@ export function AgenticGrid({
               style={seamStyle(seam)}
             />
           ))}
-        {session.terminals.length === 0 && (
+        {/* The deck says this itself, in its own words and with the orb still
+            on screen — two "open a terminal" offers stacked on each other
+            would be the same question asked twice. */}
+        {session.terminals.length === 0 && !deckView && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
             <span>Every terminal in this workspace is closed.</span>
             {/* `relative` so the picker hangs under the button rather than off
@@ -2988,6 +3121,61 @@ export function AgenticGrid({
           </div>
         )}
       </div>
+
+      {/*
+        The Command Deck's room, drawn OVER the canvas rather than instead of
+        it. The panes underneath stay mounted and hidden — unmounting one kills
+        the coding agent behind it, which is the rule every mode in this file
+        obeys — so switching modes is a restyle and nothing more.
+
+        Folded open, the terminal takes the surface and this layer shrinks to
+        the strip that carries the way back.
+      */}
+      {deckView && deckExpanded !== null && (
+        <div
+          data-testid="deck-open-pane-header"
+          className="absolute inset-x-0 top-0 z-30 flex items-center gap-2 px-3"
+          style={{ height: DECK_HEADER_PX }}
+        >
+          <button
+            type="button"
+            data-testid="deck-fold-away"
+            onClick={() => setDeckExpanded(null)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-control px-2 py-1 text-xs",
+              "text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+            )}
+          >
+            <ChevronUp className="h-3.5 w-3.5 shrink-0" />
+            Back to the deck
+          </button>
+          <span className="truncate text-xs text-muted-foreground">{deckExpanded}</span>
+        </div>
+      )}
+      {deckView && deckExpanded === null && (
+        <div className="absolute inset-0 z-10">
+          <DeckStage
+            agents={deckAgents}
+            voiceState={voiceState}
+            listening={voiceOpen && isVoiceActive(voiceState)}
+            onToggleVoice={onToggleVoice}
+            expanded={deckExpanded}
+            onToggleExpand={toggleDeckExpand}
+            onToggleHold={toggleDeckHold}
+            onOpenTerminal={
+              session.terminals.length === 0 ? () => openTerminal("empty") : undefined
+            }
+            reporting={deck.reporting}
+            pending={deck.queue.pending}
+            onAir={deck.queue.on_air}
+            sleeping={deck.queue.sleeping}
+            onHear={deck.hear}
+            onDropReport={deck.drop}
+            onWake={deck.wake}
+          />
+        </div>
+      )}
       </div>
       </div>
 
