@@ -3824,8 +3824,6 @@ class RealtimeVoiceSession:
                             if delegate_state.result_ready.is_set():
                                 delegate_state.bridge_preempted = True
                                 continue
-                            self._mark_latency_named("REALTIME_FIRST_AUDIO")
-                            self._output_active = True
                             await self._emit_audio(event.audio)
                             delegate_state.bridge_direct_audio_emitted = True
                         else:
@@ -3838,9 +3836,6 @@ class RealtimeVoiceSession:
                         self._note_output_withheld("audio")
                         self._gate.drain()
                         continue
-                    await self._ensure_turn_started()
-                    self._mark_latency_named("REALTIME_FIRST_AUDIO")
-                    self._output_active = True
                     released = await self._gate.push_audio(
                         event.audio,
                         response_id=str(
@@ -3975,6 +3970,7 @@ class RealtimeVoiceSession:
                         and not self._surface_spoke_this_turn
                         and not self._output_active
                         and self._output_samples_sent == 0
+                        and self._gate.pending_audio_ms <= 0
                     ):
                         # Transcript deltas prove the answer exists, but an
                         # audio-mode turn with zero PCM is still silent to the
@@ -4121,6 +4117,7 @@ class RealtimeVoiceSession:
                         and not self._scrub_cancelled_for_turn
                         and not self._output_active
                         and self._output_samples_sent == 0
+                        and self._gate.pending_audio_ms <= 0
                     ):
                         # The Brain produced a grounded answer, but the duplex
                         # provider failed a second time while rendering it. Hand
@@ -4352,7 +4349,11 @@ class RealtimeVoiceSession:
                         if trusted_reply and not self._output_transcript:
                             self._output_transcript.append(trusted_reply)
                     await self._complete_surface_turn()
-                elif self._output_active or self._response_requested_for_turn:
+                elif (
+                    self._output_active
+                    or self._response_requested_for_turn
+                    or self._gate.pending_audio_ms > 0
+                ):
                     final_chunks = self._gate.finalize(
                         response_id=self._active_provider_response_id
                     )
@@ -5318,6 +5319,7 @@ class RealtimeVoiceSession:
             # Audio is flowing, so the transport is demonstrably alive.
             or self._output_active
             or self._output_samples_sent > 0
+            or self._gate.pending_audio_ms > 0
         )
 
     async def _watch_turn_for_stall(self, turn_id: str) -> None:
@@ -5746,6 +5748,7 @@ class RealtimeVoiceSession:
             or self._last_user_text
             or self._output_transcript
             or self._output_samples_sent
+            or self._gate.pending_audio_ms > 0
             or self._executed_tool_names
         )
 
@@ -5813,6 +5816,7 @@ class RealtimeVoiceSession:
             or self._scrub_cancelled_for_turn
             or self._output_active
             or self._output_samples_sent > 0
+            or self._gate.pending_audio_ms > 0
             or "".join(self._output_transcript).strip()
             or turn_id in self._delegate_turns
             or self._has_pending_delegate_from_earlier_turn()
@@ -8242,6 +8246,17 @@ class RealtimeVoiceSession:
         pcm = bytes(getattr(chunk, "pcm", b"") or b"")
         if not pcm:
             return
+        if not self._output_active:
+            # This method receives only scrub-cleared or explicitly trusted
+            # audio. Raw provider PCM can wait in the transcript gate for
+            # seconds and must not engage half-duplex before it reaches here:
+            # that mismatch made desktop calls display LISTENING while silently
+            # discarding the user's next question. Once a cleared stream starts,
+            # its quiet onset and embedded pauses still flow verbatim so the
+            # output device never starves.
+            await self._ensure_turn_started()
+            self._mark_latency_named("REALTIME_FIRST_AUDIO")
+            self._output_active = True
         if not self._first_audio_emit_monotonic:
             self._first_audio_emit_monotonic = time.monotonic()
             start = self._audio_start_monotonic or self._created_monotonic
@@ -8381,7 +8396,12 @@ class RealtimeVoiceSession:
         # deliberately decides nothing (the two-owner split is how the no-op
         # fix of 2dff5890 happened).
         reply_to_cut = bool(
-            self._output_active or self._response_requested_for_turn
+            self._output_active
+            or self._response_requested_for_turn
+            or (
+                self._gate.pending_audio_ms > 0
+                and bool(self._active_provider_response_id)
+            )
         )
         should_interrupt = bool(
             interrupt_provider and self._session is not None and reply_to_cut

@@ -6961,6 +6961,76 @@ async def test_subscription_capability_tuple_survives_three_turns():
 
 
 @pytest.mark.asyncio
+async def test_scrub_held_provider_audio_cannot_deafen_the_follow_up():
+    """Only audio that reaches the speaker may engage half-duplex.
+
+    ChatGPT-Live can resume an old response while its transcript is still
+    missing. The scrub gate correctly holds that audio, but the session used
+    to mark itself as speaking before the hold. Every microphone frame was
+    then discarded even though the desktop already displayed LISTENING: the
+    first turn worked and the second question vanished.
+    """
+    provider = SubscriptionLikeProvider([])
+    binaries = []
+    sess = _half_duplex_session(provider, binaries=binaries)
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    session = provider.session
+
+    await session.queue.put(
+        RealtimeEvent(
+            type="audio_delta",
+            audio=_pcm_chunk(),
+            provider_turn_id="late-response",
+        )
+    )
+    await _wait_until(lambda: sess._gate.pending_audio_ms > 0)  # noqa: SLF001
+
+    assert binaries == []
+    assert sess._output_active is False  # noqa: SLF001
+    assert await _microphone_reaches(sess, session), (
+        "scrub-held provider audio muted the second user turn"
+    )
+
+    # A real second utterance retires the held stale response. The next response
+    # is allowed to speak, and only that cleared PCM engages half-duplex.
+    session.isolates_response_generations = True
+    await session.queue.put(RealtimeEvent(type="speech_started"))
+    await session.queue.put(
+        RealtimeEvent(
+            type="input_transcript",
+            text="What day is tomorrow?",
+            is_final=True,
+        )
+    )
+    await session.queue.put(
+        RealtimeEvent(
+            type="output_transcript_delta",
+            text="This is the complete answer to your question.",
+            is_final=True,
+            provider_turn_id="fresh-response",
+        )
+    )
+    fresh_audio = AudioChunk(
+        pcm=b"\x20\x30" * 240,
+        sample_rate=24_000,
+        timestamp_ns=0,
+    )
+    await session.queue.put(
+        RealtimeEvent(
+            type="audio_delta",
+            audio=fresh_audio,
+            provider_turn_id="fresh-response",
+        )
+    )
+    await _wait_until(lambda: bool(binaries))
+    assert binaries == [fresh_audio.pcm]
+    assert sess._output_active is True  # noqa: SLF001
+    assert not await _microphone_reaches(sess, session)
+
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_a_boundary_after_a_local_completion_still_reopens_the_microphone():
     """The turn-id guard used to swallow the whole reset.
 
@@ -6979,7 +7049,11 @@ async def test_a_boundary_after_a_local_completion_still_reopens_the_microphone(
         RealtimeEvent(type="input_transcript", text="hello", is_final=True)
     )
     await session.queue.put(
-        RealtimeEvent(type="output_transcript_delta", text="Hi there.")
+        RealtimeEvent(
+            type="output_transcript_delta",
+            text="This is the complete answer to your question.",
+            is_final=True,
+        )
     )
     await session.queue.put(
         RealtimeEvent(type="audio_delta", audio=_pcm_chunk())
@@ -7069,7 +7143,11 @@ async def test_the_stall_watchdog_never_fires_between_turns(monkeypatch):
         RealtimeEvent(type="input_transcript", text="hello", is_final=True)
     )
     await session.queue.put(
-        RealtimeEvent(type="output_transcript_delta", text="Hi there.")
+        RealtimeEvent(
+            type="output_transcript_delta",
+            text="This is the complete answer to your question.",
+            is_final=True,
+        )
     )
     await session.queue.put(
         RealtimeEvent(type="audio_delta", audio=_pcm_chunk())
@@ -7549,7 +7627,7 @@ async def test_shadow_transcript_clears_the_gate_without_reaching_the_surface():
         ),
         RealtimeEvent(
             type="output_transcript_delta",
-            text="Here is the answer.",
+            text="This is the complete answer to your question.",
             shadow=True,
         ),
     ]
@@ -7585,7 +7663,15 @@ async def test_a_turn_without_a_boundary_releases_the_microphone_fast() -> None:
     await sess.handle_control({"type": "audio_start", "sample_rate": 24_000})
     wire = provider.session
 
-    # Assistant audio opens the output: the microphone mutes.
+    # Cleared assistant audio opens the output: the microphone mutes. Raw PCM
+    # that is still awaiting a transcript deliberately stays interruptible.
+    wire.queue.put_nowait(
+        RealtimeEvent(
+            type="output_transcript_delta",
+            text="This is the complete answer to your question.",
+            is_final=True,
+        )
+    )
     wire.queue.put_nowait(RealtimeEvent(type="audio_delta", audio=_pcm_chunk()))
     for _ in range(50):
         await asyncio.sleep(0.01)
