@@ -13,7 +13,7 @@
  *
  * Replaces the legacy `MemoryView` (`data/core_memory.json` flat memory).
  */
-import { Suspense, lazy, useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import {
   FileText,
   Maximize2,
@@ -114,6 +114,7 @@ export function WikiView(): JSX.Element {
   const [setupHint, setSetupHint] = useState<ObsidianStatusType | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [isReindexing, setIsReindexing] = useState(false);
+  const [reindexError, setReindexError] = useState<string | null>(null);
 
   // Tree query lives both here (for header stats + empty-state detection)
   // and inside TreeSidebar (for the list). React Query dedupes them.
@@ -262,11 +263,17 @@ export function WikiView(): JSX.Element {
 
   const handleReindex = useCallback(async () => {
     setIsReindexing(true);
+    setReindexError(null);
     try {
       const result = await rebuildWikiIndex();
-      if (!result.ok) throw new Error(result.error ?? "index rebuild failed");
+      if (!result.ok) {
+        throw new Error(result.error ?? t("wiki_health.reindex_failed"));
+      }
       await Promise.all([healthQuery.refetch(), treeQuery.refetch()]);
-    } catch {
+    } catch (error) {
+      setReindexError(
+        error instanceof Error ? error.message : t("wiki_health.reindex_failed"),
+      );
       showToast(t("wiki_health.reindex_failed"));
     } finally {
       setIsReindexing(false);
@@ -275,7 +282,10 @@ export function WikiView(): JSX.Element {
 
   // Build the known-slug set lazily here too, so we can validate a wikilink
   // click before changing the URL. Single source of truth: the tree response.
-  const knownSlugs = collectSlugs(treeQuery.data?.folders ?? []);
+  const knownSlugs = useMemo(
+    () => collectSlugs(treeQuery.data?.folders ?? []),
+    [treeQuery.data?.folders],
+  );
 
   const handleSelect = useCallback(
     (slug: string) => {
@@ -284,11 +294,12 @@ export function WikiView(): JSX.Element {
         return;
       }
       setIsGraphExpanded(false);
+      // Selecting the already-open page from the graph does not change the
+      // slug, so the selectedSlug effect cannot switch tabs in that case.
+      setCentreTab("page");
       setSelectedSlug(slug);
     },
-    // knownSlugs is recomputed each render; intentional, the Set is small.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [showToast, knownSlugs.size],
+    [knownSlugs, showToast, t],
   );
 
   // In Ultra mode the body below is the UltraWiki store, not the vault — so
@@ -364,6 +375,7 @@ export function WikiView(): JSX.Element {
         health={healthQuery.data}
         isLoading={healthQuery.isLoading}
         isReindexing={isReindexing}
+        reindexError={reindexError}
         onReindex={handleReindex}
       />
       <WikiCaptureFunnelStrip
@@ -623,11 +635,13 @@ function WikiHealthStrip({
   health,
   isLoading,
   isReindexing,
+  reindexError,
   onReindex,
 }: {
   health: WikiHealthSnapshot | null | undefined;
   isLoading: boolean;
   isReindexing: boolean;
+  reindexError: string | null;
   onReindex: () => void;
 }): JSX.Element {
   const t = useT();
@@ -724,6 +738,15 @@ function WikiHealthStrip({
             <RefreshCw className={cn("h-3 w-3", isReindexing && "animate-spin")} />
             {t(isReindexing ? "wiki_health.reindexing" : "wiki_health.reindex")}
           </button>
+          {reindexError && (
+            <span
+              role="alert"
+              data-testid="wiki-health-reindex-error"
+              className="font-medium text-destructive"
+            >
+              {t("wiki_health.reindex_failed_detail").replace("{0}", reindexError)}
+            </span>
+          )}
         </>
       )}
       {health.vault_legacy_conflict && (
@@ -768,6 +791,12 @@ function WikiCaptureFunnelStrip({
     "{0}",
     String(windowHours),
   );
+  const errorText =
+    error === "capture_store_unavailable"
+      ? t("wiki_health.capture_store_unavailable")
+      : error
+        ? t("wiki_health.capture_store_error").replace("{0}", error)
+        : null;
 
   return (
     <section
@@ -776,9 +805,25 @@ function WikiCaptureFunnelStrip({
       data-testid="wiki-capture-funnel"
     >
       <span className="font-medium text-foreground">{windowLabel}</span>
-      {error && (
-        <span className="font-medium text-destructive" data-testid="wiki-capture-error">
-          {t("wiki_health.capture_store_unavailable")}
+      {errorText && (
+        <span
+          className="font-medium text-destructive"
+          data-testid="wiki-capture-error"
+          role="alert"
+        >
+          {errorText}
+        </span>
+      )}
+      {!error && funnel.failed > 0 && (
+        <span
+          className="font-medium text-destructive"
+          data-testid="wiki-capture-failed-detail"
+          role="status"
+        >
+          {t("wiki_health.capture_failed_detail").replace(
+            "{0}",
+            String(funnel.failed),
+          )}
         </span>
       )}
       <dl className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">

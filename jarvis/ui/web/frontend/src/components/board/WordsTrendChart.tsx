@@ -56,7 +56,13 @@ export function WordsTrendChart({ cells, days = 45 }: WordsTrendChartProps) {
     // grid/flex parent: without a positive floor the first measure is 0×0, the
     // Area paths bake in a collapsed scale, and the ResizeObserver re-measure
     // recovers the axes but not the (animated) fills — leaving an empty chart.
-    <ResponsiveContainer width="100%" height="100%" minHeight={176}>
+    <ResponsiveContainer
+      width="100%"
+      height="100%"
+      minHeight={176}
+      minWidth={0}
+      initialDimension={{ width: 640, height: 176 }}
+    >
       <AreaChart data={data} margin={{ top: 6, right: 2, bottom: 0, left: 2 }}>
         <defs>
           <linearGradient id="board-grad-you" x1="0" y1="0" x2="0" y2="1">

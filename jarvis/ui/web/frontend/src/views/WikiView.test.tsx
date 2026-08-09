@@ -27,6 +27,14 @@ vi.mock("@/hooks/useWikiLive", () => ({
   useWikiLive: useWikiLiveMock,
 }));
 
+vi.mock("@/components/wiki/WikiGraph", () => ({
+  WikiGraph: ({ onNodeClick }: { onNodeClick: (slug: string) => void }) => (
+    <button type="button" onClick={() => onNodeClick("example-parent")}>
+      Example Parent graph node
+    </button>
+  ),
+}));
+
 function freshClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
@@ -294,6 +302,21 @@ describe("WikiView — populated tree", () => {
     });
     expect(screen.getByTestId("wiki-page-title").textContent).toBe("Example Parent");
   }, 10_000);
+
+  it("clicking the already-selected graph node returns to its page", async () => {
+    renderWithClient(<WikiView />);
+
+    fireEvent.click(await screen.findByText("example-parent.md"));
+    await screen.findByTestId("wiki-page-renderer");
+    fireEvent.click(screen.getByRole("button", { name: "Memory Map" }));
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Example Parent graph node",
+    }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("wiki-page-renderer")).toBeDefined();
+    });
+  });
 });
 
 describe("WikiView — health strip", () => {
@@ -407,6 +430,9 @@ describe("WikiView — health strip", () => {
     );
     expect(screen.getByTestId("wiki-capture-writes").textContent).toContain("9");
     expect(screen.getByTestId("wiki-capture-session-sweeps").textContent).toContain("3");
+    expect(screen.getByTestId("wiki-capture-failed-detail").textContent).toContain(
+      "2",
+    );
   });
 
   it("renders the error text for a failed last write, and the backlog count", async () => {
@@ -445,6 +471,82 @@ describe("WikiView — health strip", () => {
         { method: "POST" },
       );
     });
+  });
+
+  it("keeps the reindex failure detail visible beside the retry action", async () => {
+    const stale = { ...HEALTHY_HEALTH, indexed_pages: 0, index_state: "stale" as const };
+    installFetchMock({
+      "/api/wiki/tree": () => EMPTY_TREE,
+      "/api/wiki/health": () => ({ ok: true, health: stale }),
+      "/api/wiki/reindex": () => ({ ok: false, error: "FTS database is locked" }),
+    });
+    renderWithClient(<WikiView />);
+
+    fireEvent.click(await screen.findByTestId("wiki-health-reindex"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("wiki-health-reindex-error").textContent).toContain(
+        "FTS database is locked",
+      );
+    });
+  });
+
+  it("localises a reindex failure without a backend detail", async () => {
+    const stale = { ...HEALTHY_HEALTH, indexed_pages: 0, index_state: "stale" as const };
+    installFetchMock({
+      "/api/wiki/tree": () => EMPTY_TREE,
+      "/api/wiki/health": () => ({ ok: true, health: stale }),
+      "/api/wiki/reindex": () => ({ ok: false }),
+    });
+    renderWithClient(<WikiView />);
+
+    fireEvent.click(await screen.findByTestId("wiki-health-reindex"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("wiki-health-reindex-error").textContent).toContain(
+        "The wiki search index could not be rebuilt.",
+      );
+    });
+    expect(screen.getByTestId("wiki-health-reindex-error").textContent).not.toContain(
+      "index rebuild failed",
+    );
+  });
+
+  it("shows the capture-store error detail instead of a generic badge", async () => {
+    installFetchMock({
+      "/api/wiki/tree": () => EMPTY_TREE,
+      "/api/wiki/health": () => ({
+        ok: true,
+        health: { ...HEALTHY_HEALTH, capture_error: "capture database is locked" },
+      }),
+    });
+    renderWithClient(<WikiView />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("wiki-capture-error").textContent).toContain(
+        "capture database is locked",
+      );
+    });
+  });
+
+  it("localises the capture-store sentinel returned by the health API", async () => {
+    installFetchMock({
+      "/api/wiki/tree": () => EMPTY_TREE,
+      "/api/wiki/health": () => ({
+        ok: true,
+        health: { ...HEALTHY_HEALTH, capture_error: "capture_store_unavailable" },
+      }),
+    });
+    renderWithClient(<WikiView />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("wiki-capture-error").textContent).toBe(
+        "Capture store unavailable",
+      );
+    });
+    expect(screen.getByTestId("wiki-capture-error").textContent).not.toContain(
+      "capture_store_unavailable",
+    );
   });
 });
 

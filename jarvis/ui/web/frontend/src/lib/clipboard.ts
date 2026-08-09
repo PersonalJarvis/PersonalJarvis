@@ -18,7 +18,11 @@
  * Returns true if any path succeeded, false if all paths failed.
  */
 export async function robustCopy(text: string): Promise<boolean> {
-  // Path A — modern clipboard API. Fast and reliable for short texts.
+  let browserCopySucceeded = false;
+
+  // Path A — modern clipboard API. Some Chromium/WebView builds resolve the
+  // promise without updating the OS clipboard, so success here is remembered
+  // but no longer prevents the independently verifiable fallbacks below.
   try {
     if (
       typeof navigator !== "undefined" &&
@@ -26,17 +30,7 @@ export async function robustCopy(text: string): Promise<boolean> {
       typeof navigator.clipboard.writeText === "function"
     ) {
       await navigator.clipboard.writeText(text);
-      // WebView2 quirk: writeText() resolves even when only a partial
-      // string was applied. We can't reliably read the result back
-      // (readText needs permissions that pywebview doesn't grant by
-      // default). So for multi-line content, always run the fallback
-      // too — it overwrites the corrupted entry with the full text
-      // if needed.
-      if (text.includes("\n")) {
-        if (execCommandCopy(text)) return true;
-        return nativeBackendCopy(text);
-      }
-      return true;
+      browserCopySucceeded = true;
     }
   } catch {
     // Path A failed — fall through to the fallback.
@@ -45,7 +39,8 @@ export async function robustCopy(text: string): Promise<boolean> {
   if (execCommandCopy(text)) return true;
   // Path C — local desktop backend. It is intentionally unavailable on a
   // browser/headless server, where writing would target the wrong machine.
-  return nativeBackendCopy(text);
+  if (await nativeBackendCopy(text)) return true;
+  return browserCopySucceeded;
 }
 
 /** Hard cap on the browser clipboard read (see robustPaste). */

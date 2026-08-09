@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowRight,
   BookA,
@@ -272,18 +273,30 @@ function DictionaryEntryDialog({
     }
   }
 
-  return (
+  // Render at document level. The voice hub is an overflow-constrained flex
+  // pane; keeping a fixed, backdrop-filtered modal inside that stacking context
+  // made Chromium/WebView spend seconds repainting the whole pane and the Edit
+  // click appeared to hang. A plain scrim in a portal has the same modal
+  // boundary without trapping or blurring the hub.
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/50 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/50"
       onClick={onClose}
+      role="presentation"
     >
       <div
         className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
         data-testid="dictionary-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dictionary-dialog-title"
       >
         <header className="mb-4 flex items-center gap-3">
-          <h3 className="flex-1 font-display text-base font-semibold">
+          <h3
+            id="dictionary-dialog-title"
+            className="flex-1 font-display text-base font-semibold"
+          >
             {initial
               ? t("dictionary.dialog_edit_title")
               : t("dictionary.dialog_add_title")}
@@ -369,6 +382,7 @@ function DictionaryEntryDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

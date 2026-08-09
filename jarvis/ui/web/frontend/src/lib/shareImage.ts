@@ -101,54 +101,76 @@ export function buildShareText(stats: ShareStats): string {
 
 export type ShareToXResult =
   | "shared" // native share sheet completed (image included)
-  | "dismissed" // user cancelled the native sheet — no further action
+  | "dismissed" // user cancelled the native sheet
   | "composer" // intent composer opened; image is on the clipboard to paste
+  | "composer_without_image" // composer opened, clipboard image unavailable
   | "blocked" // popup blocked (e.g. WebView2 default) — image still copied
-  | "error"; // image render failed
+  | "blocked_without_image"; // popup and clipboard image both unavailable
 
 /**
- * Share to X with the best path each platform allows:
- *   1. Mobile / capable browsers → Web Share API WITH the image file.
- *   2. Desktop → copy the image to the clipboard, then open the prefilled
- *      ``/intent/tweet`` composer; the user pastes the image (Ctrl/Cmd+V).
- * X intent URLs cannot attach an image, so (2) is the only desktop option.
+ * Share to X by opening the prefilled intent composer synchronously, then
+ * staging the image on the clipboard for the user to paste (Ctrl/Cmd+V).
+ * X intent URLs cannot attach an image directly.
+ *
+ * Opening the composer MUST happen before the first ``await``. Otherwise the
+ * browser no longer considers it part of the click gesture and blocks the
+ * popup while the share card is still rendering.
  * If the popup is blocked (the pywebview/WebView2 shell does this), the image
  * is still on the clipboard and we report ``"blocked"`` so the dialog can tell
  * the user to open X manually — never a misleading image-error.
  */
 export async function shareToX(
-  blob: Blob,
+  image: Blob | Promise<Blob>,
   text: string,
 ): Promise<ShareToXResult> {
-  const file = new File([blob], "jarvis-stats.png", { type: "image/png" });
-  const nav = navigator as Navigator & {
-    canShare?: (data: { files?: File[] }) => boolean;
-  };
-  if (nav.canShare?.({ files: [file] }) && typeof navigator.share === "function") {
-    try {
-      await navigator.share({ files: [file], text: `${text} ${REPO_URL}` });
-      return "shared";
-    } catch (err) {
-      // User dismissed the native sheet — stop, don't pop a second composer.
-      if ((err as Error)?.name === "AbortError") return "dismissed";
-      // Any other failure falls through to the intent composer below.
+  // A pre-rendered Blob lets the native share sheet start synchronously inside
+  // the click gesture while still including the image. A pending render cannot
+  // use this route because creating the File after awaiting it loses activation.
+  if (image instanceof Blob) {
+    const file = new File([image], "jarvis-stats.png", { type: "image/png" });
+    const nav = navigator as Navigator & {
+      canShare?: (data: { files?: File[] }) => boolean;
+    };
+    if (nav.canShare?.({ files: [file] }) && typeof navigator.share === "function") {
+      try {
+        await navigator.share({ files: [file], text: `${text} ${REPO_URL}` });
+        return "shared";
+      } catch (error) {
+        if ((error as Error)?.name === "AbortError") return "dismissed";
+        // A synchronous native-share refusal can still fall back to X.
+      }
     }
-  }
-
-  // Desktop fallback: stage the image on the clipboard for pasting.
-  try {
-    if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-    }
-  } catch {
-    /* clipboard is best-effort here */
   }
 
   const params = new URLSearchParams({ text, url: REPO_URL });
-  const win = globalThis.open?.(
-    `https://twitter.com/intent/tweet?${params.toString()}`,
-    "_blank",
-    "noopener,noreferrer",
-  );
-  return win ? "composer" : "blocked";
+  const intentUrl = `https://twitter.com/intent/tweet?${params.toString()}`;
+  let win: Window | null = null;
+  const candidate = globalThis.open?.("", "_blank") ?? null;
+  if (candidate) {
+    try {
+      // Opening about:blank gives us a truthful popup-blocker signal. Sever
+      // the opener while it is still same-origin, then navigate only after the
+      // new page can no longer reach back into the Jarvis window.
+      candidate.opener = null;
+      candidate.location.replace(intentUrl);
+      win = candidate;
+    } catch {
+      // A handle that cannot be secured or navigated is not a usable composer.
+      try {
+        candidate.close();
+      } catch {
+        /* best-effort cleanup of the blank window */
+      }
+    }
+  }
+
+  // The composer and ClipboardItem are both created before the first await so
+  // the browser still recognises them as consequences of the button click.
+  const copy = copyImageToClipboard(image);
+  await Promise.resolve(image);
+  const copyResult = await copy;
+  if (win) {
+    return copyResult === "copied" ? "composer" : "composer_without_image";
+  }
+  return copyResult === "copied" ? "blocked" : "blocked_without_image";
 }

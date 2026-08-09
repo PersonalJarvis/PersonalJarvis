@@ -19,8 +19,31 @@ if (typeof globalThis.ResizeObserver === "undefined") {
     ResizeObserverPolyfill as unknown as typeof ResizeObserver;
 }
 
-// Identity translator so rendered text equals the i18n key.
-vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
+// Most component-specific copy remains an identity translation in this suite.
+// The launcher navigation uses real English labels so its accessible workflow
+// stays readable while the locale dictionaries are tested separately.
+const launcherEnglish = vi.hoisted<Record<string, string>>(() => ({
+  "workspace_launcher.wizard.steps.folder.title": "Choose the project folder",
+  "workspace_launcher.wizard.steps.layout.title": "Shape the workspace",
+  "workspace_launcher.wizard.steps.view.title": "Choose how to read the workspace",
+  "workspace_launcher.wizard.steps.review.title": "Review before opening",
+  "workspace_launcher.wizard.continue_layout": "Continue to layout",
+  "workspace_launcher.wizard.continue_agents": "Continue to agents",
+  "workspace_launcher.wizard.choose_view": "Choose the view",
+  "workspace_launcher.wizard.review_workspace": "Review workspace",
+  "workspace_launcher.wizard.open_workspace": "Open workspace",
+  "workspace_launcher.wizard.terminal_unavailable_before":
+    "This machine has no usable terminal backend. Required:",
+  "workspace_launcher.wizard.no_cli":
+    "No coding-agent CLI was found on this machine's PATH.",
+  "workspace_launcher.wizard.open_clis": "Open CLIs",
+  "workspace_launcher.wizard.views.grid.title": "Terminal grid",
+  "workspace_launcher.wizard.views.chat.title": "Chat view",
+  "workspace_launcher.wizard.views.deck.title": "Command Deck",
+}));
+vi.mock("@/i18n", () => ({
+  useT: () => (key: string) => launcherEnglish[key] ?? key,
+}));
 
 // The workspace grid follows the app theme for its terminal colours; this test
 // renders the view outside the provider, so the hook is stubbed.
@@ -111,6 +134,7 @@ vi.mock("@/lib/agenticIdeApi", () => ({
 }));
 
 import { AgenticIdeView } from "./AgenticIdeView";
+import { workspaceLaunchShortcut } from "@/components/agentic/WorkspaceLauncher";
 import * as api from "@/lib/agenticIdeApi";
 import { GRID_HORIZONTAL_PADDING_PX } from "@/components/agentic/layout";
 
@@ -369,6 +393,12 @@ describe("Agentic IDE — before the first read lands", () => {
 });
 
 describe("Agentic IDE launcher", () => {
+  it("shows the launch chord for the current operating system", () => {
+    expect(workspaceLaunchShortcut("Win32")).toBe("Ctrl+↵");
+    expect(workspaceLaunchShortcut("MacIntel")).toBe("⌘↵");
+    expect(workspaceLaunchShortcut("Linux x86_64")).toBe("Ctrl+↵");
+  });
+
   async function chooseFolder(): Promise<void> {
     fireEvent.click(await screen.findByRole("button", { name: /project/i }));
   }

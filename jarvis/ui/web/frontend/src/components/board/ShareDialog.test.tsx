@@ -19,6 +19,8 @@ import {
 } from "@testing-library/react";
 
 import { ShareDialog } from "@/components/board/ShareDialog";
+import { shareToX } from "@/lib/shareImage";
+import { toBlob } from "html-to-image";
 
 vi.mock("html-to-image", () => ({
   toBlob: vi.fn(async () => new Blob(["png"], { type: "image/png" })),
@@ -32,9 +34,42 @@ const STATS = {
   longestStreak: 23,
 };
 
+function installImageClipboard(): ReturnType<typeof vi.fn> {
+  const write = vi.fn(async () => {});
+  (globalThis as unknown as { ClipboardItem: unknown }).ClipboardItem = class {
+    constructor(public items: unknown) {}
+  };
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { write },
+  });
+  return write;
+}
+
+function installComposerWindow() {
+  const handle = {
+    opener: globalThis,
+    location: { replace: vi.fn() },
+    close: vi.fn(),
+  } as unknown as Window;
+  const replace = vi.mocked(handle.location.replace);
+  replace.mockImplementation(() => {
+    expect(handle.opener).toBeNull();
+  });
+  const open = vi.spyOn(globalThis, "open").mockReturnValue(handle);
+  return { handle, open, replace };
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  (globalThis as unknown as { ClipboardItem: unknown }).ClipboardItem = undefined;
+  for (const property of ["clipboard", "canShare", "share"] as const) {
+    Object.defineProperty(navigator, property, {
+      configurable: true,
+      value: undefined,
+    });
+  }
   try {
     localStorage.clear();
   } catch {
@@ -60,15 +95,7 @@ describe("ShareDialog", () => {
   });
 
   it("Copy Image writes a PNG to the clipboard and shows a status", async () => {
-    const write = vi.fn(async () => {});
-    // jsdom lacks ClipboardItem — provide a minimal stand-in.
-    (globalThis as unknown as { ClipboardItem: unknown }).ClipboardItem = class {
-      constructor(public items: unknown) {}
-    };
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { write },
-    });
+    const write = installImageClipboard();
 
     render(<ShareDialog open onOpenChange={() => {}} stats={STATS} />);
     fireEvent.click(screen.getByTestId("share-copy"));
@@ -85,5 +112,87 @@ describe("ShareDialog", () => {
     fireEvent.change(input, { target: { value: "@ruben" } });
     expect(localStorage.getItem("board.share.handle")).toBe("ruben");
     expect(screen.getAllByText(/@ruben/).length).toBeGreaterThan(0);
+  });
+
+  it("opens the X composer before a pending image render resolves", async () => {
+    installImageClipboard();
+    let finishRender: ((blob: Blob) => void) | undefined;
+    vi.mocked(toBlob).mockReturnValueOnce(
+      new Promise<Blob>((resolve) => {
+        finishRender = resolve;
+      }),
+    );
+    const { handle, open, replace } = installComposerWindow();
+
+    render(<ShareDialog open onOpenChange={() => {}} stats={STATS} />);
+    fireEvent.click(screen.getByTestId("share-x"));
+
+    expect(open).toHaveBeenCalledWith("", "_blank");
+    expect(handle.opener).toBeNull();
+    expect(String(replace.mock.calls[0][0])).toContain("twitter.com/intent/tweet");
+    expect(screen.getByTestId("share-status").textContent).toContain("Generating");
+
+    finishRender?.(new Blob(["png"], { type: "image/png" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("share-status").textContent).toContain(
+        "Image copied",
+      );
+    });
+  });
+
+  it("reports when X opens but the clipboard image is unavailable", async () => {
+    const { open } = installComposerWindow();
+
+    render(<ShareDialog open onOpenChange={() => {}} stats={STATS} />);
+    fireEvent.click(screen.getByTestId("share-x"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("share-status").textContent).toContain(
+        "image could not be copied",
+      );
+    });
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("share-status").textContent).not.toContain(
+      "Image copied",
+    );
+  });
+
+  it("starts native Web Share synchronously for an existing Blob", async () => {
+    let finishShare: (() => void) | undefined;
+    const share = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishShare = resolve;
+        }),
+    );
+    Object.defineProperty(navigator, "canShare", {
+      configurable: true,
+      value: vi.fn(() => true),
+    });
+    Object.defineProperty(navigator, "share", {
+      configurable: true,
+      value: share,
+    });
+    const open = vi.spyOn(globalThis, "open");
+
+    const result = shareToX(new Blob(["png"], { type: "image/png" }), "stats");
+
+    expect(share).toHaveBeenCalledTimes(1);
+    expect(open).not.toHaveBeenCalled();
+    finishShare?.();
+    await expect(result).resolves.toBe("shared");
+  });
+
+  it("reports blocked only when the synchronous blank-window handle is null", async () => {
+    installImageClipboard();
+    const open = vi.spyOn(globalThis, "open").mockReturnValue(null);
+
+    const result = shareToX(
+      Promise.resolve(new Blob(["png"], { type: "image/png" })),
+      "stats",
+    );
+
+    expect(open).toHaveBeenCalledWith("", "_blank");
+    await expect(result).resolves.toBe("blocked");
   });
 });

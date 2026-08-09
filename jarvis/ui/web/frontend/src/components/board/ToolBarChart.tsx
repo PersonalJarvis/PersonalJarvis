@@ -40,7 +40,10 @@ export function ToolBarChart({ histogram, limit = 15 }: ToolBarChartProps) {
 
   return (
     <div style={{ width: "100%", height }}>
-      <ResponsiveContainer>
+      <ResponsiveContainer
+        minWidth={0}
+        initialDimension={{ width: 640, height }}
+      >
         <BarChart
           data={data}
           layout="vertical"

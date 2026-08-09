@@ -143,19 +143,37 @@ export function ShareDialog({ open, onOpenChange, stats }: Props) {
 
   const onShareX = () =>
     run(async () => {
-      const res = await shareToX(await ensureBlob(), buildShareText(stats));
+      // Pass the pending render through without awaiting it here. shareToX
+      // opens the composer synchronously while this click still owns a browser
+      // user gesture, then finishes staging the image on the clipboard.
+      const res = await shareToX(
+        blobRef.current ?? ensureBlob(),
+        buildShareText(stats),
+      );
       switch (res) {
         case "shared":
           setStatus({ kind: "ok", msgKey: "board_view.share.status_shared" });
           break;
         case "dismissed":
-          setStatus({ kind: "idle" }); // user cancelled — clear the spinner, stay quiet
+          setStatus({ kind: "idle" });
           break;
         case "composer":
           setStatus({ kind: "ok", msgKey: "board_view.share.status_composer" });
           break;
+        case "composer_without_image":
+          setStatus({
+            kind: "error",
+            msgKey: "board_view.share.status_composer_without_image",
+          });
+          break;
         case "blocked":
           setStatus({ kind: "error", msgKey: "board_view.share.status_blocked" });
+          break;
+        case "blocked_without_image":
+          setStatus({
+            kind: "error",
+            msgKey: "board_view.share.status_blocked_without_image",
+          });
           break;
         default:
           setStatus({ kind: "error", msgKey: "board_view.share.status_error" });

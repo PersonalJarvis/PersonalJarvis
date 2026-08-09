@@ -81,31 +81,40 @@ type LauncherStep = 0 | 1 | 2 | 3 | 4;
 
 const STEPS = [
   {
-    label: "Folder",
-    title: "Choose the project folder",
-    hint: "Everything the agents do stays inside this folder.",
+    id: "folder",
+    label: "workspace_launcher.wizard.steps.folder.label",
+    title: "workspace_launcher.wizard.steps.folder.title",
+    hint: "workspace_launcher.wizard.steps.folder.hint",
   },
   {
-    label: "Layout",
-    title: "Shape the workspace",
-    hint: "Choose how many independent terminal panes should open.",
+    id: "layout",
+    label: "workspace_launcher.wizard.steps.layout.label",
+    title: "workspace_launcher.wizard.steps.layout.title",
+    hint: "workspace_launcher.wizard.steps.layout.hint",
   },
   {
-    label: "Agents",
-    title: "Choose the coding agents",
-    hint: "Distribute all terminal slots at once instead of editing every pane.",
+    id: "agents",
+    label: "workspace_launcher.wizard.steps.agents.label",
+    title: "workspace_launcher.agents.step_title",
+    hint: "workspace_launcher.agents.step_hint",
   },
   {
-    label: "View",
-    title: "Choose how to read the workspace",
-    hint: "The same agents either way — the toolbar switches between the two at any time.",
+    id: "view",
+    label: "workspace_launcher.wizard.steps.view.label",
+    title: "workspace_launcher.wizard.steps.view.title",
+    hint: "workspace_launcher.wizard.steps.view.hint",
   },
   {
-    label: "Review",
-    title: "Review before opening",
-    hint: "Nothing starts until you open the workspace.",
+    id: "review",
+    label: "workspace_launcher.wizard.steps.review.label",
+    title: "workspace_launcher.wizard.steps.review.title",
+    hint: "workspace_launcher.wizard.steps.review.hint",
   },
 ] as const;
+
+export function workspaceLaunchShortcut(platform = navigator.platform): string {
+  return /mac/i.test(platform) ? "⌘↵" : "Ctrl+↵";
+}
 
 export function WorkspaceLauncher({
   addingNew,
@@ -166,10 +175,8 @@ export function WorkspaceLauncher({
   }, [busy, onStart, ready, step]);
 
   const active = STEPS[step];
-  const activeTitle =
-    step === 2 ? t("workspace_launcher.agents.step_title") : active.title;
-  const activeHint =
-    step === 2 ? t("workspace_launcher.agents.step_hint") : active.hint;
+  const activeTitle = t(active.title);
+  const activeHint = t(active.hint);
 
   return (
     <div
@@ -180,9 +187,15 @@ export function WorkspaceLauncher({
         <div className="mx-auto flex w-full max-w-6xl items-start justify-between gap-6">
           <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary/80">
-              {addingNew ? "Additional workspace" : "New workspace"}
+              {t(
+                addingNew
+                  ? "workspace_launcher.wizard.additional_workspace"
+                  : "workspace_launcher.wizard.new_workspace",
+              )}
               <span className="px-2 text-muted-foreground/50">/</span>
-              Step {step + 1} of {STEPS.length}
+              {t("workspace_launcher.wizard.step_progress")
+                .replace("{0}", String(step + 1))
+                .replace("{1}", String(STEPS.length))}
             </p>
             <h2
               id="workspace-launcher-title"
@@ -193,7 +206,7 @@ export function WorkspaceLauncher({
             <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
               {activeHint}
               {addingNew && step === 0
-                ? " Your open workspaces keep running."
+                ? ` ${t("workspace_launcher.wizard.running_notice")}`
                 : ""}
             </p>
           </div>
@@ -215,11 +228,10 @@ export function WorkspaceLauncher({
               {!terminalAvailable && (
                 <Notice tone="error">
                   <span>
-                    This machine has no usable terminal backend, so agent panes
-                    cannot run here —{" "}
-                    <code className="font-mono">pywinpty</code> on Windows,{" "}
-                    <code className="font-mono">ptyprocess</code> on macOS and
-                    Linux. Both ship with the desktop extra.
+                    {t("workspace_launcher.wizard.terminal_unavailable_before")} {" "}
+                    <code className="font-mono">pywinpty</code> (Windows),{" "}
+                    <code className="font-mono">ptyprocess</code> (macOS/Linux).{" "}
+                    {t("workspace_launcher.wizard.terminal_unavailable_after")}
                   </span>
                 </Notice>
               )}
@@ -227,15 +239,14 @@ export function WorkspaceLauncher({
               {nothingInstalled && (
                 <Notice tone="warning">
                   <span>
-                    No coding-agent CLI was found on this machine’s PATH.
-                    Install one and it is picked up automatically.
+                    {t("workspace_launcher.wizard.no_cli")}
                   </span>
                   <Button
                     variant="subtle"
                     className="h-6 px-2 text-amber-200/90"
                     onClick={onOpenClis}
                   >
-                    Open CLIs
+                    {t("workspace_launcher.wizard.open_clis")}
                   </Button>
                 </Notice>
               )}
@@ -280,7 +291,9 @@ export function WorkspaceLauncher({
                 <div>
                   <div className="flex items-end justify-between gap-5 border-b border-border/70 pb-5">
                     <div>
-                      <SectionLabel>Terminal panes</SectionLabel>
+                      <SectionLabel>
+                        {t("workspace_launcher.wizard.terminal_panes")}
+                      </SectionLabel>
                       <p className="mt-2 font-mono text-4xl font-medium tabular-nums text-foreground">
                         {count.toString().padStart(2, "0")}
                       </p>
@@ -331,7 +344,7 @@ export function WorkspaceLauncher({
                     onClick={() => setStep((step - 1) as LauncherStep)}
                   >
                     <ArrowLeft className="h-3.5 w-3.5" />
-                    Back
+                    {t("workspace_launcher.wizard.back")}
                   </Button>
                 ) : (
                   <span />
@@ -345,12 +358,12 @@ export function WorkspaceLauncher({
                     className="px-4"
                   >
                     {step === 0
-                      ? "Continue to layout"
+                      ? t("workspace_launcher.wizard.continue_layout")
                       : step === 1
-                        ? "Continue to agents"
+                        ? t("workspace_launcher.wizard.continue_agents")
                         : step === 2
-                          ? "Choose the view"
-                          : "Review workspace"}
+                          ? t("workspace_launcher.wizard.choose_view")
+                          : t("workspace_launcher.wizard.review_workspace")}
                     <ArrowRight className="h-3.5 w-3.5" />
                   </Button>
                 ) : (
@@ -361,10 +374,12 @@ export function WorkspaceLauncher({
                     className="min-w-40 px-4"
                   >
                     {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                    {busy ? "Opening…" : "Open workspace"}
+                    {busy
+                      ? t("workspace_launcher.wizard.opening")
+                      : t("workspace_launcher.wizard.open_workspace")}
                     {!busy && (
                       <kbd className="ml-1 hidden font-mono text-[10px] font-normal opacity-60 sm:inline">
-                        ⌘↵
+                        {workspaceLaunchShortcut()}
                       </kbd>
                     )}
                   </Button>
@@ -399,29 +414,36 @@ function StepNavigation({
   const assigned = planned.filter((pane) => Boolean(pane.agent)).length;
   const summaries = useMemo(
     () => [
-      folder ? leafName(folder) : "Not chosen",
-      `${count} terminal${count === 1 ? "" : "s"}`,
+      folder ? leafName(folder) : t("workspace_launcher.wizard.not_chosen"),
+      t(
+        count === 1
+          ? "workspace_launcher.wizard.one_terminal"
+          : "workspace_launcher.wizard.many_terminals",
+      ).replace("{0}", String(count)),
       t("workspace_launcher.agents.nav_summary")
         .replace("{0}", String(assigned))
         .replace("{1}", String(planned.length)),
-      VIEW_NAMES[view],
-      "Check and open",
+      t(`workspace_launcher.wizard.views.${view}.title`),
+      t("workspace_launcher.wizard.check_and_open"),
     ],
     [assigned, count, folder, planned.length, t, view],
   );
 
   return (
-    <nav aria-label="Workspace setup" className="min-w-0">
+    <nav
+      aria-label={t("workspace_launcher.wizard.setup_label")}
+      className="min-w-0"
+    >
       <ol className="grid grid-cols-5 border-b border-border/70 lg:flex lg:flex-col lg:border-b-0 lg:border-r lg:pr-6">
         {STEPS.map((item, index) => {
           const target = index as LauncherStep;
           const selected = target === step;
           const enabled = canVisit(target);
           return (
-            <li key={item.label}>
+            <li key={item.id}>
               <button
                 type="button"
-                data-testid={`launcher-step-${item.label.toLowerCase()}`}
+                data-testid={`launcher-step-${item.id}`}
                 aria-current={selected ? "step" : undefined}
                 disabled={!enabled}
                 onClick={() => onStep(target)}
@@ -441,7 +463,7 @@ function StepNavigation({
                   0{index + 1}
                 </span>
                 <span className="mt-1 block truncate text-sm font-medium">
-                  {item.label}
+                  {t(item.label)}
                 </span>
                 <span className="mt-0.5 hidden truncate text-[11px] text-muted-foreground lg:block">
                   {summaries[index]}
@@ -454,13 +476,6 @@ function StepNavigation({
     </nav>
   );
 }
-
-/** The user-facing names of the three reading modes, shared by every step. */
-const VIEW_NAMES: Record<WorkspaceView, string> = {
-  grid: "Terminal grid",
-  chat: "Chat view",
-  deck: "Command Deck",
-};
 
 /**
  * The last decision before review: how the workspace is read.
@@ -482,12 +497,13 @@ function ViewChoice({
   view: WorkspaceView;
   onView: (next: WorkspaceView) => void;
 }) {
+  const t = useT();
   return (
     <div>
-      <SectionLabel>Reading mode</SectionLabel>
+      <SectionLabel>{t("workspace_launcher.wizard.reading_mode")}</SectionLabel>
       <div
         role="radiogroup"
-        aria-label="How the workspace opens"
+        aria-label={t("workspace_launcher.wizard.reading_mode_label")}
         className="mt-4 grid gap-4 sm:grid-cols-3"
       >
         <ViewOption
@@ -495,8 +511,8 @@ function ViewChoice({
           onSelect={() => onView("grid")}
           testId="view-choice-grid"
           icon={<LayoutGrid className="h-4 w-4 shrink-0" />}
-          title={VIEW_NAMES.grid}
-          description="Every pane on screen at once, side by side — the full wall of terminals."
+          title={t("workspace_launcher.wizard.views.grid.title")}
+          description={t("workspace_launcher.wizard.views.grid.description")}
           preview={<GridPreview />}
         />
         <ViewOption
@@ -504,8 +520,8 @@ function ViewChoice({
           onSelect={() => onView("chat")}
           testId="view-choice-chat"
           icon={<MessagesSquare className="h-4 w-4 shrink-0" />}
-          title={VIEW_NAMES.chat}
-          description="One agent at a time on a calm stage, the rest on a rail — read like a conversation."
+          title={t("workspace_launcher.wizard.views.chat.title")}
+          description={t("workspace_launcher.wizard.views.chat.description")}
           preview={<ChatPreview />}
         />
         <ViewOption
@@ -513,16 +529,13 @@ function ViewChoice({
           onSelect={() => onView("deck")}
           testId="view-choice-deck"
           icon={<AudioLines className="h-4 w-4 shrink-0" />}
-          title={VIEW_NAMES.deck}
-          description="You brief by voice, Jarvis runs the floor — and tells you when an agent is done."
+          title={t("workspace_launcher.wizard.views.deck.title")}
+          description={t("workspace_launcher.wizard.views.deck.description")}
           preview={<DeckPreview />}
         />
       </div>
       <p className="mt-5 max-w-2xl text-xs leading-relaxed text-muted-foreground">
-        Only how the workspace is read changes — the agents, panes and
-        conversations are the same in all three, and the workspace toolbar
-        switches between them whenever you like. The Command Deck also speaks:
-        it reports a finished agent out loud, one at a time.
+        {t("workspace_launcher.wizard.view_hint")}
       </p>
     </div>
   );
@@ -545,6 +558,7 @@ function ViewOption({
   description: string;
   preview: ReactNode;
 }) {
+  const t = useT();
   return (
     <button
       type="button"
@@ -570,7 +584,7 @@ function ViewOption({
         {title}
         {selected && (
           <span className="ml-auto text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
-            Selected
+            {t("workspace_launcher.wizard.selected")}
           </span>
         )}
       </span>
@@ -655,13 +669,14 @@ function WorkspaceReview({
   agents: AgentStatus[];
   view: WorkspaceView;
 }) {
+  const t = useT();
   const displayName = (agentId: string) =>
     agents.find((agent) => agent.name === agentId)?.display_name ?? agentId;
 
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">
       <div className="min-w-0">
-        <SectionLabel>Workspace</SectionLabel>
+        <SectionLabel>{t("workspace_launcher.wizard.workspace")}</SectionLabel>
         <h4 className="mt-3 truncate text-2xl font-semibold tracking-tight text-foreground">
           {leafName(folder)}
         </h4>
@@ -671,26 +686,34 @@ function WorkspaceReview({
 
         <dl className="mt-7 border-y border-border/70">
           <div className="flex items-center justify-between gap-5 border-b border-border/50 py-3 text-sm">
-            <dt className="text-muted-foreground">Terminal panes</dt>
+            <dt className="text-muted-foreground">
+              {t("workspace_launcher.wizard.terminal_panes")}
+            </dt>
             <dd className="font-mono tabular-nums text-foreground">
               {planned.length}
             </dd>
           </div>
           <div className="flex items-center justify-between gap-5 border-b border-border/50 py-3 text-sm">
-            <dt className="text-muted-foreground">Opens as</dt>
+            <dt className="text-muted-foreground">
+              {t("workspace_launcher.wizard.opens_as")}
+            </dt>
             <dd className="text-foreground" data-testid="review-view-mode">
-              {VIEW_NAMES[view]}
+              {t(`workspace_launcher.wizard.views.${view}.title`)}
             </dd>
           </div>
           <div className="flex items-center justify-between gap-5 py-3 text-sm">
-            <dt className="text-muted-foreground">Coding mode</dt>
-            <dd className="text-foreground">Turns on when opened</dd>
+            <dt className="text-muted-foreground">
+              {t("workspace_launcher.wizard.coding_mode")}
+            </dt>
+            <dd className="text-foreground">
+              {t("workspace_launcher.wizard.coding_mode_on_open")}
+            </dd>
           </div>
         </dl>
       </div>
 
       <div className="min-w-0">
-        <SectionLabel>Terminal plan</SectionLabel>
+        <SectionLabel>{t("workspace_launcher.wizard.terminal_plan")}</SectionLabel>
         <ol className="mt-3 border-t border-border/70">
           {planned.map((pane, index) => (
             <li

@@ -53,9 +53,9 @@ describe("saveOrDownload", () => {
   });
 
   describe("robustCopy", () => {
-    it("uses the browser clipboard when it succeeds", async () => {
+    it("keeps browser success when independent fallbacks are unavailable", async () => {
       const writeText = vi.fn(async () => undefined);
-      const fetchMock = vi.fn();
+      const fetchMock = vi.fn(async () => ({ ok: false }));
       stubClipboard(writeText);
       stubExecCommand(() => false);
       vi.stubGlobal("fetch", fetchMock);
@@ -63,7 +63,24 @@ describe("saveOrDownload", () => {
       await expect(robustCopy("short text")).resolves.toBe(true);
 
       expect(writeText).toHaveBeenCalledWith("short text");
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("also writes short commands through the desktop fallback", async () => {
+      stubClipboard(vi.fn(async () => undefined));
+      stubExecCommand(() => false);
+      const fetchMock = vi.fn(async () => ({ ok: true }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(robustCopy("jarvis setup telephony")).resolves.toBe(true);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/clipboard/text",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ text: "jarvis setup telephony" }),
+        }),
+      );
     });
 
     it("falls back to the desktop backend when WKWebView blocks DOM copy", async () => {
