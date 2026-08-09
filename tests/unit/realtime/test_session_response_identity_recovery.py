@@ -33,6 +33,7 @@ RATE = 24_000
 A_PCM = b"\x01\x02" * 160  # int16 peak 513, above the silence floor
 A_LATE_PCM = b"\x05\x06" * 160  # late audio of the cancelled identity
 B_PCM = b"\x03\x04" * 160  # the superseding response's audio
+SILENT_PCM = b"\x00\x00" * 160
 
 
 class _ScriptedWire:
@@ -217,6 +218,39 @@ async def test_a_watchdog_retirement_keeps_late_audio_playable() -> None:
     assert session._late_response_readoptions == 1
     assert session._response_identity_drops == 0
     assert session._active_provider_response_id == "resp-a"
+
+
+async def test_a_watchdog_retirement_ignores_a_silent_webrtc_tail() -> None:
+    """Silent carrier frames must not repeatedly deafen the next turn.
+
+    The live Codex transport kept emitting silent PCM after the first reply.
+    Every frame re-adopted the provisionally retired response, set output
+    active again, and made half-duplex discard the user's follow-up.  Late
+    metadata is equally unable to prove that audible output resumed.
+    """
+    session = _session()
+    assert await session._accept_provider_response_event(_audio_event("resp-a"))
+    session._reset_output_state(reason="watchdog", provisional=True)
+
+    assert not await session._accept_provider_response_event(
+        _audio_event("resp-a", SILENT_PCM)
+    )
+    assert not await session._accept_provider_response_event(
+        RealtimeEvent(
+            type="output_transcript_delta",
+            text="late metadata",
+            provider_turn_id="resp-a",
+        )
+    )
+    assert session._active_provider_response_id == ""
+    assert "resp-a" in session._provisional_response_retirements
+    assert session._late_response_readoptions == 0
+
+    assert await session._accept_provider_response_event(
+        _audio_event("resp-a", A_LATE_PCM)
+    ), "real audible audio may still revive the delayed answer"
+    assert session._active_provider_response_id == "resp-a"
+    assert session._late_response_readoptions == 1
 
 
 async def test_a_superseding_response_completes_the_provisional_one() -> None:

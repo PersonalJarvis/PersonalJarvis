@@ -5480,6 +5480,7 @@ class RealtimeVoiceSession:
                 )
                 return False
             if boundary_id:
+                self._provisional_response_retirements.pop(boundary_id, None)
                 self._completed_provider_response_ids.append(boundary_id)
             self._active_provider_response_id = ""
             return True
@@ -5492,6 +5493,23 @@ class RealtimeVoiceSession:
 
         if not response_id:
             return True
+        if response_id in self._provisional_response_retirements:
+            # A watchdog released this response because no AUDIBLE output had
+            # arrived for long enough to reopen the microphone.  ChatGPT-Live
+            # keeps its WebRTC audio track alive with silent PCM after the
+            # spoken reply.  Treating one of those carrier frames (or a late
+            # transcript delta) as a revived answer immediately set
+            # ``_output_active`` again; the next microphone frame then entered
+            # the same watchdog/re-adoption loop.  Live 2026-08-09 12:03:
+            # thirteen cycles created an empty Turn 2 and swallowed every
+            # follow-up until hangup.  Only energy that meets the same audible
+            # threshold used by playback liveness can prove the answer resumed.
+            pcm = bytes(getattr(getattr(event, "audio", None), "pcm", b"") or b"")
+            if (
+                event.type != "audio_delta"
+                or _pcm16_peak(pcm) < _EMBEDDED_SILENCE_PEAK
+            ):
+                return False
         if not active_id:
             readopted = self._provisional_response_retirements.pop(response_id, None)
             if readopted is not None:
