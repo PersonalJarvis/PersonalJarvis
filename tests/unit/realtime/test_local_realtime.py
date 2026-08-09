@@ -138,6 +138,124 @@ async def test_open_session_without_an_address_says_what_to_do() -> None:
     assert "server URL" in str(err.value)
 
 
+async def test_cold_managed_server_starts_but_does_not_hold_the_call(
+    monkeypatch,
+) -> None:
+    """Cold loading continues under supervision while the interactive probe
+    returns immediately instead of spending 120 seconds without a pool slot."""
+    from jarvis.realtime.local_server import supervisor
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        supervisor, "is_managed_launch_command", lambda command: True
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "ensure_running",
+        lambda **kwargs: calls.append(f"run:{kwargs['reason']}") or "spawned",
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "start_runtime_monitor",
+        lambda **kwargs: calls.append("monitor") or True,
+    )
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: None)
+    provider = LocalRealtimeProvider(
+        base_url="http://127.0.0.1:8765",
+        launch_command="managed-server --mode realtime",
+    )
+
+    assert await provider.can_open_duplex_session() is False
+    assert calls == ["run:interactive-preflight", "monitor"]
+
+
+async def test_slow_managed_spawn_continues_after_the_call_fails_fast(
+    monkeypatch,
+) -> None:
+    import asyncio
+    import time
+
+    from jarvis.plugins.realtime import openai_realtime as module
+    from jarvis.realtime.local_server import supervisor
+
+    calls: list[str] = []
+    monkeypatch.setattr(module, "_LOCAL_MANAGED_PREFLIGHT_WAIT_S", 0.005)
+    monkeypatch.setattr(
+        supervisor, "is_managed_launch_command", lambda command: True
+    )
+
+    def slow_start(**kwargs: Any) -> str:
+        time.sleep(0.05)
+        calls.append(kwargs["reason"])
+        return "spawned"
+
+    monkeypatch.setattr(supervisor, "ensure_running", slow_start)
+    monkeypatch.setattr(
+        supervisor,
+        "start_runtime_monitor",
+        lambda **kwargs: calls.append("monitor") or True,
+    )
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: None)
+    provider = LocalRealtimeProvider(
+        base_url="http://127.0.0.1:8765",
+        launch_command="managed-server --mode realtime",
+    )
+
+    assert (
+        await asyncio.wait_for(provider.can_open_duplex_session(), timeout=0.2)
+        is False
+    )
+    assert calls == []
+    await asyncio.gather(*LocalRealtimeProvider._background_start_tasks)
+    assert calls == ["interactive-preflight", "monitor"]
+
+
+async def test_ready_managed_pool_opens_only_with_idle_capacity(monkeypatch) -> None:
+    from jarvis.realtime.local_server import supervisor
+
+    pool = {"size": 1, "in_use": 0, "available": 1, "active": 0}
+    monkeypatch.setattr(
+        supervisor, "is_managed_launch_command", lambda command: True
+    )
+    monkeypatch.setattr(
+        supervisor, "ensure_running", lambda **kwargs: "already-running"
+    )
+    monkeypatch.setattr(supervisor, "start_runtime_monitor", lambda **kwargs: True)
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: pool)
+    provider = LocalRealtimeProvider(
+        base_url="http://127.0.0.1:8765",
+        launch_command="managed-server --mode realtime",
+    )
+
+    assert await provider.can_open_duplex_session() is True
+    pool.update({"in_use": 1, "available": 0, "active": 1})
+    assert await provider.can_open_duplex_session() is False
+
+
+async def test_byo_server_never_requires_the_private_pool(monkeypatch) -> None:
+    from jarvis.realtime.local_server import supervisor
+
+    monkeypatch.setattr(
+        supervisor, "is_managed_launch_command", lambda command: False
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "ensure_running",
+        lambda **kwargs: pytest.fail("BYO launch must retain protocol-only behavior"),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "probe_runtime",
+        lambda *args, **kwargs: pytest.fail("BYO server need not implement /v1/pool"),
+    )
+    provider = LocalRealtimeProvider(
+        base_url="http://127.0.0.1:8765",
+        launch_command="custom-realtime-server --flag",
+    )
+
+    assert await provider.can_open_duplex_session() is True
+
+
 # ── Credentials come from the environment, never from the config file ────
 def test_optional_key_is_read_from_the_environment(monkeypatch) -> None:
     monkeypatch.setenv("JARVIS_LOCAL_REALTIME_API_KEY", "sk-local-proxy")
@@ -382,6 +500,53 @@ async def test_cancellation_is_never_retried(monkeypatch) -> None:
     with pytest.raises(asyncio.CancelledError):
         await provider.open_session(SimpleNamespace(model="m"))
     assert attempts == 1
+
+
+async def test_managed_initial_open_race_never_uses_the_recovery_window(
+    monkeypatch,
+) -> None:
+    """A pool can disappear between readiness and WebSocket acquisition. That
+    first-call race is bounded separately from the patient mid-call rebuild."""
+    import asyncio
+
+    from jarvis.plugins.realtime import openai_realtime as module
+    from jarvis.realtime.local_server import supervisor
+
+    monkeypatch.setattr(module, "_LOCAL_MANAGED_INTERACTIVE_OPEN_S", 0.02)
+    monkeypatch.setattr(
+        supervisor, "is_managed_launch_command", lambda command: True
+    )
+    monkeypatch.setattr(
+        supervisor, "ensure_running", lambda **kwargs: "already-running"
+    )
+    monkeypatch.setattr(supervisor, "start_runtime_monitor", lambda **kwargs: True)
+    monkeypatch.setattr(
+        supervisor,
+        "probe_runtime",
+        lambda *args, **kwargs: {
+            "size": 1,
+            "in_use": 0,
+            "available": 1,
+            "active": 0,
+        },
+    )
+    provider = LocalRealtimeProvider(
+        base_url="http://127.0.0.1:8765",
+        model="m",
+        launch_command="managed-server --mode realtime",
+    )
+    assert await provider.can_open_duplex_session() is True
+
+    async def wedged_handshake(cfg: Any) -> str:
+        await asyncio.sleep(1.0)
+        return "too-late"
+
+    monkeypatch.setattr(provider, "_open_session_once", wedged_handshake)
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(
+            provider.open_session(SimpleNamespace(model="m")),
+            timeout=0.5,
+        )
 
 
 def test_patience_is_earned_by_a_launch_command() -> None:

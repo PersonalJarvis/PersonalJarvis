@@ -1392,6 +1392,10 @@ _LOCAL_RESPONSE_START_TIMEOUT_S = 90.0
 #: call hostage.
 _LOCAL_CONNECT_SHORT_WINDOW_S = 8.0
 _LOCAL_CONNECT_RETRY_STEP_S = 2.0
+#: A cold spawn may spend up to 30 seconds preparing its bounded Ollama model
+#: before the child even exists. Interactive readiness waits only this long;
+#: the same supervisor operation then continues on its worker thread.
+_LOCAL_MANAGED_PREFLIGHT_WAIT_S = 0.75
 #: A managed pool that just reported an idle slot should accept the first
 #: interactive handshake promptly. If that readiness becomes stale, bound the
 #: race here instead of falling back to the 120-second recovery window. Long
@@ -1573,6 +1577,7 @@ class LocalRealtimeProvider:
     # the cache so the first real call never pays the probe either.
     _model_cache: dict[str, tuple[str, float]] = {}
     _MODEL_CACHE_TTL_S = 300.0
+    _background_start_tasks: set[asyncio.Task[bool]] = set()
 
     def __init__(
         self,
@@ -1676,7 +1681,38 @@ class LocalRealtimeProvider:
                 )
                 return False
 
-        return bool(await asyncio.to_thread(_ready_or_warming))
+        task = asyncio.create_task(
+            asyncio.to_thread(_ready_or_warming),
+            name="local-realtime-interactive-preflight",
+        )
+        LocalRealtimeProvider._background_start_tasks.add(task)
+
+        def _consume_background_start(done: asyncio.Task[bool]) -> None:
+            LocalRealtimeProvider._background_start_tasks.discard(done)
+            if done.cancelled():
+                return
+            try:
+                done.result()
+            except Exception:  # noqa: BLE001 - background failure was already degraded
+                log.warning(
+                    "local-realtime: background managed start failed",
+                    exc_info=True,
+                )
+
+        task.add_done_callback(_consume_background_start)
+        try:
+            return bool(
+                await asyncio.wait_for(
+                    asyncio.shield(task),
+                    timeout=_LOCAL_MANAGED_PREFLIGHT_WAIT_S,
+                )
+            )
+        except TimeoutError:
+            log.info(
+                "local-realtime: managed server is still starting in the "
+                "background; refusing to hold this call on Connecting"
+            )
+            return False
 
     async def _resolve_model(self) -> str:
         """The configured model, else the first one the server serves.
