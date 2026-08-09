@@ -28,10 +28,36 @@ log = logging.getLogger(__name__)
 
 #: Models preferred as the server brain, best first. Only ever chosen from
 #: what is ALREADY present in Ollama — the resolver never pulls.
-_PREFERRED_MODELS: tuple[str, ...] = ("qwen2.5:7b", "qwen3-coder:30b", "llama3.1:8b")
+_PREFERRED_MODELS: tuple[str, ...] = (
+    "qwen3.5:4b",
+    "qwen3.5:9b",
+    "gemma4:12b-it-qat",
+)
 
-#: Tag substrings that mark non-chat models a voice brain must never use.
-_UNUSABLE_MARKERS: tuple[str, ...] = ("embed", "whisper", "rerank")
+#: Tag substrings that mark models a voice brain must never use.
+#:
+#: "embed" alone missed the embedding families whose NAME carries no such word
+#: — a live picker offered ``bge-m3`` as a voice brain (2026-08-09 screenshot),
+#: which would answer every spoken turn with a vector. The named families are
+#: the well-known embedding/sentence-transformer lines (BGE = BAAI General
+#: Embedding, GTE = General Text Embeddings, E5, MiniLM, paraphrase-*).
+#:
+#: ``:cloud`` is excluded for a different reason, and it is not a quality
+#: judgement: those tags execute on Ollama's servers behind the user's
+#: account. This resolver's whole promise is "Fully local: reasoning runs on
+#: your Ollama", so a cloud tag would make that sentence a lie and add a
+#: sign-in the local path never asked for.
+_UNUSABLE_MARKERS: tuple[str, ...] = (
+    "embed",
+    "whisper",
+    "rerank",
+    "bge-",
+    "gte-",
+    "e5-",
+    "minilm",
+    "paraphrase-",
+    ":cloud",
+)
 
 _OLLAMA_DEFAULT = "http://127.0.0.1:11434"
 

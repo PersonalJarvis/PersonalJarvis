@@ -28,7 +28,7 @@ class TestTierLadder:
     def test_only_measured_tiers_may_claim_measured(self) -> None:
         # Mandate: a tier flips to measured only with a recorded bake-off.
         measured = [t for t in tiers.TIERS if t.measured]
-        assert [t.key for t in measured] == ["t0-12gb"]
+        assert measured == []
         for tier in tiers.TIERS:
             if not tier.measured:
                 assert "pending bake-off" in tier.target_class
@@ -41,9 +41,9 @@ class TestTierLadder:
 class TestBrainResolution:
     def test_prefers_the_pinned_model(self) -> None:
         chosen, note = brain_link._pick_model(
-            [("llama3.1:8b", 4.9), ("qwen2.5:7b", 4.7)]
+            [("qwen3.5:9b", 6.6), ("qwen3.5:4b", 3.4)]
         )
-        assert chosen == "qwen2.5:7b"
+        assert chosen == "qwen3.5:4b"
         assert note == ""
 
     def test_skips_non_chat_models(self) -> None:
@@ -54,6 +54,27 @@ class TestBrainResolution:
             )[0]
             == "mistral:7b"
         )
+
+    def test_skips_embedding_families_without_the_word_embed(self) -> None:
+        """A live picker offered ``bge-m3`` as a voice brain (2026-08-09):
+        the embedding families whose NAME carries no "embed" slipped the
+        filter and would answer every spoken turn with a vector."""
+        for tag in (
+            "bge-m3:latest",
+            "gte-large:latest",
+            "e5-mistral:latest",
+            "all-minilm:latest",
+            "paraphrase-multilingual:latest",
+        ):
+            assert brain_link._pick_model([(tag, 1.1)])[0] == "", tag
+
+    def test_skips_cloud_tags_on_the_fully_local_path(self) -> None:
+        """A ``:cloud`` tag runs on Ollama's servers behind the user's
+        account — offering it would make the resolver's own "Fully local"
+        sentence a lie and add a sign-in the local path never asked for."""
+        assert brain_link._pick_model([("kimi-k2.5:cloud", 0.0)])[0] == ""
+        # The local sibling of the same family stays perfectly usable.
+        assert brain_link._pick_model([("kimi-k2.5:9b", 6.0)])[0] == "kimi-k2.5:9b"
 
     def test_a_configured_model_wins_when_it_fits(self) -> None:
         chosen, note = brain_link._pick_model(
@@ -90,21 +111,21 @@ class TestBrainResolution:
             brain_link,
             "_ollama_models",
             lambda base, timeout: [
-                ("qwen2.5:7b", 4.7),
+                ("qwen3.5:4b", 3.4),
                 ("nemotron-cascade-2:latest", 24.0),
                 ("nomic-embed-text:latest", 0.3),  # never a voice brain
             ],
         )
         payload = brain_link.list_brain_choices(
-            usable_gb=16.0, current_model="qwen2.5:7b"
+            usable_gb=16.0, current_model="qwen3.5:4b"
         )
         assert payload["reachable"] is True
         by_id = {entry["id"]: entry for entry in payload["models"]}
         assert "nomic-embed-text:latest" not in by_id
-        assert by_id["qwen2.5:7b"]["installed"] is True
-        assert by_id["qwen2.5:7b"]["fits"] is True
-        assert by_id["qwen2.5:7b"]["current"] is True
-        assert by_id["qwen2.5:7b"]["recommended"] is True
+        assert by_id["qwen3.5:4b"]["installed"] is True
+        assert by_id["qwen3.5:4b"]["fits"] is True
+        assert by_id["qwen3.5:4b"]["current"] is True
+        assert by_id["qwen3.5:4b"]["recommended"] is True
         assert by_id["nemotron-cascade-2:latest"]["fits"] is False
         assert "does not fit" in by_id["nemotron-cascade-2:latest"]["note"]
         # Curated chat entries that are not installed join the list.
