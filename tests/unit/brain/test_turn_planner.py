@@ -10,6 +10,7 @@ from jarvis.brain.turn_planner import (
     GroundingFailurePolicy,
     TurnPath,
     TurnReason,
+    is_public_fact_question,
     plan_turn,
 )
 from jarvis.core.capabilities import Capability, CapabilityRegistry
@@ -157,12 +158,21 @@ def test_strong_current_markers_still_use_orchestrator(utterance: str) -> None:
 @pytest.mark.parametrize(
     "utterance",
     [
+        "How high is Mount Everest?",
+        "How fast can a cheetah run?",
+        "What year was NASA founded?",
         "How long did Muhammad Ali live?",
-        "Wer ist der Praesident des WBC?",  # i18n-allow: German speech fixture
-        "Quien fundo la NASA?",  # i18n-allow: Spanish speech fixture
+        "Who is the current president of the WBC?",
+        "Wie hoch ist der Eiffelturm?",  # i18n-allow: German speech fixture
+        "Wie lange lebte Muhammad Ali?",  # i18n-allow: German speech fixture
+        "Wer ist aktuell Praesident des WBC?",  # i18n-allow: German speech fixture
+        "¿En que ano se fundo la NASA?",  # i18n-allow: Spanish speech fixture
+        "¿Quien es el presidente actual del WBC?",  # i18n-allow: Spanish speech fixture
     ],
 )
 def test_declared_small_model_public_facts_ground_once(utterance: str) -> None:
+    assert is_public_fact_question(utterance) is True
+
     plan = plan_turn(
         utterance,
         tool_names=(PUBLIC_FACT_GROUNDING_CAPABILITY,),
@@ -202,6 +212,11 @@ def test_public_search_capability_is_deduplicated() -> None:
 @pytest.mark.parametrize(
     "utterance",
     [
+        "Find the Python executable on disk.",
+        "Which process is listening on port 8000 on this machine?",
+        "Check the current Jarvis settings.",
+        "What is inside the README.md file?",
+        "Find the local config file.",
         "What is in my Gmail inbox?",
         "Which meetings are in my calendar today?",
         "What is on my screen?",
@@ -210,8 +225,29 @@ def test_public_search_capability_is_deduplicated() -> None:
 def test_private_or_connected_facts_never_leak_to_public_search(
     utterance: str,
 ) -> None:
+    assert is_public_fact_question(utterance) is False
+
     plan = plan_turn(utterance, requires_public_fact_grounding=True)
 
+    assert plan.requires_public_fact_grounding is False
+    assert PUBLIC_FACT_GROUNDING_CAPABILITY not in plan.required_capabilities
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Which pull requests are open today?",
+        "Which repositories are private?",
+        "Which deployments failed today?",
+        "Which inboxes have unread mail?",
+    ],
+)
+def test_plural_connected_domains_never_route_to_public_search(
+    utterance: str,
+) -> None:
+    plan = plan_turn(utterance, requires_public_fact_grounding=True)
+
+    assert TurnReason.CONNECTED_DATA in plan.reasons
     assert plan.requires_public_fact_grounding is False
     assert PUBLIC_FACT_GROUNDING_CAPABILITY not in plan.required_capabilities
 
@@ -574,14 +610,17 @@ def test_capability_canonical_utterances_route_to_orchestrator(
         # ("What is tomorrow for day?") from the live transcript.
         "Was ist morgen für ein Tag?",  # i18n-allow: forensic fixture
         "Was ist heute für ein Datum?",  # i18n-allow: forensic fixture
+        "Ich will wissen, was morgen f\u00fcr ein Tag ist.",  # i18n-allow: exact regression
         "Welcher Tag ist morgen?",  # i18n-allow: German speech-input fixture
         "Welcher Wochentag ist heute?",  # i18n-allow: German fixture
         "Welches Datum haben wir?",  # i18n-allow: German speech-input fixture
         "Der Wievielte ist heute?",  # i18n-allow: German speech-input fixture
+        "I want to know what day tomorrow is.",
         "What day is it today?",
         "What day is tomorrow?",
         "What is tomorrow for day?",
         "What's the date?",
+        "Quiero saber qu\u00e9 d\u00eda es ma\u00f1ana.",  # i18n-allow: embedded Spanish
         "¿Qué día es hoy?",
     ],
 )
@@ -604,6 +643,23 @@ def test_calendar_trivia_stays_native(utterance: str) -> None:
 )
 def test_time_words_with_real_evidence_still_delegate(utterance: str) -> None:
     assert plan_turn(utterance).path is TurnPath.ORCHESTRATOR
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Wie ist das Wetter morgen?",  # i18n-allow: German speech-input fixture
+        "Was steht heute in den Nachrichten?",  # i18n-allow: German fixture
+        "What's in the news today?",
+    ],
+)
+def test_calendar_trivia_suppression_does_not_hide_fresh_public_facts(
+    utterance: str,
+) -> None:
+    plan = plan_turn(utterance)
+
+    assert plan.requires_public_fact_grounding is True
+    assert plan.required_capabilities.count(PUBLIC_FACT_GROUNDING_CAPABILITY) == 1
 
 
 # --------------------------------------------------------------------------- #

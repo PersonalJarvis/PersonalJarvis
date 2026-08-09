@@ -776,7 +776,7 @@ def test_install_hint_pins_the_supported_release() -> None:
     unpin would send users to a version the trust gate rejects."""
     spec = get_spec("codex-subscription-realtime")
     assert spec is not None
-    assert spec.install_hint == "npm i -g @openai/codex@0.146.0"
+    assert spec.install_hint == "npm i -g @openai/codex@0.147.0"
 
 
 def test_reason_code_vocabulary_is_pinned() -> None:

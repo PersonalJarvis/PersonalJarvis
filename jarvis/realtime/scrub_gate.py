@@ -110,6 +110,14 @@ class ScrubHoldGate:
         self._hard_leak = False
         self._transcript_seen = False
         self._transcript_tail = ""
+        # Language classification needs more context than the first streamed
+        # words often provide.  Until the aggregate is a positive match, PCM
+        # stays buffered: an indeterminate prefix must not authorize audio that
+        # a later delta proves belongs to the wrong language.  A still-
+        # indeterminate *complete* reply is released by ``finalize`` because
+        # the shared validator deliberately treats that verdict as fail-open.
+        self._language_validation_active = False
+        self._language_match_seen = False
         # A provider may split a control token across transcript deltas. The
         # ordinary scrubber sees each delta independently for display, so a
         # split token used to pass through unchanged even though the aggregate
@@ -221,7 +229,13 @@ class ScrubHoldGate:
         """The non-empty provider response currently owned by this gate."""
         return self._response_id
 
-    async def feed_transcript(self, text: str, *, response_id: str = "") -> str:
+    async def feed_transcript(
+        self,
+        text: str,
+        *,
+        response_id: str = "",
+        enforce_output_language: bool = False,
+    ) -> str:
         """Scrub a transcript boundary. Returns display-safe text.
 
         Sets the clear flag (audio may flow) on clean text; sets the hard-leak
@@ -241,18 +255,23 @@ class ScrubHoldGate:
         self._transcript_seen = True
         aggregate = scrub_for_voice(self._transcript_tail, language=self._language)
         result = scrub_for_voice(text, language=self._language)
-        language_verdict = validate_output_language(
-            aggregate.cleaned,
-            resolved_language=self._language,
-        )
-        if language_verdict.should_block:
-            self._hard_leak = True
-            self._hard_leak_actions = ("output_language_mismatch",)
-            self._cleared = False
-            self._pending.clear()
-            self._pending_audio_ms = 0.0
-            self._pending_since = None
-            return self.fallback_phrase()
+        language_verdict = None
+        if enforce_output_language:
+            self._language_validation_active = True
+            language_verdict = validate_output_language(
+                aggregate.cleaned,
+                resolved_language=self._language,
+            )
+            if language_verdict.should_block:
+                self._hard_leak = True
+                self._hard_leak_actions = ("output_language_mismatch",)
+                self._cleared = False
+                self._pending.clear()
+                self._pending_audio_ms = 0.0
+                self._pending_since = None
+                return self.fallback_phrase()
+            if language_verdict.status == "match":
+                self._language_match_seen = True
         aggregate_is_hard = _is_hard_scrub_result(aggregate)
         result_is_hard = _is_hard_scrub_result(result)
         if aggregate_is_hard or result_is_hard:
@@ -277,6 +296,19 @@ class ScrubHoldGate:
             self._covered_chars += len(text)
             self._cleared = False
             return text
+        if (
+            language_verdict is not None
+            and language_verdict.status == "indeterminate"
+            and not self._language_match_seen
+        ):
+            # Keep the opening PCM fail-closed until enough aggregate prose
+            # establishes the resolved language.  Display text may continue;
+            # it has already passed the ordinary regex scrub above.
+            self._covered_chars += len(text)
+            self._cleared = False
+            if not result.actions:
+                return text
+            return _restore_edge_whitespace(text, result.cleaned)
         self._covered_chars += len(text)
         self._coverage_active = True
         self._cleared = True
@@ -455,6 +487,11 @@ class ScrubHoldGate:
         self._expire_direct_speech_budget()
         if self.fail_closed() or self._hard_leak:
             return []
+        # A complete short/ambiguous reply can remain indeterminate forever.
+        # That verdict is intentionally non-blocking; only the response
+        # boundary, after every delta has been inspected, may release it.
+        if self._language_validation_active and not self._language_match_seen:
+            self._cleared = True
         out = self._pending
         self._pending = []
         self._pending_audio_ms = 0.0
@@ -502,6 +539,8 @@ class ScrubHoldGate:
         self._hard_leak = False
         self._transcript_seen = False
         self._transcript_tail = ""
+        self._language_validation_active = False
+        self._language_match_seen = False
         self._control_tail = ""
         self._hard_leak_actions = ()
         self._response_id = ""

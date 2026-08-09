@@ -140,19 +140,6 @@ def test_provider_spec_is_frozen_dataclass() -> None:
     raise AssertionError("ProviderSpec should be frozen")
 
 
-def test_public_fact_grounding_is_declared_as_a_capability() -> None:
-    """Self-hosted small-model surfaces ground facts without id branches."""
-    for provider_id in ("ollama", "local-openai", "local-realtime"):
-        spec = get_spec(provider_id)
-        assert spec is not None
-        assert spec.requires_public_fact_grounding is True
-
-    for provider_id in ("gemini", "openai", "openai-realtime", "gemini-live"):
-        spec = get_spec(provider_id)
-        assert spec is not None
-        assert spec.requires_public_fact_grounding is False
-
-
 # ── New: per-provider credential help + billing classification ───────────────
 
 

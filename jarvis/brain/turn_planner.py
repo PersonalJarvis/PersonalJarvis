@@ -154,25 +154,57 @@ _CURRENT_RE = re.compile(
 # its unaided public-fact recall is not a trustworthy source. It must not turn
 # advice, how-to requests, private data, or connected data into web searches.
 _PUBLIC_FACT_QUESTION_RE = re.compile(
-    r"^\s*(?:(?:hey|hello|hi|hallo|hola|okay|ok|jarvis|please|bitte|"
+    r"^[\s¿¡]*(?:(?:hey|hello|hi|hallo|hola|okay|ok|jarvis|please|bitte|"
     r"por favor)[\s,]+){0,3}(?:"
     r"who\b|where\b|when\b|which\b|"
     r"what\s+(?:is|are|was|were|did|does|has|have)\b|"
-    r"how\s+(?:many|much|old|long|large|big|tall|far)\b|"
+    r"what\s+year\b|in\s+(?:what|which)\s+year\b|"
+    r"how\s+(?:many|much|old|long|high|fast|large|big|tall|far)\b|"
     r"wer\b|wo\b|wann\b|welch\w*\b|"
     r"was\s+(?:ist|sind|war|waren|hat|haben|macht|machte)\b|"  # i18n-allow
-    r"wie\s+(?:viel|viele|alt|lang|gross|weit)\b|"  # i18n-allow: speech input
+    r"in\s+welch\w*\s+jahr\b|"
+    r"wie\s+(?:viel\w*|alt\w*|lang\w*|hoch\w*|schnell\w*|"
+    r"gross\w*|weit\w*)\b|"  # i18n-allow: speech input
     r"quien\b|donde\b|cuando\b|cual\w*\b|cuant\w*\b|"
+    r"(?:en\s+)?que\s+ano\b|"
     r"que\s+(?:es|son|fue|eran|hizo|hace|tiene|tienen)\b"
     r")"  # i18n-allow: multilingual speech-input matching data
 )
 _PUBLIC_FACT_REQUEST_RE = re.compile(
-    r"^\s*(?:(?:hey|hello|hi|hallo|hola|okay|ok|jarvis|please|bitte|"
+    r"^[\s¿¡]*(?:(?:hey|hello|hi|hallo|hola|okay|ok|jarvis|please|bitte|"
     r"por favor)[\s,]+){0,3}(?:"
     r"tell me|give me|look up|search(?: for)?|check|find|"
     r"sag mir|nenne mir|such\w*|pruef\w*|find\w*|"
     r"dime|busca|revisa|encuentra"
     r")\b"  # i18n-allow: multilingual speech-input matching data
+)
+
+# Concrete local-world evidence that can look like a public fact request.
+# These shapes belong to filesystem/process/settings tools, never search_web.
+# Phrases stay qualified because a bare "process" or "file" can itself be the
+# subject of an evergreen definition.
+_LOCAL_EVIDENCE_RE = re.compile(
+    r"\b(?:"
+    r"(?:on|from|inside|under)\s+(?:this|that|my|the)\s+"
+    r"(?:computer|machine|device|disk|filesystem|file|folder|directory)|"
+    r"(?:in|inside)\s+(?:this|that|my|the)\s+(?:file|folder|directory)|"
+    r"(?:executable|file|folder|directory|path).{0,32}\b(?:on disk|locally)\b|"
+    r"local\s+(?:config(?:uration)?|settings?|file|folder|directory|process|service)|"
+    r"config(?:uration)?\s+file|(?:running|local)\s+(?:process|service)|"
+    r"(?:process|service).{0,32}\b(?:port|pid|machine|computer)\b|"
+    r"environment\s+variable|registry\s+key|system\s+setting|"
+    r"(?:current|jarvis|app|system|my|the)\s+settings?|settings?\s+file|"
+    r"(?:readme|pyproject|package\.json|jarvis\.toml)\b|"
+    r"(?:auf|von|in)\s+(?:diesem|meinem|dem)\s+"  # i18n-allow: speech input
+    r"(?:computer|rechner|geraet|datei|ordner|verzeichnis)|"
+    r"(?:datei|ordner|verzeichnis|pfad|prozess|dienst).{0,32}\b"
+    r"(?:lokal|port|pid|rechner)\b|"
+    r"umgebungsvariable|systemeinstellung|"
+    r"(?:en|dentro de)\s+(?:este|esta|mi|el|la)\s+"
+    r"(?:equipo|ordenador|dispositivo|archivo|carpeta|directorio)|"
+    r"(?:archivo|carpeta|directorio|ruta|proceso|servicio).{0,32}\b"
+    r"(?:local|puerto|pid|equipo)\b|variable\s+de\s+entorno"
+    r")"  # i18n-allow: multilingual speech-input matching data
 )
 _LOCAL_STATE_RE = re.compile(
     r"\b(?:wiki|mcp\w*|cli\w*|tool\w*|plugin\w*|connector\w*|"
@@ -190,9 +222,9 @@ _LOCAL_STATE_RE = re.compile(
     r"instalad\w*|conectad\w*|capacidad\w*)\b"  # i18n-allow: speech input
 )
 _CONNECTED_DOMAIN_RE = re.compile(
-    r"\b(?:gmail|email|e-mail|mailbox|inbox|calendar|sap|salesforce|"
+    r"\b(?:gmail|email|e-mail|mailboxes?|inboxes?|calendars?|sap|salesforce|"
     r"github|gitlab|drive|notion|slack|discord|telegram|whatsapp|"
-    r"repository|pull request|deployment|cloud billing|contact\w*|"
+    r"repositor(?:y|ies)|pull requests?|deployments?|cloud billing|contact\w*|"
     r"postfach|posteingang|kalender|termin\w*|kontakt\w*|abrechnung\w*|"
     r"correo|bandeja|calendario|cita\w*|contacto\w*)\b"  # i18n-allow: speech input
 )
@@ -341,6 +373,8 @@ _DATE_TRIVIA_RE = re.compile(
     # i18n-allow: multilingual speech-input matching data
     r"\bwas (?:ist|wird|war) (?:heute|morgen|uebermorgen|gestern)"  # i18n-allow: speech input
     r"[^.?!]{0,24}?\b(?:tag|wochentag|datum)\b|"  # i18n-allow: speech input
+    r"\bwas (?:heute|morgen|uebermorgen|gestern)[^.?!]{0,24}?"  # i18n-allow: speech input
+    r"\b(?:tag|wochentag|datum)\b[^.?!]{0,12}?\b(?:ist|wird|war)\b|"  # i18n-allow
     r"\b(?:welcher|welchen|was fuer ein\w*) (?:tag|wochentag)\b"  # i18n-allow: speech input
     r"[^.?!]{0,16}?\b(?:ist|haben wir|war)\b(?:[^.?!]{0,16}?"  # i18n-allow: speech input
     r"\b(?:heute|morgen|uebermorgen|gestern)\b)?|"  # i18n-allow: speech input
@@ -348,6 +382,7 @@ _DATE_TRIVIA_RE = re.compile(
     r"\bder wievielte\b(?:[^.?!]{0,16}?"
     r"\b(?:heute|morgen|uebermorgen|gestern)\b)?|"
     r"\bwhat day (?:is|was)(?: it)?(?: (?:today|tomorrow|yesterday))?\b|"
+    r"\bwhat (?:day|date) (?:today|tomorrow|yesterday) (?:is|was)\b|"
     r"\bwhat is (?:today|tomorrow|yesterday)(?:'s)? (?:day|date|for day)\b|"
     r"\bwhat(?:'s| is) the (?:date|day)\b(?: (?:today|tomorrow)\b)?|"
     r"\bque dia es (?:hoy|manana)\b|\ba que fecha estamos\b"
@@ -572,7 +607,15 @@ def is_public_fact_question(text: str) -> bool:
     Keeping it deterministic makes it safe on the voice hot path.
     """
     normalized = _normalize(text).strip()
-    if not normalized or _INSTRUCTIONAL_RE.search(normalized):
+    if (
+        not normalized
+        or _INSTRUCTIONAL_RE.search(normalized)
+        or _LOCAL_EVIDENCE_RE.search(normalized)
+        or _APP_STATE_RE.search(normalized)
+        or _OWNERSHIP_RE.search(normalized)
+        or _CONNECTED_DOMAIN_RE.search(normalized)
+        or _CONTACT_DETAIL_RE.search(normalized)
+    ):
         return False
     return bool(
         _PUBLIC_FACT_QUESTION_RE.search(normalized)
@@ -715,6 +758,8 @@ def plan_turn(
     if _RECALL_RE is not None and _RECALL_RE.search(normalized):
         reasons.add(TurnReason.PRIVATE_DATA)
     if _LOCAL_STATE_RE.search(normalized) and not definition:
+        reasons.add(TurnReason.LOCAL_STATE)
+    if _LOCAL_EVIDENCE_RE.search(normalized) and (lookup or action_intent):
         reasons.add(TurnReason.LOCAL_STATE)
     if (
         _CONNECTED_DOMAIN_RE.search(normalized)
@@ -862,6 +907,7 @@ def plan_turn(
     # private lookups retain their own tools and must never leak into web
     # search. Set de-duplication gives the execution layer exactly one required
     # search capability even if the live tool catalog matched it too.
+    public_fact_shape = is_public_fact_question(text)
     non_public_evidence = reasons & {
         TurnReason.LOCAL_STATE,
         TurnReason.MISSION,
@@ -870,6 +916,8 @@ def plan_turn(
         TurnReason.SKILL,
         TurnReason.WORKSPACE,
     }
+    if TurnReason.ACTION in reasons and not public_fact_shape:
+        non_public_evidence.add(TurnReason.ACTION)
     required_without_public_search = {
         item for item in required if item != PUBLIC_FACT_GROUNDING_CAPABILITY
     }
@@ -882,7 +930,6 @@ def plan_turn(
         or private
     ):
         non_public_evidence.add(TurnReason.CONNECTED_DATA)
-    public_fact_shape = is_public_fact_question(text)
     fresh_public_fact = (
         TurnReason.CURRENT_DATA in reasons
         and (public_fact_shape or lookup)

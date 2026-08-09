@@ -105,12 +105,6 @@ class ProviderSpec:
     # shows a clear badge and fallback note, while runtime selection remains
     # capability-driven. This is presentation only and never gates behavior.
     experimental: bool = False
-    # The provider/model class cannot be trusted to answer concrete public
-    # facts from unaided recall. The shared turn planner uses this capability
-    # to require one bounded search_web evidence attempt. Consumers branch on
-    # this field, never on a provider id; hosted evergreen turns keep the
-    # default False fast path.
-    requires_public_fact_grounding: bool = False
 
 
 def provider_billing(spec: ProviderSpec) -> Billing:
@@ -515,7 +509,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         signup_url="https://ollama.com/download",
         supports_base_url=True,
         default_base_url="http://localhost:11434",
-        requires_public_fact_grounding=True,
         credential_help=(
             "Runs models fully local through an Ollama server — no API key, "
             "no cloud account, nothing leaves this machine. Install Ollama, "
@@ -541,7 +534,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "The API key is optional; most local servers ignore it."
         ),
         supports_base_url=True,
-        requires_public_fact_grounding=True,
     ),
     # ── TTS ───────────────────────────────────────────────────────────────
     # Voice-Output cards render in this tuple order. OpenRouter leads (one key
@@ -817,7 +809,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         dashboard_url=None,
         signup_url="https://platform.openai.com/docs/guides/realtime",
         supports_base_url=True,
-        requires_public_fact_grounding=True,
         credential_help=(
             "Fully local voice calls, no cloud account. Easiest path: the "
             "install panel below checks this machine (12 GB of GPU/unified "

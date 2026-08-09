@@ -77,6 +77,7 @@ _URL_RE = re.compile(r"\b(?:https?://|www\.)\S+", re.IGNORECASE)
 # English, or Spanish sentence containing a Chinese name remains valid.
 _HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 _LATIN_LETTER_RE = re.compile(r"[A-Za-z\u00c0-\u024f]")
+_MIN_GROSS_HAN_CHARS = 10
 
 # Vietnamese uses Latin script, so script alone is insufficient. The validator
 # combines its characteristic letters/tones with a vocabulary signal and only
@@ -217,7 +218,10 @@ def _prose_for_output_validation(text: str) -> str:
 
 def _detect_gross_han_output(text: str) -> bool:
     han_count = len(_HAN_RE.findall(text))
-    if han_count < 4:
+    # A short Han span is commonly a person, organization, or product name,
+    # including a compact label value. It is not enough evidence to suppress
+    # an otherwise correctly resolved answer.
+    if han_count < _MIN_GROSS_HAN_CHARS:
         return False
     latin_count = len(_LATIN_LETTER_RE.findall(text))
     script_ratio = han_count / max(1, han_count + latin_count)

@@ -106,6 +106,40 @@ def evaluate_postmortem(pm: Mapping[str, Any]) -> list[RealtimeFinding]:
             )
         )
 
+    language_failures = _count(pm, "output_language_failures")
+    language_mismatches = _count(pm, "output_language_mismatches")
+    if language_failures or language_mismatches:
+        add(
+            RealtimeFinding(
+                "high" if language_failures else "warn",
+                "output-language-mismatch",
+                f"{language_mismatches} wrong-language response(s) were "
+                f"blocked; {language_failures} exhausted the one-shot retry",
+            )
+        )
+
+    grounding_failures = _count(pm, "public_fact_grounding_failures")
+    if grounding_failures:
+        add(
+            RealtimeFinding(
+                "warn",
+                "public-fact-grounding-unavailable",
+                f"{grounding_failures} required public-fact lookup(s) "
+                "degraded to an honest uncertainty response",
+            )
+        )
+
+    detached_deliveries = _count(pm, "delegate_deliveries_detached")
+    if detached_deliveries:
+        add(
+            RealtimeFinding(
+                "info",
+                "delegate-delivery-detached",
+                f"{detached_deliveries} in-flight delegate result(s) were "
+                "retained beyond realtime socket teardown",
+            )
+        )
+
     quiescence = _count(pm, "quiescence_boundary_turns")
     if quiescence:
         add(

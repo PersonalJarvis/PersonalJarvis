@@ -11,6 +11,7 @@ from __future__ import annotations
 import array
 import asyncio
 import inspect
+import json
 import logging
 import random
 import re
@@ -41,13 +42,20 @@ from jarvis.brain.provider_test import (
     UNREACHABLE,
     classify_provider_error,
 )
-from jarvis.brain.turn_planner import TurnPath, TurnPlan, TurnReason, plan_turn
+from jarvis.brain.turn_planner import (
+    TurnPath,
+    TurnPlan,
+    TurnReason,
+    is_public_fact_question,
+    plan_turn,
+)
 from jarvis.core.protocols import AudioChunk, BrainMessage
 from jarvis.core.redact import safe_preview
 from jarvis.core.turn_language import (
     is_substantive_turn,
     normalize_language_tag,
     resolve_output_language,
+    validate_output_language,
 )
 from jarvis.realtime.audio import StreamingPcm16Resampler
 from jarvis.realtime.protocol import RealtimeSessionConfig
@@ -120,6 +128,10 @@ _TURN_STALL_POLL_S = 0.5
 # Withheld provider output used to leave no trace anywhere (AP-30): a turn could
 # be dropped in full and the log looked like a healthy call. Report it, bounded.
 _OUTPUT_DROP_LOG_INTERVAL_S = 2.0
+# Prefer the provider's own terminal boundary before requesting a language
+# retry.  A short timer is the bounded escape hatch for transports that never
+# emit one after response cancellation.
+_OUTPUT_LANGUAGE_RETRY_BOUNDARY_GRACE_S = 0.35
 # Answered input-item ids retained for duplicate suppression. Per transport
 # (cleared on rebuild) and bounded, so a long call cannot grow one entry per
 # utterance forever.
@@ -236,26 +248,6 @@ _CREDENTIAL_TERMINAL_STATUSES = frozenset(
 _PROVIDER_FAILOVER_STATUSES = frozenset(
     {MODEL_UNAVAILABLE, RATE_LIMITED, UNREACHABLE}
 )
-# Narrow proof that a native turn is an ordinary factual question. This is
-# intentionally not a generic "planner said native" check: advice, deictic
-# follow-ups, and ambiguous action phrases also stay native so the realtime
-# model can disambiguate them with a tool call. The multilingual tokens are
-# literal speech-input matching data.  # i18n-allow: supported input vocabulary
-_PUBLIC_KNOWLEDGE_QUESTION_RE = re.compile(
-    r"^\s*(?:"
-    r"who\b|where\b|when\b|which\b|"
-    r"what\s+(?:is|are|was|were|did|does|has|have)\b|"
-    r"how\s+(?:many|much|old|large|big|far)\b|"
-    r"wer\b|wo\b|wann\b|welch\w*\b|"
-    r"was\s+(?:ist|sind|war|waren|hat|haben|macht|machte)\b|"  # i18n-allow: input
-    r"wie\s+(?:viel|viele|alt|gross|groß|weit)\b|"  # i18n-allow: input
-    r"quien\b|donde\b|cuando\b|cual\w*\b|cuant\w*\b|"
-    r"que\s+(?:es|son|fue|eran|hizo|hace|tiene|tienen)\b"
-    r")",
-    re.IGNORECASE,
-)
-
-
 def _pcm16_peak(pcm: bytes) -> int:
     """Peak absolute amplitude of little-endian int16 PCM (C-speed, no numpy)."""
     usable = len(pcm) - (len(pcm) % 2)
@@ -264,10 +256,6 @@ def _pcm16_peak(pcm: bytes) -> int:
     samples = array.array("h")
     samples.frombytes(pcm[:usable])
     return max(max(samples), -min(samples))
-
-
-def _is_public_knowledge_question(text: str) -> bool:
-    return bool(_PUBLIC_KNOWLEDGE_QUESTION_RE.search(str(text or "").strip()))
 
 
 def _dictionary_corrected(text: str) -> str:
@@ -595,6 +583,31 @@ _DELEGATE_DISCOURAGED_DIRECTIVE_HANDOFF = _handoff_variant(
 # follow-up. The bound only decides how long a result may wait for that silence.
 _LATE_DELEGATE_DELIVERY_TIMEOUT_S = 30.0
 _LATE_DELEGATE_POLL_S = 0.15
+# Let tasks that are only unwinding a readback verifier observe ``_ended``
+# before process-scope retention. Real action work remains untouched after
+# this tiny teardown-only grace and is transferred below.
+_DELEGATE_END_SETTLE_S = 0.1
+# Strong references for delegated work whose realtime transport has already
+# gone away.  The task itself retains the session-local delivery ledger and
+# publishes the final result through AnnouncementRequested; a module-level
+# owner prevents garbage collection from cancelling that user-visible debt.
+_DETACHED_DELEGATE_TASKS: set[asyncio.Task[None]] = set()
+
+_OUTPUT_LANGUAGE_FAILURE: dict[str, str] = {
+    "de": "Ich konnte gerade keine sichere Antwort auf Deutsch erzeugen.",  # i18n-allow
+    "en": "I couldn't produce a safe answer in English just now.",
+    "es": "No pude generar una respuesta segura en español ahora mismo.",  # i18n-allow
+}
+_PUBLIC_FACT_UNCERTAINTY: dict[str, str] = {
+    "de": (  # i18n-allow
+        "Ich konnte das gerade nicht zuverlässig mit einer öffentlichen "  # i18n-allow
+        "Quelle prüfen."  # i18n-allow
+    ),
+    "en": "I couldn't verify that reliably with a public source just now.",
+    "es": (  # i18n-allow
+        "No pude verificarlo de forma fiable con una fuente pública ahora mismo."
+    ),
+}
 # When a delegated Brain reply ends in a question (clarify or confirmation),
 # the user's short elliptical answer ("the readme one", "yes the second")
 # matches no planner category on its own. Only answers up to this token count
@@ -1025,6 +1038,15 @@ class _DelegateTurnState:
     result_complete: bool = False
     result_success: bool = False
     deterministic: bool = False
+    # Resolved output language captured when this turn is dispatched.  The
+    # session language may change while a slow action is running; completion
+    # delivery must remain in the originating turn's language.
+    language: str = ""
+    delivery_id: str = ""
+    delivery_completed: bool = False
+    delivery_channel: str = ""
+    requires_public_fact_grounding: bool = False
+    public_fact_grounding_timeout_s: float = 0.0
     delivery_started: bool = False
     provider_boundary_seen: bool = False
     provider_stream_ended: bool = False
@@ -1052,6 +1074,10 @@ class _DelegateTurnState:
     # rendered no readback in time; any late provider rendering of the same
     # reply is then withheld so the user never hears it twice.
     surface_fallback_spoken: bool = False
+    # ``surface_fallback_spoken`` is the race-prevention claim made before the
+    # async surface send.  Only this separate flag proves that the send
+    # completed successfully and therefore satisfies exactly-once delivery.
+    surface_fallback_confirmed: bool = False
     # True while the delegate task lingers in the readback-verification
     # watchdog AFTER delivery. In that phase a pending delegate task no
     # longer holds provider turn boundaries.
@@ -1078,6 +1104,7 @@ class _LateDelegateResult:
     text: str
     success: bool
     language: str
+    delivery_id: str
 
 
 _TOOL_ROLE_DIRECTIVE = (
@@ -1697,6 +1724,11 @@ class RealtimeVoiceSession:
         self._response_requested_for_turn = False
         self._response_requested_input_ids: set[str] = set()
         self._active_provider_response_id = ""
+        # Once the adapter demonstrates response identities, every subsequent
+        # audio/transcript event must carry one.  Accepting an untagged stale
+        # transcript after tagged PCM would recreate the cross-response pairing
+        # this guard is meant to prevent.
+        self._provider_response_identity_required = False
         self._completed_provider_response_ids: deque[str] = deque(
             maxlen=_COMPLETED_RESPONSE_ID_MAX
         )
@@ -1708,6 +1740,28 @@ class RealtimeVoiceSession:
         self._response_identity_drops = 0
         self._late_response_readoptions = 0
         self._unsafe_output_cancellations = 0
+        self._active_requires_public_fact_grounding = bool(
+            getattr(self._provider, "requires_public_fact_grounding", False)
+        )
+        self._public_fact_grounding_attempts = 0
+        self._public_fact_grounding_successes = 0
+        self._public_fact_grounding_failures = 0
+        self._output_language_mismatches = 0
+        self._output_language_retries = 0
+        self._output_language_failures = 0
+        self._output_language_retry_attempted_for_turn = False
+        self._output_language_retry_pending = False
+        self._output_language_retry_requested = False
+        self._output_language_retry_task: asyncio.Task[None] | None = None
+        # Stable per-turn delivery ledger.  A provider injection is only
+        # pending until real PCM is emitted; teardown may then atomically
+        # transfer that debt to the pipeline completion channel.
+        self._delegate_delivery_status: dict[str, str] = {}
+        self._delegate_delivery_claims = 0
+        self._delegate_deliveries_completed = 0
+        self._delegate_delivery_recoveries = 0
+        self._delegate_delivery_duplicates_suppressed = 0
+        self._delegate_deliveries_detached = 0
         # True once the surface TTS spoke anything in THIS turn, so the turn is
         # answered and the no-audio rescue must not speak over it.
         self._surface_spoke_this_turn = False
@@ -1835,11 +1889,21 @@ class RealtimeVoiceSession:
                     parameters = inspect.signature(brain_planner).parameters
                 except (TypeError, ValueError):
                     parameters = {}
-                planned = (
-                    brain_planner(text, context=context)
-                    if "context" in parameters
-                    else brain_planner(text)
+                accepts_kwargs = any(
+                    parameter.kind is inspect.Parameter.VAR_KEYWORD
+                    for parameter in parameters.values()
                 )
+                planner_kwargs: dict[str, Any] = {}
+                if "context" in parameters or accepts_kwargs:
+                    planner_kwargs["context"] = context
+                if (
+                    "requires_public_fact_grounding" in parameters
+                    or accepts_kwargs
+                ):
+                    planner_kwargs["requires_public_fact_grounding"] = (
+                        self._active_requires_public_fact_grounding
+                    )
+                planned = brain_planner(text, **planner_kwargs)
                 if isinstance(planned, TurnPlan):
                     return planned
             except Exception:  # noqa: BLE001 - local planner remains available
@@ -1876,6 +1940,9 @@ class RealtimeVoiceSession:
                 context=context,
                 skill_index=self._skill_match_index(),
                 workspace_names=self._workspace_call_signs(),
+                requires_public_fact_grounding=(
+                    self._active_requires_public_fact_grounding
+                ),
             )
         except Exception:  # noqa: BLE001 — routing must never end a live call
             # Planning only chooses a route, and both routes can answer. The
@@ -2415,6 +2482,10 @@ class RealtimeVoiceSession:
 
             self._provider = provider
             self._session = session
+            self._reset_provider_response_identity_state()
+            self._active_requires_public_fact_grounding = bool(
+                getattr(provider, "requires_public_fact_grounding", False)
+            )
             self._active_model = model
             # Captured at accept so every per-turn instruction rebuild keeps
             # the profile the accepted provider asked for.
@@ -3095,6 +3166,28 @@ class RealtimeVoiceSession:
                             input_item_id,
                         )
                         continue
+                    late_duplicate_without_id = bool(
+                        event.is_final
+                        and transcript
+                        and not input_item_id
+                        and self._response_requested_for_turn
+                        and (self._output_active or self._output_transcript)
+                        and _normalize_for_repeat_match(transcript)
+                        == _normalize_for_repeat_match(self._last_user_text)
+                    )
+                    if late_duplicate_without_id:
+                        # ChatGPT-Live can surface the same locally grounded
+                        # utterance again after its answer already started, but
+                        # without an input item id. Treat only an exact,
+                        # normalized repeat as the already-owned input; a
+                        # different final remains a genuine correction or a
+                        # later multipart fragment.
+                        log.info(
+                            "realtime[%s] ignored a late duplicate final "
+                            "without an item id while its response was in flight",
+                            self.session_id,
+                        )
+                        continue
                     if input_observed:
                         self._input_turn_observed = True
                         self._user_speech_active = False
@@ -3247,11 +3340,24 @@ class RealtimeVoiceSession:
                         screen_context_turn = (
                             TurnReason.SCREEN_CONTEXT in turn_plan.reasons
                         )
+                        grounding_turn = bool(
+                            turn_plan.requires_public_fact_grounding
+                        )
                         deterministic_delegate_available = callable(self._brain)
+                        if grounding_turn:
+                            # Grounding is fail-closed even when synthesis is
+                            # unavailable: the deterministic delegate emits a
+                            # localized uncertainty instead of letting the
+                            # native model invent the public fact.
+                            self._delegate_required_for_turn = True
                         if (
                             self._last_user_text
                             and deterministic_delegate_available
-                            and (self._delegate_enabled or screen_context_turn)
+                            and (
+                                self._delegate_enabled
+                                or screen_context_turn
+                                or grounding_turn
+                            )
                         ):
                             self._delegate_required_for_turn = (
                                 self._delegate_required_for_turn
@@ -3431,7 +3537,9 @@ class RealtimeVoiceSession:
                         # This branch runs on a FINAL input transcript, so the
                         # utterance is provably over — no boundary wait needed.
                         self._start_deterministic_delegate(
-                            self._last_user_text, input_final=True
+                            self._last_user_text,
+                            input_final=True,
+                            turn_plan=turn_plan,
                         )
                     if (
                         event.is_final
@@ -3563,9 +3671,18 @@ class RealtimeVoiceSession:
                         response_id=str(
                             getattr(event, "provider_turn_id", "") or ""
                         ),
+                        enforce_output_language=(
+                            self._output_language_validation_is_active()
+                        ),
                     )
                     if self._gate.hard_leak_pending():
                         _actions = ", ".join(self._gate.hard_leak_actions())
+                        if "output_language_mismatch" in (
+                            self._gate.hard_leak_actions()
+                        ):
+                            await self._handle_output_language_mismatch()
+                            self._gate.drain()
+                            continue
                         await self._cancel_unsafe_output(
                             reason=(
                                 "unsafe output transcript (shadow recovery; "
@@ -3605,12 +3722,21 @@ class RealtimeVoiceSession:
                         response_id=str(
                             getattr(event, "provider_turn_id", "") or ""
                         ),
+                        enforce_output_language=(
+                            self._output_language_validation_is_active()
+                        ),
                     )
                     if self._gate.hard_leak_pending():
                         # Name the tripped detectors (safe metadata, never the
                         # flagged content) so a false-positive abort is
                         # diagnosable from the transcript alone (BUG-056).
                         _actions = ", ".join(self._gate.hard_leak_actions())
+                        if "output_language_mismatch" in (
+                            self._gate.hard_leak_actions()
+                        ):
+                            await self._handle_output_language_mismatch()
+                            self._gate.drain()
+                            continue
                         await self._cancel_unsafe_output(
                             reason=(
                                 "unsafe output transcript"
@@ -3747,12 +3873,12 @@ class RealtimeVoiceSession:
                             trusted_reply = self._scrubbed_trusted_reply(
                                 delegate_state
                             )
-                            if trusted_reply:
-                                delegate_state.surface_fallback_spoken = True
-                                self._arm_stale_readback_guard(trusted_reply)
                         await self._cancel_unsafe_output(
                             reason="output transcript exceeded safe audio buffer",
                             fallback_text=trusted_reply or None,
+                            delegate_state=(
+                                delegate_state if trusted_reply else None
+                            ),
                         )
                 elif event.type == "interrupted" and getattr(
                     event, "self_initiated", False
@@ -3823,6 +3949,19 @@ class RealtimeVoiceSession:
                         await self._ensure_turn_started()
                         await self._handle_tool_call(event)
                 elif event.type == "turn_complete":
+                    if self._output_language_retry_pending:
+                        if not self._output_language_retry_requested:
+                            await self._request_output_language_retry()
+                            continue
+                        # The retry itself ended without one acceptable text
+                        # fragment.  Do not ask again or release any PCM.
+                        self._output_language_retry_pending = False
+                        self._output_language_failures += 1
+                        await self._cancel_unsafe_output(
+                            reason="output language retry produced no safe output",
+                            interrupt_provider=False,
+                            fallback_text=self._output_language_failure_phrase(),
+                        )
                     if self._pending_tool_events:
                         self._cancel_tool_transcript_wait()
                         pending = self._pending_tool_events
@@ -4011,11 +4150,9 @@ class RealtimeVoiceSession:
                         # and a very late provider rendering — arriving after
                         # this turn closes — must stay inaudible until the
                         # user opens the next turn.
-                        delegate_state.surface_fallback_spoken = True
-                        self._drop_provider_output_until_user_turn = True
-                        self._arm_stale_readback_guard(fallback_text)
-                        await self._send_json(
-                            self._surface_speech_message(fallback_text)
+                        await self._send_delegate_surface_fallback(
+                            delegate_state,
+                            fallback_text,
                         )
                     final_chunks = self._gate.finalize(
                         response_id=str(
@@ -4044,16 +4181,13 @@ class RealtimeVoiceSession:
                             trusted_reply = self._scrubbed_trusted_reply(
                                 delegate_state
                             )
-                            if trusted_reply:
-                                delegate_state.surface_fallback_spoken = True
-                                self._drop_provider_output_until_user_turn = (
-                                    True
-                                )
-                                self._arm_stale_readback_guard(trusted_reply)
                         await self._cancel_unsafe_output(
                             reason="output transcript missing at turn completion",
                             interrupt_provider=False,
                             fallback_text=trusted_reply or None,
+                            delegate_state=(
+                                delegate_state if trusted_reply else None
+                            ),
                         )
                     for chunk in final_chunks:
                         await self._emit_audio(chunk)
@@ -4585,7 +4719,8 @@ class RealtimeVoiceSession:
         raw = str(getattr(delegate_state, "last_reply", "") or "").strip()
         if not raw:
             return ""
-        return scrub_for_voice(raw, language=self._language).cleaned.strip()
+        language = str(getattr(delegate_state, "language", "") or self._language)
+        return scrub_for_voice(raw, language=language).cleaned.strip()
 
     def _advance_echo_horizon(self, duration_s: float) -> None:
         """Date the echo guard's activity forward to the estimated drain.
@@ -4635,7 +4770,12 @@ class RealtimeVoiceSession:
             words = len(cleaned.split())
             self._advance_echo_horizon(words * 0.4 + 1.0)
 
-    def _surface_speech_message(self, text: str) -> dict[str, Any]:
+    def _surface_speech_message(
+        self,
+        text: str,
+        *,
+        language: str | None = None,
+    ) -> dict[str, Any]:
         """Build one ``error_spoken`` payload for the surface's classic TTS.
 
         The session's active realtime voice rides along as a hint so the
@@ -4654,10 +4794,11 @@ class RealtimeVoiceSession:
         # exported transcript honest — so without this the rescue speaks the
         # same sentence a second time.
         self._surface_spoke_this_turn = True
+        output_language = str(language or self._language)
         message: dict[str, Any] = {
             "type": "error_spoken",
             "text": text,
-            "language": self._language,
+            "language": output_language,
             # Which realtime engine this line belongs to. The desktop surface
             # resolves its realtime-scoped TTS from ambient state that is only
             # set once a handshake SUCCEEDED, so a notice about a handshake
@@ -4671,12 +4812,219 @@ class RealtimeVoiceSession:
             message["voice"] = self._active_voice
         return message
 
+    def _output_language_failure_phrase(self, language: str | None = None) -> str:
+        output_language = str(language or self._language)
+        return _OUTPUT_LANGUAGE_FAILURE.get(
+            output_language,
+            _OUTPUT_LANGUAGE_FAILURE["en"],
+        )
+
+    async def _send_delegate_surface_fallback(
+        self,
+        turn_state: _DelegateTurnState,
+        text: str,
+    ) -> bool:
+        """Claim and confirm one surface delivery for an executed action.
+
+        The pre-await claim prevents two live fallback paths from racing.  It
+        is deliberately not completion evidence: if the surface send fails,
+        teardown may still recover the same result through the process-scoped
+        announcement channel.
+        """
+        if not turn_state.delivery_id:
+            turn_state.delivery_id = f"{self.session_id}:{self._turn_id or uuid4()}"
+        delivery_id = turn_state.delivery_id
+        status = self._delegate_delivery_status.get(delivery_id, "")
+        if turn_state.delivery_completed or status in {
+            "surface_pending",
+            "detached_pending",
+            "delivered",
+        }:
+            self._delegate_delivery_duplicates_suppressed += 1
+            return False
+        language = str(turn_state.language or self._language)
+        turn_state.surface_fallback_spoken = True
+        turn_state.surface_fallback_confirmed = False
+        self._delegate_delivery_status[delivery_id] = "surface_pending"
+        self._drop_provider_output_until_user_turn = True
+        self._arm_stale_readback_guard(text)
+        try:
+            await self._send_json(
+                self._surface_speech_message(text, language=language)
+            )
+        except Exception:  # noqa: BLE001 - leave a recoverable delivery debt
+            if self._delegate_delivery_status.get(delivery_id) == "surface_pending":
+                self._delegate_delivery_status.pop(delivery_id, None)
+            turn_state.surface_fallback_spoken = False
+            self._drop_provider_output_until_user_turn = False
+            log.warning(
+                "realtime[%s] delegate surface fallback delivery failed",
+                self.session_id,
+                exc_info=True,
+            )
+            if turn_state.result_complete:
+                await self._deliver_detached_delegate_result(
+                    self._turn_id or f"detached:{delivery_id}",
+                    turn_state,
+                )
+            return False
+        turn_state.surface_fallback_confirmed = True
+        self._mark_delegate_delivery_complete(turn_state, channel="surface")
+        return True
+
+    def _output_language_validation_is_active(self) -> bool:
+        """Whether this output has a resolved turn language to enforce.
+
+        In auto mode, the initial English fallback is only a bootstrap value;
+        before any substantive user turn it is not evidence that an opening
+        provider greeting must be English. Explicit pins, established calls,
+        user-owned turns, and trusted external updates all have a real target
+        and are validated fail-closed.
+        """
+        return bool(
+            self._language_is_pinned
+            or self._conversation_established
+            or self._input_turn_observed
+            or self._external_update is not None
+        )
+
+    async def _request_output_language_retry(self) -> None:
+        """Request the one provider retry with the resolved language pinned."""
+        if (
+            self._output_language_retry_requested
+            or self._ended
+            or self._session is None
+            or not self._turn_id
+        ):
+            return
+        self._output_language_retry_requested = True
+        task = self._output_language_retry_task
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+        self._output_language_retry_task = None
+        language_name = _LANGUAGE_NAMES.get(
+            self._language,
+            "the conversation language",
+        )
+        try:
+            await self._session.update_session(
+                instructions=_session_instructions(
+                    self._language,
+                    input_language=self._input_language,
+                    provider=self.active_provider,
+                    model=self._active_model,
+                    language_is_pinned=True,
+                    tool_directive=self._tool_directive(
+                        delegate_required=False,
+                        delegate_discouraged=True,
+                    ),
+                    preferences=_preferences_block(self._config),
+                    workspace_directive=self._workspace_directive(),
+                    compact=getattr(self, "_compact_instructions", False),
+                ),
+                language=self._language,
+            )
+            if self._executed_tool_names:
+                send_text = getattr(self._session, "send_text", None)
+                if not callable(send_text):
+                    raise RuntimeError(
+                        "provider cannot retry an already-executed tool result"
+                    )
+                await send_text(
+                    _direct_tool_result_retry_prompt(language=self._language)
+                )
+            else:
+                try:
+                    await self._session.request_response(required_tool=None)
+                except TypeError:
+                    await self._session.request_response()
+            log.info(
+                "realtime[%s] retrying one blocked output in %s",
+                self.session_id,
+                language_name,
+            )
+        except Exception:  # noqa: BLE001 - retry failure gets a canned safe answer
+            self._output_language_retry_pending = False
+            self._output_language_failures += 1
+            await self._cancel_unsafe_output(
+                reason="output language retry failed",
+                interrupt_provider=False,
+                fallback_text=self._output_language_failure_phrase(),
+            )
+
+    async def _request_output_language_retry_after_grace(
+        self,
+        turn_id: str,
+    ) -> None:
+        try:
+            await asyncio.sleep(_OUTPUT_LANGUAGE_RETRY_BOUNDARY_GRACE_S)
+            if self._turn_id == turn_id and self._output_language_retry_pending:
+                await self._request_output_language_retry()
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if self._output_language_retry_task is asyncio.current_task():
+                self._output_language_retry_task = None
+
+    async def _handle_output_language_mismatch(self) -> None:
+        """Suppress a gross mismatch, retry once, then fail locally."""
+        self._output_language_mismatches += 1
+        delegate_state = self._delegate_turns.get(self._turn_id)
+        if delegate_state is not None and delegate_state.last_reply:
+            trusted = self._scrubbed_trusted_reply(delegate_state)
+            trusted_verdict = validate_output_language(
+                trusted,
+                resolved_language=self._language,
+            )
+            if trusted and not trusted_verdict.should_block:
+                await self._cancel_unsafe_output(
+                    reason="provider changed a trusted result's language",
+                    fallback_text=trusted,
+                    delegate_state=delegate_state,
+                )
+                return
+
+        if not self._output_language_retry_attempted_for_turn:
+            self._output_language_retry_attempted_for_turn = True
+            self._output_language_retry_pending = True
+            self._output_language_retry_requested = False
+            self._output_language_retries += 1
+            self._retire_active_provider_response()
+            self._gate.drain()
+            self._output_transcript.clear()
+            self._provider_output_probe = ""
+            self._output_active = False
+            self._output_samples_sent = 0
+            self._reset_echo_horizon()
+            try:
+                await self._send_json({"type": "tts_cancel"})
+            except Exception:  # noqa: BLE001, S110 - surface may be gone
+                pass
+            try:
+                if self._session is not None:
+                    await self._session.interrupt()
+            except Exception:  # noqa: BLE001, S110 - boundary timer still retries
+                pass
+            self._output_language_retry_task = asyncio.create_task(
+                self._request_output_language_retry_after_grace(self._turn_id),
+                name=f"rt-language-retry-{self.session_id}",
+            )
+            return
+
+        self._output_language_retry_pending = False
+        self._output_language_failures += 1
+        await self._cancel_unsafe_output(
+            reason="provider output language mismatched after one retry",
+            fallback_text=self._output_language_failure_phrase(),
+        )
+
     async def _cancel_unsafe_output(
         self,
         *,
         reason: str,
         interrupt_provider: bool = True,
         fallback_text: str | None = None,
+        delegate_state: _DelegateTurnState | None = None,
     ) -> None:
         """Cancel one unsafe provider response and emit one honest fallback."""
         if self._scrub_cancelled_for_turn:
@@ -4732,7 +5080,15 @@ class RealtimeVoiceSession:
         self._output_transcript.clear()
         self._output_transcript.append(spoken_fallback)
         try:
-            await self._send_json(self._surface_speech_message(spoken_fallback))
+            if delegate_state is not None:
+                await self._send_delegate_surface_fallback(
+                    delegate_state,
+                    spoken_fallback,
+                )
+            else:
+                await self._send_json(
+                    self._surface_speech_message(spoken_fallback)
+                )
         except Exception:  # noqa: BLE001, S110 — surface may already be gone
             pass
         # Keep the transcript honest (BUG-056): the 15:13 session recorded a
@@ -5086,6 +5442,20 @@ class RealtimeVoiceSession:
         response_id = str(getattr(event, "provider_turn_id", "") or "").strip()
         active_id = self._active_provider_response_id
         self._expire_provisional_retirements()
+        if response_id:
+            self._provider_response_identity_required = True
+        elif (
+            event.type != "turn_complete"
+            and self._provider_response_identity_required
+        ):
+            self._response_identity_drops += 1
+            log.warning(
+                "realtime[%s] dropped an untagged %s event after the provider "
+                "began emitting response identities",
+                self.session_id,
+                event.type,
+            )
+            return False
         if response_id and response_id in self._completed_provider_response_ids:
             self._response_identity_drops += 1
             log.warning(
@@ -5113,6 +5483,12 @@ class RealtimeVoiceSession:
                 self._completed_provider_response_ids.append(boundary_id)
             self._active_provider_response_id = ""
             return True
+
+        if self._output_language_retry_requested:
+            # The retry has begun producing.  Its transcript still has to pass
+            # the same deterministic gate, but an older terminal boundary can
+            # no longer be mistaken for the retry's completion.
+            self._output_language_retry_pending = False
 
         if not response_id:
             return True
@@ -5166,6 +5542,20 @@ class RealtimeVoiceSession:
         # event (e.g. by a delegation that owns the turn) is preserved.
         self._drop_provider_output_until_new_response = drop_before_cancel
         return False
+
+    def _reset_provider_response_identity_state(self) -> None:
+        """Retire response identities that belonged to the previous transport.
+
+        Response ids and the decision to require them are adapter-session
+        scoped. A rebuilt transport may restart its id sequence or fall back to
+        an ordered stream without ids; carrying either ledger across that
+        boundary would discard the fresh transport's first answer as stale.
+        Diagnostic counters remain session-wide and are deliberately retained.
+        """
+        self._active_provider_response_id = ""
+        self._provider_response_identity_required = False
+        self._completed_provider_response_ids.clear()
+        self._provisional_response_retirements.clear()
 
     def _retire_active_provider_response(self, *, provisional: bool = False) -> None:
         """Remember the active response id as closed and clear its owner.
@@ -5221,6 +5611,17 @@ class RealtimeVoiceSession:
             if response_id not in self._completed_provider_response_ids:
                 self._completed_provider_response_ids.append(response_id)
 
+    def _expire_provisional_retirements(self) -> None:
+        """Complete provisional retirements whose re-adoption window ran out."""
+        now = time.monotonic()
+        for response_id, deadline in tuple(
+            self._provisional_response_retirements.items()
+        ):
+            if now < deadline:
+                continue
+            del self._provisional_response_retirements[response_id]
+            if response_id not in self._completed_provider_response_ids:
+                self._completed_provider_response_ids.append(response_id)
 
     def _latency_detail(self, detail: str = "") -> str:
         fields = [
@@ -5873,6 +6274,10 @@ class RealtimeVoiceSession:
         # it from surviving into the next unit of work and aborting a fresh
         # answer (AP-19 / BUG-032).
         self._cancel_turn_stall_watchdog()
+        retry_task = self._output_language_retry_task
+        self._output_language_retry_task = None
+        if retry_task is not None and not retry_task.done():
+            retry_task.cancel()
         self._turn_id = ""
         self._turn_trace_id = None
         self._latency_tracker = None
@@ -5891,6 +6296,9 @@ class RealtimeVoiceSession:
         self._handoff_action_seen_for_turn = False
         self._deferred_provider_speech_start = False
         self._scrub_cancelled_for_turn = False
+        self._output_language_retry_attempted_for_turn = False
+        self._output_language_retry_pending = False
+        self._output_language_retry_requested = False
         self._embedded_silence_ms = 0.0
 
     def _declared_tools(self) -> tuple[dict[str, Any], ...]:
@@ -5983,9 +6391,19 @@ class RealtimeVoiceSession:
         return not (state is not None and state.bridge_delivery_started)
 
     def _delegate_surface_fallback_spoken(self) -> bool:
-        """True once the surface already spoke this turn's trusted reply."""
+        """True while a non-provider channel owns this turn's delivery."""
         state = self._delegate_turns.get(self._turn_id)
-        return bool(state is not None and state.surface_fallback_spoken)
+        if state is None:
+            return False
+        status = self._delegate_delivery_status.get(state.delivery_id, "")
+        return bool(
+            state.surface_fallback_spoken
+            or status in {"surface_pending", "detached_pending"}
+            or (
+                state.delivery_completed
+                and state.delivery_channel in {"surface", "detached"}
+            )
+        )
 
     def _arm_stale_readback_guard(self, reply: str) -> None:
         """Remember one surface-delivered delegate reply for repeat detection.
@@ -6047,7 +6465,7 @@ class RealtimeVoiceSession:
         if self._must_withhold_delegate_output():
             return "a delegated action owns this turn"
         if self._delegate_surface_fallback_spoken():
-            return "the surface already spoke this turn's reply"
+            return "a non-provider channel already owns this turn's reply"
         return ""
 
     def _note_output_withheld(self, kind: str) -> None:
@@ -6084,6 +6502,122 @@ class RealtimeVoiceSession:
                 self._delegate_tasks_by_turn.pop(turn_id, None)
 
         task.add_done_callback(_discard)
+
+    def _retain_detached_delegate_task(
+        self,
+        turn_id: str,
+        task: asyncio.Task[None],
+    ) -> None:
+        """Transfer an unfinished delegate from the socket to process scope."""
+        if task.done() or task in _DETACHED_DELEGATE_TASKS:
+            return
+        _DETACHED_DELEGATE_TASKS.add(task)
+        delivery_id = f"{self.session_id}:{turn_id}"
+        if self._delegate_delivery_status.get(delivery_id) != "running_detached":
+            self._delegate_delivery_status[delivery_id] = "running_detached"
+            self._delegate_deliveries_detached += 1
+
+        def _reap(done: asyncio.Task[None]) -> None:
+            _DETACHED_DELEGATE_TASKS.discard(done)
+            if done.cancelled():
+                log.warning(
+                    "realtime[%s] detached delegate was cancelled",
+                    self.session_id,
+                )
+                return
+            try:
+                error = done.exception()
+            except asyncio.CancelledError:
+                return
+            if error is not None:
+                log.warning(
+                    "realtime[%s] detached delegate failed",
+                    self.session_id,
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+
+        task.add_done_callback(_reap)
+
+    def _mark_delegate_delivery_complete(
+        self,
+        turn_state: _DelegateTurnState,
+        *,
+        channel: str = "",
+    ) -> None:
+        delivery_id = turn_state.delivery_id
+        if not delivery_id or turn_state.delivery_completed:
+            return
+        turn_state.delivery_completed = True
+        if channel:
+            turn_state.delivery_channel = channel
+        self._delegate_delivery_status[delivery_id] = "delivered"
+        self._delegate_deliveries_completed += 1
+
+    async def _deliver_detached_delegate_result(
+        self,
+        turn_id: str,
+        turn_state: _DelegateTurnState,
+    ) -> bool:
+        """Publish one completed result after its realtime socket is gone."""
+        if turn_state.surface_fallback_confirmed:
+            self._mark_delegate_delivery_complete(turn_state, channel="surface")
+            return True
+        if not turn_state.delivery_id:
+            turn_state.delivery_id = f"{self.session_id}:{turn_id}"
+        delivery_id = turn_state.delivery_id
+        status = self._delegate_delivery_status.get(delivery_id, "")
+        if status == "surface_pending":
+            # The live surface send owns delivery until it either confirms or
+            # releases the claim on failure.  Its task is retained across
+            # teardown and performs detached recovery in the latter case.
+            return False
+        if turn_state.delivery_completed or status in {"detached_pending", "delivered"}:
+            self._delegate_delivery_duplicates_suppressed += 1
+            return False
+        text = self._scrubbed_trusted_reply(turn_state)
+        if not text:
+            return False
+        language = str(turn_state.language or self._language)
+        verdict = validate_output_language(
+            text,
+            resolved_language=language,
+        )
+        if verdict.should_block:
+            self._output_language_mismatches += 1
+            self._output_language_failures += 1
+            text = self._output_language_failure_phrase(language)
+        if self._bus is None:
+            log.warning(
+                "realtime[%s] completed delegate result has no delivery bus",
+                self.session_id,
+            )
+            return False
+        self._delegate_delivery_status[delivery_id] = "detached_pending"
+        self._delegate_delivery_claims += 1
+        self._delegate_delivery_recoveries += 1
+        try:
+            from jarvis.core.events import AnnouncementRequested
+
+            await self._bus.publish(
+                AnnouncementRequested(
+                    source_layer="realtime.delegate",
+                    text=text,
+                    priority="normal",
+                    language=language,
+                    kind="completion",
+                    detail=f"delivery_id={delivery_id}",
+                )
+            )
+        except Exception:  # noqa: BLE001 - retain the debt for diagnosis
+            self._delegate_delivery_status.pop(delivery_id, None)
+            log.warning(
+                "realtime[%s] detached delegate delivery failed",
+                self.session_id,
+                exc_info=True,
+            )
+            return False
+        self._mark_delegate_delivery_complete(turn_state, channel="detached")
+        return True
 
     def _turn_has_pending_delegate(self, turn_id: str) -> bool:
         return any(
@@ -6228,12 +6762,15 @@ class RealtimeVoiceSession:
         reply = str(turn_state.last_reply or "").strip()
         if not reply or self._ended or turn_state.delivery_started:
             return
+        if not turn_state.delivery_id:
+            turn_state.delivery_id = f"{self.session_id}:late:{uuid4()}"
         turn_state.delivery_started = True
         self._late_delegate_results.append(
             _LateDelegateResult(
                 text=reply,
                 success=turn_state.result_success,
-                language=self._language,
+                language=str(turn_state.language or self._language),
+                delivery_id=turn_state.delivery_id,
             )
         )
         log.info(
@@ -6398,8 +6935,8 @@ class RealtimeVoiceSession:
                 not self._delegate_required_for_turn
                 and not local_plan.requires_orchestrator
                 and not provider_plan.requires_orchestrator
-                and _is_public_knowledge_question(self._last_user_text)
-                and _is_public_knowledge_question(
+                and is_public_fact_question(self._last_user_text)
+                and is_public_fact_question(
                     provider_request or self._last_user_text
                 )
             ):
@@ -6564,7 +7101,11 @@ class RealtimeVoiceSession:
             )
 
     def _start_deterministic_delegate(
-        self, user_text: str, *, input_final: bool = False
+        self,
+        user_text: str,
+        *,
+        input_final: bool = False,
+        turn_plan: TurnPlan | None = None,
     ) -> None:
         """Start one orchestrator-owned Brain turn for local-evidence input.
 
@@ -6580,9 +7121,18 @@ class RealtimeVoiceSession:
             turn_id,
             _DelegateTurnState(deterministic=True),
         )
+        if not turn_state.delivery_id:
+            turn_state.delivery_id = f"{self.session_id}:{turn_id}"
+        if not turn_state.language:
+            turn_state.language = self._language
         turn_state.deterministic = True
         turn_state.input_final = turn_state.input_final or bool(input_final)
         turn_state.user_text = str(user_text or "").strip()
+        if turn_plan is not None and turn_plan.requires_public_fact_grounding:
+            turn_state.requires_public_fact_grounding = True
+            turn_state.public_fact_grounding_timeout_s = float(
+                turn_plan.public_fact_grounding_timeout_s or 2.5
+            )
         if turn_state.dispatch_started or turn_state.result_complete:
             return
         turn_state.dispatch_started = True
@@ -6909,11 +7459,174 @@ class RealtimeVoiceSession:
                 )
                 return
 
+    async def _speak_public_fact_ack(
+        self,
+        query: str,
+        *,
+        language: str,
+    ) -> None:
+        """Give immediate deterministic feedback before the bounded lookup."""
+        try:
+            from jarvis.brain.ack_generator import generate_ack
+
+            spoken = generate_ack(
+                "search_web",
+                {"query": query},
+                language=language,
+            )
+        except Exception:  # noqa: BLE001 - the search itself still proceeds
+            spoken = None
+        if not spoken:
+            return
+        try:
+            await self._send_json(
+                self._surface_speech_message(spoken, language=language)
+            )
+            await self._publish_delegate_bridge_spoken(spoken)
+        except Exception:  # noqa: BLE001 - feedback is best-effort, grounding is not
+            log.debug(
+                "realtime[%s] public-fact acknowledgement failed",
+                self.session_id,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _grounding_output_has_evidence(output: Any) -> bool:
+        """Accept only a non-empty public-search result set as evidence."""
+        if not isinstance(output, dict):
+            return False
+        results = output.get("results")
+        return bool(
+            str(output.get("status", "ok") or "").strip().lower() == "ok"
+            and isinstance(results, list)
+            and any(isinstance(item, dict) and item for item in results)
+        )
+
+    async def _ground_public_fact(
+        self,
+        query: str,
+        *,
+        timeout_s: float,
+        language: str,
+    ) -> tuple[str, bool]:
+        """Execute exactly one bounded search, then synthesize without tools."""
+        uncertainty = _PUBLIC_FACT_UNCERTAINTY.get(
+            language,
+            _PUBLIC_FACT_UNCERTAINTY["en"],
+        )
+        await self._speak_public_fact_ack(query, language=language)
+        try:
+            from jarvis.core import runtime_refs
+            from jarvis.core.protocols import SupervisorToolRequest
+
+            gateway = runtime_refs.get_supervisor_tool_gateway()
+            descriptor_names = {
+                str(item.name)
+                for item in (gateway.catalog() if gateway is not None else ())
+            }
+            if gateway is None or "search_web" not in descriptor_names:
+                self._public_fact_grounding_failures += 1
+                return uncertainty, False
+            self._public_fact_grounding_attempts += 1
+            result = await asyncio.wait_for(
+                gateway.execute(
+                    "search_web",
+                    {"query": query, "max_results": 5},
+                    SupervisorToolRequest(
+                        trace_id=self._turn_trace_id or uuid4(),
+                        origin="realtime_grounding",
+                        user_utterance=query,
+                        rationale=(
+                            "The active realtime model requires public-fact "
+                            "grounding before answering."
+                        ),
+                        config_snapshot={
+                            "output_language": language,
+                            "voice_confirm": True,
+                        },
+                    ),
+                ),
+                timeout=max(0.05, float(timeout_s or 2.5)),
+            )
+        except TimeoutError:
+            self._public_fact_grounding_failures += 1
+            return uncertainty, False
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - honest degradation, never native guess
+            log.warning(
+                "realtime[%s] public-fact grounding failed safely",
+                self.session_id,
+                exc_info=True,
+            )
+            self._public_fact_grounding_failures += 1
+            return uncertainty, False
+
+        output = getattr(result, "output", None)
+        if not bool(getattr(result, "success", False)) or not (
+            self._grounding_output_has_evidence(output)
+        ):
+            self._public_fact_grounding_failures += 1
+            return uncertainty, False
+
+        run_task = getattr(self._brain, "run_task", None)
+        if not callable(run_task):
+            self._public_fact_grounding_failures += 1
+            return uncertainty, False
+        evidence = json.dumps(output, ensure_ascii=False, default=str)[:8_000]
+        language_name = _LANGUAGE_NAMES.get(
+            language,
+            "the resolved conversation language",
+        )
+        prompt = (
+            "Answer the user's question using only the supplied public-search "
+            "evidence. Do not call tools and do not add facts absent from the "
+            f"evidence. Reply concisely in {language_name}. If the evidence "
+            "does not answer the question, say that honestly.\n\n"
+            f"User question: {query}\n\nEvidence:\n{evidence}"
+        )
+        try:
+            reply = str(
+                await asyncio.wait_for(
+                    run_task(
+                        prompt=prompt,
+                        allowed_tools=(),
+                        model_tier="fast",
+                        trace_id=self._turn_trace_id,
+                    ),
+                    timeout=_DELEGATE_TIMEOUT_S,
+                )
+                or ""
+            ).strip()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - evidence exists but synthesis did not
+            log.warning(
+                "realtime[%s] grounded public-fact synthesis failed",
+                self.session_id,
+                exc_info=True,
+            )
+            self._public_fact_grounding_failures += 1
+            return uncertainty, False
+        verdict = validate_output_language(
+            reply,
+            resolved_language=language,
+        )
+        if not reply or verdict.should_block:
+            if verdict.should_block:
+                self._output_language_mismatches += 1
+                self._output_language_failures += 1
+            self._public_fact_grounding_failures += 1
+            return uncertainty, False
+        self._public_fact_grounding_successes += 1
+        return reply, True
+
     async def _run_deterministic_delegate(
         self,
         turn_id: str,
         turn_state: _DelegateTurnState,
     ) -> None:
+        turn_language = str(turn_state.language or self._language)
         try:
             if bool(
                 getattr(self._session, "creates_responses_automatically", False)
@@ -6952,33 +7665,50 @@ class RealtimeVoiceSession:
             if not self._delegate_turn_is_active(turn_id, turn_state):
                 return
             user_text = turn_state.user_text
-            reply = (
-                await asyncio.wait_for(
-                    self._dispatch_brain_turn(user_text),
-                    timeout=_DELEGATE_TIMEOUT_S,
+            if turn_state.requires_public_fact_grounding:
+                reply, succeeded = await self._ground_public_fact(
+                    user_text,
+                    timeout_s=turn_state.public_fact_grounding_timeout_s,
+                    language=turn_language,
                 )
-                or ""
-            ).strip()
-            brain_chain_failed = bool(
-                getattr(self._brain, "_last_turn_all_failed", False)
-            )
-            if reply and not brain_chain_failed:
                 turn_state.last_reply = reply
-                result: dict[str, Any] = {
-                    "success": True,
+                result = {
+                    "success": succeeded,
                     "spoken_reply": reply,
                 }
-                succeeded = True
+                if not succeeded:
+                    result["error"] = "Public fact grounding was unavailable."
             else:
-                result = {
-                    "success": False,
-                    "error": (
-                        "No configured Tool Model completed the delegated turn."
-                        if brain_chain_failed
-                        else "The delegated action returned no grounded result."
-                    ),
-                }
-                succeeded = False
+                reply = (
+                    await asyncio.wait_for(
+                        self._dispatch_brain_turn(
+                            user_text,
+                            output_language=turn_language,
+                        ),
+                        timeout=_DELEGATE_TIMEOUT_S,
+                    )
+                    or ""
+                ).strip()
+                brain_chain_failed = bool(
+                    getattr(self._brain, "_last_turn_all_failed", False)
+                )
+                if reply and not brain_chain_failed:
+                    turn_state.last_reply = reply
+                    result = {
+                        "success": True,
+                        "spoken_reply": reply,
+                    }
+                    succeeded = True
+                else:
+                    result = {
+                        "success": False,
+                        "error": (
+                            "No configured Tool Model completed the delegated turn."
+                            if brain_chain_failed
+                            else "The delegated action returned no grounded result."
+                        ),
+                    }
+                    succeeded = False
         except TimeoutError:
             result = {
                 "success": False,
@@ -7004,11 +7734,11 @@ class RealtimeVoiceSession:
             }
             succeeded = False
 
-        if not succeeded:
+        if not succeeded and not turn_state.requires_public_fact_grounding:
             from jarvis.voice.action_phrases import action_phrase
 
             turn_state.last_reply = action_phrase(
-                "action_failed_generic", self._language
+                "action_failed_generic", turn_language
             )
             result["spoken_reply"] = turn_state.last_reply
         turn_state.result_complete = True
@@ -7023,6 +7753,10 @@ class RealtimeVoiceSession:
         if self._delegate_turn_is_active(turn_id, turn_state) and succeeded:
             self._executed_tool_names.add(str(_DELEGATE_DECLARATION["name"]))
         if self._ended or self._session is None:
+            await self._deliver_detached_delegate_result(
+                turn_id,
+                turn_state,
+            )
             return
         if self._suppress_repeated_outage_notice(turn_state):
             if not bool(
@@ -7054,7 +7788,7 @@ class RealtimeVoiceSession:
 
             trusted_reply = action_phrase(
                 "cu_done" if succeeded else "action_failed_generic",
-                self._language,
+                turn_language,
             )
         # From this point onward every speech and persistence fallback must use
         # the regex-scrubbed value (ADR-0010). The raw Brain answer must never
@@ -7068,10 +7802,10 @@ class RealtimeVoiceSession:
         self._drop_provider_output_until_new_response = False
         try:
             if turn_state.provider_stream_ended:
-                turn_state.surface_fallback_spoken = True
-                self._drop_provider_output_until_user_turn = True
-                self._arm_stale_readback_guard(trusted_reply)
-                await self._send_json(self._surface_speech_message(trusted_reply))
+                await self._send_delegate_surface_fallback(
+                    turn_state,
+                    trusted_reply,
+                )
                 return
             if turn_state.pending_tool_calls and not self._session_takes_tool_results():
                 # Should be unreachable (a transport with no native tools can
@@ -7112,7 +7846,7 @@ class RealtimeVoiceSession:
                     await self._session.send_text(
                         _delegate_result_prompt(
                             trusted_reply,
-                            language=self._language,
+                            language=turn_language,
                             success=succeeded,
                         )
                     )
@@ -7124,8 +7858,9 @@ class RealtimeVoiceSession:
                 self.session_id,
                 exc_info=True,
             )
-            await self._send_json(
-                self._surface_speech_message(turn_state.last_reply)
+            await self._send_delegate_surface_fallback(
+                turn_state,
+                turn_state.last_reply,
             )
             return
         await self._verify_delegate_readback(turn_id, turn_state)
@@ -7182,9 +7917,6 @@ class RealtimeVoiceSession:
         # then a third time when the provider rendered it late).
         if not reply or turn_state.surface_fallback_spoken:
             return
-        turn_state.surface_fallback_spoken = True
-        self._drop_provider_output_until_user_turn = True
-        self._arm_stale_readback_guard(reply)
         log.warning(
             "realtime[%s] provider rendered no readback for a delivered "
             "delegate result within %.1fs; speaking it through the "
@@ -7192,7 +7924,7 @@ class RealtimeVoiceSession:
             self.session_id,
             self._delegate_readback_budget_s(),
         )
-        await self._send_json(self._surface_speech_message(reply))
+        await self._send_delegate_surface_fallback(turn_state, reply)
 
     def _delegate_readback_budget_s(self) -> float:
         """How long a delivered delegate result may wait for provider audio.
@@ -7217,6 +7949,10 @@ class RealtimeVoiceSession:
         turn_state: _DelegateTurnState,
     ) -> None:
         """Start the single Brain dispatch owned by one realtime turn."""
+        if not turn_state.delivery_id:
+            turn_state.delivery_id = f"{self.session_id}:{turn_id}"
+        if not turn_state.language:
+            turn_state.language = self._language
         if turn_state.dispatch_started or turn_state.result_complete:
             return
         turn_state.dispatch_started = True
@@ -7239,11 +7975,15 @@ class RealtimeVoiceSession:
         turn_id: str,
         turn_state: _DelegateTurnState,
     ) -> None:
+        turn_language = str(turn_state.language or self._language)
         succeeded = False
         try:
             reply = (
                 await asyncio.wait_for(
-                    self._dispatch_brain_turn(turn_state.user_text),
+                    self._dispatch_brain_turn(
+                        turn_state.user_text,
+                        output_language=turn_language,
+                    ),
                     timeout=_DELEGATE_TIMEOUT_S,
                 )
                 or ""
@@ -7294,7 +8034,7 @@ class RealtimeVoiceSession:
             from jarvis.voice.action_phrases import action_phrase
 
             turn_state.last_reply = action_phrase(
-                "action_failed_generic", self._language
+                "action_failed_generic", turn_language
             )
             result["spoken_reply"] = turn_state.last_reply
         turn_state.result_complete = True
@@ -7307,6 +8047,10 @@ class RealtimeVoiceSession:
                 detail=f"kind=provider_requested;success={succeeded}",
             )
         if self._ended or self._session is None:
+            await self._deliver_detached_delegate_result(
+                turn_id,
+                turn_state,
+            )
             return
         if not self._delegate_turn_is_active(turn_id, turn_state):
             # The provider's function call belongs to a response that no longer
@@ -7335,7 +8079,12 @@ class RealtimeVoiceSession:
             return
         await self._verify_delegate_readback(turn_id, turn_state)
 
-    async def _dispatch_brain_turn(self, text: str) -> str:
+    async def _dispatch_brain_turn(
+        self,
+        text: str,
+        *,
+        output_language: str | None = None,
+    ) -> str:
         # allow_voice_confirm=True is load-bearing: without it an ask-tier
         # tool blocks on a UI approval no voice user can give (the classic
         # pipeline passes the same flag). prefer_tool_model routes the
@@ -7344,6 +8093,7 @@ class RealtimeVoiceSession:
         # the one response that was actually spoken.
         generate = getattr(self._brain, "generate", None)
         if callable(generate):
+            turn_language = str(output_language or self._language)
             desired_kwargs: dict[str, Any] = {
                 "allow_voice_confirm": True,
                 "prefer_tool_model": True,
@@ -7363,7 +8113,7 @@ class RealtimeVoiceSession:
                 # 2026-07-23: an English conversation whose memory-save turns
                 # were spoken in German). Unsupported by older managers -> the
                 # signature filter below simply drops it.
-                "force_output_language": self._language,
+                "force_output_language": turn_language,
             }
             try:
                 signature = inspect.signature(generate)
@@ -7465,6 +8215,9 @@ class RealtimeVoiceSession:
         self._tool_transcript_task = None
 
     async def _emit_audio(self, chunk: Any) -> None:
+        if self._ended:
+            self._note_output_withheld("audio after session end")
+            return
         if self._must_withhold_provider_output():
             self._note_output_withheld("audio")
             return
@@ -7530,6 +8283,13 @@ class RealtimeVoiceSession:
             # horizon by this chunk's duration (BUG-089).
             self._advance_echo_horizon((len(pcm) / 2) / rate)
         await self._send_binary(pcm)
+        if audible:
+            delegate_state = self._delegate_turns.get(self._turn_id)
+            if delegate_state is not None and delegate_state.delivery_started:
+                self._mark_delegate_delivery_complete(
+                    delegate_state,
+                    channel="provider_audio",
+                )
 
     def _note_audio_flow(self, pcm: bytes, chunk: Any) -> None:
         """Attribute audible mid-reply holes to their actual producer.
@@ -7611,6 +8371,7 @@ class RealtimeVoiceSession:
         if reply_to_cut:
             self._drop_provider_output_until_new_response = True
             self._gate.drain()
+            self._retire_active_provider_response()
         self._response_requested_for_turn = False
         output_rate = int(getattr(self._provider, "output_sample_rate", 24_000) or 24_000)
         audio_end_ms = (
@@ -7751,6 +8512,27 @@ class RealtimeVoiceSession:
             response_identity_drops=self._response_identity_drops,
             late_response_readoptions=self._late_response_readoptions,
             unsafe_output_cancellations=self._unsafe_output_cancellations,
+            public_fact_grounding_attempts=(
+                self._public_fact_grounding_attempts
+            ),
+            public_fact_grounding_successes=(
+                self._public_fact_grounding_successes
+            ),
+            public_fact_grounding_failures=(
+                self._public_fact_grounding_failures
+            ),
+            output_language_mismatches=self._output_language_mismatches,
+            output_language_retries=self._output_language_retries,
+            output_language_failures=self._output_language_failures,
+            delegate_delivery_claims=self._delegate_delivery_claims,
+            delegate_deliveries_completed=(
+                self._delegate_deliveries_completed
+            ),
+            delegate_delivery_recoveries=self._delegate_delivery_recoveries,
+            delegate_delivery_duplicates_suppressed=(
+                self._delegate_delivery_duplicates_suppressed
+            ),
+            delegate_deliveries_detached=self._delegate_deliveries_detached,
             opening_responses_bounded=diag.get("opening_responses_bounded", 0),
             self_dialogue_rebuilds=diag.get("self_dialogue_rebuilds", 0),
             handoff_action_turns=self._handoff_action_turns,
@@ -7777,31 +8559,52 @@ class RealtimeVoiceSession:
         if self._ended:
             return
         self._ended = True
+        # Teardown claims any undelivered action result through the announcement
+        # channel below.  First make provider readback physically incapable of
+        # racing that claim: withhold, drain buffered PCM, and signal the pump
+        # before the first teardown await.
+        self._drop_provider_output_until_new_response = True
+        self._drop_provider_output_until_user_turn = True
+        self._gate.drain()
+        pump = self._pump_task
+        if pump is not None and not pump.done():
+            pump.cancel()
         self._loop_lag.stop()
         self._cancel_turn_stall_watchdog()
         self._cancel_tool_transcript_wait()
         if self._end_call_timer is not None and not self._end_call_timer.done():
             self._end_call_timer.cancel()
         self._end_call_timer = None
+        if self._delegate_tasks:
+            await asyncio.wait(
+                tuple(self._delegate_tasks),
+                timeout=_DELEGATE_END_SETTLE_S,
+            )
         for turn_id, tasks in tuple(self._delegate_tasks_by_turn.items()):
-            if not any(not task.done() for task in tasks):
-                continue
-            # The cancel below kills the in-flight brain turn: the user hung
-            # up before its answer existed, and nothing will ever speak it
-            # (live forensic 2026-07-17 09:23: a hangup 31 s into a delegated
-            # answer discarded it without a trace). Name the lost request so
-            # the loss is diagnosable from the log.
             state = self._delegate_turns.get(turn_id)
+            if state is not None and state.result_complete:
+                # The action has already run.  Claim its result before the
+                # socket is closed; the delivery ledger suppresses the task's
+                # own teardown branch if both paths race here.
+                await self._deliver_detached_delegate_result(turn_id, state)
+            unfinished = tuple(task for task in tasks if not task.done())
+            if not unfinished:
+                continue
+            # A socket lifetime is not an action lifetime.  Once dispatch has
+            # started, cancelling it on hangup can leave an external side
+            # effect complete while erasing its only result (and a retry can
+            # then execute that effect twice). Transfer ownership to process
+            # scope; the task publishes one completion announcement when it
+            # finishes and never re-dispatches the action.
+            for task in unfinished:
+                self._retain_detached_delegate_task(turn_id, task)
             request = str(getattr(state, "user_text", "") or "")
-            log.warning(
+            log.info(
                 "realtime[%s] session ended while a delegated action was "
-                "still running; its answer was never produced: %s",
+                "still running; retaining it for exactly-once delivery: %s",
                 self.session_id,
                 safe_preview(request, max_chars=200) or "<unknown request>",
             )
-        for task in tuple(self._delegate_tasks):
-            if not task.done():
-                task.cancel()
         self._delegate_tasks.clear()
         self._delegate_tasks_by_turn.clear()
         if (
@@ -7816,15 +8619,21 @@ class RealtimeVoiceSession:
         ):
             self._late_delegate_flush_task.cancel()
         self._late_delegate_flush_task = None
-        for lost in self._late_delegate_results:
-            # The action ran; the session ended before its result could be said.
-            log.warning(
-                "realtime[%s] session ended with an unspoken action result: %s",
-                self.session_id,
-                safe_preview(lost.text, max_chars=200),
+        for pending in tuple(self._late_delegate_results):
+            # The provider follow-up never became audible before teardown.
+            # Move the already-executed result to the same exactly-once
+            # completion channel as a delegate that finishes after hangup.
+            await self._deliver_detached_delegate_result(
+                f"late:{pending.delivery_id}",
+                _DelegateTurnState(
+                    last_reply=pending.text,
+                    result_complete=True,
+                    result_success=pending.success,
+                    language=pending.language,
+                    delivery_id=pending.delivery_id,
+                ),
             )
         self._late_delegate_results.clear()
-        pump = self._pump_task
         if pump is not None and not pump.done():
             # A single cancel() can be LOST to an asyncio race (BUG-081): when
             # cancel() lands while the pump's current waiter future is already

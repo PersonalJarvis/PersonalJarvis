@@ -1696,6 +1696,28 @@ class RealtimeSessionPostmortem(Event):
     late_response_readoptions: int = 0
     #: Provider responses cancelled by the fail-closed output gate.
     unsafe_output_cancellations: int = 0
+    #: Required public-fact searches started through the supervisor gateway.
+    public_fact_grounding_attempts: int = 0
+    #: Required public-fact searches that yielded a grounded localized answer.
+    public_fact_grounding_successes: int = 0
+    #: Required public-fact turns that degraded to honest uncertainty.
+    public_fact_grounding_failures: int = 0
+    #: Provider outputs rejected for using the wrong resolved turn language.
+    output_language_mismatches: int = 0
+    #: One-shot provider retries requested after a language mismatch.
+    output_language_retries: int = 0
+    #: Language retries that still ended in the localized safe fallback.
+    output_language_failures: int = 0
+    #: Stable delegate result delivery claims made during this session.
+    delegate_delivery_claims: int = 0
+    #: Delegate results confirmed by audible PCM or the completion channel.
+    delegate_deliveries_completed: int = 0
+    #: Completed delegate results recovered through AnnouncementRequested.
+    delegate_delivery_recoveries: int = 0
+    #: Duplicate delegate delivery attempts suppressed by the stable ledger.
+    delegate_delivery_duplicates_suppressed: int = 0
+    #: In-flight delegates transferred from socket to process lifetime.
+    delegate_deliveries_detached: int = 0
     #: Opening responses cut at the cap because no user question existed yet.
     opening_responses_bounded: int = 0
     #: Self-dialogue verdicts that forced a transport replacement (BUG-124).

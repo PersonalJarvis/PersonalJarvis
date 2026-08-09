@@ -237,6 +237,37 @@ async def test_a_superseding_response_completes_the_provisional_one() -> None:
     assert session._response_identity_drops == 1
 
 
+async def test_transport_rebuild_resets_response_identity_scope() -> None:
+    """Tagged ids from a dead wire cannot poison its replacement transport."""
+    session = _session()
+    provider = session._providers[0]  # noqa: SLF001 - contract fixture
+    provider.rebuild_on_transport_death = True
+    await session._open()
+    try:
+        assert await session._accept_provider_response_event(
+            _audio_event("reused-id")
+        )
+        assert await session._accept_provider_response_event(
+            RealtimeEvent(type="turn_complete", provider_turn_id="reused-id")
+        )
+        assert session._provider_response_identity_required is True
+        assert "reused-id" in session._completed_provider_response_ids
+
+        assert await session._rebuild_transport(detail="identity scope test")
+
+        assert session._provider_response_identity_required is False
+        assert not session._completed_provider_response_ids
+        assert not session._provisional_response_retirements
+        assert await session._accept_provider_response_event(
+            _audio_event("")
+        ), "an ordered untagged replacement transport must remain compatible"
+        assert await session._accept_provider_response_event(
+            _audio_event("reused-id")
+        ), "a fresh transport may reuse an id from the dead transport"
+    finally:
+        await session.end(reason="test")
+
+
 async def test_the_readoption_window_expires() -> None:
     """Patience is bounded by the provider's own declared render budget."""
     session = _session()

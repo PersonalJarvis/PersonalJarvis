@@ -6,6 +6,7 @@ from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.brain.tool_gateway import BrainSupervisorToolGateway
 from jarvis.core import runtime_refs
 from jarvis.core.events import (
+    AnnouncementRequested,
     LatencyPhase,
     LatencySpan,
     ResponseGenerated,
@@ -1033,7 +1034,10 @@ async def test_audio_after_a_leak_transcript_is_never_emitted():
         RealtimeEvent(
             type="audio_delta", audio=AudioChunk(pcm=a1, sample_rate=24000, timestamp_ns=0)
         ),
-        RealtimeEvent(type="output_transcript_delta", text="A clean first sentence."),
+        RealtimeEvent(
+            type="output_transcript_delta",
+            text="This is the normal English opening for the user.",
+        ),
         RealtimeEvent(
             type="audio_delta", audio=AudioChunk(pcm=a2, sample_rate=24000, timestamp_ns=0)
         ),
@@ -1796,17 +1800,33 @@ async def test_end_call_tool_finishes_after_turn_complete():
 
 
 @pytest.mark.asyncio
-async def test_ordinary_speech_does_not_hang_up():
-    provider = FakeProvider(
-        [
-            RealtimeEvent(
+async def test_ordinary_speech_does_not_hang_up(monkeypatch):
+    monkeypatch.setattr(
+        runtime_refs,
+        "get_supervisor_tool_gateway",
+        lambda: None,
+    )
+
+    class _WaitForSafeGroundingFallbackSession(FakeSession):
+        async def receive(self):
+            yield RealtimeEvent(
                 type="input_transcript",
                 text="wie ist das wetter heute",  # i18n-allow: ordinary speech guard
                 is_final=True,
-            ),
-            RealtimeEvent(type="turn_complete"),
-        ]
-    )
+            )
+            for _ in range(100):
+                if self.text_inputs:
+                    break
+                await asyncio.sleep(0.01)
+            yield RealtimeEvent(type="turn_complete")
+
+    class _WaitForSafeGroundingFallbackProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _WaitForSafeGroundingFallbackSession([])
+            return self.session
+
+    provider = _WaitForSafeGroundingFallbackProvider([])
     jsons = []
     sess = RealtimeVoiceSession(
         session_id="hangup-guard",
@@ -1823,7 +1843,112 @@ async def test_ordinary_speech_does_not_hang_up():
 
     assert sess.hangup_reason == ""
     assert _hangup_jsons(jsons) == []
-    assert provider.session.response_requests == 1
+    assert provider.session.response_requests == 0
+    assert provider.session.text_inputs
+    assert "couldn't verify that reliably" in provider.session.text_inputs[-1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("language", "user_text", "wrong_text", "correct_text"),
+    [
+        (
+            "en",
+            "What is kindness?",
+            "Xin chào, đây là câu trả lời bằng tiếng Việt với nhiều từ rõ "
+            "ràng để xác định ngôn ngữ.",
+            "Kindness is the practice of treating other people with care "
+            "and respect.",
+        ),
+        (
+            "de",
+            "Was ist Freundlichkeit?",  # i18n-allow
+            "这是一个完整的中文回答，包含足够多的文字来可靠地识别语言。",
+            "Freundlichkeit bedeutet, andere Menschen mit Fürsorge und "  # i18n-allow
+            "Respekt zu behandeln.",  # i18n-allow
+        ),
+    ],
+)
+async def test_wrong_output_language_retries_once_before_releasing_pcm(
+    language: str,
+    user_text: str,
+    wrong_text: str,
+    correct_text: str,
+):
+    wrong_pcm = b"\x02\x03" * 32
+    correct_pcm = b"\x10\x20" * 32
+
+    class _LanguageRetrySession(FakeSession):
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text=user_text,
+                is_final=True,
+            )
+            yield RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=wrong_pcm,
+                    sample_rate=24_000,
+                    timestamp_ns=0,
+                ),
+            )
+            yield RealtimeEvent(
+                type="output_transcript_delta",
+                text=wrong_text,
+            )
+            for _ in range(100):
+                if self.response_requests >= 2:
+                    break
+                await asyncio.sleep(0.01)
+            yield RealtimeEvent(
+                type="output_transcript_delta",
+                text=correct_text,
+            )
+            yield RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=correct_pcm,
+                    sample_rate=24_000,
+                    timestamp_ns=0,
+                ),
+            )
+            yield RealtimeEvent(type="turn_complete")
+
+    class _LanguageRetryProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _LanguageRetrySession([])
+            return self.session
+
+    provider = _LanguageRetryProvider([])
+    jsons: list[dict] = []
+    binaries: list[bytes] = []
+    sess = RealtimeVoiceSession(
+        session_id=f"language-retry-{language}",
+        send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(reply_language=language),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert provider.session.response_requests == 2
+    assert provider.session.interrupts == 1
+    assert binaries == [correct_pcm]
+    assert [
+        item["text"]
+        for item in jsons
+        if item.get("type") == "transcript"
+        and item.get("role") == "assistant"
+    ] == [correct_text]
+    assert sess._output_language_mismatches == 1  # noqa: SLF001
+    assert sess._output_language_retries == 1  # noqa: SLF001
+    assert sess._output_language_failures == 0  # noqa: SLF001
 
 
 @pytest.mark.asyncio
@@ -2039,6 +2164,89 @@ async def test_delegate_mode_declares_single_action_function():
     assert "jarvis_action" in provider.opened_with.instructions
     assert "Wiki or personal memory" in provider.opened_with.instructions
     assert "MCPs" in provider.opened_with.instructions
+
+
+@pytest.mark.asyncio
+async def test_local_public_fact_uses_exactly_one_supervisor_search(
+    wire_supervisor_gateway,
+):
+    class _SearchTool(_StubTool):
+        name = "search_web"
+        description = "Search public web sources."
+        risk_tier = "safe"
+
+    class _RecordingSearchExecutor:
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, tool, arguments, **kwargs):
+            self.calls.append((tool, arguments, kwargs))
+            return ToolResult(
+                success=True,
+                output={
+                    "status": "ok",
+                    "results": [
+                        {
+                            "title": "Public source",
+                            "url": "https://example.test/source",
+                            "snippet": "Ada Lovelace was born in 1815.",
+                        }
+                    ],
+                },
+            )
+
+    class _GroundingBrain(FakeBrain):
+        def __init__(self):
+            super().__init__()
+            self.run_task_calls = []
+
+        async def run_task(self, **kwargs):
+            self.run_task_calls.append(kwargs)
+            return "Ada Lovelace was born in 1815 according to the source."
+
+    class _GroundedResultSession(FakeSession):
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="When was Ada Lovelace born?",
+                is_final=True,
+            )
+            for _ in range(100):
+                if self.text_inputs:
+                    break
+                await asyncio.sleep(0.01)
+            yield RealtimeEvent(type="turn_complete")
+
+    class _LocalFactProvider(FakeProvider):
+        requires_public_fact_grounding = True
+
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _GroundedResultSession([])
+            return self.session
+
+    brain = _GroundingBrain()
+    brain._tools = {"search_web": _SearchTool()}
+    executor = _RecordingSearchExecutor()
+    wire_supervisor_gateway(brain, executor)
+    provider = _LocalFactProvider([])
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert len(executor.calls) == 1
+    assert executor.calls[0][1] == {
+        "query": "When was Ada Lovelace born?",
+        "max_results": 5,
+    }
+    assert len(brain.run_task_calls) == 1
+    assert brain.run_task_calls[0]["allowed_tools"] == ()
+    assert brain.calls == []
+    assert len(provider.session.text_inputs) == 1
+    assert "Ada Lovelace was born" in provider.session.text_inputs[0]
+    assert "according to the source" in provider.session.text_inputs[0]
 
 
 @pytest.mark.asyncio
@@ -2527,7 +2735,7 @@ async def test_generative_voice_provider_delegate_reply_renders_natively_on_desk
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
 
     async def _played():
-        while not binaries:
+        while not binaries:  # noqa: ASYNC110 - callback exposes no wait handle
             await asyncio.sleep(0.01)
 
     await asyncio.wait_for(_played(), timeout=5)
@@ -2563,7 +2771,9 @@ async def test_generative_voice_provider_mute_still_falls_back_to_surface_tts():
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
 
     async def _spoken():
-        while not any(m.get("type") == "error_spoken" for m in jsons):
+        while not any(  # noqa: ASYNC110 - callback exposes no wait handle
+            m.get("type") == "error_spoken" for m in jsons
+        ):
             await asyncio.sleep(0.01)
 
     # Must take at least the readback wait window (2.5 s) — an immediate
@@ -2610,7 +2820,7 @@ async def test_generative_voice_provider_keeps_native_readback_on_the_browser_su
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
 
     async def _played():
-        while not binaries:
+        while not binaries:  # noqa: ASYNC110 - callback exposes no wait handle
             await asyncio.sleep(0.01)
 
     await asyncio.wait_for(_played(), timeout=5)
@@ -2657,7 +2867,7 @@ async def test_generative_voice_readback_race_never_speaks_twice():
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
 
     async def _one_rendering():
-        while not binaries and not any(
+        while not binaries and not any(  # noqa: ASYNC110 - two callback outcomes
             m.get("type") == "error_spoken" for m in jsons
         ):
             await asyncio.sleep(0.01)
@@ -3092,6 +3302,181 @@ async def test_action_result_that_outlived_its_turn_is_still_spoken():
 
 
 @pytest.mark.asyncio
+async def test_end_mid_delegate_delivers_exactly_once_without_rerunning_action():
+    """Socket teardown must not cancel, lose, or repeat an executing action."""
+    dispatch_started = asyncio.Event()
+    release_action = asyncio.Event()
+
+    class _BlockingBrain(FakeBrain):
+        async def generate(self, text, **kwargs):
+            dispatch_started.set()
+            return await super().generate(text, **kwargs)
+
+    class _OpenUntilEndedSession(FakeSession):
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="Write the status to my wiki.",
+                is_final=True,
+            )
+            await asyncio.Event().wait()
+
+    class _OpenUntilEndedProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _OpenUntilEndedSession([])
+            return self.session
+
+    brain = _BlockingBrain(
+        replies=("The requested wiki update completed successfully.",),
+        gate=release_action,
+    )
+    bus = FakeBus()
+    provider = _OpenUntilEndedProvider([])
+    sess = _session(provider, brain=brain, bus=bus)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(dispatch_started.wait(), timeout=2)
+    turn_id, turn_state = next(iter(sess._delegate_turns.items()))  # noqa: SLF001
+
+    await asyncio.wait_for(sess.end(reason="test"), timeout=5)
+    assert brain.cancelled is False
+
+    release_action.set()
+    for _ in range(100):
+        announcements = [
+            event
+            for event in bus.events
+            if isinstance(event, AnnouncementRequested)
+            and event.kind == "completion"
+        ]
+        if announcements:
+            break
+        await asyncio.sleep(0.01)
+
+    assert len(brain.calls) == 1
+    assert len(announcements) == 1
+    assert announcements[0].text == (
+        "The requested wiki update completed successfully."
+    )
+
+    # A late duplicate callback may observe the same completed state, but the
+    # stable delivery id owns the claim and cannot publish a second result.
+    assert not await sess._deliver_detached_delegate_result(  # noqa: SLF001
+        turn_id,
+        turn_state,
+    )
+    assert len(
+        [
+            event
+            for event in bus.events
+            if isinstance(event, AnnouncementRequested)
+            and event.kind == "completion"
+        ]
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_surface_claim_recovers_once_in_originating_language():
+    from jarvis.realtime.session import _DelegateTurnState
+
+    async def _failed_surface_send(_message):
+        raise RuntimeError("surface disconnected")
+
+    bus = FakeBus()
+    binaries = []
+    sess = RealtimeVoiceSession(
+        session_id="surface-recovery",
+        send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
+        send_json=_failed_surface_send,
+        provider=FakeProvider([]),
+        config=_cfg(reply_language="en"),
+        bus=bus,
+    )
+    state = _DelegateTurnState(
+        last_reply="Das Ergebnis wurde erfolgreich gespeichert.",  # i18n-allow
+        result_complete=True,
+        result_success=True,
+        language="de",
+        delivery_id="surface-recovery:turn-1",
+    )
+
+    assert not await sess._send_delegate_surface_fallback(  # noqa: SLF001
+        state,
+        state.last_reply,
+    )
+    assert state.surface_fallback_confirmed is False
+    assert state.delivery_completed is True
+    assert state.delivery_channel == "detached"
+
+    assert not await sess._deliver_detached_delegate_result(  # noqa: SLF001
+        "turn-1",
+        state,
+    )
+    announcements = [
+        event for event in bus.events if isinstance(event, AnnouncementRequested)
+    ]
+    assert len(announcements) == 1
+    assert announcements[0].language == "de"
+    assert announcements[0].text == state.last_reply
+    sess._turn_id = "turn-1"  # noqa: SLF001
+    sess._delegate_turns["turn-1"] = state  # noqa: SLF001
+    await sess._emit_audio(  # noqa: SLF001
+        AudioChunk(
+            pcm=b"\x10\x00" * 160,
+            sample_rate=24_000,
+            timestamp_ns=0,
+        )
+    )
+    assert binaries == []
+
+
+@pytest.mark.asyncio
+async def test_provider_audio_is_blocked_as_soon_as_teardown_begins():
+    binaries = []
+    sess = _session(FakeProvider([]), binaries=binaries)
+    sess._ended = True  # noqa: SLF001
+
+    await sess._emit_audio(  # noqa: SLF001
+        AudioChunk(
+            pcm=b"\x10\x00" * 160,
+            sample_rate=24_000,
+            timestamp_ns=0,
+        )
+    )
+
+    assert binaries == []
+
+
+@pytest.mark.asyncio
+async def test_tagged_provider_response_rejects_later_untagged_transcript():
+    sess = _session(FakeProvider([]))
+    tagged_audio = RealtimeEvent(
+        type="audio_delta",
+        audio=AudioChunk(
+            pcm=b"\x10\x00" * 160,
+            sample_rate=24_000,
+            timestamp_ns=0,
+        ),
+        provider_turn_id="response-a",
+    )
+
+    assert await sess._accept_provider_response_event(tagged_audio)  # noqa: SLF001
+    assert await sess._gate.push_audio(  # noqa: SLF001
+        tagged_audio.audio,
+        response_id="response-a",
+    ) == []
+    assert not await sess._accept_provider_response_event(  # noqa: SLF001
+        RealtimeEvent(
+            type="output_transcript_delta",
+            text="Stale transcript without an owner.",
+        )
+    )
+    assert sess._gate.release_available() == []  # noqa: SLF001
+    assert sess._response_identity_drops == 1  # noqa: SLF001
+
+
+@pytest.mark.asyncio
 async def test_turn_after_a_pending_action_may_not_claim_an_outcome():
     gate = asyncio.Event()
     dispatch_started = asyncio.Event()
@@ -3482,7 +3867,7 @@ async def test_blocked_action_promise_still_dispatches_after_boundary_timeout(
 
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
     async with asyncio.timeout(2):
-        while not provider.session.text_inputs:
+        while not provider.session.text_inputs:  # noqa: ASYNC110 - fake has no event
             await asyncio.sleep(0.01)
 
     assert brain.calls, "the recovery must dispatch the brain turn"
@@ -3549,7 +3934,7 @@ class _PreemptedDelegateBridgeSession(FakeSession):
     async def receive(self):
         yield RealtimeEvent(
             type="input_transcript",
-            text="Check the current figure.",
+            text="Check my current wiki status.",
             is_final=True,
         )
         await self._bridge_sent.wait()
@@ -5368,12 +5753,13 @@ async def test_presence_check_without_pending_action_stays_native():
 
 
 @pytest.mark.asyncio
-async def test_session_end_names_the_delegated_request_it_cancels(caplog):
-    """A hangup mid-action must leave a trace of the answer it discarded."""
+async def test_session_end_names_the_delegated_request_it_retains(caplog):
+    """A hangup mid-action must name and retain the result delivery debt."""
     import logging as _logging
 
-    gate = asyncio.Event()  # never set: the delegated action never finishes
+    gate = asyncio.Event()
     brain = FakeBrain(gate=gate)
+    bus = FakeBus()
     provider = FakeProvider(
         [
             RealtimeEvent(
@@ -5384,11 +5770,11 @@ async def test_session_end_names_the_delegated_request_it_cancels(caplog):
             RealtimeEvent(type="turn_complete"),
         ]
     )
-    sess = _session(provider, brain=brain)
+    sess = _session(provider, brain=brain, bus=bus)
 
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
     await sess.wait_finished()
-    with caplog.at_level(_logging.WARNING, logger="jarvis.realtime.session"):
+    with caplog.at_level(_logging.INFO, logger="jarvis.realtime.session"):
         await sess.end(reason="hotkey")
 
     lost = [
@@ -5398,6 +5784,17 @@ async def test_session_end_names_the_delegated_request_it_cancels(caplog):
     ]
     assert len(lost) == 1
     assert "travel plan" in lost[0].getMessage()
+    assert "retaining it for exactly-once delivery" in lost[0].getMessage()
+    assert brain.cancelled is False
+
+    gate.set()
+    for _ in range(100):
+        if any(isinstance(event, AnnouncementRequested) for event in bus.events):
+            break
+        await asyncio.sleep(0.01)
+    assert len(
+        [event for event in bus.events if isinstance(event, AnnouncementRequested)]
+    ) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -5480,7 +5877,7 @@ class RebuildingProvider(FakeProvider):
 
 async def _wait_until(predicate):
     async with asyncio.timeout(2):
-        while not predicate():
+        while not predicate():  # noqa: ASYNC110 - shared bounded test helper
             await asyncio.sleep(0.01)
 
 

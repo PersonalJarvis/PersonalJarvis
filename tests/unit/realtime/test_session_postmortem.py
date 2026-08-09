@@ -145,6 +145,17 @@ async def test_end_publishes_one_postmortem_with_adapter_counters() -> None:
     session._handoff_requests = 1  # noqa: SLF001 - postmortem inputs
     session._handoff_delegate_dispatches = 2  # noqa: SLF001 - postmortem inputs
     session._handoff_declines = 1  # noqa: SLF001 - postmortem inputs
+    session._public_fact_grounding_attempts = 2  # noqa: SLF001
+    session._public_fact_grounding_successes = 1  # noqa: SLF001
+    session._public_fact_grounding_failures = 1  # noqa: SLF001
+    session._output_language_mismatches = 2  # noqa: SLF001
+    session._output_language_retries = 1  # noqa: SLF001
+    session._output_language_failures = 1  # noqa: SLF001
+    session._delegate_delivery_claims = 2  # noqa: SLF001
+    session._delegate_deliveries_completed = 1  # noqa: SLF001
+    session._delegate_delivery_recoveries = 1  # noqa: SLF001
+    session._delegate_delivery_duplicates_suppressed = 1  # noqa: SLF001
+    session._delegate_deliveries_detached = 1  # noqa: SLF001
 
     await asyncio.wait_for(session.end(reason="hotkey"), TIMEOUT_S)
 
@@ -161,6 +172,17 @@ async def test_end_publishes_one_postmortem_with_adapter_counters() -> None:
     assert event.handoff_delegate_dispatches == 2
     assert event.handoff_declines == 1
     assert event.handoff_obligation_misses == 1
+    assert event.public_fact_grounding_attempts == 2
+    assert event.public_fact_grounding_successes == 1
+    assert event.public_fact_grounding_failures == 1
+    assert event.output_language_mismatches == 2
+    assert event.output_language_retries == 1
+    assert event.output_language_failures == 1
+    assert event.delegate_delivery_claims == 2
+    assert event.delegate_deliveries_completed == 1
+    assert event.delegate_delivery_recoveries == 1
+    assert event.delegate_delivery_duplicates_suppressed == 1
+    assert event.delegate_deliveries_detached == 1
     assert event.ready_ms >= 0
     assert event.close_clean is True
 

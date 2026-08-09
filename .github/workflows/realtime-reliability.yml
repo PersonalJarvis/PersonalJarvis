@@ -1,0 +1,134 @@
+# Realtime's small, blocking cross-platform contract.  It is separate from the
+# monolithic CI matrix so macOS can run this focused suite on every change
+# without multiplying the hour-long full-suite cost.
+#
+# No job here owns a microphone, speaker, desktop session, or provider secret.
+# Physical microphone/acoustic-echo behavior, device hot-plug, and macOS TCC
+# prompts remain explicit human release sign-offs; a headless runner must never
+# turn their absence into a fake green result.
+
+name: Realtime reliability
+
+on:
+  push:
+    branches:
+      - main
+      - "wip/cross-platform-cloud-first-20260529"
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_contract_soak:
+        description: "Run the extended synthetic orchestration soak (not release evidence)."
+        type: boolean
+        default: true
+
+concurrency:
+  group: realtime-reliability-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  provider-contract:
+    name: provider contract (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install portable base and focused test runner
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest pytest-asyncio
+
+      - name: Blocking provider-neutral realtime contract
+        run: >-
+          python -m pytest
+          tests/contract/test_realtime_provider_contract.py
+          tests/contract/test_realtime_reliability_gate.py
+          -q -p no:cacheprovider
+
+  python-slim-no-audio:
+    name: python:3.11-slim (no PortAudio)
+    runs-on: ubuntu-latest
+    container: python:3.11-slim
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install base without system audio libraries
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest pytest-asyncio
+
+      - name: Prove the container really has no usable PortAudio
+        run: |
+          python - <<'PY'
+          try:
+              import sounddevice  # noqa: F401
+          except Exception as exc:
+              print(f"NO_PORTAUDIO: {type(exc).__name__}: {exc}")
+          else:
+              raise SystemExit("python:3.11-slim unexpectedly loaded PortAudio")
+          PY
+
+      - name: Blocking headless realtime degradation contract
+        run: >-
+          python -m pytest
+          tests/contract/test_realtime_provider_contract.py
+          tests/contract/test_realtime_reliability_gate.py
+          -q -p no:cacheprovider
+
+  extended-contract-soak:
+    name: extended contract soak (not release evidence)
+    # This synthetic orchestration proof must never green-light a tag. A real
+    # release still needs same-SHA target measurements and manual acoustic
+    # sign-off, neither of which a headless GitHub runner can produce.
+    if: github.event_name == 'workflow_dispatch' && inputs.run_contract_soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install portable base
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Run provider-neutral orchestration soak
+        run: python scripts/realtime_reliability_gate.py --contract-soak

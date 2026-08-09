@@ -12,6 +12,115 @@ def _chunk(n: int) -> AudioChunk:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("language", "text"),
+    [
+        (
+            "en",
+            "This is a clear English answer with enough ordinary words to "
+            "identify the language correctly.",
+        ),
+        (
+            "de",
+            "Das ist eine klare deutsche Antwort mit genügend gewöhnlichen "  # i18n-allow
+            "Wörtern für eine sichere Erkennung.",  # i18n-allow
+        ),
+        (
+            "es",
+            "Esta es una respuesta clara en español con suficientes palabras "
+            "comunes para reconocer el idioma.",
+        ),
+    ],
+)
+async def test_resolved_output_language_releases_matching_pcm(
+    language: str,
+    text: str,
+) -> None:
+    gate = ScrubHoldGate(language=language)
+    buffered = _chunk(16)
+
+    assert await gate.push_audio(buffered) == []
+    assert await gate.feed_transcript(
+        text,
+        enforce_output_language=True,
+    ) == text
+
+    assert gate.hard_leak_pending() is False
+    assert gate.release_available() == [buffered]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("language", "text"),
+    [
+        (
+            "en",
+            "Xin chào, đây là câu trả lời bằng tiếng Việt với nhiều từ rõ "
+            "ràng để xác định ngôn ngữ.",
+        ),
+        (
+            "de",
+            "这是一个完整的中文回答，包含足够多的文字来可靠地识别语言。",
+        ),
+    ],
+)
+async def test_gross_wrong_language_blocks_all_buffered_pcm(
+    language: str,
+    text: str,
+) -> None:
+    gate = ScrubHoldGate(language=language)
+    buffered = _chunk(16)
+
+    assert await gate.push_audio(buffered) == []
+    assert await gate.feed_transcript(
+        text,
+        enforce_output_language=True,
+    ) == gate.fallback_phrase()
+
+    assert gate.hard_leak_pending() is True
+    assert gate.hard_leak_actions() == ("output_language_mismatch",)
+    assert gate.pending_audio_ms == 0.0
+    assert gate.release_available() == []
+
+
+@pytest.mark.asyncio
+async def test_indeterminate_language_prefix_never_releases_pcm_before_mismatch():
+    gate = ScrubHoldGate(language="en")
+    buffered = _chunk(16)
+
+    assert await gate.push_audio(buffered) == []
+    assert await gate.feed_transcript(
+        "Das ist",  # i18n-allow
+        enforce_output_language=True,
+    ) == "Das ist"  # i18n-allow
+    assert gate.release_available() == []
+
+    display = await gate.feed_transcript(
+        " eine klare deutsche Antwort mit vielen normalen Woertern.",  # i18n-allow
+        enforce_output_language=True,
+    )
+
+    assert display == gate.fallback_phrase()
+    assert gate.hard_leak_actions() == ("output_language_mismatch",)
+    assert gate.release_available() == []
+
+
+@pytest.mark.asyncio
+async def test_complete_indeterminate_reply_releases_only_at_final_boundary():
+    gate = ScrubHoldGate(language="en")
+    buffered = _chunk(16)
+
+    assert await gate.push_audio(buffered) == []
+    assert await gate.feed_transcript(
+        "OK",
+        enforce_output_language=True,
+    ) == "OK"
+    assert gate.release_available() == []
+
+    assert gate.finalize() == [buffered]
+
+
+@pytest.mark.asyncio
 async def test_clean_transcript_releases_buffered_audio():
     gate = ScrubHoldGate(language="en")
     await gate.push_audio(_chunk(4))

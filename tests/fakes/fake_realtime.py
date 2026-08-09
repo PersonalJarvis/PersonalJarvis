@@ -20,6 +20,7 @@ class FakeRealtimeWire:
         self._hold_after_events = hold_after_events
         self.events_drained = asyncio.Event()
         self.sent_audio: list[Any] = []
+        self.sent_text: list[str] = []
         self.tool_results: list[tuple[str, str, dict[str, Any]]] = []
         self.session_updates: list[dict[str, Any]] = []
         self.response_requests = 0
@@ -30,6 +31,10 @@ class FakeRealtimeWire:
 
     async def send_audio(self, chunk: Any) -> None:
         self.sent_audio.append(chunk)
+
+    async def send_text(self, text: str) -> None:
+        """Record an injected provider prompt required by the wire protocol."""
+        self.sent_text.append(text)
 
     async def receive(self):
         for event in self._events:

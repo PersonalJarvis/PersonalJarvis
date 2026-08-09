@@ -351,6 +351,35 @@ def test_output_language_validator_does_not_reject_a_chinese_name() -> None:
     assert result.detected_language != "zh"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Name: 中华人民共和国",
+        "中华人民共和国",
+        "Label: 中华人民共和国",
+        "The organization 中华人民共和国 is listed with the correct English name.",
+    ],
+)
+def test_output_language_validator_keeps_short_han_names_non_blocking(
+    text: str,
+) -> None:
+    result = validate_output_language(text, resolved_language="en")
+
+    assert result.detected_language != "zh"
+    assert result.should_block is False
+
+
+def test_output_language_validator_still_blocks_long_han_corruption() -> None:
+    result = validate_output_language(
+        "这是一个完全错误的中文回答必须立即阻止不能向用户播放",
+        resolved_language="en",
+    )
+
+    assert result.status == "mismatch"
+    assert result.detected_language == "zh"
+    assert result.should_block is True
+
+
 def test_output_language_validator_does_not_reject_a_vietnamese_name() -> None:
     result = validate_output_language(
         "The meeting with Nguyễn Văn Bình is today.",

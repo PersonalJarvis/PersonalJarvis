@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -231,11 +233,7 @@ async def test_unconfigured_local_provider_probe_is_false() -> None:
 )
 def test_plugin_module_imports_no_jarvis_modules(path: Path):
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    imports = [
-        node.module or ""
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-    ]
+    imports = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
     direct_imports = [
         alias.name
         for node in ast.walk(tree)
@@ -243,9 +241,7 @@ def test_plugin_module_imports_no_jarvis_modules(path: Path):
         for alias in node.names
     ]
     assert not any(name == "jarvis" or name.startswith("jarvis.") for name in imports)
-    assert not any(
-        name == "jarvis" or name.startswith("jarvis.") for name in direct_imports
-    )
+    assert not any(name == "jarvis" or name.startswith("jarvis.") for name in direct_imports)
 
 
 @pytest.mark.parametrize(
@@ -257,18 +253,41 @@ def test_plugin_module_imports_no_jarvis_modules(path: Path):
 )
 def test_provider_sdk_import_is_lazy(path: Path, sdk_root: str):
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    top_level = [
-        node
-        for node in tree.body
-        if isinstance(node, (ast.Import, ast.ImportFrom))
-    ]
-    names = [
-        alias.name
-        for node in top_level
-        for alias in (getattr(node, "names", []) or [])
-    ]
+    top_level = [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
+    names = [alias.name for node in top_level for alias in (getattr(node, "names", []) or [])]
     modules = [getattr(node, "module", "") or "" for node in top_level]
     assert not any(
-        name == sdk_root or name.startswith(f"{sdk_root}.")
-        for name in [*names, *modules]
+        name == sdk_root or name.startswith(f"{sdk_root}.") for name in [*names, *modules]
     )
+
+
+def test_headless_realtime_stack_reports_unavailable_without_audio_libraries() -> None:
+    """A slim/no-audio host imports cleanly and returns an honest capability.
+
+    A fresh interpreter is required: the contract module imports provider
+    classes above, while this proof must take the actual missing-dependency
+    branch before any audio or WebRTC module reaches ``sys.modules``.
+    """
+    code = "\n".join(
+        (
+            "import sys",
+            "sys.modules['sounddevice'] = None",
+            "sys.modules['aiortc'] = None",
+            "sys.modules['av'] = None",
+            "from jarvis.audio.devices import list_devices",
+            "from jarvis.realtime.webrtc_transport import webrtc_unavailable_reason",
+            "assert list_devices(output=True) == []",
+            "reason = webrtc_unavailable_reason()",
+            "assert reason and 'aiortc' in reason.lower(), reason",
+            "print('HEADLESS_DEGRADED')",
+        )
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "HEADLESS_DEGRADED" in result.stdout

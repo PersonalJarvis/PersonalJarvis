@@ -269,6 +269,9 @@ async def _open_call() -> tuple[
         session.handle_control({"type": "audio_start", "sample_rate": INPUT_RATE}),
         TIMEOUT_S,
     )
+    # The real desktop surface supplies this probe. This in-memory surface has
+    # no device queue, so every forwarded frame is drained immediately.
+    session.set_playback_probe(lambda: False)
     assert provider.sessions, "the provider was never opened"
     return session, provider, provider.sessions[0], surface
 
@@ -502,7 +505,13 @@ async def test_a_turn_without_any_terminal_item_does_not_wedge_the_next_one(
         wire.push(
             RealtimeEvent(type="speech_started"),
             RealtimeEvent(type="input_transcript", text="no boundary please", is_final=True),
-            RealtimeEvent(type="output_transcript_delta", text="An answer with no end."),
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text=(
+                    "This is a complete English answer with enough ordinary "
+                    "words to establish its language, but no terminal boundary."
+                ),
+            ),
             RealtimeEvent(type="audio_delta", audio=_audio()),
             # No turn_complete, deliberately.
         )
@@ -626,13 +635,11 @@ async def test_a_late_user_transcript_does_not_break_the_turn_in_flight() -> Non
         since = surface.mark()
         wire.push(
             RealtimeEvent(type="speech_started"),
-            RealtimeEvent(type="input_transcript", text="what is the weather", is_final=True),
-            RealtimeEvent(type="output_transcript_delta", text="It is sunny."),
+            RealtimeEvent(type="input_transcript", text="how are you", is_final=True),
+            RealtimeEvent(type="output_transcript_delta", text="I am doing well."),
             RealtimeEvent(type="audio_delta", audio=_audio()),
             # The far end's own copy of the SAME utterance, arriving late.
-            RealtimeEvent(
-                type="input_transcript", text="what is the weather", is_final=True
-            ),
+            RealtimeEvent(type="input_transcript", text="how are you", is_final=True),
             RealtimeEvent(type="turn_complete"),
         )
         await surface.wait_json(lambda m: m.get("type") == "turn_complete", since=since)
