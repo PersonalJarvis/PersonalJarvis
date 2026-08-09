@@ -53,6 +53,16 @@ class _Answers:
         return self._text
 
 
+class _RecordsAnswer(_Answers):
+    def __init__(self) -> None:
+        super().__init__()
+        self.max_output_tokens = 0
+
+    async def complete(self, _system: str, _user: str, **kw: Any) -> str:
+        self.max_output_tokens = int(kw["max_output_tokens"])
+        return await super().complete(_system, _user, **kw)
+
+
 class _Raises:
     def __init__(self, message: str):
         self._message = message
@@ -71,6 +81,18 @@ def test_a_provider_that_answers_in_time_is_ok() -> None:
     assert res.status == "ok"
     # Reported under the CARD id, so the UI can attach the verdict to a card.
     assert res.provider == "groq-polish"
+
+
+def test_probe_reserves_room_for_reasoning_models_final_text() -> None:
+    client = _RecordsAnswer()
+
+    _run(
+        probe_polish_family(
+            _family("groq"), _cfg(), make_client=lambda _f, _m: client
+        )
+    )
+
+    assert client.max_output_tokens == 256
 
 
 def test_a_provider_slower_than_the_budget_is_not_reported_healthy() -> None:

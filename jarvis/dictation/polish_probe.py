@@ -136,7 +136,11 @@ async def probe_polish_family(
             client.complete(
                 PROBE_SYSTEM,
                 PROBE_USER,
-                max_output_tokens=64,
+                # Reasoning-capable providers count hidden work against this
+                # ceiling too. 64 tokens can therefore yield HTTP 200 with no
+                # visible text; 256 remains small for a one-sentence probe while
+                # leaving room for the final answer.
+                max_output_tokens=256,
                 temperature=0.0,
                 timeout_s=ceiling_s,
             ),

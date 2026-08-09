@@ -50,6 +50,7 @@ from jarvis.dictation.polish_client import (
 )
 
 GROQ: PolishFamily = POLISH_FAMILIES[0]
+OPENAI: PolishFamily = next(f for f in POLISH_FAMILIES if f.id == "openai")
 GEMINI: PolishFamily = next(f for f in POLISH_FAMILIES if f.transport == "gemini")
 
 RAW = "so we should probably move the meeting to the morning and tell the team"
@@ -446,6 +447,64 @@ async def test_the_openai_chat_transport_returns_the_message_content(
     assert seen[0]["model"] == "m"
     assert [m["role"] for m in seen[0]["messages"]] == ["system", "user"]
     assert seen[0]["max_tokens"] == 1200
+
+
+async def test_openai_compatible_transport_requests_low_reasoning_cross_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rewrite intent is a transport option, never a family/model allowlist."""
+    import httpx
+
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": POLISHED}}]}
+        )
+
+    _mock_http(monkeypatch, handler)
+    client = OpenAIChatPolishClient(OPENAI, model="arbitrary-future-model", api_key="k")
+
+    text = await client.complete(
+        "system", "user", max_output_tokens=256, temperature=0.0, timeout_s=1.0
+    )
+
+    assert text == POLISHED
+    assert seen[0]["max_tokens"] == 256
+    assert seen[0]["reasoning_effort"] == "low"
+
+
+async def test_low_reasoning_intent_is_stripped_after_explicit_400_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An incompatible endpoint gets one honest retry without the option."""
+    import httpx
+
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        bodies.append(body)
+        if "reasoning_effort" in body:
+            return httpx.Response(
+                400, text="Unsupported parameter: 'reasoning_effort'."
+            )
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": POLISHED}}]}
+        )
+
+    _mock_http(monkeypatch, handler)
+    client = OpenAIChatPolishClient(GROQ, model="any-model", api_key="k")
+
+    text = await client.complete(
+        "system", "user", max_output_tokens=256, temperature=0.0, timeout_s=1.0
+    )
+
+    assert text == POLISHED
+    assert len(bodies) == 2
+    assert bodies[0]["reasoning_effort"] == "low"
+    assert "reasoning_effort" not in bodies[1]
 
 
 async def test_a_rate_limited_transport_reports_its_status_and_retry_after(

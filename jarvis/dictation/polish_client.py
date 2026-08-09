@@ -748,6 +748,12 @@ class OpenAIChatPolishClient:
             "max_tokens": max_output_tokens,
             "temperature": temperature,
             "stream": False,
+            # A polish pass is a deterministic rewrite, so OpenAI-compatible
+            # transports should spend their budget on visible text rather than
+            # hidden reasoning. This is an optional wire-level intent, not a
+            # provider/model capability claim: a 400 naming the field removes
+            # it for the single schema-negotiation retry below.
+            "reasoning_effort": "low",
         }
         data = await self._post(payload, timeout_s=timeout_s)
         choices = data.get("choices") or []
@@ -760,11 +766,10 @@ class OpenAIChatPolishClient:
     async def _post(self, payload: dict[str, Any], *, timeout_s: float) -> dict[str, Any]:
         """POST the payload, retrying ONCE against a schema-shape rejection.
 
-        Newer OpenAI-schema endpoints renamed ``max_tokens`` to
-        ``max_completion_tokens`` and pin ``temperature`` to 1 on some models.
-        Both show up as a 400 naming the offending field, so the retry is driven
-        by what the SERVER said rather than by a model-id allowlist that would
-        rot with every release (AP-21).
+        OpenAI-compatible endpoints can rename ``max_tokens``, pin
+        ``temperature``, or reject the optional low-reasoning intent. These
+        show up as a 400 naming the offending field, so the retry is driven by
+        what the SERVER said rather than by a provider/model allowlist (AP-21).
         """
         import httpx
 
@@ -832,6 +837,9 @@ def _relax_payload(payload: dict[str, Any], body: str) -> dict[str, Any] | None:
         changed = True
     if "temperature" in lowered and "temperature" in adjusted:
         adjusted.pop("temperature")
+        changed = True
+    if "reasoning_effort" in lowered and "reasoning_effort" in adjusted:
+        adjusted.pop("reasoning_effort")
         changed = True
     return adjusted if changed else None
 
