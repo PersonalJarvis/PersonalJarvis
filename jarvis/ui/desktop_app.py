@@ -101,6 +101,13 @@ _REALTIME_WARM_VOICE_GATE_S = 45.0
 #: account once per call.
 _REALTIME_WARM_MIN_INTERVAL_S = 20.0
 
+#: How long the backend must have been serving before its death is treated as
+#: an accident worth recovering from (see ``_note_backend_stopped``). Below
+#: this it reads as a boot failure — the fresh process would hit the same wall
+#: and relaunch again, so the app stays down and says why instead. Comfortably
+#: above a full cold boot, including model prefetch on a cold disk.
+_BACKEND_MIN_UPTIME_FOR_RECOVERY_S = 120.0
+
 
 def _local_voice_permission_granted(
     *,
@@ -429,6 +436,78 @@ def _install_desktop_log_sink(log_path: Path) -> None:
         root.setLevel(_logging.INFO)
 
     logger.info("Desktop log sink active: {}", log_path)
+
+
+_CRASH_HOOKS_INSTALLED = False
+
+
+def _build_crash_hooks(
+    previous_thread_hook: Any, previous_main_hook: Any
+) -> tuple[Any, Any]:
+    """Build the ``(threading.excepthook, sys.excepthook)`` pair.
+
+    Split out from the installer so the behaviour can be tested without
+    swapping two process-wide hooks — a test that does that leaks into every
+    test after it.
+    """
+    from loguru import logger
+
+    def _thread_hook(args: Any) -> None:
+        # A thread torn down during interpreter shutdown reports SystemExit
+        # with no traceback. That is an exit, not a crash.
+        if args.exc_type is not SystemExit:
+            logger.opt(
+                exception=(args.exc_type, args.exc_value, args.exc_traceback)
+            ).critical(
+                "Thread '{}' died on an unhandled exception — whatever it was "
+                "serving is gone for the rest of this process.",
+                getattr(args.thread, "name", "<unnamed>"),
+            )
+        try:
+            previous_thread_hook(args)
+        except Exception:  # noqa: BLE001, S110 — the fallback reporter is
+            # best-effort; we already have the line that matters.
+            pass
+
+    def _main_hook(exc_type: Any, exc_value: Any, exc_tb: Any) -> None:
+        if not issubclass(exc_type, KeyboardInterrupt):
+            logger.opt(exception=(exc_type, exc_value, exc_tb)).critical(
+                "Main thread died on an unhandled exception."
+            )
+        try:
+            previous_main_hook(exc_type, exc_value, exc_tb)
+        except Exception:  # noqa: BLE001, S110 — see above.
+            pass
+
+    return _thread_hook, _main_hook
+
+
+def _install_crash_hooks() -> None:
+    """Route a thread or main-thread crash into the log file.
+
+    The sink above only catches what someone *logs*. An exception that escapes
+    a thread's target goes to :data:`threading.excepthook`, and one that
+    escapes the main thread goes to :data:`sys.excepthook` — both of which
+    print to ``sys.stderr``, which ``pythonw.exe`` does not have. So the
+    loudest failure this app can suffer is also its quietest one.
+
+    That is exactly how the backend can end mid-session and leave nothing
+    behind but the pending tasks asyncio destroys on the way out: the window
+    stays up, every socket is gone, the sidebar flips to OFFLINE, and the log
+    holds no reason at all (live incident 2026-08-09, 15:44:45 — eighteen
+    "Task was destroyed but it is pending" lines and not one word of cause).
+
+    Both hooks chain to whatever was installed before, so a debugger's own
+    reporting still runs. Idempotent.
+    """
+    global _CRASH_HOOKS_INSTALLED
+    if _CRASH_HOOKS_INSTALLED:
+        return
+    _CRASH_HOOKS_INSTALLED = True
+
+    threading.excepthook, sys.excepthook = _build_crash_hooks(
+        threading.excepthook, sys.excepthook
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1111,9 +1190,20 @@ class DesktopApp:
         # calling add() with an identical sink would duplicate it, hence the
         # module-global guard.
         _install_desktop_log_sink(DATA_DIR / "jarvis_desktop.log")
+        # ...and the sink alone is not enough: it only records what someone
+        # logs. A thread that dies on an exception reports to a stderr that
+        # does not exist here, so the crash that matters most is the one the
+        # log never mentions. See _install_crash_hooks.
+        _install_crash_hooks()
 
         self._backend_thread: threading.Thread | None = None
         self._backend_loop: asyncio.AbstractEventLoop | None = None
+        # Monotonic stamp of the moment the backend loop began serving, and a
+        # one-shot latch — together they gate the automatic recovery in
+        # _note_backend_stopped so a crash-on-boot can never become a
+        # relaunch loop.
+        self._backend_serving_since: float | None = None
+        self._auto_recovery_used = False
         # Off-loop stall reporter, armed once the backend loop starts serving.
         self._loop_watchdog: Any = None
         self._server: WebServer | None = None
@@ -2315,7 +2405,26 @@ class DesktopApp:
             # and a sampling profiler attached to the live process was the only
             # way to learn it was a TOML parse). Costs one sleeping thread.
             self._start_loop_watchdog(loop)
-            loop.run_forever()
+            self._backend_serving_since = time.monotonic()
+            # run_forever() has exactly one legitimate way out: shutdown()
+            # calling loop.stop(). Every OTHER way out — a BaseException from
+            # a callback, a stop nobody asked for — takes the whole backend
+            # with it and leaves the window standing in front of a dead
+            # process. Naming which of the two happened is the difference
+            # between a diagnosable incident and a grey OFFLINE dot.
+            try:
+                loop.run_forever()
+            except BaseException as exc:  # noqa: BLE001 — re-raising here
+                # would only reach the excepthook; we want it in the log WITH
+                # the recovery decision that follows, then a clean unwind.
+                from loguru import logger as _crash_log
+
+                _crash_log.opt(exception=exc).critical(
+                    "Backend event loop crashed out of run_forever()."
+                )
+                self._note_backend_stopped(f"{type(exc).__name__}: {exc}")
+            else:
+                self._note_backend_stopped("the loop was stopped")
         finally:
             self._stop_loop_watchdog()
             try:
@@ -2361,6 +2470,87 @@ class DesktopApp:
             watchdog.stop()
         except Exception:  # noqa: BLE001, S110 — teardown of a diagnostic
             pass
+
+    # ---- Backend death -------------------------------------------------------
+
+    def _note_backend_stopped(self, reason: str) -> None:
+        """The backend loop has ended. Say so, and refuse to be a ghost.
+
+        Two very different situations reach this point:
+
+        * The user quit or restarted. ``shutdown()`` set the flag, the window
+          is on its way out, and there is nothing to report.
+        * Nobody asked. The loop is gone but the GUI thread keeps the window
+          on screen, so the app is still *there* — it just cannot serve a
+          single request. Every live surface goes dark at once and the only
+          thing the user is told is a grey OFFLINE dot in the sidebar, with no
+          reason and no way back short of killing the app by hand. That is the
+          state reported 2026-08-09, and an app that can enter it silently is
+          the actual defect, not the crash that started it.
+
+        For the second case: log it as the incident it is, then use the same
+        relauncher the in-app Restart button uses to bring the process back.
+        Two guards keep that from becoming a loop — it fires at most once per
+        process, and only for a backend that had genuinely been serving. A
+        backend that dies during boot therefore fails visibly and stays
+        failed, which is the honest outcome: restarting it would just crash
+        the same way, forever.
+        """
+        from loguru import logger
+
+        # Every read is a getattr: this runs on the way OUT, including out of a
+        # backend that never finished coming up, and a half-built instance must
+        # not turn a crash report into a second crash.
+        if getattr(self, "_shutdown_done", False) or getattr(
+            self, "_user_requested_quit", False
+        ):
+            logger.debug("Backend loop ended as part of shutdown ({}).", reason)
+            return
+
+        started = getattr(self, "_backend_serving_since", None)
+        served_s = 0.0 if started is None else time.monotonic() - started
+        logger.critical(
+            "Backend loop ended after {:.0f}s WITHOUT a shutdown request "
+            "({}). Every socket, route and voice surface is gone; the window "
+            "is still on screen.",
+            served_s,
+            reason,
+        )
+
+        window_up = getattr(self, "_window", None) is not None or bool(
+            getattr(self, "_detached_windows", None)
+        )
+        if not window_up:
+            # Headless, or the window is already down: the process is ending
+            # anyway and a relaunch would fight the exit path.
+            logger.info("No window left to rescue — letting the process end.")
+            return
+        if getattr(self, "_auto_recovery_used", False):
+            logger.error(
+                "Automatic recovery was already used this process — not "
+                "restarting again. Please restart the app."
+            )
+            return
+        if served_s < _BACKEND_MIN_UPTIME_FOR_RECOVERY_S:
+            logger.error(
+                "Backend survived only {:.0f}s (< {:.0f}s) — treating this as "
+                "a boot failure and NOT restarting, so a broken build cannot "
+                "relaunch itself forever.",
+                served_s,
+                _BACKEND_MIN_UPTIME_FOR_RECOVERY_S,
+            )
+            return
+
+        self._auto_recovery_used = True
+        scheduled, detail = self._schedule_restart(drop_elevation=False)
+        if scheduled:
+            logger.warning("Backend died — restarting the app automatically.")
+        else:
+            logger.error(
+                "Backend died and the automatic restart could not be "
+                "scheduled ({}). The window will stay up but stay offline.",
+                detail,
+            )
 
     def _start_virtual_cursor(self) -> None:
         """Arm the Jarvis cursor identity and (optionally) the click-pulse overlay.
