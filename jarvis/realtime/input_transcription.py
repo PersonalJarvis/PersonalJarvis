@@ -138,6 +138,23 @@ _RECOGNITION_TIMEOUT_MAX_S = 90.0
 _RECOVER_AFTER_FAILURES = 2
 _RECOVER_AFTER_BUSY = 3
 
+# A SET busy flag is not evidence of a wedge. Since one engine is shared
+# process-wide, the ordinary meaning of "busy" is that ANOTHER session is inside
+# a perfectly healthy recognition — the cache doing exactly its job. Counting
+# those skips toward a rebuild made routine contention indistinguishable from a
+# wedge: the second session evicted the shared engine and tore the backend down
+# while the first was still inside an inference, so that utterance was lost, both
+# sessions re-paid a multi-second model load, and the weights were briefly
+# resident twice.
+#
+# What DOES prove a wedge is wall-clock. Every recognition runs under its own
+# ``asyncio.wait_for`` bound and every exit path — success, timeout, error,
+# cancellation — clears the flag, so a busy span that outlives the holder's own
+# bound by this margin cannot still be running: the holder is gone (its loop went
+# away mid-flight, or a native worker was abandoned) and the flag will never
+# clear by itself. Only that span may rebuild the engine.
+_BUSY_WEDGE_GRACE_S = 10.0
+
 # Control events (``speech_started``) are grounding evidence, not telemetry: a
 # dropped one makes the adapter treat the next genuine answer as a self-echo and
 # interrupt it. The queue is therefore bounded by EVICTING the oldest droppable
@@ -258,10 +275,19 @@ class _SharedRecognizer:
     once two sessions can share one cached backend, a per-object flag cannot see
     the other caller, and entering a native engine twice at once is what wedges
     it permanently (AP-24).
+
+    ``busy_since`` / ``busy_bound_s`` travel with the flag for the same reason:
+    the transcriber that has to decide whether a busy engine is merely serving
+    someone else or is genuinely wedged is a DIFFERENT object from the one that
+    took the guard, so the evidence cannot live on the holder.
     """
 
     backend: Any
     busy: bool = False
+    #: Monotonic instant the in-flight recognition took the guard, and the
+    #: timeout it runs under. Both are meaningless while ``busy`` is False.
+    busy_since: float = 0.0
+    busy_bound_s: float = 0.0
 
 
 # Building the recognizer is the expensive half of opening a realtime call — a
@@ -395,6 +421,9 @@ class LocalInputTranscriber:
         # Held here only while this transcriber owns its engine alone; a cached
         # engine carries the flag itself (see ``_recognition_busy``).
         self._local_recognition_busy = False
+        # The unshared mirror of the shared record's busy timestamps.
+        self._local_busy_since = 0.0
+        self._local_busy_bound_s = 0.0
         # Serializes only the CONSTRUCTION of the recognizer, so two utterances
         # racing at session start cannot load the model twice. Never held across
         # an inference: a model load inside the inference guard made the first
@@ -591,11 +620,48 @@ class LocalInputTranscriber:
 
     @_recognition_busy.setter
     def _recognition_busy(self, value: bool) -> None:
+        # Without a caller-supplied bound the only honest assumption is the
+        # widest one a recognition can legitimately run under.
+        self._set_recognition_busy(bool(value), bound_s=_RECOGNITION_TIMEOUT_MAX_S)
+
+    def _set_recognition_busy(self, busy: bool, *, bound_s: float) -> None:
+        """Flip the in-flight guard and stamp what the holder is bounded by.
+
+        Written onto the shared cache entry whenever there is one, because the
+        reader of these fields is the OTHER transcriber on the same engine.
+        """
+        since = time.monotonic() if busy else 0.0
+        bound = float(bound_s) if busy else 0.0
         shared = self._shared
         if shared is not None:
-            shared.busy = bool(value)
+            shared.busy = busy
+            shared.busy_since = since
+            shared.busy_bound_s = bound
         else:
-            self._local_recognition_busy = bool(value)
+            self._local_recognition_busy = busy
+            self._local_busy_since = since
+            self._local_busy_bound_s = bound
+
+    def _busy_wedge_state(self) -> tuple[float, bool]:
+        """How long the guard has been held, and whether that proves a wedge.
+
+        Returns ``(0.0, False)`` when nothing is in flight. A span still inside
+        the holder's own bound (plus ``_BUSY_WEDGE_GRACE_S``) is ordinary
+        sharing, never a reason to tear an engine down underneath its user.
+        """
+        shared = self._shared
+        if shared is not None:
+            busy = shared.busy
+            since = shared.busy_since
+            bound = shared.busy_bound_s
+        else:
+            busy = self._local_recognition_busy
+            since = self._local_busy_since
+            bound = self._local_busy_bound_s
+        if not busy or since <= 0.0:
+            return 0.0, False
+        span = max(0.0, time.monotonic() - since)
+        return span, span >= bound + _BUSY_WEDGE_GRACE_S
 
     async def warm(self) -> bool:
         """Build (and prime) the recognizer off the first utterance's path.
@@ -705,8 +771,26 @@ class LocalInputTranscriber:
         self._consecutive_failures = 0
         self._consecutive_busy = 0
 
-    async def _note_busy(self) -> None:
-        """A skipped call is not proof the engine is broken — a streak is."""
+    async def _note_busy(self, *, in_flight: bool = False) -> None:
+        """A skipped call is not proof the engine is broken — a streak is.
+
+        ``in_flight`` marks the skip THIS transcriber's own guard produced, i.e.
+        "the engine is inside a recognition right now". On a shared engine that
+        is usually another session's healthy call, so such a skip only counts
+        toward a rebuild once the busy span outlives the holder's own bound. A
+        provider reporting its own engine busy while our guard is clear needs no
+        such proof: nobody legitimate is inside it.
+        """
+        if in_flight:
+            span, wedged = self._busy_wedge_state()
+            if not wedged:
+                log.debug(
+                    "Local input transcription skipped a segment: the shared "
+                    "recognizer has been serving another holder for %.1f s, "
+                    "which is normal sharing rather than a wedged engine",
+                    span,
+                )
+                return
         self._consecutive_busy += 1
         if self._consecutive_busy >= _RECOVER_AFTER_BUSY:
             await self._recover_recognizer(
@@ -729,9 +813,16 @@ class LocalInputTranscriber:
         of the call" signature. Providers that own such an engine expose
         ``recover()``; the reference is dropped either way, so the next
         utterance constructs a fresh one.
+
+        Dropping the reference is safe for everyone. ``recover()`` is not: it
+        tears the model down under whoever is inside it, so it is withheld while
+        a holder is still within its own bound — this transcriber cannot see the
+        other session, only the guard it left behind.
         """
         stt = self._stt
         shared = self._shared
+        in_flight = self._recognition_busy
+        busy_span, wedged = self._busy_wedge_state()
         if shared is not None:
             # Dropping only this reference would leave the wedged engine in the
             # process-wide cache, and the next session would be handed it as if
@@ -750,6 +841,16 @@ class LocalInputTranscriber:
         )
         recover = getattr(stt, "recover", None)
         if not callable(recover):
+            return
+        if in_flight and not wedged:
+            log.warning(
+                "Not tearing down the local input recognizer after %s: it is "
+                "%.1f s into a recognition for another holder and still inside "
+                "its own bound. The cache entry was retired, so the next "
+                "utterance builds a fresh engine instead.",
+                reason,
+                busy_span,
+            )
             return
         try:
             await asyncio.to_thread(recover)
@@ -866,7 +967,7 @@ class LocalInputTranscriber:
             return ""
 
         if self._recognition_busy:
-            await self._note_busy()
+            await self._note_busy(in_flight=True)
             raise RecognizerBusy(
                 "the local recognizer is already transcribing another segment"
             )
@@ -886,12 +987,14 @@ class LocalInputTranscriber:
         # output-transcript recovery. Counting it only in the caller above left
         # a wedge first hit by recovery invisible to the leash, so the self-heal
         # needed four lost utterances instead of two.
-        self._recognition_busy = True
+        #
+        # The guard is taken WITH this call's own timeout, so a second session
+        # that finds the engine busy can tell "still inside its bound" from
+        # "long past every bound it had", instead of reading the flag alone.
+        bound_s = self._recognition_timeout_s(payload, target_rate)
+        self._set_recognition_busy(True, bound_s=bound_s)
         try:
-            result = await asyncio.wait_for(
-                stt.transcribe(chunks()),
-                timeout=self._recognition_timeout_s(payload, target_rate),
-            )
+            result = await asyncio.wait_for(stt.transcribe(chunks()), timeout=bound_s)
         except TimeoutError:
             self._recognition_busy = False
             await self._note_failure("timeout")
