@@ -23,7 +23,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import ValidationError
@@ -910,6 +910,14 @@ class WebServer:
         @app.get("/api/health")
         async def health() -> dict[str, Any]:
             return {"ok": True, "version": __version__}
+
+        @app.post("/api/ui/shell-painted", status_code=204, response_model=None)
+        async def shell_painted() -> Response:
+            # FastBootstrap consumes this acknowledgement during warm-up. A
+            # browser can paint after the full FastAPI app has already taken
+            # over, so the live app must accept the same POST as an idempotent
+            # no-op instead of returning FastAPI's 405 Method Not Allowed.
+            return Response(status_code=204)
 
         @app.get("/api/config")
         async def get_config() -> dict[str, Any]:

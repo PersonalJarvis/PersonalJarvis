@@ -220,6 +220,7 @@ describe("PkceConnectDialog own-client + production hint", () => {
     authMode: "oauth_pkce_loopback",
     authConfig: { mode: "oauth_pkce_loopback" },
     status: "not_connected",
+    oauthClientConfigured: true,
   } as unknown as Parameters<typeof PkceConnectDialog>[0]["plugin"];
 
   it("shows the Google production hint with a console link", () => {
@@ -271,6 +272,26 @@ describe("PkceConnectDialog own-client + production hint", () => {
     expect(calls).toContain("/api/secrets/google_oauth_client_id");
     expect(calls).toContain("/api/secrets/google_oauth_client_secret");
     expect(onProceed).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks a placeholder-only provider until a client id is entered", () => {
+    const slack = {
+      ...gmail,
+      id: "slack",
+      name: "Slack",
+      oauthClientFamily: "slack",
+      oauthClientConfigured: false,
+    };
+    render(
+      <PkceConnectDialog plugin={slack} onClose={() => {}} onProceed={() => {}} />,
+    );
+
+    expect(screen.getByText(/has no Slack OAuth client yet/i)).toBeDefined();
+    expect(
+      (screen.getByRole("button", { name: /^continue$/i }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(screen.getByLabelText(/client id/i)).toBeDefined();
   });
 });
 

@@ -80,6 +80,28 @@ async def test_list_plugins_marks_native_tool_as_live_callable(monkeypatch):
     assert payload["plugins"][0]["live_callable"] is True
 
 
+@pytest.mark.asyncio
+async def test_list_plugins_exposes_only_pkce_client_configuration_state(monkeypatch):
+    """The UI may learn that a client exists, but never its id or secret."""
+    from fastapi import Response
+
+    from jarvis.ui.web import marketplace_routes
+
+    catalog = _gmail_catalog()
+    monkeypatch.setattr(marketplace_routes, "load_catalog", lambda: catalog)
+    monkeypatch.setattr(marketplace_routes, "TokenStore", lambda: TokenStore(InMemoryBackend()))
+    monkeypatch.setattr(
+        "jarvis.marketplace.connect_helpers.resolve_pkce_client",
+        lambda plugin_id, client_id, client_secret: ("configured-client", "private"),
+    )
+
+    item = (await marketplace_routes.list_plugins(Response()))["plugins"][0]
+
+    assert item["oauth_client_configured"] is True
+    assert "configured-client" not in repr(item)
+    assert "private" not in repr(item)
+
+
 def _gmail_catalog():
     from jarvis.marketplace.catalog import PluginCatalog, PluginSpec
 

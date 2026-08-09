@@ -177,6 +177,50 @@ def test_default_override_migrates_only_exact_obsolete_mcp_launchers(
     clear_cache()
 
 
+def test_default_override_migrates_only_exact_obsolete_oauth_discovery(
+    monkeypatch, tmp_path
+) -> None:
+    clear_cache()
+    seed = json.loads(catalog_data._PACKAGE_SEED_PATH.read_text(encoding="utf-8"))
+    clickup = next(item for item in seed["plugins"] if item["id"] == "clickup")
+    canva = next(item for item in seed["plugins"] if item["id"] == "canva")
+    clickup["auth"]["discovery_url"] = (
+        "https://mcp.clickup.com/.well-known/oauth-authorization-server"
+    )
+    custom = "https://oauth.example.test/custom-protected-resource"
+    canva["auth"]["discovery_url"] = custom
+    override = tmp_path / "plugin_catalog.json"
+    override.write_text(
+        json.dumps(
+            {"version": 1, "schema_version": "old", "plugins": [clickup, canva]}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(catalog_data, "_DEFAULT_CATALOG_PATH", override)
+
+    catalog = load_catalog()
+
+    assert catalog.by_id("clickup").auth.discovery_url == (
+        "https://mcp.clickup.com/.well-known/oauth-protected-resource"
+    )
+    assert catalog.by_id("canva").auth.discovery_url == custom
+    clear_cache()
+
+
+def test_seed_dcr_connectors_begin_at_protected_resource_metadata() -> None:
+    catalog = _seed()
+    expected = {
+        "clickup": "https://mcp.clickup.com/.well-known/oauth-protected-resource",
+        "canva": "https://mcp.canva.com/.well-known/oauth-protected-resource",
+        "airtable": "https://mcp.airtable.com/.well-known/oauth-protected-resource",
+        "cal_com": "https://mcp.cal.com/.well-known/oauth-protected-resource",
+    }
+    assert {
+        plugin_id: catalog.by_id(plugin_id).auth.discovery_url
+        for plugin_id in expected
+    } == expected
+
+
 def _seed():
     """Load the tracked package seed directly (independent of any data/ override)."""
     clear_cache()

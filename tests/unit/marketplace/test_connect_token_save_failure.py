@@ -118,3 +118,42 @@ async def test_connect_poll_reports_connected_when_save_succeeds(
     result = await mr.connect_poll(plugin_id, flow_id)
     assert result["state"] == "connected"
     assert saved  # the token was actually persisted before the state flipped
+
+
+@pytest.mark.asyncio
+async def test_cancelled_reconnect_does_not_replace_needs_reauth_grant(
+    monkeypatch, _capture_background_tasks
+) -> None:
+    release = asyncio.Event()
+
+    class _DelayedPkceHandler(_StubPkceHandler):
+        async def await_completion(self, session: AuthSession) -> FlowResult:
+            await release.wait()
+            return FlowResult(tokens=Tokens(access="replacement"), error=None)
+
+    spec = _pkce_spec("real-client-id.apps.example")
+    store: dict[str, Tokens] = {
+        spec.id: Tokens(access="expired", needs_reauth=True)
+    }
+
+    class _Store:
+        def save(self, plugin_id: str, tokens: Tokens) -> None:
+            store[plugin_id] = tokens
+
+    monkeypatch.setattr(mr, "load_catalog", lambda: _Catalog([spec]))
+    monkeypatch.setattr(
+        "jarvis.marketplace.connect_helpers.resolve_pkce_client",
+        lambda pid, cid, csec: ("real-client-id.apps.example", None),
+    )
+    monkeypatch.setattr(mr, "PkceLoopbackHandler", _DelayedPkceHandler)
+    monkeypatch.setattr(mr, "TokenStore", _Store)
+
+    session = await mr.connect_start(spec.id, BackgroundTasks())
+    result = await mr.cancel_connect(spec.id, session["flow_id"])
+    release.set()
+    for task in _capture_background_tasks:
+        await task
+
+    assert result["state"] == "cancelled"
+    assert store[spec.id].access == "expired"
+    assert store[spec.id].needs_reauth is True

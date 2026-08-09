@@ -407,7 +407,7 @@
       "longevity_note": "ClickUp states its access token does not expire, so this connection needs no renewal. That is a policy rather than a guarantee, so Jarvis still asks you to reconnect if it is ever rejected.",
       "auth": {
         "mode": "hosted_mcp_oauth_dcr",
-        "discovery_url": "https://mcp.clickup.com/.well-known/oauth-authorization-server",
+        "discovery_url": "https://mcp.clickup.com/.well-known/oauth-protected-resource",
         "mcp_url": "https://mcp.clickup.com/mcp",
         "refresh_supported": false
       },
@@ -449,7 +449,7 @@
       "longevity": "self_renewing",
       "auth": {
         "mode": "hosted_mcp_oauth_dcr",
-        "discovery_url": "https://mcp.canva.com/.well-known/oauth-authorization-server",
+        "discovery_url": "https://mcp.canva.com/.well-known/oauth-protected-resource",
         "mcp_url": "https://mcp.canva.com/mcp",
         "refresh_supported": true
       },
@@ -472,7 +472,7 @@
       "longevity_note": "Airtable ends a connection after 60 days without use. Jarvis renews it in the background every 12 hours, so it stays open as long as this machine runs from time to time.",
       "auth": {
         "mode": "hosted_mcp_oauth_dcr",
-        "discovery_url": "https://airtable.com/.well-known/oauth-authorization-server/oauth2/v1",
+        "discovery_url": "https://mcp.airtable.com/.well-known/oauth-protected-resource",
         "mcp_url": "https://mcp.airtable.com",
         "refresh_supported": true
       },
@@ -494,7 +494,7 @@
       "longevity_note": "Cal.com publishes no token lifetime, so how long this stays connected has not been confirmed. Jarvis renews it in the background and will ask you to reconnect if that ever fails.",
       "auth": {
         "mode": "hosted_mcp_oauth_dcr",
-        "discovery_url": "https://mcp.cal.com/.well-known/oauth-authorization-server",
+        "discovery_url": "https://mcp.cal.com/.well-known/oauth-protected-resource",
         "mcp_url": "https://mcp.cal.com/mcp",
         "refresh_supported": true
       },

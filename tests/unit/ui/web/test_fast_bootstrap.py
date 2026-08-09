@@ -290,6 +290,7 @@ def test_boot_page_acknowledges_after_two_frames() -> None:
     html = page.read_text(encoding="utf-8")
     assert "/api/ui/shell-painted" in html
     assert html.count("requestAnimationFrame") >= 2
+    assert '<link rel="icon" href="/jarvis.ico"' in html
 
 
 # --- listener self-healing (the lock-zombie root cause) ---------------------

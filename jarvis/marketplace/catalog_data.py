@@ -68,6 +68,30 @@ _PORTABLE_MCP_MIGRATIONS: dict[str, tuple[dict[str, object], dict[str, object]]]
     ),
 }
 
+# Exact shipped discovery URLs that pointed at authorization-server metadata
+# instead of the RFC 9728 protected-resource document. Existing installations
+# may have copied these entries into data/plugin_catalog.json, whose auth block
+# is intentionally user-owned. Upgrade only the known bad built-in value so a
+# genuinely custom endpoint remains untouched.
+_OAUTH_DISCOVERY_MIGRATIONS: dict[str, tuple[str, str]] = {
+    "clickup": (
+        "https://mcp.clickup.com/.well-known/oauth-authorization-server",
+        "https://mcp.clickup.com/.well-known/oauth-protected-resource",
+    ),
+    "canva": (
+        "https://mcp.canva.com/.well-known/oauth-authorization-server",
+        "https://mcp.canva.com/.well-known/oauth-protected-resource",
+    ),
+    "airtable": (
+        "https://airtable.com/.well-known/oauth-authorization-server/oauth2/v1",
+        "https://mcp.airtable.com/.well-known/oauth-protected-resource",
+    ),
+    "cal_com": (
+        "https://mcp.cal.com/.well-known/oauth-authorization-server",
+        "https://mcp.cal.com/.well-known/oauth-protected-resource",
+    ),
+}
+
 
 def _migrate_obsolete_mcp_transports(raw: object) -> object:
     """Upgrade exact built-in launcher specs without changing user variants.
@@ -89,6 +113,23 @@ def _migrate_obsolete_mcp_transports(raw: object) -> object:
         legacy, portable = migration
         if plugin.get("mcp_server") == legacy:
             plugin["mcp_server"] = portable
+    return raw
+
+
+def _migrate_obsolete_oauth_discovery(raw: object) -> object:
+    """Upgrade exact broken built-in discovery URLs in a local override."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("plugins"), list):
+        return raw
+    for plugin in raw["plugins"]:
+        if not isinstance(plugin, dict):
+            continue
+        migration = _OAUTH_DISCOVERY_MIGRATIONS.get(str(plugin.get("id", "")))
+        auth = plugin.get("auth")
+        if migration is None or not isinstance(auth, dict):
+            continue
+        obsolete, current = migration
+        if auth.get("discovery_url") == obsolete:
+            auth["discovery_url"] = current
     return raw
 
 
@@ -165,6 +206,7 @@ def _read(path: Path) -> PluginCatalog:
     raw = _read_raw(path)
     if path.resolve() == _DEFAULT_CATALOG_PATH.resolve():
         raw = _migrate_obsolete_mcp_transports(raw)
+        raw = _migrate_obsolete_oauth_discovery(raw)
     return PluginCatalog.model_validate(raw)
 
 
@@ -177,6 +219,7 @@ def load_catalog(path: Path | None = None) -> PluginCatalog:
     if not _DEFAULT_CATALOG_PATH.exists():
         return _read(_PACKAGE_SEED_PATH)
     raw = _migrate_obsolete_mcp_transports(_read_raw(_DEFAULT_CATALOG_PATH))
+    raw = _migrate_obsolete_oauth_discovery(raw)
     try:
         seed_raw = _read_raw(_PACKAGE_SEED_PATH)
     except (OSError, ValueError):

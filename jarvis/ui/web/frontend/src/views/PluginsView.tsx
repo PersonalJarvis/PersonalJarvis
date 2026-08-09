@@ -447,7 +447,7 @@ export function PluginsView() {
   // Kick off the real OAuth handshake: /connect/start, open the URL, then the
   // dialog long-polls /connect/poll. Shared by the DCR/device path (called
   // directly) and the PKCE path (called by the pre-connect dialog's Continue).
-  const startOAuthFlow = async (p: Plugin) => {
+  const startOAuthFlow = async (p: Plugin): Promise<boolean> => {
     try {
       const r = await oauthStart.mutateAsync(p.id);
       if (r.kind === "device_flow") {
@@ -461,7 +461,7 @@ export function PluginsView() {
         const userCode = (r as unknown as { user_code?: string }).user_code;
         if (!verifyUrl || !userCode) {
           alert("Backend returned an incomplete device-flow session.");
-          return;
+          return false;
         }
         // Auto-open the pre-filled verify URL if available; user lands
         // on the consent page with the code already typed in.
@@ -477,11 +477,11 @@ export function PluginsView() {
           verificationUriComplete: verifyUrlComplete ?? null,
           expiresAtMs: r.expires_at_ms,
         });
-        return;
+        return true;
       }
       if (!r.open_url) {
         alert("Backend returned no open_url — connect aborted.");
-        return;
+        return false;
       }
       void openExternalUrl(r.open_url);
       setOauthSession({
@@ -490,13 +490,29 @@ export function PluginsView() {
         pluginName: p.name,
         openUrl: r.open_url,
       });
+      return true;
     } catch (e) {
       alert(
         `Could not start ${p.name} connect flow: ${
           e instanceof Error ? e.message : String(e)
         }`,
       );
+      return false;
     }
+  };
+
+  const cancelOAuthSession = (session: {
+    flowId: string;
+    pluginId: string;
+  }) => {
+    void fetch(
+      `/api/marketplace/plugins/${session.pluginId}/connect/${session.flowId}`,
+      { method: "DELETE" },
+    )
+      .catch(() => undefined)
+      .finally(() => {
+        qc.invalidateQueries({ queryKey: ["marketplace-plugins"] });
+      });
   };
 
   const handleConnect = async (p: Plugin) => {
@@ -742,7 +758,10 @@ export function PluginsView() {
           pluginId={oauthSession.pluginId}
           pluginName={oauthSession.pluginName}
           openUrl={oauthSession.openUrl}
-          onClose={() => setOauthSession(null)}
+          onClose={() => {
+            cancelOAuthSession(oauthSession);
+            setOauthSession(null);
+          }}
           onSuccess={() => {
             setOauthSession(null);
             qc.invalidateQueries({ queryKey: ["marketplace-plugins"] });
@@ -759,7 +778,10 @@ export function PluginsView() {
           verificationUri={deviceSession.verificationUri}
           verificationUriComplete={deviceSession.verificationUriComplete}
           expiresAtMs={deviceSession.expiresAtMs}
-          onClose={() => setDeviceSession(null)}
+          onClose={() => {
+            cancelOAuthSession(deviceSession);
+            setDeviceSession(null);
+          }}
           onSuccess={() => {
             setDeviceSession(null);
             qc.invalidateQueries({ queryKey: ["marketplace-plugins"] });
@@ -2017,11 +2039,12 @@ export function PkceConnectDialog({
 }: {
   plugin: Plugin;
   onClose: () => void;
-  onProceed: () => void | Promise<void>;
+  onProceed: () => boolean | void | Promise<boolean | void>;
 }) {
   const fam = oauthClientFamily(plugin);
   const isGoogle = fam?.family === "google";
-  const [showClient, setShowClient] = useState(false);
+  const clientRequired = Boolean(fam && !plugin.oauthClientConfigured);
+  const [showClient, setShowClient] = useState(clientRequired);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2062,8 +2085,8 @@ export function PkceConnectDialog({
         await writeSecret(`${fam.family}_oauth_client_id`, cid);
         if (csec) await writeSecret(`${fam.family}_oauth_client_secret`, csec);
       }
-      await onProceed();
-      onClose();
+      const proceeded = await onProceed();
+      if (proceeded !== false) onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -2129,17 +2152,26 @@ export function PkceConnectDialog({
 
           {fam && (
             <div>
+              {clientRequired && (
+                <p className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+                  This installation has no {fam.label} OAuth client yet. Add
+                  your own Client ID below before browser sign-in can start.
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => setShowClient((v) => !v)}
                 className="text-[11px] font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
               >
-                Use your own OAuth client (advanced)
+                {clientRequired
+                  ? "OAuth client setup required"
+                  : "Use your own OAuth client (advanced)"}
               </button>
               {showClient && (
                 <div className="mt-2 space-y-2">
                   <p className="text-[10px] leading-relaxed text-muted-foreground">
-                    Optional. Paste a client from your own {fam.label}{" "}
+                    {clientRequired ? "Required. " : "Optional. "}Paste a client
+                    from your own {fam.label}{" "}
                     {OAUTH_CLIENT_CONSOLE[fam.family] && (
                       <a
                         href={OAUTH_CLIENT_CONSOLE[fam.family]}
@@ -2209,7 +2241,7 @@ export function PkceConnectDialog({
           <button
             type="button"
             onClick={handleContinue}
-            disabled={busy}
+            disabled={busy || (clientRequired && !clientId.trim())}
             className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
           >
             {busy && <Loader2 className="h-3 w-3 animate-spin" />}
