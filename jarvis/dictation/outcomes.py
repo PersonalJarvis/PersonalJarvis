@@ -87,6 +87,29 @@ DICTATION_OUTCOMES: Final[tuple[str, ...]] = (
     "failed",
 )
 
+#: Outcomes where the user's words REACHED them: the field they were looking
+#: at (``inserted``), the app's own input (``chat``), the app the paste chord
+#: went to (``paste_sent``), or the part of the recording that survived
+#: (``partial``). ``cancelled`` counts too — the user called it off themselves,
+#: and nothing failed.
+#:
+#: This is the set a surface must never put a FAILURE mark on, and the Jarvis
+#: Bar is why it exists at all: the bar carries no text (its
+#: ``show_listening_transcript`` is a documented no-op), so the red cross is
+#: not a caveat standing next to an explanation — it IS the whole message.
+#: Every outcome that carried a ``detail`` sentence used to raise that cross,
+#: which meant a dictation that pasted perfectly and only wanted to add a
+#: footnote ("the shortcut was sent", "some seconds were lost") reported itself
+#: to the user as a failure. Reported on Windows, 2026-08-09.
+#:
+#: Deliberately NOT the complement of "has something to say": ``partial`` is in
+#: here and still owes the user a sentence. The two questions are separate —
+#: *did the words arrive* decides the mark, *is there anything to add* decides
+#: how long the sentence stays up.
+DELIVERED_OUTCOMES: Final[frozenset[str]] = frozenset(
+    {"inserted", "chat", "paste_sent", "partial", "cancelled"}
+)
+
 #: Outcomes where the user is missing words the recording could still give
 #: back, so keeping the audio (when they allow it) is what makes a later
 #: Restore possible. The plain success outcomes are excluded on purpose: audio
@@ -102,6 +125,17 @@ RECOVERABLE_OUTCOMES: Final[frozenset[str]] = frozenset(
 )
 
 
+def was_delivered(outcome: str | None) -> bool:
+    """``True`` when the dictation's words reached the user.
+
+    Fail-CLOSED, the opposite of :func:`is_recoverable`: an unknown value from
+    a newer install reads as "not delivered". A surface may only ever suppress
+    its failure mark on an outcome it actually understands — the alternative is
+    a future failure outcome that ships silently.
+    """
+    return str(outcome or "") in DELIVERED_OUTCOMES
+
+
 def is_recoverable(outcome: str | None) -> bool:
     """``True`` when this outcome left the user missing words the audio holds.
 
@@ -113,7 +147,9 @@ def is_recoverable(outcome: str | None) -> bool:
 
 
 __all__ = [
+    "DELIVERED_OUTCOMES",
     "DICTATION_OUTCOMES",
     "RECOVERABLE_OUTCOMES",
     "is_recoverable",
+    "was_delivered",
 ]

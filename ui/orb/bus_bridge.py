@@ -58,6 +58,7 @@ from jarvis.core.events import (
     WakeCandidateDetected,
     WakeWordDetected,
 )
+from jarvis.dictation.outcomes import was_delivered
 from ui.orb.animations import IDLE_ANIMATION_POOL
 
 if TYPE_CHECKING:
@@ -117,13 +118,17 @@ DICTATION_NOTHING_BACK_DWELL_S = 1.5
 # that may not bind it). Long enough to read a full sentence.
 DICTATION_OUTCOME_DWELL_S = 4.0
 
-# Outcomes the bar has nothing to add to: the words reached the field the user
-# is already looking at (``inserted``), the app's own input (``chat``), or the
-# user called the dictation off themselves (``cancelled``). Nothing is in
-# flight and nothing needs saying, so the bar stands down AT ONCE — see
-# ``_on_dictation_completed``. Every other outcome carries either a sentence to
-# act on or the news that nothing came back, and gets a dwell.
-DICTATION_QUIET_OUTCOMES: tuple[str, ...] = ("inserted", "chat", "cancelled")
+# Refusal reasons the bar must NOT answer with the failure look, keyed by the
+# one thing that makes them different: nothing failed.
+#
+# ``already_running`` is the whole set today and the reason it exists. It is
+# raised when a SECOND start lands on a dictation that is happily recording —
+# on Windows the polling hotkey backend re-reports the chord, so a key edge
+# arriving next to the release produces exactly that. Answering it with the
+# red cross put a verdict on the turn the user was watching, and (because the
+# handler also drops ``_dictation_active``) swallowed that turn's completion,
+# so the cross stayed up over a dictation that pasted perfectly.
+DICTATION_INERT_REFUSALS: frozenset[str] = frozenset({"already_running"})
 
 # Long enough to cover an entire THINKING/SPEAKING phase. The transcript
 # bubble is explicitly hidden when the state leaves voice mode (→ IDLE/ERROR).
@@ -1138,16 +1143,20 @@ class OrbBusBridge:
         contradicted (reported 2026-07-29). So the mode is resolved here, by
         the outcome, and never left over from the previous phase:
 
-        * The words arrived (``inserted`` / ``chat``) or the user cancelled →
-          nothing is left to say and the text speaks for itself, so the bar
-          goes down immediately.
-        * ``detail`` is set → something needs ACTING on (the OS blocked the
-          paste; a custom chord was sent to an app that may ignore it). The
-          notice look says "here is what happened" instead of "still working",
-          and it stays up long enough to read.
-        * Nothing came back at all (``empty`` / ``failed``) → the same notice
-          look, briefly. A dictation that vanishes in silence is
-          indistinguishable from a dead shortcut.
+        * The words arrived (``was_delivered``) → the bar leaves the working
+          look at once and stands down. It never raises the failure mark here,
+          not even when the outcome brought a sentence with it: this surface
+          carries no text (``show_listening_transcript`` is a no-op on both bar
+          overlays), so the red cross is not a footnote next to an explanation
+          — it IS the explanation, and "your dictation was lost" is the wrong
+          one for a paste that landed. A sentence only buys the DWELL, which is
+          what keeps it readable on the surfaces that do render it.
+        * The words did not arrive (``clipboard_only`` — the OS blocked the
+          paste — ``unavailable``, ``empty``, ``failed``, or an outcome from a
+          newer install we do not know) → the notice look, which is what that
+          mark has always meant. It stays up long enough to read a sentence
+          when there is one, and briefly when there is not: a dictation that
+          vanishes in silence is indistinguishable from a dead shortcut.
         """
         if not getattr(self, "_dictation_active", False):
             return
@@ -1156,11 +1165,13 @@ class OrbBusBridge:
         self._cancel_dictation_failsafe()
         detail = (event.detail or "").strip()
         outcome = (event.outcome or "").strip()
-        delivered = not detail and outcome in DICTATION_QUIET_OUTCOMES
-        # A delivered dictation gets NO echo bubble: the words are already in
-        # the field the user is looking at, and a bubble raised for one frame
-        # before the stand-down clears it is a flicker, not a receipt.
-        self._show_listening_transcript("" if delivered else (detail or (event.text or "").strip()))
+        arrived = was_delivered(outcome)
+        quiet = arrived and not detail
+        # A delivered dictation with nothing to add gets NO echo bubble: the
+        # words are already in the field the user is looking at, and a bubble
+        # raised for one frame before the stand-down clears it is a flicker,
+        # not a receipt.
+        self._show_listening_transcript("" if quiet else (detail or (event.text or "").strip()))
         # Whatever raised the bar must be able to lower it. This guard is
         # deliberately the SAME one ``_on_dictation_started`` uses — an
         # asymmetric pair (raise on any state, lower only from IDLE) would leave
@@ -1168,8 +1179,15 @@ class OrbBusBridge:
         # possibility because dictation never touches the voice state machine.
         if self._voice_session_active:
             return
-        if delivered:
-            delay = 0.0
+        if arrived:
+            # Nothing is in flight and nothing failed, so the bar rests NOW
+            # rather than sitting in the working look for the dwell. When a
+            # sentence came with it, the stand-down is merely deferred so the
+            # surfaces that can render it keep it up long enough to read; the
+            # bar itself is already back at rest either way.
+            delay = 0.0 if quiet else DICTATION_OUTCOME_DWELL_S
+            if not quiet:
+                self._rest_surface()
         else:
             self._show_notice_mode()
             delay = (
@@ -1200,10 +1218,29 @@ class OrbBusBridge:
         raised while a conversation legitimately owns the surface, and taking
         that conversation off screen to report a declined keypress would trade
         one invisible state for another.
+
+        The one thing it does NOT answer is a refusal that reports success:
+        ``DICTATION_INERT_REFUSALS``. Those are dropped before anything is
+        painted or torn down — see the comment at the guard.
         """
         reason = (event.reason or "").strip() or "unspecified"
         detail = (event.detail or "").strip() or DICTATION_REFUSAL_FALLBACK_TEXT
         log.info("OrbBridge._on_dictation_refused: reason=%s — %s", reason, detail)
+        if reason in DICTATION_INERT_REFUSALS:
+            # "A dictation is already recording" is not a failure — it is the
+            # statement that the turn the user is watching is alive and will
+            # deliver. Painting the refusal look here marks that turn as lost,
+            # and the teardown below would drop ``_dictation_active``, so the
+            # completion that follows is swallowed by its own guard and the
+            # mark never comes off. That is how a dictation which transcribed
+            # cleanly and pasted successfully ended under a red cross on
+            # Windows, where the polling hotkey backend re-reports a held chord
+            # and one edge lands next to the release.
+            log.debug(
+                "OrbBridge: refusal %r left the running dictation untouched.",
+                reason,
+            )
+            return
         # Nothing is recording: a refusal means the session never opened. Drop
         # the lane's latches and both of its timers so a stale one can neither
         # fight this notice nor close the surface out from under it.
@@ -1214,6 +1251,21 @@ class OrbBusBridge:
         self._show_notice_mode()
         self._show_listening_transcript(detail)
         self._schedule_notice_standdown(DICTATION_REFUSAL_DWELL_S)
+
+    def _rest_surface(self) -> None:
+        """Drop the working look NOW, without closing the surface yet.
+
+        For a delivered dictation that still has a sentence to show. The
+        stand-down would do both — rest AND clear the transcript bubble — and
+        the bubble is exactly what has to survive the dwell. Hiding here is
+        wrong for the same reason: on the mascot it would strand the bubble
+        next to nothing, and the stand-down a few seconds later hides anyway.
+        Resting is the honest middle: nothing is in flight, and nothing failed.
+        """
+        try:
+            self._orb.show(mode="idle")
+        except Exception as exc:  # noqa: BLE001 — a missed repaint is cosmetic
+            log.debug("OrbBridge dictation rest repaint suppressed: %s", exc)
 
     def _show_notice_mode(self) -> None:
         """Drive the current surface into its brief "that did not happen" look.

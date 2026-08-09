@@ -449,3 +449,146 @@ async def test_a_real_session_takes_the_bar_from_the_dictation_lane() -> None:
     assert bridge._dictation_failsafe_task is None
     assert "listen" in orb.modes
     await _quiesce(bridge)
+
+
+# --------------------------------------------------------------------------
+# The failure mark means failure — nothing else
+#
+# The bar carries no text: ``show_listening_transcript`` is a documented no-op
+# on both bar overlays, so the red cross is not a footnote standing next to an
+# explanation, it IS the explanation. Every outcome that merely brought a
+# sentence with it used to raise that cross, which is how a Windows dictation
+# that transcribed cleanly and pasted successfully reported itself to the user
+# as a failure (2026-08-09).
+# --------------------------------------------------------------------------
+async def test_a_delivered_dictation_with_a_footnote_is_not_marked_failed() -> None:
+    """``paste_sent``: the chord went out and the app pasted. The sentence is a
+    caveat about an unknown, not a verdict about a loss."""
+    orb = _FakeOrb()
+    bridge = _bridge(orb)
+    await bridge._on_dictation_started(DictationStarted(target="insert"))
+    await bridge._on_dictation_transcribing(DictationTranscribing())
+    orb.calls.clear()
+
+    await bridge._on_dictation_completed(
+        DictationCompleted(
+            text="hello there",
+            outcome="paste_sent",
+            detail="The shortcut Ctrl + Shift + Insert was sent.",
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert "notice" not in orb.modes
+    # The bar stops claiming work is in flight at once ...
+    assert orb.modes == ["idle"]
+    # ... and the sentence stays up for the dwell on surfaces that render it.
+    assert ("transcript", "The shortcut Ctrl + Shift + Insert was sent.") in orb.calls
+    assert ("transcript", "") not in orb.calls
+    assert ("hide", None) not in orb.calls
+    await _quiesce(bridge)
+
+
+async def test_a_partial_dictation_keeps_its_words_and_loses_the_cross() -> None:
+    """Words ARE missing and that is worth saying — but the fragment arrived,
+    and the user can see it."""
+    orb = _FakeOrb()
+    bridge = _bridge(orb)
+    await bridge._on_dictation_started(DictationStarted(target="insert"))
+    orb.calls.clear()
+
+    await bridge._on_dictation_completed(
+        DictationCompleted(
+            text="three words only",
+            outcome="partial",
+            detail="About 12.0s of the recording could not be transcribed.",
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert "notice" not in orb.modes
+    await _quiesce(bridge)
+
+
+async def test_an_unknown_outcome_still_gets_the_cross() -> None:
+    """Fail-closed: a value this build has never heard of is not proof of
+    delivery, and a future failure outcome must never ship silently."""
+    orb = _FakeOrb()
+    bridge = _bridge(orb)
+    await bridge._on_dictation_started(DictationStarted(target="insert"))
+    orb.calls.clear()
+
+    await bridge._on_dictation_completed(
+        DictationCompleted(text="hello", outcome="teleported")
+    )
+    await asyncio.sleep(0)
+
+    assert orb.modes == ["notice"]
+    await _quiesce(bridge)
+
+
+async def test_every_outcome_the_pipeline_can_publish_is_classified() -> None:
+    """AP-4 guard: the delivered set is keyed off the ONE outcome vocabulary,
+    so a new value cannot quietly inherit either verdict."""
+    from jarvis.dictation.outcomes import DELIVERED_OUTCOMES, DICTATION_OUTCOMES
+
+    assert DELIVERED_OUTCOMES <= set(DICTATION_OUTCOMES)
+    assert set(DICTATION_OUTCOMES) - DELIVERED_OUTCOMES == {
+        "clipboard_only",
+        "unavailable",
+        "empty",
+        "failed",
+    }
+
+
+# --------------------------------------------------------------------------
+# "A dictation is already recording" is not a refusal the user must be shown
+# --------------------------------------------------------------------------
+async def test_already_running_never_marks_the_live_dictation_as_failed() -> None:
+    """The Windows polling hotkey backend re-reports a held chord, so a second
+    start edge lands next to the release. Answering it with the failure look
+    put a verdict on the turn the user was watching — and dropping the lane's
+    state swallowed that turn's completion, so the cross never came off."""
+    from jarvis.core.events import DictationRefused
+
+    orb = _FakeOrb()
+    bridge = _bridge(orb)
+    await bridge._on_dictation_started(DictationStarted(target="insert"))
+    await bridge._on_dictation_transcribing(DictationTranscribing())
+    orb.calls.clear()
+
+    await bridge._on_dictation_refused(
+        DictationRefused(reason="already_running", detail="A dictation is already recording.")
+    )
+
+    assert orb.calls == []
+    assert bridge._dictation_active is True
+
+    # The real completion still lands and still closes the bar.
+    await bridge._on_dictation_completed(
+        DictationCompleted(text="hello there", outcome="inserted")
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert "notice" not in orb.modes
+    assert ("hide", None) in orb.calls
+    await _quiesce(bridge)
+
+
+async def test_a_real_refusal_still_reaches_the_user() -> None:
+    from jarvis.core.events import DictationRefused
+
+    orb = _FakeOrb()
+    bridge = _bridge(orb)
+
+    await bridge._on_dictation_refused(
+        DictationRefused(
+            reason="voice_session_active",
+            detail="A voice conversation is running.",
+        )
+    )
+
+    assert orb.modes == ["notice"]
+    assert ("transcript", "A voice conversation is running.") in orb.calls
+    await _quiesce(bridge)
