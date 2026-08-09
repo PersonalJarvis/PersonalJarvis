@@ -321,6 +321,20 @@ class _WorkingSTT:
         return Transcript(text=self.text, language="en", confidence=0.9)
 
 
+class _BusyThenWorkingSTT:
+    """A native engine whose cosmetic preview still owns its inference lock."""
+
+    def __init__(self, busy_calls: int = 2) -> None:
+        self.busy_calls = busy_calls
+        self.calls = 0
+
+    async def transcribe_pcm(self, pcm: bytes, **_kwargs: Any) -> Transcript:
+        self.calls += 1
+        if self.calls <= self.busy_calls:
+            raise RuntimeError("a transcription is already in flight on this model")
+        return Transcript(text="the final transcript", language="en", confidence=0.9)
+
+
 def _voice_pipeline(primary: Any, *, fallback: str = "auto") -> SpeechPipeline:
     """A pipeline with just enough state for ``_transcribe_final``."""
     pipe = SpeechPipeline.__new__(SpeechPipeline)
@@ -372,6 +386,21 @@ async def test_a_rate_limit_that_survives_the_ladder_crosses_family(
     assert built == ["openai-api"], built
     # The user's own provider still got the whole ladder before we crossed.
     assert primary.calls == pipeline_mod._STT_FINAL_RETRIES + 1
+
+
+@pytest.mark.asyncio
+async def test_a_busy_native_preview_is_retried_instead_of_dropping_the_turn(
+    _instant_retries: None,
+) -> None:
+    """A cancelled asyncio wrapper does not stop an in-flight native preview."""
+    stt = _BusyThenWorkingSTT()
+    pipe = _voice_pipeline(stt)
+
+    result = await pipe._transcribe_final(b"\x00\x01" * 512)
+
+    assert result is not None
+    assert result.text == "the final transcript"
+    assert stt.calls == pipeline_mod._STT_FINAL_RETRIES + 1
 
 
 @pytest.mark.asyncio

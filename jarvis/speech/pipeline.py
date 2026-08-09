@@ -631,8 +631,16 @@ def _stt_error_status(exc: BaseException) -> int | None:
 
 
 def _is_transient_stt_error(exc: BaseException) -> bool:
-    """True when an STT error is a recoverable rate-limit / gateway blip."""
-    return _stt_error_status(exc) in _STT_TRANSIENT_STATUS
+    """True when an STT error should clear without changing provider setup.
+
+    A busy local engine is the normal AP-24 handoff race: cancelling an
+    ``asyncio.to_thread`` wrapper cannot stop the native preview already using
+    the model, so the final call must retry after that preview releases it.
+    """
+    return (
+        _stt_error_status(exc) in _STT_TRANSIENT_STATUS
+        or classify_stt_failure(exc) == "engine_busy"
+    )
 
 
 def _stt_crossover_would_leave_the_machine() -> bool:
