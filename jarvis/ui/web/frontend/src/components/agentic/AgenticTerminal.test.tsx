@@ -29,6 +29,8 @@ const terminalHarness = vi.hoisted(() => ({
   }[],
   focus: vi.fn(),
   scrollToBottom: vi.fn(),
+  scrollToLine: vi.fn<(line: number) => void>(),
+  viewport: { baseY: 0, viewportY: 0 },
   write: vi.fn(),
   visibilityAtWrite: [] as string[],
   deferWrite: false,
@@ -58,7 +60,7 @@ vi.mock("@xterm/xterm", () => ({
     }
     get buffer() {
       return {
-        active: { type: terminalHarness.bufferType, baseY: 0, viewportY: 0 },
+        active: { type: terminalHarness.bufferType, ...terminalHarness.viewport },
       };
     }
     scrollLines(amount: number) {
@@ -127,6 +129,11 @@ vi.mock("@xterm/xterm", () => ({
     }
     scrollToBottom() {
       terminalHarness.scrollToBottom();
+      terminalHarness.viewport.viewportY = terminalHarness.viewport.baseY;
+    }
+    scrollToLine(line: number) {
+      terminalHarness.scrollToLine(line);
+      terminalHarness.viewport.viewportY = line;
     }
     reset() {}
     resize() {}
@@ -184,6 +191,8 @@ describe("AgenticTerminal layout", () => {
     terminalHarness.observe.mockClear();
     terminalHarness.fit.mockClear();
     terminalHarness.scrollToBottom.mockClear();
+    terminalHarness.scrollToLine.mockClear();
+    terminalHarness.viewport = { baseY: 0, viewportY: 0 };
     terminalHarness.write.mockClear();
     terminalHarness.host.current = null;
     terminalHarness.visibilityAtWrite = [];
@@ -323,6 +332,43 @@ describe("AgenticTerminal layout", () => {
     expect(terminalHarness.scrollToBottom).toHaveBeenCalled();
   });
 
+  it("restores a scrolled-back viewport when switching away and back", () => {
+    const view = render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+    terminalHarness.viewport = { baseY: 240, viewportY: 84 };
+    terminalHarness.scrollToBottom.mockClear();
+    terminalHarness.scrollToLine.mockClear();
+
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+        active={false}
+      />,
+    );
+    view.rerender(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+
+    expect(terminalHarness.scrollToLine).toHaveBeenCalledWith(84);
+    expect(terminalHarness.scrollToBottom).not.toHaveBeenCalled();
+  });
+
   it("keeps prompt output parked until an inactive chat pane is selected", () => {
     const view = render(
       <AgenticTerminal
@@ -450,6 +496,39 @@ describe("AgenticTerminal layout", () => {
     expect(terminalHarness.scrollToBottom).toHaveBeenCalled();
     expect(screen.getByTestId("agentic-terminal-host-Dana").style.visibility).toBe("");
     expect(region?.className).not.toContain("invisible");
+  });
+
+  it("restores a scrolled-back viewport after replaying a Codex terminal", () => {
+    vi.useFakeTimers();
+    terminalHarness.deferWrite = true;
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Codex"
+        appearance="dark"
+        fontSize={13}
+        active
+      />,
+    );
+    act(() => {
+      vi.advanceTimersByTime(20);
+    });
+    terminalHarness.viewport = { baseY: 240, viewportY: 84 };
+    terminalHarness.scrollToBottom.mockClear();
+    terminalHarness.scrollToLine.mockClear();
+
+    act(() => {
+      terminalHarness.handlers.current?.onReplay?.("recorded session" as never);
+    });
+    // The rebuilt buffer can be longer than the one the reader left.
+    terminalHarness.viewport = { baseY: 260, viewportY: 260 };
+    act(() => {
+      terminalHarness.writeCallbacks.shift()?.();
+      vi.advanceTimersByTime(20);
+    });
+
+    expect(terminalHarness.scrollToLine).toHaveBeenCalledWith(84);
+    expect(terminalHarness.scrollToBottom).not.toHaveBeenCalled();
   });
 
   it("does not let an older replay reveal a newer replay", () => {

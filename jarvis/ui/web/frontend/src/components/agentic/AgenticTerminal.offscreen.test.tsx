@@ -38,6 +38,9 @@ vi.mock("@xterm/xterm", () => ({
     rows = 24;
     options: Record<string, unknown> = {};
     unicode = { activeVersion: "" };
+    buffer = {
+      active: { type: "normal", baseY: 0, viewportY: 0 },
+    };
     // A pane takes over the terminal's protocol replies on mount, because the
     // backend answers those instead (see ./terminalQueries). A stand-in without
     // a parser is a terminal xterm never shipped.
@@ -66,6 +69,8 @@ vi.mock("@xterm/xterm", () => ({
     write(text: string) {
       harness.writes.push(text);
     }
+    scrollToBottom() {}
+    scrollToLine() {}
     reset() {
       harness.writes.push(RESET);
     }

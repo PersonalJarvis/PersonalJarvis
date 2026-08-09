@@ -137,6 +137,39 @@ import { useT } from "@/i18n";
  */
 const RECEIPT_MAX_AGE_MS = 30 * 60 * 1000;
 
+type PreservedTerminalViewport = {
+  line: number;
+  followsTail: boolean;
+};
+
+/** Remember what the reader was looking at before a pane is rebuilt or hidden. */
+function captureTerminalViewport(
+  term: Terminal | null,
+): PreservedTerminalViewport | null {
+  if (!term) return null;
+  const buffer = term.buffer.active;
+  return {
+    line: buffer.viewportY,
+    // Alternate-screen applications do not own scrollback. Their only honest
+    // position is the live screen, just like a normal buffer already at its end.
+    followsTail: buffer.type !== "normal" || buffer.viewportY >= buffer.baseY,
+  };
+}
+
+/** Put a pane back where the reader left it, without following new output. */
+function restoreTerminalViewport(
+  term: Terminal | null,
+  viewport: PreservedTerminalViewport | null,
+) {
+  if (!term) return;
+  const buffer = term.buffer.active;
+  if (!viewport || viewport.followsTail || buffer.type !== "normal") {
+    term.scrollToBottom();
+    return;
+  }
+  term.scrollToLine(Math.min(viewport.line, buffer.baseY));
+}
+
 /**
  * How long a call-sign may be — the same cap the backend enforces
  * (`MAX_TERMINAL_NAME`), so the field stops where the save would have failed
@@ -402,7 +435,7 @@ export function AgenticTerminal({
   const [painted, setPainted] = useState(false);
   // A parked chat pane may have a large asynchronous xterm write to parse when
   // it takes the stage again. Keep its terminal surface out of the paint until
-  // that write and the final tail scroll have both landed; otherwise xterm
+  // that write and the final viewport restoration have both landed; otherwise xterm
   // briefly shows the pane's old viewport (often its first prompt) and visibly
   // jumps to the live prompt one frame later.
   const [tailReady, setTailReady] = useState(active);
@@ -413,7 +446,7 @@ export function AgenticTerminal({
    * Is a replay currently rebuilding this pane behind the curtain?
    *
    * The replay path and the chat-stage switch both hide the surface until the
-   * tail scroll has landed, and they can interleave: a replay arriving within
+   * viewport restoration has landed, and they can interleave: a replay arriving within
    * a frame of a stage switch (or of the mount) would otherwise have the
    * OTHER sequence's settle step lift the curtain while the replay is still
    * printing its history — which is exactly the top-to-bottom scroll the
@@ -421,6 +454,10 @@ export function AgenticTerminal({
    * completion may reveal the pane.
    */
   const replayCurtainRef = useRef(false);
+  // A stage switch must preserve a reader who deliberately scrolled back.
+  // Kept through replay parsing because reset() temporarily destroys xterm's
+  // own viewport, making it impossible to recover afterwards.
+  const preservedViewportRef = useRef<PreservedTerminalViewport | null>(null);
   // Every replay and active-stage transition invalidates callbacks/frames from
   // the one before it. A boolean alone cannot distinguish "A finished" from
   // "B is still rebuilding", so an old callback could otherwise reveal B.
@@ -844,6 +881,9 @@ export function AgenticTerminal({
      */
     const replayToPane = (text: string) => {
       if (!text) return;
+      const replayViewport =
+        preservedViewportRef.current ?? captureTerminalViewport(term);
+      if (replayViewport) preservedViewportRef.current = replayViewport;
       const generation = replayGenerationRef.current + 1;
       replayGenerationRef.current = generation;
       if (replayRevealFrameRef.current !== undefined) {
@@ -877,7 +917,7 @@ export function AgenticTerminal({
       // repaint in place, which is why only normal-buffer CLIs ever showed
       // it. So the surface is hidden for the length of the rebuild — the same
       // curtain a chat-stage switch drops — and lifted one settled frame
-      // after the tail scroll has landed.
+      // after the reader's viewport has been restored.
       // Through the ordinary path, so a replay arriving while nobody is looking
       // is parked and un-parked by the same rules as anything else — and so it
       // counts as the pane having painted.
@@ -888,10 +928,13 @@ export function AgenticTerminal({
         // the curtain forever.
         replayCurtainRef.current = false;
         if (disposed || !activeRef.current) return;
-        // A selected chat returning from another session opens on the live
-        // prompt, never several screens above it.
-        term.scrollToBottom?.();
-        if (!curtain) return;
+        restoreTerminalViewport(term, replayViewport);
+        if (!curtain) {
+          if (preservedViewportRef.current === replayViewport) {
+            preservedViewportRef.current = null;
+          }
+          return;
+        }
         replayRevealFrameRef.current = requestAnimationFrame(() => {
           replayRevealFrameRef.current = undefined;
           if (
@@ -901,9 +944,12 @@ export function AgenticTerminal({
           ) {
             return;
           }
-          term.scrollToBottom?.();
+          restoreTerminalViewport(term, replayViewport);
           setTailReady(true);
           container.style.removeProperty("visibility");
+          if (preservedViewportRef.current === replayViewport) {
+            preservedViewportRef.current = null;
+          }
         });
       });
     };
@@ -1248,10 +1294,21 @@ export function AgenticTerminal({
 
   /*
    * A chat-stage switch changes a pane from `display:none` to the full canvas
-   * in one commit. Refit and follow the live tail before that frame paints;
-   * hidden siblings stay parked even when a prompt is addressed to them.
+   * in one commit. Refit and restore the reader's viewport before that frame
+   * paints; a pane already at the tail keeps following it, while hidden
+   * siblings stay parked even when a prompt is addressed to them.
    */
   useLayoutEffect(() => {
+    const departingViewport = !active
+      ? captureTerminalViewport(termRef.current)
+      : null;
+    if (
+      !active &&
+      departingViewport &&
+      (!replayCurtainRef.current || !preservedViewportRef.current)
+    ) {
+      preservedViewportRef.current = departingViewport;
+    }
     // A stage change supersedes every reveal owned by the stage before it. If
     // a replay is still parsing, the active branch's queue barrier below waits
     // for it and becomes the only path allowed to lift the new curtain.
@@ -1271,33 +1328,37 @@ export function AgenticTerminal({
     setTailReady(false);
     let cancelled = false;
     let frame: number | undefined;
-    const followTail = () => {
+    const returningViewport = preservedViewportRef.current;
+    const restoreViewport = () => {
       resizeRef.current?.();
       claimResizeRef.current?.();
-      termRef.current?.scrollToBottom?.();
+      restoreTerminalViewport(termRef.current, returningViewport);
     };
     // Measure the now-mounted stage before parsing held output. Once xterm has
     // consumed that output, one final frame lets its canvas and viewport settle;
     // only then may the surface paint.
-    followTail();
+    restoreViewport();
     const settle = () => {
       if (cancelled || !activeRef.current) return;
-      followTail();
+      restoreViewport();
       frame = requestAnimationFrame(() => {
         if (cancelled || !activeRef.current) return;
-        followTail();
+        restoreViewport();
         // A replay mid-rebuild keeps the curtain: lifting it here would show
         // the rest of its history printing. Its own completion reveals the
         // pane (see `replayToPane`).
         if (!replayCurtainRef.current) {
           setTailReady(true);
           containerRef.current?.style.removeProperty("visibility");
+          if (preservedViewportRef.current === returningViewport) {
+            preservedViewportRef.current = null;
+          }
         }
       });
     };
     const afterFlush = () => {
       if (cancelled || !activeRef.current) return;
-      followTail();
+      restoreViewport();
       // The held flush joins the END of xterm's write queue, but a write that
       // reached the terminal earlier — a replay flushed while this pane was
       // hidden — may still be mid-parse, and settling now would lift the
