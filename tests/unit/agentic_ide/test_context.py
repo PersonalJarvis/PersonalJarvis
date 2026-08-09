@@ -74,7 +74,7 @@ async def test_focus_context_names_the_one_terminal_visible_in_chat_view(
     registry.set_focus_mode(True)
     assert registry.set_surface_context(
         workspace_id=session.id,
-        chat_view=True,
+        view="chat",
         on_screen=True,
         terminal="T2",
     )

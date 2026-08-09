@@ -55,6 +55,7 @@ import logging
 import re
 from dataclasses import asdict
 from pathlib import Path
+from typing import Literal, get_args
 
 from fastapi import (
     APIRouter,
@@ -112,6 +113,10 @@ from jarvis.agentic_ide.session import (
     workspace_changed_event,
 )
 from jarvis.agentic_ide.terminal_input import is_terminal_report_only
+from jarvis.agentic_ide.workspace_view import (
+    WORKSPACE_VIEWS,
+    view_from_legacy_chat_flag,
+)
 
 from .surface_security import credentials_valid, is_loopback_request
 
@@ -296,11 +301,35 @@ class ModeRequest(BaseModel):
     )
 
 
+#: Layer 3 of the workspace-view enum (``docs/anti-drift-three-layer.md``).
+#: Pydantic cannot take a tuple in ``Literal[...]``, so the values are spelled
+#: again here and the assertion below makes that duplication safe: any drift
+#: from layer 0 fails at import, which means pytest collection fails, rather
+#: than producing an HTTP 422 for one specific body weeks later.
+WorkspaceViewName = Literal["grid", "chat", "deck"]
+if set(get_args(WorkspaceViewName)) != set(WORKSPACE_VIEWS):  # pragma: no cover - guard
+    raise RuntimeError(
+        "WorkspaceViewName drifted from WORKSPACE_VIEWS — update both "
+        "(jarvis/agentic_ide/workspace_view.py is the source of truth)."
+    )
+
+
 class SurfaceContextRequest(BaseModel):
     """Which terminal the Agentic-IDE UI shows and targets for prompts."""
 
     workspace_id: str = Field(description="Workspace currently rendered by this view.")
-    chat_view: bool = Field(description="True only while the one-pane chat view is selected.")
+    view: WorkspaceViewName | None = Field(
+        default=None,
+        description="Which reading mode is on screen: grid, chat, or deck.",
+    )
+    chat_view: bool | None = Field(
+        default=None,
+        description=(
+            "Deprecated — superseded by `view`. Still read so a desktop WebView "
+            "still holding the pre-deck bundle keeps reporting its surface "
+            "correctly for the seconds before it reloads itself."
+        ),
+    )
     on_screen: bool = Field(description="Whether the Agentic-IDE section is visible.")
     terminal: str | None = Field(
         default=None,
@@ -1913,15 +1942,20 @@ async def set_mode(request: Request, req: ModeRequest) -> dict:
 
 @router.put("/surface-context", summary="Report the visible Agentic-IDE terminal")
 async def set_surface_context(req: SurfaceContextRequest) -> dict:
-    """Keep deictic voice/chat references aligned with the visible chat pane.
+    """Keep deictic voice/chat references aligned with the visible pane.
 
     The state is ephemeral and active-workspace scoped. Grid view clears it,
     because several terminals are visible there and guessing one would be less
     honest than asking for a call-sign.
+
+    Two ways in, one meaning: `view` is the contract, `chat_view` is what the
+    pre-deck bundle sends. A body carrying neither reports the grid, which is
+    the view that promises the least — see `workspace_view.VIEW_DEFAULT`.
     """
+    view = req.view if req.view is not None else view_from_legacy_chat_flag(req.chat_view)
     accepted = get_registry().set_surface_context(
         workspace_id=req.workspace_id,
-        chat_view=req.chat_view,
+        view=view,
         on_screen=req.on_screen,
         terminal=req.terminal,
         prompt_target=req.prompt_target,

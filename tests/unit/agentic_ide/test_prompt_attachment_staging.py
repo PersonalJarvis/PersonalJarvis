@@ -24,7 +24,7 @@ async def test_bar_drop_is_copied_analysed_and_queued_for_prompt_target(
     session = await registry.start(str(tmp_path), [{"agent": "claude"}, {"agent": "codex"}])
     registry.set_surface_context(
         workspace_id=session.id,
-        chat_view=False,
+        view="grid",
         on_screen=True,
         terminal=None,
         prompt_target="T2",

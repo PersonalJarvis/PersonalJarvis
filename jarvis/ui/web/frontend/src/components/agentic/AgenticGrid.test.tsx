@@ -2549,7 +2549,13 @@ describe("chat view", () => {
   const cellClass = (name: string) =>
     screen.getByTestId(`pane-cell-${name}`).className;
 
+  /*
+   * The reading modes are three separate buttons, not one cycling control:
+   * past two states "click again" stops telling you where you land, and the
+   * third mode changes the assistant's behaviour rather than only the layout.
+   */
   const toChat = () => fireEvent.click(screen.getByTestId("agentic-view-mode-toggle"));
+  const toGrid = () => fireEvent.click(screen.getByTestId("agentic-view-mode-grid"));
 
   const railOrder = () =>
     screen
@@ -2645,14 +2651,20 @@ describe("chat view", () => {
     );
   });
 
-  it("keeps the very same pane elements across a switch and back", () => {
+  it("keeps the very same pane elements across every mode and back", () => {
+    // The iron rule of this component, and the one a new reading mode is most
+    // likely to break: element identity is the mounting guarantee. A remounted
+    // pane is a NEW element, and a new element means the WebSocket died with
+    // the old one — which kills the coding agent behind it.
     renderGrid(FOUR);
     const before = screen.getByTestId("pane-Nova");
+
     toChat();
     expect(screen.getByTestId("pane-Nova")).toBe(before);
-    toChat();
-    // Element identity is the mounting guarantee: a remounted pane would be a
-    // NEW element, and a new element means the WebSocket died with the old one.
+    fireEvent.click(screen.getByTestId("agentic-view-mode-deck"));
+    expect(screen.getByTestId("pane-Nova")).toBe(before);
+    toGrid();
+
     expect(screen.getByTestId("pane-Nova")).toBe(before);
     expect(screen.getByTestId("agentic-chat-rail").className).toContain("hidden");
     expect(cellClass("Kai")).not.toContain("hidden");
@@ -2751,7 +2763,7 @@ describe("chat view", () => {
     await waitFor(() =>
       expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith({
         workspaceId: "ide_test",
-        chatView: false,
+        view: "grid",
         onScreen: true,
         terminal: null,
         promptTarget: "Mika",
@@ -2764,22 +2776,61 @@ describe("chat view", () => {
     await waitFor(() =>
       expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith({
         workspaceId: "ide_test",
-        chatView: true,
+        view: "chat",
         onScreen: true,
         terminal: "Aria",
         promptTarget: "Aria",
       }),
     );
 
-    toChat();
+    toGrid();
     await waitFor(() =>
       expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith({
         workspaceId: "ide_test",
-        chatView: false,
+        view: "grid",
         onScreen: true,
         terminal: null,
         promptTarget: "Aria",
       }),
+    );
+  });
+
+  /*
+   * The view travels to the backend by NAME, and the backend acts on more than
+   * deixis with it: the Command Deck is the only surface allowed to speak a
+   * finished pane out loud. A wrong name here is a wrong answer about whether
+   * Jarvis talks, which is why this is pinned separately from the pane above.
+   */
+  it("tells the backend which of the three modes is on screen", async () => {
+    renderGrid(FOUR);
+
+    fireEvent.click(screen.getByTestId("agentic-view-mode-deck"));
+
+    await waitFor(() =>
+      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith(
+        expect.objectContaining({ view: "deck", onScreen: true }),
+      ),
+    );
+  });
+
+  it("reports the grid while the section is off screen, whatever it shows", async () => {
+    // The deck speaks; a deck nobody is looking at must not. This grid stays
+    // mounted behind another section, so "on screen" is the only thing that
+    // can stop it — see the matching backend test.
+    const { rerender } = renderGrid(FOUR);
+    fireEvent.click(screen.getByTestId("agentic-view-mode-deck"));
+    await waitFor(() =>
+      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith(
+        expect.objectContaining({ view: "deck" }),
+      ),
+    );
+
+    rerender({ onScreen: false });
+
+    await waitFor(() =>
+      expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith(
+        expect.objectContaining({ onScreen: false, terminal: null }),
+      ),
     );
   });
 

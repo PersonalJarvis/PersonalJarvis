@@ -1209,15 +1209,21 @@ export async function setFocusMode(enabled: boolean): Promise<boolean> {
 }
 
 /**
- * Tell the backend which pane is visible and which one owns the next prompt.
+ * Tell the backend which view is on screen, which pane it stages, and which
+ * one owns the next prompt.
  *
  * Ephemeral by design: this is grounding for "this terminal", not a display
  * preference. Grid view has no single visible terminal, but its selected prompt
  * chip remains an explicit target for the prompt bar, voice orb, and file drops.
+ *
+ * The view travels as a NAME rather than the `chat_view` boolean it replaced:
+ * there are three of them now, and the backend reads this to decide more than
+ * deixis — the Command Deck is the one surface allowed to speak a finished pane
+ * out loud, so a wrong answer here is a wrong answer about whether Jarvis talks.
  */
 export async function syncAgenticIdeSurface(payload: {
   workspaceId: string;
-  chatView: boolean;
+  view: "grid" | "chat" | "deck";
   onScreen: boolean;
   terminal: string | null;
   promptTarget: string | null;
@@ -1228,7 +1234,7 @@ export async function syncAgenticIdeSurface(payload: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       workspace_id: payload.workspaceId,
-      chat_view: payload.chatView,
+      view: payload.view,
       on_screen: payload.onScreen,
       terminal: payload.terminal,
       prompt_target: payload.promptTarget,

@@ -271,6 +271,41 @@ const TOOLBAR_BTN =
 const TOOLBAR_BTN_ON = "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary";
 
 /**
+ * The reading-mode switch, one entry per view.
+ *
+ * A table rather than three hand-written buttons because the set is a contract
+ * (see `WorkspaceView`): a fourth mode should be one row here, and a mode with
+ * no row is a mode the user cannot reach — which is the failure this shape
+ * makes obvious instead of silent.
+ */
+const VIEW_BUTTONS: ReadonlyArray<{
+  view: WorkspaceView;
+  testId: string;
+  icon: LucideIcon;
+  title: string;
+}> = [
+  {
+    view: "grid",
+    testId: "agentic-view-mode-grid",
+    icon: LayoutGrid,
+    title: "Terminal grid — every pane on screen at once.",
+  },
+  {
+    view: "chat",
+    testId: "agentic-view-mode-toggle",
+    icon: MessagesSquare,
+    title: "Chat view — read one agent at a time, like a conversation.",
+  },
+  {
+    view: "deck",
+    testId: "agentic-view-mode-deck",
+    icon: AudioLines,
+    title:
+      "Command Deck — brief the agents by voice and hear back when one is done.",
+  },
+];
+
+/**
  * The part of the hovered pane a drop would take, drawn as it will look.
  *
  * A label alone ("Right of Mika") is a sentence to read mid-gesture; the filled
@@ -488,22 +523,37 @@ const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
 const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
 
 /**
- * The two ways of looking at one workspace.
+ * The three ways of looking at one workspace.
  *
  * `grid` is the wall of terminals — every pane visible at once, sized by the
  * dragged seams. `chat` is the same workspace read like a conversation: a rail
  * of agents on the left, ONE terminal on a calm centred stage, and the prompt
- * bar underneath as the composer. Neither mode owns the panes — switching is a
- * pure restyle of the same mounted elements, because unmounting a pane kills
- * the coding agent behind it (see the grid container's comment below).
+ * bar underneath as the composer. `deck` is the Command Deck: the orb is the
+ * subject of the screen, each agent is a card, and Jarvis briefs them and
+ * reports their finished work back out loud.
+ *
+ * No mode owns the panes — switching is a pure restyle of the same mounted
+ * elements, because unmounting a pane kills the coding agent behind it (see
+ * the grid container's comment below). That rule is what makes a third mode
+ * cheap to add and is the one thing a fourth must not break.
+ *
+ * Layer 4 of the enum contract; `jarvis/agentic_ide/workspace_view.py` is the
+ * source of truth and the backend asserts the two agree at import.
  */
-export type WorkspaceView = "grid" | "chat";
+export type WorkspaceView = "grid" | "chat" | "deck";
+
+/** Every value, in the order the toolbar and the wizard offer them. */
+export const WORKSPACE_VIEWS: readonly WorkspaceView[] = ["grid", "chat", "deck"];
+
+function isWorkspaceView(raw: string): raw is WorkspaceView {
+  return (WORKSPACE_VIEWS as readonly string[]).includes(raw);
+}
 
 const VIEW_KEY = "jarvis.agenticIde.workspaceView";
 const CHAT_ORDER_KEY_PREFIX = "jarvis.agenticIde.chatOrder.v1";
 
 export function storedViewMode(): WorkspaceView | null {
-  return readStored(VIEW_KEY, (raw) => (raw === "grid" || raw === "chat" ? raw : null));
+  return readStored(VIEW_KEY, (raw) => (isWorkspaceView(raw) ? raw : null));
 }
 
 /**
@@ -1491,21 +1541,28 @@ export function AgenticGrid({
     return names[0] ?? null;
   }, [arrivingChatPane, chatPane, target, session.terminals]);
 
-  // The browser is the only layer that knows which pane fills the one-pane
-  // chat stage. Hand that fact to the backend so voice and chat can resolve
-  // "this terminal" from what the user actually sees. Grid view clears the
-  // context rather than guessing among several visible panes.
+  /*
+   * The browser is the only layer that knows what is actually on screen. Hand
+   * that fact to the backend so voice and chat can resolve "this terminal"
+   * from what the user sees, and so the deck knows it may speak.
+   *
+   * `stagedPane` is the ONE pane the view puts in front of the user: chat's
+   * stage, or the deck card the user unfolded to read. Grid has no such pane
+   * and reports none — guessing among a dozen visible terminals would be less
+   * honest than making the user name one.
+   */
+  const stagedPane = chatView ? chatSelected : null;
   useEffect(() => {
     void syncAgenticIdeSurface({
       workspaceId: session.id,
-      chatView,
+      view: viewMode,
       onScreen,
-      terminal: chatView && onScreen ? chatSelected : null,
+      terminal: onScreen ? stagedPane : null,
       promptTarget: onScreen ? target || null : null,
     }).catch((error) => {
       console.warn("Agentic IDE: could not sync the visible terminal:", error);
     });
-  }, [chatSelected, chatView, onScreen, session.id, target]);
+  }, [onScreen, session.id, stagedPane, target, viewMode]);
 
   /** Rail click: show the pane, and aim the composer at it when it can listen. */
   const selectChatPane = useCallback((name: string, promptable: boolean) => {
@@ -2134,33 +2191,39 @@ export function AgenticGrid({
           <Brain className="h-4 w-4 shrink-0" />
         </button>
 
-        {/* Grid or chat — how the same agents are read. The chat side opens
-            the composer with it: a conversation surface without an input box
-            is a screenshot, not a chat. */}
-        <button
-          type="button"
-          data-testid="agentic-view-mode-toggle"
-          aria-pressed={chatView}
-          onClick={() => {
-            const next: WorkspaceView = chatView ? "grid" : "chat";
-            setViewMode(next);
-            if (next === "chat" && composerCollapsed) {
-              resizeComposer(COMPOSER_DEFAULT_PX);
-            }
-          }}
-          title={
-            chatView
-              ? "Chat view is on — one agent at a time, like a conversation. Click for the terminal grid."
-              : "Switch to chat view — read one agent at a time, like a conversation."
-          }
-          className={cn(TOOLBAR_BTN, chatView && TOOLBAR_BTN_ON)}
-        >
-          {chatView ? (
-            <LayoutGrid className="h-4 w-4 shrink-0" />
-          ) : (
-            <MessagesSquare className="h-4 w-4 shrink-0" />
-          )}
-        </button>
+        {/* Grid, chat or deck — how the same agents are read.
+
+            Three buttons rather than one cycling through three states: past
+            two, "click again" stops telling you where you will land, and this
+            control now reaches a mode that changes the assistant's behaviour
+            rather than only the layout. They are three ordinary toolbar
+            glyphs, not a segmented group in a box — the row's rule is one
+            button shape throughout, with colour reserved for what is ON.
+
+            `agentic-view-mode-toggle` stays on the chat button: it is the one
+            this control used to be, and the tests that press it are about
+            chat view rather than about the switch. */}
+        {VIEW_BUTTONS.map(({ view, testId, icon: Icon, title }) => (
+          <button
+            key={view}
+            type="button"
+            data-testid={testId}
+            aria-pressed={viewMode === view}
+            onClick={() => {
+              setViewMode(view);
+              // A conversation surface with no input box is a screenshot, so
+              // both talking modes bring the composer with them. The deck is
+              // voice-first but must stay usable with the mic muted.
+              if (view !== "grid" && composerCollapsed) {
+                resizeComposer(COMPOSER_DEFAULT_PX);
+              }
+            }}
+            title={title}
+            className={cn(TOOLBAR_BTN, viewMode === view && TOOLBAR_BTN_ON)}
+          >
+            <Icon className="h-4 w-4 shrink-0" />
+          </button>
+        ))}
 
         {/* Even out the sizes. Beside the grid/chat toggle because both are
             about the SHAPE of the workspace rather than what is in it, and

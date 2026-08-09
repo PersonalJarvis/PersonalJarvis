@@ -97,6 +97,12 @@ from .terminal_input import (
     is_pointer_noise_only,
 )
 from .transcript import ReplayBuffer, Transcript
+from .workspace_view import (
+    VIEW_CHAT,
+    VIEW_DECK,
+    VIEW_GRID,
+    coerce_view,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from jarvis.agent_accounts import AgentAccount
@@ -1240,7 +1246,12 @@ class Session:
     # in the grid every pane is visible and no default is honest. This state is
     # reported by the mounted frontend and deliberately excluded from resume
     # snapshots: after a restart the UI reports what it actually shows again.
-    surface_chat_visible: bool = False
+    #
+    # Which of the three reading modes is on screen — see
+    # ``agentic_ide.workspace_view``. It replaced a ``chat_view`` boolean once a
+    # third mode existed, and it is read for more than deixis now: the Command
+    # Deck is the one surface allowed to speak a finished pane out loud.
+    surface_view: str = VIEW_GRID
     surface_terminal: str = ""
     # The written prompt bar and the voice orb share one explicit pane target.
     # Unlike ``surface_terminal``, this remains meaningful in grid view: every
@@ -1289,10 +1300,22 @@ class Session:
         return next((t for t in self.terminals if t.name == matched), None)
 
     def contextual_terminal(self) -> Terminal | None:
-        """The one pane visibly filling chat view, if there is exactly one."""
-        if not self.surface_chat_visible or not self.surface_terminal:
+        """The one pane the visible surface puts in front of the user.
+
+        Two of the three views can answer this. Chat view stages exactly one
+        pane; the Command Deck stages one whenever a card has been unfolded to
+        read its terminal. The grid never answers — a dozen panes are visible
+        there, and picking one of them would be a guess dressed as a fact.
+        """
+        if self.surface_view not in (VIEW_CHAT, VIEW_DECK):
+            return None
+        if not self.surface_terminal:
             return None
         return self.find(self.surface_terminal)
+
+    def stages_one_pane(self) -> bool:
+        """Does the visible view show a single pane, rather than the wall?"""
+        return self.surface_view in (VIEW_CHAT, VIEW_DECK)
 
     def prompt_target_terminal(self) -> Terminal | None:
         """The pane selected by the visible prompt bar and voice orb."""
@@ -2343,23 +2366,28 @@ class Registry:
         self,
         *,
         workspace_id: str,
-        chat_view: bool,
+        view: str,
         on_screen: bool,
         terminal: str | None,
         prompt_target: str | None = None,
     ) -> bool:
-        """Record which single pane the active UI visibly puts on its stage.
+        """Record which view the active UI shows, and the pane it stages.
 
         A stale grid can finish a request after the user changed workspace, so
         only the active workspace may write this context. Invalid or hidden
         selections clear the default rather than leaving a believable old one.
+
+        An off-screen section reports the grid regardless of what it was last
+        showing. That is not cosmetic: the deck speaks finished panes out loud,
+        and a section the user navigated away from must not keep talking from
+        behind whatever they are looking at now.
         """
         session = self.session
         if session is None or session.id != workspace_id:
             return False
         session.surface_on_screen = bool(on_screen)
-        session.surface_chat_visible = bool(chat_view and on_screen)
-        selected = session.find(terminal or "") if session.surface_chat_visible else None
+        session.surface_view = coerce_view(view) if session.surface_on_screen else VIEW_GRID
+        selected = session.find(terminal or "") if session.stages_one_pane() else None
         session.surface_terminal = selected.name if selected is not None else ""
         prompt = session.find(prompt_target or "") if session.surface_on_screen else None
         session.surface_prompt_target = (

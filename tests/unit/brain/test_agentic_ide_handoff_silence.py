@@ -273,7 +273,7 @@ async def test_the_visible_chat_terminal_beats_a_stale_conversation_target(
     assert registry.session is not None
     registry.set_surface_context(
         workspace_id=registry.session.id,
-        chat_view=True,
+        view="chat",
         on_screen=True,
         terminal="T4",
     )

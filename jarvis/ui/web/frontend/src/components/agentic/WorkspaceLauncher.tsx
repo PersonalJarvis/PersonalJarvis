@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  AudioLines,
   LayoutGrid,
   Loader2,
   MessagesSquare,
@@ -454,19 +455,25 @@ function StepNavigation({
   );
 }
 
-/** The user-facing names of the two reading modes, shared by every step. */
+/** The user-facing names of the three reading modes, shared by every step. */
 const VIEW_NAMES: Record<WorkspaceView, string> = {
   grid: "Terminal grid",
   chat: "Chat view",
+  deck: "Command Deck",
 };
 
 /**
  * The last decision before review: how the workspace is read.
  *
- * Two ways of looking at the SAME panes (see WorkspaceView in AgenticGrid) —
+ * Three ways of looking at the SAME panes (see WorkspaceView in AgenticGrid) —
  * the grid shows every terminal at once, chat puts one agent on a stage like a
- * conversation. A choice of presentation, not of substance, which is why the
- * step needs no gate: both answers are always valid and one is preselected.
+ * conversation, and the deck hands the floor to Jarvis. A choice of
+ * presentation, not of substance, which is why the step needs no gate: every
+ * answer is valid and one is preselected.
+ *
+ * The deck's card says what it DOES differently rather than what it looks
+ * like, because it is the one option that changes the assistant's behaviour:
+ * pick it and Jarvis starts speaking finished work back to you.
  */
 function ViewChoice({
   view,
@@ -481,7 +488,7 @@ function ViewChoice({
       <div
         role="radiogroup"
         aria-label="How the workspace opens"
-        className="mt-4 grid gap-4 sm:grid-cols-2"
+        className="mt-4 grid gap-4 sm:grid-cols-3"
       >
         <ViewOption
           selected={view === "grid"}
@@ -501,11 +508,21 @@ function ViewChoice({
           description="One agent at a time on a calm stage, the rest on a rail — read like a conversation."
           preview={<ChatPreview />}
         />
+        <ViewOption
+          selected={view === "deck"}
+          onSelect={() => onView("deck")}
+          testId="view-choice-deck"
+          icon={<AudioLines className="h-4 w-4 shrink-0" />}
+          title={VIEW_NAMES.deck}
+          description="You brief by voice, Jarvis runs the floor — and tells you when an agent is done."
+          preview={<DeckPreview />}
+        />
       </div>
       <p className="mt-5 max-w-2xl text-xs leading-relaxed text-muted-foreground">
         Only how the workspace is read changes — the agents, panes and
-        conversations are the same either way, and the workspace toolbar
-        switches between the two whenever you like.
+        conversations are the same in all three, and the workspace toolbar
+        switches between them whenever you like. The Command Deck also speaks:
+        it reports a finished agent out loud, one at a time.
       </p>
     </div>
   );
@@ -564,7 +581,7 @@ function ViewOption({
   );
 }
 
-/* Miniatures of the two modes, drawn with rules like the rest of the wizard. */
+/* Miniatures of the three modes, drawn with rules like the rest of the wizard. */
 
 function GridPreview() {
   return (
@@ -594,6 +611,35 @@ function ChatPreview() {
         ))}
       </span>
       <span className="block h-[4.875rem] flex-1 border border-border/70 bg-muted/30" />
+    </span>
+  );
+}
+
+/*
+ * The deck miniature is the odd one out on purpose.
+ *
+ * The other two draw their layout, because their layout IS the difference. The
+ * deck's difference is that the conversation is at the centre and the
+ * terminals have receded to cards around it — so it draws a ring with the
+ * agents arranged about it, which is the one glance that distinguishes it from
+ * "chat view with bigger panes".
+ */
+function DeckPreview() {
+  return (
+    <span aria-hidden className="flex h-[4.875rem] items-center justify-center gap-2">
+      <span className="flex flex-col gap-1.5">
+        {[0, 1].map((i) => (
+          <span key={i} className="block h-6 w-8 border border-border/70 bg-muted/20" />
+        ))}
+      </span>
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/60 bg-primary/10">
+        <span className="block h-4 w-4 rounded-full border border-primary/70 bg-primary/25" />
+      </span>
+      <span className="flex flex-col gap-1.5">
+        {[0, 1].map((i) => (
+          <span key={i} className="block h-6 w-8 border border-border/70 bg-muted/20" />
+        ))}
+      </span>
     </span>
   );
 }
