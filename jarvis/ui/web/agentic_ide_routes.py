@@ -354,6 +354,17 @@ if set(get_args(DeckAction)) != set(get_args(standup.Action)):  # pragma: no cov
     )
 
 
+class DeckHoldRequest(BaseModel):
+    """Whether the user is driving this pane themselves for now."""
+
+    held: bool = Field(
+        description=(
+            "True takes the pane over: the Command Deck stops assigning work to "
+            "it and stops reporting it. False hands it back."
+        )
+    )
+
+
 class DeckAckRequest(BaseModel):
     """What the user said about one Command Deck report."""
 
@@ -1892,6 +1903,23 @@ async def get_deck_queue() -> dict:
     were indistinguishable from the outside in the first version.
     """
     return standup.queue().state()
+
+
+@router.post("/deck/hold/{name}", summary="Take a pane over from the Command Deck")
+async def set_deck_hold(name: str, req: DeckHoldRequest) -> dict:
+    """"I'll take this one" — and handing it back.
+
+    The honest limit on the deck's promise. A pane can hold a question only the
+    user can settle, and while they are dealing with it the deck must stop
+    assigning work to it and stop reporting it. Per pane rather than a mode:
+    the interesting case is one agent out of eight, and the other seven carry
+    on being run by Jarvis.
+    """
+    try:
+        held = get_registry().set_deck_hold(name, req.held)
+    except SessionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"terminal": name, "deck_hold": held}
 
 
 @router.post("/deck/ack", summary="Answer a Command Deck report")

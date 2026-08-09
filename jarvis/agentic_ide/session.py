@@ -1106,6 +1106,21 @@ class Terminal:
     # every cold start behind the slowest one.
     attach_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
 
+    # "I'll take this one" — the Command Deck's per-pane hold.
+    #
+    # The deck's whole promise is that Jarvis runs the floor, and the honest
+    # limit on that promise is a pane the user has decided to drive themselves:
+    # a permission prompt to answer, a password, a question only they can settle.
+    # While this is on, the deck neither assigns work to the pane nor reports it
+    # — both would be talking over somebody who is already there.
+    #
+    # Ephemeral and per pane rather than a workspace mode: the interesting case
+    # is one agent out of eight, and the other seven should carry on. It is not
+    # persisted for the same reason `surface_view` is not — a restart lands the
+    # user back in the ordinary state rather than in a hold they set an hour ago
+    # and have long forgotten.
+    deck_hold: bool = False
+
     def to_dict(self) -> dict[str, Any]:
         # Read the replayed screen ONCE. `lines()` walks the whole scrollback,
         # and both the line count below and the recap want it — asking twice per
@@ -1131,6 +1146,9 @@ class Terminal:
             # the voice path both have to know, or they would offer a target
             # that refuses every instruction sent to it.
             "accepts_prompts": accepts_prompts(self.agent),
+            # Has the user taken this pane over in the Command Deck? Reported
+            # so the card can show it and the deck can leave the pane alone.
+            "deck_hold": self.deck_hold,
             "index": self.index,
             "column": self.column,
             "slot": self.slot,
@@ -2361,6 +2379,30 @@ class Registry:
         session.focus_mode = bool(enabled)
         logger.info("Agentic IDE focus mode {}", "on" if enabled else "off")
         return session.focus_mode
+
+    def set_deck_hold(self, name: str, held: bool, *, workspace_id: str | None = None) -> bool:
+        """"I'll take this one" — stop the Command Deck using this pane.
+
+        While held, the deck neither assigns work to the pane nor reports it,
+        and the pane's own editor is unlocked in the UI. Everything else about
+        the pane is unchanged: it keeps running, keeps its recap, keeps its
+        place, and the bell still counts it like every other pane.
+
+        Raises for a pane that is not there rather than answering False — the
+        two outcomes are "it is now held" and "it is now not", and a silent
+        no-op for a mistyped call-sign looks exactly like the first.
+        """
+        located = self._locate(name, workspace_id)
+        if located is None:
+            raise SessionError(f"No terminal called '{name}'.")
+        _session, term = located
+        term.deck_hold = bool(held)
+        logger.info(
+            "Agentic IDE: {} {} by the user in the Command Deck",
+            term.name,
+            "taken over" if term.deck_hold else "handed back",
+        )
+        return term.deck_hold
 
     def set_surface_context(
         self,

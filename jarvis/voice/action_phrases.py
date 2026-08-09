@@ -361,6 +361,22 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I could not reach {failed}, so nothing is running.",
         "es": "No pude llegar a {failed}, así que no hay nada en marcha.",
     },
+    # The Command Deck was handed work with nobody's name on it and has no
+    # agent free to take it. Said rather than queued: a silently held order is
+    # how a user ends up waiting on work that was never started.
+    "ide_deck_nobody_free": {
+        "de": "Alle arbeiten noch. Soll ich einen dazuholen?",  # i18n-allow
+        "en": "Nobody is free right now — they are all still working. Shall I open one?",
+        "es": "Ahora mismo no hay nadie libre, todos siguen trabajando. ¿Abro uno?",
+    },
+    # No agent pane at all: an empty workspace, or one holding only plain
+    # shells. A different sentence from the one above, because the answer the
+    # user needs is different.
+    "ide_deck_no_agents": {
+        "de": "In diesem Workspace läuft noch kein Agent. Soll ich einen öffnen?",  # i18n-allow
+        "en": "There is no agent running in this workspace yet. Shall I open one?",
+        "es": "Todavía no hay ningún agente en este espacio. ¿Abro uno?",
+    },
     # Typed into the input box but never submitted — looks identical to a
     # running agent until you ask it something (the 2026-07-25 popup trap).
     "ide_prompt_typed_not_started": {

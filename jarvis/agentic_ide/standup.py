@@ -657,6 +657,24 @@ def deck_workspaces(registry: Any) -> set[str]:
     return found
 
 
+def held_panes(registry: Any) -> set[tuple[str, str]]:
+    """Panes the user has taken over — the deck reports none of them.
+
+    The other half of ``deck_hold`` (see ``session.Terminal``). Somebody who is
+    sitting in front of a pane answering its question does not need to be told
+    it stopped: they are watching it stop.
+    """
+    held: set[tuple[str, str]] = set()
+    try:
+        for session in registry.sessions:
+            for term in getattr(session, "terminals", []):
+                if bool(getattr(term, "deck_hold", False)):
+                    held.add((str(session.id), str(getattr(term, "key", "") or "")))
+    except Exception:  # noqa: BLE001 - a registry read must not end the sweep
+        return set()
+    return held
+
+
 async def pump(registry: Any, entries: Sequence[Notification]) -> str:
     """The sweep's one call into this module: take the news, say what is due.
 
@@ -676,9 +694,21 @@ async def pump(registry: Any, entries: Sequence[Notification]) -> str:
             # Nothing is being read as a deck. The queue keeps whatever it
             # holds — the user may come back to it — but takes nothing new.
             return ""
-        fresh = [entry for entry in entries if entry.workspace_id in decks]
+        held = held_panes(registry)
+        fresh = [
+            entry
+            for entry in entries
+            if entry.workspace_id in decks
+            and (entry.workspace_id, entry.pane_key) not in held
+        ]
         if fresh:
             _QUEUE.offer(fresh)
+        # A pane taken over AFTER its report was filed drops out too. The user
+        # is in front of it now, which is the same reason reading one silences
+        # it (rule 6) — and without this the deck would announce a pane the
+        # user is currently typing into.
+        for workspace_id, pane_key in held:
+            _QUEUE.drop_pane(workspace_id, pane_key)
         return await announce_due()
     except Exception as exc:  # noqa: BLE001 - a mute deck beats a dead sweep
         logger.warning("Agentic IDE: standup pump failed: %s", exc)
@@ -780,6 +810,7 @@ __all__ = [
     "canned_line",
     "deck_workspaces",
     "enabled",
+    "held_panes",
     "pump",
     "queue",
     "reset",

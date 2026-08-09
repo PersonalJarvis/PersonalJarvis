@@ -6133,6 +6133,25 @@ class BrainManager:
             )
             if retry is not None:
                 return retry
+            # In the Command Deck the user is a team lead, and a team lead does
+            # not address people by name for every order. "Somebody get the
+            # wake-path tests green" is a real instruction; asking WHICH agent
+            # would be the deck handing its own job back.
+            #
+            # Only in the deck: everywhere else an unaddressed sentence keeps
+            # meaning what it always did, or an open workspace would start
+            # swallowing ordinary conversation.
+            delegated = await self._delegate_in_command_deck(
+                user_text,
+                session=session,
+                candidates=candidates,
+                language=out_lang,
+                consume_pending_voice_attachments=(
+                    consume_pending_voice_attachments
+                ),
+            )
+            if delegated is not None:
+                return delegated
             return self._ask_which_agentic_ide_terminal(
                 user_text, candidates=candidates, language=out_lang
             )
@@ -6311,6 +6330,114 @@ class BrainManager:
                 "ide_prompt_sent_nobody", language, failed=_join_names(names, language)
             )
         return _fanout_reply_line(result, language)
+
+    async def _delegate_in_command_deck(
+        self,
+        user_text: str,
+        *,
+        session: Any,
+        candidates: list[str],
+        language: str,
+        consume_pending_voice_attachments: bool = False,
+    ) -> str | None:
+        """Hand work that names no pane to whoever is free. Deck only.
+
+        Everywhere else, an instruction with no call-sign in it is a question
+        for Jarvis. In the Command Deck the user is running a team and has
+        stopped naming people for every order, so "somebody get the wake-path
+        tests green" has to reach an agent — asking which one would be the deck
+        handing its own job back to the person who opened it.
+
+        Three answers, and the middle one is the reason this is not a loop over
+        ``deliver``:
+
+        * one free agent, or an order that does not decompose → one brief;
+        * several free agents AND an explicit request to split → ``work_split``
+          plans distinct assignments and the fan-out delivers them together,
+          because the same sentence sent five times is five agents racing on
+          one file rather than a team;
+        * nobody free → SAY so. A silently held order is how a user ends up
+          waiting an hour on work that was never started.
+
+        Returns ``None`` for anything that is not deck delegation, so the
+        caller's clarifying question still runs.
+        """
+        try:
+            from jarvis.agentic_ide import fleet_actions as ide_fleet
+            from jarvis.agentic_ide import intent as ide_intent
+            from jarvis.agentic_ide.workspace_view import VIEW_DECK
+
+            if getattr(session, "surface_view", "") != VIEW_DECK:
+                return None
+            work = ide_intent.unaddressed_work(user_text, names=candidates)
+            if work is None:
+                return None
+            free = ide_fleet.free_agents(session)
+        except Exception:  # noqa: BLE001 - never crash a turn over an optional surface
+            log.warning("Command Deck delegation check failed", exc_info=True)
+            return None
+
+        if not free:
+            # Two different situations, two different answers: a workspace whose
+            # agents are all busy, and one that has no agent at all. Offering to
+            # "open one" is right in both, but telling somebody their agents are
+            # busy when they have none is the kind of small lie that makes a
+            # surface untrustworthy.
+            try:
+                from jarvis.agentic_ide.session import accepts_prompts
+
+                has_agents = any(
+                    accepts_prompts(str(getattr(term, "agent", "") or ""))
+                    for term in getattr(session, "terminals", [])
+                )
+            except Exception:  # noqa: BLE001 - the phrasing is not worth a crash
+                has_agents = True
+            key = "ide_deck_nobody_free" if has_agents else "ide_deck_no_agents"
+            log.info("Command Deck: nothing free for an unaddressed order")
+            return action_phrase(key, language)
+
+        # An explicit split across a free fleet, or one agent takes it. The
+        # default is deliberately ONE: "fix the wake path" is a job, not a
+        # committee, and spending five subscriptions on it because five panes
+        # happened to be idle is the fan-out mistake in reverse.
+        names = [term.name for term in free]
+        assignments: dict[str, str] | None = None
+        if len(names) > 1 and ide_intent.wants_split(user_text):
+            try:
+                from jarvis.agentic_ide import work_split as ide_split
+
+                plan = await ide_split.split(
+                    work,
+                    session=session,
+                    count=len(names),
+                    conversation=self._agentic_ide_conversation(user_text),
+                )
+                assignments = {
+                    name: item.task
+                    for name, item in zip(names, plan.assignments, strict=False)
+                }
+                log.info(
+                    "Command Deck: split %s across %d free panes (%s)",
+                    plan.split_by,
+                    len(assignments),
+                    ", ".join(a.area for a in plan.assignments),
+                )
+            except Exception:  # noqa: BLE001 - an unplanned fleet still works
+                log.warning("Command Deck work split failed", exc_info=True)
+                names = names[:1]
+        else:
+            names = names[:1]
+
+        log.info("Command Deck: delegating an unaddressed order to %s", ", ".join(names))
+        return await self._deliver_agentic_ide_prompt(
+            session=session,
+            names=names,
+            utterance=work,
+            instruction="",
+            language=language,
+            assignments=assignments,
+            consume_pending_voice_attachments=consume_pending_voice_attachments,
+        )
 
     #: How long a "you never prompted it" complaint may reach back. Bounded to
     #: the running conversation: past this, "do it again" is a fresh request and
