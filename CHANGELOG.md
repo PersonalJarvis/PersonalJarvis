@@ -11,6 +11,71 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [1.3.0] — 2026-08-09
+
+This release makes fully-local voice a plug-and-go experience: the app now
+installs and supervises everything itself — including Ollama — connects in
+milliseconds instead of seconds, and lets you choose the brain model that
+fits your machine.
+
+### Added
+
+- The app installs and starts Ollama itself when local models are selected:
+  runtime detection distinguishes not-installed / stopped / running, each
+  with the right one-click fix (winget or the official installer on Windows,
+  Homebrew on macOS, the official script behind non-interactive sudo on
+  Linux — every other case gets an honest refusal naming the fix).
+- One click on the self-hosted realtime card now covers the whole local
+  chain: Ollama, the brain model download, the server environment, the
+  vendored patch, and the proving smoke boot.
+- A brain-model picker on the voice-server card: every installed and curated
+  model annotated with an honest fits/does-not-fit verdict for this
+  machine's accelerator; switching never needs a reinstall and an explicit
+  choice that does not fit is refused instead of silently substituted.
+- Local model cards reach the whole public Ollama library, not just the
+  curated shortlist — any published model can be searched, downloaded, and
+  used.
+- A lifecycle supervisor for the managed voice server: prewarmed at app
+  start, pidfile ownership (PID-reuse safe), start/stop from the card and
+  the CLI, and an Ollama keep-alive so the brain model stays resident.
+- Honest connect errors on every voice surface: a failed start attempt now
+  names the provider and reason instead of silently returning to idle, and
+  a deleted install fails fast with the repair action instead of retrying
+  for two minutes.
+
+### Changed
+
+- Local realtime connects in milliseconds: "localhost" is pinned to
+  127.0.0.1 (the OS resolver's dead IPv6 attempt cost ~2 s per connect),
+  and the SDK client and model probe are reused across calls
+  (~430 ms more per call before).
+- Self-hosted brains get a compact instruction profile (about a third of
+  the size, prefix-cache-friendly ordering), cutting per-turn thinking
+  time on small local models by several seconds.
+- Delegated replies wait for the local server's own readback long enough
+  (a declared per-provider budget) instead of muting the answer through a
+  text-only fallback.
+- Preflight tells the truth on unsupported GPUs ("no supported
+  accelerator" instead of a false "0 GB"), and the managed install works
+  with venvs created by a different Python.
+- The curated local-model catalog was refreshed to the current generation
+  and is verified against the live Ollama library.
+
+### Fixed
+
+- A deleted managed install no longer leaves every call chasing a
+  nonexistent server for two minutes; stale installs are detected and
+  offered a repair.
+- Killing the voice server no longer strands orphan processes: process
+  groups are terminated with escalation on POSIX, and ownership is
+  verified before any kill.
+- Embedding models (BGE, GTE, E5, MiniLM and friends) and cloud-hosted
+  tags are no longer offered as the local voice brain — the first would
+  answer a spoken turn with a vector, the second would quietly break the
+  "runs entirely on your machine" promise.
+
+---
+
 ## [1.2.3] — 2026-08-07
 
 This release makes live voice calls survive crashes and restarts, lets the
