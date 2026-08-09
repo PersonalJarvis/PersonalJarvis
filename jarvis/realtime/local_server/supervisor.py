@@ -74,6 +74,18 @@ _MAX_POOL_RESPONSE_BYTES = 64 * 1024
 #: so only a genuinely idle multi-hour gap pays a reload.
 BRAIN_KEEP_ALIVE = "2h"
 
+# Ollama's OpenAI-compatible endpoints cannot accept a per-request context
+# size.  Current long-context models can therefore reserve their full native
+# window (qwen3.5:4b used 262,144 tokens and spilled 5+ GiB into shared GPU
+# memory on a 16 GiB card).  The managed voice stack needs only a compact turn
+# history, so it runs through a deterministic Ollama profile with an explicit
+# bounded context.  This leaves room for local TTS and prevents system-wide
+# WDDM paging while preserving the user's chosen base model.
+VOICE_BRAIN_CONTEXT_TOKENS = 8192
+_VOICE_MODEL_SUFFIX = "-voice-8k"
+_VOICE_MODEL_PREPARE_LOCK = threading.Lock()
+_prepared_voice_models: set[tuple[str, str, str]] = set()
+
 _DEFAULT_PORT = 8765
 
 _WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
@@ -782,6 +794,14 @@ def ensure_running(*, launch_command: str, base_url: str, reason: str) -> str:
                     "local-realtime supervisor: removed %s orphan process(es) before spawn",
                     killed,
                 )
+            try:
+                command = prepare_voice_brain_command(command)
+            except RuntimeError as exc:
+                log.warning(
+                    "local-realtime supervisor: bounded brain profile failed: %s",
+                    exc,
+                )
+                return "refused:brain-context-profile"
         clear_pidfile()
         spawned_pid = _spawn(command, reason=reason)
         if spawned_pid is None:
@@ -1359,6 +1379,7 @@ def warm_brain(*, launch_command: str, timeout: float = 5.0) -> bool:
     first sentence after a pause pays a multi-second cold load. Best-effort:
     a non-Ollama endpoint simply answers 404 and nothing changes.
     """
+    launch_command = _effective_owned_launch_command(launch_command)
     model, brain_url = _brain_endpoint(launch_command)
     if not model or not brain_url:
         return False
@@ -1389,22 +1410,131 @@ def warm_brain(*, launch_command: str, timeout: float = 5.0) -> bool:
     return True
 
 
+def prepare_voice_brain_command(
+    launch_command: str, *, timeout: float = 30.0
+) -> str:
+    """Return a managed-server command using a bounded Ollama context profile.
+
+    Ollama documents that its OpenAI-compatible API has no context-size field;
+    a model created with ``num_ctx`` is the supported control surface.  Creating
+    this alias changes no weights and performs no download.  Cloud/BYO commands
+    are returned unchanged.
+    """
+    model, brain_url, api_key = _brain_endpoint_details(launch_command)
+    if not model or not brain_url or api_key.lower() != "ollama":
+        return launch_command
+    root = brain_url[: -len("/v1")] if brain_url.endswith("/v1") else brain_url
+    if not root.startswith(("http://", "https://")):
+        return launch_command
+
+    source_model, voice_model = _voice_context_models(model)
+    cache_key = (root, source_model, voice_model)
+    with _VOICE_MODEL_PREPARE_LOCK:
+        if cache_key not in _prepared_voice_models:
+            payload = json.dumps(
+                {
+                    "model": voice_model,
+                    "from": source_model,
+                    "parameters": {"num_ctx": VOICE_BRAIN_CONTEXT_TOKENS},
+                    "stream": False,
+                }
+            ).encode("utf-8")
+            import urllib.error
+            import urllib.request
+
+            url = f"{root}/api/create"
+            request = urllib.request.Request(  # noqa: S310 - scheme checked above
+                url, data=payload, headers={"Content-Type": "application/json"}
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=timeout):  # noqa: S310
+                    pass
+            except (urllib.error.URLError, OSError, ValueError) as exc:
+                raise RuntimeError(
+                    f"could not create the {VOICE_BRAIN_CONTEXT_TOKENS}-token "
+                    f"Ollama voice profile for {source_model}: {exc}"
+                ) from exc
+            _prepared_voice_models.add(cache_key)
+            log.info(
+                "local-realtime supervisor: prepared bounded Ollama model %s "
+                "from %s (num_ctx=%s)",
+                voice_model,
+                source_model,
+                VOICE_BRAIN_CONTEXT_TOKENS,
+            )
+    return _replace_brain_model(launch_command, voice_model)
+
+
+def _voice_context_models(model: str) -> tuple[str, str]:
+    """Return ``(base, bounded_alias)`` for an Ollama model tag."""
+    cleaned = model.strip()
+    if ":" in cleaned:
+        name, tag = cleaned.rsplit(":", 1)
+    else:
+        name, tag = cleaned, "latest"
+    if tag.endswith(_VOICE_MODEL_SUFFIX):
+        return f"{name}:{tag[: -len(_VOICE_MODEL_SUFFIX)]}", cleaned
+    return cleaned, f"{name}:{tag}{_VOICE_MODEL_SUFFIX}"
+
+
+_MODEL_NAME_FLAG = re.compile(
+    r"(?<!\S)(?P<flag>--model_name)(?P<sep>\s+|=)"
+    r"(?P<value>\"[^\"]*\"|'[^']*'|\S+)",
+    re.IGNORECASE,
+)
+
+
+def _replace_brain_model(command: str, model: str) -> str:
+    """Replace only the managed server's model flag, preserving its quoting."""
+
+    def _replacement(match: re.Match[str]) -> str:
+        value = match.group("value")
+        quote = value[0] if value[:1] in {'"', "'"} else ""
+        rendered = f"{quote}{model}{quote}" if quote else model
+        return f"{match.group('flag')}{match.group('sep')}{rendered}"
+
+    return _MODEL_NAME_FLAG.sub(_replacement, command, count=1)
+
+
+def _effective_owned_launch_command(configured_command: str) -> str:
+    """Use the exact owned generation's command when warming its brain."""
+    configured_root = managed_install_root(configured_command)
+    if configured_root is None:
+        return configured_command
+    active_command = _verified_owned_command()
+    if (
+        active_command is not None
+        and managed_install_root(active_command) == configured_root
+    ):
+        return active_command
+    return configured_command
+
+
 def _brain_endpoint(launch_command: str) -> tuple[str, str]:
     """(model, responses_api_base_url) parsed from a launch command."""
+    model, base, _api_key = _brain_endpoint_details(launch_command)
+    return model, base
+
+
+def _brain_endpoint_details(launch_command: str) -> tuple[str, str, str]:
+    """(model, Responses base URL, placeholder key) parsed from a command."""
     try:
         import shlex
 
         tokens = shlex.split(launch_command or "", posix=os.name != "nt")
     except ValueError:
-        return "", ""
+        return "", "", ""
     model = ""
     base = ""
+    api_key = ""
     for index, flag in enumerate(tokens[:-1]):
         if flag == "--model_name":
             model = tokens[index + 1].strip('"')
         elif flag == "--responses_api_base_url":
             base = tokens[index + 1].strip('"').rstrip("/")
-    return model, base
+        elif flag == "--responses_api_api_key":
+            api_key = tokens[index + 1].strip('"')
+    return model, base, api_key
 
 
 # ── Test support ─────────────────────────────────────────────────────────
@@ -1414,6 +1544,7 @@ def _reset_for_tests() -> None:
     """Reset module-level rate-limit and monitor state between tests."""
     global _last_spawn_at, _monitor_thread, _monitor_stop, _monitor_key
     _last_spawn_at = float("-inf")
+    _prepared_voice_models.clear()
     with _MONITOR_LOCK:
         if _monitor_stop is not None:
             _monitor_stop.set()

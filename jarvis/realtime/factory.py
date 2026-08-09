@@ -246,12 +246,15 @@ def _realtime_is_the_configured_voice_mode(cfg: Any) -> bool:
 
 
 async def realtime_warm_selected_transports(cfg: Any) -> None:
-    """Let every explicitly selected provider pre-open its transport.
+    """Pre-open the primary transport and only explicitly safe fallbacks.
 
     A capability probe, never a provider-id check (AP-21): a provider that
-    declares no ``warm_transport`` is simply skipped. Only explicitly selected
-    primary/fallback providers are warmed — an installed-but-unselected plugin
-    must not spawn a process or touch a credential on its own.
+    declares no ``warm_transport`` is simply skipped. The primary is always
+    eligible. A fallback must additionally declare
+    ``eager_warm_as_fallback=True``: preloading multiple native model stacks can
+    oversubscribe shared GPU/RAM even though only one call transport is used.
+    An installed-but-unselected plugin must never spawn a process or touch a
+    credential on its own.
 
     Warming exists because the Codex subscription adapter otherwise spawns its
     app-server and verifies the account INSIDE the first call's handshake
@@ -270,9 +273,18 @@ async def realtime_warm_selected_transports(cfg: Any) -> None:
             "voice mode."
         )
         return
-    for provider_id in _explicit_provider_ids(cfg):
+    for position, provider_id in enumerate(_explicit_provider_ids(cfg)):
         try:
             provider_cls = load(_GROUP, provider_id, protocol=RealtimeProvider)
+            if position > 0 and not bool(
+                getattr(provider_cls, "eager_warm_as_fallback", False)
+            ):
+                log.debug(
+                    "Realtime fallback warm skipped for %s: provider did not "
+                    "declare eager_warm_as_fallback.",
+                    provider_id,
+                )
+                continue
             warm = getattr(provider_cls, "warm_transport", None)
             if callable(warm):
                 await warm(cfg)

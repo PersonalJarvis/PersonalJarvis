@@ -308,6 +308,7 @@ class _WarmProbe:
     """Minimal realtime provider exposing the optional warm capability."""
 
     supports_realtime = True
+    eager_warm_as_fallback = True
 
     def __init__(self) -> None:
         self.calls = 0
@@ -338,6 +339,30 @@ async def test_warm_selected_transports_skips_providers_without_the_capability(
     await factory.realtime_warm_selected_transports(_cfg())
 
     assert warm.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_warm_selected_transports_does_not_prewarm_a_heavy_fallback(
+    monkeypatch,
+) -> None:
+    """An inactive fallback must not compete with the primary for GPU/RAM."""
+    primary = _WarmProbe()
+    fallback = _WarmProbe()
+    fallback.eager_warm_as_fallback = False
+    loaded = {"primary": primary, "heavy-fallback": fallback}
+    monkeypatch.setattr(
+        factory,
+        "_explicit_provider_ids",
+        lambda _cfg: ["primary", "heavy-fallback"],
+    )
+    monkeypatch.setattr(
+        factory, "load", lambda _group, pid, protocol=None: loaded[pid]
+    )
+
+    await factory.realtime_warm_selected_transports(_cfg())
+
+    assert primary.calls == 1
+    assert fallback.calls == 0
 
 
 @pytest.mark.asyncio

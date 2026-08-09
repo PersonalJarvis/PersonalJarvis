@@ -1,9 +1,9 @@
 """The web/headless boot path must warm the selected realtime transports.
 
-``realtime_warm_selected_transports`` pre-opens the transport of every
-explicitly selected realtime provider so its cold start (for a subscription
-transport: a spawned app-server plus a live account check) is not paid inside
-the user's first call. Its only caller used to be the desktop shell, which left
+``realtime_warm_selected_transports`` pre-opens the primary transport (plus any
+fallback that explicitly declares eager warming safe) so its cold start (for a
+subscription transport: a spawned app-server plus a live account check) is not
+paid inside the user's first call. Its only caller used to be the desktop shell, which left
 ``run.bat --headless`` and every browser-only install — headless Linux included
 — paying that cost on every first call.
 

@@ -355,6 +355,43 @@ def test_an_owned_managed_zombie_is_replaced_after_startup_deadline(
     assert spawned and "--ws_host 127.0.0.1" in spawned[0]
 
 
+def test_managed_spawn_uses_the_bounded_voice_brain_command(
+    monkeypatch, tmp_path
+) -> None:
+    """The resource-safe profile must reach Popen, not just a helper test."""
+    from jarvis.realtime.local_server import install
+
+    supervisor._reset_for_tests()
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    entrypoint = install.install_root() / "venv" / "server.exe"
+    command = f'"{entrypoint}" --mode realtime --model_name qwen3.5:4b'
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: None)
+    monkeypatch.setattr(supervisor, "_port_open", lambda *args, **kwargs: False)
+    monkeypatch.setattr(supervisor, "_owned_process", lambda: (None, False))
+    monkeypatch.setattr(supervisor, "_kill_by_install_root", lambda root: (0, 0))
+    monkeypatch.setattr(
+        supervisor,
+        "prepare_voice_brain_command",
+        lambda candidate: candidate.replace("qwen3.5:4b", "qwen3.5:4b-voice-8k"),
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "_spawn",
+        lambda candidate, **kwargs: spawned.append(candidate) or 7331,
+    )
+    monkeypatch.setattr(supervisor, "_write_pidfile", lambda *args: True)
+
+    outcome = supervisor.ensure_running(
+        launch_command=command,
+        base_url="http://127.0.0.1:8765",
+        reason="test",
+    )
+
+    assert outcome == "spawned"
+    assert "--model_name qwen3.5:4b-voice-8k" in spawned[0]
+
+
 def test_a_running_install_blocks_the_spawn(monkeypatch, tmp_path) -> None:
     """Spawning a half-installed venv proves nothing and locks files the
     installer is about to replace."""
@@ -982,6 +1019,76 @@ def test_brain_endpoint_is_parsed_from_the_command() -> None:
     model, base = supervisor._brain_endpoint(_COMMAND)
     assert model == "qwen2.5:7b"
     assert base == "http://127.0.0.1:11434/v1"
+
+
+def test_voice_brain_command_creates_an_8k_ollama_profile(monkeypatch) -> None:
+    import urllib.request
+
+    requests: list[tuple[str, dict[str, Any]]] = []
+
+    class _Response:
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+    def fake_urlopen(request: Any, timeout: float = 0.0) -> _Response:
+        requests.append((request.full_url, json.loads(request.data.decode("utf-8"))))
+        return _Response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    prepared = supervisor.prepare_voice_brain_command(_COMMAND)
+
+    assert "--model_name qwen2.5:7b-voice-8k" in prepared
+    assert requests == [
+        (
+            "http://127.0.0.1:11434/api/create",
+            {
+                "model": "qwen2.5:7b-voice-8k",
+                "from": "qwen2.5:7b",
+                "parameters": {"num_ctx": 8192},
+                "stream": False,
+            },
+        )
+    ]
+
+
+def test_voice_brain_profile_is_idempotent_across_restarts(monkeypatch) -> None:
+    import urllib.request
+
+    payloads: list[dict[str, Any]] = []
+
+    class _Response:
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+    def fake_urlopen(request: Any, timeout: float = 0.0) -> _Response:
+        payloads.append(json.loads(request.data.decode("utf-8")))
+        return _Response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    aliased = _COMMAND.replace("qwen2.5:7b", "qwen2.5:7b-voice-8k")
+
+    assert supervisor.prepare_voice_brain_command(aliased) == aliased
+    assert payloads[0]["from"] == "qwen2.5:7b"
+    assert payloads[0]["model"] == "qwen2.5:7b-voice-8k"
+
+
+def test_cloud_brain_command_is_not_rewritten(monkeypatch) -> None:
+    import urllib.request
+
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: pytest.fail("cloud commands must not touch Ollama"),
+    )
+    cloud = _COMMAND.replace("--responses_api_api_key ollama", "")
+    assert supervisor.prepare_voice_brain_command(cloud) == cloud
 
 
 def test_warm_brain_pings_ollama_with_keep_alive(monkeypatch) -> None:

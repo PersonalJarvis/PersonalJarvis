@@ -777,6 +777,16 @@ def _run_install_guarded(confirmed_brain: str = "") -> None:
 
         _set("smoke", 70, "first boot (downloads voice/hearing models once)")
         launch_command = derive_launch_command(report.brain, memory_source=report.memory_source)
+        if report.brain.kind == "ollama":
+            # The OpenAI-compatible Ollama API cannot carry num_ctx per request.
+            # Create/use the managed 8k profile before the first smoke boot so
+            # installation itself cannot reserve a model's full native context
+            # and push the desktop into shared-GPU-memory paging.
+            from jarvis.realtime.local_server import supervisor as local_supervisor
+
+            launch_command = local_supervisor.prepare_voice_brain_command(
+                launch_command
+            )
         _smoke_boot(launch_command, report.brain)
 
         _set("configure", 96, "writing the launch configuration")
