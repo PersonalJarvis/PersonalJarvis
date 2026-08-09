@@ -45,17 +45,14 @@ describe("AudioDevicesGroup", () => {
     expect(screen.getByText("Audio devices")).toBeTruthy();
 
     await waitFor(() => {
-      const output = screen.getByTestId(
-        "audio-output-select",
-      ) as HTMLSelectElement;
-      expect(output.value).toBe("PRO X Gaming Headset");
-      const input = screen.getByTestId(
-        "audio-input-select",
-      ) as HTMLSelectElement;
-      expect(input.value).toBe("auto-headset");
+      const output = screen.getByTestId("audio-output-select");
+      expect(output.getAttribute("data-value")).toBe("PRO X Gaming Headset");
+      const input = screen.getByTestId("audio-input-select");
+      expect(input.getAttribute("data-value")).toBe("auto-headset");
     });
 
     // The OS default entry is labeled, the automatic option is first.
+    fireEvent.click(screen.getByTestId("audio-output-select"));
     expect(screen.getByText(/Speakers \(Realtek HD Audio\)/)).toBeTruthy();
     const autoOptions = screen.getAllByText("Automatic (recommended)");
     expect(autoOptions.length).toBe(2);
@@ -81,12 +78,11 @@ describe("AudioDevicesGroup", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AudioDevicesGroup />);
 
-    const output = (await waitFor(() =>
+    const output = await waitFor(() =>
       screen.getByTestId("audio-output-select"),
-    )) as HTMLSelectElement;
-    fireEvent.change(output, {
-      target: { value: "Speakers (Realtek HD Audio)" },
-    });
+    );
+    fireEvent.click(output);
+    fireEvent.click(screen.getByText(/Speakers \(Realtek HD Audio\)/));
 
     await waitFor(() => {
       const putCall = fetchMock.mock.calls.find(
@@ -129,10 +125,8 @@ describe("AudioDevicesGroup", () => {
     render(<AudioDevicesGroup />);
 
     await waitFor(() => {
-      const output = screen.getByTestId(
-        "audio-output-select",
-      ) as HTMLSelectElement;
-      expect(output.value).toBe("Jabra Evolve2 65");
+      const output = screen.getByTestId("audio-output-select");
+      expect(output.getAttribute("data-value")).toBe("Jabra Evolve2 65");
     });
   });
 

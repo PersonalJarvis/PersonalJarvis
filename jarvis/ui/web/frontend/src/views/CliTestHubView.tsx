@@ -31,6 +31,7 @@ import {
 import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { BrandedSelect } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
@@ -337,21 +338,24 @@ function PromptPanel({
           <span className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground/70">
             {t("cli_test_hub_view.cli_hint_label")}
           </span>
-          <select
+          <BrandedSelect
             id="cli-test-hint"
             value={cliHint}
-            onChange={(e) => onCliHintChange(e.target.value)}
+            onValueChange={onCliHintChange}
             disabled={isPending}
-            aria-label={t("cli_test_hub_view.cli_hint_aria")}
-            className="min-w-[180px] rounded-md border border-input bg-background px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
-          >
-            <option value="">{assistantName} {t("cli_test_hub_view.let_decide")}</option>
-            {connectedClis.map((cli) => (
-              <option key={cli.name} value={cli.name}>
-                {cli.name}
-              </option>
-            ))}
-          </select>
+            ariaLabel={t("cli_test_hub_view.cli_hint_aria")}
+            className="min-w-[180px] py-1.5 text-xs"
+            options={[
+              {
+                value: "",
+                label: `${assistantName} ${t("cli_test_hub_view.let_decide")}`,
+              },
+              ...connectedClis.map((cli) => ({
+                value: cli.name,
+                label: cli.name,
+              })),
+            ]}
+          />
         </label>
 
         <div className="flex items-center gap-3">

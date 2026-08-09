@@ -21,6 +21,7 @@ import {
 import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { BrandedSelect } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
   useCheckCli,
@@ -1042,16 +1043,23 @@ function CustomCliWizard({ onClose }: { onClose: () => void }) {
                 <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
                   {t("clis_view.auth_mode_label")}
                 </div>
-                <select
+                <BrandedSelect
                   value={form.auth_mode}
-                  onChange={(e) => setForm({ ...form, auth_mode: e.target.value as typeof form.auth_mode })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs"
-                >
-                  <option value="none">{t("clis_view.auth_none")}</option>
-                  <option value="oauth_cli">{t("clis_view.auth_oauth_cli")}</option>
-                  <option value="api_key">{t("clis_view.auth_api_key")}</option>
-                  <option value="config_file">{t("clis_view.auth_config_file")}</option>
-                </select>
+                  onValueChange={(value) =>
+                    setForm({
+                      ...form,
+                      auth_mode: value as typeof form.auth_mode,
+                    })
+                  }
+                  ariaLabel={t("clis_view.auth_mode_label")}
+                  className="py-1.5 text-xs"
+                  options={[
+                    { value: "none", label: t("clis_view.auth_none") },
+                    { value: "oauth_cli", label: t("clis_view.auth_oauth_cli") },
+                    { value: "api_key", label: t("clis_view.auth_api_key") },
+                    { value: "config_file", label: t("clis_view.auth_config_file") },
+                  ]}
+                />
               </label>
               {(form.auth_mode === "oauth_cli") && (
                 <TextField label={t("clis_view.field_login_command")} val={form.login_command}
@@ -1081,16 +1089,23 @@ function CustomCliWizard({ onClose }: { onClose: () => void }) {
                 <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
                   Risk-Tier
                 </div>
-                <select
+                <BrandedSelect
                   value={form.risk_tier}
-                  onChange={(e) => setForm({ ...form, risk_tier: e.target.value as typeof form.risk_tier })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs"
-                >
-                  <option value="safe">{t("clis_view.risk_safe")}</option>
-                  <option value="monitor">monitor (execute + log)</option>
-                  <option value="ask">{t("clis_view.risk_ask")}</option>
-                  <option value="block">{t("clis_view.risk_block")}</option>
-                </select>
+                  onValueChange={(value) =>
+                    setForm({
+                      ...form,
+                      risk_tier: value as typeof form.risk_tier,
+                    })
+                  }
+                  ariaLabel="Risk tier"
+                  className="py-1.5 text-xs"
+                  options={[
+                    { value: "safe", label: t("clis_view.risk_safe") },
+                    { value: "monitor", label: "monitor (execute + log)" },
+                    { value: "ask", label: t("clis_view.risk_ask") },
+                    { value: "block", label: t("clis_view.risk_block") },
+                  ]}
+                />
               </label>
               <TextArea label={t("clis_view.field_allow_patterns")} val={form.allow_patterns}
                 onChange={(v) => setForm({ ...form, allow_patterns: v })}

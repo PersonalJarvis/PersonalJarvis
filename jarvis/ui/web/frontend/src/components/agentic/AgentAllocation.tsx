@@ -8,7 +8,8 @@ import { cn } from "@/lib/utils";
 import type { AgentAccount } from "@/lib/agentAccountsApi";
 import type { AgentStatus } from "@/lib/agenticIdeApi";
 import { AgentMark } from "./AgentMark";
-import { Button, Select, SectionLabel } from "./controls";
+import { Button, SectionLabel } from "./controls";
+import { BrandedSelect } from "@/components/ui/select";
 
 export interface PlannedTerminal {
   agent: string;
@@ -305,31 +306,32 @@ export function AgentAllocation({
                   {accounts.length >= 2 && count > 0 && (
                     <label className="mt-2 flex max-w-sm items-center gap-2 text-[11px] text-muted-foreground">
                       <span>{t("workspace_launcher.agents.account")}</span>
-                      <Select
+                      <BrandedSelect
                         value={selectedAccount}
-                        aria-label={t(
+                        ariaLabel={t(
                           "workspace_launcher.agents.account_for",
                         ).replace("{0}", agent.display_name)}
-                        onChange={(event) =>
-                          setAccount(
-                            agent.name,
-                            event.target.value || undefined,
-                          )
+                        onValueChange={(value) =>
+                          setAccount(agent.name, value || undefined)
                         }
                         className="h-7 min-w-0 flex-1 text-xs"
-                      >
-                        <option value="">
-                          {t("workspace_launcher.agents.active_account")}
-                        </option>
-                        {accounts.map((account) => (
-                          <option key={account.id} value={account.id}>
-                            {account.label}
-                            {account.connected
-                              ? ""
-                              : ` (${t("workspace_launcher.agents.not_signed_in")})`}
-                          </option>
-                        ))}
-                      </Select>
+                        options={[
+                          {
+                            value: "",
+                            label: t(
+                              "workspace_launcher.agents.active_account",
+                            ),
+                          },
+                          ...accounts.map((account) => ({
+                            value: account.id,
+                            label: `${account.label}${
+                              account.connected
+                                ? ""
+                                : ` (${t("workspace_launcher.agents.not_signed_in")})`
+                            }`,
+                          })),
+                        ]}
+                      />
                     </label>
                   )}
                 </div>

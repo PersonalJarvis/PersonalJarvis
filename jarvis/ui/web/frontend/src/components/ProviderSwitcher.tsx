@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { BrandedSelect } from "@/components/ui/select";
 import { switchBrainProvider, useProviders } from "@/hooks/useProviders";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
@@ -49,18 +50,20 @@ export function ProviderSwitcher() {
       <label className="text-xs uppercase tracking-wide text-muted-foreground">
         Active Brain
       </label>
-      <select
+      <BrandedSelect
         value={choice}
-        onChange={(e) => setTarget(e.target.value)}
-        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-      >
-        {brainProviders.map((p) => (
-          <option key={p.id} value={p.id} disabled={!p.configured}>
-            {p.label}
-            {!p.configured && ` — ${t("provider_switcher.no_credential")}`}
-          </option>
-        ))}
-      </select>
+        onValueChange={setTarget}
+        ariaLabel="Active Brain"
+        options={brainProviders.map((provider) => ({
+          value: provider.id,
+          label: `${provider.label}${
+            provider.configured
+              ? ""
+              : ` — ${t("provider_switcher.no_credential")}`
+          }`,
+          disabled: !provider.configured,
+        }))}
+      />
       <Button onClick={handleApply} disabled={pending} className="w-full">
         {pending ? "Switching…" : "Apply"}
       </Button>

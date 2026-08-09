@@ -137,34 +137,6 @@ export const Field = forwardRef<
 });
 
 /**
- * A native select at the same scale.
- *
- * Native rather than a custom menu because the two places it is used — which
- * coding CLI runs in a pane, which subscription it opens on — are short lists
- * where the OS control is better than anything worth reimplementing: it is
- * keyboard-navigable, it scrolls, and on a phone it becomes the platform picker.
- */
-export const Select = forwardRef<
-  HTMLSelectElement,
-  React.SelectHTMLAttributes<HTMLSelectElement>
->(function Select({ className, children, ...rest }, ref) {
-  return (
-    <select
-      ref={ref}
-      className={cn(
-        "h-8 max-w-full rounded-control border border-border bg-background px-2 text-sm " +
-          "text-foreground outline-none transition-colors focus:border-primary/60 " +
-          "disabled:cursor-not-allowed disabled:opacity-40",
-        className,
-      )}
-      {...rest}
-    >
-      {children}
-    </select>
-  );
-});
-
-/**
  * A panel — the one container shape this section uses.
  *
  * `title` is rendered as a small caps-tracked label rather than a heading with
