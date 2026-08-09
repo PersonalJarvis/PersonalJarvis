@@ -40,6 +40,18 @@ _PATCH_FILE = (
     Path(__file__).parent / "patches" / f"service_create_response_{PATCH_TARGET_VERSION}.patch"
 )
 
+# Pocket TTS 2.1 added current multilingual checkpoints, while the pinned
+# speech-to-speech handler still always loads its English default. Jarvis uses
+# an internal ``@language:voice`` token in the existing voice argument so the
+# patch remains local to one handler and introduces no new CLI enum layer.
+POCKET_HANDLER_RELPATH = Path("speech_to_speech") / "TTS" / "pocket_tts_handler.py"
+POCKET_HANDLER_PRISTINE_SHA256 = "72e5c24cb0d4540d98c60276cee2de8950cf106361948569fe558e683200e62d"
+# Filled from the byte-exact patch result below; pinned by tests.
+POCKET_HANDLER_PATCHED_SHA256 = "58ec72c68c14927473a18fccbea2e7b7e51166c55a53122ab953f866e595238e"
+_POCKET_PATCH_FILE = (
+    Path(__file__).parent / "patches" / f"pocket_language_{PATCH_TARGET_VERSION}.patch"
+)
+
 
 class PatchDriftError(RuntimeError):
     """The target file matches neither the pristine nor the patched hash."""
@@ -136,4 +148,42 @@ def apply_create_response_patch(site_packages: Path) -> str:
         )
     target.write_bytes(patched.encode("utf-8"))
     log.info("local-realtime: applied create_response patch to %s", target)
+    return "applied"
+
+
+def pocket_language_patch_state(site_packages: Path) -> str:
+    """Report whether the Pocket TTS multilingual compatibility patch is ready."""
+    target = site_packages / POCKET_HANDLER_RELPATH
+    try:
+        digest = _sha256(target.read_bytes())
+    except OSError:
+        return "missing"
+    if digest == POCKET_HANDLER_PRISTINE_SHA256:
+        return "pristine"
+    if digest == POCKET_HANDLER_PATCHED_SHA256:
+        return "patched"
+    return "drifted"
+
+
+def apply_pocket_language_patch(site_packages: Path) -> str:
+    """Enable Pocket TTS 2.1 language profiles in the pinned server handler."""
+    target = site_packages / POCKET_HANDLER_RELPATH
+    state = pocket_language_patch_state(site_packages)
+    if state == "patched":
+        return "already-applied"
+    if state != "pristine":
+        raise PatchDriftError(
+            f"{target} is {state}: expected the pristine speech-to-speech "
+            f"{PATCH_TARGET_VERSION} Pocket handler; refusing to modify an unknown file"
+        )
+    original = target.read_bytes().decode("utf-8")
+    diff_text = _POCKET_PATCH_FILE.read_bytes().decode("utf-8")
+    patched = _apply_unified_diff(original, diff_text)
+    if _sha256(patched.encode("utf-8")) != POCKET_HANDLER_PATCHED_SHA256:
+        raise PatchDriftError(
+            "Pocket language patch produced an unexpected result hash; the "
+            "vendored diff and its recorded hashes are out of sync"
+        )
+    target.write_bytes(patched.encode("utf-8"))
+    log.info("local-realtime: applied Pocket language patch to %s", target)
     return "applied"

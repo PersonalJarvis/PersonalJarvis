@@ -1,0 +1,17 @@
+--- a/speech_to_speech/TTS/pocket_tts_handler.py
++++ b/speech_to_speech/TTS/pocket_tts_handler.py
+@@ -53,8 +53,13 @@
+         self.should_listen = should_listen
+         self.cancel_scope = cancel_scope
+         self.speculative_turns = speculative_turns
+         self.device = device
++        language = None
++        if voice.startswith("@") and ":" in voice:
++            language, voice = voice[1:].split(":", 1)
+         self.voice = voice
+         self.sample_rate = sample_rate
+         self.blocksize = blocksize
+@@ -70,2 +75,2 @@
+         logger.info("Loading Pocket TTS model")
+-        self.model = TTSModel.load_model()
++        self.model = TTSModel.load_model(language=language)

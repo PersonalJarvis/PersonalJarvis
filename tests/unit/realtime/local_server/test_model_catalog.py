@@ -11,9 +11,13 @@ def test_catalog_separates_hearing_from_wake_word_and_speaking() -> None:
     assert catalog["hearing"]["id"] == "parakeet-tdt"
     assert "wake-word" in str(catalog["hearing"]["note"])
     assert catalog["current"] == "qwen3-tts-1.7b"
-    assert len(catalog["models"]) == 6
+    assert len(catalog["models"]) >= 12
     selectable = [item["id"] for item in catalog["models"] if item["selectable"]]
-    assert selectable == ["qwen3-tts-1.7b", "qwen3-tts-0.6b"]
+    assert selectable[:2] == ["qwen3-tts-1.7b", "qwen3-tts-0.6b"]
+    assert "pocket-tts-de-24l" in selectable
+    frontier = [item for item in catalog["models"] if item["frontier"]]
+    assert any(item["id"] == "moss-tts-nano-100m" for item in frontier)
+    assert all(item["source_url"].startswith("https://") for item in frontier)
 
 
 def test_voice_profile_replaces_all_qwen_flags_without_duplicates() -> None:
@@ -27,6 +31,19 @@ def test_voice_profile_replaces_all_qwen_flags_without_duplicates() -> None:
     assert "--qwen3_tts_speaker Aiden" in rewritten
 
 
+def test_pocket_german_profile_encodes_language_without_a_new_cli_enum() -> None:
+    command = "serve --tts qwen3 --pocket_tts_voice alba --pocket_tts_device cuda"
+
+    rewritten = model_catalog.apply_voice_profile(command, "pocket-tts-de-24l")
+
+    assert rewritten.count("--tts") == 1
+    assert "--tts pocket" in rewritten
+    assert rewritten.count("--pocket_tts_voice") == 1
+    assert "--pocket_tts_voice @german_24l:juergen" in rewritten
+    assert "--pocket_tts_device cpu" in rewritten
+    assert model_catalog.current_voice_profile(rewritten) == "pocket-tts-de-24l"
+
+
 def test_unvalidated_upstream_voice_cannot_be_selected() -> None:
-    with pytest.raises(ValueError, match="not yet validated"):
+    with pytest.raises(ValueError, match="has not passed the managed voice test"):
         model_catalog.apply_voice_profile("serve", "chattts")

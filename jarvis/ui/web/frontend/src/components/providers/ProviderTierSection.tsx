@@ -1928,6 +1928,7 @@ function ManagedServerPanel({
   const [catalog, setCatalog] = useState<ManagedModelCatalog | null>(null);
   const [selectedBrain, setSelectedBrain] = useState("");
   const [selectedVoice, setSelectedVoice] = useState("");
+  const [voiceQuery, setVoiceQuery] = useState("");
   const [setupBusy, setSetupBusy] = useState(false);
   const [setupNote, setSetupNote] = useState<string | null>(null);
   const [libraryBusy, setLibraryBusy] = useState<string | null>(null);
@@ -2105,8 +2106,9 @@ function ManagedServerPanel({
   const applySetup = async (
     brainModel = selectedBrain,
     downloadFirst = false,
+    voiceModel = selectedVoice,
   ) => {
-    if (!brainModel || !selectedVoice) return;
+    if (!brainModel || !voiceModel) return;
     setError(null);
     setSetupNote(null);
     setSetupBusy(true);
@@ -2117,7 +2119,7 @@ function ManagedServerPanel({
         // then adopt — never adopt a model the server cannot serve yet.
         await downloadBrain(brainModel);
       }
-      const result = await managedServerSetup(brainModel, selectedVoice);
+      const result = await managedServerSetup(brainModel, voiceModel);
       const latency = result.smoke.first_audio_ms;
       setSelectedBrain(brainModel);
       setSetupNote(
@@ -2156,6 +2158,37 @@ function ManagedServerPanel({
     await applySetup(model, !installedModel);
   };
 
+  const applyVoiceChoice = async (choice: ManagedModelCatalog["models"][number]) => {
+    if (!choice.selectable || !selectedBrain) return;
+    setSelectedVoice(choice.id);
+    setError(null);
+    setSetupNote(null);
+    if (!installed) {
+      setSetupNote(t("apikeys_view.managed_catalog_selected"));
+      return;
+    }
+    if (choice.runtime_ready === false) {
+      setSetupBusy(true);
+      try {
+        // A runtime-compatible model whose optional package is absent uses the
+        // existing resumable managed installer. It stops the owned server,
+        // installs the pinned adapter dependency, applies compatibility
+        // patches, downloads this checkpoint, and only commits after smoke.
+        const first = await managedServerInstall(undefined, selectedBrain, choice.id);
+        setProgress(first);
+        if (!first.running && first.phase === "error" && first.error) {
+          setError(first.error);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSetupBusy(false);
+      }
+      return;
+    }
+    await applySetup(selectedBrain, false, choice.id);
+  };
+
   const stopServer = async () => {
     setError(null);
     setLifecycleBusy(true);
@@ -2182,6 +2215,21 @@ function ManagedServerPanel({
             : { key: "apikeys_view.managed_server_stopped", tone: "muted" as const };
 
   const failed = progress?.phase === "error";
+  const normalizedVoiceQuery = voiceQuery.trim().toLocaleLowerCase();
+  const voiceResults = (catalog?.models ?? []).filter((choice) => {
+    if (!normalizedVoiceQuery) return true;
+    return [
+      choice.label,
+      choice.backend,
+      choice.model,
+      choice.note,
+      choice.license ?? "",
+      ...(choice.languages ?? []),
+    ]
+      .join(" ")
+      .toLocaleLowerCase()
+      .includes(normalizedVoiceQuery);
+  });
   return (
     <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 p-3">
       <div className="flex items-start gap-2 text-xs">
@@ -2316,7 +2364,11 @@ function ManagedServerPanel({
                   >
                     {choice.label}
                     {choice.recommended ? ` · ${t("apikeys_view.managed_brain_recommended")}` : ""}
-                    {!choice.selectable ? ` · ${t("apikeys_view.managed_voice_unavailable")}` : ""}
+                    {!choice.selectable
+                      ? ` · ${t("apikeys_view.managed_voice_unavailable")}`
+                      : choice.runtime_ready === false
+                        ? ` · ${t("apikeys_view.managed_voice_install_required")}`
+                        : ""}
                   </option>
                 ))}
               </select>
@@ -2352,6 +2404,131 @@ function ManagedServerPanel({
                 actionLabel={t("apikeys_view.managed_download_test")}
                 installedActionLabel={t("apikeys_view.managed_use_test")}
               />
+          </details>
+
+          <details
+            data-testid="managed-voice-catalog"
+            className="rounded-md border border-border/50 bg-background/30 p-2"
+          >
+            <summary className="cursor-pointer text-[11px] font-medium">
+              {t("apikeys_view.managed_voice_catalog_title")}
+            </summary>
+            <div className="mt-2 space-y-2">
+              <label className="relative block">
+                <Search
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground"
+                />
+                <input
+                  type="search"
+                  value={voiceQuery}
+                  onChange={(event) => setVoiceQuery(event.target.value)}
+                  placeholder={t("apikeys_view.managed_voice_catalog_search")}
+                  aria-label={t("apikeys_view.managed_voice_catalog_search")}
+                  className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-2 text-xs"
+                />
+              </label>
+
+              {voiceResults.length === 0 ? (
+                <p className="px-1 py-2 text-[11px] text-muted-foreground">
+                  {t("apikeys_view.managed_voice_catalog_empty")}
+                </p>
+              ) : (
+                <div className="max-h-80 space-y-1.5 overflow-y-auto pr-1">
+                  {voiceResults.map((choice) => (
+                    <div
+                      key={choice.id}
+                      data-testid={`managed-voice-row-${choice.id}`}
+                      className={cn(
+                        "flex items-start justify-between gap-3 rounded-md border px-2.5 py-2",
+                        choice.id === selectedVoice
+                          ? "border-primary/45 bg-primary/[0.05]"
+                          : "border-border/50 bg-background/50",
+                      )}
+                    >
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-xs font-medium">{choice.label}</span>
+                          {choice.frontier && (
+                            <span className="rounded-full bg-primary/15 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-primary">
+                              {t("apikeys_view.managed_voice_frontier")}
+                            </span>
+                          )}
+                          {choice.streaming && (
+                            <span className="rounded-full border border-border px-1.5 py-px text-[9px] text-muted-foreground">
+                              {t("apikeys_view.managed_voice_streaming")}
+                            </span>
+                          )}
+                          <span
+                            className={cn(
+                              "rounded-full border px-1.5 py-px text-[9px]",
+                              choice.selectable
+                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-500"
+                                : "border-amber-500/30 bg-amber-500/10 text-amber-500",
+                            )}
+                          >
+                            {t(
+                              choice.selectable
+                                ? "apikeys_view.managed_voice_compatible"
+                                : "apikeys_view.managed_voice_integration_pending",
+                            )}
+                          </span>
+                        </div>
+                        <p className="break-all font-mono text-[10px] text-muted-foreground">
+                          {choice.model}
+                        </p>
+                        <p className="text-[10px] leading-snug text-muted-foreground">
+                          {choice.note}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-1 text-[9px] text-muted-foreground">
+                          {(choice.languages ?? []).slice(0, 12).map((language) => (
+                            <span key={language} className="rounded bg-muted px-1 py-px uppercase">
+                              {language}
+                            </span>
+                          ))}
+                          {(choice.languages?.length ?? 0) > 12 && (
+                            <span>+{(choice.languages?.length ?? 0) - 12}</span>
+                          )}
+                          {choice.release_date && <span>· {choice.release_date}</span>}
+                          {choice.license && <span>· {choice.license}</span>}
+                          {(choice.size_gb ?? 0) > 0 && <span>· ~{choice.size_gb} GB</span>}
+                          {choice.source_url && (
+                            <a
+                              href={choice.source_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-medium text-primary hover:underline"
+                            >
+                              {t("apikeys_view.managed_voice_source")}
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                      {choice.selectable && (
+                        <Button
+                          size="sm"
+                          variant={choice.id === selectedVoice ? "secondary" : "outline"}
+                          disabled={setupBusy || !selectedBrain}
+                          onClick={() => void applyVoiceChoice(choice)}
+                          className="h-7 shrink-0 gap-1 px-2 text-[10px]"
+                        >
+                          {setupBusy && choice.id === selectedVoice ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Volume2 className="h-3 w-3" />
+                          )}
+                          {t(
+                            choice.runtime_ready === false
+                              ? "apikeys_view.managed_voice_install_test"
+                              : "apikeys_view.managed_use_test",
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </details>
         </div>
       )}

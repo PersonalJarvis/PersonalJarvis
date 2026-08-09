@@ -954,6 +954,15 @@ export interface ManagedVoiceChoice {
   speaker: string;
   current: boolean;
   platform: string;
+  /** The adapter + pinned dependency are present in the managed venv. */
+  runtime_ready?: boolean;
+  pocket_language?: string;
+  release_date?: string;
+  license?: string;
+  source_url?: string;
+  streaming?: boolean;
+  frontier?: boolean;
+  size_gb?: number;
 }
 
 export interface ManagedModelCatalog {

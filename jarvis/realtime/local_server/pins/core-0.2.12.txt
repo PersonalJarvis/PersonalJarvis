@@ -6,4 +6,5 @@ speech-to-speech==0.2.12
 faster-qwen3-tts==0.3.2
 nano_parakeet==0.2.1
 qwen-tts==0.1.1
+pocket-tts==2.1.0
 onnxruntime==1.28.0

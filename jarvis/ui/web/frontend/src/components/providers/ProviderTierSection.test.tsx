@@ -998,6 +998,33 @@ describe("managed local realtime model setup", () => {
                 speaker: "Aiden",
                 current: true,
                 platform: "all",
+                runtime_ready: true,
+                frontier: true,
+                streaming: true,
+                source_url: "https://github.com/QwenLM/Qwen3-TTS",
+                release_date: "2026-01",
+                license: "Apache-2.0",
+                size_gb: 3.4,
+              },
+              {
+                id: "pocket-tts-de-24l",
+                label: "Pocket TTS 2.1 · German HQ",
+                backend: "pocket",
+                model: "kyutai/pocket-tts:german_24l",
+                languages: ["de"],
+                selectable: true,
+                recommended: false,
+                note: "current CPU-first streaming model",
+                speaker: "juergen",
+                current: false,
+                platform: "all",
+                runtime_ready: false,
+                frontier: true,
+                streaming: true,
+                source_url: "https://github.com/kyutai-labs/pocket-tts",
+                release_date: "2026-05",
+                license: "MIT",
+                size_gb: 1,
               },
               {
                 id: "chattts",
@@ -1011,6 +1038,26 @@ describe("managed local realtime model setup", () => {
                 speaker: "",
                 current: false,
                 platform: "all",
+              },
+              {
+                id: "moss-tts-nano-100m",
+                label: "MOSS-TTS-Nano 100M",
+                backend: "moss",
+                model: "OpenMOSS-Team/MOSS-TTS-Nano-100M",
+                languages: ["de", "en", "es"],
+                selectable: false,
+                recommended: false,
+                note: "managed realtime adapter is not available yet",
+                speaker: "",
+                current: false,
+                platform: "all",
+                runtime_ready: false,
+                frontier: true,
+                streaming: true,
+                source_url: "https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M",
+                release_date: "2026-04",
+                license: "Apache-2.0",
+                size_gb: 0.6,
               },
             ],
             hearing: {
@@ -1038,11 +1085,24 @@ describe("managed local realtime model setup", () => {
     expect(screen.getByText("Speak")).toBeTruthy();
     expect(screen.getByText("Parakeet TDT")).toBeTruthy();
     expect(screen.getByText("Browse the full Ollama catalog")).toBeTruthy();
+    expect(screen.getByText("Browse open-source speech models")).toBeTruthy();
     expect(screen.getByText("Advanced connection settings")).toBeTruthy();
     const unavailable = screen.getByRole("option", {
       name: /ChatTTS.*not voice-tested yet/,
     }) as HTMLOptionElement;
     expect(unavailable.disabled).toBe(true);
     expect(calls.some((call) => call.url.endsWith("/model-catalog"))).toBe(true);
+
+    fireEvent.click(screen.getByText("Browse open-source speech models"));
+    const search = screen.getByRole("searchbox", {
+      name: "Search by model, backend, language, or license…",
+    });
+    fireEvent.change(search, { target: { value: "german" } });
+    expect(screen.getByText("Pocket TTS 2.1 · German HQ")).toBeTruthy();
+    expect(screen.queryByText("MOSS-TTS-Nano 100M")).toBeNull();
+
+    fireEvent.change(search, { target: { value: "moss" } });
+    expect(screen.getByText("MOSS-TTS-Nano 100M")).toBeTruthy();
+    expect(screen.getByText("Integration pending")).toBeTruthy();
   });
 });

@@ -34,6 +34,7 @@ from jarvis.realtime.local_server.brain_link import BrainResolution
 from jarvis.realtime.local_server.patching import (
     PATCH_TARGET_VERSION,
     apply_create_response_patch,
+    apply_pocket_language_patch,
     patch_state,
 )
 from jarvis.realtime.local_server.preflight import (
@@ -853,9 +854,10 @@ def _run_install_guarded(
         _set("deps", 45, "installing the server package set")
         _run(pip + ["-r", str(_PINS_FILE)], timeout=_PIP_TIMEOUT_S)
 
-        _set("patch", 60, "applying the vendored create_response patch")
-        outcome = apply_create_response_patch(_site_packages())
-        _set("patch", 62, f"patch {outcome}")
+        _set("patch", 60, "applying the vendored realtime compatibility patches")
+        response_outcome = apply_create_response_patch(_site_packages())
+        pocket_outcome = apply_pocket_language_patch(_site_packages())
+        _set("patch", 62, f"protocol {response_outcome}; Pocket TTS {pocket_outcome}")
 
         _set("smoke", 70, "first boot (downloads voice/hearing models once)")
         launch_command = derive_launch_command(report.brain, memory_source=report.memory_source)
