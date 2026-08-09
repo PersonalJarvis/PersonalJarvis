@@ -215,22 +215,19 @@
   display: none;
 }
 
-/* Agentic IDE scroll ownership is explicit. A normal xterm buffer exposes its
-   exact native scrollback. A full-screen application owns the alternate
-   buffer and mouse wheel, so its inert browser track is hidden while xterm
-   continues relaying wheel reports to the application. `data-scroll-owner`
-   is synchronized in terminalScrollSurface.ts from xterm's real parser state.
-   Keep these rules top-level because xterm creates the viewport at runtime. */
+/* Agentic IDE panes draw exactly ONE scrollbar: the golden PaneScrollRail.
+   The native viewport scrollbar is hidden unconditionally — when it was only
+   hidden for application-owned panes, every normal-buffer pane double-drew
+   an 8px grey native thumb underneath the rail, at a different position and
+   with its hit area eaten by the rail overlay (confirmed review finding,
+   2026-08-08). Keep these rules top-level because xterm creates the viewport
+   at runtime. */
 .agentic-terminal-host .xterm-viewport {
   overscroll-behavior: contain;
-}
-
-.agentic-terminal-host[data-scroll-owner="application"] .xterm-viewport {
   scrollbar-width: none;
 }
 
-.agentic-terminal-host[data-scroll-owner="application"]
-  .xterm-viewport::-webkit-scrollbar {
+.agentic-terminal-host .xterm-viewport::-webkit-scrollbar {
   width: 0;
   height: 0;
 }

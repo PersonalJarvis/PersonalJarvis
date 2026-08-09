@@ -116,10 +116,7 @@ import {
 } from "./offscreenBuffer";
 import { installQuerySuppression } from "./terminalQueries";
 import { PaneScrollRail } from "./PaneScrollRail";
-import {
-  createLiveTuiWheelHandler,
-  installLiveTuiCursorTracking,
-} from "./terminalScrollSurface";
+import { captureWheelForTerminalHistory } from "./terminalScrollSurface";
 import {
   openPaneSocket,
   type PaneSocket,
@@ -556,21 +553,6 @@ export function AgenticTerminal({
     // before reaching it — too late, and then visible as junk in its prompt.
     // The backend answers those instead. See ./terminalQueries.
     const disposeQuerySuppression = installQuerySuppression(term.parser);
-    // A hidden cursor is only a CANDIDATE for a keyboard-owned live drawing:
-    // progress spinners use the same terminal mode. The rail exposes an
-    // explicit activation control for that candidate; only that user choice
-    // may turn wheel/drag input into cursor keys.
-    let cursorHidden = false;
-    const setCursorHidden = (hidden: boolean) => {
-      cursorHidden = hidden;
-      container.dataset.liveTuiCandidate = hidden ? "true" : "false";
-      if (!hidden) container.dataset.liveTuiNavigation = "false";
-    };
-    setCursorHidden(false);
-    const liveTuiTracking = installLiveTuiCursorTracking(
-      term.parser,
-      setCursorHidden,
-    );
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon(activateLink));
@@ -589,19 +571,11 @@ export function AgenticTerminal({
       /* proposed API unavailable in this build — widths stay at Unicode 6 */
     }
     term.open(container);
-    // A normal-buffer coding CLI can draw a windowed live block inside ordinary
-    // terminal history. xterm can scroll that history, but rows omitted by the
-    // live block only exist in the CLI and need cursor navigation. The handler
-    // is active only after the rail's explicit live-view activation, and that
-    // opt-in is revoked as soon as the CLI restores the cursor.
-    term.attachCustomWheelEventHandler(
-      createLiveTuiWheelHandler(
-        term,
-        () =>
-          cursorHidden &&
-          container.dataset.liveTuiNavigation === "true",
-      ),
-    );
+    // The wheel always moves xterm's own history, even while a normal-buffer
+    // CLI has negotiated mouse tracking — otherwise scrolling only "works"
+    // when the CLI feels like it, which is the per-provider inconsistency the
+    // scroll rebuild removed. See captureWheelForTerminalHistory.
+    term.attachCustomWheelEventHandler(captureWheelForTerminalHistory(term));
     // Canvas rather than the DOM renderer: a coding agent's TUI redraws its
     // prompt box on every keystroke, and per-cell DOM elements both lag and
     // land on fractional pixel offsets. Loaded AFTER open() because it needs
@@ -883,7 +857,16 @@ export function AgenticTerminal({
       // screen this replay just replaced.
       cancelHoldTimer();
       offscreen.drain();
-      liveTuiTracking.reset();
+      // React state is not a synchronous paint barrier. In a real WebSocket
+      // callback, `setTailReady(false)` may not reach the DOM before xterm's
+      // write queue starts parsing. Hide the canvas host imperatively BEFORE
+      // reset/write; React still mirrors the curtain below for later renders.
+      const curtain = paneVisible && activeRef.current;
+      if (curtain) {
+        container.style.visibility = "hidden";
+        replayCurtainRef.current = true;
+        setTailReady(false);
+      }
       term.reset();
       // A normal-buffer CLI's replay is its whole scrollback — up to the
       // server's 128 KB (see `ReplayBuffer`) — and xterm parses it in time
@@ -895,11 +878,6 @@ export function AgenticTerminal({
       // it. So the surface is hidden for the length of the rebuild — the same
       // curtain a chat-stage switch drops — and lifted one settled frame
       // after the tail scroll has landed.
-      const curtain = paneVisible && activeRef.current;
-      if (curtain) {
-        replayCurtainRef.current = true;
-        setTailReady(false);
-      }
       // Through the ordinary path, so a replay arriving while nobody is looking
       // is parked and un-parked by the same rules as anything else — and so it
       // counts as the pane having painted.
@@ -925,6 +903,7 @@ export function AgenticTerminal({
           }
           term.scrollToBottom?.();
           setTailReady(true);
+          container.style.removeProperty("visibility");
         });
       });
     };
@@ -1095,9 +1074,6 @@ export function AgenticTerminal({
           }
         },
         onExit: (code) => {
-          // A crash cannot be trusted to restore cursor visibility. End live
-          // TUI ownership before drawing the terminal's definitive exit row.
-          liveTuiTracking.reset();
           report("exited", explainExit(code));
           writeToPane(
             `\r\n\x1b[?25h\x1b[33m${describeExit(displayName, code)}\x1b[0m\r\n`,
@@ -1234,6 +1210,7 @@ export function AgenticTerminal({
         cancelAnimationFrame(replayRevealFrameRef.current);
         replayRevealFrameRef.current = undefined;
       }
+      container.style.removeProperty("visibility");
       // Before the terminal is disposed below: a deadline flush one tick later
       // would write into it after it is gone.
       cancelHoldTimer();
@@ -1252,7 +1229,6 @@ export function AgenticTerminal({
       disposeCopyBridge();
       disposePasteBridge();
       disposeNewlineBridge();
-      liveTuiTracking.dispose();
       disposeQuerySuppression();
       try {
         socket?.close();
@@ -1286,10 +1262,12 @@ export function AgenticTerminal({
       replayRevealFrameRef.current = undefined;
     }
     if (!active) {
+      containerRef.current?.style.setProperty("visibility", "hidden");
       setTailReady(false);
       visibilityRef.current?.park();
       return;
     }
+    containerRef.current?.style.setProperty("visibility", "hidden");
     setTailReady(false);
     let cancelled = false;
     let frame: number | undefined;
@@ -1311,7 +1289,10 @@ export function AgenticTerminal({
         // A replay mid-rebuild keeps the curtain: lifting it here would show
         // the rest of its history printing. Its own completion reveals the
         // pane (see `replayToPane`).
-        if (!replayCurtainRef.current) setTailReady(true);
+        if (!replayCurtainRef.current) {
+          setTailReady(true);
+          containerRef.current?.style.removeProperty("visibility");
+        }
       });
     };
     const afterFlush = () => {
@@ -1588,7 +1569,6 @@ export function AgenticTerminal({
           epoch={terminalEpoch}
           appearance={appearance}
           onFocus={onFocus}
-          onOpenHistory={() => setHistoryOpen(true)}
         />
         <PaneConversationDialog
           terminal={name}

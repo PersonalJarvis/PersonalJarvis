@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const terminalHarness = vi.hoisted(() => ({
   open: vi.fn(),
+  host: { current: null as HTMLElement | null },
   observe: vi.fn(),
   fit: vi.fn(),
   /** What the terminal reports after a fit — a test moves it to grow the pane. */
@@ -15,8 +16,12 @@ const terminalHarness = vi.hoisted(() => ({
   input: vi.fn<(data: string) => void>(),
   /** xterm's single custom key handler, so a test can press a key. */
   keys: { current: null as ((event: KeyboardEvent) => boolean) | null },
-  /** xterm's wheel arbiter, which bridges a live inline TUI at its tail. */
+  /** xterm's wheel arbiter, which keeps the wheel on terminal history. */
   wheel: { current: null as ((event: WheelEvent) => boolean) | null },
+  /** Parser state the wheel arbiter reads — a test flips these directly. */
+  modes: { mouseTrackingMode: "none" as "none" | "any" },
+  bufferType: "normal" as "normal" | "alternate",
+  scrollLines: vi.fn<(amount: number) => void>(),
   /** Custom CSI observers installed on xterm's parser. */
   csiHandlers: [] as {
     id: { prefix?: string; final: string };
@@ -25,6 +30,7 @@ const terminalHarness = vi.hoisted(() => ({
   focus: vi.fn(),
   scrollToBottom: vi.fn(),
   write: vi.fn(),
+  visibilityAtWrite: [] as string[],
   deferWrite: false,
   writeCallbacks: [] as (() => void)[],
   /**
@@ -46,6 +52,17 @@ vi.mock("@xterm/xterm", () => ({
     }
     get rows() {
       return terminalHarness.size.rows;
+    }
+    get modes() {
+      return terminalHarness.modes;
+    }
+    get buffer() {
+      return {
+        active: { type: terminalHarness.bufferType, baseY: 0, viewportY: 0 },
+      };
+    }
+    scrollLines(amount: number) {
+      terminalHarness.scrollLines(amount);
     }
     options: Record<string, unknown>;
     unicode = { activeVersion: "" };
@@ -78,6 +95,7 @@ vi.mock("@xterm/xterm", () => ({
     loadAddon() {}
     open(host: HTMLElement) {
       terminalHarness.open(host);
+      terminalHarness.host.current = host;
     }
     focus() {
       terminalHarness.focus();
@@ -100,6 +118,9 @@ vi.mock("@xterm/xterm", () => ({
     }
     write(text: string, callback?: () => void) {
       terminalHarness.write(text);
+      terminalHarness.visibilityAtWrite.push(
+        terminalHarness.host.current?.style.visibility ?? "",
+      );
       if (!callback) return;
       if (terminalHarness.deferWrite) terminalHarness.writeCallbacks.push(callback);
       else callback();
@@ -164,10 +185,15 @@ describe("AgenticTerminal layout", () => {
     terminalHarness.fit.mockClear();
     terminalHarness.scrollToBottom.mockClear();
     terminalHarness.write.mockClear();
+    terminalHarness.host.current = null;
+    terminalHarness.visibilityAtWrite = [];
     terminalHarness.deferWrite = false;
     terminalHarness.writeCallbacks = [];
     terminalHarness.wheel.current = null;
     terminalHarness.csiHandlers = [];
+    terminalHarness.modes.mouseTrackingMode = "none";
+    terminalHarness.bufferType = "normal";
+    terminalHarness.scrollLines.mockClear();
     globalThis.ResizeObserver = ResizeObserverHarness;
   });
 
@@ -206,7 +232,7 @@ describe("AgenticTerminal layout", () => {
     expect(terminalHarness.wheel.current).not.toBeNull();
   });
 
-  it("requires explicit live-view activation and revokes it on exit", () => {
+  it("keeps the wheel on terminal history even while the CLI tracks the mouse", () => {
     render(
       <AgenticTerminal
         name="Dana"
@@ -215,50 +241,30 @@ describe("AgenticTerminal layout", () => {
         fontSize={13}
       />,
     );
-    const host = screen.getByTestId("agentic-terminal-host-Dana");
-    const hide = terminalHarness.csiHandlers.find(
-      ({ id }) => id.prefix === "?" && id.final === "l",
-    );
-    const show = terminalHarness.csiHandlers.find(
-      ({ id }) => id.prefix === "?" && id.final === "h",
-    );
 
-    expect(host.dataset.liveTuiCandidate).toBe("false");
-    expect(host.dataset.liveTuiNavigation).toBe("false");
-    expect(hide?.callback([25])).toBe(false);
-    expect(host.dataset.liveTuiCandidate).toBe("true");
-    expect(host.dataset.liveTuiNavigation).toBe("false");
+    // Plain pane: xterm's native wheel behaviour is already right.
     expect(
-      terminalHarness.wheel.current?.(
-        new WheelEvent("wheel", { deltaY: 120 }),
-      ),
+      terminalHarness.wheel.current?.(new WheelEvent("wheel", { deltaY: 120 })),
     ).toBe(true);
-    expect(terminalHarness.input).not.toHaveBeenCalled();
+    expect(terminalHarness.scrollLines).not.toHaveBeenCalled();
 
-    host.dataset.liveTuiNavigation = "true";
+    // A normal-buffer CLI that negotiates mouse tracking must NOT receive the
+    // wheel as mouse reports — the wheel keeps scrolling xterm's history, so
+    // scrolling behaves identically in every provider and every CLI mode.
+    terminalHarness.modes.mouseTrackingMode = "any";
     expect(
-      terminalHarness.wheel.current?.(
-        new WheelEvent("wheel", { deltaY: 120 }),
-      ),
+      terminalHarness.wheel.current?.(new WheelEvent("wheel", { deltaY: 120 })),
     ).toBe(false);
-    expect(terminalHarness.input).toHaveBeenCalledWith("\x1b[B".repeat(3));
-    expect(show?.callback([25])).toBe(false);
-    expect(host.dataset.liveTuiCandidate).toBe("false");
-    expect(host.dataset.liveTuiNavigation).toBe("false");
-
-    expect(hide?.callback([25])).toBe(false);
-    host.dataset.liveTuiNavigation = "true";
-    terminalHarness.input.mockClear();
-    act(() => terminalHarness.handlers.current?.onExit?.(1 as never));
-    expect(host.dataset.liveTuiCandidate).toBe("false");
-    expect(host.dataset.liveTuiNavigation).toBe("false");
-    expect(terminalHarness.write).toHaveBeenLastCalledWith(
-      expect.stringContaining("\x1b[?25h"),
-    );
-    expect(terminalHarness.wheel.current?.(new WheelEvent("wheel", { deltaY: 120 }))).toBe(
-      true,
-    );
+    expect(terminalHarness.scrollLines).toHaveBeenCalledWith(3);
     expect(terminalHarness.input).not.toHaveBeenCalled();
+
+    // A true alternate-screen app (vim, less) keeps its negotiated protocols.
+    terminalHarness.bufferType = "alternate";
+    terminalHarness.scrollLines.mockClear();
+    expect(
+      terminalHarness.wheel.current?.(new WheelEvent("wheel", { deltaY: 120 })),
+    ).toBe(true);
+    expect(terminalHarness.scrollLines).not.toHaveBeenCalled();
   });
 
   it("waits for the area-aware grid measurement before opening the PTY", () => {
@@ -426,6 +432,13 @@ describe("AgenticTerminal layout", () => {
         "the whole recorded session" as never,
       );
     });
+    // Captured INSIDE `term.write`, before React gets another render. This is
+    // the timing the real WebView exposed: a state-only curtain arrived after
+    // xterm had already begun painting the replay.
+    expect(terminalHarness.visibilityAtWrite.at(-1)).toBe("hidden");
+    expect(screen.getByTestId("agentic-terminal-host-Dana").style.visibility).toBe(
+      "hidden",
+    );
     expect(region?.className).toContain("invisible");
     expect(terminalHarness.writeCallbacks).toHaveLength(1);
 
@@ -435,6 +448,7 @@ describe("AgenticTerminal layout", () => {
     });
 
     expect(terminalHarness.scrollToBottom).toHaveBeenCalled();
+    expect(screen.getByTestId("agentic-terminal-host-Dana").style.visibility).toBe("");
     expect(region?.className).not.toContain("invisible");
   });
 

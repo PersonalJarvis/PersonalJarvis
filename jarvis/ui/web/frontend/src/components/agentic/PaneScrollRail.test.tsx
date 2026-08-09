@@ -50,48 +50,38 @@ interface TerminalHarness {
   term: Terminal;
   scrollToLine: ReturnType<typeof vi.fn>;
   scrollLines: ReturnType<typeof vi.fn>;
-  input: ReturnType<typeof vi.fn>;
-  setOwner: (owner: "terminal" | "mouse-app" | "page-app") => void;
-  /** Repaint every visible row, which is what a moved application looks like. */
-  repaint: () => void;
+  scrollToTop: ReturnType<typeof vi.fn>;
+  scrollToBottom: ReturnType<typeof vi.fn>;
 }
 
 function fakeTerminal({
-  owner,
+  type = "normal",
   line = 100,
   maxLine = 100,
 }: {
-  owner: "terminal" | "mouse-app" | "page-app";
+  type?: "normal" | "alternate";
   line?: number;
   maxLine?: number;
-}): TerminalHarness {
+} = {}): TerminalHarness {
   const scroll = signal<number>();
   const parsed = signal<void>();
   const changed = signal<unknown>();
-  let generation = 0;
-  const active = {
-    type: owner === "terminal" ? "normal" : "alternate",
-    baseY: maxLine,
-    viewportY: line,
-    getLine: (index: number) => ({
-      translateToString: () => `row ${index} of paint ${generation}`,
-    }),
-  };
-  const modes = {
-    mouseTrackingMode: owner === "mouse-app" ? "any" : "none",
-  };
+  const active = { type, baseY: maxLine, viewportY: line };
   const scrollToLine = vi.fn((next: number) => {
     active.viewportY = next;
     scroll.fire(next);
   });
   const scrollLines = vi.fn((amount: number) => {
-    active.viewportY = Math.max(0, Math.min(active.baseY, active.viewportY + amount));
+    active.viewportY = Math.max(
+      0,
+      Math.min(active.baseY, active.viewportY + amount),
+    );
     scroll.fire(active.viewportY);
   });
-  const input = vi.fn();
+  const scrollToTop = vi.fn(() => scrollToLine(0));
+  const scrollToBottom = vi.fn(() => scrollToLine(active.baseY));
   const term = {
     rows: 20,
-    modes,
     buffer: {
       active,
       onBufferChange: changed.event,
@@ -100,48 +90,19 @@ function fakeTerminal({
     onWriteParsed: parsed.event,
     scrollToLine,
     scrollLines,
-    scrollToTop: vi.fn(() => scrollToLine(0)),
-    scrollToBottom: vi.fn(() => scrollToLine(active.baseY)),
-    input,
+    scrollToTop,
+    scrollToBottom,
   } as unknown as Terminal;
-  const setOwner = (next: "terminal" | "mouse-app" | "page-app") => {
-    active.type = next === "terminal" ? "normal" : "alternate";
-    modes.mouseTrackingMode = next === "mouse-app" ? "any" : "none";
-    changed.fire(active);
-  };
-  return {
-    term,
-    scrollToLine,
-    scrollLines,
-    input,
-    setOwner,
-    repaint: () => {
-      generation += 1;
-    },
-  };
+  return { term, scrollToLine, scrollLines, scrollToTop, scrollToBottom };
 }
 
-function RailHarness({
-  name,
-  term,
-  liveTuiCandidate = false,
-  onOpenHistory,
-}: {
-  name: string;
-  term: Terminal;
-  liveTuiCandidate?: boolean;
-  onOpenHistory?: () => void;
-}) {
+function RailHarness({ name, term }: { name: string; term: Terminal }) {
   const regionRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(term);
   return (
     <div ref={regionRef} id={`terminal-${name}`}>
-      <div
-        ref={hostRef}
-        data-live-tui-candidate={liveTuiCandidate ? "true" : "false"}
-        data-live-tui-navigation="false"
-      >
+      <div ref={hostRef}>
         <div className="xterm-screen" data-testid={`xterm-screen-${name}`} />
       </div>
       <PaneScrollRail
@@ -152,7 +113,6 @@ function RailHarness({
         terminalRef={terminalRef}
         epoch={1}
         appearance="dark"
-        onOpenHistory={onOpenHistory}
       />
     </div>
   );
@@ -182,8 +142,8 @@ function giveTrackGeometry(name: string, height = 200): HTMLElement {
 
 describe("PaneScrollRail", () => {
   it("drags the exact xterm history independently for each terminal ID", () => {
-    const mika = fakeTerminal({ owner: "terminal" });
-    const nova = fakeTerminal({ owner: "terminal" });
+    const mika = fakeTerminal();
+    const nova = fakeTerminal();
     render(
       <>
         <RailHarness name="Mika" term={mika.term} />
@@ -202,9 +162,6 @@ describe("PaneScrollRail", () => {
     expect(mika.scrollToLine.mock.calls.at(-1)?.[0]).toBeLessThan(30);
     expect(nova.scrollToLine).not.toHaveBeenCalled();
     expect(thumb.style.top).not.toBe("");
-    expect(screen.getByTestId("pane-scroll-rail-Mika").dataset.scrollMode).toBe(
-      "terminal",
-    );
     expect(
       screen
         .getByRole("scrollbar", { name: "Scroll Mika" })
@@ -212,299 +169,41 @@ describe("PaneScrollRail", () => {
     ).toBe("terminal-Mika");
   });
 
-  it("strokes a positionless live inline TUI in both directions", () => {
-    const harness = fakeTerminal({ owner: "terminal" });
-    render(<RailHarness name="Mira" term={harness.term} liveTuiCandidate />);
-    const rail = giveTrackGeometry("Mira");
-
-    // Cursor-hidden is only a candidate. Until the user explicitly activates
-    // the live view, the exact terminal thumb and its keyboard behavior win.
-    expect(screen.getByTestId("pane-scroll-thumb-Mira")).toBeTruthy();
-    const candidateButton = screen.getByRole("button", {
-      name: "Control live view in Mira",
-    });
-    const nativeWheel: number[] = [];
-    screen
-      .getByTestId("xterm-screen-Mira")
-      .addEventListener("wheel", (event) => nativeWheel.push(event.deltaY));
-    fireEvent.wheel(candidateButton, { deltaY: 120 });
-    expect(nativeWheel).toEqual([120]);
-    fireEvent.keyDown(rail, { key: "ArrowDown" });
-    expect(harness.scrollLines).toHaveBeenCalledWith(1);
-    expect(harness.input).not.toHaveBeenCalled();
-
-    fireEvent.click(candidateButton);
-    const grip = screen.getByTestId("pane-scroll-grip-Mira");
-
-    fireEvent.pointerDown(grip, { button: 0, clientY: 100, pointerId: 21 });
-    fireEvent.pointerMove(rail, { clientY: 115, pointerId: 21 });
-    fireEvent.pointerMove(rail, { clientY: 109, pointerId: 21 });
-    fireEvent.pointerUp(rail, { clientY: 109, pointerId: 21 });
-
-    expect(harness.input.mock.calls.map((call) => call[0])).toEqual([
-      "\x1b[B".repeat(5),
-      "\x1b[A".repeat(2),
-    ]);
-    expect(screen.queryByTestId("pane-scroll-thumb-Mira")).toBeNull();
-    expect(rail.dataset.scrollPosition).toBe("none");
-  });
-
-  it("hands ArrowDown and PageDown to an explicit live inline TUI", () => {
-    const harness = fakeTerminal({ owner: "terminal" });
-    render(<RailHarness name="Tali" term={harness.term} liveTuiCandidate />);
-    const rail = giveTrackGeometry("Tali");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Control live view in Tali" }),
-    );
-
-    fireEvent.keyDown(rail, { key: "ArrowDown" });
-    fireEvent.keyDown(rail, { key: "PageDown" });
-
-    expect(harness.scrollLines).not.toHaveBeenCalled();
-    expect(harness.input.mock.calls.map((call) => call[0])).toEqual([
-      "\x1b[B",
-      "\x1b[B".repeat(7),
-    ]);
-  });
-
-  it("keeps ArrowDown native at a visible-cursor prompt, including its tail", () => {
-    const harness = fakeTerminal({ owner: "terminal" });
-    render(<RailHarness name="Niko" term={harness.term} />);
-    const rail = giveTrackGeometry("Niko");
-
-    fireEvent.keyDown(rail, { key: "ArrowDown" });
-
-    expect(harness.scrollLines).toHaveBeenCalledWith(1);
-    expect(harness.input).not.toHaveBeenCalled();
-  });
-
-  it("strokes a mouse-aware full-screen IDE both ways and shows no position at all", () => {
-    const harness = fakeTerminal({ owner: "mouse-app" });
-    render(<RailHarness name="Aria" term={harness.term} />);
-    const rail = giveTrackGeometry("Aria");
-    const xtermScreen = screen.getByTestId("xterm-screen-Aria");
-    const deltas: number[] = [];
-    xtermScreen.addEventListener("wheel", (event) => deltas.push(event.deltaY));
-    // The regression this pins: no shape in this track, in any state. Twice a
-    // grip was drawn here and twice it was read as a position that was wrong.
-    expect(screen.queryByTestId("pane-scroll-thumb-Aria")).toBeNull();
-    expect(rail.dataset.scrollPosition).toBe("none");
-
-    fireEvent.pointerDown(rail, { button: 0, clientY: 100, pointerId: 2 });
-    // A press alone must move nothing: there is no position it could mean.
-    expect(deltas).toEqual([]);
-    fireEvent.pointerMove(rail, { clientY: 65, pointerId: 2 });
-    fireEvent.pointerMove(rail, { clientY: 121, pointerId: 2 });
-    fireEvent.pointerUp(rail, { clientY: 121, pointerId: 2 });
-
-    expect(deltas.some((delta) => delta < 0)).toBe(true);
-    expect(deltas.some((delta) => delta > 0)).toBe(true);
-    expect(screen.queryByTestId("pane-scroll-thumb-Aria")).toBeNull();
-    expect(rail.dataset.scrollMode).toBe("application");
-    expect(rail.hasAttribute("aria-valuemin")).toBe(false);
-    expect(rail.hasAttribute("aria-valuemax")).toBe(false);
-    expect(rail.hasAttribute("aria-valuenow")).toBe(false);
-    expect(rail.hasAttribute("aria-valuetext")).toBe(false);
-    expect(
-      screen
-        .getByRole("button", { name: "Scroll older in Aria" })
-        .getAttribute("aria-controls"),
-    ).toBe("terminal-Aria");
-    expect(
-      screen
-        .getByRole("button", { name: "Scroll newer in Aria" })
-        .getAttribute("aria-controls"),
-    ).toBe("terminal-Aria");
-  });
-
-  it("drags the application grip to stroke, and it springs back to centre", () => {
-    const harness = fakeTerminal({ owner: "mouse-app" });
-    render(<RailHarness name="Rex" term={harness.term} />);
-    const rail = giveTrackGeometry("Rex");
-    const grip = screen.getByTestId("pane-scroll-grip-Rex");
-    const deltas: number[] = [];
-    screen
-      .getByTestId("xterm-screen-Rex")
-      .addEventListener("wheel", (event) => deltas.push(event.deltaY));
-
-    // At rest the grip sits dead centre — it carries no position.
-    expect(grip.style.transform).toBe("translate(-50%, calc(-50% + 0px))");
-
-    fireEvent.pointerDown(grip, { button: 0, clientY: 100, pointerId: 9 });
-    fireEvent.pointerMove(rail, { clientY: 60, pointerId: 9 });
-
-    // The drag strokes the application and the grip rides along with it.
-    expect(deltas.length).toBeGreaterThan(0);
-    expect(deltas.every((delta) => delta < 0)).toBe(true);
-    expect(grip.style.transform).toBe("translate(-50%, calc(-50% + -40px))");
-
-    fireEvent.pointerUp(rail, { clientY: 60, pointerId: 9 });
-
-    // Released, it returns to centre: a handle that never stays put cannot be
-    // read as "you are here". The thumb testid stays application-free.
-    expect(grip.style.transform).toBe("translate(-50%, calc(-50% + 0px))");
-    expect(screen.queryByTestId("pane-scroll-thumb-Rex")).toBeNull();
-  });
-
-  it("opens the recorded conversation on a grip click, but not after a drag", () => {
-    const harness = fakeTerminal({ owner: "mouse-app" });
-    const onOpenHistory = vi.fn();
-    render(
-      <RailHarness name="Uma" term={harness.term} onOpenHistory={onOpenHistory} />,
-    );
-    const rail = giveTrackGeometry("Uma");
-    const grip = screen.getByTestId("pane-scroll-grip-Uma");
-
-    // A real drag scrolls; it must NOT also open the history on release.
-    fireEvent.pointerDown(grip, { button: 0, clientY: 100, pointerId: 11 });
-    fireEvent.pointerMove(rail, { clientY: 60, pointerId: 11 });
-    fireEvent.pointerUp(rail, { clientY: 60, pointerId: 11 });
-    expect(onOpenHistory).not.toHaveBeenCalled();
-
-    // A press-and-release that never moved is a click, and a click opens it.
-    fireEvent.pointerDown(grip, { button: 0, clientY: 100, pointerId: 12 });
-    fireEvent.pointerUp(rail, { clientY: 101, pointerId: 12 });
-    expect(onOpenHistory).toHaveBeenCalledTimes(1);
-
-    // Pressing the empty track is a stroke gesture, never a click-open.
-    fireEvent.pointerDown(rail, { button: 0, clientY: 40, pointerId: 13 });
-    fireEvent.pointerUp(rail, { clientY: 40, pointerId: 13 });
-    expect(onOpenHistory).toHaveBeenCalledTimes(1);
-  });
-
-  it("pages the application from the visible arrow caps", () => {
-    const harness = fakeTerminal({ owner: "mouse-app" });
+  it("jumps to a pressed track spot and keeps dragging from there", () => {
+    const harness = fakeTerminal({ line: 100, maxLine: 100 });
     render(<RailHarness name="Odo" term={harness.term} />);
-    giveTrackGeometry("Odo");
-    const deltas: number[] = [];
-    screen
-      .getByTestId("xterm-screen-Odo")
-      .addEventListener("wheel", (event) =>
-        deltas.push((event as WheelEvent).deltaY),
-      );
+    const rail = giveTrackGeometry("Odo");
 
-    fireEvent.click(screen.getByRole("button", { name: "Scroll older in Odo" }));
-    expect(deltas.length).toBeGreaterThan(0);
-    expect(deltas.every((delta) => delta < 0)).toBe(true);
+    fireEvent.pointerDown(rail, { button: 0, clientY: 20, pointerId: 2 });
+    expect(harness.scrollToLine).toHaveBeenCalled();
+    expect(harness.scrollToLine.mock.calls.at(-1)?.[0]).toBeLessThan(30);
 
-    fireEvent.click(screen.getByRole("button", { name: "Scroll newer in Odo" }));
-    expect(deltas.some((delta) => delta > 0)).toBe(true);
+    fireEvent.pointerMove(rail, { clientY: 190, pointerId: 2 });
+    fireEvent.pointerUp(rail, { clientY: 190, pointerId: 2 });
+    expect(harness.scrollToLine.mock.calls.at(-1)?.[0]).toBe(100);
   });
 
-  it("says plainly why an application rail has no position, and stays visible", () => {
-    const harness = fakeTerminal({ owner: "mouse-app" });
-    render(<RailHarness name="Ida" term={harness.term} />);
-    const rail = giveTrackGeometry("Ida");
+  it("scrolls with the keyboard on every pane the same way", () => {
+    const harness = fakeTerminal({ line: 50 });
+    render(<RailHarness name="Vera" term={harness.term} />);
+    const rail = giveTrackGeometry("Vera");
 
-    expect(rail.title).toBe(
-      "Scroll Ida: this app keeps its own history, so there is no position to show",
-    );
-    // The regression this pins: the application rail once hid at rest, and an
-    // invisible control next to a sibling pane's always-visible thumb was read
-    // as "the scrollbar is broken in this CLI". Both rail kinds now share the
-    // same resting visibility.
-    expect(rail.className).not.toContain("opacity-0");
-    expect(rail.className).toContain("opacity-65");
-  });
-
-  it("notices a mouse-tracking flip that arrives without any buffer event", () => {
-    vi.useFakeTimers({
-      toFake: [
-        "setInterval",
-        "clearInterval",
-        "requestAnimationFrame",
-        "cancelAnimationFrame",
-      ],
-    });
-    try {
-      const harness = fakeTerminal({ owner: "terminal" });
-      render(<RailHarness name="Vera" term={harness.term} />);
-      const rail = screen.getByTestId("pane-scroll-rail-Vera");
-      expect(rail.dataset.scrollMode).toBe("terminal");
-
-      // A replayed session consumes the TUI's DECSET before the rail
-      // subscribes, so the flip reaches xterm without any later event.
-      (
-        harness.term.modes as { mouseTrackingMode: string }
-      ).mouseTrackingMode = "any";
-      act(() => {
-        vi.advanceTimersByTime(1600);
-      });
-
-      expect(rail.dataset.scrollMode).toBe("application");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("drops the exact thumb when a TUI takes the screen during a drag", () => {
-    vi.useFakeTimers({
-      toFake: [
-        "setInterval",
-        "clearInterval",
-        "requestAnimationFrame",
-        "cancelAnimationFrame",
-      ],
-    });
-    try {
-      const harness = fakeTerminal({ owner: "terminal", line: 50 });
-      render(<RailHarness name="Iris" term={harness.term} />);
-      const rail = giveTrackGeometry("Iris");
-      const thumb = screen.getByTestId("pane-scroll-thumb-Iris");
-      expect(rail.dataset.scrollMode).toBe("terminal");
-      const deltas: number[] = [];
-      screen
-        .getByTestId("xterm-screen-Iris")
-        .addEventListener("wheel", (event) => deltas.push(event.deltaY));
-
-      fireEvent.pointerDown(thumb, { button: 0, clientY: 100, pointerId: 5 });
-      harness.setOwner("mouse-app");
-      fireEvent.pointerMove(rail, { clientY: 60, pointerId: 5 });
-      fireEvent.pointerUp(rail, { clientY: 60, pointerId: 5 });
-      act(() => {
-        vi.advanceTimersByTime(50);
-      });
-
-      // The gesture continues as a stroke on the application that took over,
-      // and the thumb it started on is gone rather than left pointing at a line
-      // the pane no longer has.
-      expect(deltas.length).toBeGreaterThan(0);
-      expect(deltas.every((delta) => delta < 0)).toBe(true);
-      expect(screen.queryByTestId("pane-scroll-thumb-Iris")).toBeNull();
-      expect(rail.dataset.scrollMode).toBe("application");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("cancels an uncaptured drag when the pointer leaves the rail", () => {
-    const harness = fakeTerminal({ owner: "terminal", line: 50 });
-    render(<RailHarness name="Lumi" term={harness.term} />);
-    const rail = giveTrackGeometry("Lumi");
-    const thumb = screen.getByTestId("pane-scroll-thumb-Lumi");
-
-    fireEvent.pointerDown(thumb, { button: 0, clientY: 100, pointerId: 6 });
-    expect(rail.className).toContain("cursor-grabbing");
-    fireEvent.pointerLeave(rail, { pointerId: 6 });
-    expect(rail.className).not.toContain("cursor-grabbing");
-  });
-
-  it("uses PageUp and PageDown for an alternate-screen IDE without mouse mode", () => {
-    const harness = fakeTerminal({ owner: "page-app" });
-    render(<RailHarness name="Sora" term={harness.term} />);
-    const rail = giveTrackGeometry("Sora");
-
+    fireEvent.keyDown(rail, { key: "ArrowUp" });
+    fireEvent.keyDown(rail, { key: "ArrowDown" });
     fireEvent.keyDown(rail, { key: "PageUp" });
     fireEvent.keyDown(rail, { key: "PageDown" });
+    fireEvent.keyDown(rail, { key: "Home" });
+    fireEvent.keyDown(rail, { key: "End" });
 
-    expect(harness.input.mock.calls.map((call) => call[0])).toEqual([
-      "\x1b[5~",
-      "\x1b[6~",
+    expect(harness.scrollLines.mock.calls.map((call) => call[0])).toEqual([
+      -1, 1, -20, 20,
     ]);
+    expect(harness.scrollToTop).toHaveBeenCalledOnce();
+    expect(harness.scrollToBottom).toHaveBeenCalledOnce();
   });
 
   it("forwards a wheel over the rail unchanged to its own terminal", () => {
-    const harness = fakeTerminal({ owner: "mouse-app" });
+    const harness = fakeTerminal();
     render(<RailHarness name="Nia" term={harness.term} />);
     const rail = giveTrackGeometry("Nia");
     const xtermScreen = screen.getByTestId("xterm-screen-Nia");
@@ -523,5 +222,32 @@ describe("PaneScrollRail", () => {
     expect(forwarded.deltaX).toBe(5);
     expect(forwarded.deltaY).toBe(120);
     expect(forwarded.shiftKey).toBe(true);
+  });
+
+  it("cancels an uncaptured drag when the pointer leaves the rail", () => {
+    const harness = fakeTerminal({ line: 50 });
+    render(<RailHarness name="Lumi" term={harness.term} />);
+    const rail = giveTrackGeometry("Lumi");
+    const thumb = screen.getByTestId("pane-scroll-thumb-Lumi");
+
+    fireEvent.pointerDown(thumb, { button: 0, clientY: 100, pointerId: 6 });
+    expect(rail.className).toContain("cursor-grabbing");
+    fireEvent.pointerLeave(rail, { pointerId: 6 });
+    expect(rail.className).not.toContain("cursor-grabbing");
+  });
+
+  it("says honestly when a full-screen app owns the pane", () => {
+    const harness = fakeTerminal({ type: "alternate", line: 0, maxLine: 0 });
+    render(<RailHarness name="Ida" term={harness.term} />);
+    const rail = giveTrackGeometry("Ida");
+    const thumb = screen.getByTestId("pane-scroll-thumb-Ida");
+
+    // No history to scroll: the thumb honestly fills the whole track, and the
+    // tooltip explains who owns the screen. One rail shape for every pane —
+    // the owner-switching rail (grip, caps, strokes) is gone.
+    expect(thumb.style.height).toBe("200px");
+    expect(rail.title).toBe(
+      "Scroll Ida: a full-screen app owns this pane right now",
+    );
   });
 });
