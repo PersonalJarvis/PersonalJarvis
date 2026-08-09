@@ -120,6 +120,8 @@ def _server_version(timeout: float = _VERSION_TIMEOUT_S) -> str | None:
         with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
             payload = json.load(resp)
     except (urllib.error.URLError, OSError, ValueError):
+        # A server that is not up is the normal answer this probe asks for,
+        # not a failure — "not running" is exactly what the caller renders.
         return None
     version = str(payload.get("version", "") or "")
     return version or "unknown"
@@ -159,6 +161,8 @@ def _server_port() -> int:
     try:
         return parsed.port or 11434
     except ValueError:
+        # A malformed port in a user-typed OLLAMA_HOST falls back to the
+        # vendor default rather than breaking every probe on a typo.
         return 11434
 
 
@@ -167,6 +171,7 @@ def _port_open(port: int, timeout: float = 1.0) -> bool:
         with socket.create_connection(("127.0.0.1", port), timeout=timeout):
             return True
     except OSError:
+        # A closed port IS the answer this probe asks for.
         return False
 
 
@@ -215,6 +220,8 @@ def start_server() -> tuple[bool, str]:
             **popen_kwargs,  # type: ignore[arg-type]
         )
     except OSError as exc:
+        # Not swallowed: the reason travels back as this function's own
+        # return value and the card renders it verbatim.
         return False, f"Could not start Ollama ({exc})."
     finally:
         if sink is not None:

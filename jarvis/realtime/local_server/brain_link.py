@@ -108,6 +108,8 @@ def _ollama_models(base: str, timeout: float) -> list[tuple[str, float]] | None:
         with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 — http(s) only
             payload = json.load(resp)
     except (urllib.error.URLError, OSError, ValueError):
+        # An unreachable Ollama is a normal state, not an error: the caller
+        # renders it as "not reachable" and offers the install/start path.
         return None
     models = payload.get("models") or []
     out: list[tuple[str, float]] = []
@@ -118,6 +120,8 @@ def _ollama_models(base: str, timeout: float) -> list[tuple[str, float]] | None:
         try:
             size_gb = float(entry.get("size", 0) or 0) / (1024**3)
         except (TypeError, ValueError):
+            # An unreadable size means UNKNOWN, and unknown never vetoes a
+            # model (the fit check is deliberately fail-open).
             size_gb = 0.0
         out.append((name, size_gb))
     return out

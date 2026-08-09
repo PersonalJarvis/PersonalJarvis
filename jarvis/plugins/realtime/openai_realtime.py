@@ -146,6 +146,8 @@ def _usage_from_response(response: Any) -> dict[str, int] | None:
         try:
             return int(value or 0)
         except (TypeError, ValueError):
+            # A usage field a provider omits or sends oddly counts as zero;
+            # metering must never break a live call.
             return 0
 
     total_in = _count(getattr(usage_obj, "input_tokens", None))
@@ -229,9 +231,7 @@ def _session_payload(
     reject the whole session for a field the user never chose. The server then
     transcribes with whatever it ships.
     """
-    transcription: dict[str, Any] = (
-        {"model": transcription_model} if transcription_model else {}
-    )
+    transcription: dict[str, Any] = {"model": transcription_model} if transcription_model else {}
     input_language = str(getattr(cfg, "input_language", "auto") or "auto")
     input_language = input_language.strip().lower().replace("_", "-").split("-", 1)[0]
     if input_language in {"de", "en", "es"}:
@@ -343,9 +343,7 @@ class _OpenAIRealtimeSession:
         self._response_start_timeout_s = max(
             0.0,
             float(
-                _RESPONSE_STALL_S
-                if response_start_timeout_s is None
-                else response_start_timeout_s
+                _RESPONSE_STALL_S if response_start_timeout_s is None else response_start_timeout_s
             ),
         )
         # A capacity-one server must release the old pipeline before opening a
@@ -585,6 +583,8 @@ class _OpenAIRealtimeSession:
             try:
                 arguments = json.loads(raw_arguments)
             except (TypeError, ValueError):
+                # Malformed tool arguments are treated as none given; the
+                # tool layer then reports the missing field honestly.
                 arguments = {}
             if not isinstance(arguments, dict):
                 arguments = {}
@@ -659,9 +659,7 @@ class _OpenAIRealtimeSession:
                     item={
                         "type": "message",
                         "role": role,
-                        "content": [
-                            {"type": content_type, "text": message["text"]}
-                        ],
+                        "content": [{"type": content_type, "text": message["text"]}],
                     }
                 )
             except Exception:  # noqa: BLE001 — degrade to an amnesiac session
@@ -1084,9 +1082,7 @@ class _OpenAIRealtimeSession:
                 )
         return not self._closed and self._events is not old_events
 
-    async def _open_rebuild_connection(
-        self, *, handshake_timeout_s: float
-    ) -> tuple[Any, Any, Any]:
+    async def _open_rebuild_connection(self, *, handshake_timeout_s: float) -> tuple[Any, Any, Any]:
         """Open and fully handshake one replacement transport."""
         connection_cm: Any | None = None
         try:
@@ -1129,9 +1125,7 @@ class _OpenAIRealtimeSession:
         that pipeline. Either path restores the bounded call transcript before
         the receive pump can continue on the new connection.
         """
-        log.warning(
-            "OpenAI Realtime rebuilding a transport that stopped making progress"
-        )
+        log.warning("OpenAI Realtime rebuilding a transport that stopped making progress")
         old_cm = self._connection_cm
         old_retired = False
         if self._disconnect_before_rebuild:
@@ -1156,10 +1150,7 @@ class _OpenAIRealtimeSession:
             attempt += 1
             remaining = deadline - time.monotonic()
             handshake_timeout_s = _HANDSHAKE_TIMEOUT_S
-            if (
-                self._disconnect_before_rebuild
-                and self._rebuild_retry_window_s > 0.0
-            ):
+            if self._disconnect_before_rebuild and self._rebuild_retry_window_s > 0.0:
                 handshake_timeout_s = min(
                     _HANDSHAKE_TIMEOUT_S,
                     max(0.001, remaining),
@@ -1311,9 +1302,7 @@ async def _open_realtime_session(
                     if hasattr(result, "__await__"):
                         await result
             except BaseException:  # noqa: BLE001 - preserve failure/cancellation
-                log.debug(
-                    "Realtime client cleanup after failed enter failed", exc_info=True
-                )
+                log.debug("Realtime client cleanup after failed enter failed", exc_info=True)
         raise
     payload = _session_payload(cfg, transcription_model=transcription_model)
     session = _OpenAIRealtimeSession(
@@ -1403,6 +1392,12 @@ _LOCAL_RESPONSE_START_TIMEOUT_S = 90.0
 #: call hostage.
 _LOCAL_CONNECT_SHORT_WINDOW_S = 8.0
 _LOCAL_CONNECT_RETRY_STEP_S = 2.0
+#: A managed pool that just reported an idle slot should accept the first
+#: interactive handshake promptly. If that readiness becomes stale, bound the
+#: race here instead of falling back to the 120-second recovery window. Long
+#: patience remains inside the accepted session's rebuild path, where it
+#: preserves a conversation instead of holding a new call on "Connecting".
+_LOCAL_MANAGED_INTERACTIVE_OPEN_S = 3.0
 #: Never respawn the server more often than this — a crash-looping server
 #: must not be hammered back up in a tight loop (AP-24 doctrine: mark it bad,
 #: do not thrash).
@@ -1443,6 +1438,8 @@ def _launch_command_target_state(command: str) -> str:
         try:
             head = (shlex.split(text) or [""])[0]
         except ValueError:
+            # An unbalanced quote makes the command unparsable — never judge
+            # a launch command this function could not read (fail-open).
             return "unknown"
     if not head:
         return "unknown"
@@ -1490,9 +1487,9 @@ def _normalize_local_root(url: str) -> str:
     if "://" not in root:
         root = f"http://{root}"
     if root.startswith("ws://"):
-        root = f"http://{root[len('ws://'):]}"
+        root = f"http://{root[len('ws://') :]}"
     elif root.startswith("wss://"):
-        root = f"https://{root[len('wss://'):]}"
+        root = f"https://{root[len('wss://') :]}"
     root = root.replace("://0.0.0.0", "://127.0.0.1")
     root = root.replace("://localhost", "://127.0.0.1")
     if root.endswith("/realtime"):
@@ -1533,6 +1530,10 @@ class LocalRealtimeProvider:
     # with the distilled persona and a prefix-cache-friendly static-first
     # ordering (AP-21: a declared capability, never a provider-name check).
     prefers_compact_instructions = True
+    # Small/local realtime models must not answer concrete public facts from
+    # unaided recall.  The session reads this capability once when accepting
+    # the provider and performs one bounded ToolExecutor-backed web lookup.
+    requires_public_fact_grounding = True
     # A delegate readback on this card is rendered by the server's own LLM +
     # TTS (4-8 s live on the dev box), not by a hosted realtime model that
     # starts audio in under a second. The shared 2.5 s readback window
@@ -1585,6 +1586,7 @@ class LocalRealtimeProvider:
         self._api_key = (api_key or "").strip()
         self._model = (model or "").strip()
         self._launch_command = (launch_command or "").strip()
+        self._managed_interactive_preflight = False
 
     # -- factory wiring ----------------------------------------------------
 
@@ -1608,9 +1610,7 @@ class LocalRealtimeProvider:
         and ``open_session`` is what finds out whether it answers.
         """
         provider_cfg = cls._provider_config(cfg)
-        return bool(
-            _normalize_local_root(str(getattr(provider_cfg, "base_url", "") or ""))
-        )
+        return bool(_normalize_local_root(str(getattr(provider_cfg, "base_url", "") or "")))
 
     @classmethod
     def from_runtime_config(cls, cfg: Any) -> LocalRealtimeProvider:
@@ -1628,7 +1628,55 @@ class LocalRealtimeProvider:
     # -- session -----------------------------------------------------------
 
     async def can_open_duplex_session(self) -> bool:
-        return bool(self._base_url)
+        if not self._base_url:
+            return False
+        if not self._launch_command or not self._server_is_local_process():
+            return True
+
+        import importlib  # lazy (AP-26)
+
+        try:
+            supervisor = importlib.import_module("jarvis.realtime.local_server.supervisor")
+            if not bool(supervisor.is_managed_launch_command(self._launch_command)):
+                # A bring-your-own server is not required to expose the pinned
+                # stack's private /v1/pool readiness contract.
+                return True
+        except Exception:  # noqa: BLE001 - preserve generic BYO connectivity
+            log.debug(
+                "local-realtime: managed readiness detection failed",
+                exc_info=True,
+            )
+            return True
+
+        self._managed_interactive_preflight = True
+
+        def _ready_or_warming() -> bool:
+            try:
+                outcome = str(
+                    supervisor.ensure_running(
+                        launch_command=self._launch_command,
+                        base_url=self._base_url,
+                        reason="interactive-preflight",
+                    )
+                )
+                if outcome in {"spawned", "already-running"}:
+                    # A cold child keeps warming after this call fails fast;
+                    # the monitor owns later crash/wedge recovery.
+                    supervisor.start_runtime_monitor(
+                        launch_command=self._launch_command,
+                        base_url=self._base_url,
+                    )
+                pool = supervisor.probe_runtime(self._base_url, timeout=0.35)
+                return bool(pool and pool.get("available", 0) > 0)
+            except Exception:  # noqa: BLE001 - a probe never breaks voice startup
+                log.warning(
+                    "local-realtime: managed readiness probe failed; the "
+                    "interactive call will not wait on a cold server",
+                    exc_info=True,
+                )
+                return False
+
+        return bool(await asyncio.to_thread(_ready_or_warming))
 
     async def _resolve_model(self) -> str:
         """The configured model, else the first one the server serves.
@@ -1646,9 +1694,7 @@ class LocalRealtimeProvider:
             import importlib  # lazy (AP-26)
 
             try:
-                supervisor = importlib.import_module(
-                    "jarvis.realtime.local_server.supervisor"
-                )
+                supervisor = importlib.import_module("jarvis.realtime.local_server.supervisor")
                 if supervisor.is_managed_launch_command(self._launch_command):
                     # The pinned speech-to-speech server implements the
                     # realtime protocol and /v1/pool, but not /v1/models.
@@ -1673,8 +1719,7 @@ class LocalRealtimeProvider:
                 resp = await client.get(f"{self._base_url}/models", headers=headers)
                 resp.raise_for_status()
                 served = [
-                    str(entry.get("id") or "").strip()
-                    for entry in (resp.json().get("data") or [])
+                    str(entry.get("id") or "").strip() for entry in (resp.json().get("data") or [])
                 ]
         except Exception as exc:  # noqa: BLE001 — the connect reports the real failure
             log.info(
@@ -1709,10 +1754,7 @@ class LocalRealtimeProvider:
         other end, so a short window rides out a hiccup and then reports
         honestly.
         """
-        if (
-            self._launch_command
-            and _launch_command_target_state(self._launch_command) != "missing"
-        ):
+        if self._launch_command and _launch_command_target_state(self._launch_command) != "missing":
             return _LOCAL_CONNECT_PATIENT_WINDOW_S
         return _LOCAL_CONNECT_SHORT_WINDOW_S
 
@@ -1760,9 +1802,7 @@ class LocalRealtimeProvider:
         # importlib, not a literal ``from jarvis...``: the plugin-module
         # contract (no jarvis imports, AST-checked) counts lazy imports too.
         try:
-            supervisor = importlib.import_module(
-                "jarvis.realtime.local_server.supervisor"
-            )
+            supervisor = importlib.import_module("jarvis.realtime.local_server.supervisor")
             outcome = str(
                 supervisor.ensure_running(
                     launch_command=self._launch_command,
@@ -1816,12 +1856,8 @@ class LocalRealtimeProvider:
             import importlib  # lazy (AP-26)
 
             def _warm() -> bool:
-                supervisor = importlib.import_module(
-                    "jarvis.realtime.local_server.supervisor"
-                )
-                managed = bool(
-                    supervisor.is_managed_launch_command(provider._launch_command)
-                )
+                supervisor = importlib.import_module("jarvis.realtime.local_server.supervisor")
+                managed = bool(supervisor.is_managed_launch_command(provider._launch_command))
                 outcome = str(
                     supervisor.ensure_running(
                         launch_command=provider._launch_command,
@@ -1842,18 +1878,11 @@ class LocalRealtimeProvider:
                     )
                     if not ready:
                         log.warning(
-                            "local-realtime: prewarm timed out before the model pool "
-                            "was ready"
+                            "local-realtime: prewarm timed out before the model pool was ready"
                         )
                         return False
-                    install = importlib.import_module(
-                        "jarvis.realtime.local_server.install"
-                    )
-                    if not bool(
-                        install.repair_smoke_marker_from_live_runtime(
-                            provider._base_url
-                        )
-                    ):
+                    install = importlib.import_module("jarvis.realtime.local_server.install")
+                    if not bool(install.repair_smoke_marker_from_live_runtime(provider._base_url)):
                         log.warning(
                             "local-realtime: server is ready but its managed-install "
                             "smoke proof could not be repaired"
@@ -1888,11 +1917,24 @@ class LocalRealtimeProvider:
                 "No server URL configured for the self-hosted realtime provider "
                 "— set it on the provider card first (e.g. http://127.0.0.1:8080)."
             )
-        deadline = time.monotonic() + self._connect_retry_window_s()
+        managed_interactive = self._managed_interactive_preflight
+        self._managed_interactive_preflight = False
+        retry_window_s = (
+            _LOCAL_MANAGED_INTERACTIVE_OPEN_S
+            if managed_interactive
+            else self._connect_retry_window_s()
+        )
+        deadline = time.monotonic() + retry_window_s
         attempt = 0
         while True:
             attempt += 1
             try:
+                if managed_interactive:
+                    remaining = max(0.001, deadline - time.monotonic())
+                    return await asyncio.wait_for(
+                        self._open_session_once(cfg),
+                        timeout=remaining,
+                    )
                 return await self._open_session_once(cfg)
             except asyncio.CancelledError:
                 raise
@@ -1909,8 +1951,7 @@ class LocalRealtimeProvider:
                 if (
                     self._launch_command
                     and self._server_is_local_process()
-                    and _launch_command_target_state(self._launch_command)
-                    == "missing"
+                    and _launch_command_target_state(self._launch_command) == "missing"
                 ):
                     raise RuntimeError(
                         "The local realtime server is not installed anymore: "
@@ -1931,9 +1972,7 @@ class LocalRealtimeProvider:
                     " after relaunching the server" if launched else "",
                     remaining,
                 )
-                await asyncio.sleep(
-                    min(_LOCAL_CONNECT_RETRY_STEP_S, max(remaining, 0.0))
-                )
+                await asyncio.sleep(min(_LOCAL_CONNECT_RETRY_STEP_S, max(remaining, 0.0)))
 
     def _shared_client(self) -> Any:
         """The cached SDK client for this endpoint (built once, reused forever)."""
