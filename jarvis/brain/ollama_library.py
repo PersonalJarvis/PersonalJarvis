@@ -71,14 +71,46 @@ _NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
 #: handled separately: it is a hosting fact, not a model capability.
 _CAPABILITY_BADGES = ("vision", "tools", "thinking", "embedding")
 
-_search_cache: dict[str, tuple[float, dict[str, Any]]] = {}
-_tags_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+#: Download sizes as the tags page writes them. The unit is NOT always GB — a
+#: sub-gigabyte tag reads "398MB", and matching only GB dropped the size of
+#: exactly the small models a weak machine depends on, leaving them with no fit
+#: verdict at all. Decimal units, matching the catalog's own arithmetic.
+_SIZE_RE = re.compile(r"([\d.]+)\s*(TB|GB|MB|KB)\b")
+_SIZE_FACTOR_GB = {"TB": 1000.0, "GB": 1.0, "MB": 1e-3, "KB": 1e-6}
+
+#: Caches hold the CATALOG half only — what ollama.com said, never what this
+#: machine holds. Caching the enriched answer froze `installed` too, so a tag
+#: downloaded from this very panel kept offering "Download" for the rest of the
+#: TTL. The catalog drifts in days; the inventory changes while the user
+#: watches, so it is re-read on every call.
+_search_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_tags_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
 
-def _cache_get(cache: dict[str, tuple[float, dict[str, Any]]], key: str) -> dict[str, Any] | None:
+def _size_to_gb(match: re.Match[str]) -> float | None:
+    """A matched ``398MB`` / ``6.6GB`` as gigabytes, or ``None`` if unreadable."""
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None
+    gb = value * _SIZE_FACTOR_GB[match.group(2)]
+    # Two decimals keeps a 398 MB model at 0.4 rather than collapsing to 0.0,
+    # which would read as "free" next to the fit verdict.
+    return round(gb, 2) if gb > 0 else None
+
+
+def _cache_get(
+    cache: dict[str, tuple[float, list[dict[str, Any]]]], key: str
+) -> list[dict[str, Any]] | None:
+    """Cached catalog entries for ``key``, or ``None`` when stale or absent.
+
+    Copies are returned: the caller enriches each entry with this machine's
+    state, and mutating the cached dicts would bake that state into every
+    later reader.
+    """
     hit = cache.get(key)
     if hit and (time.monotonic() - hit[0]) < _CACHE_TTL_SECONDS:
-        return hit[1]
+        return [dict(entry) for entry in hit[1]]
     return None
 
 
@@ -181,31 +213,28 @@ async def search_library(query: str) -> dict[str, Any]:
     already pulled (any tag of it) reads as such directly in the results.
     """
     q = (query or "").strip()
-    if cached := _cache_get(_search_cache, q):
-        return cached
+    models = _cache_get(_search_cache, q)
+    if models is None:
+        page, error = await _fetch_page("/search", params={"q": q} if q else None)
+        if page is None:
+            return {"query": q, "models": [], "error": error}
 
-    page, error = await _fetch_page("/search", params={"q": q} if q else None)
-    if page is None:
-        return {"query": q, "models": [], "error": error}
-
-    models = parse_search_html(page)
-    if not models:
-        # An empty answer for a nonsense query is correct; empty for a page
-        # that no longer parses would silently kill the feature. Only the
-        # latter is an error, and only the live guard can tell them apart —
-        # here both honestly say "nothing found".
-        log.info("ollama-library: search %r parsed 0 entries", q)
+        models = parse_search_html(page)
+        if not models:
+            # An empty answer for a nonsense query is correct; empty for a page
+            # that no longer parses would silently kill the feature. Only the
+            # latter is an error, and only the live guard can tell them apart —
+            # here both honestly say "nothing found".
+            log.info("ollama-library: search %r parsed 0 entries", q)
+        _search_cache[q] = (time.monotonic(), [dict(entry) for entry in models])
 
     installed, _inventory_error = await installed_models()
+    families = {i.partition(":")[0] for i in installed}
     for model in models:
         name = model["name"]
-        model["installed"] = name in {i.partition(":")[0] for i in installed} or _is_installed(
-            name, installed
-        )
+        model["installed"] = name in families or _is_installed(name, installed)
 
-    result = {"query": q, "models": models, "error": None}
-    _search_cache[q] = (time.monotonic(), result)
-    return result
+    return {"query": q, "models": models, "error": None}
 
 
 # ── tags ────────────────────────────────────────────────────────────────────
@@ -235,7 +264,7 @@ def parse_tags_html(page: str, name: str) -> list[dict[str, Any]]:
         end = first_seen[index + 1][1] if index + 1 < len(first_seen) else len(page)
         window = page[start:end]
 
-        size_match = re.search(r"([\d.]+)\s*GB", window)
+        size_match = _SIZE_RE.search(window)
         context_match = re.search(r"([\d.]+[KM])\s+context window", window)
         inputs_match = re.search(r"([A-Za-z][A-Za-z, ]*?)\s+input\b", window)
         updated_match = re.search(r"(\d+ \w+ ago|yesterday)", window)
@@ -244,7 +273,7 @@ def parse_tags_html(page: str, name: str) -> list[dict[str, Any]]:
             {
                 "tag": tag,
                 "id": f"{name}:{tag}",
-                "size_gb": float(size_match.group(1)) if size_match else None,
+                "size_gb": _size_to_gb(size_match) if size_match else None,
                 "context": context_match.group(1) if context_match else "",
                 "inputs": _text(inputs_match.group(1)) if inputs_match else "",
                 "updated": updated_match.group(1) if updated_match else "",
@@ -267,20 +296,20 @@ async def library_tags(model: str) -> dict[str, Any]:
     name = (model or "").strip()
     if not name or not _NAME_RE.fullmatch(name):
         return {"model": name, "tags": [], "error": "Not a valid library model name."}
-    if cached := _cache_get(_tags_cache, name):
-        return cached
+    tags = _cache_get(_tags_cache, name)
+    if tags is None:
+        page, error = await _fetch_page(f"/library/{name}/tags")
+        if page is None:
+            return {"model": name, "tags": [], "error": error}
 
-    page, error = await _fetch_page(f"/library/{name}/tags")
-    if page is None:
-        return {"model": name, "tags": [], "error": error}
-
-    tags = parse_tags_html(page, name)
-    if not tags:
-        return {
-            "model": name,
-            "tags": [],
-            "error": f"No tags could be read for '{name}' — check it on ollama.com/library.",
-        }
+        tags = parse_tags_html(page, name)
+        if not tags:
+            return {
+                "model": name,
+                "tags": [],
+                "error": f"No tags could be read for '{name}' — check it on ollama.com/library.",
+            }
+        _tags_cache[name] = (time.monotonic(), [dict(entry) for entry in tags])
 
     installed, _inventory_error = await installed_models()
     memory_gb = total_memory_gb()
@@ -292,6 +321,4 @@ async def library_tags(model: str) -> dict[str, Any]:
         else:
             entry["fit"], entry["fit_note"] = fit_verdict(entry["size_gb"], memory_gb, accel)
 
-    result = {"model": name, "tags": tags, "error": None}
-    _tags_cache[name] = (time.monotonic(), result)
-    return result
+    return {"model": name, "tags": tags, "error": None}

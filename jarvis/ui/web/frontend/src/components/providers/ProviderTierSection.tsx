@@ -2730,7 +2730,10 @@ function LibraryBrowser({
               </button>
 
               {openModel === model.name && (
-                <div className="space-y-1 border-t border-border/40 px-2 py-1.5">
+                // A popular family publishes well over a hundred tags
+                // (qwen2.5: 133). Un-capped, one opened model would push the
+                // whole settings page down by several screens.
+                <div className="max-h-56 space-y-1 overflow-y-auto border-t border-border/40 px-2 py-1.5">
                   {loadingTags && !tags[model.name] && (
                     <p className="text-[11px] text-muted-foreground">
                       {t("apikeys_model_pull.library_loading_versions")}

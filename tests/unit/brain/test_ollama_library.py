@@ -82,7 +82,30 @@ def test_search_parser_answers_empty_on_garbage() -> None:
 
 def test_tags_parser_dedupes_the_mobile_and_desktop_blocks(tags_page: str) -> None:
     tags = library.parse_tags_html(tags_page, "qwen3.5")
-    assert [t["tag"] for t in tags] == ["latest", "cloud", "0.8b"]
+    assert [t["tag"] for t in tags] == ["latest", "cloud", "0.8b", "0.3b"]
+
+
+def test_tags_parser_reads_sub_gigabyte_sizes(tags_page: str) -> None:
+    """The page writes "398MB", not "0.4GB". A GB-only parser dropped the size
+    of exactly the tags a weak machine depends on, leaving them fit-unknown."""
+    small = next(t for t in library.parse_tags_html(tags_page, "qwen3.5") if t["tag"] == "0.3b")
+    assert small["size_gb"] == 0.4
+
+
+@pytest.mark.parametrize(
+    ("markup", "expected"),
+    [
+        ('<a href="/library/x:a">x</a> 6.6GB', 6.6),
+        ('<a href="/library/x:a">x</a> 398MB', 0.4),
+        ('<a href="/library/x:a">x</a> 1.2TB', 1200.0),
+        # "256K context window" must never be read as a size.
+        ('<a href="/library/x:a">x</a> 256K context window', None),
+    ],
+)
+def test_size_units_are_read_the_way_the_catalog_writes_them(
+    markup: str, expected: float | None
+) -> None:
+    assert library.parse_tags_html(markup, "x")[0]["size_gb"] == expected
 
 
 def test_tags_parser_reads_size_context_and_inputs(tags_page: str) -> None:
@@ -176,6 +199,61 @@ async def test_tags_enrich_with_fit_and_installed(monkeypatch, tags_page: str, _
     # No size → no invented verdict.
     assert by_tag["cloud"]["fit"] == "unknown"
     assert by_tag["cloud"]["fit_note"] == ""
+
+
+@pytest.mark.asyncio
+async def test_a_freshly_pulled_tag_stops_offering_download_immediately(
+    monkeypatch, tags_page: str
+) -> None:
+    """The cache must hold the CATALOG, never this machine's inventory.
+
+    Caching the enriched answer meant a tag downloaded from this very panel
+    kept its "Download" button for the rest of the TTL — the one moment the
+    panel is guaranteed to be wrong is right after it did its job.
+    """
+    inventory: set[str] = set()
+
+    async def _installed() -> tuple[set[str], str | None]:
+        return set(inventory), None
+
+    monkeypatch.setattr(library, "installed_models", _installed)
+    monkeypatch.setattr(library, "total_memory_gb", lambda: 32.0)
+    monkeypatch.setattr(library, "accelerator_gb", lambda: (0.0, "none"))
+    fetches: list[str] = []
+    monkeypatch.setattr(library, "_fetch_page", _fake_fetch(tags_page, None, fetches))
+
+    first = await library.library_tags("qwen3.5")
+    assert next(t for t in first["tags"] if t["tag"] == "0.8b")["installed"] is False
+
+    inventory.add("qwen3.5:0.8b")  # the pull completes
+
+    second = await library.library_tags("qwen3.5")
+    assert next(t for t in second["tags"] if t["tag"] == "0.8b")["installed"] is True
+    # …and the catalog half still came from the cache, not a second fetch.
+    assert len(fetches) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_installed_state_is_never_cached(
+    monkeypatch, search_page: str
+) -> None:
+    inventory: set[str] = set()
+
+    async def _installed() -> tuple[set[str], str | None]:
+        return set(inventory), None
+
+    monkeypatch.setattr(library, "installed_models", _installed)
+    fetches: list[str] = []
+    monkeypatch.setattr(library, "_fetch_page", _fake_fetch(search_page, None, fetches))
+
+    first = await library.search_library("qwen")
+    assert first["models"][0]["installed"] is False
+
+    inventory.add("qwen3.5:9b")
+
+    second = await library.search_library("qwen")
+    assert second["models"][0]["installed"] is True
+    assert len(fetches) == 1
 
 
 @pytest.mark.asyncio

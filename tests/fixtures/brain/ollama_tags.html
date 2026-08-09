@@ -78,4 +78,31 @@
       </div>
     </div>
   </div>
+  <!-- A sub-gigabyte tag: the page switches units to MB here, which is why the
+       size parser cannot anchor on "GB". These are exactly the tags a weak
+       machine depends on, so losing their size loses their fit verdict too. -->
+  <div class="group px-4 py-3">
+    <a href="/library/qwen3.5:0.3b" class="md:hidden flex flex-col space-y-[6px] group">
+      <div class="flex items-center font-medium">
+        <span class="group-hover:underline">qwen3.5:0.3b</span>
+      </div>
+      <div class="flex flex-col text-neutral-500 text-[13px]">
+        <span>
+          <span class="font-mono">a8b0c5157701</span> • 398MB • 32K context window  •
+          <span class="hidden sm:inline">Text input • 5 months ago</span>
+        </span>
+      </div>
+    </a>
+    <div class="hidden md:flex flex-col space-y-[6px]">
+      <div class="grid grid-cols-12 items-center">
+        <span class="flex items-center font-medium col-span-6 group text-sm">
+          <a href="/library/qwen3.5:0.3b" class="group-hover:underline">qwen3.5:0.3b</a>
+          <input class="command hidden" value="qwen3.5:0.3b" />
+        </span>
+        <p class="col-span-2 text-neutral-500 text-[13px]">398MB</p>
+        <p class="col-span-2 text-neutral-500 text-[13px]">32K</p>
+        <div class="col-span-2 text-neutral-500 text-[13px] ">Text</div>
+      </div>
+    </div>
+  </div>
 </main>
