@@ -3427,6 +3427,17 @@ class AgenticIdeConfig(BaseModel):
         ),
     )
 
+    deck_reports: bool = Field(
+        default=True,
+        description=(
+            "In the Command Deck, say a finished agent out loud instead of only "
+            "counting it in the bell — one report at a time, and only while a "
+            "conversation is open. Off leaves the deck's report lane on screen "
+            "and silent. Has no effect in the terminal grid or chat view, "
+            "which never speak."
+        ),
+    )
+
     @field_validator("prompt_writer", mode="before")
     @classmethod
     def _usable_writer(cls, value: object) -> str:

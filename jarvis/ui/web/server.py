@@ -585,6 +585,21 @@ class WebServer:
         app.state.config = self.cfg
         app.state.bus = self.bus
 
+        # The Command Deck's way back to the user: when a coding agent stops,
+        # say so instead of only counting it in the header bell. Attached here
+        # because this is where the speech bus becomes available, and it is
+        # cheap — three subscriptions and nothing running. The queue behind it
+        # only ever fills while a workspace is actually being READ as a deck
+        # (see agentic_ide/standup.py), so an install that never opens the IDE
+        # pays for three handlers that are never called.
+        try:
+            from jarvis.agentic_ide import deck_voice
+
+            app.state.deck_voice = deck_voice.attach(self.bus)
+        except Exception as exc:  # noqa: BLE001 - an optional surface never breaks boot
+            logger.opt(exception=exc).warning("Command Deck voice not attached")
+            app.state.deck_voice = None
+
         # Voice boot-readiness mirror. WS events are one-shot, so a tab that
         # connects after warm-up finished would never see VoiceBootStatus.
         # Persist the latest state on this (long-lived) server instance for

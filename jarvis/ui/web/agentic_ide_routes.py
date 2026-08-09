@@ -81,6 +81,7 @@ from jarvis.agentic_ide import (
     recap_engine,
     recents,
     resume_store,
+    standup,
 )
 from jarvis.agentic_ide.activity import has_work_behind_it
 from jarvis.agentic_ide.agent_sessions import has_conversation
@@ -341,6 +342,27 @@ class SurfaceContextRequest(BaseModel):
             "Pane selected by the prompt bar and voice orb; null when no pane "
             "can accept an instruction."
         ),
+    )
+
+
+#: Layer 3 for the report actions, guarded the same way as the view enum above.
+DeckAction = Literal["next", "later", "drop"]
+if set(get_args(DeckAction)) != set(get_args(standup.Action)):  # pragma: no cover - guard
+    raise RuntimeError(
+        "DeckAction drifted from standup.Action — update both "
+        "(jarvis/agentic_ide/standup.py is the source of truth)."
+    )
+
+
+class DeckAckRequest(BaseModel):
+    """What the user said about one Command Deck report."""
+
+    id: str = Field(description="The report being answered.")
+    action: DeckAction = Field(
+        description=(
+            "`next` reports this one now, `later` puts the queue to sleep "
+            "without losing anything, `drop` takes this report away."
+        )
     )
 
 
@@ -1857,6 +1879,32 @@ async def clear_notification(notification_id: str) -> NotificationsChangedRespon
     center = notifications.center()
     dropped = center.clear([notification_id])
     return NotificationsChangedResponse(changed=dropped, unread=center.unread)
+
+
+@router.get("/deck/queue", summary="What the Command Deck still has to report")
+async def get_deck_queue() -> dict:
+    """The report lane: what is waiting, and what is being reported right now.
+
+    Only the Command Deck renders this — the same events reach the bell in the
+    other two views and are never spoken there. `sleeping` is true once a line
+    has gone unanswered: the deck says so rather than looking broken, because
+    "nothing new" and "it has stopped talking to you" are very different and
+    were indistinguishable from the outside in the first version.
+    """
+    return standup.queue().state()
+
+
+@router.post("/deck/ack", summary="Answer a Command Deck report")
+async def ack_deck_report(req: DeckAckRequest) -> dict:
+    """"Tell me that one" / "later" / "drop it", from voice or from the lane.
+
+    Not a 404 for an unknown id: a report goes away when its pane does, and a
+    click that lands a moment after that got the outcome it wanted. `found`
+    says which happened, so a caller that cares can tell.
+    """
+    queue = standup.queue()
+    report = queue.acknowledge(req.id, req.action)
+    return {"found": report is not None, **queue.state()}
 
 
 @router.post(
