@@ -218,7 +218,10 @@ POLISH_FAMILIES: Final[tuple[PolishFamily, ...]] = (
         transport="openai_chat",
         base_url="https://api.groq.com/openai/v1",
         secret_candidates=("groq_api_key",),
-        default_model="llama-3.1-8b-instant",
+        # Groq's own catalog rates this at roughly twice the throughput of the
+        # Llama 3.1 8B that used to sit here, and polish lives or dies on
+        # latency: the budget above is 1.2 s for the whole call.
+        default_model="openai/gpt-oss-20b",
         default_timeout_ms=1200,
     ),
     PolishFamily(
@@ -227,7 +230,10 @@ POLISH_FAMILIES: Final[tuple[PolishFamily, ...]] = (
         transport="openai_chat",
         base_url="https://api.cerebras.ai/v1",
         secret_candidates=("cerebras_api_key",),
-        default_model="llama-3.3-70b",
+        # The only model Cerebras still lists as production (checked
+        # 2026-08-09). The previous default, llama-3.3-70b, is no longer on
+        # that list — a default nobody serves is a 404 at dictation time.
+        default_model="gpt-oss-120b",
         default_timeout_ms=1200,
     ),
     PolishFamily(
@@ -260,7 +266,9 @@ POLISH_FAMILIES: Final[tuple[PolishFamily, ...]] = (
         transport="openai_chat",
         base_url="https://openrouter.ai/api/v1",
         secret_candidates=("openrouter_api_key",),
-        default_model="meta-llama/llama-3.1-8b-instruct",
+        # Current small flash-class model on OpenRouter's live catalog
+        # (checked 2026-08-09), replacing a Llama 3.1 build from 2024.
+        default_model="qwen/qwen3.7-flash",
         default_timeout_ms=1500,
     ),
     PolishFamily(
