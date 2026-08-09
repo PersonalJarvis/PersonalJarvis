@@ -985,3 +985,85 @@ def test_pull_on_an_unknown_provider_is_404(
     with TestClient(server_with_brain.app) as client:
         resp = client.get("/api/providers/nope/pullable-models")
         assert resp.status_code == 404
+
+
+# ----------------------------------------------------------------------
+# /api/providers/{pid}/library/…  (browse the FULL public model library)
+# ----------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_library(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Stub the library module so the routes never touch ollama.com."""
+    from jarvis.brain import ollama_library
+
+    calls: dict[str, Any] = {"searched": [], "tagged": []}
+
+    async def _search_library(query: str) -> dict[str, Any]:
+        calls["searched"].append(query)
+        return {
+            "query": query,
+            "models": [{"name": "qwen3.5", "description": "…", "installed": False}],
+            "error": None,
+        }
+
+    async def _library_tags(model: str) -> dict[str, Any]:
+        calls["tagged"].append(model)
+        return {
+            "model": model,
+            "tags": [{"tag": "4b", "id": f"{model}:4b", "size_gb": 3.4, "fit": "comfortable"}],
+            "error": None,
+        }
+
+    monkeypatch.setattr(ollama_library, "search_library", _search_library)
+    monkeypatch.setattr(ollama_library, "library_tags", _library_tags)
+    return calls
+
+
+def test_library_search_returns_models_from_the_public_catalog(
+    server_with_brain: WebServer, fake_library: dict[str, Any]
+) -> None:
+    with TestClient(server_with_brain.app) as client:
+        resp = client.get("/api/providers/ollama/library/search", params={"q": "qwen"})
+        assert resp.status_code == 200
+        assert resp.json()["models"][0]["name"] == "qwen3.5"
+    assert fake_library["searched"] == ["qwen"]
+
+
+def test_library_search_without_a_query_browses_the_popular_models(
+    server_with_brain: WebServer, fake_library: dict[str, Any]
+) -> None:
+    """Someone who does not know what to look for still gets a list."""
+    with TestClient(server_with_brain.app) as client:
+        resp = client.get("/api/providers/ollama/library/search")
+        assert resp.status_code == 200
+    assert fake_library["searched"] == [""]
+
+
+def test_library_tags_list_the_installable_sizes(
+    server_with_brain: WebServer, fake_library: dict[str, Any]
+) -> None:
+    """A bare model name is not installable — the tag carries the size."""
+    with TestClient(server_with_brain.app) as client:
+        resp = client.get("/api/providers/ollama/library/qwen3.5/tags")
+        assert resp.status_code == 200
+        assert resp.json()["tags"][0]["id"] == "qwen3.5:4b"
+    assert fake_library["tagged"] == ["qwen3.5"]
+
+
+def test_library_routes_reject_a_card_without_a_download_api(
+    server_with_brain: WebServer, fake_library: dict[str, Any]
+) -> None:
+    """Browsing a library the card could not pull from would be a dead end."""
+    with TestClient(server_with_brain.app) as client:
+        resp = client.get("/api/providers/local-openai/library/search")
+        assert resp.status_code == 400
+    assert fake_library["searched"] == []
+
+
+def test_library_search_on_an_unknown_provider_is_404(
+    server_with_brain: WebServer, fake_library: dict[str, Any]
+) -> None:
+    with TestClient(server_with_brain.app) as client:
+        resp = client.get("/api/providers/nope/library/search")
+        assert resp.status_code == 404

@@ -3031,6 +3031,41 @@ async def list_pullable_models(provider_id: str) -> dict[str, Any]:
     return await recommendations()
 
 
+@router.get("/providers/{provider_id}/library/search")
+async def search_model_library(provider_id: str, q: str = "") -> dict[str, Any]:
+    """Search the provider's PUBLIC model library, not just the shortlist.
+
+    The curated list answers "which model should I get?"; this answers "what
+    else is there?" — the same question that otherwise sends a user to a
+    browser and back with a name typed from memory. An empty ``q`` lists the
+    popular models, which is the useful default for someone just browsing.
+
+    Never fails the panel: an unreachable ollama.com answers ``models: []``
+    plus an English ``error`` sentence, and downloading by exact name keeps
+    working without this route entirely.
+    """
+    _require_pull_capable(provider_id)
+    from jarvis.brain.ollama_library import search_library
+
+    return await search_library(q)
+
+
+@router.get("/providers/{provider_id}/library/{model}/tags")
+async def list_model_library_tags(provider_id: str, model: str) -> dict[str, Any]:
+    """Every published tag of ``model``, sized and fit-checked for this machine.
+
+    A model name alone is not installable — ``qwen3.5`` ships from 0.8B to
+    122B, and picking blind is how a 4 GB laptop ends up pulling 65 GB. Each
+    tag carries the library's own download size and the SAME fit verdict the
+    curated shortlist uses, so both halves of the panel mean one thing by
+    "tight".
+    """
+    _require_pull_capable(provider_id)
+    from jarvis.brain.ollama_library import library_tags
+
+    return await library_tags(model)
+
+
 @router.post("/providers/{provider_id}/pull")
 async def start_model_pull(provider_id: str, body: PullModelBody) -> dict[str, Any]:
     """Download a model into the local server (§3: recoverable in-app).
