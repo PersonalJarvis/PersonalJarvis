@@ -47,7 +47,7 @@ CLIENT_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=30.0, pool=30.0)
 # tools; the manager passes the user's PICK in almost every path, so this only
 # bites a genuinely model-less build. Kept off the reasoning flagships on
 # purpose (latency) — the user selects Nemotron/DeepSeek from the live catalog.
-DEFAULT_MODEL = "meta/llama-3.3-70b-instruct"
+DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 
 
 class NvidiaBrain:

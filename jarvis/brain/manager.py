@@ -356,8 +356,11 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         "grok": "grok-4.3",
         # NVIDIA NIM router pick: a widely-hosted, tool-capable, low-latency model
         # (the reasoning Nemotron flagships are the deep tier). The user's own pick
-        # from the live catalog wins over this.
-        "nvidia": "meta/llama-3.3-70b-instruct",
+        # from the live catalog wins over this. 2026-08-09: moved off Meta's
+        # Llama 3.3 70B (dense, late 2024) to NVIDIA's own current sparse
+        # generation — 12B of 120B activate per token, so it answers faster than
+        # the dense model it replaces. Verified against integrate.api.nvidia.com.
+        "nvidia": "nvidia/nemotron-3-super-120b-a12b",
         "mistral": "mistral-small-3.1",
         # Local providers: no server-side catalog is knowable ahead of time —
         # empty means "the plugin discovers the first installed model".
@@ -379,8 +382,11 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         # user (§3/AP-22) — see the router-tier note above.
         "openrouter": "nvidia/nemotron-3-ultra-550b-a55b:free",
         "grok": "grok-4.3",
-        # NVIDIA NIM deep pick: NVIDIA's own reasoning flagship.
-        "nvidia": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
+        # NVIDIA NIM deep pick: NVIDIA's own reasoning flagship. 2026-08-09:
+        # the Llama-3.1-based Nemotron Ultra gives way to the current
+        # Nemotron 3 Ultra (verified against integrate.api.nvidia.com), which
+        # the OpenRouter tiers above already name.
+        "nvidia": "nvidia/nemotron-3-ultra-550b-a55b",
         "mistral": "mistral-large-3",
         # Local providers: empty = plugin-side discovery (see router tier).
         "ollama": "",
