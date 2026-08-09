@@ -565,6 +565,14 @@ def _smoke_boot(launch_command: str, brain: BrainResolution) -> None:
                         f"server exited right after binding (code {proc.returncode}); "
                         f"see {smoke_log}"
                     )
+                _set("smoke", 94, "testing a complete text-to-speech response")
+                from jarvis.realtime.local_server.smoke import (
+                    probe_voice_roundtrip_sync,
+                )
+
+                probe_voice_roundtrip_sync(
+                    f"http://127.0.0.1:{_SMOKE_PORT}", timeout_s=90.0
+                )
                 return
             elapsed = int(time.monotonic() - (deadline - _SMOKE_TIMEOUT_S))
             _set("smoke", 70 + min(25, elapsed // 30), "waiting for first boot (downloads models)")
@@ -579,7 +587,12 @@ def _smoke_boot(launch_command: str, brain: BrainResolution) -> None:
             )
 
 
-def start_install(*, confirmed_brain: str = "") -> tuple[bool, str]:
+def start_install(
+    *,
+    confirmed_brain: str = "",
+    brain_model: str = "",
+    voice_model: str = "",
+) -> tuple[bool, str]:
     """Kick off (or resume) the managed install. Returns immediately.
 
     ``confirmed_brain`` is the brain kind the user saw in the preflight
@@ -600,7 +613,11 @@ def start_install(*, confirmed_brain: str = "") -> tuple[bool, str]:
         thread = threading.Thread(
             target=_run_install,
             name="local-realtime-install",
-            args=(confirmed_brain.strip(),),
+            args=(
+                confirmed_brain.strip(),
+                brain_model.strip(),
+                voice_model.strip(),
+            ),
             daemon=True,
         )
         _STATE.thread = thread
@@ -608,7 +625,11 @@ def start_install(*, confirmed_brain: str = "") -> tuple[bool, str]:
     return True, "install started"
 
 
-def _run_install(confirmed_brain: str = "") -> None:
+def _run_install(
+    confirmed_brain: str = "",
+    brain_model: str = "",
+    voice_model: str = "",
+) -> None:
     """Hold the cross-process server lifecycle lease for the whole install."""
     from jarvis.realtime.local_server import supervisor
 
@@ -616,7 +637,12 @@ def _run_install(confirmed_brain: str = "") -> None:
         if not guarded:
             _fail("another local-realtime lifecycle operation is already running")
             return
-        _run_install_guarded(confirmed_brain)
+        if brain_model or voice_model:
+            _run_install_guarded(confirmed_brain, brain_model, voice_model)
+        else:
+            # Keep the long-standing one-argument seam used by embedders and
+            # tests while extending new installs with explicit model choices.
+            _run_install_guarded(confirmed_brain)
 
 
 def _pull_brain_model(model: str) -> None:
@@ -661,7 +687,7 @@ def _pull_brain_model(model: str) -> None:
     asyncio.run(_pull_and_wait())
 
 
-def resolve_brain_for_install() -> BrainResolution:
+def resolve_brain_for_install(preferred_model: str = "") -> BrainResolution:
     """The brain resolution the install engine trusts (own seam for tests)."""
     from jarvis.realtime.local_server.brain_link import resolve_brain
     from jarvis.realtime.local_server.preflight import (
@@ -671,11 +697,12 @@ def resolve_brain_for_install() -> BrainResolution:
 
     usable_gb, _source = _usable_accelerator_gb()
     return resolve_brain(
-        preferred_model=_preferred_brain_model(), usable_gb=usable_gb
+        preferred_model=preferred_model or _preferred_brain_model(),
+        usable_gb=usable_gb,
     )
 
 
-def _setup_local_brain() -> None:
+def _setup_local_brain(preferred_model: str = "") -> None:
     """Make the Ollama brain real: runtime installed + running + model present.
 
     The single-click promise (maintainer directive 2026-08-08): selecting
@@ -690,19 +717,41 @@ def _setup_local_brain() -> None:
     ok, detail = ollama_runtime.ensure_runtime_blocking()
     if not ok:
         raise RuntimeError(detail)
-    if resolve_brain_for_install().ok:
+    resolved = (
+        resolve_brain_for_install(preferred_model)
+        if preferred_model
+        else resolve_brain_for_install()
+    )
+    if resolved.ok and (not preferred_model or resolved.model == preferred_model):
         return
     _set("brain-setup", 5, "no usable brain model yet — downloading one")
-    _pull_brain_model(_PREFERRED_MODELS[0])
+    _pull_brain_model(preferred_model or _PREFERRED_MODELS[0])
+
+    if not preferred_model:
+        return
+    verified = resolve_brain_for_install(preferred_model)
+    if not verified.ok or verified.model != preferred_model:
+        raise RuntimeError(
+            f"the selected brain model is not usable after download: {preferred_model}"
+        )
 
 
-def _run_install_guarded(confirmed_brain: str = "") -> None:
+def _run_install_guarded(
+    confirmed_brain: str = "",
+    brain_model: str = "",
+    voice_model: str = "",
+) -> None:
     try:
         # Marker-schema upgrades are metadata debt, not grounds to tear down a
         # healthy multi-gigabyte runtime. Only this exact patched install's
         # owned, fully-ready pool may take the non-destructive repair path.
-        if not _smoke_marker_valid() and _repair_smoke_marker_from_live_runtime_unlocked(
-            f"http://127.0.0.1:{SERVE_PORT}"
+        if (
+            not brain_model
+            and not voice_model
+            and not _smoke_marker_valid()
+            and _repair_smoke_marker_from_live_runtime_unlocked(
+                f"http://127.0.0.1:{SERVE_PORT}"
+            )
         ):
             marker = _read_smoke_marker_payload() or {}
             repaired_brain = str(marker.get("brain") or "")
@@ -716,24 +765,42 @@ def _run_install_guarded(confirmed_brain: str = "") -> None:
                 log.info("local-realtime: install proof repaired without server teardown")
                 return
         _set("preflight", 2, "checking hardware, disk, and brain")
-        report: PreflightReport = run_preflight(install_root())
+        report: PreflightReport = (
+            run_preflight(install_root(), preferred_model=brain_model)
+            if brain_model
+            else run_preflight(install_root())
+        )
         if (
-            not report.ok
-            and confirmed_brain == "ollama"
+            confirmed_brain == "ollama"
             and report.tier is not None
             and report.brain is not None
-            and report.brain.kind == "blocked"
+            and (
+                report.brain.kind == "blocked"
+                or (brain_model and report.brain.model != brain_model)
+            )
         ):
             # Hardware and disk are fine; only the BRAIN is missing — and
             # the user just confirmed a fully-local install. Set it up
             # (install/start Ollama, pull the model) and check again.
-            _setup_local_brain()
+            if brain_model:
+                _setup_local_brain(brain_model)
+            else:
+                _setup_local_brain()
             _set("preflight", 7, "re-checking after the brain setup")
-            report = run_preflight(install_root())
+            report = (
+                run_preflight(install_root(), preferred_model=brain_model)
+                if brain_model
+                else run_preflight(install_root())
+            )
         if not report.ok:
             _fail(report.blocker)
             return
         assert report.brain is not None and report.tier is not None
+        if brain_model and report.brain.model != brain_model:
+            _fail(
+                f"the selected brain model is not available or does not fit: {brain_model}"
+            )
+            return
         if confirmed_brain and report.brain.kind != confirmed_brain:
             _fail(
                 "the reasoning setup changed since your confirmation (was "
@@ -792,6 +859,10 @@ def _run_install_guarded(confirmed_brain: str = "") -> None:
 
         _set("smoke", 70, "first boot (downloads voice/hearing models once)")
         launch_command = derive_launch_command(report.brain, memory_source=report.memory_source)
+        if voice_model:
+            from jarvis.realtime.local_server.model_catalog import apply_voice_profile
+
+            launch_command = apply_voice_profile(launch_command, voice_model)
         if report.brain.kind == "ollama":
             # The OpenAI-compatible Ollama API cannot carry num_ctx per request.
             # Create/use the managed 8k profile before the first smoke boot so
@@ -812,6 +883,8 @@ def _run_install_guarded(confirmed_brain: str = "") -> None:
                 "at": time.time(),
                 "tier": report.tier.key,
                 "brain": report.brain.kind,
+                "brain_model": report.brain.model,
+                "voice_model": voice_model or "qwen3-tts-1.7b",
                 "preflight": report_payload(report),
             }
         )

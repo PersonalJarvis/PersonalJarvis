@@ -51,6 +51,16 @@ Switch which realtime voice engine (speech-to-speech) is active, including subsc
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the realtime model to gemini"
 
+## `local-realtime-models-set` — Configure local realtime models
+
+Select the Ollama brain and speech model for the managed local realtime server, then activate them only after a voice test.
+
+- **Endpoint:** `POST /api/providers/local-realtime/managed-server/setup`
+- **Arguments:** `brain_model` (string; required); `voice_model` (one of: qwen3-tts-1.7b, qwen3-tts-0.6b; required)
+- **Requires confirmation:** yes
+- **Desktop UI section:** `apikeys`
+- **Voice example (EN):** "change the local realtime models"
+
 ## `computer-use-switch` — Switch Computer-Use provider
 
 Switch the dedicated Computer-Use planner provider (screen control), decoupled from the main brain.

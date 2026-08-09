@@ -98,7 +98,9 @@ def _preferred_brain_model() -> str:
         return ""
 
 
-def run_preflight(install_root: Path) -> PreflightReport:
+def run_preflight(
+    install_root: Path, *, preferred_model: str = ""
+) -> PreflightReport:
     """The full go/no-go report for a managed install under ``install_root``."""
     usable_gb, source = _usable_accelerator_gb()
     disk_free = _disk_free_gb(install_root)
@@ -148,7 +150,8 @@ def run_preflight(install_root: Path) -> PreflightReport:
             tier=tier,
         )
     brain = resolve_brain(
-        preferred_model=_preferred_brain_model(), usable_gb=usable_gb
+        preferred_model=preferred_model or _preferred_brain_model(),
+        usable_gb=usable_gb,
     )
     if not brain.ok:
         return PreflightReport(

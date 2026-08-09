@@ -266,33 +266,35 @@ async def test_background_warm_waits_for_managed_pool_before_brain(
     assert ready_kwargs["cleanup_on_timeout"] is True
 
 
-def test_brain_route_rewrites_the_model_without_reinstall(
-    server: WebServer, monkeypatch: pytest.MonkeyPatch, tmp_path
+def test_brain_route_voice_tests_before_adopting_the_model(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from jarvis.core.config_writer import set_local_realtime_launch_command
+    from jarvis.core.config import BrainProviderConfig
+    from jarvis.realtime.local_server import configure
 
-    cfg_file = tmp_path / "jarvis.toml"
-    cfg_file.write_text("", encoding="utf-8")
     entrypoint = (install.install_root() / "venv" / "s.exe").as_posix()
-    set_local_realtime_launch_command(
-        f"'{entrypoint}' --mode realtime --model_name qwen2.5:7b", path=cfg_file
+    old_command = f"'{entrypoint}' --mode realtime --model_name qwen2.5:7b"
+    new_command = f"'{entrypoint}' --mode realtime --model_name llama3.1:8b"
+    server.app.state.config.brain.providers["local-realtime"] = BrainProviderConfig(
+        base_url="http://127.0.0.1:8765",
+        launch_command=old_command,
     )
     monkeypatch.setattr(preflight, "_usable_accelerator_gb", lambda: (16.0, "nvidia-smi"))
     monkeypatch.setattr(
         brain_link, "_ollama_models", lambda base, timeout: [("llama3.1:8b", 4.9)]
     )
-    # Route writes through config_writer against the real DEFAULT_CONFIG_FILE;
-    # redirect it at the writer level for the test.
-    import jarvis.core.config_writer as config_writer
+    seen: dict[str, str] = {}
 
-    original = config_writer.update_local_realtime_launch_model
+    async def tested(**kwargs):
+        seen.update({key: str(value) for key, value in kwargs.items()})
+        return {
+            "ok": True,
+            "changed": True,
+            "smoke": {"audio_bytes": 4800},
+            "launch_command": new_command,
+        }
 
-    def redirected(model: str, *, only_if_under: str = "", path=None) -> bool:
-        return original(model, only_if_under=only_if_under, path=cfg_file)
-
-    monkeypatch.setattr(
-        config_writer, "update_local_realtime_launch_model", redirected
-    )
+    monkeypatch.setattr(configure, "apply_and_test_stack", tested)
     with TestClient(server.app) as client:
         resp = client.post(
             "/api/providers/local-realtime/managed-server/brain",
@@ -303,7 +305,12 @@ def test_brain_route_rewrites_the_model_without_reinstall(
     assert body["ok"] is True
     assert body["changed"] is True
     assert body["brain"]["model"] == "llama3.1:8b"
-    assert "--model_name llama3.1:8b" in cfg_file.read_text(encoding="utf-8")
+    assert seen["brain_model"] == "llama3.1:8b"
+    assert seen["voice_model"] == "qwen3-tts-1.7b"
+    assert (
+        server.app.state.config.brain.providers["local-realtime"].launch_command
+        == new_command
+    )
 
 
 def test_brain_models_route_lists_annotated_choices(
@@ -335,6 +342,12 @@ def test_brain_route_refuses_to_swap_an_explicit_choice(
 ) -> None:
     """A named model that does not fit gets an honest 409 — never a silent
     substitution (user autonomy)."""
+    from jarvis.core.config import BrainProviderConfig
+
+    entrypoint = (install.install_root() / "venv" / "s.exe").as_posix()
+    server.app.state.config.brain.providers["local-realtime"] = BrainProviderConfig(
+        launch_command=f"'{entrypoint}' --mode realtime --model_name qwen2.5:7b"
+    )
     monkeypatch.setattr(preflight, "_usable_accelerator_gb", lambda: (16.0, "nvidia-smi"))
     monkeypatch.setattr(
         brain_link,

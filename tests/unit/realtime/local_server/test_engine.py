@@ -584,6 +584,10 @@ class TestReviewFixes:
         monkeypatch.setattr(
             install, "_kill_tree", lambda proc: killed.append(proc) or True
         )
+        monkeypatch.setattr(
+            "jarvis.realtime.local_server.smoke.probe_voice_roundtrip_sync",
+            lambda *args, **kwargs: {"ok": True},
+        )
 
         install._smoke_boot(
             "serve --mode realtime",
@@ -620,6 +624,10 @@ class TestReviewFixes:
             },
         )
         monkeypatch.setattr(install, "_kill_tree", lambda proc: False)
+        monkeypatch.setattr(
+            "jarvis.realtime.local_server.smoke.probe_voice_roundtrip_sync",
+            lambda *args, **kwargs: {"ok": True},
+        )
 
         with pytest.raises(RuntimeError, match="survived teardown"):
             install._smoke_boot(
@@ -811,6 +819,29 @@ class TestBrainSetupChain:
         install._run_install("ollama")
         assert calls == []
         assert "minimum" in str(install.snapshot()["error"])
+
+    def test_disk_blocker_never_downloads_a_brain_model(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+        disk_blocked = preflight.PreflightReport(
+            ok=False,
+            blocker="not enough free disk",
+            usable_gb=16.0,
+            memory_source="nvidia-smi",
+            disk_free_gb=1.0,
+            tier=tiers.TIERS[0],
+        )
+        monkeypatch.setattr(install, "run_preflight", lambda root: disk_blocked)
+        calls: list[str] = []
+        monkeypatch.setattr(
+            install, "_setup_local_brain", lambda: calls.append("setup")
+        )
+
+        install._run_install("ollama")
+
+        assert calls == []
+        assert "disk" in str(install.snapshot()["error"])
 
     def test_setup_pulls_the_preferred_model_when_missing(self, monkeypatch) -> None:
         from jarvis.brain import ollama_runtime

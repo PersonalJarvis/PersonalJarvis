@@ -1029,6 +1029,100 @@ def ensure_running(
         return "spawned"
 
 
+def replace_idle_managed_runtime(
+    *,
+    current_command: str,
+    launch_command: str,
+    base_url: str,
+    reason: str,
+) -> str:
+    """Replace one managed generation without ever interrupting a live call.
+
+    This is the transactional model-switch primitive.  It intentionally
+    bypasses the crash-loop rate limit because the caller made one explicit
+    replacement decision, but it keeps every ownership, loopback, process-tree
+    and pid-reuse guard used by :func:`ensure_running`.
+    """
+    current = (current_command or "").strip()
+    command = (launch_command or "").strip()
+    current_root = managed_install_root(current)
+    managed_root = managed_install_root(command)
+    host, port = _host_port(base_url)
+    if not command:
+        return "refused:no-launch-command"
+    if managed_root is None or (current and current_root != managed_root):
+        return "refused:not-managed"
+    if not _is_loopback(host):
+        return "refused:not-local"
+
+    with lifecycle_guard() as guarded:
+        if not guarded:
+            return "refused:lifecycle-busy"
+        try:
+            from jarvis.realtime.local_server import install
+
+            if bool(install.snapshot().get("running")):
+                return "refused:install-running"
+        except Exception:  # noqa: BLE001 - install state is advisory here
+            log.debug("supervisor: install snapshot unavailable during switch", exc_info=True)
+
+        pool = probe_runtime(base_url, timeout=0.75)
+        if pool is not None and pool.get("in_use", 0) > 0:
+            return "refused:call-active"
+        _pid, alive = _owned_process()
+        if pool is None and alive:
+            # No model-pool verdict means the process may be loading or may
+            # still own a client.  Never turn uncertainty into a destructive
+            # model switch.
+            return "refused:runtime-state-unknown"
+        if pool is None and _port_open(port, timeout=0.25):
+            return "refused:port-in-use"
+
+        _request_runtime_monitor_stop()
+        changed, stop_message = _stop_owned_unlocked(
+            owned_only=True,
+            install_root=managed_root,
+        )
+        if not changed and pool is not None:
+            log.warning(
+                "local-realtime supervisor: idle replacement could not stop "
+                "the serving generation (%s)",
+                stop_message,
+            )
+            return "refused:stuck-process"
+        if _port_open(port, timeout=0.25):
+            return "refused:port-still-in-use"
+
+        command = _force_loopback_bind(command)
+        command = _force_low_latency_ollama_backend(command)
+        command = _force_stable_turn_detection(command)
+        try:
+            command = prepare_voice_brain_command(command)
+        except RuntimeError as exc:
+            log.warning(
+                "local-realtime supervisor: switch brain profile failed: %s",
+                exc,
+            )
+            return "refused:brain-context-profile"
+
+        clear_pidfile()
+        spawned_pid = _spawn(command, reason=reason)
+        if spawned_pid is None:
+            return "refused:spawn-failed"
+        if not _write_pidfile(spawned_pid, port, command):
+            _kill_pid_tree(spawned_pid)
+            _kill_by_install_root(managed_root)
+            return "refused:ownership-failed"
+        global _last_spawn_at
+        _last_spawn_at = time.monotonic()
+        log.info(
+            "local-realtime supervisor: replaced idle server with pid=%s (%s)",
+            spawned_pid,
+            reason,
+        )
+        return "spawned"
+
+
 def _server_creationflags(*, platform_name: str | None = None) -> int:
     """Windowless flags that let the managed server survive an app restart."""
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # lazy
@@ -1135,7 +1229,10 @@ def start_runtime_monitor(*, launch_command: str, base_url: str) -> bool:
         log.warning("supervisor: runtime monitor could not verify the install", exc_info=True)
         return False
     _pid, alive = _owned_process()
-    if not alive:
+    if not alive and not reconcile_ready_ownership(
+        launch_command=command,
+        base_url=base_url,
+    ):
         return False
     key = (command, _pool_url(base_url))
 
@@ -1547,9 +1644,77 @@ def _lexical_path_is_within_root(value: str, root: Path) -> bool:
 
 def _process_identity_is_managed(exe: str, cmdline: tuple[str, ...], root: Path) -> bool:
     """Match only executable identity, never arbitrary opened-file arguments."""
-    return _lexical_path_is_within_root(exe, root) or bool(
+    if _lexical_path_is_within_root(exe, root) or bool(
         cmdline and _lexical_path_is_within_root(cmdline[0], root)
+    ):
+        return True
+    # uv-managed Windows environments can hand execution from the venv
+    # launcher to uv's base Python.  The first program argument is then the
+    # managed console-script executable; it is executable identity, not an
+    # arbitrary opened data file.  Without this case the listener survived
+    # while its short-lived launcher PID made ownership disappear.
+    interpreter = Path(exe or (cmdline[0] if cmdline else "")).name.lower()
+    return bool(
+        os.name == "nt"
+        and interpreter in {"python", "python.exe", "pythonw", "pythonw.exe"}
+        and len(cmdline) > 1
+        and Path(cmdline[1].strip("\"'")).name.lower() == "speech-to-speech.exe"
+        and _lexical_path_is_within_root(cmdline[1], root)
     )
+
+
+def reconcile_ready_ownership(*, launch_command: str, base_url: str) -> bool:
+    """Adopt the unique managed process that actually owns the ready port.
+
+    Windows console-script launchers may exit after delegating to a Python
+    child.  Recording only the initial ``Popen.pid`` therefore loses
+    ownership even though the server keeps listening.  This bounded adoption
+    requires all three proofs: a ready pool, executable identity under the
+    managed install, and the exact loopback listening port.
+    """
+    root = managed_install_root(launch_command)
+    host, port = _host_port(base_url)
+    if root is None or not _is_loopback(host):
+        return False
+    with lifecycle_guard() as guarded:
+        if not guarded or probe_runtime(base_url, timeout=0.75) is None:
+            return False
+        try:
+            import psutil  # type: ignore[import-untyped]
+        except ImportError:
+            return False
+
+        candidates: list[Any] = []
+        for proc in psutil.process_iter(["pid", "exe", "cmdline"]):
+            try:
+                exe = str(proc.info.get("exe") or "")
+                cmdline = tuple(str(item) for item in (proc.info.get("cmdline") or ()))
+                if not _process_identity_is_managed(exe, cmdline, root):
+                    continue
+                if any(
+                    connection.status == psutil.CONN_LISTEN
+                    and connection.laddr
+                    and int(connection.laddr.port) == port
+                    for connection in proc.net_connections(kind="inet")
+                ):
+                    candidates.append(proc)
+            except (psutil.Error, OSError, TypeError, ValueError):
+                log.debug("supervisor: ready-owner inspection failed", exc_info=True)
+        if len(candidates) != 1:
+            log.warning(
+                "local-realtime supervisor: expected one managed listener on %s, found %s",
+                port,
+                len(candidates),
+            )
+            return False
+        proc = candidates[0]
+        pid = int(proc.pid)
+        record = _read_pidfile() or {}
+        command = str(record.get("command") or launch_command)
+        if not _write_pidfile(pid, port, command):
+            return False
+        log.info("local-realtime supervisor: adopted ready listener pid=%s", pid)
+        return True
 
 
 def _kill_by_install_root(root: Path) -> tuple[int, int]:

@@ -50,6 +50,37 @@ def _spawn_ready(monkeypatch, tmp_path: Path) -> list[dict[str, Any]]:
     return spawned
 
 
+def test_model_switch_never_interrupts_an_active_voice_call(
+    monkeypatch, tmp_path
+) -> None:
+    from jarvis.realtime.local_server import install
+
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    root = tmp_path / "local_realtime"
+    executable = root / "venv" / "Scripts" / "speech-to-speech.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"")
+    command = f'"{executable}" --mode realtime'
+    monkeypatch.setattr(install, "snapshot", lambda: {"running": False})
+    monkeypatch.setattr(
+        supervisor,
+        "probe_runtime",
+        lambda *args, **kwargs: {"size": 1, "in_use": 1, "available": 0},
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_stop_owned_unlocked",
+        lambda **kwargs: pytest.fail("an active call must not be stopped"),
+    )
+
+    assert supervisor.replace_idle_managed_runtime(
+        current_command=command,
+        launch_command=f"{command} --model_name qwen3.5:4b",
+        base_url="http://127.0.0.1:8765",
+        reason="test-switch",
+    ) == "refused:call-active"
+
+
 # ── Address parsing ──────────────────────────────────────────────────────
 def test_host_port_parses_the_configured_address() -> None:
     assert supervisor._host_port("http://localhost:8765") == ("localhost", 8765)
@@ -952,6 +983,7 @@ def test_an_abandoned_owned_pool_is_replaced_generation_safely(
     from jarvis.realtime.local_server import install
 
     supervisor._reset_for_tests()
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     root = tmp_path / "local_realtime"
     command = f'"{root / "venv" / "server.exe"}" --mode realtime --ws_host 127.0.0.1'
     generation = (4711, 1000.0, "generation-a")
@@ -1498,6 +1530,69 @@ def test_managed_sweep_ignores_an_editor_opening_a_file_in_the_tree(tmp_path) ->
     )
     managed = str((root / "venv" / "server.exe").resolve())
     assert supervisor._process_identity_is_managed(managed, (managed,), root)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uv Windows console-script handoff")
+def test_managed_identity_follows_a_uv_python_console_script(tmp_path) -> None:
+    root = (tmp_path / "local_realtime").resolve()
+    script = str((root / "venv" / "Scripts" / "speech-to-speech.exe").resolve())
+    uv_python = str((tmp_path / "uv" / "python.exe").resolve())
+
+    assert supervisor._process_identity_is_managed(
+        uv_python,
+        (uv_python, script, "--mode", "realtime"),
+        root,
+    )
+    assert not supervisor._process_identity_is_managed(
+        uv_python,
+        (uv_python, str(root / "smoke_boot.log")),
+        root,
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="uv Windows console-script handoff")
+def test_ready_listener_replaces_a_dead_launcher_as_owner(
+    monkeypatch, tmp_path
+) -> None:
+    import psutil
+
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    root = tmp_path / "local_realtime"
+    script = root / "venv" / "Scripts" / "speech-to-speech.exe"
+    script.parent.mkdir(parents=True)
+    script.write_bytes(b"")
+    uv_python = str((tmp_path / "uv" / "python.exe").resolve())
+    command = f'"{script}" --mode realtime'
+
+    class _Process:
+        pid = 8123
+        info = {
+            "pid": pid,
+            "exe": uv_python,
+            "cmdline": [uv_python, str(script), "--mode", "realtime"],
+        }
+
+        @staticmethod
+        def net_connections(*, kind):
+            assert kind == "inet"
+            return [
+                SimpleNamespace(
+                    status=psutil.CONN_LISTEN,
+                    laddr=SimpleNamespace(port=8765),
+                )
+            ]
+
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: {"size": 1})
+    monkeypatch.setattr(psutil, "process_iter", lambda attrs: [_Process()])
+    monkeypatch.setattr(supervisor, "_process_create_time", lambda pid: 1234.5)
+
+    assert supervisor.reconcile_ready_ownership(
+        launch_command=command,
+        base_url="http://127.0.0.1:8765",
+    )
+    record = supervisor._read_pidfile()
+    assert record is not None
+    assert record["pid"] == 8123
 
 
 def test_managed_identity_keeps_a_posix_venv_python_symlink_lexical(tmp_path) -> None:

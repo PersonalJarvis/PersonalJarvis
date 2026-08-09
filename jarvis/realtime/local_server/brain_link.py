@@ -60,6 +60,7 @@ _UNUSABLE_MARKERS: tuple[str, ...] = (
 )
 
 _OLLAMA_DEFAULT = "http://127.0.0.1:11434"
+_MANAGED_VOICE_SUFFIX = "-voice-8k"
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,12 +197,17 @@ def list_brain_choices(
     resolver applies, so the picker and the resolver can never disagree.
     """
     base = _ollama_base()
+    if current_model.endswith(_MANAGED_VOICE_SUFFIX):
+        current_model = current_model[: -len(_MANAGED_VOICE_SUFFIX)]
     served = _ollama_models(base, timeout)
     reachable = served is not None
     choices: list[dict[str, object]] = []
     seen: set[str] = set()
     for name, size in served or []:
-        if not _usable_tag(name):
+        # The managed 8k alias is an implementation detail derived from its
+        # base tag. Listing both made one selection look like two models and
+        # encouraged users to select an alias that is recreated automatically.
+        if name.endswith(_MANAGED_VOICE_SUFFIX) or not _usable_tag(name):
             continue
         seen.add(name)
         fits = _fits(size, usable_gb)

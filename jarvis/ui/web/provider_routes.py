@@ -2698,13 +2698,35 @@ async def managed_server_install(request: Request) -> dict[str, Any]:
     from jarvis.realtime.local_server.install import snapshot, start_install
 
     confirmed_brain = ""
+    brain_model = ""
+    voice_model = ""
     try:
         body = await request.json()
         confirmed_brain = str((body or {}).get("confirmed_brain", "") or "")
+        brain_model = str((body or {}).get("brain_model", "") or "").strip()
+        voice_model = str((body or {}).get("voice_model", "") or "").strip()
     except Exception:  # noqa: BLE001 — an empty/absent body is the normal case
         confirmed_brain = ""
+    if voice_model:
+        from jarvis.realtime.local_server.model_catalog import get_voice_profile
+
+        profile = get_voice_profile(voice_model)
+        if profile is None or not profile.selectable:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    profile.note
+                    if profile is not None
+                    else f"unknown voice model: {voice_model}"
+                ),
+            )
+    install_options = {"confirmed_brain": confirmed_brain}
+    if brain_model:
+        install_options["brain_model"] = brain_model
+    if voice_model:
+        install_options["voice_model"] = voice_model
     started, message = await asyncio.to_thread(
-        lambda: start_install(confirmed_brain=confirmed_brain)
+        lambda: start_install(**install_options)
     )
     payload = snapshot()
     payload["started"] = started
@@ -2909,24 +2931,174 @@ async def managed_server_brain_models(request: Request) -> dict[str, Any]:
     return await asyncio.to_thread(_collect)
 
 
-@router.post("/providers/local-realtime/managed-server/brain")
-async def managed_server_brain(request: Request) -> dict[str, Any]:
-    """Re-resolve the brain model and rewrite the launch command in place.
+@router.get("/providers/local-realtime/managed-server/model-catalog")
+async def managed_server_model_catalog(request: Request) -> dict[str, Any]:
+    """The local voice stack as three honest, separate model roles.
 
-    The model choice is baked into the persisted command; before this route
-    changing it meant a full multi-gigabyte reinstall. Optional body
-    ``{"model": "..."}`` names an explicit Ollama tag (else the configured
-    ollama-card model, else the curated preference order). Only the managed
-    command is ever rewritten (`only_if_under` autonomy guard); the running
-    server keeps its old brain until the next start.
+    Ollama supplies the reasoning catalog.  Hearing and speaking are not
+    Ollama models, so this endpoint exposes the managed server's own speech
+    catalog instead of mixing incompatible model types into one list.
     """
-    from jarvis.core.config_writer import update_local_realtime_launch_model
+    from jarvis.realtime.local_server.model_catalog import voice_catalog
+
+    _base_url, command = _local_realtime_card(request)
+    return {
+        "brain": await managed_server_brain_models(request),
+        **voice_catalog(command),
+    }
+
+
+def _managed_probe_language(request: Request) -> str:
+    """Resolve the setup probe language through the one language resolver."""
+    from jarvis.core.turn_language import DEFAULT_LOCALE, resolve_output_language
+
+    cfg = getattr(request.app.state, "config", None) or getattr(
+        request.app.state, "cfg", None
+    )
+    reply_language = getattr(getattr(cfg, "brain", None), "reply_language", "auto")
+    ui_language = getattr(getattr(cfg, "ui", None), "language", DEFAULT_LOCALE)
+    return resolve_output_language(
+        reply_language,
+        ui_language,
+        "",
+        default=DEFAULT_LOCALE,
+    )
+
+
+def _adopt_managed_command(request: Request, command: str) -> None:
+    """Keep the live config object aligned with the atomically written file."""
+    cfg = getattr(request.app.state, "config", None) or getattr(
+        request.app.state, "cfg", None
+    )
+    providers = getattr(getattr(cfg, "brain", None), "providers", None) or {}
+    getter = getattr(providers, "get", None)
+    card = getter("local-realtime") if callable(getter) else None
+    if card is None:
+        return
+    card.launch_command = command
+    if not str(getattr(card, "base_url", "") or "").strip():
+        card.base_url = "http://127.0.0.1:8765"
+
+
+async def _apply_managed_stack(
+    request: Request,
+    *,
+    requested_brain: str,
+    requested_voice: str,
+) -> dict[str, Any]:
     from jarvis.realtime.local_server.brain_link import resolve_brain
-    from jarvis.realtime.local_server.install import install_root
+    from jarvis.realtime.local_server.configure import (
+        ManagedSetupError,
+        apply_and_test_stack,
+    )
+    from jarvis.realtime.local_server.model_catalog import get_voice_profile
     from jarvis.realtime.local_server.preflight import (
         _preferred_brain_model,
         _usable_accelerator_gb,
     )
+    from jarvis.realtime.local_server.supervisor import is_managed_launch_command
+
+    base_url, command = _local_realtime_card(request)
+    if not command or not is_managed_launch_command(command):
+        raise HTTPException(
+            status_code=409,
+            detail="install the managed local server before changing its models",
+        )
+    profile = get_voice_profile(requested_voice)
+    if profile is None or not profile.selectable:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                profile.note
+                if profile is not None
+                else f"unknown voice model: {requested_voice}"
+            ),
+        )
+
+    usable_gb, _source = await asyncio.to_thread(_usable_accelerator_gb)
+    preferred = requested_brain or _preferred_brain_model()
+    brain = await asyncio.to_thread(
+        lambda: resolve_brain(
+            preferred_model=preferred,
+            usable_gb=usable_gb,
+        )
+    )
+    if not brain.ok or brain.kind != "ollama":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                brain.note
+                or "no usable local brain was found; install one through Ollama first"
+            ),
+        )
+    if requested_brain and brain.model != requested_brain:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                brain.note
+                or f"'{requested_brain}' is not served by Ollama or does not fit this machine"
+            ),
+        )
+
+    await _cancel_managed_server_warm(request)
+    try:
+        result = await apply_and_test_stack(
+            base_url=base_url or "http://127.0.0.1:8765",
+            current_command=command,
+            brain_model=brain.model,
+            voice_model=profile.id,
+            language=_managed_probe_language(request),
+        )
+    except ManagedSetupError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    launch_command = str(result.pop("launch_command", "") or "")
+    if launch_command:
+        _adopt_managed_command(request, launch_command)
+    result["brain"] = {
+        "kind": brain.kind,
+        "model": brain.model,
+        "note": brain.note,
+    }
+    result["voice"] = {
+        "id": profile.id,
+        "label": profile.label,
+    }
+    return result
+
+
+@router.post(
+    "/providers/local-realtime/managed-server/setup",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def managed_server_setup(request: Request) -> dict[str, Any]:
+    """Apply a brain + voice choice only after a real audio test succeeds."""
+    try:
+        body = await request.json()
+    except Exception as exc:  # noqa: BLE001 - malformed JSON is a client error
+        raise HTTPException(status_code=400, detail="a JSON request body is required") from exc
+    brain_model = str((body or {}).get("brain_model", "") or "").strip()
+    voice_model = str((body or {}).get("voice_model", "") or "").strip()
+    if not brain_model or not voice_model:
+        raise HTTPException(
+            status_code=400,
+            detail="brain_model and voice_model are required",
+        )
+    return await _apply_managed_stack(
+        request,
+        requested_brain=brain_model,
+        requested_voice=voice_model,
+    )
+
+
+@router.post("/providers/local-realtime/managed-server/brain")
+async def managed_server_brain(request: Request) -> dict[str, Any]:
+    """Compatibility action: switch the brain through the full voice gate.
+
+    Older clients call this brain-only route.  It preserves the current voice
+    model but now uses the same restart, audio test and rollback contract as
+    the combined setup action, so no user-facing model switch can bypass it.
+    """
+    from jarvis.realtime.local_server.model_catalog import voice_catalog
 
     requested = ""
     try:
@@ -2935,44 +3107,13 @@ async def managed_server_brain(request: Request) -> dict[str, Any]:
     except Exception:  # noqa: BLE001 — an empty/absent body is the normal case
         requested = ""
 
-    def _resolve() -> Any:
-        usable_gb, _source = _usable_accelerator_gb()
-        return resolve_brain(
-            preferred_model=requested or _preferred_brain_model(),
-            usable_gb=usable_gb,
-        )
-
-    brain = await asyncio.to_thread(_resolve)
-    if not brain.ok or brain.kind != "ollama":
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                brain.note
-                or "no usable local brain was found — install one via Ollama first"
-            ),
-        )
-    if requested and brain.model != requested:
-        # An EXPLICIT choice is never silently swapped (user autonomy): the
-        # resolver's fallback pick is fine for automatic re-resolution, but a
-        # user who named a model gets the honest refusal with the reason.
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                brain.note
-                or f"'{requested}' is not served by Ollama or does not fit "
-                "this machine."
-            ),
-        )
-    changed = await asyncio.to_thread(
-        lambda: update_local_realtime_launch_model(
-            brain.model, only_if_under=str(install_root())
-        )
+    _base_url, command = _local_realtime_card(request)
+    current_voice = str(voice_catalog(command).get("current") or "qwen3-tts-1.7b")
+    return await _apply_managed_stack(
+        request,
+        requested_brain=requested,
+        requested_voice=current_voice,
     )
-    return {
-        "ok": True,
-        "changed": changed,
-        "brain": {"kind": brain.kind, "model": brain.model, "note": brain.note},
-    }
 
 
 @router.delete(

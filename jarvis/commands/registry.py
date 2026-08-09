@@ -234,6 +234,36 @@ def _build_registry() -> tuple[AppCommand, ...]:
             },
         ),
         AppCommand(
+            id="local-realtime-models-set",
+            title="Configure local realtime models",
+            description=(
+                "Select the Ollama brain and speech model for the managed local "
+                "realtime server, then activate them only after a voice test."
+            ),
+            method="POST",
+            path="/api/providers/local-realtime/managed-server/setup",
+            params={
+                "type": "object",
+                "properties": {
+                    "brain_model": _str_param(
+                        "Exact Ollama model tag.", min_length=1, max_length=201
+                    ),
+                    "voice_model": _str_param(
+                        "Managed speech-model profile id.",
+                        enum=["qwen3-tts-1.7b", "qwen3-tts-0.6b"],
+                    ),
+                },
+                "required": ["brain_model", "voice_model"],
+            },
+            dangerous=True,
+            ui_section="apikeys",
+            voice_aliases={
+                "de": ("stelle die lokalen sprachmodelle um",),  # i18n-allow: input vocab
+                "en": ("change the local realtime models",),
+                "es": ("cambia los modelos de voz locales",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
             id="computer-use-switch",
             title="Switch Computer-Use provider",
             description=(
