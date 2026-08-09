@@ -1142,6 +1142,76 @@ export async function startModelPull(
   return body as ModelPullProgress;
 }
 
+/** One model in the provider's PUBLIC library — mirror of `ollama_library`. */
+export interface LibraryModel {
+  name: string;
+  description: string;
+  /** "vision" | "tools" | "thinking" | "embedding", in the catalog's order. */
+  capabilities: string[];
+  /** The catalog offers a hosted variant of this model as well. */
+  cloud: boolean;
+  /** Parameter-count badges ("4b", "122b") — a preview of the tag list. */
+  sizes: string[];
+  pulls: string;
+  updated: string;
+  /** Whether any tag of this model is already on the local server. */
+  installed?: boolean;
+}
+
+/** One installable tag of a library model, judged against THIS machine. */
+export interface LibraryTag {
+  tag: string;
+  /** The full pullable id, e.g. "qwen3.5:4b". */
+  id: string;
+  /** Download size from the catalog; null when it could not be read. */
+  size_gb: number | null;
+  context: string;
+  inputs: string;
+  updated: string;
+  /** Hosted-only tag: nothing to download, so it is never offered as a pull. */
+  cloud: boolean;
+  installed?: boolean;
+  /** Same verdict vocabulary as the curated shortlist; "unknown" if no size. */
+  fit?: string;
+  fit_note?: string;
+}
+
+/**
+ * Search the provider's public model library.
+ *
+ * `error` is a normal outcome, not an exception: the catalog lives on the
+ * public internet, and an offline machine must still see a working panel with
+ * its free-text download field.
+ */
+export async function searchModelLibrary(
+  providerId: string,
+  query: string,
+): Promise<{ query: string; models: LibraryModel[]; error: string | null }> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/library/search?q=${encodeURIComponent(query)}`,
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as { query: string; models: LibraryModel[]; error: string | null };
+}
+
+/** Every published tag of one library model, with size and fit verdict. */
+export async function modelLibraryTags(
+  providerId: string,
+  model: string,
+): Promise<{ model: string; tags: LibraryTag[]; error: string | null }> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/library/${encodeURIComponent(model)}/tags`,
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as { model: string; tags: LibraryTag[]; error: string | null };
+}
+
 /** Poll one download; `installed` reflects the server's inventory, not the run. */
 export async function modelPullStatus(
   providerId: string,

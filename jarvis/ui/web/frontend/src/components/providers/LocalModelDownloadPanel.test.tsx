@@ -26,7 +26,13 @@ vi.mock("@/i18n", () => ({
       "apikeys_model_pull.size": "~{0} GB",
       "apikeys_model_pull.installed": "Installed",
       "apikeys_model_pull.download": "Download",
-      "apikeys_model_pull.custom_placeholder": "Any model name",
+      "apikeys_model_pull.custom_placeholder": "Search the library, or type an exact name…",
+      "apikeys_model_pull.library_searching": "Searching the library…",
+      "apikeys_model_pull.library_no_results": "No models found for that search.",
+      "apikeys_model_pull.library_loading_versions": "Loading versions…",
+      "apikeys_model_pull.library_hosted": "Hosted",
+      "apikeys_model_pull.library_context": "{0} context",
+      "apikeys_model_pull.library_size_unknown": "size unknown",
       "apikeys_model_pull.hardware_gpu": "{0} GB graphics memory",
       "apikeys_model_pull.best_for_machine": "Best for your machine",
       "apikeys_model_pull.role_chat": "Chat and voice",
@@ -324,5 +330,221 @@ describe("local model download panel — hardware-aware ranking", () => {
 
     await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
     expect(document.querySelectorAll('[data-recommended="true"]')).toHaveLength(0);
+  });
+});
+
+/**
+ * Choosing freely from the PUBLIC library.
+ *
+ * The shortlist is for someone with no opinion. Someone with one used to get a
+ * blind text box: leave the app, look the name up, come back and hope — and the
+ * common mistake (pulling a bare name when you wanted a specific size) failed
+ * silently by downloading something else. These pin the replacement: the field
+ * searches the real catalog, a result opens into its actual published versions
+ * with sizes, and none of it is allowed to become load-bearing — an offline
+ * catalog must still leave a working exact-name download behind.
+ */
+const LIBRARY_SEARCH = {
+  query: "qwen",
+  error: null,
+  models: [
+    {
+      name: "qwen3.5",
+      description: "A family of open-source multimodal models.",
+      capabilities: ["vision", "tools"],
+      cloud: true,
+      sizes: ["2b", "9b", "122b"],
+      pulls: "17.2M",
+      updated: "2 months ago",
+      installed: false,
+    },
+  ],
+};
+
+const LIBRARY_TAGS = {
+  model: "qwen3.5",
+  error: null,
+  tags: [
+    {
+      tag: "9b",
+      id: "qwen3.5:9b",
+      size_gb: 6.6,
+      context: "256K",
+      inputs: "Text, Image",
+      updated: "5 months ago",
+      cloud: false,
+      installed: false,
+      fit: "comfortable",
+      fit_note: "Runs comfortably in 32 GB of memory.",
+    },
+    {
+      tag: "122b",
+      id: "qwen3.5:122b",
+      size_gb: 65.4,
+      context: "256K",
+      inputs: "Text, Image",
+      updated: "5 months ago",
+      cloud: false,
+      installed: false,
+      fit: "tight",
+      fit_note: "Needs about 67 GB with 32 GB installed.",
+    },
+    {
+      tag: "cloud",
+      id: "qwen3.5:cloud",
+      size_gb: null,
+      context: "256K",
+      inputs: "Text, Image",
+      updated: "5 months ago",
+      cloud: true,
+      installed: false,
+      fit: "unknown",
+      fit_note: "",
+    },
+  ],
+};
+
+function libraryFetchMock(overrides: Record<string, unknown> = {}) {
+  const calls: string[] = [];
+  installFetchMock((url) => {
+    calls.push(url);
+    for (const [fragment, body] of Object.entries(overrides)) {
+      if (url.includes(fragment)) return body;
+    }
+    if (url.includes("/library/search")) return LIBRARY_SEARCH;
+    if (url.includes("/tags")) return LIBRARY_TAGS;
+    if (url.endsWith("/pull")) return { state: "running", model: "x", message: "Starting…" };
+    return CATALOG;
+  });
+  return calls;
+}
+
+describe("local model download panel — browsing the public library", () => {
+  it("does not touch the public catalog until the user asks", async () => {
+    // The panel renders inside a provider LIST; searching on mount would hit
+    // the catalog once per card on every render of the settings view.
+    const calls = libraryFetchMock();
+
+    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
+    expect(calls.some((u) => u.includes("/library/search"))).toBe(false);
+  });
+
+  it("searches the catalog and shows what it found", async () => {
+    libraryFetchMock();
+
+    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
+
+    fireEvent.change(screen.getByPlaceholderText(/Search the library/), {
+      target: { value: "qwen" },
+    });
+
+    await waitFor(
+      () => expect(screen.getByTestId("library-row-qwen3.5")).toBeTruthy(),
+      { timeout: 3000 },
+    );
+    expect(
+      screen.getByText("A family of open-source multimodal models."),
+    ).toBeTruthy();
+  });
+
+  it("opens a model into its real published versions, with sizes", async () => {
+    libraryFetchMock();
+
+    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
+    fireEvent.change(screen.getByPlaceholderText(/Search the library/), {
+      target: { value: "qwen" },
+    });
+    await waitFor(
+      () => expect(screen.getByTestId("library-row-qwen3.5")).toBeTruthy(),
+      { timeout: 3000 },
+    );
+
+    fireEvent.click(screen.getByText("qwen3.5"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("library-tag-qwen3.5:9b")).toBeTruthy(),
+    );
+    // The whole point of the tag list: sizes differ by an order of magnitude.
+    expect(screen.getByTestId("library-tag-qwen3.5:122b").textContent).toContain("65.4");
+    expect(screen.getByTestId("library-tag-qwen3.5:9b").textContent).toContain("6.6");
+  });
+
+  it("downloads the exact tag the user picked, not the bare name", async () => {
+    const calls = libraryFetchMock();
+
+    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
+    fireEvent.change(screen.getByPlaceholderText(/Search the library/), {
+      target: { value: "qwen" },
+    });
+    await waitFor(
+      () => expect(screen.getByTestId("library-row-qwen3.5")).toBeTruthy(),
+      { timeout: 3000 },
+    );
+    fireEvent.click(screen.getByText("qwen3.5"));
+    await waitFor(() =>
+      expect(screen.getByTestId("library-tag-qwen3.5:9b")).toBeTruthy(),
+    );
+
+    const row = screen.getByTestId("library-tag-qwen3.5:9b");
+    fireEvent.click(row.querySelector("button")!);
+
+    await waitFor(() =>
+      expect(calls.some((u) => u.endsWith("/api/providers/ollama/pull"))).toBe(true),
+    );
+  });
+
+  it("offers no download for a hosted-only tag", async () => {
+    libraryFetchMock();
+
+    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
+    fireEvent.change(screen.getByPlaceholderText(/Search the library/), {
+      target: { value: "qwen" },
+    });
+    await waitFor(
+      () => expect(screen.getByTestId("library-row-qwen3.5")).toBeTruthy(),
+      { timeout: 3000 },
+    );
+    fireEvent.click(screen.getByText("qwen3.5"));
+    await waitFor(() =>
+      expect(screen.getByTestId("library-tag-qwen3.5:cloud")).toBeTruthy(),
+    );
+
+    const hosted = screen.getByTestId("library-tag-qwen3.5:cloud");
+    expect(hosted.textContent).toContain("Hosted");
+    expect(hosted.querySelector("button")).toBeNull();
+  });
+
+  it("keeps the exact-name download when the catalog is unreachable", async () => {
+    // Scraping a public website is a liability; it must never become the only
+    // way to install a model.
+    const calls = libraryFetchMock({
+      "/library/search": {
+        query: "mistral",
+        models: [],
+        error: "ollama.com did not answer, so the library cannot be browsed.",
+      },
+    });
+
+    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Qwen 3 VL")).toBeTruthy());
+
+    const field = screen.getByPlaceholderText(/Search the library/);
+    fireEvent.change(field, { target: { value: "mistral" } });
+
+    await waitFor(() => expect(screen.getByText(/did not answer/)).toBeTruthy(), {
+      timeout: 3000,
+    });
+
+    const downloadButtons = screen.getAllByRole("button", { name: /download/i });
+    fireEvent.click(downloadButtons[downloadButtons.length - 1]);
+    await waitFor(() =>
+      expect(calls.some((u) => u.endsWith("/api/providers/ollama/pull"))).toBe(true),
+    );
   });
 });

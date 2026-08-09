@@ -660,6 +660,48 @@ _TOOLLESS_HEARING_PROBE_RE = re.compile(
     r"|\bme\s+(?:oyes|escuchas|entiendes)\b"
 )
 
+# The delegate tie-break below reuses the planner's PRIVATE vocabulary
+# verbatim (no drifting second copy here). Private names are another
+# module's internals and may be renamed under this module's feet, so they
+# are resolved per call with getattr instead of attribute access: a missing
+# name must degrade the tie-break to the plain planner path, never raise
+# inside the event pump mid-call. Durable home for this contract is a
+# public turn_planner predicate once that module is free to grow one.
+_TOOLLESS_VOCAB_NAMES = (
+    "_normalize",
+    "_ASSISTANT_TASKING_RE",
+    "_DEFINITION_RE",
+    "_INSTRUCTIONAL_RE",
+    "_OPINION_RE",
+)
+_toolless_vocab_warning_emitted = False
+
+
+def _resolve_toolless_vocab() -> tuple[Any, ...] | None:
+    """The planner's private vocabulary, or ``None`` when any name is gone."""
+    global _toolless_vocab_warning_emitted
+    resolved = tuple(
+        getattr(_planner_vocab, name, None) for name in _TOOLLESS_VOCAB_NAMES
+    )
+    if all(item is not None for item in resolved):
+        return resolved
+    if not _toolless_vocab_warning_emitted:
+        _toolless_vocab_warning_emitted = True
+        missing = ", ".join(
+            name
+            for name, item in zip(
+                _TOOLLESS_VOCAB_NAMES, resolved, strict=True
+            )
+            if item is None
+        )
+        log.warning(
+            "turn_planner no longer exposes %s; the toolless delegation "
+            "tie-break is disabled and ambiguous finals stay on the plain "
+            "planner path",
+            missing,
+        )
+    return None
+
 
 def _toolless_ambiguous_action(text: str) -> bool:
     """Whether an action-shaped-but-ambiguous final should delegate anyway.
@@ -682,17 +724,21 @@ def _toolless_ambiguous_action(text: str) -> bool:
     I/O. Explanation shapes (definition / how-to / opinion) and bare
     presence probes stay native — they are conversation, not lost actions.
     """  # i18n-allow: quotes the German tasking idiom the vocabulary matches
-    normalized = _planner_vocab._normalize(text).strip()
+    vocab = _resolve_toolless_vocab()
+    if vocab is None:
+        return False
+    normalize, tasking_re, definition_re, instructional_re, opinion_re = vocab
+    normalized = normalize(text).strip()
     if not normalized:
         return False
     if len(normalized.split()) < _TOOLLESS_AMBIGUITY_MIN_WORDS:
         return False
-    if not _planner_vocab._ASSISTANT_TASKING_RE.search(normalized):
+    if not tasking_re.search(normalized):
         return False
     if (
-        _planner_vocab._DEFINITION_RE.search(normalized)
-        or _planner_vocab._INSTRUCTIONAL_RE.search(normalized)
-        or _planner_vocab._OPINION_RE.search(normalized)
+        definition_re.search(normalized)
+        or instructional_re.search(normalized)
+        or opinion_re.search(normalized)
     ):
         return False
     if _TOOLLESS_HEARING_PROBE_RE.search(normalized):
@@ -5061,6 +5107,7 @@ class RealtimeVoiceSession:
         # mismatched event, cancel the unsafe generation once, then allow
         # subsequent events of the new identity to start cleanly.
         self._response_identity_drops += 1
+        drop_before_cancel = self._drop_provider_output_until_new_response
         await self._cancel_unsafe_output(
             reason=(
                 "provider response identity changed before the previous "
@@ -5072,6 +5119,15 @@ class RealtimeVoiceSession:
         self._gate.drain()
         self._active_provider_response_id = response_id
         self._gate.begin_response(response_id)
+        # The cancel above armed _drop_provider_output_until_new_response for
+        # the STALE identity — but this very event already carries the NEW
+        # one, so on an adapter that never clears the flag it would withhold
+        # the superseding response's audio and transcript, contradicting the
+        # clean-start promise above. Restore the pre-cancel value: late
+        # events of the cancelled id stay dropped through
+        # _completed_provider_response_ids, and a withhold armed BEFORE this
+        # event (e.g. by a delegation that owns the turn) is preserved.
+        self._drop_provider_output_until_new_response = drop_before_cancel
         return False
 
     def _retire_active_provider_response(self) -> None:
@@ -5637,6 +5693,17 @@ class RealtimeVoiceSession:
                 "realtime[%s] output state reset (%s)", self.session_id, reason
             )
         self._retire_active_provider_response()
+        if self._gate.response_id:
+            # The retired response can still OWN the scrub gate when its
+            # boundary never arrived (e.g. the half-duplex emergency release
+            # above, a transcript that stalled fail-closed): every boundary
+            # path drains the gate before reaching here, so a binding that
+            # survives to this reset is dead by construction. Left standing,
+            # the NEXT response's begin_response would read as a
+            # response_identity_mismatch hard leak and cancel the real answer
+            # into the generic fallback. drain() is the gate's end-of-response
+            # reset; it keeps an unplayed direct-speech clearance.
+            self._gate.drain()
         self._output_active = False
         self._output_samples_sent = 0
         self._response_requested_for_turn = False

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Bot, Brain, Check, Copy, Download, HardDrive, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Sparkles, Square, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
+import { AlertCircle, Bot, Brain, Check, ChevronDown, Copy, Download, HardDrive, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Sparkles, Square, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
@@ -21,6 +21,7 @@ import {
   managedServerStatus,
   managedServerStop,
   managedServerUninstall,
+  modelLibraryTags,
   modelPullStatus,
   ollamaRuntime,
   ollamaRuntimeInstall,
@@ -31,7 +32,10 @@ import {
   type OllamaRuntimeInstallProgress,
   type OllamaRuntimeStatus,
   pullableModels,
+  searchModelLibrary,
   startLocalInstall,
+  type LibraryModel,
+  type LibraryTag,
   type LocalInstallProgress,
   type ManagedInstallProgress,
   type ManagedPreflight,
@@ -2542,6 +2546,266 @@ function OllamaRuntimePanel({
 }
 
 /**
+ * Browse the provider's WHOLE public library, not just the curated shortlist.
+ *
+ * The shortlist answers "which model should I get?" for someone who has no
+ * opinion. Someone who does had exactly one way through before this: type an
+ * exact tag into a blind text field and hope. That meant leaving the app for a
+ * browser, and it silently punished the common mistake of pulling a bare name
+ * (`qwen3.5` is 6.6 GB; `qwen3.5:122b` is not).
+ *
+ * So the same field now searches. Results carry the catalog's own blurb and
+ * badges, and opening one lists every published version with its real download
+ * size and the SAME fit verdict the shortlist uses. Nothing here is required:
+ * the field still pulls whatever is typed, so a machine that cannot reach the
+ * public catalog keeps the exact-name path it always had.
+ */
+function LibraryBrowser({
+  providerId,
+  onPull,
+  disabled,
+  pullingModel,
+}: {
+  providerId: string;
+  onPull: (model: string) => void;
+  /** The local server is unreachable — nothing can be downloaded into it. */
+  disabled: boolean;
+  /** Id of the download in flight, so its row shows the spinner. */
+  pullingModel: string | null;
+}) {
+  const t = useT();
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<LibraryModel[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [openModel, setOpenModel] = useState<string | null>(null);
+  const [tags, setTags] = useState<Record<string, LibraryTag[]>>({});
+  const [tagsError, setTagsError] = useState<string | null>(null);
+  const [loadingTags, setLoadingTags] = useState(false);
+
+  // Nothing is fetched until the user asks for it. The panel renders inside a
+  // provider LIST, and a search-on-mount would hit the public catalog once per
+  // card on every render of the settings view.
+  const [browsing, setBrowsing] = useState(false);
+
+  const runSearch = useCallback(
+    async (q: string) => {
+      setSearching(true);
+      try {
+        const answer = await searchModelLibrary(providerId, q);
+        setResults(answer.models);
+        setLibraryError(answer.error);
+      } catch (err) {
+        setResults([]);
+        setLibraryError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSearching(false);
+      }
+    },
+    [providerId],
+  );
+
+  // Debounced: a search per keystroke would hammer the catalog and make the
+  // list flicker between partial-word answers.
+  useEffect(() => {
+    if (!browsing) return;
+    const timer = window.setTimeout(() => void runSearch(query.trim()), 350);
+    return () => window.clearTimeout(timer);
+  }, [browsing, query, runSearch]);
+
+  const toggleModel = async (name: string) => {
+    if (openModel === name) {
+      setOpenModel(null);
+      return;
+    }
+    setOpenModel(name);
+    setTagsError(null);
+    if (tags[name]) return;
+    setLoadingTags(true);
+    try {
+      const answer = await modelLibraryTags(providerId, name);
+      if (answer.error) setTagsError(answer.error);
+      setTags((prev) => ({ ...prev, [name]: answer.tags }));
+    } catch (err) {
+      setTagsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingTags(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 border-t border-border/50 pt-2" data-testid="model-library">
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={query}
+          onFocus={() => setBrowsing(true)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setBrowsing(true);
+          }}
+          placeholder={t("apikeys_model_pull.custom_placeholder")}
+          className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+        />
+        {/* The exact-name path the panel has always had: whatever is typed can
+            be pulled directly, whether or not the catalog was reachable. */}
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={disabled || !query.trim()}
+          onClick={() => onPull(query)}
+        >
+          {t("apikeys_model_pull.download")}
+        </Button>
+      </div>
+
+      {browsing && (
+        <div className="space-y-1.5">
+          {searching && !results && (
+            <p className="text-[11px] text-muted-foreground">
+              {t("apikeys_model_pull.library_searching")}
+            </p>
+          )}
+          {/* An unreachable catalog is a note, never a blocker — the field
+              above still downloads by exact name. */}
+          {libraryError && (
+            <p className="text-[11px] text-amber-500">{libraryError}</p>
+          )}
+          {results && results.length === 0 && !libraryError && (
+            <p className="text-[11px] text-muted-foreground">
+              {t("apikeys_model_pull.library_no_results")}
+            </p>
+          )}
+
+          {(results ?? []).map((model) => (
+            <div
+              key={model.name}
+              data-testid={`library-row-${model.name}`}
+              className="rounded border border-border/50 bg-background/50"
+            >
+              <button
+                type="button"
+                className="flex w-full items-start justify-between gap-2 px-2 py-1.5 text-left"
+                onClick={() => void toggleModel(model.name)}
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-medium">
+                    {model.name}
+                    {model.installed && (
+                      <span className="ml-1.5 text-[10px] font-normal text-emerald-500">
+                        {t("apikeys_model_pull.installed")}
+                      </span>
+                    )}
+                  </p>
+                  {model.description && (
+                    <p className="text-[11px] leading-snug text-muted-foreground">
+                      {model.description}
+                    </p>
+                  )}
+                  <div className="mt-0.5 flex flex-wrap gap-1">
+                    {model.capabilities.map((cap) => (
+                      <span
+                        key={cap}
+                        className="rounded bg-primary/10 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-primary"
+                      >
+                        {cap}
+                      </span>
+                    ))}
+                    {model.sizes.slice(0, 6).map((size) => (
+                      <span
+                        key={size}
+                        className="rounded bg-muted px-1 py-px text-[9px] font-medium text-muted-foreground"
+                      >
+                        {size}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <ChevronDown
+                  className={cn(
+                    "mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+                    openModel === model.name && "rotate-180",
+                  )}
+                />
+              </button>
+
+              {openModel === model.name && (
+                <div className="space-y-1 border-t border-border/40 px-2 py-1.5">
+                  {loadingTags && !tags[model.name] && (
+                    <p className="text-[11px] text-muted-foreground">
+                      {t("apikeys_model_pull.library_loading_versions")}
+                    </p>
+                  )}
+                  {tagsError && (
+                    <p className="text-[11px] text-amber-500">{tagsError}</p>
+                  )}
+                  {(tags[model.name] ?? []).map((tag) => (
+                    <div
+                      key={tag.id}
+                      data-testid={`library-tag-${tag.id}`}
+                      className="flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-[11px]">
+                          <span className="font-mono">{tag.id}</span>{" "}
+                          <span className="text-muted-foreground">
+                            {tag.size_gb
+                              ? t("apikeys_model_pull.size").replace(
+                                  "{0}",
+                                  String(tag.size_gb),
+                                )
+                              : t("apikeys_model_pull.library_size_unknown")}
+                            {tag.context
+                              ? ` · ${t("apikeys_model_pull.library_context").replace("{0}", tag.context)}`
+                              : ""}
+                          </span>
+                        </p>
+                        {tag.fit === "tight" && tag.fit_note && (
+                          <p className="text-[10px] leading-snug text-amber-500">
+                            {tag.fit_note}
+                          </p>
+                        )}
+                      </div>
+                      {/* A hosted tag has no weights to fetch. Offering
+                          "Download" for it would fail at the server. */}
+                      {tag.cloud ? (
+                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                          {t("apikeys_model_pull.library_hosted")}
+                        </span>
+                      ) : tag.installed ? (
+                        <span className="flex shrink-0 items-center gap-1 text-[10px] text-emerald-500">
+                          <Check className="h-3 w-3" />
+                          {t("apikeys_model_pull.installed")}
+                        </span>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="h-6 shrink-0 gap-1 px-2 text-[10px]"
+                          disabled={disabled || pullingModel !== null}
+                          onClick={() => onPull(tag.id)}
+                        >
+                          {pullingModel === tag.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Download className="h-3 w-3" />
+                          )}
+                          {t("apikeys_model_pull.download")}
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * The download half of a keyless local brain card: which models this machine
  * could run, which it already has, and the one button that fetches one.
  *
@@ -2569,7 +2833,6 @@ export function LocalModelDownloadPanel({
   const t = useT();
   const [catalog, setCatalog] = useState<PullableModels | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [custom, setCustom] = useState("");
   const [progress, setProgress] = useState<ModelPullProgress | null>(null);
   const running = progress?.state === "running";
 
@@ -2771,23 +3034,12 @@ export function LocalModelDownloadPanel({
       {/* Any name the library knows — the shortlist is a starting point, not a
           gate, and a user who wants a specific model should not have to leave
           the app for it. */}
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={custom}
-          onChange={(e) => setCustom(e.target.value)}
-          placeholder={t("apikeys_model_pull.custom_placeholder")}
-          className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
-        />
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={running || !custom.trim() || !catalog?.server_reachable}
-          onClick={() => void pull(custom)}
-        >
-          {t("apikeys_model_pull.download")}
-        </Button>
-      </div>
+      <LibraryBrowser
+        providerId={descriptor.id}
+        onPull={(model) => void pull(model)}
+        disabled={running || !catalog?.server_reachable}
+        pullingModel={running ? (progress?.model ?? null) : null}
+      />
 
       {progress && progress.state !== "idle" && (
         <div className="space-y-1">
