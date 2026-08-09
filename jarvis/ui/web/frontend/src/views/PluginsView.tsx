@@ -51,6 +51,45 @@ type PluginStatus = "not_connected" | "connected" | "needs_reauth" | "error";
  *  already know. */
 type Category = string;
 type Longevity = "permanent" | "self_renewing" | "provider_limited";
+/** Mirrors the backend's REAUTH_* codes (jarvis/marketplace/token_store.py). */
+type ReauthReason =
+  | "provider_rejected"
+  | "client_rejected"
+  | "client_missing"
+  | "rotation_lost";
+
+/** What actually happened, in the user's terms, and what it means for them.
+ *
+ *  A bare "Reconnect needed" makes every cause look like the same random
+ *  glitch. These four sentences are the difference between "this keeps
+ *  breaking for no reason" and "my own OAuth app is still in Testing mode".
+ */
+const REAUTH_EXPLANATION: Record<ReauthReason, string> = {
+  provider_rejected: "The provider withdrew the authorization",
+  client_rejected: "The provider no longer accepts this app's OAuth client",
+  client_missing: "Connected before Jarvis stored the OAuth client",
+  rotation_lost: "A renewed token could not be saved, so it was retired",
+};
+
+/** Whether Jarvis will keep trying on its own, so the card never implies the
+ *  user must act when a retry is already scheduled — or stays silent when one
+ *  is not. `rotation_lost` is deliberately never retried. */
+function retriesItself(reason: ReauthReason | string | null | undefined): boolean {
+  return reason !== "rotation_lost";
+}
+
+/** Coarse age of a flag: "today", "3 days ago". Deliberately not minute-exact —
+ *  what matters is whether this happened just now or a week ago. Returns null
+ *  for a missing or unparseable stamp rather than inventing a moment. */
+function flaggedAgo(stamp: string | null | undefined, now: number = Date.now()): string | null {
+  if (!stamp) return null;
+  const then = Date.parse(stamp);
+  if (Number.isNaN(then)) return null;
+  const days = Math.floor(Math.max(0, now - then) / 86_400_000);
+  if (days < 1) return "today";
+  if (days === 1) return "yesterday";
+  return `${days} days ago`;
+}
 
 interface CatalogPlugin {
   id: string;
@@ -64,9 +103,15 @@ interface CatalogPlugin {
   longevity?: Longevity;
   longevity_note?: string | null;
   oauth_client_family?: string | null;
+  oauth_client_configured?: boolean;
   auth: { mode: AuthMode; [key: string]: unknown };
   status: PluginStatus;
   live_callable?: boolean;
+  /** Why the connection is flagged, and since when. Only set while
+   *  `status === "needs_reauth"`; `null` when it died before Jarvis recorded
+   *  reasons. Never carries provider error text. */
+  reauth_reason?: ReauthReason | string | null;
+  reauth_at?: string | null;
 }
 
 interface CatalogResponse {
@@ -111,6 +156,9 @@ interface Plugin {
   longevity: Longevity;
   longevityNote?: string;
   oauthClientFamily?: string;
+  reauthReason?: ReauthReason | string;
+  reauthAt?: string;
+  oauthClientConfigured: boolean;
 }
 
 function adapt(p: CatalogPlugin): Plugin {
@@ -130,6 +178,9 @@ function adapt(p: CatalogPlugin): Plugin {
     longevity: p.longevity ?? "self_renewing",
     longevityNote: p.longevity_note ?? undefined,
     oauthClientFamily: p.oauth_client_family ?? undefined,
+    reauthReason: p.reauth_reason ?? undefined,
+    reauthAt: p.reauth_at ?? undefined,
+    oauthClientConfigured: p.oauth_client_configured ?? false,
   };
 }
 
@@ -748,7 +799,15 @@ function AttentionBanner({
         <p className="truncate text-sm font-medium text-foreground">{headline}</p>
         <p className="truncate text-xs text-muted-foreground">
           {one
-            ? "Its token expired or was revoked — reconnect to keep it working."
+            ? // The banner is the first thing the user reads, so it states the
+              // actual cause rather than the old catch-all guess ("expired or
+              // was revoked"), which was wrong as often as it was right.
+              `${
+                plugins[0].reauthReason &&
+                plugins[0].reauthReason in REAUTH_EXPLANATION
+                  ? REAUTH_EXPLANATION[plugins[0].reauthReason as ReauthReason]
+                  : "The authorization stopped working"
+              } — reconnect to keep it working.`
             : `Reconnect to keep them working: ${names.join(", ")}`}
         </p>
       </div>
@@ -1273,6 +1332,44 @@ export function LongevityBadge({ plugin }: { plugin: Plugin }) {
 // PluginRow — brand tile + status and longevity badges
 // ---------------------------------------------------------------------------
 
+/** Why this connection died, in place of the description it replaces.
+ *
+ *  Shown INSTEAD of the plugin description: while a connection is broken, what
+ *  the plugin does matters less than why it stopped and whether the user has to
+ *  act. `longevityNote` gets its own line here because for the Google plugins it
+ *  carries the actual fix (publish the OAuth app so Google stops expiring the
+ *  grant every 7 days) — buried in a tooltip it never reached anyone.
+ */
+export function ReauthExplanation({ plugin }: { plugin: Plugin }) {
+  const reason = plugin.reauthReason;
+  const explanation =
+    reason && reason in REAUTH_EXPLANATION
+      ? REAUTH_EXPLANATION[reason as ReauthReason]
+      : // Flagged before Jarvis recorded reasons, or by a version that did not.
+        // Say so plainly rather than guess at a cause.
+        "The authorization stopped working";
+  const ago = flaggedAgo(plugin.reauthAt);
+  const headline = ago ? `${explanation} · ${ago}` : explanation;
+  const retrying = retriesItself(reason);
+  const fix = plugin.longevity === "provider_limited" ? plugin.longevityNote : undefined;
+
+  return (
+    <>
+      <p
+        className="truncate text-xs text-amber-500/90"
+        title={
+          retrying
+            ? `${headline}. Jarvis retries this once a day; reconnect to fix it now.`
+            : `${headline}. This one cannot be retried automatically — reconnect to fix it.`
+        }
+      >
+        {headline}
+      </p>
+      {fix && <p className="truncate text-[11px] text-muted-foreground" title={fix}>{fix}</p>}
+    </>
+  );
+}
+
 function PluginRow({
   plugin,
   onConnect,
@@ -1334,7 +1431,11 @@ function PluginRow({
             </span>
           )}
         </div>
-        <p className="truncate text-xs text-muted-foreground">{plugin.description}</p>
+        {needsReauth ? (
+          <ReauthExplanation plugin={plugin} />
+        ) : (
+          <p className="truncate text-xs text-muted-foreground">{plugin.description}</p>
+        )}
       </div>
 
       <div className="hidden shrink-0 flex-col items-end gap-0.5 sm:flex">

@@ -81,6 +81,24 @@ makes it impossible to miss:
 Click **Reconnect**, sign in again, and you're back. If you never set a real
 client, do that in the same dialog first (above), then reconnect.
 
+The card also says **why** it broke and when — "The provider withdrew the
+authorization · 10 days ago" — because the four causes need different responses
+and used to be indistinguishable once the log line rotated away:
+
+| What the card says | What it means | What fixes it |
+|---|---|---|
+| The provider withdrew the authorization | The grant is gone: a Testing-mode expiry, a revoke, or an account policy change | Reconnect; for the Testing-mode case, publish the app first (below) |
+| The provider no longer accepts this app's OAuth client | The OAuth client itself was refused or has been dropped | Check the client still exists, then reconnect |
+| Connected before Jarvis stored the OAuth client | An old token that predates the client_id being persisted | Reconnect once; it will not recur |
+| A renewed token could not be saved, so it was retired | The provider rotated the token but the write failed | Reconnect (this is the one case Jarvis will not retry — see below) |
+
+Jarvis also retries a flagged connection **once a day** on its own, so one
+provider outage or DNS blip no longer strands a grant whose refresh token is
+still good — it comes back without you doing anything. The single exception is
+the last row: replaying a token the provider has already retired is what some
+providers treat as theft and answer by revoking every token on the account, so
+that one waits for a deliberate reconnect.
+
 ### Keeping it connected (the 7-day rule)
 
 Google authorizations issued while an external app's publishing status is
