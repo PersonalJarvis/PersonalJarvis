@@ -2702,9 +2702,26 @@ class CodexAppServerClient:
         # The verify pass just proved the account; completing the FULL startup
         # audit here (off the wake critical path) lets one wake word inside
         # the ride TTL skip the byte-identical re-audit in ``thread_start``.
-        await self.prime_startup_audit()
+        # Priming is a pure wake-latency optimization on top of a login that
+        # was JUST proven, so it is best-effort: any failure short of the
+        # unambiguous entitlement loss below is logged and dropped — it never
+        # fails the login result or closes the just-verified process, and the
+        # next wake word simply pays the full audit in ``thread_start``.
+        try:
+            await self.prime_startup_audit(best_effort=True)
+        except CodexSubscriptionPlanUnsupported:
+            # The audit's own live account re-read refused the plan — a real
+            # entitlement loss, recorded sticky where it was discovered. The
+            # login result must report it, exactly like the gate above.
+            raise
+        except Exception:
+            log.warning(
+                "Codex warm-audit priming failed after a proven login; "
+                "skipping the wake ride (the next wake word re-audits in full)",
+                exc_info=True,
+            )
 
-    async def prime_startup_audit(self) -> None:
+    async def prime_startup_audit(self, *, best_effort: bool = False) -> None:
         """Complete the full startup audit now and mint the one-shot wake ride.
 
         Runs the byte-identical audit ``thread_start`` performs (profile walk,
@@ -2717,6 +2734,12 @@ class CodexAppServerClient:
         ever minted from an audit that actually completed — this method never
         skips or weakens any check, it only moves the identical work off the
         wake critical path.
+
+        With ``best_effort=True`` (the ``require_chatgpt_login`` warm path) a
+        refusal other than the permanently-recorded plan loss leaves the live
+        process untouched and re-raises for the caller to log-and-drop: the
+        account was proven moments earlier, so an ambiguous refusal must not
+        tear down a just-verified process over a wake-latency optimization.
         """
         await self.ensure_started()
         async with self._thread_start_lock:
@@ -2752,6 +2775,14 @@ class CodexAppServerClient:
                     await asyncio.shield(
                         asyncio.to_thread(set_codex_subscription_activation_block, str(exc))
                     )
+                elif best_effort:
+                    # Ambiguous between a transient hiccup (an antivirus-locked
+                    # profile directory, a config read racing a restart) and a
+                    # real state change — and the account was proven moments
+                    # ago. Keep the just-verified process alive and re-raise
+                    # for the caller to log-and-drop; the next wake word
+                    # re-audits in full.
+                    raise
                 error = type(exc)(str(exc))
                 await self._close_process(
                     CodexAppServerDisconnected("Codex app-server safety state changed."),
@@ -3842,6 +3873,20 @@ class CodexAppServerClient:
             "thread/unsubscribe", {"threadId": thread_id}
         )
 
+    def realtime_start_instructions_supported(self) -> bool:
+        """Whether ``realtimeStartInstructions`` will actually be transmitted.
+
+        Cheap, synchronous capability probe for the adapter layer, derived
+        from the same trusted-binary gate ``realtime_start`` applies before
+        sending any 0.147-audited field: ``True`` only when this client is
+        bound to the audited 0.147.0 binary, whose schema accepts the field
+        (per call, ``realtime_start`` additionally requires the audited v3
+        protocol). This is the adapter's basis for deciding whether to blank
+        its fallback prompt — when the field would be withheld, the fallback
+        must stay in place instead.
+        """
+        return self._trusted_binary_version == _SUPPORTED_CODEX_VERSION
+
     async def realtime_start(
         self,
         thread_id: str,
@@ -3900,15 +3945,28 @@ class CodexAppServerClient:
             "prompt": start_prompt,
             "threadId": thread_id,
         }
-        if startup_items:
-            params["initialItems"] = startup_items
         # Added in audited 0.147.0. Older approved binaries must not receive an
         # unknown field, while 0.147 explicitly suppresses the automatic
         # delegation acknowledgement that otherwise speaks over Jarvis.
-        if (
+        trusted_current_binary = (
             version == "v3"
             and self._trusted_binary_version == _SUPPORTED_CODEX_VERSION
-        ):
+        )
+        if startup_items:
+            if trusted_current_binary:
+                params["initialItems"] = startup_items
+            else:
+                # Same rule as the audited fields below: an older approved
+                # binary must never receive an unknown field. A thread rebuild
+                # on 0.146 restores the call without its history instead of
+                # failing the whole start on serde.
+                log.warning(
+                    "Codex realtime start dropped initialItems (%d startup-history "
+                    "items) for this binary: the field exists only in the audited "
+                    "0.147.0 release.",
+                    len(startup_items),
+                )
+        if trusted_current_binary:
             params["delegationAckFiller"] = False
             # Same 0.147/v3 gate for the caller-provided audited fields: the
             # start/end instruction slots and the codexResponse* handoff

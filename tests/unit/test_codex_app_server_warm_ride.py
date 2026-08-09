@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -521,6 +522,175 @@ async def test_realtime_start_never_sends_audited_fields_to_an_untrusted_binary(
     assert "codexResponseHandoffMode" not in params
     assert "delegationAckFiller" not in params
     await client.close()
+
+
+# --- (d) best-effort warm-audit priming inside the login gate ---------------
+
+
+def _fail_config_requirements_after(first_ok: int) -> Callable[[FakeProcess, dict[str, Any]], None]:
+    """Responder whose ``configRequirements/read`` errors after ``first_ok`` calls."""
+    seen = {"count": 0}
+
+    def responder(process: FakeProcess, message: dict[str, Any]) -> None:
+        request_id = message.get("id")
+        if not isinstance(request_id, int):
+            return
+        if message.get("method") == "configRequirements/read":
+            seen["count"] += 1
+            if seen["count"] > first_ok:
+                asyncio.get_running_loop().call_soon(
+                    process.emit,
+                    {
+                        "id": request_id,
+                        "error": {"code": -32000, "message": "transient hiccup"},
+                    },
+                )
+                return
+        _default_responder(process, message)
+
+    return responder
+
+
+@pytest.mark.asyncio
+async def test_login_survives_a_transient_rpc_failure_in_warm_audit_priming(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A transient RPC error inside the priming audit must not fail the login
+    result or touch the just-verified live process — only a WARNING is left."""
+    harness = SpawnHarness(monkeypatch, _fail_config_requirements_after(first_ok=1))
+    client = CodexAppServerClient()
+
+    # Cold start audits in full (its configRequirements/read succeeds).
+    await client.ensure_started()
+    _age_stamp(client)
+    client._warm_audit_process = None
+    client._warm_audit_at = 0.0
+
+    with caplog.at_level(logging.WARNING, logger="jarvis.codex_app_server"):
+        await client.require_chatgpt_login()
+
+    assert client.running is True
+    assert harness.processes[0].returncode is None
+    assert any(
+        "warm-audit priming failed" in record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING and record.exc_info is not None
+    )
+    # No ride was minted from an audit that never completed.
+    assert client._warm_audit_process is None
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_login_survives_a_subscription_refusal_in_warm_audit_priming(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A non-plan ``CodexSubscriptionUnavailable`` from the priming audit is
+    ambiguous right after a proven account: log-and-continue, never close."""
+    seen = {"count": 0}
+
+    def responder(process: FakeProcess, message: dict[str, Any]) -> None:
+        request_id = message.get("id")
+        if not isinstance(request_id, int):
+            return
+        if message.get("method") == "configRequirements/read":
+            seen["count"] += 1
+            if seen["count"] > 1:
+                # A managed-requirements payload makes the audit refuse.
+                _respond(process, request_id, {"requirements": {"managed": True}})
+                return
+        _default_responder(process, message)
+
+    harness = SpawnHarness(monkeypatch, responder)
+    client = CodexAppServerClient()
+
+    await client.ensure_started()
+    _age_stamp(client)
+    client._warm_audit_process = None
+    client._warm_audit_at = 0.0
+
+    with caplog.at_level(logging.WARNING, logger="jarvis.codex_app_server"):
+        await client.require_chatgpt_login()
+
+    assert client.running is True
+    assert harness.processes[0].returncode is None
+    assert any(
+        "warm-audit priming failed" in record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+    )
+    assert client._warm_audit_process is None
+    await client.close()
+
+
+# --- (e) initialItems trusted-binary gate ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_realtime_start_sends_initial_items_to_the_trusted_binary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = SpawnHarness(monkeypatch)
+    client = CodexAppServerClient()
+    await client.ensure_started()
+    client._trusted_binary_version = transport._SUPPORTED_CODEX_VERSION
+
+    await client.realtime_start(
+        "thread-1",
+        version="v3",
+        trusted_prompt="Contract",
+        initial_items=({"role": "user", "text": "hello"},),
+    )
+
+    params = _realtime_start_params(harness)
+    assert params["initialItems"] == [{"role": "user", "text": "hello"}]
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_realtime_start_drops_initial_items_for_an_untrusted_binary(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An older approved binary never receives the unknown ``initialItems``
+    field: a rebuild restores the call without history, with one warning."""
+    harness = SpawnHarness(monkeypatch)
+    client = CodexAppServerClient()
+    await client.ensure_started()
+    client._trusted_binary_version = transport._LEGACY_CODEX_VERSION
+
+    with caplog.at_level(logging.WARNING, logger="jarvis.codex_app_server"):
+        await client.realtime_start(
+            "thread-1",
+            version="v3",
+            trusted_prompt="Contract",
+            initial_items=({"role": "user", "text": "hello"},),
+        )
+
+    params = _realtime_start_params(harness)
+    assert "initialItems" not in params
+    dropped = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "initialItems" in record.getMessage()
+    ]
+    assert len(dropped) == 1
+    await client.close()
+
+
+# --- (f) realtimeStartInstructions capability probe --------------------------
+
+
+def test_realtime_start_instructions_supported_tracks_the_trusted_binary() -> None:
+    client = CodexAppServerClient()
+
+    assert client.realtime_start_instructions_supported() is False
+    client._trusted_binary_version = transport._LEGACY_CODEX_VERSION
+    assert client.realtime_start_instructions_supported() is False
+    client._trusted_binary_version = transport._SUPPORTED_CODEX_VERSION
+    assert client.realtime_start_instructions_supported() is True
 
 
 @pytest.mark.asyncio
