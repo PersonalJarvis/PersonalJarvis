@@ -613,6 +613,69 @@ def test_legacy_managed_command_is_bound_to_loopback_at_spawn(monkeypatch, tmp_p
     assert "0.0.0.0" not in spawned[0]  # noqa: S104 - legacy input assertion
 
 
+def test_legacy_managed_ollama_command_uses_non_reasoning_chat_backend_at_spawn(
+    monkeypatch, tmp_path
+) -> None:
+    from jarvis.realtime.local_server import install
+
+    supervisor._reset_for_tests()
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    entrypoint = install.install_root() / "venv" / "server.exe"
+    command = (
+        f'"{entrypoint}" --mode realtime --ws_host 127.0.0.1 '
+        "--model_name qwen3.5:4b "
+        "--responses_api_base_url http://127.0.0.1:11434/v1 "
+        "--responses_api_api_key ollama"
+    )
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: None)
+    monkeypatch.setattr(supervisor, "_port_open", lambda *args, **kwargs: False)
+    monkeypatch.setattr(supervisor, "_owned_process", lambda: (None, False))
+    monkeypatch.setattr(supervisor, "_kill_by_install_root", lambda root: (0, 0))
+    monkeypatch.setattr(
+        supervisor,
+        "prepare_voice_brain_command",
+        lambda candidate: candidate,
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "_spawn",
+        lambda candidate, **kwargs: spawned.append(candidate) or 7331,
+    )
+    monkeypatch.setattr(supervisor, "_write_pidfile", lambda *args: True)
+
+    assert (
+        supervisor.ensure_running(
+            launch_command=command,
+            base_url="http://127.0.0.1:8765",
+            reason="upgrade",
+        )
+        == "spawned"
+    )
+    assert spawned[0].count("--llm_backend") == 1
+    assert "--llm_backend chat-completions" in spawned[0]
+    assert spawned[0].count("--responses_api_reasoning_effort") == 1
+    assert "--responses_api_reasoning_effort none" in spawned[0]
+
+
+def test_ollama_backend_normalizer_replaces_legacy_equals_flags_once() -> None:
+    command = (
+        "serve --model_name=qwen3.5:4b "
+        "--responses_api_base_url=http://localhost:11434/v1 "
+        "--responses_api_api_key=ollama "
+        "--llm_backend=responses-api "
+        "--responses_api_reasoning_effort=high"
+    )
+
+    migrated = supervisor._force_low_latency_ollama_backend(command)
+
+    assert migrated.count("--llm_backend") == 1
+    assert "--llm_backend chat-completions" in migrated
+    assert migrated.count("--responses_api_reasoning_effort") == 1
+    assert "--responses_api_reasoning_effort none" in migrated
+    assert supervisor._force_low_latency_ollama_backend(migrated) == migrated
+
+
 def test_a_ready_owned_legacy_bind_is_migrated_to_loopback(monkeypatch, tmp_path) -> None:
     from jarvis.realtime.local_server import install
 
@@ -663,12 +726,170 @@ def test_a_ready_owned_legacy_bind_is_migrated_to_loopback(monkeypatch, tmp_path
     assert "--ws_host 127.0.0.1" in spawned[0]
 
 
+def test_a_ready_owned_legacy_ollama_backend_is_migrated(monkeypatch, tmp_path) -> None:
+    from jarvis.realtime.local_server import install
+
+    supervisor._reset_for_tests()
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    entrypoint = install.install_root() / "venv" / "server.exe"
+    legacy = (
+        f'"{entrypoint}" --mode realtime --ws_host 127.0.0.1 '
+        "--model_name qwen3.5:4b-voice-8k "
+        "--responses_api_base_url http://127.0.0.1:11434/v1 "
+        "--responses_api_api_key ollama"
+    )
+    (tmp_path / "local_realtime_server.pid.json").write_text(
+        json.dumps(
+            {
+                "pid": 4711,
+                "create_time": 1000.0,
+                "spawned_at": 1000.0,
+                "port": 8765,
+                "command": legacy,
+            }
+        ),
+        encoding="utf-8",
+    )
+    pool = {"size": 1, "in_use": 0, "available": 1, "stuck": 0}
+    monkeypatch.setattr(supervisor, "_process_create_time", lambda pid: 1000.0)
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: pool)
+    monkeypatch.setattr(supervisor, "_port_open", lambda *args, **kwargs: False)
+    stopped: list[Path] = []
+    monkeypatch.setattr(
+        supervisor,
+        "_stop_owned_unlocked",
+        lambda **kwargs: stopped.append(kwargs["install_root"]) or (True, "stopped"),
+    )
+    monkeypatch.setattr(supervisor, "_kill_by_install_root", lambda root: (0, 0))
+    monkeypatch.setattr(
+        supervisor,
+        "prepare_voice_brain_command",
+        lambda candidate: candidate,
+    )
+    spawned: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "_spawn",
+        lambda command, **kwargs: spawned.append(command) or 7331,
+    )
+    monkeypatch.setattr(supervisor, "_write_pidfile", lambda *args: True)
+
+    outcome = supervisor.ensure_running(
+        launch_command=legacy,
+        base_url="http://127.0.0.1:8765",
+        reason="upgrade",
+    )
+
+    assert outcome == "spawned"
+    assert stopped == [install.install_root()]
+    assert "--llm_backend chat-completions" in spawned[0]
+    assert "--responses_api_reasoning_effort none" in spawned[0]
+
+
+def test_ollama_backend_migration_never_interrupts_an_active_call(
+    monkeypatch, tmp_path
+) -> None:
+    from jarvis.realtime.local_server import install
+
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    entrypoint = install.install_root() / "venv" / "server.exe"
+    command = (
+        f'"{entrypoint}" --mode realtime --ws_host 127.0.0.1 '
+        "--model_name qwen3.5:4b-voice-8k "
+        "--responses_api_base_url http://127.0.0.1:11434/v1 "
+        "--responses_api_api_key ollama"
+    )
+    (tmp_path / "local_realtime_server.pid.json").write_text(
+        json.dumps(
+            {
+                "pid": 4711,
+                "create_time": 1000.0,
+                "port": 8765,
+                "command": command,
+            }
+        ),
+        encoding="utf-8",
+    )
+    pool = {
+        "size": 1,
+        "in_use": 1,
+        "available": 0,
+        "active": 1,
+        "draining": 0,
+        "stuck": 0,
+    }
+    monkeypatch.setattr(supervisor, "_process_create_time", lambda pid: 1000.0)
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: pool)
+
+    def forbidden_stop(**kwargs):
+        raise AssertionError("backend migration must never interrupt an active call")
+
+    monkeypatch.setattr(supervisor, "_stop_owned_unlocked", forbidden_stop)
+    assert (
+        supervisor.ensure_running(
+            launch_command=command,
+            base_url="http://127.0.0.1:8765",
+            reason="upgrade",
+        )
+        == "already-running"
+    )
+
+
+def test_ollama_backend_migration_defers_when_pool_state_is_unknown(
+    monkeypatch, tmp_path
+) -> None:
+    from jarvis.realtime.local_server import install
+
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    entrypoint = install.install_root() / "venv" / "server.exe"
+    command = (
+        f'"{entrypoint}" --mode realtime --ws_host 127.0.0.1 '
+        "--model_name qwen3.5:4b-voice-8k "
+        "--responses_api_base_url http://127.0.0.1:11434/v1 "
+        "--responses_api_api_key ollama"
+    )
+    (tmp_path / "local_realtime_server.pid.json").write_text(
+        json.dumps(
+            {
+                "pid": 4711,
+                "create_time": 1000.0,
+                "port": 8765,
+                "command": command,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(supervisor, "_process_create_time", lambda pid: 1000.0)
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: None)
+    monkeypatch.setattr(supervisor, "_port_open", lambda *args, **kwargs: True)
+
+    def forbidden_stop(**kwargs):
+        raise AssertionError("an unproven runtime must never be stopped for latency")
+
+    monkeypatch.setattr(supervisor, "_stop_owned_unlocked", forbidden_stop)
+    assert (
+        supervisor.ensure_running(
+            launch_command=command,
+            base_url="http://127.0.0.1:8765",
+            reason="upgrade",
+        )
+        == "already-running"
+    )
+
+
 def test_a_ready_owned_loopback_bind_is_not_restarted(monkeypatch, tmp_path) -> None:
     from jarvis.realtime.local_server import install
 
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     entrypoint = install.install_root() / "venv" / "server.exe"
-    command = f'"{entrypoint}" --mode realtime --ws_host 127.0.0.1'
+    command = (
+        f'"{entrypoint}" --mode realtime --ws_host 127.0.0.1 '
+        "--model_name qwen3.5:4b-voice-8k "
+        "--responses_api_base_url http://127.0.0.1:11434/v1 "
+        "--responses_api_api_key ollama "
+        "--llm_backend chat-completions "
+        "--responses_api_reasoning_effort none"
+    )
     (tmp_path / "local_realtime_server.pid.json").write_text(
         json.dumps(
             {
@@ -685,7 +906,7 @@ def test_a_ready_owned_loopback_bind_is_not_restarted(monkeypatch, tmp_path) -> 
     monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: pool)
 
     def forbidden_stop(**kwargs):
-        raise AssertionError("a loopback-bound server must stay alive")
+        raise AssertionError("a safe low-latency server must stay alive")
 
     monkeypatch.setattr(supervisor, "_stop_owned_unlocked", forbidden_stop)
     assert (

@@ -233,6 +233,8 @@ class TestDeriveLaunchCommand:
         cmd = install.derive_launch_command(self._brain(), memory_source="nvidia-smi")
         assert "--responses_api_base_url http://127.0.0.1:11434/v1" in cmd
         assert "--responses_api_api_key ollama" in cmd
+        assert "--llm_backend chat-completions" in cmd
+        assert "--responses_api_reasoning_effort none" in cmd
         assert "--qwen3_tts_device cuda" in cmd
         assert "--model_name qwen2.5:7b" in cmd
         assert "--ws_host 127.0.0.1" in cmd
@@ -244,6 +246,8 @@ class TestDeriveLaunchCommand:
         cmd = install.derive_launch_command(brain, memory_source="nvidia-smi")
         assert "sk-secret" not in cmd
         assert "--responses_api_api_key" not in cmd
+        assert "--llm_backend chat-completions" not in cmd
+        assert "--responses_api_reasoning_effort" not in cmd
 
     def test_apple_unified_memory_maps_to_mps(self) -> None:
         cmd = install.derive_launch_command(self._brain(), memory_source="apple-unified")

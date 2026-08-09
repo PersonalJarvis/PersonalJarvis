@@ -682,6 +682,14 @@ _WS_HOST_FLAG = re.compile(
     r"(?<!\S)--ws_host(?:\s+|=)(?:\"[^\"]*\"|'[^']*'|\S+)",
     re.IGNORECASE,
 )
+_LLM_BACKEND_FLAG = re.compile(
+    r"(?<!\S)--llm_backend(?:\s+|=)(?:\"[^\"]*\"|'[^']*'|\S+)",
+    re.IGNORECASE,
+)
+_REASONING_EFFORT_FLAG = re.compile(
+    r"(?<!\S)--responses_api_reasoning_effort(?:\s+|=)(?:\"[^\"]*\"|'[^']*'|\S+)",
+    re.IGNORECASE,
+)
 
 
 def _force_loopback_bind(command: str) -> str:
@@ -689,6 +697,65 @@ def _force_loopback_bind(command: str) -> str:
     if _WS_HOST_FLAG.search(command):
         return _WS_HOST_FLAG.sub("--ws_host 127.0.0.1", command)
     return f"{command.rstrip()} --ws_host 127.0.0.1"
+
+
+def _replace_cli_flag(command: str, pattern: re.Pattern[str], rendered: str) -> str:
+    """Replace every spelling of one value flag with one canonical value."""
+    without_old_values = pattern.sub("", command).rstrip()
+    return f"{without_old_values} {rendered}"
+
+
+def _cli_flag_value(command: str, flag: str) -> str | None:
+    """Return the last effective CLI value, accepting ``--flag x`` and ``=x``."""
+    try:
+        import shlex
+
+        tokens = shlex.split(command, posix=os.name != "nt")
+    except ValueError:
+        return None
+    value: str | None = None
+    normalized_flag = flag.lower()
+    for index, token in enumerate(tokens):
+        lowered = token.lower()
+        if lowered == normalized_flag:
+            if index + 1 >= len(tokens):
+                return None
+            value = tokens[index + 1].strip("\"'")
+        elif lowered.startswith(f"{normalized_flag}="):
+            value = token.split("=", 1)[1].strip("\"'")
+    return value
+
+
+def _is_loopback_ollama_brain(command: str) -> bool:
+    """Whether a server command targets the local Ollama compatibility API."""
+    _model, base_url, api_key = _brain_endpoint_details(command)
+    if not base_url or api_key.lower() != "ollama":
+        return False
+    return _is_loopback(urlsplit(base_url).hostname or "")
+
+
+def _needs_ollama_backend_migration(command: str) -> bool:
+    """Whether an Ollama command can still burn hidden reasoning tokens."""
+    return _is_loopback_ollama_brain(command) and (
+        _cli_flag_value(command, "--llm_backend") != "chat-completions"
+        or _cli_flag_value(command, "--responses_api_reasoning_effort") != "none"
+    )
+
+
+def _force_low_latency_ollama_backend(command: str) -> str:
+    """Use Ollama's supported no-thinking endpoint for managed voice turns."""
+    if not _needs_ollama_backend_migration(command):
+        return command
+    command = _replace_cli_flag(
+        command,
+        _LLM_BACKEND_FLAG,
+        "--llm_backend chat-completions",
+    )
+    return _replace_cli_flag(
+        command,
+        _REASONING_EFFORT_FLAG,
+        "--responses_api_reasoning_effort none",
+    )
 
 
 def _uses_loopback_bind(command: str) -> bool:
@@ -740,9 +807,10 @@ def ensure_running(
 
         managed_root = managed_install_root(command)
         if managed_root is not None:
-            # Existing installs predate the loopback flag. Normalize at the
-            # actual spawn boundary so they become safe without a reinstall.
+            # Normalize at the actual spawn boundary so existing installs get
+            # both security and latency migrations without a reinstall.
             command = _force_loopback_bind(command)
+            command = _force_low_latency_ollama_backend(command)
             try:
                 from jarvis.realtime.local_server import install  # lazy (AP-26)
 
@@ -759,21 +827,33 @@ def ensure_running(
             owned_root = (
                 managed_install_root(owned_command) if owned_command is not None else None
             )
+            unsafe_bind = bool(owned_command and not _uses_loopback_bind(owned_command))
+            slow_ollama_backend = bool(
+                owned_command and _needs_ollama_backend_migration(owned_command)
+            )
             if (
-                owned_root is not None
-                and owned_command is not None
-                and not _uses_loopback_bind(owned_command)
+                slow_ollama_backend
+                and not unsafe_bind
+                and (
+                    pool is None
+                    or pool.get("active", pool["in_use"]) > 0
+                )
             ):
+                # Latency migration is never a reason to terminate somebody's
+                # live call or a generation whose state cannot be proven. The
+                # next verified-idle connect can replace this generation.
+                return "already-running"
+            if owned_root is not None and (unsafe_bind or slow_ollama_backend):
                 # Managed servers survive app exits, so an upgrade can inherit
-                # a healthy but LAN-bound legacy generation. Only a verified
-                # owned process is eligible for this one-time migration.
+                # a healthy legacy generation. Only a verified owned process
+                # is eligible for these one-time migrations.
                 changed, message = _stop_owned_unlocked(
                     owned_only=True,
                     install_root=owned_root,
                 )
                 if not changed:
                     log.warning(
-                        "local-realtime supervisor: unsafe legacy bind migration failed (%s)",
+                        "local-realtime supervisor: legacy runtime migration failed (%s)",
                         message,
                     )
                     return "refused:stuck-process"
@@ -1614,23 +1694,10 @@ def _brain_endpoint(launch_command: str) -> tuple[str, str]:
 
 def _brain_endpoint_details(launch_command: str) -> tuple[str, str, str]:
     """(model, Responses base URL, placeholder key) parsed from a command."""
-    try:
-        import shlex
-
-        tokens = shlex.split(launch_command or "", posix=os.name != "nt")
-    except ValueError:
-        return "", "", ""
-    model = ""
-    base = ""
-    api_key = ""
-    for index, flag in enumerate(tokens[:-1]):
-        if flag == "--model_name":
-            model = tokens[index + 1].strip('"')
-        elif flag == "--responses_api_base_url":
-            base = tokens[index + 1].strip('"').rstrip("/")
-        elif flag == "--responses_api_api_key":
-            api_key = tokens[index + 1].strip('"')
-    return model, base, api_key
+    model = _cli_flag_value(launch_command or "", "--model_name") or ""
+    base = _cli_flag_value(launch_command or "", "--responses_api_base_url") or ""
+    api_key = _cli_flag_value(launch_command or "", "--responses_api_api_key") or ""
+    return model, base.rstrip("/"), api_key
 
 
 # ── Test support ─────────────────────────────────────────────────────────

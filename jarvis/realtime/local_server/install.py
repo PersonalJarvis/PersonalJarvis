@@ -378,6 +378,12 @@ def derive_launch_command(brain: BrainResolution, *, memory_source: str) -> str:
     ]
     if brain.kind == "ollama":
         parts += [
+            # Ollama exposes its reliable no-thinking control on Chat
+            # Completions. Its Responses endpoint does not accept that field,
+            # which made Qwen spend hundreds of hidden reasoning tokens before
+            # even a four-word voice reply.
+            "--llm_backend chat-completions",
+            "--responses_api_reasoning_effort none",
             f"--responses_api_base_url {brain.base_url}",
             "--responses_api_api_key ollama",
         ]
