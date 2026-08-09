@@ -34,6 +34,11 @@ OS incl. headless `python:3.11-slim` (base stays torch-free; GPU deps in
 macOS/Linux ship in the SAME change behind one capability probe or degrade
 honestly (+ `docs/os-parity.md`). Done = the four non-maintainer paths (§3).
 Device triage: version lag → setup divergence → OS gap.
+Ollama/llama.cpp defaults, recommendations, and examples must be verified
+against the official live catalog when changed and use a current,
+hardware-fitting generation/quantization; an artifact shown as one year old
+or older must never be a default or recommendation. A measured compatibility
+pin may remain only as a documented non-general exception with a removal test.
 
 ## 4. Naming (BINDING)
 Internal: **Jarvis-Agents**. User-visible brand is DYNAMIC from the wake word

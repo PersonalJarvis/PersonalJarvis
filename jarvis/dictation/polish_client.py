@@ -271,7 +271,7 @@ POLISH_FAMILIES: Final[tuple[PolishFamily, ...]] = (
         # Ollama card, so a server moved to another machine keeps working.
         base_url="http://localhost:11434/v1",
         secret_candidates=(),
-        default_model="llama3.1:8b",
+        default_model="qwen3.5:4b",
         default_timeout_ms=3000,
         endpoint_provider="ollama",
     ),

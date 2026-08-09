@@ -18,7 +18,8 @@ cascade exposed through an OpenAI-Realtime-shaped WebSocket:
 
 1. Silero VAD and turn detection;
 2. Parakeet TDT STT on CPU;
-3. `qwen2.5:7b` through Ollama on GPU;
+3. a local Ollama brain on GPU — now `qwen3.5:4b`; the measurements below
+   used the retired `qwen2.5:7b` baseline;
 4. Qwen3-TTS on GPU;
 5. a one-slot threaded pipeline in `speech-to-speech==0.2.12`.
 

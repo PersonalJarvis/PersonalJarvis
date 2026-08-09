@@ -58,6 +58,7 @@ Concretely, Rule #1 means:
 - **All five provider classes (Brain, STT, TTS, Vision, Wake) have a fully cloud-reachable default path** — no required local GPU, model, microphone, speaker, or OS API.
 - **Headless VPS + browser UI is a first-class runtime.** Browser `getUserMedia` → WebSocket, or a channel adapter (Telegram, Discord, SMS, webhook), reaches the full Router-Brain → Worker-Critic → Mission-Manager experience with zero native installs.
 - **Defaults in `jarvis.toml` cannot assume CUDA, local audio, or Windows paths.** STT/TTS default to cloud providers; wake defaults to a server-side gate (browser PTT / channel / webhook).
+- **Local-model recommendations stay current.** Every Ollama/llama.cpp default, recommendation, managed profile, and current setup example must be verified against the official live catalog when changed and use a hardware-fitting current generation/quantization. An artifact shown as one year old or older is forbidden as a default or recommendation; a measured compatibility pin is allowed only as a documented non-general exception with a removal test.
 - **Docs, defaults, install instructions, and onboarding lead with the cloud + cross-platform path.** Windows-desktop instructions are a footnote in an "Optional power-user extras" section.
 - **Maintainer dev tooling under `scripts/` may stay Windows-PowerShell-only.** The line is the boundary between `scripts/` (developer tools — may stay Windows-only) and the importable `jarvis/` package (runtime — must run on Linux, macOS, and Windows).
 

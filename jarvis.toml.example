@@ -118,6 +118,15 @@ deep_model = "grok-4.3"
 model = "anthropic/claude-opus-4.8"
 base_url = "https://openrouter.ai/api/v1"
 
+# Optional current local preset. Keep the cloud-first [brain] defaults above
+# unless you intentionally run this server. Start llama.cpp with the matching
+# stable alias (cross-platform commands are in the local-AI guide), then make
+# "local-openai" the active Brain in-app. Keep a ready provider from another
+# family in the fallback chain (AP-22).
+[brain.providers.local-openai]
+model = "gemma-4-12b-it-qat-q4_0"
+base_url = "http://127.0.0.1:8080"
+
 # ── Safety: anti-confirmation-fatigue whitelist + hard blacklist ──
 [safety]
 default_tier = "safe"

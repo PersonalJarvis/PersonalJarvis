@@ -85,11 +85,10 @@ class EmbeddingModelList:
 #: placeholder still comes from provider_catalog.DEFAULT_MODELS.
 CURATED_EMBEDDING_MODELS: dict[str, tuple[tuple[str, str], ...]] = {
     "ollama": (
-        ("bge-m3", "bge-m3 — multilingual, strong all-rounder"),
-        ("nomic-embed-text", "nomic-embed-text — fast, English-first"),
-        ("mxbai-embed-large", "mxbai-embed-large — larger, higher quality"),
-        ("snowflake-arctic-embed2", "snowflake-arctic-embed2 — multilingual"),
-        ("all-minilm", "all-minilm — tiny and quick"),
+        (
+            "qwen3-embedding:4b",
+            "qwen3-embedding:4b — current multilingual default",
+        ),
     ),
     "gemini": (
         ("gemini-embedding-001", "gemini-embedding-001"),
@@ -167,7 +166,7 @@ async def _ollama(cfg: Any, transport: Any) -> EmbeddingModelList:
         return _curated(
             "ollama",
             "Ollama is running but has no models pulled yet — "
-            "'ollama pull bge-m3' installs a good default.",
+            "'ollama pull qwen3-embedding:4b' installs the current default.",
         )
     return _live(models)
 

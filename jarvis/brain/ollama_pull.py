@@ -122,31 +122,16 @@ RECOMMENDED_MODELS: tuple[RecommendedModel, ...] = (
         purpose="The balanced default: chat, voice, and reliable tool calling.",
     ),
     RecommendedModel(
-        id="qwen2.5:7b",
-        label="Qwen 2.5 7B",
-        size_gb=4.7,
-        # The measured brain of the local realtime voice stack (tiers.py
-        # t0/t1): the managed install's brain-setup pulls THIS tag, so the
-        # panel must list it too — two curated lists must not drift apart.
-        purpose="The local realtime voice stack's measured brain model.",
+        id="gemma4:12b-it-qat",
+        label="Gemma 4 12B QAT",
+        size_gb=7.2,
+        purpose="Current quantized 12B chat, tools, and vision for one GPU.",
     ),
     RecommendedModel(
-        id="gpt-oss:20b",
-        label="GPT-OSS 20B",
-        size_gb=13.8,
-        purpose="Noticeably stronger reasoning; wants a GPU or plenty of memory.",
-    ),
-    RecommendedModel(
-        id="gemma3:27b",
-        label="Gemma 3 27B",
-        size_gb=17.4,
-        purpose="A second strong option at this size, with a different style.",
-    ),
-    RecommendedModel(
-        id="gpt-oss:120b",
-        label="GPT-OSS 120B",
-        size_gb=65.4,
-        purpose="Frontier-class answers, for a workstation-sized accelerator.",
+        id="gemma4:26b-a4b-it-qat",
+        label="Gemma 4 26B A4B QAT",
+        size_gb=16.0,
+        purpose="Current sparse Gemma with stronger reasoning where memory allows.",
     ),
     # ── vision (Screen Context / Computer-Use) ──────────────────────────────
     RecommendedModel(
@@ -183,17 +168,17 @@ RECOMMENDED_MODELS: tuple[RecommendedModel, ...] = (
     ),
     # ── coding worker (the Agents tab's heavy-task model) ───────────────────
     RecommendedModel(
-        id="devstral",
-        label="Devstral",
-        size_gb=14.3,
-        purpose="Built for agentic coding work — a local heavy-task worker.",
+        id="qwen3.6:27b",
+        label="Qwen 3.6 27B",
+        size_gb=17.0,
+        purpose="Current dense Qwen for agentic coding and repository work.",
         role="coder",
     ),
     RecommendedModel(
-        id="qwen3-coder",
-        label="Qwen 3 Coder",
-        size_gb=18.6,
-        purpose="The stronger local coding worker where memory allows.",
+        id="qwen3.6:35b-a3b",
+        label="Qwen 3.6 35B A3B",
+        size_gb=24.0,
+        purpose="Current sparse Qwen coding worker; 3B parameters activate per token.",
         role="coder",
     ),
     # ── embeddings (UltraWiki search) ───────────────────────────────────────
@@ -206,10 +191,10 @@ RECOMMENDED_MODELS: tuple[RecommendedModel, ...] = (
         tools=False,
     ),
     RecommendedModel(
-        id="bge-m3",
-        label="BGE-M3",
-        size_gb=1.2,
-        purpose="Multilingual embeddings for UltraWiki. Not a chat model.",
+        id="qwen3-embedding:4b",
+        label="Qwen 3 Embedding 4B",
+        size_gb=2.5,
+        purpose="Higher-capacity current multilingual embeddings for retrieval.",
         role="embedding",
         tools=False,
     ),
@@ -506,9 +491,12 @@ async def _run_pull(model: str) -> None:
     run = _run_for(model)
     root = server_root()
     try:
-        async with httpx.AsyncClient(timeout=_PULL_TIMEOUT) as client, client.stream(
-            "POST", f"{root}/api/pull", json={"model": model, "stream": True}
-        ) as resp:
+        async with (
+            httpx.AsyncClient(timeout=_PULL_TIMEOUT) as client,
+            client.stream(
+                "POST", f"{root}/api/pull", json={"model": model, "stream": True}
+            ) as resp,
+        ):
             if resp.status_code == 404:
                 run.state = "error"
                 run.message = (

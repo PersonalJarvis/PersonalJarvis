@@ -22,12 +22,33 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from jarvis.brain.ack_brain.config import AckBrainConfig
+from jarvis.brain.ollama_library import parse_tags_html
 from jarvis.brain.ollama_pull import RECOMMENDED_MODELS, ROLE_ORDER
+from jarvis.core.config import MemoryConfig
+from jarvis.dictation.polish_client import POLISH_FAMILIES
+from jarvis.realtime.local_server import brain_link, tiers
+from jarvis.ultrawiki.embedding_models import CURATED_EMBEDDING_MODELS
+from jarvis.ultrawiki.embeddings import DEFAULT_MODELS
 
 pytestmark = pytest.mark.integration
 
 _REGISTRY = "https://registry.ollama.ai/v2/library"
 _ACCEPT = {"Accept": "application/vnd.docker.distribution.manifest.v2+json"}
+
+_RUNTIME_OLLAMA_MODELS = tuple(
+    sorted(
+        {
+            AckBrainConfig().providers.ollama.model,
+            MemoryConfig().embedding_model,
+            DEFAULT_MODELS["ollama"],
+            next(f.default_model for f in POLISH_FAMILIES if f.id == "ollama"),
+            *(model for model, _label in CURATED_EMBEDDING_MODELS["ollama"]),
+            *(tier.brain_model for tier in tiers.TIERS),
+            *brain_link._PREFERRED_MODELS,
+        }
+    )
+)
 
 
 def _manifest(client: httpx.Client, model: str) -> httpx.Response:
@@ -39,7 +60,7 @@ def _manifest(client: httpx.Client, model: str) -> httpx.Response:
 def registry() -> httpx.Client:
     with httpx.Client(timeout=15.0) as client:
         try:
-            probe = _manifest(client, "bge-m3")
+            probe = _manifest(client, "qwen3-embedding:4b")
         except Exception as exc:  # noqa: BLE001 — offline is a skip, not a failure
             pytest.skip(f"Ollama registry unreachable: {type(exc).__name__} {exc}")
         if probe.status_code != 200:
@@ -74,6 +95,33 @@ def test_the_fallback_size_is_in_the_right_ballpark(entry, registry) -> None:
     assert abs(real_gb - entry.size_gb) <= max(1.0, real_gb * 0.25), (
         f"'{entry.id}' is listed at {entry.size_gb} GB but the library ships "
         f"{real_gb:.1f} GB. Update the curated estimate."
+    )
+
+
+@pytest.mark.parametrize("entry", RECOMMENDED_MODELS, ids=lambda e: e.id)
+def test_curated_model_is_not_a_year_old(entry, registry) -> None:
+    """General recommendations must stay on a current official artifact."""
+    _assert_model_is_current(entry.id, registry)
+
+
+@pytest.mark.parametrize("model_id", _RUNTIME_OLLAMA_MODELS)
+def test_runtime_default_is_not_a_year_old(model_id, registry) -> None:
+    """Hidden defaults must obey the same currency rule as the visible list."""
+    _assert_model_is_current(model_id, registry)
+
+
+def _assert_model_is_current(model_id: str, registry: httpx.Client) -> None:
+    name, _, requested_tag = model_id.partition(":")
+    response = registry.get(f"https://ollama.com/library/{name}/tags")
+    assert response.status_code == 200
+    tags = parse_tags_html(response.text, name)
+    tag = requested_tag or "latest"
+    selected = next((item for item in tags if item["tag"] == tag), None)
+    assert selected is not None, f"'{model_id}' is absent from the public tag page"
+    updated = selected["updated"]
+    assert updated and "year" not in updated, (
+        f"'{model_id}' is shown as '{updated}' in the official library. Replace "
+        "year-old general recommendations with a current hardware-fitting model."
     )
 
 

@@ -74,7 +74,7 @@ async def test_an_offline_ollama_falls_back_with_a_reason(cfg):
     )
     assert result.source == "curated"
     assert "unreachable" in result.reason
-    assert any(m.id == "bge-m3" for m in result.models)
+    assert any(m.id == "qwen3-embedding:4b" for m in result.models)
 
 
 async def test_gemini_keeps_only_models_that_serve_embeddings(cfg, monkeypatch):

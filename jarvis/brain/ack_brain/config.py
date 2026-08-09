@@ -89,7 +89,7 @@ class _ProvidersBundle(BaseModel):
         default_factory=lambda: OpenAIAckProviderConfig(model="gpt-5-mini")
     )
     ollama: OllamaAckProviderConfig = Field(
-        default_factory=lambda: OllamaAckProviderConfig(model="llama3.1:8b")
+        default_factory=lambda: OllamaAckProviderConfig(model="qwen3.5:4b")
     )
 
 

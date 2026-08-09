@@ -5,13 +5,12 @@ HARD floor at 12 GB: below it the managed install is refused with an honest
 blocker instead of shipping a degraded experience (maintainer mandate
 2026-08-07).
 
-Bake-off honesty: a tier may only pin a model stack that has been MEASURED
-(recorded audio + numbers), never datasheet-picked. Today only the bottom
-stack is measured (the dev-box configuration: Parakeet TDT CPU STT +
-qwen2.5:7b via Ollama + Qwen3-TTS CustomVoice on GPU, speech-end → first
-audio ~2.4 s warm). Higher tiers therefore install the SAME measured stack
-and say so; their target classes are documented here and flip to pinned
-only when the Chunk-6 bake-off records a winner.
+Model currency and bake-off honesty are independent gates. The current
+interim baseline uses qwen3.5:4b via Ollama: generation and structured tool
+calling were verified on the 16 GB reference machine on 2026-08-09, while a
+new recorded end-to-end voice bake-off is still pending. No tier therefore
+claims measured latency. Higher tiers install this same compatibility-probed
+stack until the Chunk-6 bake-off records a current winner.
 """
 
 from __future__ import annotations
@@ -55,51 +54,51 @@ TIERS: tuple[Tier, ...] = (
         key="t0-12gb",
         label="12 GB — baseline",
         min_usable_gb=12.0,
-        brain_model="qwen2.5:7b",
-        target_class="measured dev-box stack (the only recorded configuration)",
-        measured=True,
-        download_gb=14.0,
-        expected_latency="~2-3 s",
+        brain_model="qwen3.5:4b",
+        target_class="current 4B brain baseline (pending bake-off for full voice)",
+        measured=False,
+        download_gb=13.0,
+        expected_latency="pending bake-off",
     ),
     Tier(
         key="t1-16gb",
         label="16 GB",
         min_usable_gb=15.5,
-        brain_model="qwen2.5:7b",
+        brain_model="qwen3.5:4b",
         target_class="~30B-class brain (pending bake-off)",
         measured=False,
-        download_gb=14.0,
-        expected_latency="~2-3 s",
+        download_gb=13.0,
+        expected_latency="pending bake-off",
     ),
     Tier(
         key="t2-32gb",
         label="32 GB",
         min_usable_gb=31.0,
-        brain_model="qwen2.5:7b",
+        brain_model="qwen3.5:4b",
         target_class="~70B-class brain, quantized (pending bake-off)",
         measured=False,
-        download_gb=14.0,
-        expected_latency="~2-3 s",
+        download_gb=13.0,
+        expected_latency="pending bake-off",
     ),
     Tier(
         key="t3-64gb",
         label="64 GB",
         min_usable_gb=62.0,
-        brain_model="qwen2.5:7b",
+        brain_model="qwen3.5:4b",
         target_class="~70B-class brain, full precision / large MoE (pending bake-off)",
         measured=False,
-        download_gb=14.0,
-        expected_latency="~2-3 s",
+        download_gb=13.0,
+        expected_latency="pending bake-off",
     ),
     Tier(
         key="t4-128gb",
         label="128 GB+",
         min_usable_gb=124.0,
-        brain_model="qwen2.5:7b",
+        brain_model="qwen3.5:4b",
         target_class="frontier open-weights class, ~120B+ MoE (pending bake-off)",
         measured=False,
-        download_gb=14.0,
-        expected_latency="~2-3 s",
+        download_gb=13.0,
+        expected_latency="pending bake-off",
     ),
 )
 
@@ -124,7 +123,7 @@ def describe_stack(tier: Tier) -> str:
             f"Installs the measured baseline stack (brain {tier.brain_model}, local STT + GPU TTS)."
         )
     return (
-        f"Installs the measured baseline stack (brain {tier.brain_model}) for "
-        f"now; this tier targets a {tier.target_class} and upgrades once the "
+        f"Installs the current compatibility-probed baseline (brain {tier.brain_model}); "
+        f"this tier targets a {tier.target_class} and upgrades once the "
         "bake-off has recorded a winner."
     )

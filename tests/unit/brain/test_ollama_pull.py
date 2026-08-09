@@ -377,9 +377,7 @@ async def test_a_big_machine_is_recommended_a_big_model(fake_tags, monkeypatch) 
     assert picked[0]["size_gb"] == max(m["size_gb"] for m in chat)
 
 
-async def test_a_small_machine_is_recommended_a_small_model(
-    fake_tags, monkeypatch
-) -> None:
+async def test_a_small_machine_is_recommended_a_small_model(fake_tags, monkeypatch) -> None:
     _machine(monkeypatch, ram=8.0, accel=0.0)
     result = await pull.recommendations()
     chat = [m for m in result["models"] if m["role"] == "chat"]
@@ -409,9 +407,7 @@ async def test_every_role_gets_its_own_pick(fake_tags, monkeypatch) -> None:
     assert picked_roles == set(result["roles"])
 
 
-async def test_an_installed_role_stops_being_recommended(
-    fake_tags, monkeypatch
-) -> None:
+async def test_an_installed_role_stops_being_recommended(fake_tags, monkeypatch) -> None:
     """Re-recommending a different size over a choice the user already made is
     how a panel starts nagging."""
     _machine(monkeypatch, ram=64.0, accel=24.0)
@@ -433,7 +429,7 @@ async def test_real_registry_sizes_replace_the_estimates(fake_tags, monkeypatch)
     assert by_id["qwen3.5"]["size_gb"] == 9.0
     # A model the registry did not answer for keeps its curated estimate rather
     # than vanishing or reporting zero.
-    assert by_id["bge-m3"]["size_gb"] > 0
+    assert by_id["qwen3-embedding:4b"]["size_gb"] > 0
 
 
 async def test_an_offline_registry_leaves_a_usable_panel(fake_tags, monkeypatch) -> None:
@@ -443,9 +439,7 @@ async def test_an_offline_registry_leaves_a_usable_panel(fake_tags, monkeypatch)
     assert any(m["recommended"] for m in result["models"])
 
 
-async def test_the_payload_names_the_hardware_it_judged_against(
-    fake_tags, monkeypatch
-) -> None:
+async def test_the_payload_names_the_hardware_it_judged_against(fake_tags, monkeypatch) -> None:
     """A verdict the user cannot check against their own machine is a verdict
     they have to take on faith."""
     _machine(monkeypatch, ram=32.0, accel=16.0)

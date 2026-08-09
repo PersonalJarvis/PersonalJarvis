@@ -452,7 +452,7 @@ EMBEDDING_BACKENDS: dict[str, Callable[[Any], Any]] = {
 
 #: Sensible current default model per backend, surfaced by the settings UI.
 DEFAULT_MODELS: dict[str, str] = {
-    "ollama": "bge-m3",
+    "ollama": "qwen3-embedding:4b",
     "gemini": "gemini-embedding-001",
     "openai": "text-embedding-3-small",
     "voyage": "voyage-3.5",

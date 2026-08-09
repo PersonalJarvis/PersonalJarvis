@@ -12,7 +12,7 @@ local and one cloud option**:
 | Slot | Local option | Cloud option | Switch cost |
 |---|---|---|---|
 | **Storage** | SQLite file (created automatically under the data dir) | PostgreSQL connection string — any host the user has (own server, Supabase, Neon, RDS, …) | export/import migration, guided |
-| **Embedding model** | multilingual local model via Ollama (bge-m3 class; one-time download) | any configured embedding-capable provider key (e.g. Gemini Embedding, OpenAI, Voyage, Mistral) | **background rebuild** — deliberate, confirmed; search stays up throughout (D-3) |
+| **Embedding model** | current multilingual local model via Ollama (`qwen3-embedding:4b`; one-time download) | any configured embedding-capable provider key (e.g. Gemini Embedding, OpenAI, Voyage, Mistral) | **background rebuild** — deliberate, confirmed; search stays up throughout (D-3) |
 | **Distillation model** | local model via Ollama | any configured chat-capable provider key | none (applies to new work; re-enrichment optional) |
 | **Rerank (optional)** | local cross-encoder | rerank-capable provider | none |
 

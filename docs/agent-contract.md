@@ -195,6 +195,19 @@ paths (test or honest manual trace):
 the install base. Doctrine: [`CLOUD.md`](../CLOUD.md) +
 [`docs/PHILOSOPHY.md`](PHILOSOPHY.md) (doctrine wins). See AP-21/22/23.
 
+### Local-model currency (BINDING)
+
+Every Ollama or llama.cpp model used as a default, recommendation, managed
+profile, or current setup example must be checked against the official live
+catalog when it is added or changed. Select the newest capable generation and
+the strongest quantization that fits the target hardware honestly; never keep
+an older id merely because it was once tested on the maintainer's machine. An
+artifact whose official catalog entry is shown as one year old or older is
+forbidden in those surfaces. A benchmark-specific compatibility pin may remain
+only outside the general defaults, with its measured reason and the test or
+condition that removes it. The live Ollama catalog guard is
+`tests/integration/test_ollama_catalog_is_current.py`.
+
 ### Device-parity triage ritual (BINDING)
 
 "Works on the dev box, broken on device X" has THREE independent causes —

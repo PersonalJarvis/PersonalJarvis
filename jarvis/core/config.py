@@ -1307,7 +1307,7 @@ class MemoryConfig(BaseModel):
     # jarvis/memory/. Default to the sqlite store so a fresh install does not
     # point the archival tier at a backend that no longer exists.
     archival_store: str = "sqlite"
-    embedding_model: str = "bge-m3"
+    embedding_model: str = "qwen3-embedding:4b"
     retention_days_recall: int = 90
     data_dir: str = "./data"
     wiki: WikiMemoryConfig = Field(default_factory=WikiMemoryConfig)
