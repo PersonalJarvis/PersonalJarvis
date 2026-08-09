@@ -25,6 +25,8 @@ import {
   type RefObject,
 } from "react";
 import type { Terminal } from "@xterm/xterm";
+import { BookOpenText } from "lucide-react";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { PANE_CHROME, type TerminalAppearance } from "./terminalThemes";
 import {
@@ -53,6 +55,12 @@ interface PaneScrollRailProps {
   epoch: number;
   appearance: TerminalAppearance;
   onFocus?: () => void;
+  /**
+   * Open the pane's recorded conversation. The rail offers this where it has
+   * nothing to scroll — an alternate-screen CLI owns its history, and a
+   * pointer at the one scrollable copy beats a dead track.
+   */
+  onOpenHistory?: () => void;
 }
 
 /**
@@ -90,7 +98,9 @@ export function PaneScrollRail({
   epoch,
   appearance,
   onFocus,
+  onOpenHistory,
 }: PaneScrollRailProps) {
+  const t = useT();
   const trackRef = useRef<HTMLDivElement | null>(null);
   const thumbRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragSession | null>(null);
@@ -301,13 +311,15 @@ export function PaneScrollRail({
   const state = view.altScreen ? "app" : view.maxLine === 0 ? "empty" : "history";
   const valueText =
     state === "app"
-      ? view.hiddenHistory > 0
-        ? `Scroll ${name}: a full-screen app owns this pane — its earlier history is in the pane history above`
-        : `Scroll ${name}: a full-screen app owns this pane right now`
+      ? `Scroll ${name}: this CLI draws a full screen and keeps its own history — open the pane history to scroll it`
       : state === "empty"
         ? `Scroll ${name}: nothing has scrolled out of view yet`
         : `Terminal line ${view.line} of ${view.maxLine}`;
   const shell = PANE_CHROME[appearance].shell;
+  // An alternate-screen pane has no position and never will — the CLI holds
+  // the history inside its own process. Rather than a dead track, the rail
+  // becomes the doorway to the one scrollable copy Jarvis owns.
+  const offerHistory = state === "app" && onOpenHistory !== undefined;
 
   return (
     <div
@@ -352,13 +364,39 @@ export function PaneScrollRail({
           "shadow-[0_0_0_1px_rgba(0,0,0,0.18)] transition-[background-color,top]",
           state === "history"
             ? "bg-[#e7c46e]/65 group-hover:bg-[#e7c46e]/90 group-focus-visible:bg-[#e7c46e]/90"
-            : // Nothing to scroll: a faint full-length track, never a bright
-              // bar that reads as a grip stuck at full height.
-              "bg-[#e7c46e]/20",
+            : // Nothing to scroll: a quiet full-length track. Visible enough to
+              // read as "this rail is present and has nothing to point at",
+              // never bright enough to read as a grip stuck at full height.
+              "bg-[#e7c46e]/30",
           dragging && state === "history" && "bg-[#e7c46e] transition-none",
         )}
         style={{ top: geometry.top, height: geometry.height }}
       />
+      {offerHistory && (
+        <button
+          type="button"
+          data-testid={`pane-scroll-history-${name}`}
+          aria-label={t("agentic_grid.conversation.open").replace("{0}", name)}
+          title={t("agentic_grid.conversation.open").replace("{0}", name)}
+          // The rail's own pointer handlers would read this as a track press
+          // and seek a position that does not exist.
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenHistory?.();
+          }}
+          className={cn(
+            "absolute left-1/2 top-1/2 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2",
+            "items-center justify-center rounded-full border border-[#e7c46e]/45",
+            "text-[#e7c46e]/85 outline-none transition-colors",
+            "hover:border-[#e7c46e] hover:text-[#e7c46e]",
+            "focus-visible:ring-1 focus-visible:ring-[#e7c46e]",
+          )}
+          style={{ background: shell }}
+        >
+          <BookOpenText className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      )}
     </div>
   );
 }

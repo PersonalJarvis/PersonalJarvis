@@ -112,7 +112,15 @@ function fakeTerminal({
   };
 }
 
-function RailHarness({ name, term }: { name: string; term: Terminal }) {
+function RailHarness({
+  name,
+  term,
+  onOpenHistory,
+}: {
+  name: string;
+  term: Terminal;
+  onOpenHistory?: () => void;
+}) {
   const regionRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(term);
@@ -129,6 +137,7 @@ function RailHarness({ name, term }: { name: string; term: Terminal }) {
         terminalRef={terminalRef}
         epoch={1}
         appearance="dark"
+        onOpenHistory={onOpenHistory}
       />
     </div>
   );
@@ -262,25 +271,37 @@ describe("PaneScrollRail", () => {
     // bright bar that reads as a grip stuck at full height.
     expect(rail.dataset.scrollState).toBe("app");
     expect(thumb.style.height).toBe("200px");
-    expect(thumb.className).toContain("bg-[#e7c46e]/20");
+    expect(thumb.className).toContain("bg-[#e7c46e]/30");
     expect(rail.title).toBe(
-      "Scroll Ida: a full-screen app owns this pane right now",
+      "Scroll Ida: this CLI draws a full screen and keeps its own history — open the pane history to scroll it",
     );
   });
 
-  it("points at the pane history when an app hides real scrollback", () => {
-    const harness = fakeTerminal({
-      type: "alternate",
-      line: 0,
-      maxLine: 0,
-      normalMaxLine: 420,
-    });
-    render(<RailHarness name="Sora" term={harness.term} />);
+  it("offers the pane history where a full-screen CLI keeps its own", () => {
+    // Claude Code 2.1.226 takes the alternate screen (measured 2026-08-09), so
+    // xterm holds no history for it and no thumb can ever be honest. Rather
+    // than a dead track, the rail carries a visible door to the one scrollable
+    // copy — an empty rail is what reads as "the scrollbar is broken".
+    const harness = fakeTerminal({ type: "alternate", line: 0, maxLine: 0 });
+    const onOpenHistory = vi.fn();
+    render(
+      <RailHarness name="Sora" term={harness.term} onOpenHistory={onOpenHistory} />,
+    );
     const rail = giveTrackGeometry("Sora");
 
-    expect(rail.title).toBe(
-      "Scroll Sora: a full-screen app owns this pane — its earlier history is in the pane history above",
-    );
+    expect(rail.dataset.scrollState).toBe("app");
+    fireEvent.click(screen.getByTestId("pane-scroll-history-Sora"));
+    expect(onOpenHistory).toHaveBeenCalledOnce();
+    // The press must not also be read as a track seek.
+    expect(harness.scrollToLine).not.toHaveBeenCalled();
+  });
+
+  it("carries no history door on a pane whose own history is scrollable", () => {
+    const harness = fakeTerminal({ line: 40, maxLine: 100 });
+    render(<RailHarness name="Kai" term={harness.term} onOpenHistory={vi.fn()} />);
+    giveTrackGeometry("Kai");
+
+    expect(screen.queryByTestId("pane-scroll-history-Kai")).toBeNull();
   });
 
   it("re-reads an idle pane whose history arrived before it subscribed", () => {

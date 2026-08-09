@@ -12,15 +12,26 @@
  * scrollbar double-drew next to this one. The maintainer's verdict after
  * living with it was to remove the whole regime.
  *
- * What makes the single rule honest today: the current coding CLIs (Claude
- * Code 2.1.226, Codex) paint the NORMAL buffer line by line — measured via a
- * ConPTY probe, no alt-screen (1049), no mouse tracking at boot — so xterm's
- * scrollback is the real transcript and its position is the real position.
- * A CLI that briefly negotiates mouse tracking mid-session does not get the
- * wheel handed to it: `captureWheelForTerminalHistory` keeps wheel input on
- * xterm's history, which is exactly how Windows Terminal treats these CLIs.
- * Only a true alternate-screen application (vim, less) keeps its negotiated
- * protocols — there xterm has no history, and the rail says so.
+ * MEASURED, and the measurement is the whole map (ConPTY probe, 2026-08-09):
+ *
+ * * **Codex** paints the NORMAL buffer. xterm's scrollback IS its transcript,
+ *   so the exact thumb is the exact truth and dragging it seeks.
+ * * **Claude Code 2.1.226** takes the ALTERNATE screen (`?1049h`) plus full
+ *   mouse tracking (`?1000/1002/1003/1006h`) as soon as its UI is up. An
+ *   alternate buffer HAS NO SCROLLBACK — not in this app, not in Windows
+ *   Terminal, not anywhere — so there is no position to show and no history
+ *   to seek. The CLI scrolls its own view from the mouse reports xterm sends
+ *   it. (An earlier probe missed this: run in an untrusted directory, the CLI
+ *   stops at its trust prompt and never reaches the UI that switches buffer.)
+ *
+ * So the rail states what each pane can honestly answer, and the pane history
+ * dialog — Jarvis's own recording, with a real scrollbar — is what an
+ * alternate-screen pane points at instead of a fake thumb.
+ *
+ * `captureWheelForTerminalHistory` covers the third shape: a NORMAL-buffer CLI
+ * that has negotiated mouse tracking. There xterm has real history, so the
+ * wheel scrolls it rather than being handed to the app as mouse reports —
+ * otherwise scrolling would work only while that CLI felt like it.
  */
 import type { Terminal } from "@xterm/xterm";
 

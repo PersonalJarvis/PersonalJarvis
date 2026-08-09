@@ -1763,6 +1763,7 @@ export function AgenticTerminal({
           epoch={terminalEpoch}
           appearance={appearance}
           onFocus={onFocus}
+          onOpenHistory={() => setHistoryOpen(true)}
         />
         <PaneConversationDialog
           terminal={name}
