@@ -55,6 +55,19 @@ interface PaneScrollRailProps {
   onFocus?: () => void;
 }
 
+/**
+ * How often the rail re-reads the terminal without being told to.
+ *
+ * xterm's events cover output and scrolling, but a pane that has STOPPED
+ * emitting output still has a position to state, and the events that would
+ * have announced it can land before this rail subscribes — a replayed session
+ * writes its whole scrollback in one burst at mount. Without this the rail
+ * kept whatever it read first, which on an idle pane was "no history yet", and
+ * a full-track thumb on a pane full of history reads as a broken scrollbar
+ * (reported 2026-08-09). `sameView` keeps a tick that changes nothing free.
+ */
+const RESYNC_MS = 500;
+
 function sameView(
   left: TerminalScrollView | null,
   right: TerminalScrollView,
@@ -63,7 +76,8 @@ function sameView(
     left?.rows === right.rows &&
     left.maxLine === right.maxLine &&
     left.line === right.line &&
-    left.altScreen === right.altScreen
+    left.altScreen === right.altScreen &&
+    left.hiddenHistory === right.hiddenHistory
   );
 }
 
@@ -119,6 +133,14 @@ export function PaneScrollRail({
       for (const subscription of subscriptions) subscription?.dispose();
     };
   }, [epoch, scheduleSync, sync, terminalRef]);
+
+  useEffect(() => {
+    // Deliberately `sync`, not `scheduleSync`: the whole point of this timer is
+    // to be the path that cannot be starved, and the rAF gate is exactly what
+    // an unpainted or throttled pane withholds.
+    const timer = window.setInterval(sync, RESYNC_MS);
+    return () => window.clearInterval(timer);
+  }, [sync]);
 
   useEffect(() => {
     const region = regionRef.current;
@@ -273,11 +295,18 @@ export function PaneScrollRail({
   );
   if (!view) return null;
 
-  const valueText = view.altScreen
-    ? `Scroll ${name}: a full-screen app owns this pane right now`
-    : view.maxLine === 0
-      ? "No terminal history yet"
-      : `Terminal line ${view.line} of ${view.maxLine}`;
+  // Three honest states, and the rail LOOKS different in each — a full-track
+  // thumb that means "nothing to scroll" is indistinguishable from a stuck one
+  // unless it also stops looking like a grip.
+  const state = view.altScreen ? "app" : view.maxLine === 0 ? "empty" : "history";
+  const valueText =
+    state === "app"
+      ? view.hiddenHistory > 0
+        ? `Scroll ${name}: a full-screen app owns this pane — its earlier history is in the pane history above`
+        : `Scroll ${name}: a full-screen app owns this pane right now`
+      : state === "empty"
+        ? `Scroll ${name}: nothing has scrolled out of view yet`
+        : `Terminal line ${view.line} of ${view.maxLine}`;
   const shell = PANE_CHROME[appearance].shell;
 
   return (
@@ -293,6 +322,7 @@ export function PaneScrollRail({
       aria-valuetext={valueText}
       tabIndex={0}
       data-testid={`pane-scroll-rail-${name}`}
+      data-scroll-state={state}
       title={valueText}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -318,10 +348,14 @@ export function PaneScrollRail({
         data-pane-scroll-thumb="true"
         data-testid={`pane-scroll-thumb-${name}`}
         className={cn(
-          "absolute right-[3px] w-1.5 rounded-full bg-[#e7c46e]/65",
+          "absolute right-[3px] w-1.5 rounded-full",
           "shadow-[0_0_0_1px_rgba(0,0,0,0.18)] transition-[background-color,top]",
-          "group-hover:bg-[#e7c46e]/90 group-focus-visible:bg-[#e7c46e]/90",
-          dragging && "bg-[#e7c46e] transition-none",
+          state === "history"
+            ? "bg-[#e7c46e]/65 group-hover:bg-[#e7c46e]/90 group-focus-visible:bg-[#e7c46e]/90"
+            : // Nothing to scroll: a faint full-length track, never a bright
+              // bar that reads as a grip stuck at full height.
+              "bg-[#e7c46e]/20",
+          dragging && state === "history" && "bg-[#e7c46e] transition-none",
         )}
         style={{ top: geometry.top, height: geometry.height }}
       />

@@ -34,12 +34,15 @@ async function newTerminal(): Promise<Terminal> {
 function terminalDouble(
   tracking: "none" | "any",
   type: "normal" | "alternate",
-  { baseY = 0, viewportY = 0 } = {},
+  { baseY = 0, viewportY = 0, normalBaseY = 0 } = {},
 ): Terminal & { scrollLines: ReturnType<typeof vi.fn> } {
   return {
     rows: 24,
     modes: { mouseTrackingMode: tracking },
-    buffer: { active: { type, baseY, viewportY } },
+    buffer: {
+      active: { type, baseY, viewportY },
+      normal: { baseY: normalBaseY, viewportY: normalBaseY },
+    },
     scrollLines: vi.fn(),
   } as unknown as Terminal & { scrollLines: ReturnType<typeof vi.fn> };
 }
@@ -53,7 +56,13 @@ describe("terminalScrollSurface", () => {
     const term = terminalDouble("none", "normal", { baseY: 80, viewportY: 40 });
     const view = readTerminalScrollView(term);
 
-    expect(view).toEqual({ rows: 24, maxLine: 80, line: 40, altScreen: false });
+    expect(view).toEqual({
+      rows: 24,
+      maxLine: 80,
+      line: 40,
+      altScreen: false,
+      hiddenHistory: 0,
+    });
     expect(scrollThumbGeometry(view, 208)).toEqual({ top: 80, height: 48 });
     expect(lineAtThumbTop(view, 0, 208)).toBe(0);
     expect(lineAtThumbTop(view, 80, 208)).toBe(40);
@@ -68,6 +77,21 @@ describe("terminalScrollSurface", () => {
     const alt = readTerminalScrollView(terminalDouble("any", "alternate"));
     expect(alt.altScreen).toBe(true);
     expect(scrollThumbGeometry(alt, 200)).toEqual({ top: 0, height: 200 });
+  });
+
+  it("reports scrollback an alternate-screen app is standing in front of", () => {
+    // The alt buffer has no history of its own, but the conversation the app
+    // covered is still in the normal buffer — the rail says where it went
+    // instead of implying it is gone.
+    const alt = readTerminalScrollView(
+      terminalDouble("any", "alternate", { normalBaseY: 420 }),
+    );
+    expect(alt.hiddenHistory).toBe(420);
+    // A normal-buffer pane never reports hidden history: its own is reachable.
+    const plain = readTerminalScrollView(
+      terminalDouble("none", "normal", { baseY: 80, normalBaseY: 80 }),
+    );
+    expect(plain.hiddenHistory).toBe(0);
   });
 
   it("keeps the wheel on xterm history while a normal-buffer CLI tracks the mouse", () => {

@@ -52,16 +52,21 @@ interface TerminalHarness {
   scrollLines: ReturnType<typeof vi.fn>;
   scrollToTop: ReturnType<typeof vi.fn>;
   scrollToBottom: ReturnType<typeof vi.fn>;
+  /** Grow the scrollback WITHOUT firing an event — a pane that already wrote. */
+  loadHistory: (next: { maxLine: number; line: number }) => void;
 }
 
 function fakeTerminal({
   type = "normal",
   line = 100,
   maxLine = 100,
+  normalMaxLine = 0,
 }: {
   type?: "normal" | "alternate";
   line?: number;
   maxLine?: number;
+  /** Scrollback in the normal buffer while an alternate screen is displayed. */
+  normalMaxLine?: number;
 } = {}): TerminalHarness {
   const scroll = signal<number>();
   const parsed = signal<void>();
@@ -84,6 +89,7 @@ function fakeTerminal({
     rows: 20,
     buffer: {
       active,
+      normal: { baseY: normalMaxLine, viewportY: normalMaxLine },
       onBufferChange: changed.event,
     },
     onScroll: scroll.event,
@@ -93,7 +99,17 @@ function fakeTerminal({
     scrollToTop,
     scrollToBottom,
   } as unknown as Terminal;
-  return { term, scrollToLine, scrollLines, scrollToTop, scrollToBottom };
+  return {
+    term,
+    scrollToLine,
+    scrollLines,
+    scrollToTop,
+    scrollToBottom,
+    loadHistory: ({ maxLine: nextMax, line: nextLine }) => {
+      active.baseY = nextMax;
+      active.viewportY = nextLine;
+    },
+  };
 }
 
 function RailHarness({ name, term }: { name: string; term: Terminal }) {
@@ -242,12 +258,54 @@ describe("PaneScrollRail", () => {
     const rail = giveTrackGeometry("Ida");
     const thumb = screen.getByTestId("pane-scroll-thumb-Ida");
 
-    // No history to scroll: the thumb honestly fills the whole track, and the
-    // tooltip explains who owns the screen. One rail shape for every pane —
-    // the owner-switching rail (grip, caps, strokes) is gone.
+    // No history to scroll: the track is a faint full-length line, never a
+    // bright bar that reads as a grip stuck at full height.
+    expect(rail.dataset.scrollState).toBe("app");
     expect(thumb.style.height).toBe("200px");
+    expect(thumb.className).toContain("bg-[#e7c46e]/20");
     expect(rail.title).toBe(
       "Scroll Ida: a full-screen app owns this pane right now",
     );
+  });
+
+  it("points at the pane history when an app hides real scrollback", () => {
+    const harness = fakeTerminal({
+      type: "alternate",
+      line: 0,
+      maxLine: 0,
+      normalMaxLine: 420,
+    });
+    render(<RailHarness name="Sora" term={harness.term} />);
+    const rail = giveTrackGeometry("Sora");
+
+    expect(rail.title).toBe(
+      "Scroll Sora: a full-screen app owns this pane — its earlier history is in the pane history above",
+    );
+  });
+
+  it("re-reads an idle pane whose history arrived before it subscribed", () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      // The regression this pins: a replayed pane writes its whole scrollback
+      // in one burst, and an idle pane emits nothing afterwards. Reading once
+      // and waiting for an event left the rail showing a full-track thumb on
+      // a pane full of history — "the scrollbar is just gone".
+      const harness = fakeTerminal({ line: 0, maxLine: 0 });
+      render(<RailHarness name="Rex" term={harness.term} />);
+      const rail = giveTrackGeometry("Rex");
+      expect(rail.dataset.scrollState).toBe("empty");
+
+      harness.loadHistory({ maxLine: 300, line: 300 });
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+
+      expect(rail.dataset.scrollState).toBe("history");
+      const thumb = screen.getByTestId("pane-scroll-thumb-Rex");
+      expect(Number.parseFloat(thumb.style.height)).toBeLessThan(200);
+      expect(rail.title).toBe("Terminal line 300 of 300");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

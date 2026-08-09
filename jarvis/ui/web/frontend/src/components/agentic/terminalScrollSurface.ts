@@ -32,6 +32,13 @@ export interface TerminalScrollView {
   line: number;
   /** True while an alternate-screen app (vim, less) owns the screen. */
   altScreen: boolean;
+  /**
+   * Scrollback sitting in the NORMAL buffer while an alternate-screen app has
+   * the display. It exists but cannot be scrolled to until that app exits —
+   * knowing it is there is what lets the rail point at the pane history
+   * instead of implying the conversation is gone.
+   */
+  hiddenHistory: number;
 }
 
 export interface ScrollThumbGeometry {
@@ -57,14 +64,17 @@ function finiteWhole(value: unknown): number {
 
 /** The exact xterm viewport position — the only scroll truth this UI shows. */
 export function readTerminalScrollView(term: Terminal): TerminalScrollView {
-  const active = term.buffer?.active;
+  const buffer = term.buffer;
+  const active = buffer?.active;
   const rows = Math.max(1, finiteWhole(term.rows));
   const maxLine = finiteWhole(active?.baseY);
+  const altScreen = (active?.type ?? "normal") === "alternate";
   return {
     rows,
     maxLine,
     line: clamp(finiteWhole(active?.viewportY), 0, maxLine),
-    altScreen: (active?.type ?? "normal") === "alternate",
+    altScreen,
+    hiddenHistory: altScreen ? finiteWhole(buffer?.normal?.baseY) : 0,
   };
 }
 
