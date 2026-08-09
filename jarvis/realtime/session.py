@@ -129,6 +129,14 @@ _ANSWERED_INPUT_ID_MAX = 64
 # letting them open and clear the next response's scrub gate. Per session and
 # bounded, like the input-item duplicate guard above.
 _COMPLETED_RESPONSE_ID_MAX = 64
+# Floor for how long a response retired by a LOCAL WATCHDOG (never by the
+# provider) may still be re-adopted when its audio finally arrives. It must
+# stay comfortably above _HALF_DUPLEX_SILENT_RELEASE_S: that watchdog reopens
+# the microphone after 2 s of quiet, which is the right call for the MIC and a
+# terrible one for the RESPONSE — ChatGPT-Live's audio trailed the transcript
+# by 5.0 s and 13.2 s in the live 2026-08-09 calls whose answers were lost.
+# Providers that declare readback_render_budget_s raise this per transport.
+_LATE_RESPONSE_READOPTION_MIN_S = 15.0
 _TOOL_TRANSCRIPT_WAIT_S = 3.0
 # Grace window for the model to finish its goodbye after an end_call tool
 # call; if the provider never sends turn_complete, hang up anyway.
@@ -1692,7 +1700,13 @@ class RealtimeVoiceSession:
         self._completed_provider_response_ids: deque[str] = deque(
             maxlen=_COMPLETED_RESPONSE_ID_MAX
         )
+        # Responses closed by a LOCAL timeout rather than by evidence from the
+        # provider. A timeout is a guess, so these ids stay re-adoptable until
+        # a real successor binds or the window below expires; completing them
+        # outright discarded whole answers (see _retire_active_provider_response).
+        self._provisional_response_retirements: dict[str, float] = {}
         self._response_identity_drops = 0
+        self._late_response_readoptions = 0
         self._unsafe_output_cancellations = 0
         # True once the surface TTS spoke anything in THIS turn, so the turn is
         # answered and the no-audio rescue must not speak over it.
@@ -2593,7 +2607,13 @@ class RealtimeVoiceSession:
                     else "drained"
                 ),
             )
-            self._reset_output_state(reason="half-duplex mute outlived its turn")
+            # PROVISIONAL: this watchdog proves the microphone should reopen,
+            # never that the far end finished. Retiring the response outright
+            # here discarded every frame that was still in flight.
+            self._reset_output_state(
+                reason="half-duplex mute outlived its turn",
+                provisional=True,
+            )
             self._half_duplex_muted_since = None
             self._half_duplex_mute_reported = 0.0
             return
@@ -5065,6 +5085,7 @@ class RealtimeVoiceSession:
             return True
         response_id = str(getattr(event, "provider_turn_id", "") or "").strip()
         active_id = self._active_provider_response_id
+        self._expire_provisional_retirements()
         if response_id and response_id in self._completed_provider_response_ids:
             self._response_identity_drops += 1
             log.warning(
@@ -5096,6 +5117,22 @@ class RealtimeVoiceSession:
         if not response_id:
             return True
         if not active_id:
+            readopted = self._provisional_response_retirements.pop(response_id, None)
+            if readopted is not None:
+                # The watchdog guessed this response was over and released the
+                # microphone; the far end simply had not delivered its audio
+                # yet. Re-adopt rather than discard — this is the answer the
+                # user asked for.
+                self._late_response_readoptions += 1
+                log.info(
+                    "realtime[%s] re-adopted provider response %s after a "
+                    "local timeout retired it; its audio arrived late",
+                    self.session_id,
+                    response_id,
+                )
+            # Anything else still awaiting re-adoption is superseded by this
+            # binding and must not surface behind the answer replacing it.
+            self._complete_provisional_retirements(keep=response_id)
             self._active_provider_response_id = response_id
             self._gate.begin_response(response_id)
             return True
@@ -5130,12 +5167,60 @@ class RealtimeVoiceSession:
         self._drop_provider_output_until_new_response = drop_before_cancel
         return False
 
-    def _retire_active_provider_response(self) -> None:
-        """Remember the active response id as closed and clear its owner."""
+    def _retire_active_provider_response(self, *, provisional: bool = False) -> None:
+        """Remember the active response id as closed and clear its owner.
+
+        ``provisional`` marks a retirement the PROVIDER never confirmed — a
+        local watchdog decided the turn looked over. On a transport that
+        announces no terminal item and whose audio measurably trails the
+        transcript by seconds (ChatGPT-Live: 5.0 s and 13.2 s to first audio,
+        live 2026-08-09), completing such a guess outright is what silenced the
+        product: the mic-release watchdog fired after 2 s of quiet, the id went
+        onto the completed list, and every frame of the answer that was still
+        on its way was discarded as late — 1 419 frames, 28.4 s of speech, in
+        one 40 s call. A provisional retirement therefore only releases
+        OWNERSHIP; the id stays re-adoptable until a real successor binds or
+        its window expires, and the answer is heard instead of thrown away.
+        """
         response_id = self._active_provider_response_id
-        if response_id and response_id not in self._completed_provider_response_ids:
-            self._completed_provider_response_ids.append(response_id)
+        if response_id:
+            if provisional:
+                self._provisional_response_retirements[response_id] = (
+                    time.monotonic() + self._late_response_readoption_window_s()
+                )
+            elif response_id not in self._completed_provider_response_ids:
+                self._provisional_response_retirements.pop(response_id, None)
+                self._completed_provider_response_ids.append(response_id)
         self._active_provider_response_id = ""
+
+    def _late_response_readoption_window_s(self) -> float:
+        """How long a provisionally retired response may still be re-adopted.
+
+        Sized from the provider's own declared rendering budget (AP-21: a
+        capability read, never a provider-id check) because the wait is a
+        property of that transport's audio path, with a floor so a provider
+        that declares nothing still gets more patience than the watchdog that
+        retired it.
+        """
+        declared = float(
+            getattr(self._provider, "readback_render_budget_s", 0.0) or 0.0
+        )
+        return max(_LATE_RESPONSE_READOPTION_MIN_S, declared)
+
+    def _complete_provisional_retirements(self, *, keep: str = "") -> None:
+        """Promote every provisional retirement except ``keep`` to completed.
+
+        Called when a genuinely new response binds: whatever the far end was
+        rendering before it is superseded, so its stragglers must not surface
+        after the answer that replaced them.
+        """
+        for response_id in tuple(self._provisional_response_retirements):
+            if response_id == keep:
+                continue
+            del self._provisional_response_retirements[response_id]
+            if response_id not in self._completed_provider_response_ids:
+                self._completed_provider_response_ids.append(response_id)
+
 
     def _latency_detail(self, detail: str = "") -> str:
         fields = [
@@ -5669,7 +5754,7 @@ class RealtimeVoiceSession:
         self._external_update = None
         self._reset_turn_tracking()
 
-    def _reset_output_state(self, *, reason: str) -> None:
+    def _reset_output_state(self, *, reason: str, provisional: bool = False) -> None:
         """Clear every per-response duplex flag — on EVERY path that ends one.
 
         Half-duplex mutes the microphone while ``_output_active`` stands
@@ -5687,12 +5772,18 @@ class RealtimeVoiceSession:
         after its turn closed, so a turn boundary is precisely when they must
         survive. They are released by real user input and by the delivery
         paths that own them.
+
+        ``provisional`` says the caller INFERRED the end locally instead of
+        observing it. Such a reset still frees the microphone and every duplex
+        flag — that part is always right — but it leaves the response itself
+        re-adoptable, because a watchdog's patience is not evidence that the
+        far end stopped talking.
         """
         if self._output_active or self._output_samples_sent:
             log.debug(
                 "realtime[%s] output state reset (%s)", self.session_id, reason
             )
-        self._retire_active_provider_response()
+        self._retire_active_provider_response(provisional=provisional)
         if self._gate.response_id:
             # The retired response can still OWN the scrub gate when its
             # boundary never arrived (e.g. the half-duplex emergency release
@@ -7658,6 +7749,7 @@ class RealtimeVoiceSession:
                 "output_transcript_recovery_failures", 0
             ),
             response_identity_drops=self._response_identity_drops,
+            late_response_readoptions=self._late_response_readoptions,
             unsafe_output_cancellations=self._unsafe_output_cancellations,
             opening_responses_bounded=diag.get("opening_responses_bounded", 0),
             self_dialogue_rebuilds=diag.get("self_dialogue_rebuilds", 0),

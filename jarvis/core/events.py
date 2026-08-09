@@ -1692,6 +1692,8 @@ class RealtimeSessionPostmortem(Event):
     output_transcript_recovery_failures: int = 0
     #: Late/mismatched response events dropped before text could clear PCM.
     response_identity_drops: int = 0
+    #: Responses a local watchdog retired whose late audio was still played.
+    late_response_readoptions: int = 0
     #: Provider responses cancelled by the fail-closed output gate.
     unsafe_output_cancellations: int = 0
     #: Opening responses cut at the cap because no user question existed yet.

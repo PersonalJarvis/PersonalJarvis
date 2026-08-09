@@ -187,6 +187,83 @@ def test_output_reset_drains_only_a_bound_gate() -> None:
     assert "drain" in bound.calls
     assert bound.response_id == ""
 
+
+async def test_a_watchdog_retirement_keeps_late_audio_playable() -> None:
+    """The 2026-08-09 silence: 1 419 discarded frames, 28.4 s of speech.
+
+    The half-duplex watchdog reopens the microphone after 2 s of provider
+    quiet, but ChatGPT-Live delivered its audio 5-13 s after the transcript.
+    Completing the response on that guess put its id on the completed ledger,
+    so every frame still in flight was dropped as late and the user heard
+    nothing. A local timeout may release the microphone, never the answer.
+    """
+    binaries: list[bytes] = []
+    session = _session(binaries=binaries)
+    assert await session._accept_provider_response_event(_audio_event("resp-a"))
+
+    session._reset_output_state(
+        reason="half-duplex mute outlived its turn",
+        provisional=True,
+    )
+    assert session._active_provider_response_id == ""
+    assert "resp-a" not in session._completed_provider_response_ids, (
+        "a watchdog guess must not complete a response the provider never ended"
+    )
+
+    # The rest of the SAME answer finally arrives.
+    assert await session._accept_provider_response_event(
+        _audio_event("resp-a", A_LATE_PCM)
+    ), "late audio of a provisionally retired response must still be played"
+    assert session._late_response_readoptions == 1
+    assert session._response_identity_drops == 0
+    assert session._active_provider_response_id == "resp-a"
+
+
+async def test_a_superseding_response_completes_the_provisional_one() -> None:
+    """Re-adoption is bounded: a real successor buries its predecessor."""
+    session = _session()
+    assert await session._accept_provider_response_event(_audio_event("resp-a"))
+    session._reset_output_state(reason="watchdog", provisional=True)
+
+    # A genuinely new response binds — resp-a is superseded for good.
+    assert await session._accept_provider_response_event(_audio_event("resp-b"))
+    assert "resp-a" in session._completed_provider_response_ids
+    assert not session._provisional_response_retirements
+
+    session._reset_output_state(reason="surface turn boundary")
+    assert not await session._accept_provider_response_event(
+        _audio_event("resp-a", A_LATE_PCM)
+    ), "a superseded response may not surface behind the answer replacing it"
+    assert session._response_identity_drops == 1
+
+
+async def test_the_readoption_window_expires() -> None:
+    """Patience is bounded by the provider's own declared render budget."""
+    session = _session()
+    assert await session._accept_provider_response_event(_audio_event("resp-a"))
+    session._reset_output_state(reason="watchdog", provisional=True)
+
+    # Age the pending retirement past its deadline.
+    session._provisional_response_retirements["resp-a"] = -1.0
+    assert not await session._accept_provider_response_event(
+        _audio_event("resp-a", A_LATE_PCM)
+    ), "audio arriving long after the window must stay dropped"
+    assert session._late_response_readoptions == 0
+    assert session._response_identity_drops == 1
+
+
+def test_the_readoption_window_follows_the_provider_capability() -> None:
+    """AP-21: a capability read, never a provider-id check."""
+    session = _session()
+    assert session._late_response_readoption_window_s() == 15.0
+
+    session._provider = SimpleNamespace(readback_render_budget_s=12.0)
+    assert session._late_response_readoption_window_s() == 15.0, (
+        "the floor still outlasts the 2 s watchdog that retired the response"
+    )
+    session._provider = SimpleNamespace(readback_render_budget_s=30.0)
+    assert session._late_response_readoption_window_s() == 30.0
+
     unbound = _RecordingGate("")
     session._gate = unbound  # type: ignore[assignment]
     session._reset_output_state(reason="test: unbound gate")
