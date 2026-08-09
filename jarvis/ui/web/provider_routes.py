@@ -1,4 +1,4 @@
-﻿"""REST API for the Brain, TTS, STT, Realtime and Dictation-polish providers.
+"""REST API for the Brain, TTS, STT, Realtime and Dictation-polish providers.
 
 Endpoints:
     GET    /api/providers                    → list configured and active status
@@ -15,6 +15,7 @@ Mounted by the WebServer in ``_build_app()``:
     from .provider_routes import router as provider_router
     app.include_router(provider_router)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -115,9 +116,9 @@ ProviderTestStatusLiteral = Literal[
     "unreachable",
     "error",
 ]
-assert set(get_args(ProviderTestStatusLiteral)) == set(
-    _provider_test.PROVIDER_TEST_STATUSES
-), "provider-test status vocabulary drift (Pydantic Literal vs SSOT)"
+assert set(get_args(ProviderTestStatusLiteral)) == set(_provider_test.PROVIDER_TEST_STATUSES), (
+    "provider-test status vocabulary drift (Pydantic Literal vs SSOT)"
+)
 
 
 class ProviderTestResponse(BaseModel):
@@ -217,9 +218,9 @@ class CuModelBody(BaseModel):
 class CuModelResponse(BaseModel):
     ok: bool = True
     provider: str
-    cu_model: str          # the pinned value ("" = use the main model)
-    effective_model: str   # the model Computer-Use would actually run
-    uses_main: bool        # True when nothing is pinned (effective == main model)
+    cu_model: str  # the pinned value ("" = use the main model)
+    effective_model: str  # the model Computer-Use would actually run
+    uses_main: bool  # True when nothing is pinned (effective == main model)
     persisted: bool = False
     restart_required: bool = False
 
@@ -429,8 +430,7 @@ def _installed_local_models(provider_id: str, models: list[Any]) -> list[Any]:
         kept = [
             m
             for m in models
-            if getattr(m, "id", "") not in SHERPA_BUNDLES
-            or bundle_present(getattr(m, "id", ""))
+            if getattr(m, "id", "") not in SHERPA_BUNDLES or bundle_present(getattr(m, "id", ""))
         ]
     except Exception as exc:  # noqa: BLE001 — the picker must never 500
         log.debug("Local model filter for %s failed (%s); listing all.", provider_id, exc)
@@ -493,11 +493,7 @@ def _spec_to_payload(
     # resolves one. Only single-slot api_key specs get the family OR — a
     # multi-slot spec (e.g. Twilio) has no meaningful per-slot fallback.
     secrets_effective = dict(secrets_set)
-    if (
-        spec.auth_mode == "api_key"
-        and len(spec.secret_keys) == 1
-        and not all(secrets_set.values())
-    ):
+    if spec.auth_mode == "api_key" and len(spec.secret_keys) == 1 and not all(secrets_set.values()):
         # A dictation-polish card has its own candidate list (polish_client),
         # which the brain's alias map knows nothing about; ask the family.
         if _polish_family(spec) is not None:
@@ -521,18 +517,14 @@ def _spec_to_payload(
     codex_status = None
     if spec.auth_mode == "codex":
         from_isolated_snapshot = (
-            spec.id == "codex-subscription-realtime"
-            and codex_subscription_status is not None
+            spec.id == "codex-subscription-realtime" and codex_subscription_status is not None
         )
         codex_status = (
             dict(codex_subscription_status)
             if from_isolated_snapshot
             else CodexAuthService(_codex_binary_path()).status().to_dict()
         )
-        if (
-            spec.id == "codex-subscription-realtime"
-            and codex_subscription_ready is not None
-        ):
+        if spec.id == "codex-subscription-realtime" and codex_subscription_ready is not None:
             codex_status["connected"] = codex_subscription_ready
             if codex_subscription_ready:
                 codex_status["mode"] = "chatgpt"
@@ -545,10 +537,7 @@ def _spec_to_payload(
                 # read from the ORDINARY Codex profile is exactly what the
                 # authoritative override corrects, so its message must not
                 # survive; nor may an empty message reach the card.
-                if (
-                    not from_isolated_snapshot
-                    or not str(codex_status.get("message") or "").strip()
-                ):
+                if not from_isolated_snapshot or not str(codex_status.get("message") or "").strip():
                     codex_status["message"] = (
                         "ChatGPT subscription voice is not ready. "
                         "Reconnect with ChatGPT and review the setup status."
@@ -616,9 +605,7 @@ def _spec_to_payload(
         # On-device cards only: whether the engine and its weights are REALLY
         # here, so the UI can offer the install instead of a false "ready".
         # ``None`` on every cloud card.
-        "local_runtime": _local_runtime_payload(
-            spec, model_override=local_model_override
-        ),
+        "local_runtime": _local_runtime_payload(spec, model_override=local_model_override),
         # Self-hosted realtime card only: state of the one-click managed
         # server install (fail-closed, server sentence rendered verbatim).
         "managed_server": _managed_server_payload(spec),
@@ -638,11 +625,8 @@ def _spec_to_payload(
             bool(antigravity_status["connected"])
             if antigravity_status is not None
             else codex_subscription_ready
-            if spec.id == "codex-subscription-realtime"
-            and codex_subscription_ready is not None
-            else bool(
-                codex_status["connected"] and codex_status["mode"] == "chatgpt"
-            )
+            if spec.id == "codex-subscription-realtime" and codex_subscription_ready is not None
+            else bool(codex_status["connected"] and codex_status["mode"] == "chatgpt")
             if codex_status is not None and not spec.secret_keys
             else _is_credential_present(
                 spec,
@@ -662,9 +646,7 @@ def _spec_to_payload(
         # provider can be BOTH the main Brain ("active") AND/OR the dedicated
         # Computer-Use planner ("computer_use_active") — the two selections
         # are independent, so this never touches "active" above.
-        "computer_use_active": (
-            spec.tier == "brain" and spec.id == active_computer_use
-        ),
+        "computer_use_active": (spec.tier == "brain" and spec.id == active_computer_use),
     }
     if antigravity_status is not None:
         payload["antigravity_status"] = antigravity_status
@@ -916,9 +898,7 @@ def _resolve_cfg(request: Request):
     ``server.py::_build_app``. Fall back to ``load_config()`` when a headless
     app started without the normal bootstrap.
     """
-    cfg_attr = getattr(request.app.state, "config", None) or getattr(
-        request.app.state, "cfg", None
-    )
+    cfg_attr = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
     if cfg_attr is not None:
         return cfg_attr
     try:
@@ -1031,10 +1011,7 @@ def _codex_subscription_status_payload(binary_path: str | None) -> dict[str, Any
             chatgpt_authenticated=False,
             binary_path=None,
             version=None,
-            reason=(
-                f"The Codex status probe failed ({type(exc).__name__}); "
-                "retrying shortly."
-            ),
+            reason=(f"The Codex status probe failed ({type(exc).__name__}); retrying shortly."),
             reason_code="busy",
         )
     installed = bool(snapshot.available or snapshot.version)
@@ -1054,9 +1031,7 @@ def _codex_subscription_status_payload(binary_path: str | None) -> dict[str, Any
         # without touching the owned profile — the card must never tell a
         # user mid-login to reinstall the CLI that is running their login.
         try:
-            installed = (
-                CodexAuthService(binary_path)._resolve_binary() is not None
-            )
+            installed = CodexAuthService(binary_path)._resolve_binary() is not None
         except Exception:  # noqa: BLE001 — presence stays unknown, not fatal
             log.debug(
                 "Codex CLI presence probe failed during an ownership window",
@@ -1140,7 +1115,8 @@ def _apply_worker_model_in_memory(request: Request, model: str) -> None:
             from jarvis.core.config import BrainTierConfig
 
             cfg.brain.worker = BrainTierConfig(
-                provider=getattr(cfg.brain, "primary", "") or "", model=model,
+                provider=getattr(cfg.brain, "primary", "") or "",
+                model=model,
             )
         else:
             sub.model = model
@@ -1252,9 +1228,7 @@ def _tier_test_ceiling_s(spec: ProviderSpec) -> float:
     return _tier_test_budget_s(spec) + 15.0
 
 
-async def _run_tier_test(
-    spec: ProviderSpec, cfg: Any, *, model: str | None = None
-) -> Any:
+async def _run_tier_test(spec: ProviderSpec, cfg: Any, *, model: str | None = None) -> Any:
     """Dispatch a card to the probe that can actually judge it.
 
     Every tier but one is judged by ``run_provider_test``. A dictation card is
@@ -1294,8 +1268,7 @@ async def _run_tier_test(
                 spec.id,
                 _provider_test.RATE_LIMITED,
                 str(payload.get("message") or "")
-                or "The ChatGPT voice status is still being checked — try "
-                "again in a moment.",
+                or "The ChatGPT voice status is still being checked — try again in a moment.",
             )
         isolated_status = SimpleNamespace(
             connected=bool(payload.get("connected")),
@@ -1310,9 +1283,7 @@ async def _run_tier_test(
 
 
 @router.post("/providers/{provider_id}/test")
-async def test_provider_connection(
-    provider_id: str, request: Request
-) -> ProviderTestResponse:
+async def test_provider_connection(provider_id: str, request: Request) -> ProviderTestResponse:
     """Run a REAL minimal call against ``provider_id`` and report the honest
     outcome.
 
@@ -1328,9 +1299,7 @@ async def test_provider_connection(
 
     cfg = _resolve_cfg(request)
     if cfg is None:
-        raise HTTPException(
-            status_code=503, detail="Configuration is unavailable (headless mode?)"
-        )
+        raise HTTPException(status_code=503, detail="Configuration is unavailable (headless mode?)")
 
     # Hard ceiling ABOVE the per-call timeout the tier uses: the route must
     # always answer, else the UI's "Testing…" spinner never resolves. Any async
@@ -1343,9 +1312,7 @@ async def test_provider_connection(
         result = _provider_test.ProviderTestResult(
             provider=spec.id,
             status=_provider_test.UNREACHABLE,
-            detail=(
-                f"Test timed out after {ceiling:.0f}s — the provider did not answer."
-            ),
+            detail=(f"Test timed out after {ceiling:.0f}s — the provider did not answer."),
             latency_ms=ceiling * 1000.0,
         )
     # This exact result is newer than any overlapping section sweep. Cancel the
@@ -1369,9 +1336,9 @@ async def test_provider_connection(
 # anti-drift guard (BUG-008 class) and the TS ``SectionHealthStatus`` union in
 # ``useProviders.ts`` is the UI mirror.
 SectionHealthStatusLiteral = Literal["ok", "needs_setup", "error", "unknown"]
-assert set(get_args(SectionHealthStatusLiteral)) == set(
-    _section_health.SECTION_HEALTH_STATUSES
-), "section-health status vocabulary drift (Pydantic Literal vs SSOT)"
+assert set(get_args(SectionHealthStatusLiteral)) == set(_section_health.SECTION_HEALTH_STATUSES), (
+    "section-health status vocabulary drift (Pydantic Literal vs SSOT)"
+)
 
 # Cache the rollup briefly so opening the API-Keys page / switching tabs does not
 # re-run the REAL connectivity tests on every render. ``?refresh=true`` (used by
@@ -1486,9 +1453,7 @@ async def _tier_section_health(
         if spec.id == "codex-subscription-realtime":
             # One snapshot call answers both "configured?" and "busy?" — a
             # second probe would wait out the same busy window twice.
-            codex_payload = await asyncio.to_thread(
-                _codex_subscription_status_payload, binary_path
-            )
+            codex_payload = await asyncio.to_thread(_codex_subscription_status_payload, binary_path)
             if codex_payload.get("reason_code") == "busy":
                 # Transiently unknown is not "needs setup": the amber dot
                 # with "not connected" would contradict a card that says
@@ -1530,10 +1495,7 @@ async def _tier_section_health(
                 return SectionHealth(
                     status=_section_health.NEEDS_SETUP,
                     reason=str(codex_payload.get("reason_code")),
-                    detail=(
-                        f"{spec.label}: "
-                        f"{codex_payload.get('message') or 'not available'}"
-                    ),
+                    detail=(f"{spec.label}: {codex_payload.get('message') or 'not available'}"),
                     subject_id=spec.id,
                 )
             configured = bool(codex_payload.get("connected"))
@@ -1599,26 +1561,20 @@ def _worker_usable(provider: str) -> bool:
         if p in _CODEX_SUBAGENT_SLUGS or p in {"codex", "openai-codex"}:
             status = CodexAuthService(_codex_binary_path()).status()
             has_key = bool(
-                cfg_mod.get_secret(
-                    "codex_openai_api_key", env_fallback="CODEX_OPENAI_API_KEY"
-                )
+                cfg_mod.get_secret("codex_openai_api_key", env_fallback="CODEX_OPENAI_API_KEY")
             )
             return bool(status.connected or (status.installed and has_key))
         if p == "antigravity":
             from jarvis.google_cli.auth_service import GoogleCliAuthService
 
             return bool(
-                GoogleCliAuthService().status().connected
-                or get_jarvis_agent_secret("gemini")
+                GoogleCliAuthService().status().connected or get_jarvis_agent_secret("gemini")
             )
         if p in {"claude-api", "claude"}:
             from jarvis.claude_auth import ClaudeAuthService
 
             st = ClaudeAuthService().status()
-            return bool(
-                getattr(st, "connected", False)
-                or get_jarvis_agent_secret("claude-api")
-            )
+            return bool(getattr(st, "connected", False) or get_jarvis_agent_secret("claude-api"))
         return bool(get_jarvis_agent_secret(p))
     except Exception:  # noqa: BLE001
         return False
@@ -1671,9 +1627,7 @@ def _claude_worker_display_label(*, default: str) -> str:
         subscription_connected = False
         oauth_status = "absent"
     return (
-        "Claude (subscription)"
-        if subscription_connected or oauth_status != "absent"
-        else default
+        "Claude (subscription)" if subscription_connected or oauth_status != "absent" else default
     )
 
 
@@ -1884,10 +1838,7 @@ def _section_health_fingerprint(
         ("dictation-provider", str(getattr(dictation, "polish_provider", None) or "")),
         ("advanced-reachable", repr(reachable)),
     )
-    return (
-        tuple((key, subjects.get(key) or "") for key in _SECTION_HEALTH_KEYS)
-        + configuration
-    )
+    return tuple((key, subjects.get(key) or "") for key in _SECTION_HEALTH_KEYS) + configuration
 
 
 def _invalidate_section_health_state(request: Request) -> None:
@@ -1975,12 +1926,8 @@ async def section_health(request: Request, refresh: bool = False) -> SectionHeal
 
         current_cfg = _resolve_cfg(request)
         await _warm_active_polish(request)
-        current_subjects = await asyncio.to_thread(
-            _section_health_subjects, request, current_cfg
-        )
-        current_fingerprint = _section_health_fingerprint(
-            request, current_cfg, current_subjects
-        )
+        current_subjects = await asyncio.to_thread(_section_health_subjects, request, current_cfg)
+        current_fingerprint = _section_health_fingerprint(request, current_cfg, current_subjects)
         if current_fingerprint != fingerprint:
             refresh = True
             continue
@@ -2051,12 +1998,8 @@ async def _compute_section_health(
             model=_provider_cu_model(cfg, subjects["computer-use"] or "") or None,
             binary_path=binary_path,
         ),
-        "tts": _tier_section_health(
-            cfg, get_spec(subjects["tts"] or ""), binary_path=binary_path
-        ),
-        "stt": _tier_section_health(
-            cfg, get_spec(subjects["stt"] or ""), binary_path=binary_path
-        ),
+        "tts": _tier_section_health(cfg, get_spec(subjects["tts"] or ""), binary_path=binary_path),
+        "stt": _tier_section_health(cfg, get_spec(subjects["stt"] or ""), binary_path=binary_path),
         "realtime": _realtime_section_health(
             cfg,
             get_spec(subjects["realtime"] or ""),
@@ -2219,9 +2162,7 @@ async def _probe_brain_model(
     )
 
 
-def _model_probe_detail(
-    provider: str, model: str, error: str | None, budget: float
-) -> str:
+def _model_probe_detail(provider: str, model: str, error: str | None, budget: float) -> str:
     """The sentence the card shows — "timeout after 240.0s" explains nothing.
 
     A local model that times out is almost always still loading, and the user's
@@ -2320,16 +2261,8 @@ def _brain_model_info(m: ModelInfo) -> BrainModelInfo:
         frontier=tags.frontier,
         value=tags.value,
         starred=tags.starred,
-        vision=(
-            ("image" in m.input_modalities)
-            if m.input_modalities is not None
-            else None
-        ),
-        tools=(
-            ("tools" in m.supported_parameters)
-            if m.supported_parameters is not None
-            else None
-        ),
+        vision=(("image" in m.input_modalities) if m.input_modalities is not None else None),
+        tools=(("tools" in m.supported_parameters) if m.supported_parameters is not None else None),
     )
 
 
@@ -2385,9 +2318,7 @@ async def _apply_brain_model(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=500, detail=f"TOML write failed: {exc}"
-            ) from exc
+            raise HTTPException(status_code=500, detail=f"TOML write failed: {exc}") from exc
 
     cfg = _resolve_cfg(request)
     _set_brain_model_in_memory(cfg, provider_id, model)
@@ -2419,8 +2350,13 @@ async def _apply_brain_model(
     )
     _invalidate_section_health_state(request)
     return BrainModelSaveResponse(
-        ok=True, provider=provider_id, model=model, persisted=persisted,
-        applied_live=applied_live, restart_required=restart_required, probe=probe_payload,
+        ok=True,
+        provider=provider_id,
+        model=model,
+        persisted=persisted,
+        applied_live=applied_live,
+        restart_required=restart_required,
+        probe=probe_payload,
     )
 
 
@@ -2448,9 +2384,7 @@ def _apply_tts_selection(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=500, detail=f"TOML write failed: {exc}"
-            ) from exc
+            raise HTTPException(status_code=500, detail=f"TOML write failed: {exc}") from exc
 
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "tts", None) is not None:
@@ -2486,8 +2420,13 @@ def _apply_tts_selection(
 
     _invalidate_section_health_state(request)
     return BrainModelSaveResponse(
-        ok=True, provider=provider_id, model=value, persisted=persisted,
-        applied_live=applied_live, restart_required=not applied_live, probe=None,
+        ok=True,
+        provider=provider_id,
+        model=value,
+        persisted=persisted,
+        applied_live=applied_live,
+        restart_required=not applied_live,
+        probe=None,
     )
 
 
@@ -2509,8 +2448,7 @@ def _apply_stt_model(
 
         on_device = provider_runs_on_device(provider_id)
     except Exception as exc:  # noqa: BLE001 — an unknown provider is treated as cloud
-        log.debug("STT on-device probe failed for %s (%s); treating as cloud.",
-                  provider_id, exc)
+        log.debug("STT on-device probe failed for %s (%s); treating as cloud.", provider_id, exc)
 
     persisted = False
     if body.persist:
@@ -2524,9 +2462,7 @@ def _apply_stt_model(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=500, detail=f"TOML write failed: {exc}"
-            ) from exc
+            raise HTTPException(status_code=500, detail=f"TOML write failed: {exc}") from exc
 
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "stt", None) is not None:
@@ -2544,8 +2480,13 @@ def _apply_stt_model(
 
     _invalidate_section_health_state(request)
     return BrainModelSaveResponse(
-        ok=True, provider=provider_id, model=value, persisted=persisted,
-        applied_live=False, restart_required=True, probe=None,
+        ok=True,
+        provider=provider_id,
+        model=value,
+        persisted=persisted,
+        applied_live=False,
+        restart_required=True,
+        probe=None,
     )
 
 
@@ -2643,9 +2584,7 @@ async def start_local_install(provider_id: str) -> dict[str, Any]:
     from jarvis.speech.local_install import start_install
 
     result = await asyncio.to_thread(start_install, provider_id)
-    if result.get("state") == "error" and "not a local provider" in result.get(
-        "message", ""
-    ):
+    if result.get("state") == "error" and "not a local provider" in result.get("message", ""):
         raise HTTPException(status_code=400, detail=result["message"])
     return result
 
@@ -2665,9 +2604,7 @@ async def get_local_install_status(provider_id: str) -> dict[str, Any]:
     from jarvis.speech.local_install import install_status
 
     result = await asyncio.to_thread(install_status, provider_id)
-    if result.get("state") == "error" and "not a local provider" in result.get(
-        "message", ""
-    ):
+    if result.get("state") == "error" and "not a local provider" in result.get("message", ""):
         raise HTTPException(status_code=400, detail=result["message"])
     return result
 
@@ -2722,9 +2659,7 @@ async def managed_server_install(request: Request) -> dict[str, Any]:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    profile.note
-                    if profile is not None
-                    else f"unknown voice model: {voice_model}"
+                    profile.note if profile is not None else f"unknown voice model: {voice_model}"
                 ),
             )
     install_options = {"confirmed_brain": confirmed_brain}
@@ -2732,9 +2667,7 @@ async def managed_server_install(request: Request) -> dict[str, Any]:
         install_options["brain_model"] = brain_model
     if voice_model:
         install_options["voice_model"] = voice_model
-    started, message = await asyncio.to_thread(
-        lambda: start_install(**install_options)
-    )
+    started, message = await asyncio.to_thread(lambda: start_install(**install_options))
     payload = snapshot()
     payload["started"] = started
     payload["message"] = message
@@ -2743,9 +2676,7 @@ async def managed_server_install(request: Request) -> dict[str, Any]:
 
 def _local_realtime_card(request: Request) -> tuple[str, str]:
     """(base_url, launch_command) of the local-realtime card, defensively."""
-    cfg = getattr(request.app.state, "config", None) or getattr(
-        request.app.state, "cfg", None
-    )
+    cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
     providers = getattr(getattr(cfg, "brain", None), "providers", None) or {}
     getter = getattr(providers, "get", None)
     card = getter("local-realtime") if callable(getter) else None
@@ -2784,6 +2715,7 @@ async def _finish_managed_server_warm(
             )
         )
         if ready and not cancel_event.is_set():
+
             def _finish_ready_runtime() -> None:
                 if cancel_event.is_set():
                     return
@@ -2959,9 +2891,7 @@ def _managed_probe_language(request: Request) -> str:
     """Resolve the setup probe language through the one language resolver."""
     from jarvis.core.turn_language import DEFAULT_LOCALE, resolve_output_language
 
-    cfg = getattr(request.app.state, "config", None) or getattr(
-        request.app.state, "cfg", None
-    )
+    cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
     reply_language = getattr(getattr(cfg, "brain", None), "reply_language", "auto")
     ui_language = getattr(getattr(cfg, "ui", None), "language", DEFAULT_LOCALE)
     return resolve_output_language(
@@ -2974,9 +2904,7 @@ def _managed_probe_language(request: Request) -> str:
 
 def _adopt_managed_command(request: Request, command: str) -> None:
     """Keep the live config object aligned with the atomically written file."""
-    cfg = getattr(request.app.state, "config", None) or getattr(
-        request.app.state, "cfg", None
-    )
+    cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
     providers = getattr(getattr(cfg, "brain", None), "providers", None) or {}
     getter = getattr(providers, "get", None)
     card = getter("local-realtime") if callable(getter) else None
@@ -3016,9 +2944,7 @@ async def _apply_managed_stack(
         raise HTTPException(
             status_code=409,
             detail=(
-                profile.note
-                if profile is not None
-                else f"unknown voice model: {requested_voice}"
+                profile.note if profile is not None else f"unknown voice model: {requested_voice}"
             ),
         )
 
@@ -3034,8 +2960,7 @@ async def _apply_managed_stack(
         raise HTTPException(
             status_code=409,
             detail=(
-                brain.note
-                or "no usable local brain was found; install one through Ollama first"
+                brain.note or "no usable local brain was found; install one through Ollama first"
             ),
         )
     if requested_brain and brain.model != requested_brain:
@@ -3320,9 +3245,7 @@ async def get_cu_model(provider_id: str, request: Request) -> CuModelResponse:
 
 
 @router.put("/providers/{provider_id}/cu-model")
-async def set_cu_model(
-    provider_id: str, body: CuModelBody, request: Request
-) -> CuModelResponse:
+async def set_cu_model(provider_id: str, body: CuModelBody, request: Request) -> CuModelResponse:
     """Pin (or clear with "") the per-provider Computer-Use model (Phase 3).
 
     Persists the canonical ``tool_model`` and legacy ``cu_model`` keys, then
@@ -3342,16 +3265,12 @@ async def set_cu_model(
         try:
             from jarvis.core.config_writer import set_brain_provider_model
 
-            set_brain_provider_model(
-                provider_id, tool_model=value, cu_model=value
-            )
+            set_brain_provider_model(provider_id, tool_model=value, cu_model=value)
             persisted = True
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=500, detail=f"TOML write failed: {exc}"
-            ) from exc
+            raise HTTPException(status_code=500, detail=f"TOML write failed: {exc}") from exc
 
     cfg = _resolve_cfg(request)
     _set_cu_model_in_memory(cfg, provider_id, value)
@@ -3418,10 +3337,7 @@ def _validate_realtime_option(
         status_code=422,
         detail={
             "code": f"unsupported_realtime_{field}",
-            "message": (
-                f"Unsupported Realtime {field} '{value}' for provider "
-                f"'{provider_id}'."
-            ),
+            "message": (f"Unsupported Realtime {field} '{value}' for provider '{provider_id}'."),
             "allowed_values": allowed_values,
         },
     )
@@ -3444,15 +3360,9 @@ async def get_realtime_options(provider_id: str, request: Request) -> RealtimeOp
         # control honest without coupling this backend fix to a frontend build.
         return RealtimeOptionsResponse(
             provider=provider_id,
-            models=[
-                RealtimeOptionInfo(
-                    id="auto", label="Codex App Server (subscription text)"
-                )
-            ],
+            models=[RealtimeOptionInfo(id="auto", label="Codex App Server (subscription text)")],
             voices=[
-                RealtimeOptionInfo(
-                    id="configured-tts", label="Configured Jarvis voice output"
-                )
+                RealtimeOptionInfo(id="configured-tts", label="Configured Jarvis voice output")
             ],
             current_model="auto",
             current_voice="configured-tts",
@@ -3465,12 +3375,10 @@ async def get_realtime_options(provider_id: str, request: Request) -> RealtimeOp
     return RealtimeOptionsResponse(
         provider=provider_id,
         models=[
-            RealtimeOptionInfo(id=m.id, label=m.label)
-            for m in REALTIME_MODELS.get(provider_id, [])
+            RealtimeOptionInfo(id=m.id, label=m.label) for m in REALTIME_MODELS.get(provider_id, [])
         ],
         voices=[
-            RealtimeOptionInfo(id=v.id, label=v.label)
-            for v in REALTIME_VOICES.get(provider_id, [])
+            RealtimeOptionInfo(id=v.id, label=v.label) for v in REALTIME_VOICES.get(provider_id, [])
         ],
         current_model=current_model,
         current_voice=current_voice,
@@ -3526,9 +3434,7 @@ async def set_realtime_options(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=500, detail=f"TOML write failed: {exc}"
-            ) from exc
+            raise HTTPException(status_code=500, detail=f"TOML write failed: {exc}") from exc
 
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "brain", None) is not None:
@@ -3545,9 +3451,7 @@ async def set_realtime_options(
             if voice is not None:
                 pc.voice = voice
         except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
-            log.debug(
-                "In-memory realtime-options update skipped for %s: %s", provider_id, exc
-            )
+            log.debug("In-memory realtime-options update skipped for %s: %s", provider_id, exc)
 
     await _emit(
         request,
@@ -3555,16 +3459,13 @@ async def set_realtime_options(
     )
     current_model, current_voice = _current_realtime_selection(cfg, provider_id)
     selected_provider = str(
-        getattr(getattr(getattr(cfg, "brain", None), "realtime", None), "provider", "")
-        or ""
+        getattr(getattr(getattr(cfg, "brain", None), "realtime", None), "provider", "") or ""
     )
     session_restarted = False
     if selected_provider == provider_id:
         from jarvis.ui.web.voice_runtime import reconnect_realtime
 
-        session_restarted = reconnect_realtime(
-            request, reason=f"realtime_options:{provider_id}"
-        )
+        session_restarted = reconnect_realtime(request, reason=f"realtime_options:{provider_id}")
     _invalidate_section_health_state(request)
     return RealtimeOptionsSaveResponse(
         ok=True,
@@ -3730,8 +3631,7 @@ async def _codex_subscription_voice_sample(
         messages=(
             BrainMessage(
                 "user",
-                "Reply with one short, natural spoken sentence matching this "
-                f"message: {text}",
+                f"Reply with one short, natural spoken sentence matching this message: {text}",
             ),
         ),
         system=subscription_language_directive(language),
@@ -3749,9 +3649,7 @@ async def _codex_subscription_voice_sample(
     tts = build_tts_from_config(active_config.tts)
     pcm = bytearray()
     sample_rate = 0
-    language_code = {"de": "de-DE", "en": "en-US", "es": "es-ES"}.get(
-        language, language
-    )
+    language_code = {"de": "de-DE", "en": "en-US", "es": "es-ES"}.get(language, language)
     try:
         async for chunk in tts.synthesize(answer, language_code=language_code):
             rate = int(chunk.sample_rate or 0)
@@ -3797,9 +3695,7 @@ class RealtimeVoicePreviewBody(BaseModel):
 
 
 @router.post("/providers/{provider_id}/realtime-voice-preview")
-async def realtime_voice_preview(
-    provider_id: str, body: RealtimeVoicePreviewBody
-) -> Response:
+async def realtime_voice_preview(provider_id: str, body: RealtimeVoicePreviewBody) -> Response:
     """Speak a SHORT sample with one of a realtime provider's voices.
 
     Returns ``audio/wav`` (24 kHz mono s16le in a WAV container) so the voice
@@ -3843,8 +3739,7 @@ async def realtime_voice_preview(
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Provider '{provider_id}' has no configured credentials. "
-                "Add its API key first."
+                f"Provider '{provider_id}' has no configured credentials. Add its API key first."
             ),
         )
 
@@ -3871,17 +3766,12 @@ async def realtime_voice_preview(
             ),
         ) from exc
     except Exception as exc:  # noqa: BLE001 — never 500 the page
-        raise HTTPException(
-            status_code=502, detail=f"Voice preview failed: {exc}"
-        ) from exc
+        raise HTTPException(status_code=502, detail=f"Voice preview failed: {exc}") from exc
 
     if not pcm:
         raise HTTPException(
             status_code=502,
-            detail=(
-                "Voice preview produced no audio — check the provider "
-                "connection and quota."
-            ),
+            detail=("Voice preview produced no audio — check the provider connection and quota."),
         )
     wav = _pcm_to_wav(pcm, sample_rate=sample_rate, channels=1)
     return Response(
@@ -4046,10 +3936,14 @@ async def codex_subscription_voice_logout(request: Request) -> dict[str, Any]:
 # is unused until the next voice start. Surface restart_required so the UI shows the
 # "active from next voice start" hint instead of implying the new key is live now.
 # (Brain provider keys hot-reload, so they are deliberately NOT listed here.)
-_RESTART_REQUIRED_SECRET_KEYS: frozenset[str] = frozenset({
-    "groq_api_key", "deepgram_api_key",        # STT
-    "cartesia_api_key", "elevenlabs_api_key",  # TTS
-})
+_RESTART_REQUIRED_SECRET_KEYS: frozenset[str] = frozenset(
+    {
+        "groq_api_key",
+        "deepgram_api_key",  # STT
+        "cartesia_api_key",
+        "elevenlabs_api_key",  # TTS
+    }
+)
 
 
 @router.post("/secrets/{key}", openapi_extra={"x-jarvis-dangerous": True})
@@ -4221,9 +4115,7 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     """
     spec = get_spec(body.provider)
     if spec is None:
-        raise HTTPException(
-            status_code=404, detail=f"Unknown provider: {body.provider}"
-        )
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {body.provider}")
     if spec.tier != "tts":
         raise HTTPException(
             status_code=400,
@@ -4233,8 +4125,7 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Provider '{body.provider}' has no configured credentials. "
-                "Add its API key first."
+                f"Provider '{body.provider}' has no configured credentials. Add its API key first."
             ),
         )
     # Same reasoning as the STT switch: a local provider has no credential to
@@ -4254,9 +4145,7 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=500, detail=f"TOML write failed: {exc}"
-            ) from exc
+            raise HTTPException(status_code=500, detail=f"TOML write failed: {exc}") from exc
 
     # Best-effort live update lets subscribers observe the value immediately
     # when the app-state Pydantic model is mutable.
@@ -4289,7 +4178,9 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             # Keep the root cause and stack in the log for diagnosis.
             log.error(
                 "TTS live switch failed; restart required: %s: %s",
-                type(exc).__name__, exc, exc_info=True,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
             )
             restart_required = True
 
@@ -4412,9 +4303,7 @@ def _tts_voice_entries(provider: str, model: str) -> tuple[list[dict], str, str]
                 detail=f"Model {resolved!r} is not on the TTS allowlist.",
             )
         entries = voice_entries_for_model(resolved)
-        default = MODEL_DEFAULT_VOICE.get(resolved, "") or (
-            entries[0]["id"] if entries else ""
-        )
+        default = MODEL_DEFAULT_VOICE.get(resolved, "") or (entries[0]["id"] if entries else "")
         return entries, resolved, default
 
     models = cc.allowed_models(family=fam)
@@ -4474,9 +4363,7 @@ class TtsVoiceBody(BaseModel):
 
 
 @router.post("/tts/voice")
-async def set_tts_voice_selection(
-    body: TtsVoiceBody, request: Request
-) -> BrainModelSaveResponse:
+async def set_tts_voice_selection(body: TtsVoiceBody, request: Request) -> BrainModelSaveResponse:
     """Persist + live-apply the global TTS voice (``[tts] voice_de``/``voice_en``).
 
     A TTS model ships several voices; this pins the chosen one. Reuses the shared
@@ -4542,9 +4429,7 @@ async def tts_preview(body: TtsPreviewBody) -> Response:
             pcm += bytes(chunk.pcm)
             sample_rate = chunk.sample_rate
     except Exception as exc:  # noqa: BLE001 — never 500 the page
-        raise HTTPException(
-            status_code=502, detail=f"Voice preview failed: {exc}"
-        ) from exc
+        raise HTTPException(status_code=502, detail=f"Voice preview failed: {exc}") from exc
     finally:
         aclose = getattr(tts, "aclose", None)
         if aclose is not None:
@@ -4571,9 +4456,7 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     """
     spec = get_spec(body.provider)
     if spec is None:
-        raise HTTPException(
-            status_code=404, detail=f"Unknown provider: {body.provider}"
-        )
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {body.provider}")
     if spec.tier != "stt":
         raise HTTPException(
             status_code=400,
@@ -4583,8 +4466,7 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Provider '{body.provider}' has no configured credentials. "
-                "Add its API key first."
+                f"Provider '{body.provider}' has no configured credentials. Add its API key first."
             ),
         )
     # A local provider passes the credential check trivially (it has no key), so
@@ -4675,9 +4557,7 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                     rollback_exc,
                     exc_info=True,
                 )
-            raise HTTPException(
-                status_code=500, detail=f"STT provider save failed: {exc}"
-            ) from exc
+            raise HTTPException(status_code=500, detail=f"STT provider save failed: {exc}") from exc
 
     await _emit(request, SecretConfigured(key="stt.provider", action="set"))
 
@@ -4707,16 +4587,11 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     """
     spec = get_spec(body.provider)
     if spec is None:
-        raise HTTPException(
-            status_code=404, detail=f"Unknown provider: {body.provider}"
-        )
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {body.provider}")
     if spec.tier != "realtime":
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Provider '{body.provider}' is not a realtime provider "
-                f"(tier={spec.tier})"
-            ),
+            detail=(f"Provider '{body.provider}' is not a realtime provider (tier={spec.tier})"),
         )
     if spec.experimental and not body.accept_experimental:
         raise HTTPException(
@@ -4737,8 +4612,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "The ChatGPT subscription voice status is being checked. "
-                    "Try again in a moment."
+                    "The ChatGPT subscription voice status is being checked. Try again in a moment."
                 ),
             )
         if codex_payload.get("reason_code") == "login_in_progress":
@@ -4784,10 +4658,9 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             CODEX_SUBSCRIPTION_VOICE_PROFILE,
         )
 
+        client = None
         try:
-            client = get_shared_codex_app_server(
-                _codex_binary_path(request), purpose="text"
-            )
+            client = get_shared_codex_app_server(_codex_binary_path(request), purpose="text")
             await asyncio.wait_for(client.require_chatgpt_login(), timeout=45.0)
         except TimeoutError as exc:
             raise HTTPException(
@@ -4796,6 +4669,23 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             ) from exc
         except Exception as exc:  # noqa: BLE001 - safe activation refusal
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        finally:
+            close = getattr(client, "close", None)
+            if callable(close):
+                try:
+                    await asyncio.shield(close())
+                except Exception as cleanup_exc:  # noqa: BLE001
+                    log.warning(
+                        "Codex subscription activation transport cleanup failed",
+                        exc_info=True,
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "The ChatGPT subscription check could not release its "
+                            "voice transport. Try activation again."
+                        ),
+                    ) from cleanup_exc
         await asyncio.to_thread(set_codex_subscription_activation_block, None)
 
         if body.persist:
@@ -4804,9 +4694,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
 
                 set_voice_profile(CODEX_SUBSCRIPTION_VOICE_PROFILE, mode="pipeline")
             except Exception as exc:  # noqa: BLE001
-                raise HTTPException(
-                    status_code=500, detail=f"TOML write failed: {exc}"
-                ) from exc
+                raise HTTPException(status_code=500, detail=f"TOML write failed: {exc}") from exc
 
         cfg = _resolve_cfg(request)
         voice_cfg = getattr(cfg, "voice", None) if cfg is not None else None
@@ -4817,9 +4705,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
 
         from jarvis.ui.web.voice_runtime import apply_voice_profile
 
-        session_restarted = apply_voice_profile(
-            request, CODEX_SUBSCRIPTION_VOICE_PROFILE
-        )
+        session_restarted = apply_voice_profile(request, CODEX_SUBSCRIPTION_VOICE_PROFILE)
         _invalidate_section_health_state(request)
         return {
             "ok": True,
@@ -4850,10 +4736,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     except TimeoutError as exc:
         raise HTTPException(
             status_code=409,
-            detail=(
-                "The provider's activation check timed out. Try again in a "
-                "moment."
-            ),
+            detail=("The provider's activation check timed out. Try again in a moment."),
         ) from exc
     except Exception as exc:  # noqa: BLE001 - provider gate returns a safe 409
         # A refused plan already recorded its sticky diagnosis where it was
@@ -4882,16 +4765,13 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
 
             if cfg_now is not None and subscription_voice_selected(cfg_now):
                 current_mode = str(
-                    getattr(getattr(cfg_now, "voice", None), "mode", "pipeline")
-                    or "pipeline"
+                    getattr(getattr(cfg_now, "voice", None), "mode", "pipeline") or "pipeline"
                 )
                 set_voice_profile("", mode=current_mode)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=500, detail=f"TOML write failed: {exc}"
-            ) from exc
+            raise HTTPException(status_code=500, detail=f"TOML write failed: {exc}") from exc
 
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "voice", None) is not None:
@@ -4971,9 +4851,7 @@ async def computer_use_switch(body: SwitchBody, request: Request) -> dict[str, A
     """
     spec = get_spec(body.provider)
     if spec is None:
-        raise HTTPException(
-            status_code=404, detail=f"Unknown provider: {body.provider}"
-        )
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {body.provider}")
     if spec.tier != "brain" or not spec.brain_switchable:
         raise HTTPException(
             status_code=400,
@@ -4986,10 +4864,7 @@ async def computer_use_switch(body: SwitchBody, request: Request) -> dict[str, A
     if not _is_credential_present(spec):
         raise HTTPException(
             status_code=409,
-            detail=(
-                f"{spec.label} has no saved API key. Save a key first, "
-                "then activate."
-            ),
+            detail=(f"{spec.label} has no saved API key. Save a key first, then activate."),
         )
 
     if body.persist:
@@ -5000,9 +4875,7 @@ async def computer_use_switch(body: SwitchBody, request: Request) -> dict[str, A
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=500, detail=f"TOML write failed: {exc}"
-            ) from exc
+            raise HTTPException(status_code=500, detail=f"TOML write failed: {exc}") from exc
 
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "brain", None) is not None:
@@ -5035,9 +4908,7 @@ async def computer_use_switch(body: SwitchBody, request: Request) -> dict[str, A
     if hasattr(live_brain, "reactivate_provider"):
         live_brain.reactivate_provider(body.provider)
 
-    await _emit(
-        request, SecretConfigured(key="brain.computer_use.provider", action="set")
-    )
+    await _emit(request, SecretConfigured(key="brain.computer_use.provider", action="set"))
 
     _invalidate_section_health_state(request)
     return {
@@ -5072,9 +4943,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
     )
     if not result.get("ok"):
         raise HTTPException(
-            status_code=_SWITCH_ERROR_STATUS.get(
-                str(result.get("error_kind")), 500
-            ),
+            status_code=_SWITCH_ERROR_STATUS.get(str(result.get("error_kind")), 500),
             detail=result.get("error") or "Agent provider switch failed.",
         )
 
@@ -5126,9 +4995,7 @@ async def jarvis_agent_model(body: SubagentModelBody, request: Request) -> dict[
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=500, detail=f"TOML write failed: {exc}"
-            ) from exc
+            raise HTTPException(status_code=500, detail=f"TOML write failed: {exc}") from exc
 
     # Best-effort in-memory update so the next /jarvis-agent/status reflects the
     # choice immediately (workers resolve their chain per spawn from config).

@@ -8,6 +8,7 @@ follow-up listening, and interruption on Windows, macOS, and Linux.
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
@@ -24,6 +25,8 @@ LEGACY_CODEX_REALTIME_PROVIDER = "codex-subscription-realtime"
 _LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
 _MAX_HISTORY_MESSAGES = 6
 _SUPPORTED_DESKTOP_PLATFORMS = frozenset({"win32", "darwin", "linux"})
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +136,10 @@ class CodexSubscriptionVoiceBrain:
     def __init__(self, delegate: Any, config: object) -> None:
         self._delegate = delegate
         self._config = config
-        self._subscription = CodexBrain(prefer_subscription=True)
+        self._subscription = CodexBrain(
+            prefer_subscription=True,
+            persistent_subscription_transport=True,
+        )
         self._history: list[BrainMessage] = []
         self._conversation_language = ""
         self._last_turn_all_failed = False
@@ -152,6 +158,46 @@ class CodexSubscriptionVoiceBrain:
     async def generate(self, text: str, **kwargs: Any) -> str:
         return "".join([chunk async for chunk in self.generate_stream(text, **kwargs)])
 
+    async def _stream_delegate_turn(
+        self,
+        text: str,
+        *,
+        on_progress: Any | None,
+        **kwargs: Any,
+    ) -> AsyncIterator[str]:
+        delegated_parts: list[str] = []
+        try:
+            async for chunk in self._delegate.generate_stream(
+                text,
+                on_progress=on_progress,
+                **kwargs,
+            ):
+                delegated_parts.append(chunk)
+                yield chunk
+        finally:
+            self._last_turn_all_failed = bool(
+                getattr(self._delegate, "_last_turn_all_failed", False)
+            )
+            self._last_turn_suppressed = bool(
+                getattr(self._delegate, "_last_turn_suppressed", False)
+            )
+            self._last_turn_executed_action_tool = bool(
+                getattr(
+                    self._delegate,
+                    "_last_turn_executed_action_tool",
+                    False,
+                )
+            )
+            delegated_answer = "".join(delegated_parts).strip()
+            if delegated_answer:
+                self._history.extend(
+                    [
+                        BrainMessage("user", text),
+                        BrainMessage("assistant", delegated_answer),
+                    ]
+                )
+                self._history = self._history[-_MAX_HISTORY_MESSAGES:]
+
     async def generate_stream(
         self,
         text: str,
@@ -165,44 +211,27 @@ class CodexSubscriptionVoiceBrain:
             if isinstance(message.content, str)
         )
         turn_plan = plan_turn(text, context=context)
+        action_detector = getattr(self._delegate, "_turn_has_action_intent", None)
+        detected_action = bool(action_detector(text)) if callable(action_detector) else False
         delegate_turn = turn_plan.requires_orchestrator
         if turn_plan.reasons == frozenset({TurnReason.ACTION}):
-            action_detector = getattr(self._delegate, "_turn_has_action_intent", None)
             if callable(action_detector):
-                delegate_turn = bool(action_detector(text))
+                # The planner's broad verb fallback intentionally overmatches
+                # phrases such as "another one please". The mature BrainManager
+                # detector is the authority for this action-only boundary.
+                delegate_turn = detected_action
+        elif detected_action:
+            # Capability-registry actions must never fall through to the
+            # read-only subscription talker, even if their phrasing was not in
+            # the planner's generic action vocabulary.
+            delegate_turn = True
         if delegate_turn:
-            delegated_parts: list[str] = []
-            try:
-                async for chunk in self._delegate.generate_stream(
-                    text,
-                    on_progress=on_progress,
-                    **kwargs,
-                ):
-                    delegated_parts.append(chunk)
-                    yield chunk
-            finally:
-                self._last_turn_all_failed = bool(
-                    getattr(self._delegate, "_last_turn_all_failed", False)
-                )
-                self._last_turn_suppressed = bool(
-                    getattr(self._delegate, "_last_turn_suppressed", False)
-                )
-                self._last_turn_executed_action_tool = bool(
-                    getattr(
-                        self._delegate,
-                        "_last_turn_executed_action_tool",
-                        False,
-                    )
-                )
-                delegated_answer = "".join(delegated_parts).strip()
-                if delegated_answer:
-                    self._history.extend(
-                        [
-                            BrainMessage("user", text),
-                            BrainMessage("assistant", delegated_answer),
-                        ]
-                    )
-                    self._history = self._history[-_MAX_HISTORY_MESSAGES:]
+            async for chunk in self._stream_delegate_turn(
+                text,
+                on_progress=on_progress,
+                **kwargs,
+            ):
+                yield chunk
             return
 
         self._last_turn_all_failed = False
@@ -226,12 +255,29 @@ class CodexSubscriptionVoiceBrain:
             stream=True,
         )
         answer_parts: list[str] = []
-        async for delta in self._subscription.complete(request):
-            if on_progress is not None:
-                on_progress()
-            if delta.content:
-                answer_parts.append(delta.content)
-                yield delta.content
+        try:
+            async for delta in self._subscription.complete(request):
+                if on_progress is not None:
+                    on_progress()
+                if delta.content:
+                    answer_parts.append(delta.content)
+                    yield delta.content
+        except Exception as exc:  # noqa: BLE001 - cross-family fallback boundary
+            if answer_parts:
+                raise
+            log.warning(
+                "Subscription voice transport failed before emitting an answer; "
+                "delegating the turn to the configured provider chain: %s",
+                exc,
+                exc_info=True,
+            )
+            async for chunk in self._stream_delegate_turn(
+                text,
+                on_progress=on_progress,
+                **kwargs,
+            ):
+                yield chunk
+            return
 
         answer = "".join(answer_parts).strip()
         if answer:

@@ -132,6 +132,74 @@ async def test_conversation_turns_stream_through_subscription_with_history() -> 
 
 
 @pytest.mark.asyncio
+async def test_subscription_failure_before_first_delta_uses_provider_chain() -> None:
+    delegated = []
+
+    class Subscription:
+        async def complete(self, _request):
+            raise RuntimeError("subscription transport is busy")
+            yield BrainDelta()  # pragma: no cover - preserves async-generator shape
+
+    class Delegate:
+        _last_turn_all_failed = False
+        _last_turn_suppressed = False
+        _last_turn_executed_action_tool = False
+
+        @staticmethod
+        def _turn_has_action_intent(_text: str) -> bool:
+            return False
+
+        async def generate_stream(self, text, **_kwargs):
+            delegated.append(text)
+            yield "Fallback answer."
+
+    brain = CodexSubscriptionVoiceBrain(Delegate(), _config())
+    brain._subscription = Subscription()
+
+    result = [chunk async for chunk in brain.generate_stream("Tell me a short joke.")]
+
+    assert result == ["Fallback answer."]
+    assert delegated == ["Tell me a short joke."]
+
+
+@pytest.mark.asyncio
+async def test_registered_action_overrides_a_native_conversation_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delegated = []
+
+    class Delegate:
+        _last_turn_all_failed = False
+        _last_turn_suppressed = False
+        _last_turn_executed_action_tool = True
+
+        @staticmethod
+        def _turn_has_action_intent(_text: str) -> bool:
+            return True
+
+        async def generate_stream(self, text, **_kwargs):
+            delegated.append(text)
+            yield "Action completed."
+
+    monkeypatch.setattr(
+        "jarvis.voice.subscription_profile.plan_turn",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            requires_orchestrator=False,
+            reasons=frozenset(),
+        ),
+    )
+    brain = CodexSubscriptionVoiceBrain(Delegate(), _config())
+
+    result = [
+        chunk
+        async for chunk in brain.generate_stream("Use the connected service for this request.")
+    ]
+
+    assert result == ["Action completed."]
+    assert delegated == ["Use the connected service for this request."]
+
+
+@pytest.mark.asyncio
 async def test_action_turns_keep_the_existing_orchestrator() -> None:
     delegated = []
 

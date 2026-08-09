@@ -231,6 +231,7 @@ async def test_plan_unsupported_activation_retries_the_live_gate(
     )
 
     gate_calls: list[object] = []
+    close_calls: list[object] = []
 
     class _Client:
         async def require_chatgpt_login(self) -> None:
@@ -239,15 +240,16 @@ async def test_plan_unsupported_activation_retries_the_live_gate(
                 "Subscription voice permits only personal ChatGPT accounts."
             )
 
+        async def close(self) -> None:
+            close_calls.append(self)
+
     monkeypatch.setattr(
         codex_app_server,
         "get_shared_codex_app_server",
         lambda *_args, **_kwargs: _Client(),
     )
 
-    request = SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(config=None, cfg=None))
-    )
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(config=None, cfg=None)))
     with pytest.raises(HTTPException) as caught:
         await routes.realtime_switch(
             routes.SwitchBody(
@@ -259,6 +261,7 @@ async def test_plan_unsupported_activation_retries_the_live_gate(
         )
 
     assert gate_calls, "the stable text gate must re-judge a plan-blocked account"
+    assert close_calls == gate_calls
     assert caught.value.status_code == 409
     detail = str(caught.value.detail)
     assert "personal ChatGPT accounts" in detail
@@ -406,9 +409,7 @@ def test_status_payload_survives_a_raising_probe(
     def explode(_binary_path: str | None) -> None:
         raise OSError("cli exploded")
 
-    monkeypatch.setattr(
-        codex_app_server, "codex_subscription_auth_snapshot", explode
-    )
+    monkeypatch.setattr(codex_app_server, "codex_subscription_auth_snapshot", explode)
 
     payload = routes._codex_subscription_status_payload(None)
 
@@ -473,9 +474,7 @@ async def test_tier_test_judges_the_isolated_voice_profile(
         assert callable(status_fn)
         return SimpleNamespace(status="ok", detail=status_fn().message)
 
-    monkeypatch.setattr(
-        routes._provider_test, "run_provider_test", capture_run
-    )
+    monkeypatch.setattr(routes._provider_test, "run_provider_test", capture_run)
 
     result = await routes._run_tier_test(spec, SimpleNamespace())
 
@@ -682,9 +681,7 @@ async def test_section_health_reports_login_in_progress_as_unknown(
         },
     )
 
-    health = await routes._tier_section_health(
-        SimpleNamespace(), spec, binary_path="codex-custom"
-    )
+    health = await routes._tier_section_health(SimpleNamespace(), spec, binary_path="codex-custom")
 
     assert health.status == "unknown"
     assert health.reason == "login_in_progress"
@@ -733,9 +730,7 @@ async def test_section_health_hover_names_the_real_remedy(
         },
     )
 
-    health = await routes._tier_section_health(
-        SimpleNamespace(), spec, binary_path="codex-custom"
-    )
+    health = await routes._tier_section_health(SimpleNamespace(), spec, binary_path="codex-custom")
 
     assert health.status == "needs_setup"
     assert health.reason == reason_code
@@ -821,9 +816,14 @@ async def test_subscription_profile_no_longer_requires_experimental_acknowledgem
         },
     )
 
+    close_calls: list[object] = []
+
     class _Client:
         async def require_chatgpt_login(self) -> None:
             return None
+
+        async def close(self) -> None:
+            close_calls.append(self)
 
     monkeypatch.setattr(
         codex_app_server,
@@ -850,6 +850,7 @@ async def test_subscription_profile_no_longer_requires_experimental_acknowledgem
 
     assert response["profile"] == "codex-subscription-voice"
     assert response["mode"] == "pipeline"
+    assert len(close_calls) == 1
 
 
 @pytest.mark.asyncio

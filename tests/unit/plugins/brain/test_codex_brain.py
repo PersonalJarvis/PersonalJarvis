@@ -7,6 +7,7 @@ And even when the CLI ran, the conversational prompt wrapper ("answer in one
 to three short sentences, plain text only") made the wiki's JSON contract
 unfulfillable by instruction. These tests pin both fixes.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -62,7 +63,10 @@ async def _collect(stream: AsyncIterator[BrainDelta]) -> str:
 
 
 def _arm_api_and_oauth(
-    monkeypatch: pytest.MonkeyPatch, brain: CodexBrain, *, status: int,
+    monkeypatch: pytest.MonkeyPatch,
+    brain: CodexBrain,
+    *,
+    status: int,
 ) -> list[str]:
     """API path raises ``status``; OAuth is connected; CLI yields 'cli-answer'."""
     monkeypatch.setattr(CodexBrain, "_api_key", lambda self: "sk-test")
@@ -95,7 +99,8 @@ def _arm_api_and_oauth(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", [401, 402, 403, 429])
 async def test_throttled_api_key_crosses_over_to_the_subscription_cli(
-    monkeypatch: pytest.MonkeyPatch, status: int,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
 ) -> None:
     brain = CodexBrain()
     calls = _arm_api_and_oauth(monkeypatch, brain, status=status)
@@ -142,6 +147,7 @@ class _TextClient:
         self.subscription = _TextSubscription(notifications)
         self.interrupts: list[tuple[str, str]] = []
         self.unsubscribed: list[str] = []
+        self.closed = False
 
     async def text_thread_start(self) -> dict[str, object]:
         return {"thread": {"id": "thread-voice"}}
@@ -162,6 +168,9 @@ class _TextClient:
     async def thread_unsubscribe(self, thread_id: str) -> dict[str, object]:
         self.unsubscribed.append(thread_id)
         return {}
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 def _notification(method: str, **params: object) -> object:
@@ -200,7 +209,7 @@ async def test_app_server_subscription_streams_deltas_without_repeating_final(
         ]
     )
     monkeypatch.setattr(
-        "jarvis.codex_app_server.get_shared_codex_app_server",
+        "jarvis.codex_app_server.CodexAppServerClient",
         lambda *_a, **_k: client,
     )
     brain = CodexBrain(prefer_subscription=True)
@@ -209,6 +218,7 @@ async def test_app_server_subscription_streams_deltas_without_repeating_final(
 
     assert answer == "Hello there."
     assert client.unsubscribed == ["thread-voice"]
+    assert client.closed is True
 
 
 @pytest.mark.asyncio
@@ -229,9 +239,10 @@ async def test_app_server_subscription_interrupts_exact_turn_on_cancel(
         "jarvis.codex_app_server.get_shared_codex_app_server",
         lambda *_a, **_k: client,
     )
-    stream = CodexBrain(prefer_subscription=True)._complete_via_app_server(
-        _wiki_request()
-    )
+    stream = CodexBrain(
+        prefer_subscription=True,
+        persistent_subscription_transport=True,
+    )._complete_via_app_server(_wiki_request())
     assert (await stream.__anext__()).content == "Starting"
     pending = asyncio.create_task(stream.__anext__())
     await asyncio.wait_for(client.subscription.waiting.wait(), timeout=1.0)
@@ -242,6 +253,7 @@ async def test_app_server_subscription_interrupts_exact_turn_on_cancel(
 
     assert client.interrupts == [("thread-voice", "turn-voice")]
     assert client.unsubscribed == ["thread-voice"]
+    assert client.closed is False
 
 
 def test_subscription_cli_command_carries_the_selected_model() -> None:
@@ -360,10 +372,7 @@ def test_cli_timeout_accepts_a_caller_budget() -> None:
     assert CodexBrain(cli_timeout_s=180.0)._cli_timeout_s == 180.0
     # Garbage/zero budgets fall back to the voice-tier default.
     assert CodexBrain(cli_timeout_s=0)._cli_timeout_s == codex_module._CLI_TIMEOUT_S
-    assert (
-        CodexBrain(cli_timeout_s="nope")._cli_timeout_s
-        == codex_module._CLI_TIMEOUT_S
-    )
+    assert CodexBrain(cli_timeout_s="nope")._cli_timeout_s == codex_module._CLI_TIMEOUT_S
 
 
 # ---------------------------------------------------------------------------
@@ -376,9 +385,7 @@ def test_cli_timeout_accepts_a_caller_budget() -> None:
 def test_the_child_gets_a_path_the_npm_launcher_can_find_node_on(monkeypatch) -> None:
     import jarvis.core.path_augment as path_augment
 
-    monkeypatch.setattr(
-        path_augment, "resolve_node_executable", lambda: "/opt/node/bin/node"
-    )
+    monkeypatch.setattr(path_augment, "resolve_node_executable", lambda: "/opt/node/bin/node")
     env = {"PATH": "/usr/local/npm-global"}
     codex_module._ensure_node_reachable(env, "/usr/local/npm-global/codex")
 
@@ -390,9 +397,7 @@ def test_the_child_gets_a_path_the_npm_launcher_can_find_node_on(monkeypatch) ->
 def test_a_path_that_already_has_node_is_left_alone(monkeypatch) -> None:
     import jarvis.core.path_augment as path_augment
 
-    monkeypatch.setattr(
-        path_augment, "resolve_node_executable", lambda: "/opt/node/bin/node"
-    )
+    monkeypatch.setattr(path_augment, "resolve_node_executable", lambda: "/opt/node/bin/node")
     env = {"PATH": "/opt/node/bin"}
     codex_module._ensure_node_reachable(env, "/usr/local/npm-global/codex")
 
@@ -400,7 +405,7 @@ def test_a_path_that_already_has_node_is_left_alone(monkeypatch) -> None:
 
 
 def test_a_launcher_that_cannot_run_without_node_fails_by_name(monkeypatch) -> None:
-    """"Returned no answer" hid the real cause; the error must name it."""
+    """ "Returned no answer" hid the real cause; the error must name it."""
     import jarvis.core.path_augment as path_augment
 
     monkeypatch.setattr(path_augment, "resolve_node_executable", lambda: None)
