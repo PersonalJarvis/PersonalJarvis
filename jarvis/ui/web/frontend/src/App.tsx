@@ -6,6 +6,7 @@ import { useBrainStatus } from "@/hooks/useBrainStatus";
 import { useVoiceStatus } from "@/hooks/useVoiceStatus";
 import { useAssistantNameSeed } from "@/hooks/useAssistantNameSeed";
 import { useCodingMode } from "@/hooks/useCodingMode";
+import { useSectionUrlMemory } from "@/hooks/useSectionUrlMemory";
 import {
   Sidebar,
   SIDEBAR_DEFAULT_WIDTH,
@@ -48,6 +49,16 @@ export default function App() {
   useVoiceStatus();
   useAssistantNameSeed();
   useCodingMode();
+  /*
+   * A reload puts the user back on the section they were on.
+   *
+   * The window reloads itself these days — a rebuilt frontend is picked up by
+   * lib/bundleWatch instead of by restarting the application — and every one of
+   * those reloads used to land on the default section, because the active one
+   * lived only in the store. It is written into the address instead, which the
+   * reload carries over. See hooks/useSectionUrlMemory.
+   */
+  useSectionUrlMemory();
 
   /*
    * Remember which field the user is typing in, app-wide.
