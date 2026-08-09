@@ -1835,7 +1835,7 @@ class LocalRealtimeProvider:
                     ready = bool(
                         supervisor.wait_until_ready(
                             provider._base_url,
-                            timeout=provider._connect_retry_window_s(),
+                            timeout=supervisor.RUNTIME_READY_TIMEOUT_S,
                             launch_command=provider._launch_command,
                             cleanup_on_timeout=True,
                         )

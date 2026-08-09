@@ -49,9 +49,13 @@ log = logging.getLogger(__name__)
 #: historical revive rate limit.
 SPAWN_MIN_INTERVAL_S = 60.0
 
-# Installed checkpoints are already local after the mandatory smoke boot;
-# 120 seconds still covers the measured 90-second CUDA graph cold start.
-RUNTIME_READY_TIMEOUT_S = 120.0
+# Installed checkpoints are already local after the mandatory smoke boot, but
+# imports, CUDA graph capture, STT warm-up and the local brain can still take
+# more than two minutes on a contended 16 GB host.  This five-minute ceiling is
+# for background supervision only; an interactive call keeps its shorter
+# provider-owned connection budget.  It is deliberately bounded so a genuine
+# native hang is still reclaimed.
+RUNTIME_READY_TIMEOUT_S = 300.0
 RUNTIME_READY_POLL_S = 0.5
 OWNED_STARTUP_TIMEOUT_S = RUNTIME_READY_TIMEOUT_S
 

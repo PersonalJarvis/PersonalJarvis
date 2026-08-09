@@ -651,17 +651,21 @@ async def test_warm_transport_prewarms_via_the_supervisor(
     from jarvis.realtime.local_server import install, supervisor
 
     calls: list[str] = []
+    readiness_timeouts: list[float] = []
     monkeypatch.setattr(
         supervisor,
         "ensure_running",
         lambda **kwargs: calls.append(f"run:{kwargs['reason']}") or "spawned",
     )
     monkeypatch.setattr(supervisor, "is_managed_launch_command", lambda command: True)
-    monkeypatch.setattr(
-        supervisor,
-        "wait_until_ready",
-        lambda *args, **kwargs: calls.append("ready") or True,
-    )
+
+    def wait_until_ready(*args: Any, **kwargs: Any) -> bool:
+        del args
+        calls.append("ready")
+        readiness_timeouts.append(float(kwargs["timeout"]))
+        return True
+
+    monkeypatch.setattr(supervisor, "wait_until_ready", wait_until_ready)
     monkeypatch.setattr(
         supervisor, "warm_brain", lambda **kwargs: calls.append("warm") or True
     )
@@ -680,6 +684,8 @@ async def test_warm_transport_prewarms_via_the_supervisor(
     cfg = _warm_cfg("http://localhost:8765", f'"{exe}" --model_name m')
     assert await LocalRealtimeProvider.warm_transport(cfg) is True
     assert calls == ["run:prewarm", "ready", "marker", "monitor", "warm"]
+    assert readiness_timeouts == [supervisor.RUNTIME_READY_TIMEOUT_S]
+    assert readiness_timeouts[0] >= 300.0
 
 
 async def test_warm_transport_never_warms_the_brain_before_speech_is_ready(

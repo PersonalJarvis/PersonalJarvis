@@ -262,6 +262,52 @@ def test_an_alive_owned_process_is_not_double_spawned(monkeypatch, tmp_path) -> 
     assert outcome == "already-running"
 
 
+def test_slow_managed_cold_start_survives_beyond_interactive_budget(
+    monkeypatch, tmp_path
+) -> None:
+    """A healthy cold boot observed at 122 s must not be mistaken for a zombie."""
+    from jarvis.realtime.local_server import install
+
+    supervisor._reset_for_tests()
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    entrypoint = install.install_root() / "venv" / "server.exe"
+    command = f'"{entrypoint}" --mode realtime --ws_host 127.0.0.1'
+    (tmp_path / "local_realtime_server.pid.json").write_text(
+        json.dumps(
+            {
+                "pid": 4711,
+                "create_time": 1000.0,
+                "spawned_at": time.time() - 180.0,
+                "port": 8765,
+                "command": command,
+                "spawn_token": "slow-cold-start",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: None)
+    monkeypatch.setattr(supervisor, "_port_open", lambda *args, **kwargs: False)
+    monkeypatch.setattr(supervisor, "_process_create_time", lambda pid: 1000.0)
+
+    def forbidden_kill(pid: int) -> bool:
+        raise AssertionError(f"progressing cold-start pid {pid} must stay alive")
+
+    def forbidden_spawn(candidate: str, **kwargs: Any) -> int:
+        raise AssertionError(f"must not double-spawn while {candidate!r} is loading")
+
+    monkeypatch.setattr(supervisor, "_kill_pid_tree", forbidden_kill)
+    monkeypatch.setattr(supervisor, "_spawn", forbidden_spawn)
+
+    outcome = supervisor.ensure_running(
+        launch_command=command,
+        base_url="http://127.0.0.1:8765",
+        reason="test",
+    )
+
+    assert supervisor.OWNED_STARTUP_TIMEOUT_S >= 300.0
+    assert outcome == "already-running"
+
+
 def test_an_owned_managed_zombie_is_replaced_after_startup_deadline(
     monkeypatch, tmp_path
 ) -> None:
