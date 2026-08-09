@@ -27,6 +27,7 @@ vi.mock("@/i18n", () => ({
       "apikeys_model_pull.installed": "Installed",
       "apikeys_model_pull.download": "Download",
       "apikeys_model_pull.custom_placeholder": "Search the library, or type an exact name…",
+      "apikeys_model_pull.library_title": "Every model in the Ollama library",
       "apikeys_model_pull.library_searching": "Searching the library…",
       "apikeys_model_pull.library_no_results": "No models found for that search.",
       "apikeys_model_pull.library_loading_versions": "Loading versions…",
@@ -420,6 +421,21 @@ function libraryFetchMock(overrides: Record<string, unknown> = {}) {
 }
 
 describe("local model download panel — browsing the public library", () => {
+  it("says on the card that the whole library is searchable here", async () => {
+    // The first version of this shipped as a bare input with a changed
+    // placeholder, sitting exactly where the old blind text field had been.
+    // It worked, and it was invisible — reported as "there is no model
+    // search". A feature indistinguishable from what it replaced has not
+    // been delivered, so the heading is part of the feature, not decoration.
+    libraryFetchMock();
+
+    render(<AuthWidget descriptor={PULL_CARD} onChanged={() => {}} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Every model in the Ollama library")).toBeTruthy(),
+    );
+  });
+
   it("does not touch the public catalog until the user asks", async () => {
     // The panel renders inside a provider LIST; searching on mount would hit
     // the catalog once per card on every render of the settings view.

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Bot, Brain, Check, ChevronDown, Copy, Download, HardDrive, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Sparkles, Square, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
+import { AlertCircle, Bot, Brain, Check, ChevronDown, Copy, Download, HardDrive, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Search, Sparkles, Square, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
@@ -2635,18 +2635,30 @@ function LibraryBrowser({
 
   return (
     <div className="space-y-2 border-t border-border/50 pt-2" data-testid="model-library">
+      {/* The first version of this shipped as a bare input with a changed
+          placeholder, in the exact spot the old blind text field had occupied.
+          It worked and nobody could see it: a feature that looks identical to
+          what it replaced has not been delivered. Hence the heading — the
+          panel has to SAY that the whole catalog is searchable here. */}
+      <p className="flex items-center gap-1.5 text-xs font-medium">
+        <Search className="h-3.5 w-3.5 text-muted-foreground" />
+        {t("apikeys_model_pull.library_title")}
+      </p>
       <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={query}
-          onFocus={() => setBrowsing(true)}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setBrowsing(true);
-          }}
-          placeholder={t("apikeys_model_pull.custom_placeholder")}
-          className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
-        />
+        <div className="relative w-full">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="text"
+            value={query}
+            onFocus={() => setBrowsing(true)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setBrowsing(true);
+            }}
+            placeholder={t("apikeys_model_pull.custom_placeholder")}
+            className="h-8 w-full rounded-md border border-border bg-background pl-7 pr-2 text-xs"
+          />
+        </div>
         {/* The exact-name path the panel has always had: whatever is typed can
             be pulled directly, whether or not the catalog was reachable. */}
         <Button

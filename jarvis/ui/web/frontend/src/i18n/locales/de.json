@@ -1369,6 +1369,7 @@
     "installed": "Installiert",
     "download": "Laden",
     "custom_placeholder": "Bibliothek durchsuchen oder genauen Namen eingeben…",
+    "library_title": "Alle Modelle der Ollama-Bibliothek",
     "library_searching": "Bibliothek wird durchsucht…",
     "library_no_results": "Keine Modelle für diese Suche gefunden.",
     "library_loading_versions": "Versionen werden geladen…",
