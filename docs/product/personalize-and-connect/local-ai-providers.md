@@ -8,7 +8,7 @@ order: 7
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-30
+last_reviewed: 2026-08-09
 phase: "-"
 audience: end-user
 tags: [providers, local-ai, ollama, speech-recognition, text-to-speech, privacy, self-hosting]
@@ -71,6 +71,36 @@ advice, not a limit — a graphics card can run a model the note calls tight.
 
 Generic image support is treated as unknown. Use capable Ollama or a hosted
 provider for images; tools still depend on the loaded model.
+
+#### Recommended llama.cpp preset
+
+For a machine with about 12 GB or more of usable GPU memory, the current
+balanced preset is Google's instruction-tuned Gemma 4 12B QAT Q4_0. It is
+about 7.2 GB, so it leaves room for context instead of spilling model weights
+to system memory. Install the current llama.cpp release:
+
+```powershell
+winget install --id ggml.llamacpp --exact
+```
+
+On macOS or Linux, use the current package from your package manager or the
+official llama.cpp installer. Then start the same OpenAI-compatible endpoint
+on every platform:
+
+```text
+llama-server -hf google/gemma-4-12B-it-qat-q4_0-gguf:Q4_0 --host 127.0.0.1 --port 8080 --ctx-size 32768 --parallel 1 -ngl 99 --flash-attn on --jinja --alias gemma-4-12b-it-qat-q4_0
+```
+
+In **Local server (OpenAI-compatible)**, use
+`http://127.0.0.1:8080` and model `gemma-4-12b-it-qat-q4_0`. The matching
+optional block ships in `jarvis.toml.example`; the cloud provider remains the
+fresh-install default. Users with enough memory can instead serve
+`ggml-org/Qwen3.6-35B-A3B-GGUF:Q4_K_M`, but its model file alone is about
+20.4 GB, so it is not the right preset for a 16 GB GPU. On a 16 GB card, keep
+the single llama.cpp slot above and budget any co-resident Ollama profile
+explicitly. If inference becomes unstable, inspect `ollama ps` and stop
+unrelated runners with `ollama stop <model>`; unbounded contexts can exhaust
+VRAM even when the model weights appear to fit.
 
 ## Install Local Speech
 
