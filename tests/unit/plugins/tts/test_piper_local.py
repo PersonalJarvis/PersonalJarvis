@@ -171,6 +171,41 @@ def test_declares_that_it_runs_on_device() -> None:
     assert PiperLocalTTS.runs_on_device is True
 
 
+def test_callback_capable_engine_yields_incremental_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StreamingEngine:
+        sample_rate = 22_050
+
+        def generate(self, _text, _speaker, _speed, *, callback):
+            callback(np.full(100, 0.1, dtype=np.float32), 0.5)
+            callback(np.full(100, 0.2, dtype=np.float32), 1.0)
+            return _FakeAudio(seconds=0.0)
+
+    monkeypatch.setattr(
+        "jarvis.speech.local_models.bundle_present",
+        lambda _model_id, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        PiperLocalTTS,
+        "_build_engine",
+        lambda _self, _model_id: StreamingEngine(),
+    )
+    tts = PiperLocalTTS()
+
+    async def collect() -> list[bytes]:
+        return [
+            chunk.pcm
+            async for chunk in tts.synthesize("Hello", language_code="en-US")
+        ]
+
+    chunks = asyncio.run(collect())
+
+    assert PiperLocalTTS.supports_streaming is True
+    assert len(chunks) == 2
+    assert all(chunks)
+
+
 def test_voices_cover_every_supported_reply_language() -> None:
     """The catalog must not leave a supported language mute.
 

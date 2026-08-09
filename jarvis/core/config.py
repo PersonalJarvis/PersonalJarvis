@@ -2464,6 +2464,13 @@ class VoiceConfig(BaseModel):
     # reserved for an EXPLICIT user pick (mode present in the TOML), so a
     # fresh keyless install degrades silently instead of nagging every call.
     mode: str = "realtime"
+    # Session-scoped voice composition. Empty keeps the selected engine's
+    # normal brain. ``codex-subscription-voice`` keeps the proven local
+    # microphone/STT/TTS/playback pipeline and replaces only conversational
+    # text generation with the stable Codex App Server subscription transport.
+    # The legacy realtime provider id is migrated at read time by
+    # ``jarvis.voice.subscription_profile``.
+    profile: str = ""
     # Realtime tool exposure. "delegate" (default) gives the live model one
     # compact jarvis_action function and hands action turns to the key-aware
     # router Brain. This keeps the persistent realtime prompt small; declaring

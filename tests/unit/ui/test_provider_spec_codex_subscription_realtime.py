@@ -32,7 +32,7 @@ def test_codex_subscription_realtime_spec_has_no_api_key_path() -> None:
     assert spec.auth_mode == "codex"
     assert spec.secret_keys == ()
     assert provider_billing(spec) == "subscription"
-    assert spec.experimental is True
+    assert spec.experimental is False
 
 
 @pytest.mark.parametrize(
@@ -214,7 +214,7 @@ async def test_plan_unsupported_activation_retries_the_live_gate(
 ) -> None:
     """plan_unsupported must reach verify_activation (the only path that can
     CLEAR the sticky block) and answer with the plan diagnosis on re-refusal."""
-    import jarvis.core.registry as registry
+    from jarvis import codex_app_server
     from jarvis.codex_app_server import CodexSubscriptionPlanUnsupported
 
     monkeypatch.setattr(routes, "_codex_binary_path", lambda *_args: "codex")
@@ -232,15 +232,18 @@ async def test_plan_unsupported_activation_retries_the_live_gate(
 
     gate_calls: list[object] = []
 
-    class _Provider:
-        @classmethod
-        async def verify_activation(cls, cfg: object) -> None:
-            gate_calls.append(cfg)
+    class _Client:
+        async def require_chatgpt_login(self) -> None:
+            gate_calls.append(self)
             raise CodexSubscriptionPlanUnsupported(
                 "Subscription voice permits only personal ChatGPT accounts."
             )
 
-    monkeypatch.setattr(registry, "load", lambda *_args, **_kwargs: _Provider)
+    monkeypatch.setattr(
+        codex_app_server,
+        "get_shared_codex_app_server",
+        lambda *_args, **_kwargs: _Client(),
+    )
 
     request = SimpleNamespace(
         app=SimpleNamespace(state=SimpleNamespace(config=None, cfg=None))
@@ -255,7 +258,7 @@ async def test_plan_unsupported_activation_retries_the_live_gate(
             request,
         )
 
-    assert gate_calls, "the live gate must re-judge a plan-blocked account"
+    assert gate_calls, "the stable text gate must re-judge a plan-blocked account"
     assert caught.value.status_code == 409
     detail = str(caught.value.detail)
     assert "personal ChatGPT accounts" in detail
@@ -801,29 +804,52 @@ def test_reason_code_vocabulary_is_pinned() -> None:
 
 
 @pytest.mark.asyncio
-async def test_realtime_activation_requires_experimental_acknowledgement(
+async def test_subscription_profile_no_longer_requires_experimental_acknowledgement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def unexpected_probe(*_args, **_kwargs) -> bool:
-        pytest.fail("the experimental acknowledgement must be checked first")
+    from jarvis import codex_app_server
 
     monkeypatch.setattr(
         routes,
-        "_provider_credential_present_async",
-        unexpected_probe,
+        "_codex_subscription_status_payload",
+        lambda _binary_path: {
+            "installed": True,
+            "connected": True,
+            "mode": "chatgpt",
+            "message": "ready",
+            "reason_code": "ready",
+        },
     )
 
-    with pytest.raises(HTTPException) as caught:
-        await routes.realtime_switch(
-            routes.SwitchBody(
-                provider="codex-subscription-realtime",
-                persist=False,
-            ),
-            object(),
-        )
+    class _Client:
+        async def require_chatgpt_login(self) -> None:
+            return None
 
-    assert caught.value.status_code == 409
-    assert "Explicitly acknowledge" in str(caught.value.detail)
+    monkeypatch.setattr(
+        codex_app_server,
+        "get_shared_codex_app_server",
+        lambda *_args, **_kwargs: _Client(),
+    )
+    monkeypatch.setattr(
+        codex_app_server,
+        "set_codex_subscription_activation_block",
+        lambda _value: None,
+    )
+    config = SimpleNamespace(
+        codex=SimpleNamespace(binary_path="codex"),
+        voice=SimpleNamespace(profile="", mode="realtime"),
+        brain=SimpleNamespace(realtime=None),
+    )
+    response = await routes.realtime_switch(
+        routes.SwitchBody(
+            provider="codex-subscription-realtime",
+            persist=False,
+        ),
+        SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(config=config))),
+    )
+
+    assert response["profile"] == "codex-subscription-voice"
+    assert response["mode"] == "pipeline"
 
 
 @pytest.mark.asyncio

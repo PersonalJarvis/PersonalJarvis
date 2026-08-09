@@ -1227,6 +1227,27 @@ def set_voice_mode(mode: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "voice", "mode", mode)
 
 
+def set_voice_profile(
+    profile: str,
+    *,
+    mode: str = "pipeline",
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist one session-scoped voice profile and its compatible engine.
+
+    Both keys land in the same atomic TOML rewrite. This prevents an upgrade
+    or interrupted settings write from leaving the subscription profile paired
+    with the experimental realtime engine.
+    """
+    _patch_table(
+        path,
+        "voice",
+        "profile",
+        str(profile or "").strip(),
+        extra={"mode": str(mode or "pipeline").strip().lower()},
+    )
+
+
 def set_realtime_provider(provider: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the active realtime-voice provider to ``[brain.realtime] provider``.
 

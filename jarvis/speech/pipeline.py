@@ -2142,7 +2142,19 @@ class SpeechPipeline:
                 getattr(config.trigger, "require_hey_prefix", True)
             )
         self._require_hey_prefix = bool(require_hey_prefix) and cfg_require
-        self._brain: BrainCallback = brain_callback or _echo_brain
+        self._base_brain: BrainCallback = brain_callback or _echo_brain
+        self._brain: BrainCallback = self._base_brain
+        # This profile owns only conversational text generation. The mature
+        # cross-platform STT, sentence-TTS, playback receipts, follow-up
+        # listening and barge-in machinery below stays the single audio path.
+        if config is not None:
+            from jarvis.voice.subscription_profile import (  # noqa: PLC0415
+                CodexSubscriptionVoiceBrain,
+                subscription_voice_selected,
+            )
+
+            if subscription_voice_selected(config):
+                self._brain = CodexSubscriptionVoiceBrain(self._brain, config)
         # Flash-Brain reference (None when feature disabled).
         self._ack_brain: Any = ack_brain
         self._turn_state = TurnTakingState.IDLE
@@ -6015,6 +6027,14 @@ class SpeechPipeline:
 
     def _configured_voice_mode(self) -> str:
         """Return the normalized configured engine for the next session."""
+        config = getattr(self, "_config", None)
+        if config is not None:
+            from jarvis.voice.subscription_profile import (  # noqa: PLC0415
+                subscription_voice_selected,
+            )
+
+            if subscription_voice_selected(config):
+                return "pipeline"
         mode = str(
             getattr(
                 getattr(getattr(self, "_config", None), "voice", None),
@@ -6035,11 +6055,23 @@ class SpeechPipeline:
         """
         active_mode = getattr(self, "_active_voice_mode", None)
         session_id = getattr(self, "_current_voice_session_id", None)
+        config = getattr(self, "_config", None)
+        configured_profile = ""
+        if config is not None:
+            from jarvis.voice.subscription_profile import (  # noqa: PLC0415
+                configured_voice_profile,
+            )
+
+            configured_profile = configured_voice_profile(config)
         return {
             "configured_mode": self._configured_voice_mode(),
+            "configured_profile": configured_profile,
             "session_active": bool(session_id),
             "session_id": str(session_id or ""),
             "active_session_mode": active_mode,
+            "active_session_profile": (
+                configured_profile if active_mode == "pipeline" and session_id else ""
+            ),
             "active_session_provider": (
                 getattr(self, "_active_realtime_provider", "")
                 if active_mode == "realtime"
@@ -6077,6 +6109,33 @@ class SpeechPipeline:
         active_mode = getattr(self, "_active_voice_mode", None)
         if self._state != PipelineState.IDLE and active_mode != normalized:
             return self._schedule_engine_reopen(f"mode:{normalized}")
+        return False
+
+    def apply_voice_profile(self, profile: str) -> bool:
+        """Apply a session-scoped voice composition without restarting the app."""
+        from jarvis.voice.subscription_profile import (  # noqa: PLC0415
+            CODEX_SUBSCRIPTION_VOICE_PROFILE,
+            CodexSubscriptionVoiceBrain,
+        )
+
+        normalized = str(profile or "").strip().lower()
+        if normalized not in {"", CODEX_SUBSCRIPTION_VOICE_PROFILE}:
+            raise ValueError(f"Unsupported voice profile: {profile!r}")
+        voice = getattr(getattr(self, "_config", None), "voice", None)
+        if voice is not None:
+            voice.profile = normalized
+            if normalized:
+                voice.mode = "pipeline"
+        if normalized:
+            if not isinstance(self._brain, CodexSubscriptionVoiceBrain):
+                self._brain = CodexSubscriptionVoiceBrain(
+                    getattr(self, "_base_brain", self._brain),
+                    self._config,
+                )
+        else:
+            self._brain = getattr(self, "_base_brain", self._brain)
+        if getattr(self, "_state", PipelineState.IDLE) != PipelineState.IDLE:
+            return self._schedule_engine_reopen(f"profile:{normalized or 'default'}")
         return False
 
     def reconnect_realtime_session(self, *, reason: str) -> bool:

@@ -119,4 +119,11 @@ def test_get_realtime_options_reports_preview_capability(
     assert subscription_response.status_code == 200
     body = subscription_response.json()
     assert body["preview_available"] is True
-    assert [voice["id"] for voice in body["voices"]][0] == "cove"
+    assert body["models"] == [
+        {"id": "auto", "label": "Codex App Server (subscription text)"}
+    ]
+    assert body["voices"] == [
+        {"id": "configured-tts", "label": "Configured Jarvis voice output"}
+    ]
+    assert body["current_model"] == "auto"
+    assert body["current_voice"] == "configured-tts"

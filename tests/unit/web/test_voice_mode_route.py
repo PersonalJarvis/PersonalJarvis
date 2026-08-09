@@ -124,6 +124,41 @@ def test_get_voice_mode_reports_browser_offer_capability(monkeypatch):
     assert body["transport_offer_detail"] == "Embedded desktop WebRTC offer is ready."
 
 
+def test_get_voice_mode_reports_stable_subscription_profile(monkeypatch):
+    from jarvis.platform import capabilities
+    from jarvis.ui.web import provider_routes
+
+    monkeypatch.setattr(
+        provider_routes,
+        "_codex_subscription_status_payload",
+        lambda _binary: {
+            "connected": True,
+            "reason_code": "ready",
+        },
+    )
+    monkeypatch.setattr(
+        capabilities,
+        "detect_capabilities",
+        lambda: SimpleNamespace(display_present=True),
+    )
+    app = _app(mode="realtime")
+    app.state.config.voice.profile = "codex-subscription-voice"
+    app.state.config.brain = SimpleNamespace(realtime=None, providers={})
+    app.state.config.stt = SimpleNamespace(provider="nemotron-local")
+    app.state.config.tts = SimpleNamespace(provider="piper-local")
+    app.state.speech_pipeline = object()
+
+    body = TestClient(app).get("/api/settings/voice-mode").json()
+
+    assert body["mode"] == "pipeline"
+    assert body["profile"] == "codex-subscription-voice"
+    assert body["active_provider"] == "codex-subscription-realtime"
+    assert body["active_model"] == "subscription-text"
+    assert body["active_model_label"] == "Codex App Server (subscription text)"
+    assert body["requires_webrtc_offer"] is False
+    assert body["subscription_voice_capability"]["available"] is True
+
+
 def test_get_voice_mode_cross_family_gemini_only(monkeypatch):
     """Feature A2: realtime_available must NOT be OpenAI-only — a user with
     only a Gemini key gets realtime_available=true, active_provider=gemini-live."""

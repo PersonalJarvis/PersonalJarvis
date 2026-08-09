@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import wave
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -17,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from jarvis.core import config as cfg_mod
 from jarvis.core.config import JarvisConfig
+from jarvis.core.protocols import AudioChunk, BrainDelta
 from jarvis.ui.web import provider_routes
 from jarvis.ui.web.provider_routes import router
 
@@ -109,6 +111,42 @@ def test_subscription_preview_does_not_require_an_api_key(
     )
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_subscription_sampler_uses_text_brain_and_configured_tts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.plugins import tts as tts_module
+    from jarvis.plugins.brain import codex
+
+    requests = []
+
+    async def complete(_self, request):
+        requests.append(request)
+        yield BrainDelta(content="Ready.")
+        yield BrainDelta(finish_reason="stop")
+
+    class TTS:
+        async def synthesize(self, text, *, language_code=None):
+            assert text == "Ready."
+            assert language_code == "de-DE"
+            yield AudioChunk(b"\x01\x02" * 10, 22_050, 0, 1)
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(codex.CodexBrain, "complete", complete)
+    monkeypatch.setattr(cfg_mod, "load_config", lambda: SimpleNamespace(tts=object()))
+    monkeypatch.setattr(tts_module, "build_tts_from_config", lambda _cfg: TTS())
+
+    pcm, rate = await provider_routes._codex_subscription_voice_sample(
+        "", model="", voice="cove", text="Ready.", language="de"
+    )
+
+    assert pcm == b"\x01\x02" * 10
+    assert rate == 22_050
+    assert requests and requests[0].tools == ()
 
 
 def test_happy_path_returns_playable_wav(monkeypatch: pytest.MonkeyPatch) -> None:

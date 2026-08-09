@@ -749,6 +749,13 @@ def _active_realtime(request: Request) -> str | None:
     """
     try:
         cfg = _resolve_cfg(request)
+        from jarvis.voice.subscription_profile import (  # noqa: PLC0415
+            LEGACY_CODEX_REALTIME_PROVIDER,
+            subscription_voice_selected,
+        )
+
+        if cfg is not None and subscription_voice_selected(cfg):
+            return LEGACY_CODEX_REALTIME_PROVIDER
         realtime_cfg = getattr(getattr(cfg, "brain", None), "realtime", None)
         provider = (getattr(realtime_cfg, "provider", None) or "").strip()
         if provider:
@@ -3430,6 +3437,27 @@ async def get_realtime_options(provider_id: str, request: Request) -> RealtimeOp
     dicts directly rather than going through ``catalog_spec``.
     """
     _require_realtime_provider(provider_id)
+    if provider_id == "codex-subscription-realtime":
+        # The visible id is a compatibility alias. This profile no longer uses
+        # ChatGPT-Live's server-selected model or voices: Codex streams text and
+        # the configured Jarvis TTS owns synthesis. Keep the existing generic
+        # control honest without coupling this backend fix to a frontend build.
+        return RealtimeOptionsResponse(
+            provider=provider_id,
+            models=[
+                RealtimeOptionInfo(
+                    id="auto", label="Codex App Server (subscription text)"
+                )
+            ],
+            voices=[
+                RealtimeOptionInfo(
+                    id="configured-tts", label="Configured Jarvis voice output"
+                )
+            ],
+            current_model="auto",
+            current_voice="configured-tts",
+            preview_available=True,
+        )
     from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
 
     cfg = _resolve_cfg(request)
@@ -3688,39 +3716,57 @@ async def _openai_realtime_voice_sample(
 async def _codex_subscription_voice_sample(
     api_key: str, *, model: str, voice: str, text: str, language: str
 ) -> tuple[bytes, int]:
-    """Sample the subscription voice through its own ChatGPT-Live transport."""
-    del api_key, model
-    from jarvis.plugins.realtime.codex_subscription import (  # noqa: PLC0415
-        CodexSubscriptionRealtimeProvider,
+    """Exercise the stable subscription-text -> configured-TTS voice path."""
+    del api_key, model, voice
+    from jarvis.core.protocols import BrainMessage, BrainRequest  # noqa: PLC0415
+    from jarvis.plugins.brain.codex import CodexBrain  # noqa: PLC0415
+    from jarvis.plugins.tts import build_tts_from_config  # noqa: PLC0415
+    from jarvis.voice.subscription_profile import (  # noqa: PLC0415
+        subscription_language_directive,
     )
-    from jarvis.realtime.protocol import RealtimeSessionConfig  # noqa: PLC0415
 
-    provider = CodexSubscriptionRealtimeProvider(
-        binary_path=_codex_binary_path(),
-        # A preview sends no microphone audio and needs no input recognizer.
-        input_transcriber_factory=lambda: None,
+    brain = CodexBrain(prefer_subscription=True)
+    request = BrainRequest(
+        messages=(
+            BrainMessage(
+                "user",
+                "Reply with one short, natural spoken sentence matching this "
+                f"message: {text}",
+            ),
+        ),
+        system=subscription_language_directive(language),
+        stream=True,
     )
-    session = await provider.open_session(
-        RealtimeSessionConfig(
-            instructions="Speak only the trusted sample text supplied by the client.",
-            language=language,
-            voice=voice,
-        )
-    )
+    answer_parts: list[str] = []
+    async for delta in brain.complete(request):
+        if delta.content:
+            answer_parts.append(delta.content)
+    answer = "".join(answer_parts).strip()
+    if not answer:
+        raise RuntimeError("The subscription text transport returned no sample.")
+
+    active_config = cfg_mod.load_config()
+    tts = build_tts_from_config(active_config.tts)
     pcm = bytearray()
-    sample_rate = int(getattr(provider, "output_sample_rate", 24_000) or 24_000)
+    sample_rate = 0
+    language_code = {"de": "de-DE", "en": "en-US", "es": "es-ES"}.get(
+        language, language
+    )
     try:
-        await session.send_speech(text)
-        async for event in session.receive():
-            if event.type == "audio_delta" and event.audio is not None:
-                pcm += bytes(event.audio.pcm)
-                sample_rate = int(event.audio.sample_rate or sample_rate)
-            elif event.type == "error":
-                raise RuntimeError(str(event.error or "subscription preview failed"))
-            elif event.type == "turn_complete":
-                break
+        async for chunk in tts.synthesize(answer, language_code=language_code):
+            rate = int(chunk.sample_rate or 0)
+            if sample_rate and rate != sample_rate:
+                raise RuntimeError("The configured voice changed sample rate mid-sample.")
+            sample_rate = rate
+            pcm += bytes(chunk.pcm)
     finally:
-        await session.close()
+        close = getattr(tts, "aclose", None)
+        if callable(close):
+            closed = close()
+            if inspect.isawaitable(closed):
+                await closed
+    if not pcm or sample_rate <= 0:
+        raise RuntimeError("The configured voice produced no audible sample.")
     return bytes(pcm), sample_rate
 
 
@@ -3768,11 +3814,14 @@ async def realtime_voice_preview(
     voice = body.voice.strip()
     if not voice:
         raise HTTPException(status_code=400, detail="A voice id is required.")
+    allowed_voices = {option.id for option in REALTIME_VOICES.get(provider_id, ())}
+    if provider_id == "codex-subscription-realtime":
+        allowed_voices.add("configured-tts")
     _validate_realtime_option(
         provider_id=provider_id,
         field="voice",
         value=voice,
-        allowed={option.id for option in REALTIME_VOICES.get(provider_id, ())},
+        allowed=allowed_voices,
     )
     model = body.model.strip()
     _validate_realtime_option(
@@ -4726,6 +4775,61 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 "Connect or configure this provider first."
             ),
         )
+    if spec.id == "codex-subscription-realtime":
+        from jarvis.codex_app_server import (
+            get_shared_codex_app_server,
+            set_codex_subscription_activation_block,
+        )
+        from jarvis.voice.subscription_profile import (
+            CODEX_SUBSCRIPTION_VOICE_PROFILE,
+        )
+
+        try:
+            client = get_shared_codex_app_server(
+                _codex_binary_path(request), purpose="text"
+            )
+            await asyncio.wait_for(client.require_chatgpt_login(), timeout=45.0)
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="The ChatGPT subscription text check timed out. Try again.",
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - safe activation refusal
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        await asyncio.to_thread(set_codex_subscription_activation_block, None)
+
+        if body.persist:
+            try:
+                from jarvis.core.config_writer import set_voice_profile
+
+                set_voice_profile(CODEX_SUBSCRIPTION_VOICE_PROFILE, mode="pipeline")
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(
+                    status_code=500, detail=f"TOML write failed: {exc}"
+                ) from exc
+
+        cfg = _resolve_cfg(request)
+        voice_cfg = getattr(cfg, "voice", None) if cfg is not None else None
+        if voice_cfg is not None:
+            voice_cfg.profile = CODEX_SUBSCRIPTION_VOICE_PROFILE
+            voice_cfg.mode = "pipeline"
+        await _emit(request, SecretConfigured(key="voice.profile", action="set"))
+
+        from jarvis.ui.web.voice_runtime import apply_voice_profile
+
+        session_restarted = apply_voice_profile(
+            request, CODEX_SUBSCRIPTION_VOICE_PROFILE
+        )
+        _invalidate_section_health_state(request)
+        return {
+            "ok": True,
+            "active": body.provider,
+            "profile": CODEX_SUBSCRIPTION_VOICE_PROFILE,
+            "mode": "pipeline",
+            "persisted": body.persist,
+            "restart_required": False,
+            "session_restarted": session_restarted,
+        }
     try:
         from jarvis.core.registry import load
         from jarvis.realtime.protocol import RealtimeProvider
@@ -4765,9 +4869,23 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
 
     if body.persist:
         try:
-            from jarvis.core.config_writer import set_realtime_provider
+            from jarvis.core.config_writer import (
+                set_realtime_provider,
+                set_voice_profile,
+            )
 
             set_realtime_provider(body.provider)
+            cfg_now = _resolve_cfg(request)
+            from jarvis.voice.subscription_profile import (
+                subscription_voice_selected,
+            )
+
+            if cfg_now is not None and subscription_voice_selected(cfg_now):
+                current_mode = str(
+                    getattr(getattr(cfg_now, "voice", None), "mode", "pipeline")
+                    or "pipeline"
+                )
+                set_voice_profile("", mode=current_mode)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
@@ -4776,6 +4894,11 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             ) from exc
 
     cfg = _resolve_cfg(request)
+    if cfg is not None and getattr(cfg, "voice", None) is not None:
+        try:
+            cfg.voice.profile = ""
+        except Exception as exc:  # noqa: BLE001 - detached config is harmless
+            log.debug("In-memory voice.profile update skipped: %s", exc)
     if cfg is not None and getattr(cfg, "brain", None) is not None:
         try:
             realtime_cfg = getattr(cfg.brain, "realtime", None)
@@ -4789,7 +4912,13 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             log.debug("In-memory realtime.provider update skipped: %s", exc)
     await _emit(request, SecretConfigured(key="brain.realtime.provider", action="set"))
 
-    from jarvis.ui.web.voice_runtime import reconnect_realtime, voice_engine_status
+    from jarvis.ui.web.voice_runtime import (
+        apply_voice_profile,
+        reconnect_realtime,
+        voice_engine_status,
+    )
+
+    profile_session_restarted = apply_voice_profile(request, "")
 
     # A switch REOPENS an open call immediately. A transport that needs a
     # browser WebRTC offer cannot start without one, and the client only learns
@@ -4807,7 +4936,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 — never block a switch on this
             log.debug("Realtime offer pre-wait skipped: %s", exc)
 
-    session_restarted = reconnect_realtime(
+    session_restarted = profile_session_restarted or reconnect_realtime(
         request, reason=f"realtime_provider:{body.provider}"
     )
 

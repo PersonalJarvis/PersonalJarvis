@@ -264,6 +264,14 @@ def _realtime_model_label(provider_id: str | None, model: str | None) -> str | N
 async def get_voice_mode(request: Request) -> dict[str, object]:
     cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
     mode = getattr(getattr(cfg, "voice", None), "mode", "pipeline")
+    from jarvis.voice.subscription_profile import (
+        LEGACY_CODEX_REALTIME_PROVIDER,
+        configured_voice_profile,
+    )
+
+    profile = configured_voice_profile(cfg) if cfg is not None else ""
+    if profile:
+        mode = "pipeline"
     # Cross-family (AP-22): resolved via the SAME ordering the realtime
     # session factory uses, so this never disagrees with what a realtime
     # session would actually build (Gemini-only users now get `true` too,
@@ -271,9 +279,14 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     # External-login adapters may need a bounded CLI status probe. Keep that
     # subprocess off the event loop so a settings poll cannot punch a hole in
     # live Realtime audio playback.
-    prov = await asyncio.to_thread(_realtime_available_provider, cfg)
+    prov = (
+        LEGACY_CODEX_REALTIME_PROVIDER
+        if profile
+        else await asyncio.to_thread(_realtime_available_provider, cfg)
+    )
     realtime_available = prov is not None
     realtime_availability_pending = False
+    codex_status: dict[str, object] | None = None
     if prov == "codex-subscription-realtime":
         # Runtime discovery deliberately fails open on ``busy`` because the
         # authoritative session opener can protect an in-flight/live call.
@@ -290,11 +303,14 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
             _codex_subscription_status_payload,
             _codex_binary_path(request),
         )
-        if codex_status.get("reason_code") in {"busy", "login_in_progress"}:
+        reason_code = str(codex_status.get("reason_code") or "")
+        if reason_code in {"busy", "login_in_progress"}:
             realtime_available = False
             realtime_availability_pending = True
-    requires_webrtc_offer = await asyncio.to_thread(
-        _realtime_requires_webrtc_offer, cfg
+    requires_webrtc_offer = (
+        False
+        if profile
+        else await asyncio.to_thread(_realtime_requires_webrtc_offer, cfg)
     )
     # Capability, not a provider id (AP-21): the surface must not call a start
     # attempt dead while the backend is still inside a budget it declared.
@@ -313,13 +329,34 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
             )
         )
     prov_label, prov_model, prov_model_label = _realtime_provider_display(cfg, prov)
+    if profile:
+        # The legacy provider id remains user-visible for migration only. Its
+        # active generation path is stable subscription text, not ChatGPT-Live.
+        prov_model = "subscription-text"
+        prov_model_label = "Codex App Server (subscription text)"
     from jarvis.ui.web.voice_runtime import voice_engine_status
 
     runtime = voice_engine_status(request)
     session_provider = str(runtime.get("active_session_provider", "") or "")
     session_model = str(runtime.get("active_session_model", "") or "")
+    subscription_capability: dict[str, object] | None = None
+    if profile:
+        from jarvis.platform.capabilities import detect_capabilities
+        from jarvis.voice.subscription_profile import subscription_voice_capability
+
+        host = detect_capabilities()
+        subscription_capability = subscription_voice_capability(
+            cfg,
+            account_ready=bool(codex_status and codex_status.get("connected")),
+            runtime_attached=bool(
+                getattr(request.app.state, "speech_pipeline", None)
+            ),
+            display_present=host.display_present,
+        ).to_dict()
     return {
         "mode": mode,
+        "profile": profile,
+        "subscription_voice_capability": subscription_capability,
         "realtime_available": realtime_available,
         "realtime_availability_pending": realtime_availability_pending,
         "requires_webrtc_offer": requires_webrtc_offer,
@@ -355,6 +392,16 @@ async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, obj
         raise HTTPException(status_code=400, detail=f"mode must be one of {_VOICE_MODES}")
 
     cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
+    from jarvis.voice.subscription_profile import subscription_voice_selected
+
+    if body.mode == "realtime" and cfg is not None and subscription_voice_selected(cfg):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "ChatGPT subscription voice uses the stable Pipeline engine. "
+                "Select a different Realtime provider before enabling Realtime mode."
+            ),
+        )
 
     # A3: never pin the boot default to an unreachable engine. A provider may
     # use an API key or an external subscription login, so readiness — not a
@@ -403,6 +450,8 @@ async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, obj
     if cfg is not None and getattr(cfg, "voice", None) is not None:
         try:
             cfg.voice.mode = body.mode  # type: ignore[attr-defined]
+            if body.mode == "realtime":
+                cfg.voice.profile = ""  # type: ignore[attr-defined]
         except Exception as exc:  # noqa: BLE001 — frozen model is not an error
             log.debug("in-memory cfg.voice.mode update skipped: %s", exc)
 

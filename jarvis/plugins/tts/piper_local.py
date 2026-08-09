@@ -24,7 +24,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import queue
+import threading
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +48,7 @@ class PiperLocalTTS:
     """Local neural text-to-speech (keyless, on-device, multilingual by voice)."""
 
     name = "piper-local"
-    supports_streaming = False
+    supports_streaming = True
     #: Which voice actually spoke last — read by the per-turn transcript label,
     #: so a new provider that leaves these unset makes the label lie.
     last_voice: str | None = None
@@ -218,23 +221,105 @@ class PiperLocalTTS:
                 "voice output to a provider you have a key for."
             )
         engine = await self._engine_for(model_id)
-        audio = await asyncio.to_thread(engine.generate, spoken, 0, self._speed)
+        sample_rate = int(getattr(engine, "sample_rate", 0) or 0)
+        chunks: queue.Queue[bytes | object] = queue.Queue(maxsize=8)
+        end = object()
+        stopped = threading.Event()
+        failure: list[Exception] = []
+        emitted = threading.Event()
 
-        samples = np.asarray(audio.samples, dtype=np.float32)
-        if samples.size == 0:
-            log.warning("Local voice %s produced no audio for the turn.", model_id)
-            return
-        # Clip before scaling: a value beyond [-1, 1] would wrap around into
-        # loud noise once cast to int16.
-        pcm = (np.clip(samples, -1.0, 1.0) * _INT16_FULL_SCALE).astype(np.int16)
+        def _pcm(samples: Any) -> bytes:
+            values = np.asarray(samples, dtype=np.float32)
+            if values.size == 0:
+                return b""
+            return (
+                np.clip(values, -1.0, 1.0) * _INT16_FULL_SCALE
+            ).astype(np.int16).tobytes()
+
+        def _put(value: bytes | object) -> bool:
+            while not stopped.is_set():
+                try:
+                    chunks.put(value, timeout=0.05)
+                    return True
+                except queue.Full:
+                    continue
+            return False
+
+        def _callback(samples: Any, _progress: float) -> int:
+            data = _pcm(samples)
+            if data:
+                emitted.set()
+                if not _put(data):
+                    return 1
+            return 1 if stopped.is_set() else 0
+
+        nonlocal_rate = [sample_rate]
+
+        def _generate() -> None:
+            try:
+                try:
+                    audio = engine.generate(
+                        spoken, 0, self._speed, callback=_callback
+                    )
+                except TypeError as exc:
+                    # Older sherpa-onnx builds and lightweight test engines do
+                    # not expose the callback overload. Keep the compatible
+                    # whole-sentence path instead of failing silent.
+                    detail = str(exc).lower()
+                    if not any(
+                        marker in detail
+                        for marker in (
+                            "callback",
+                            "incompatible function arguments",
+                            "unexpected keyword",
+                        )
+                    ):
+                        raise
+                    audio = engine.generate(spoken, 0, self._speed)
+                if not sample_rate:
+                    rate = int(getattr(audio, "sample_rate", 0) or 0)
+                    if rate:
+                        nonlocal_rate[0] = rate
+                if not emitted.is_set():
+                    data = _pcm(getattr(audio, "samples", ()))
+                    if data:
+                        emitted.set()
+                        _put(data)
+            except Exception as exc:  # noqa: BLE001 - forwarded to async owner
+                failure.append(exc)
+            finally:
+                _put(end)
+
+        worker = asyncio.create_task(asyncio.to_thread(_generate), name="piper-tts")
         self.last_voice = model_id
         self.last_voice_provider = self.name
-        yield AudioChunk(
-            pcm=pcm.tobytes(),
-            sample_rate=int(audio.sample_rate),
-            timestamp_ns=0,
-            channels=1,
-        )
+        try:
+            while True:
+                item = await asyncio.to_thread(chunks.get)
+                if item is end:
+                    break
+                assert isinstance(item, bytes)
+                rate = nonlocal_rate[0] or int(
+                    getattr(engine, "sample_rate", 0) or 0
+                )
+                if rate <= 0:
+                    raise RuntimeError("The local voice returned no sample rate.")
+                yield AudioChunk(
+                    pcm=item,
+                    sample_rate=rate,
+                    timestamp_ns=0,
+                    channels=1,
+                )
+            await worker
+            if failure:
+                raise failure[0]
+            if not emitted.is_set() and chunks.empty():
+                log.warning("Local voice %s produced no audio for the turn.", model_id)
+        finally:
+            stopped.set()
+            if not worker.done():
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(worker), timeout=1.0)
 
     async def _ensure_client(self) -> None:
         """Warm-up hook the speech pipeline calls; loads the default voice.

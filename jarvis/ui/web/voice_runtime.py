@@ -58,6 +58,18 @@ def apply_voice_mode(request: Any, mode: str) -> bool:
         return False
 
 
+def apply_voice_profile(request: Any, profile: str) -> bool:
+    pipeline = _pipeline(request)
+    apply = getattr(pipeline, "apply_voice_profile", None)
+    if not callable(apply):
+        return False
+    try:
+        return bool(apply(profile))
+    except Exception:  # noqa: BLE001 -- config remains applied for next session
+        log.warning("Live voice-profile application failed", exc_info=True)
+        return False
+
+
 def reconnect_realtime(request: Any, *, reason: str) -> bool:
     pipeline = _pipeline(request)
     reconnect = getattr(pipeline, "reconnect_realtime_session", None)
@@ -70,4 +82,9 @@ def reconnect_realtime(request: Any, *, reason: str) -> bool:
         return False
 
 
-__all__ = ["apply_voice_mode", "reconnect_realtime", "voice_engine_status"]
+__all__ = [
+    "apply_voice_mode",
+    "apply_voice_profile",
+    "reconnect_realtime",
+    "voice_engine_status",
+]

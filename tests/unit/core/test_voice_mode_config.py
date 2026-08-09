@@ -33,6 +33,25 @@ def test_set_voice_mode_persists_toml_only(tmp_path: Path):
     assert 'mode = "realtime"' in toml.read_text(encoding="utf-8")
 
 
+def test_set_subscription_voice_profile_persists_compatible_mode_atomically(
+    tmp_path: Path,
+):
+    toml = tmp_path / "jarvis.toml"
+    toml.write_text('[voice]\nmode = "realtime"\n', encoding="utf-8")
+
+    config_writer.set_voice_profile(
+        "codex-subscription-voice", mode="pipeline", path=toml
+    )
+
+    loaded = cfg_mod.JarvisConfig.model_validate(
+        {"voice": {"mode": "pipeline", "profile": "codex-subscription-voice"}}
+    )
+    content = toml.read_text(encoding="utf-8")
+    assert loaded.voice.profile == "codex-subscription-voice"
+    assert 'mode = "pipeline"' in content
+    assert 'profile = "codex-subscription-voice"' in content
+
+
 def test_realtime_tier_field_accepts_brain_tier_config():
     cfg = cfg_mod.JarvisConfig.model_validate(
         {"brain": {"realtime": {"provider": "openai"}}}

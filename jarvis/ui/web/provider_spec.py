@@ -755,19 +755,15 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         install_hint="npm i -g @openai/codex@0.147.0",
         signup_url="https://chatgpt.com",
         credential_help=(
-            "Beta — subscription voice through Codex is not finished yet and "
-            "can break without notice. "
-            "Uses the ChatGPT plan signed in through Codex. The voice itself "
-            "needs no API key, and the app never switches it silently to "
-            "metered API voice: if it cannot start, the call stops. Select an "
-            "API Realtime provider if you want usage billing. One caveat — "
-            "Jarvis transcribes your side of the call with the provider chosen "
-            "in Speech-to-Text, so a CLOUD recognizer is still billed per turn "
-            "to that key; choose an on-device one to keep the whole call off "
-            "metered billing. Brain and tool providers keep their separately "
-            "configured billing."
+            "Uses the ChatGPT plan signed in through Codex for stable streamed "
+            "text generation. Jarvis keeps ownership of microphone capture, "
+            "speech recognition, sentence synthesis, playback, follow-ups, and "
+            "interruption, so the same voice pipeline works on Windows, macOS, "
+            "and Linux. No OpenAI API key is used. Cloud STT or TTS providers "
+            "may still bill their own configured keys; choose on-device speech "
+            "providers for a fully non-metered audio path."
         ),
-        experimental=True,
+        experimental=False,
     ),
     ProviderSpec(
         id="openai-realtime",
