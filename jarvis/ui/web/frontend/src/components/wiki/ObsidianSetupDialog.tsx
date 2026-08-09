@@ -29,7 +29,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, ExternalLink, Loader2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { BrandedSelect } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
@@ -599,17 +598,19 @@ export function ObsidianSetupDialog({
               </button>
 
               {registerMode === "existing" && vaults.length > 0 && (
-                <BrandedSelect
-                  ariaLabel={t("obsidian_setup_dialog.vault_select_label")}
+                <select
+                  aria-label={t("obsidian_setup_dialog.vault_select_label")}
                   value={selectedVaultPath ?? ""}
-                  onValueChange={setSelectedVaultPath}
-                  testId="obsidian-setup-vault-select"
-                  options={vaults.map((vault) => ({
-                    value: vault.path,
-                    label: vault.name,
-                    hint: vault.path,
-                  }))}
-                />
+                  onChange={(e) => setSelectedVaultPath(e.target.value)}
+                  data-testid="obsidian-setup-vault-select"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  {vaults.map((v) => (
+                    <option key={v.path} value={v.path} title={v.path}>
+                      {v.name}
+                    </option>
+                  ))}
+                </select>
               )}
             </div>
 

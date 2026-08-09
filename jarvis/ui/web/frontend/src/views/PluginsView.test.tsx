@@ -486,7 +486,6 @@ describe("PluginsView category sections are data-driven", () => {
     });
     expect(screen.getByText("mystery")).toBeDefined();
     // The filter menu is fed by the same data, so it offers the new category too.
-    fireEvent.click(screen.getByRole("combobox", { name: "Plugin category" }));
     expect(
       screen.getByRole("option", { name: "Something Brand New" }),
     ).toBeDefined();

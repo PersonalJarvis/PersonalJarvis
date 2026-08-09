@@ -19,7 +19,6 @@ import {
 import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { BrandedSelect } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { openExternalUrl } from "@/lib/openExternal";
 import { robustCopy } from "@/lib/clipboard";
@@ -902,20 +901,22 @@ function FilterMenu({ filter, setFilter }: { filter: FilterId; setFilter: (f: Fi
   const { data } = useQuery({ queryKey: ["marketplace-plugins"], queryFn: fetchCatalog });
   const categories = orderedCategories(data, (data?.plugins ?? []).map(adapt));
   return (
-    <div>
-      <BrandedSelect
+    <div className="relative">
+      <select
         value={filter}
-        onValueChange={(value) => setFilter(value as FilterId)}
-        ariaLabel="Plugin category"
-        className="h-9 w-auto rounded-full bg-card/60 px-4 text-xs font-medium"
-        options={[
-          { value: "all", label: "All" },
-          ...categories.map((category) => ({
-            value: category,
-            label: category,
-          })),
-        ]}
-      />
+        onChange={(e) => setFilter(e.target.value as FilterId)}
+        className="h-9 cursor-pointer appearance-none rounded-full border border-border bg-card/60 px-4 pr-7 text-xs font-medium text-foreground hover:border-primary/40 focus:border-primary/40 focus:outline-none"
+      >
+        <option value="all">All</option>
+        {categories.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </select>
+      <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] text-muted-foreground">
+        ▾
+      </span>
     </div>
   );
 }

@@ -1178,6 +1178,7 @@
     "managed_server_stopped": "Server stopped",
     "managed_server_starting": "Server starting — loading voice models…",
     "managed_server_port_conflict": "Another process is serving this port",
+    "managed_server_no_capacity": "Server answers but has no free voice pipeline",
     "managed_start_cta": "Start server",
     "managed_stop_cta": "Stop server",
     "managed_brain_setup_note": "Also sets up the local brain first: installs Ollama if needed and downloads the brain model (several extra GB).",

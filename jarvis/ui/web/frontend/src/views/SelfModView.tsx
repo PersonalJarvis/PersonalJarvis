@@ -10,7 +10,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
-import { BrandedSelect } from "@/components/ui/select";
 
 type AuditEvent = {
   ts: string;
@@ -114,24 +113,20 @@ function AuditFilters({
   filter: { actor?: string; action?: string; success_only: boolean };
   onChange: (f: { actor?: string; action?: string; success_only: boolean }) => void;
 }) {
-  const t = useT();
   return (
     <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
-      <BrandedSelect
+      <select
         value={filter.actor ?? ""}
-        onValueChange={(value) =>
-          onChange({ ...filter, actor: value || undefined })
+        onChange={(e) =>
+          onChange({ ...filter, actor: e.target.value || undefined })
         }
-        ariaLabel={t("self_mod_view.all_actors")}
-        className="w-44 py-1.5 text-xs"
-        options={[
-          { value: "", label: t("self_mod_view.all_actors") },
-          { value: "hauptjarvis", label: t("self_mod_view.actor_main") },
-          { value: "openclaw", label: "OpenClaw" },
-          { value: "user", label: "User" },
-          { value: "system", label: "System" },
-        ]}
-      />
+      >
+        <option value="">Alle Actors</option>
+        <option value="hauptjarvis">Hauptjarvis</option>
+        <option value="openclaw">OpenClaw</option>
+        <option value="user">User</option>
+        <option value="system">System</option>
+      </select>
       <label>
         <input
           type="checkbox"
@@ -140,7 +135,7 @@ function AuditFilters({
             onChange({ ...filter, success_only: e.target.checked })
           }
         />
-        {t("self_mod_view.successful_only")}
+        Nur erfolgreiche
       </label>
     </div>
   );

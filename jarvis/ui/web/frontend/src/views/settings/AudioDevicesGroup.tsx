@@ -6,7 +6,6 @@ import {
 } from "@/hooks/useAudioDevices";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
-import { BrandedSelect } from "@/components/ui/select";
 
 /**
  * "Audio devices" card inside the Settings view: one dropdown for the OUTPUT
@@ -150,24 +149,21 @@ function DevicePicker({
         {icon}
         {label}
       </label>
-      <BrandedSelect
-        testId={testId}
+      <select
+        data-testid={testId}
         value={selected}
-        onValueChange={onSelect}
-        ariaLabel={label}
+        onChange={(e) => onSelect(e.target.value)}
         disabled={disabled}
-        className="mt-1"
-        options={[
-          { value: autoValue, label: autoLabel },
-          ...devices.map((device) => ({
-            value: device.name,
-            label: device.is_default
-              ? `${device.name} ${defaultSuffix}`
-              : device.name,
-          })),
-          ...(showOrphan ? [{ value: selected, label: selected }] : []),
-        ]}
-      />
+        className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+      >
+        <option value={autoValue}>{autoLabel}</option>
+        {devices.map((d) => (
+          <option key={d.name} value={d.name}>
+            {d.is_default ? `${d.name} ${defaultSuffix}` : d.name}
+          </option>
+        ))}
+        {showOrphan && <option value={selected}>{selected}</option>}
+      </select>
     </>
   );
 }

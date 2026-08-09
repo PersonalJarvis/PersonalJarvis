@@ -18,7 +18,14 @@ from contextlib import suppress
 from datetime import UTC, datetime
 
 from jarvis.marketplace.auth.base import AuthHandler
-from jarvis.marketplace.token_store import Tokens, TokenStore
+from jarvis.marketplace.token_store import (
+    REAUTH_CLIENT_MISSING,
+    REAUTH_CLIENT_REJECTED,
+    REAUTH_PROVIDER_REJECTED,
+    REAUTH_ROTATION_LOST,
+    Tokens,
+    TokenStore,
+)
 
 log = logging.getLogger(__name__)
 
@@ -54,22 +61,65 @@ def _refresh_lock(plugin_id: str) -> asyncio.Lock:
         return loop_locks.setdefault(plugin_id, asyncio.Lock())
 
 
-_REAUTH_ERROR_MARKERS: tuple[str, ...] = (
-    "revoked",
-    "invalid_grant",
-    "invalid_client",
-    "unauthorized_client",
-    "client was not found",
-    "token has been expired",
-    "reconnect required",
-    "no stored client_id",
+# Ordered most-specific first: a DCR handler raises "no stored client_id —
+# reconnect required", which matches two markers, and the FIRST match wins. The
+# marker itself is our own literal, so classifying this way keeps every persisted
+# reason free of provider text (which can quote a token back at us).
+_REAUTH_ERROR_MARKERS: tuple[tuple[str, str], ...] = (
+    ("no stored client_id", REAUTH_CLIENT_MISSING),
+    ("client was not found", REAUTH_CLIENT_REJECTED),
+    ("unauthorized_client", REAUTH_CLIENT_REJECTED),
+    ("invalid_client", REAUTH_CLIENT_REJECTED),
+    ("invalid_grant", REAUTH_PROVIDER_REJECTED),
+    ("token has been expired", REAUTH_PROVIDER_REJECTED),
+    ("reconnect required", REAUTH_PROVIDER_REJECTED),
+    ("revoked", REAUTH_PROVIDER_REJECTED),
 )
 
 
-def _refresh_needs_reauth(message: str) -> bool:
-    """Return whether a refresh failure requires user authentication."""
+def reauth_reason_for(message: str) -> str | None:
+    """Classify a refresh failure, or return ``None`` when it is transient.
+
+    ``None`` means "retry on the next cycle"; any code means the grant cannot be
+    healed without the user. Returning the CODE rather than a bool is what lets
+    the UI say which of the two happened days later.
+    """
     lowered = message.lower()
-    return any(marker in lowered for marker in _REAUTH_ERROR_MARKERS)
+    for marker, reason in _REAUTH_ERROR_MARKERS:
+        if marker in lowered:
+            return reason
+    return None
+
+
+def _self_heal_due(tokens: Tokens, retry_seconds: int | None) -> bool:
+    """Whether a reauth-flagged connection may be probed once more.
+
+    The flag can be wrong. A provider outage answering ``invalid_client``, or a
+    momentary DNS failure surfacing as a hard rejection, strands a grant whose
+    refresh token is still perfectly good — and nothing ever retried it, so the
+    connection stayed dead until the user noticed and reconnected by hand. The
+    flag therefore decays: every ``retry_seconds`` the connection gets ONE more
+    attempt, and a success clears it (``needs_reauth=False`` on the saved token).
+
+    ``REAUTH_ROTATION_LOST`` is the one exception and never retries. There the
+    provider has already retired the token we hold, so presenting it again is
+    exactly the replay that some providers treat as theft and answer by revoking
+    every token on the account. A stranded connection costs one sign-in; that
+    mistake costs the whole account.
+
+    A probe is cheap — one request per dead plugin per day — and the failure it
+    repairs is otherwise permanent.
+    """
+    if retry_seconds is None or not tokens.refresh:
+        return False
+    if tokens.reauth_reason == REAUTH_ROTATION_LOST:
+        return False
+    last_try = tokens.reauth_retry_at or tokens.reauth_at
+    if last_try is None:
+        # Flagged before this field existed: probe on the next cycle, then the
+        # written `reauth_retry_at` puts it on the normal cadence.
+        return True
+    return (datetime.now(UTC) - last_try).total_seconds() >= retry_seconds
 
 
 def _keep_alive_due(tokens: object, keep_alive_seconds: int | None) -> bool:
@@ -86,6 +136,20 @@ def _keep_alive_due(tokens: object, keep_alive_seconds: int | None) -> bool:
     if last.tzinfo is None:
         last = last.replace(tzinfo=UTC)
     return (datetime.now(UTC) - last).total_seconds() >= keep_alive_seconds
+
+
+def flag_for_reauth(tokens: Tokens, reason: str) -> Tokens:
+    """Flag a grant for reconnect, recording WHY and WHEN it first failed.
+
+    ``reauth_at`` is preserved across repeated failures so it keeps meaning "when
+    this connection died" rather than "when we last confirmed it is still dead".
+    """
+    return dataclasses.replace(
+        tokens,
+        needs_reauth=True,
+        reauth_reason=reason,
+        reauth_at=tokens.reauth_at or datetime.now(UTC),
+    )
 
 
 def _reload_before_refresh_commit(
@@ -190,7 +254,7 @@ def _handle_lost_rotation(
         exc,
     )
     try:
-        store.save(plugin_id, dataclasses.replace(current, needs_reauth=True))
+        store.save(plugin_id, flag_for_reauth(current, REAUTH_ROTATION_LOST))
     except Exception as mark_exc:  # noqa: BLE001 - the store is evidently broken
         # Nothing durable can be written at all. Say so loudly rather than
         # leave a retry loop that would keep replaying the retired token.
@@ -212,12 +276,18 @@ async def refresh_plugin_token(
     observed_access_token: str | None = None,
     threshold_seconds: int = 600,
     keep_alive_seconds: int | None = None,
+    reauth_retry_seconds: int | None = None,
 ) -> RefreshAttempt:
     """Refresh one plugin under a process-local single-flight lock.
 
     The token is reloaded after acquiring the lock. If another caller already
     replaced the access token that triggered a 401, the waiting caller reuses
     that token instead of rotating the refresh token a second time.
+
+    ``reauth_retry_seconds`` opts into self-healing: a connection already
+    flagged for reconnect is probed once per that interval instead of being
+    skipped forever. Left ``None`` (the default) a flagged connection is never
+    touched, so a direct caller keeps the old behaviour verbatim.
     """
     async with _refresh_lock(plugin_id):
         try:
@@ -226,14 +296,39 @@ async def refresh_plugin_token(
             log.warning("plugin %s token load failed: %s", plugin_id, exc)
             return RefreshAttempt(FAILED)
 
-        if tokens is None or tokens.needs_reauth:
+        if tokens is None:
             return RefreshAttempt(SKIPPED)
+
+        self_heal = False
+        if tokens.needs_reauth:
+            if not _self_heal_due(tokens, reauth_retry_seconds):
+                return RefreshAttempt(SKIPPED)
+            self_heal = True
+            # Stamp the attempt BEFORE calling the provider. If that call hangs,
+            # or the process dies mid-flight, this stamp is the only thing
+            # stopping the next cycle five minutes later from probing again --
+            # a dead plugin would otherwise hammer the provider forever.
+            stamped = dataclasses.replace(tokens, reauth_retry_at=datetime.now(UTC))
+            try:
+                store.save(plugin_id, stamped)
+            except Exception as exc:  # noqa: BLE001 - isolate one plugin's storage
+                log.warning(
+                    "plugin %s self-heal stamp failed, skipping this cycle: %s",
+                    plugin_id,
+                    exc,
+                )
+                return RefreshAttempt(FAILED)
+            tokens = stamped
+            log.info("plugin %s: retrying a connection flagged for reconnect", plugin_id)
+
         if observed_access_token is not None and tokens.access != observed_access_token:
             return RefreshAttempt(SKIPPED, usable=True, access_changed=True)
         if not tokens.refresh:
             return RefreshAttempt(SKIPPED, usable=not force)
 
-        if not force:
+        # A self-heal probe is due by definition -- its access token expired long
+        # ago, and the whole point is to test the refresh token behind it.
+        if not force and not self_heal:
             due = tokens.is_near_expiry(threshold_seconds) or _keep_alive_due(
                 tokens, keep_alive_seconds
             )
@@ -255,7 +350,8 @@ async def refresh_plugin_token(
             if not refreshed.access:
                 raise RuntimeError("refresh returned an empty access token")
         except Exception as exc:  # noqa: BLE001 - provider failures are isolated
-            if not _refresh_needs_reauth(str(exc)):
+            reason = reauth_reason_for(str(exc))
+            if reason is None:
                 _current, superseded = _reload_before_refresh_commit(
                     plugin_id, store, original_state
                 )
@@ -274,7 +370,7 @@ async def refresh_plugin_token(
             assert current is not None
 
             try:
-                store.save(plugin_id, dataclasses.replace(current, needs_reauth=True))
+                store.save(plugin_id, flag_for_reauth(current, reason))
             except Exception as save_exc:  # noqa: BLE001 - isolate storage failure
                 log.warning(
                     "plugin %s needs_reauth save failed, will retry: %s",
@@ -283,8 +379,9 @@ async def refresh_plugin_token(
                 )
                 return RefreshAttempt(FAILED)
             log.info(
-                "plugin %s refresh needs reauth; marked needs_reauth: %s",
+                "plugin %s refresh needs reauth (%s): %s",
                 plugin_id,
+                reason,
                 exc,
             )
             return RefreshAttempt(REVOKED)
@@ -303,8 +400,21 @@ async def refresh_plugin_token(
             refreshed,
             refresh=refreshed.refresh or current.refresh,
             extra=merged_extra,
+            # A working refresh clears the whole reconnect story, not just the
+            # flag: a stale reason left behind would keep explaining a failure
+            # that no longer exists. Set explicitly rather than relying on the
+            # handler having returned a pristine Tokens.
             needs_reauth=False,
+            reauth_reason=None,
+            reauth_at=None,
+            reauth_retry_at=None,
         )
+        if current.needs_reauth:
+            log.info(
+                "plugin %s: self-heal succeeded, connection is live again (was flagged %s)",
+                plugin_id,
+                current.reauth_reason or "for an unrecorded reason",
+            )
         rotated = bool(refreshed.refresh) and refreshed.refresh != current.refresh
         try:
             await _save_with_retries(store, plugin_id, saved, rotated=rotated)
@@ -334,6 +444,7 @@ async def refresh_due_tokens(
     *,
     threshold_seconds: int = 600,
     keep_alive_seconds: int | None = None,
+    reauth_retry_seconds: int | None = None,
     on_refreshed: Callable[[str], None] | None = None,
 ) -> dict[str, str]:
     """Refresh every due plugin without allowing one failure to stop the cycle."""
@@ -345,6 +456,7 @@ async def refresh_due_tokens(
             build_handler,
             threshold_seconds=threshold_seconds,
             keep_alive_seconds=keep_alive_seconds,
+            reauth_retry_seconds=reauth_retry_seconds,
         )
         outcomes[plugin_id] = attempt.outcome
         if attempt.outcome == REFRESHED and on_refreshed is not None:
@@ -371,6 +483,10 @@ class RefreshScheduler:
         interval_seconds: float = 300.0,
         threshold_seconds: int = 600,
         keep_alive_seconds: int | None = 43_200,
+        # Once a day. Frequent enough that a connection stranded by a provider
+        # outage repairs itself well before the user next looks, rare enough
+        # that a genuinely revoked grant costs one request a day.
+        reauth_retry_seconds: int | None = 86_400,
         on_refreshed: Callable[[str], None] | None = None,
         shutdown_drain_timeout_seconds: float = 30.0,
     ) -> None:
@@ -380,6 +496,7 @@ class RefreshScheduler:
         self._interval = interval_seconds
         self._threshold = threshold_seconds
         self._keep_alive_seconds = keep_alive_seconds
+        self._reauth_retry_seconds = reauth_retry_seconds
         self._on_refreshed = on_refreshed
         self._shutdown_drain_timeout = shutdown_drain_timeout_seconds
         self._task: asyncio.Task[None] | None = None
@@ -393,6 +510,7 @@ class RefreshScheduler:
             self._build_handler,
             threshold_seconds=self._threshold,
             keep_alive_seconds=self._keep_alive_seconds,
+            reauth_retry_seconds=self._reauth_retry_seconds,
             on_refreshed=self._on_refreshed,
         )
 

@@ -155,9 +155,7 @@ describe("WikiProviderCard", () => {
     stubFetch();
     render(<WikiProviderCard />);
 
-    fireEvent.click(
-      await screen.findByLabelText("wiki_provider.provider_label"),
-    );
+    await screen.findByLabelText("wiki_provider.provider_label");
     expect(
       screen.getByText("codex — wiki_provider.option_agent_suffix"),
     ).toBeDefined();
@@ -180,16 +178,12 @@ describe("WikiProviderCard", () => {
     const fetchMock = stubFetch();
     render(<WikiProviderCard />);
 
-    const providerSelect = await screen.findByLabelText(
+    const providerSelect = (await screen.findByLabelText(
       "wiki_provider.provider_label",
-    );
+    )) as HTMLSelectElement;
 
     // Picking codex mounts the shared model picker fed by codex's catalog.
-    fireEvent.click(providerSelect);
-    const codexOption = (await screen.findAllByRole("option")).find(
-      (option) => option.getAttribute("data-value") === "codex",
-    );
-    fireEvent.click(codexOption!);
+    fireEvent.change(providerSelect, { target: { value: "codex" } });
     const trigger = await screen.findByLabelText("apikeys_model.model_label");
     fireEvent.click(trigger);
 
@@ -212,15 +206,11 @@ describe("WikiProviderCard", () => {
     const fetchMock = stubFetch();
     render(<WikiProviderCard />);
 
-    const providerSelect = await screen.findByLabelText(
+    const providerSelect = (await screen.findByLabelText(
       "wiki_provider.provider_label",
-    );
+    )) as HTMLSelectElement;
 
-    fireEvent.click(providerSelect);
-    const geminiOption = (await screen.findAllByRole("option")).find(
-      (option) => option.getAttribute("data-value") === "gemini",
-    );
-    fireEvent.click(geminiOption!);
+    fireEvent.change(providerSelect, { target: { value: "gemini" } });
     fireEvent.click(screen.getByRole("button", { name: "wiki_provider.apply" }));
 
     await waitFor(() => {

@@ -38,7 +38,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { BrandedSelect } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { translate, useT } from "@/i18n";
 import {
@@ -394,22 +393,18 @@ export function SkillsView() {
                 onClick={() => setOwnerFilter("builtin")}
               />
               {categoryOptions.length > 0 && (
-                <BrandedSelect
+                <select
                   value={categoryFilter ?? ""}
-                  onValueChange={(value) => setCategoryFilter(value || null)}
-                  ariaLabel={t("skills_view.all_categories")}
-                  className="w-auto rounded-full px-2 py-0.5 text-[10px]"
-                  options={[
-                    {
-                      value: "",
-                      label: t("skills_view.all_categories"),
-                    },
-                    ...categoryOptions.map((category) => ({
-                      value: category,
-                      label: category,
-                    })),
-                  ]}
-                />
+                  onChange={(e) => setCategoryFilter(e.target.value || null)}
+                  className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">Alle Kategorien</option>
+                  {categoryOptions.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
               )}
               {searchActive && (
                 <button
@@ -417,7 +412,7 @@ export function SkillsView() {
                   onClick={clearFilters}
                   className="ml-auto text-[10px] text-muted-foreground underline hover:text-foreground"
                 >
-                  {t("skills_view.reset_filters")}
+                  Zuruecksetzen
                 </button>
               )}
             </div>

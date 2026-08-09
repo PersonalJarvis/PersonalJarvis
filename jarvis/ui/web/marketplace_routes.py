@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -99,30 +100,51 @@ def _live_plugin_registry() -> Any:
 # ----------------------------------------------------------------------
 
 
-def _plugin_status_meta(
-    plugin_id: str, store: TokenStore
-) -> tuple[str, str | None, str | None]:
-    """Return ``(status, expires_at_iso, last_refreshed_iso)`` from ONE token load.
+@dataclass(frozen=True, slots=True)
+class _PluginStatusMeta:
+    """Everything the plugins view needs about one grant, from ONE token load."""
+
+    status: str
+    expires_at: str | None = None
+    last_refreshed: str | None = None
+    # Why the connection is flagged, and since when. Both stay ``None`` on a
+    # healthy grant and on one flagged before these fields existed — the view
+    # then says "unknown" rather than inventing a cause.
+    reauth_reason: str | None = None
+    reauth_at: str | None = None
+
+
+def _plugin_status_meta(plugin_id: str, store: TokenStore) -> _PluginStatusMeta:
+    """Return the plugin's stored auth state from ONE token load.
 
     ``expires_at`` / ``last_refreshed`` are surfaced so the UI can show an honest
     "auto-refreshing / expiring soon" hint without re-deriving it. Both are
     ``None`` for a token that carries no expiry (e.g. a PAT) or was never
     refreshed — never a fabricated timestamp.
+
+    ``reauth_reason`` is one of the ``REAUTH_*`` codes and is the ONLY failure
+    detail that leaves this layer: a provider's raw error body can echo a token
+    back, so it is never stored and never served.
     """
     try:
         tokens = store.load(plugin_id)
     except RuntimeError:
-        return "error", None, None
+        return _PluginStatusMeta("error")
     if tokens is None:
-        return "not_connected", None, None
-    expires_at = tokens.expires_at.isoformat() if tokens.expires_at else None
-    last_refreshed = tokens.extra.get("last_refreshed") or None
-    status = "needs_reauth" if tokens.needs_reauth else "connected"
-    return status, expires_at, last_refreshed
+        return _PluginStatusMeta("not_connected")
+    return _PluginStatusMeta(
+        status="needs_reauth" if tokens.needs_reauth else "connected",
+        expires_at=tokens.expires_at.isoformat() if tokens.expires_at else None,
+        last_refreshed=tokens.extra.get("last_refreshed") or None,
+        reauth_reason=tokens.reauth_reason if tokens.needs_reauth else None,
+        reauth_at=(
+            tokens.reauth_at.isoformat() if tokens.needs_reauth and tokens.reauth_at else None
+        ),
+    )
 
 
 def _plugin_status(plugin_id: str, store: TokenStore) -> str:
-    return _plugin_status_meta(plugin_id, store)[0]
+    return _plugin_status_meta(plugin_id, store).status
 
 
 def _build_dcr_handler(plugin_id: str, auth: HostedMcpOAuthDcrAuth) -> HostedMcpDcrHandler:
@@ -207,11 +229,7 @@ def _mcp_live(
     if transport == "http":
         if status == "connected":
             reg = _live_plugin_registry()  # the same accessor refresh uses
-            if (
-                reg is not None
-                and reg.is_bootstrapped()
-                and reg.live_tool_count(plugin_id) == 0
-            ):
+            if reg is not None and reg.is_bootstrapped() and reg.live_tool_count(plugin_id) == 0:
                 hint = reg.last_connect_error(plugin_id) or "no tools loaded — reconnect"
                 return False, hint
         return True, None
@@ -240,10 +258,28 @@ async def list_plugins(response: Response) -> dict[str, Any]:
     connected = 0
     for spec in catalog.plugins:
         item = spec.model_dump(mode="json")
-        status, expires_at, last_refreshed = _plugin_status_meta(spec.id, store)
+        meta = _plugin_status_meta(spec.id, store)
+        status = meta.status
         item["status"] = status
-        item["expires_at"] = expires_at
-        item["last_refreshed"] = last_refreshed
+        item["expires_at"] = meta.expires_at
+        item["last_refreshed"] = meta.last_refreshed
+        item["reauth_reason"] = meta.reauth_reason
+        item["reauth_at"] = meta.reauth_at
+        if isinstance(spec.auth, OAuthPkceLoopbackAuth):
+            from jarvis.marketplace.connect_helpers import (
+                is_placeholder_client_id,
+                resolve_pkce_client,
+            )
+
+            effective_client_id, _ = resolve_pkce_client(
+                spec.id, spec.auth.client_id, spec.auth.client_secret
+            )
+            # Configuration state is safe to expose; the client id and secret
+            # themselves never leave the backend. The dialog uses this to stop
+            # placeholder-only installs before they launch a doomed OAuth tab.
+            item["oauth_client_configured"] = not is_placeholder_client_id(
+                effective_client_id
+            )
         mcp = spec.mcp_server or {}
         mcp_live, runtime_missing = _mcp_live(mcp, plugin_id=spec.id, status=status)
         if runtime_missing:
@@ -523,7 +559,15 @@ async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str
                 result = await handler.await_completion(session)
             except Exception as exc:  # noqa: BLE001
                 log.warning("plugin %s connect/await failed: %s", plugin_id, exc)
-                slot.result = FlowResult(tokens=None, error=str(exc))
+                if registry.get(session.flow_id) is slot:
+                    slot.result = FlowResult(tokens=None, error=str(exc))
+                return
+            # Closing the browser-login dialog is a real cancellation, not
+            # merely a UI hide. Never let a late provider callback replace the
+            # existing grant (especially a needs_reauth grant) after the user
+            # cancelled the reconnect.
+            if registry.get(session.flow_id) is not slot:
+                log.info("plugin %s connect flow cancelled", plugin_id)
                 return
             if result.tokens is not None:
                 # Persist BEFORE publishing the result: connect_poll reads
@@ -555,6 +599,17 @@ async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str
         "expires_at_ms": session.expires_at_ms,
         "interval": session.interval,
     }
+
+
+@router.delete("/plugins/{plugin_id}/connect/{flow_id}")
+async def cancel_connect(plugin_id: str, flow_id: str) -> dict[str, str]:
+    """Cancel a pending OAuth flow without touching the stored grant."""
+    registry = get_registry()
+    slot = registry.get(flow_id)
+    if slot is not None and slot.session.plugin_id != plugin_id:
+        raise HTTPException(status_code=404, detail="unknown flow_id for plugin")
+    registry.drop(flow_id)
+    return {"state": "cancelled", "flow_id": flow_id, "plugin_id": plugin_id}
 
 
 @router.get("/plugins/{plugin_id}/connect/poll/{flow_id}")

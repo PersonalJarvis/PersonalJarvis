@@ -24,7 +24,6 @@ import { CheckCircle2, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { Button } from "@/components/ui/button";
-import { BrandedSelect } from "@/components/ui/select";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import {
@@ -144,29 +143,25 @@ export function SupabaseConnect({
           <div className="flex flex-wrap items-end gap-2">
             <div className="min-w-[14rem] flex-1">
               <SettingsField label={t("ultrawiki.supabase.project_label")}>
-                <BrandedSelect
+                <select
                   value={projectRef}
-                  onValueChange={setProjectRef}
-                  ariaLabel={t("ultrawiki.supabase.project_label")}
+                  onChange={(e) => setProjectRef(e.target.value)}
                   disabled={!projects || projects.length === 0}
                   className={settingsInputCls}
-                  testId="ultrawiki-supabase-project"
-                  options={[
-                    {
-                      value: "",
-                      label:
-                        projects === null
-                          ? t("ultrawiki.supabase.load_first")
-                          : t("ultrawiki.supabase.choose_project"),
-                    },
-                    ...(projects ?? []).map((project) => ({
-                      value: project.ref,
-                      label: `${project.name}${
-                        project.region ? ` · ${project.region}` : ""
-                      }`,
-                    })),
-                  ]}
-                />
+                  data-testid="ultrawiki-supabase-project"
+                >
+                  <option value="">
+                    {projects === null
+                      ? t("ultrawiki.supabase.load_first")
+                      : t("ultrawiki.supabase.choose_project")}
+                  </option>
+                  {(projects ?? []).map((project) => (
+                    <option key={project.ref} value={project.ref}>
+                      {project.name}
+                      {project.region ? ` · ${project.region}` : ""}
+                    </option>
+                  ))}
+                </select>
               </SettingsField>
             </div>
             <Button

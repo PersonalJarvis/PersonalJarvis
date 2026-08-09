@@ -43,8 +43,6 @@ export interface ComboboxOption {
   /** Extra text a matcher may search but that is never rendered. */
   searchText?: string;
   icon?: ReactNode;
-  /** Listed for context, but cannot be selected. */
-  disabled?: boolean;
 }
 
 export interface ComboboxGroup {
@@ -70,8 +68,6 @@ export interface ComboboxProps {
   matches?: (option: ComboboxOption, query: string) => boolean;
   disabled?: boolean;
   className?: string;
-  id?: string;
-  ariaDescribedBy?: string;
   /** Lands on the trigger button; the panel gets `${testId}-panel`. */
   testId?: string;
 }
@@ -117,8 +113,6 @@ export function Combobox({
   matches = defaultMatches,
   disabled = false,
   className,
-  id,
-  ariaDescribedBy,
   testId,
 }: ComboboxProps) {
   const [open, setOpen] = useState(false);
@@ -168,10 +162,6 @@ export function Combobox({
   const flat = useMemo(
     () => visibleGroups.flatMap((group) => group.options),
     [visibleGroups],
-  );
-  const enabled = useMemo(
-    () => flat.filter((option) => !option.disabled),
-    [flat],
   );
 
   const measure = useCallback(() => {
@@ -244,7 +234,7 @@ export function Combobox({
   // Open on the current value so the list starts where the user left it.
   useEffect(() => {
     if (!open) return;
-    const index = enabled.findIndex((option) => option.value === value);
+    const index = flat.findIndex((option) => option.value === value);
     setActiveIndex(index >= 0 ? index : 0);
     // Only on open: while typing, the query effect below owns the highlight.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -285,7 +275,6 @@ export function Combobox({
   }, [open, close]);
 
   function commit(option: ComboboxOption) {
-    if (option.disabled) return;
     close();
     if (option.value !== value) onChange(option.value);
   }
@@ -302,23 +291,19 @@ export function Combobox({
     }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      if (!enabled.length) return;
+      if (!flat.length) return;
       const step = event.key === "ArrowDown" ? 1 : -1;
-      setActiveIndex(
-        (index) => (index + step + enabled.length) % enabled.length,
-      );
+      setActiveIndex((index) => (index + step + flat.length) % flat.length);
       return;
     }
     if (event.key === "Home" || event.key === "End") {
       event.preventDefault();
-      setActiveIndex(
-        event.key === "Home" ? 0 : Math.max(0, enabled.length - 1),
-      );
+      setActiveIndex(event.key === "Home" ? 0 : Math.max(0, flat.length - 1));
       return;
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      const option = enabled[activeIndex];
+      const option = flat[activeIndex];
       if (option) commit(option);
     }
   }
@@ -331,30 +316,27 @@ export function Combobox({
   }
 
   const triggerLabel = selected?.label ?? fallbackLabel ?? value;
-  const activeOption = enabled[activeIndex];
+  const activeOption = flat[activeIndex];
 
   return (
     <>
       <button
         ref={triggerRef}
-        id={id}
         type="button"
         role="combobox"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
         aria-label={ariaLabel}
-        aria-describedby={ariaDescribedBy}
         disabled={disabled}
         data-testid={testId}
         data-value={value}
         onClick={() => !disabled && setOpen((wasOpen) => !wasOpen)}
         onKeyDown={onTriggerKeyDown}
         className={cn(
-          "flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm",
-          "shadow-[inset_0_1px_0_hsl(var(--foreground)/0.04)] transition-[border-color,background-color,box-shadow]",
-          "hover:border-primary/40 hover:bg-muted/20 focus:outline-none focus-visible:border-primary/60 focus-visible:ring-1 focus-visible:ring-primary/70",
-          open && "border-primary/60 bg-primary/[0.03] ring-1 ring-primary/70",
+          "flex w-full items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm transition-colors",
+          "hover:border-primary/40 focus:outline-none focus-visible:border-primary/60 focus-visible:ring-1 focus-visible:ring-primary",
+          open && "border-primary/60 ring-1 ring-primary",
           disabled && "cursor-not-allowed opacity-50",
           className,
         )}
@@ -388,7 +370,7 @@ export function Combobox({
               maxHeight: position.maxHeight,
             }}
             onKeyDown={onKeyDown}
-            className="fixed z-[70] flex flex-col overflow-hidden rounded-lg border border-primary/25 bg-popover/95 shadow-[0_22px_55px_-16px_rgba(0,0,0,0.9),inset_0_1px_0_hsl(var(--foreground)/0.05)] backdrop-blur-xl"
+            className="fixed z-[70] flex flex-col overflow-hidden rounded-lg border border-border bg-popover shadow-[0_18px_40px_-12px_rgba(0,0,0,0.85)]"
           >
             {searchable && (
               <div className="flex items-center gap-2 border-b border-border/70 px-3 py-2">
@@ -446,24 +428,19 @@ export function Combobox({
                         id={`${listId}-${option.value}`}
                         role="option"
                         aria-selected={isSelected}
-                        aria-disabled={option.disabled || undefined}
                         data-active={isActive}
                         data-value={option.value}
                         // Pointer, not mouse: the highlight has to follow a
                         // pen or touch drag as well, and `onMouseMove` never
                         // fires for either.
-                        onPointerMove={() => {
-                          if (!option.disabled) {
-                            setActiveIndex(enabled.indexOf(option));
-                          }
-                        }}
+                        onPointerMove={() =>
+                          setActiveIndex(flat.indexOf(option))
+                        }
                         onClick={() => commit(option)}
                         className={cn(
-                          "relative flex cursor-pointer items-center gap-2 rounded-md border border-transparent px-3 py-1.5 text-sm transition-colors",
-                          isActive && "border-primary/15 bg-primary/10 text-foreground",
-                          isSelected && "bg-primary/15 font-medium text-primary",
-                          option.disabled &&
-                            "cursor-not-allowed text-muted-foreground/45",
+                          "flex cursor-pointer items-center gap-2 rounded-md px-3 py-1.5 text-sm",
+                          isActive && "bg-primary/10 text-foreground",
+                          isSelected && "font-medium",
                         )}
                       >
                         {option.icon}

@@ -28,7 +28,6 @@ import {
 import { useQuery } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
-import { BrandedSelect } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
@@ -494,6 +493,8 @@ function OptionalStep({
   rerankOptions: UltraWikiProviderOption[];
 }): JSX.Element {
   const t = useT();
+  const selectCls =
+    "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40";
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
@@ -503,19 +504,15 @@ function OptionalStep({
         <span className="mb-1.5 block text-[10px] uppercase tracking-wider text-muted-foreground">
           {t("ultrawiki.wizard.distill_label")}
         </span>
-        <BrandedSelect
+        <select
           value={distill}
-          onValueChange={onDistill}
-          ariaLabel={t("ultrawiki.wizard.distill_label")}
-          testId="ultrawiki-wizard-distill"
-          options={[
-            { value: "", label: t("ultrawiki.wizard.distill_auto") },
-            {
-              value: "ollama",
-              label: t("ultrawiki.wizard.distill_local"),
-            },
-          ]}
-        />
+          onChange={(e) => onDistill(e.target.value)}
+          className={selectCls}
+          data-testid="ultrawiki-wizard-distill"
+        >
+          <option value="">{t("ultrawiki.wizard.distill_auto")}</option>
+          <option value="ollama">{t("ultrawiki.wizard.distill_local")}</option>
+        </select>
         <span className="mt-1 block text-[11px] text-muted-foreground">
           {t("ultrawiki.wizard.distill_privacy_hint")}
         </span>
@@ -524,24 +521,26 @@ function OptionalStep({
         <span className="mb-1.5 block text-[10px] uppercase tracking-wider text-muted-foreground">
           {t("ultrawiki.wizard.rerank_label")}
         </span>
-        <BrandedSelect
+        <select
           value={rerank}
-          onValueChange={onRerank}
-          ariaLabel={t("ultrawiki.wizard.rerank_label")}
-          testId="ultrawiki-wizard-rerank"
-          options={[
-            { value: "", label: t("ultrawiki.wizard.rerank_off") },
-            ...rerankOptions.map((option) => ({
-              value: option.name,
-              label: `${option.name}${
-                option.ready
-                  ? ""
-                  : ` (${t("ultrawiki.slots.not_ready_suffix")})`
-              }`,
-              disabled: !option.ready,
-            })),
-          ]}
-        />
+          onChange={(e) => onRerank(e.target.value)}
+          className={selectCls}
+          data-testid="ultrawiki-wizard-rerank"
+        >
+          <option value="">{t("ultrawiki.wizard.rerank_off")}</option>
+          {rerankOptions.map((option) => (
+            <option
+              key={option.name}
+              value={option.name}
+              disabled={!option.ready}
+            >
+              {option.name}
+              {!option.ready
+                ? ` (${t("ultrawiki.slots.not_ready_suffix")})`
+                : ""}
+            </option>
+          ))}
+        </select>
       </label>
     </div>
   );

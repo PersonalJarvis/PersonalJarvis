@@ -834,6 +834,23 @@ export interface ManagedServerStatus {
 export interface ManagedServerRuntime {
   /** Something answers on the configured port right now. */
   reachable: boolean;
+  /**
+   * The model pool answers — the first moment a call can actually be taken.
+   * An open port only proves a socket exists, so `reachable` alone used to
+   * badge a still-loading server as running while every call failed.
+   */
+  ready?: boolean;
+  /** At least one pipeline is free for a NEW call. */
+  available?: boolean;
+  /** Sanitized pool snapshot; `in_use > 0` means healthy-and-serving. */
+  pool?: {
+    size: number;
+    in_use: number;
+    available: number;
+    active: number;
+    draining: number;
+    stuck: number;
+  } | null;
   port: number;
   pid: number | null;
   /** The recorded server process verifiably runs (PID-reuse safe). */

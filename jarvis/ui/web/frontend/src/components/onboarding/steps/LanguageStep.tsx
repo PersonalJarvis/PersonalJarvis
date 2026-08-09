@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import { BrandedSelect } from "@/components/ui/select";
 import {
   useT,
   useUiLanguage,
@@ -20,32 +19,30 @@ export function LanguageStep({ goNext }: StepProps) {
       <h2 className="font-display text-lg font-semibold">{t("onboarding.language.title")}</h2>
       <label className="text-sm">
         {t("onboarding.language.ui_label")}
-        <BrandedSelect
-          ariaLabel={t("onboarding.language.ui_label")}
+        <select
+          aria-label={t("onboarding.language.ui_label")}
           value={ui}
-          onValueChange={(value) => setUiLanguage(value as UiLanguage)}
-          options={[
-            { value: "en", label: "English" },
-            { value: "de", label: "Deutsch" },
-            { value: "es", label: "Español" },
-          ]}
-          className="mt-1"
-        />
+          onChange={(e) => setUiLanguage(e.target.value as UiLanguage)}
+          className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        >
+          <option value="en">English</option>
+          <option value="de">Deutsch</option>
+          <option value="es">Español</option>
+        </select>
       </label>
       <label className="text-sm">
         {t("onboarding.language.reply_label")}
-        <BrandedSelect
-          ariaLabel={t("onboarding.language.reply_label")}
+        <select
+          aria-label={t("onboarding.language.reply_label")}
           value={reply}
-          onValueChange={(value) => setReplyLanguage(value as ReplyLanguage)}
-          options={[
-            { value: "auto", label: "Auto" },
-            { value: "en", label: "English" },
-            { value: "de", label: "Deutsch" },
-            { value: "es", label: "Español" },
-          ]}
-          className="mt-1"
-        />
+          onChange={(e) => setReplyLanguage(e.target.value as ReplyLanguage)}
+          className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        >
+          <option value="auto">Auto</option>
+          <option value="en">English</option>
+          <option value="de">Deutsch</option>
+          <option value="es">Español</option>
+        </select>
       </label>
       <Button className="w-full" onClick={goNext}>{t("onboarding.nav.next")}</Button>
     </div>

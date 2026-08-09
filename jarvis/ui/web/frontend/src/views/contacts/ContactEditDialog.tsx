@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Loader2, Plus, X } from "lucide-react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { BrandedSelect } from "@/components/ui/select";
 import { RELATIONSHIPS, relationshipLabel, type Relationship } from "./constants";
 import {
   createContact,
@@ -127,21 +126,18 @@ export function ContactEditDialog({
           </Labeled>
 
           <Labeled label={t("contacts.relationship")}>
-            <BrandedSelect
+            <select
               value={relationship}
-              onValueChange={(value) =>
-                setRelationship(value as Relationship | "")
-              }
-              ariaLabel={t("contacts.relationship")}
+              onChange={(e) => setRelationship(e.target.value as Relationship | "")}
               className={inputClass}
-              options={[
-                { value: "", label: "—" },
-                ...RELATIONSHIPS.map((item) => ({
-                  value: item,
-                  label: relationshipLabel(t, item),
-                })),
-              ]}
-            />
+            >
+              <option value="">—</option>
+              {RELATIONSHIPS.map((r) => (
+                <option key={r} value={r}>
+                  {relationshipLabel(t, r)}
+                </option>
+              ))}
+            </select>
           </Labeled>
 
           <ListField

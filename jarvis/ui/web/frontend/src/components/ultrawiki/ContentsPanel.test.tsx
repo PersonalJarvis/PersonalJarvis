@@ -161,14 +161,9 @@ describe("ContentsPanel", () => {
       expect(screen.getByTestId("ultrawiki-item-1")).toBeDefined();
     });
 
-    fireEvent.click(screen.getByTestId("ultrawiki-contents-state-filter"));
-    const panel = await screen.findByTestId(
-      "ultrawiki-contents-state-filter-panel",
-    );
-    const failed = [...panel.querySelectorAll('[role="option"]')].find(
-      (option) => option.getAttribute("data-value") === "failed",
-    );
-    fireEvent.click(failed!);
+    fireEvent.change(screen.getByTestId("ultrawiki-contents-state-filter"), {
+      target: { value: "failed" },
+    });
 
     await waitFor(() => {
       expect(seen.some((url) => url.includes("state=failed"))).toBe(true);

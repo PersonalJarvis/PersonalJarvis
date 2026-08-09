@@ -394,14 +394,10 @@ describe("ObsidianSetupDialog", () => {
       });
       fireEvent.click(screen.getByTestId("obsidian-setup-mode-existing"));
 
-      fireEvent.click(screen.getByTestId("obsidian-setup-vault-select"));
-      const panel = await screen.findByTestId(
-        "obsidian-setup-vault-select-panel",
-      );
-      const vault = [...panel.querySelectorAll('[role="option"]')].find(
-        (option) => option.getAttribute("data-value") === VAULTS[1].path,
-      );
-      fireEvent.click(vault!);
+      const select = screen.getByTestId(
+        "obsidian-setup-vault-select",
+      ) as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: VAULTS[1].path } });
 
       fireEvent.click(screen.getByTestId("obsidian-setup-register"));
 
@@ -465,14 +461,10 @@ describe("ObsidianSetupDialog", () => {
           ).toBe(false);
         });
         fireEvent.click(screen.getByTestId("obsidian-setup-mode-existing"));
-        fireEvent.click(screen.getByTestId("obsidian-setup-vault-select"));
-        const panel = await screen.findByTestId(
-          "obsidian-setup-vault-select-panel",
+        fireEvent.change(
+          screen.getByTestId("obsidian-setup-vault-select") as HTMLSelectElement,
+          { target: { value: VAULTS[1].path } },
         );
-        const vault = [...panel.querySelectorAll('[role="option"]')].find(
-          (option) => option.getAttribute("data-value") === VAULTS[1].path,
-        );
-        fireEvent.click(vault!);
         fireEvent.click(screen.getByTestId("obsidian-setup-register"));
 
         await waitFor(() => {

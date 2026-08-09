@@ -8,7 +8,6 @@ import { CuModelSelector } from "@/components/CuModelSelector";
 import { RealtimeOptionsControl } from "@/components/RealtimeOptionsControl";
 import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 import { Button } from "@/components/ui/button";
-import { BrandedSelect } from "@/components/ui/select";
 import {
   codexLogout,
   loginAntigravity,
@@ -1905,6 +1904,51 @@ function LocalRuntimePanel({
   );
 }
 
+export type ManagedRuntimeBadge = {
+  key: string;
+  tone: "ok" | "warn" | "muted";
+};
+
+/**
+ * The live server verdict, in one place because it is a RULE, not decoration.
+ *
+ * Honest about ownership: reachable-and-not-ours is a port conflict (or an
+ * orphan of a removed install), never claimed as ours. Honest about
+ * readiness: "running" means the server could take a call, not merely that a
+ * socket answers. The old port-only badge stayed green through the whole
+ * model load, so the card said "Server running" while every call died on a
+ * cold pool (live 2026-08-09 11:50:47).
+ *
+ * A pool with every slot in use is still healthy — that is a busy server, not
+ * a broken one. Backends older than this rule omit `ready`/`available`;
+ * treating only an explicit `false` as bad keeps the badge exactly as honest
+ * as its input instead of inventing a warning from a missing field.
+ */
+export function managedRuntimeBadge(
+  runtime: ManagedServerRuntime | null,
+  installReady: boolean,
+): ManagedRuntimeBadge | null {
+  if (runtime === null) return null;
+  const ours = runtime.owned || installReady;
+  const serving = (runtime.pool?.in_use ?? 0) > 0;
+  const canTakeACall =
+    runtime.ready !== false && (runtime.available !== false || serving);
+  if (runtime.reachable && ours) {
+    if (canTakeACall) {
+      return { key: "apikeys_view.managed_server_running", tone: "ok" };
+    }
+    return runtime.ready === false
+      ? { key: "apikeys_view.managed_server_starting", tone: "warn" }
+      : { key: "apikeys_view.managed_server_no_capacity", tone: "warn" };
+  }
+  if (runtime.reachable) {
+    return { key: "apikeys_view.managed_server_port_conflict", tone: "warn" };
+  }
+  return runtime.owned
+    ? { key: "apikeys_view.managed_server_starting", tone: "warn" }
+    : { key: "apikeys_view.managed_server_stopped", tone: "muted" };
+}
+
 /**
  * One-click managed install for the self-hosted realtime server (the card
  * that used to require a terminal, a venv, and a hand-written launch
@@ -2202,18 +2246,7 @@ function ManagedServerPanel({
     }
   };
 
-  // Live server verdict, honest about ownership: reachable-and-not-ours is a
-  // port conflict (or an orphan of a removed install), never claimed as ours.
-  const runtimeBadge =
-    runtime === null
-      ? null
-      : runtime.reachable && (runtime.owned || status.ready)
-        ? { key: "apikeys_view.managed_server_running", tone: "ok" as const }
-        : runtime.reachable
-          ? { key: "apikeys_view.managed_server_port_conflict", tone: "warn" as const }
-          : runtime.owned
-            ? { key: "apikeys_view.managed_server_starting", tone: "warn" as const }
-            : { key: "apikeys_view.managed_server_stopped", tone: "muted" as const };
+  const runtimeBadge = managedRuntimeBadge(runtime, status.ready);
 
   const failed = progress?.phase === "error";
   const normalizedVoiceQuery = voiceQuery.trim().toLocaleLowerCase();
@@ -2328,26 +2361,21 @@ function ManagedServerPanel({
                 <Brain className="h-3.5 w-3.5 text-muted-foreground" />
                 {t("apikeys_view.managed_thinking_title")}
               </span>
-              <BrandedSelect
-                ariaLabel={t("apikeys_view.managed_thinking_title")}
+              <select
+                aria-label={t("apikeys_view.managed_thinking_title")}
                 value={selectedBrain}
-                onValueChange={setSelectedBrain}
+                onChange={(event) => setSelectedBrain(event.target.value)}
                 disabled={setupBusy}
-                className="h-8 px-2 text-xs"
-                options={catalog.brain.models.map((choice) => ({
-                  value: choice.id,
-                  label: `${choice.label} · ~${choice.size_gb} GB${
-                    choice.recommended
-                      ? ` · ${t("apikeys_view.managed_brain_recommended")}`
-                      : ""
-                  }${
-                    choice.fits
-                      ? ""
-                      : ` · ${t("apikeys_view.managed_brain_no_fit")}`
-                  }`,
-                  disabled: !choice.fits,
-                }))}
-              />
+                className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+              >
+                {catalog.brain.models.map((choice) => (
+                  <option key={choice.id} value={choice.id} disabled={!choice.fits}>
+                    {choice.label} · ~{choice.size_gb} GB
+                    {choice.recommended ? ` · ${t("apikeys_view.managed_brain_recommended")}` : ""}
+                    {!choice.fits ? ` · ${t("apikeys_view.managed_brain_no_fit")}` : ""}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label className="space-y-1 rounded-md border border-border/60 bg-background/50 p-2">
@@ -2355,28 +2383,29 @@ function ManagedServerPanel({
                 <Volume2 className="h-3.5 w-3.5 text-muted-foreground" />
                 {t("apikeys_view.managed_speaking_title")}
               </span>
-              <BrandedSelect
-                ariaLabel={t("apikeys_view.managed_speaking_title")}
+              <select
+                aria-label={t("apikeys_view.managed_speaking_title")}
                 value={selectedVoice}
-                onValueChange={setSelectedVoice}
+                onChange={(event) => setSelectedVoice(event.target.value)}
                 disabled={setupBusy}
-                className="h-8 px-2 text-xs"
-                options={catalog.models.map((choice) => ({
-                  value: choice.id,
-                  label: `${choice.label}${
-                    choice.recommended
-                      ? ` · ${t("apikeys_view.managed_brain_recommended")}`
-                      : ""
-                  }${
-                    !choice.selectable
+                className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+              >
+                {catalog.models.map((choice) => (
+                  <option
+                    key={choice.id}
+                    value={choice.id}
+                    disabled={!choice.selectable}
+                  >
+                    {choice.label}
+                    {choice.recommended ? ` · ${t("apikeys_view.managed_brain_recommended")}` : ""}
+                    {!choice.selectable
                       ? ` · ${t("apikeys_view.managed_voice_unavailable")}`
                       : choice.runtime_ready === false
                         ? ` · ${t("apikeys_view.managed_voice_install_required")}`
-                        : ""
-                  }`,
-                  disabled: !choice.selectable,
-                }))}
-              />
+                        : ""}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
 

@@ -26,6 +26,30 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
+# Stable reason codes for a connection the refresh path could not heal. These
+# four strings are the ONLY thing ever persisted about a failure: a provider's
+# raw error body can echo a token back at us, so it must never reach storage or
+# the UI. Each code is matched from our own marker list, never from provider text.
+REAUTH_PROVIDER_REJECTED = "provider_rejected"
+"""The grant itself is gone — expired, revoked, or withdrawn by the provider."""
+REAUTH_CLIENT_REJECTED = "client_rejected"
+"""The OAuth client the grant belongs to was refused or no longer exists."""
+REAUTH_CLIENT_MISSING = "client_missing"
+"""Stored before we persisted the issuing client_id; unrefreshable by design."""
+REAUTH_ROTATION_LOST = "rotation_lost"
+"""A rotated refresh token could not be stored. NEVER retried — see below."""
+
+
+def _parse_utc(raw: object) -> datetime | None:
+    """Parse an ISO timestamp from storage, tolerating a naive one as UTC."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
 
 @dataclass(frozen=True, slots=True)
 class Tokens:
@@ -39,6 +63,16 @@ class Tokens:
     # un-healable). The entry is KEPT (never deleted) so the plugin stays
     # visible with a "Reconnect" affordance instead of silently disappearing.
     needs_reauth: bool = False
+    # WHY it needs reauth, and since when. Without these the flag is a bare
+    # yes/no: "Google withdrew the grant" and "the network blipped once" look
+    # identical to the user days later, once the log line has rotated away.
+    # One of the REAUTH_* codes above, or None on a healthy token.
+    reauth_reason: str | None = None
+    reauth_at: datetime | None = None
+    # Last automatic self-heal probe. Separate from `reauth_at` so retrying
+    # never overwrites when the connection actually died — that timestamp is
+    # the one the user is shown.
+    reauth_retry_at: datetime | None = None
 
     def is_near_expiry(self, threshold_seconds: int = 600) -> bool:
         if self.expires_at is None:
@@ -52,6 +86,9 @@ class Tokens:
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "extra": dict(self.extra),
             "needs_reauth": self.needs_reauth,
+            "reauth_reason": self.reauth_reason,
+            "reauth_at": self.reauth_at.isoformat() if self.reauth_at else None,
+            "reauth_retry_at": (self.reauth_retry_at.isoformat() if self.reauth_retry_at else None),
         }
         return json.dumps(payload, separators=(",", ":"))
 
@@ -64,12 +101,19 @@ class Tokens:
             expires_at = datetime.fromisoformat(expires_raw)
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=UTC)
+        reason = data.get("reauth_reason")
         return cls(
             access=data["access"],
             refresh=data.get("refresh"),
             expires_at=expires_at,
             extra=dict(data.get("extra") or {}),
             needs_reauth=bool(data.get("needs_reauth", False)),
+            # A token written before these fields existed simply has no reason.
+            # It stays flagged and still self-heals — an unknown cause is not a
+            # reason to strand it, only to say "unknown" honestly in the UI.
+            reauth_reason=reason if isinstance(reason, str) and reason else None,
+            reauth_at=_parse_utc(data.get("reauth_at")),
+            reauth_retry_at=_parse_utc(data.get("reauth_retry_at")),
         )
 
 

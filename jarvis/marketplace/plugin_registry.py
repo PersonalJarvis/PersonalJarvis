@@ -10,10 +10,10 @@ Never raises out of bootstrap()/refresh_plugin(): one broken plugin degrades
 to "no tools for that plugin" instead of blocking the whole brain (cloud-first
 graceful-degradation doctrine).
 """
+
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -66,22 +66,38 @@ _CONNECT_TIMEOUT_S_DEFAULT = 15.0
 _CLIENT_STOP_TIMEOUT_S = 5.0
 
 
-def _connect_needs_reauth(message: str) -> bool:
-    """True iff a connect failure indicates a dead credential, not a flaky host.
+def _connect_reauth_reason(message: str) -> str | None:
+    """The reason code for a connect failure, or ``None`` for a flaky host.
 
     Reuses the refresh scheduler's canonical OAuth marker list and adds the
     connect-time shapes (an HTTP 401/unauthorized on the MCP endpoint itself).
     Conservative on purpose: 'Connection closed', timeouts, and 5xx stay
-    retryable so one flaky boot never flags a healthy plugin."""
-    try:
-        from jarvis.marketplace.refresh_scheduler import _refresh_needs_reauth
+    retryable so one flaky boot never flags a healthy plugin.
 
-        if _refresh_needs_reauth(message):
-            return True
+    Returns the CODE, not a bool, so a connection flagged here carries the same
+    explanation as one flagged by the scheduler — the plugins view has only one
+    story to tell either way."""
+    try:
+        from jarvis.marketplace.refresh_scheduler import reauth_reason_for
+
+        reason = reauth_reason_for(message)
+        if reason is not None:
+            return reason
     except Exception:  # noqa: BLE001 — classifier is best-effort
         log.debug("connect reauth classifier unavailable", exc_info=True)
     m = message.lower()
-    return "401" in m or "unauthorized" in m or "invalid_token" in m
+    if "401" in m or "unauthorized" in m or "invalid_token" in m:
+        # The endpoint refused the credential itself. Indistinguishable at this
+        # layer from an expired grant, and the user's move is the same either way.
+        from jarvis.marketplace.token_store import REAUTH_PROVIDER_REJECTED
+
+        return REAUTH_PROVIDER_REJECTED
+    return None
+
+
+def _connect_needs_reauth(message: str) -> bool:
+    """Boolean view of :func:`_connect_reauth_reason` for the control-flow gates."""
+    return _connect_reauth_reason(message) is not None
 
 
 def _default_refresh_handler(plugin_id: str) -> Any | None:
@@ -271,9 +287,7 @@ class PluginToolRegistry:
         except Exception as exc:  # noqa: BLE001 - graceful per-plugin degrade
             message = self._connect_error_message(exc)
             if not _connect_needs_reauth(message):
-                log.warning(
-                    "plugin-registry: %s connect failed: %s", plugin.id, message
-                )
+                log.warning("plugin-registry: %s connect failed: %s", plugin.id, message)
                 self._last_errors[plugin.id] = message
                 return
 
@@ -337,9 +351,7 @@ class PluginToolRegistry:
 
             _ctx = try_get_skill_context()
             if _ctx is not None:
-                _register_plugin_capability(
-                    _get_cap_registry(), plugin.id, _ctx.registry.list()
-                )
+                _register_plugin_capability(_get_cap_registry(), plugin.id, _ctx.registry.list())
         except Exception as exc:  # noqa: BLE001 — capability is best-effort
             log.debug("paired cap register failed for %s: %s", plugin.id, exc)
 
@@ -362,27 +374,32 @@ class PluginToolRegistry:
         doomed connect (no repeated timeout cost) and the plugins view shows
         the Reconnect affordance instead of a silent per-boot failure."""
         try:
-            if not _connect_needs_reauth(message):
+            reason = _connect_reauth_reason(message)
+            if reason is None:
                 return
             tokens = self._store.load(plugin_id)
             if tokens is None:
                 return
             if expected_tokens is not None and tokens != expected_tokens:
                 log.info(
-                    "plugin-registry: %s re-auth mark skipped; token changed "
-                    "during connect retry",
+                    "plugin-registry: %s re-auth mark skipped; token changed during connect retry",
                     plugin_id,
                 )
                 return
-            self._store.save(plugin_id, dataclasses.replace(tokens, needs_reauth=True))
+            from jarvis.marketplace.refresh_scheduler import flag_for_reauth
+
+            self._store.save(plugin_id, flag_for_reauth(tokens, reason))
             log.warning(
-                "plugin-registry: %s connect needs re-auth — marked: %s",
-                plugin_id, message,
+                "plugin-registry: %s connect needs re-auth (%s) — marked: %s",
+                plugin_id,
+                reason,
+                message,
             )
         except Exception as exc:  # noqa: BLE001 — marking is best-effort
             log.debug(
                 "plugin-registry: needs_reauth save failed for %s: %s",
-                plugin_id, exc,
+                plugin_id,
+                exc,
             )
 
     async def _disconnect_plugin(self, plugin_id: str) -> None:

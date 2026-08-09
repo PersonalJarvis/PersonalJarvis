@@ -15,7 +15,6 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, Database, ExternalLink, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { BrandedSelect } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { formatRelativeTime } from "@/components/ultrawiki/relativeTime";
@@ -130,37 +129,35 @@ export function ContentsPanel({
       <div className="flex flex-wrap gap-2">
         <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
           {t("ultrawiki.contents.filter_source")}
-          <BrandedSelect
+          <select
             value={sourceId}
-            onValueChange={setSourceId}
-            ariaLabel={t("ultrawiki.contents.filter_source")}
-            className="w-auto min-w-40 px-2 py-1 text-xs"
-            testId="ultrawiki-contents-source-filter"
-            options={[
-              { value: "", label: t("ultrawiki.contents.all_sources") },
-              ...status.sources.map((source) => ({
-                value: source.id,
-                label: source.label,
-              })),
-            ]}
-          />
+            onChange={(e) => setSourceId(e.target.value)}
+            className="rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground"
+            data-testid="ultrawiki-contents-source-filter"
+          >
+            <option value="">{t("ultrawiki.contents.all_sources")}</option>
+            {status.sources.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.label}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
           {t("ultrawiki.contents.filter_state")}
-          <BrandedSelect
+          <select
             value={state}
-            onValueChange={setState}
-            ariaLabel={t("ultrawiki.contents.filter_state")}
-            className="w-auto min-w-40 px-2 py-1 text-xs"
-            testId="ultrawiki-contents-state-filter"
-            options={[
-              { value: "", label: t("ultrawiki.contents.all_states") },
-              ...STATE_FILTERS.map(([key, labelKey]) => ({
-                value: key,
-                label: t(labelKey),
-              })),
-            ]}
-          />
+            onChange={(e) => setState(e.target.value)}
+            className="rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground"
+            data-testid="ultrawiki-contents-state-filter"
+          >
+            <option value="">{t("ultrawiki.contents.all_states")}</option>
+            {STATE_FILTERS.map(([key, labelKey]) => (
+              <option key={key} value={key}>
+                {t(labelKey)}
+              </option>
+            ))}
+          </select>
         </label>
       </div>
 

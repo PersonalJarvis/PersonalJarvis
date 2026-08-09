@@ -1178,6 +1178,7 @@
     "managed_server_stopped": "Server gestoppt",
     "managed_server_starting": "Server startet — Sprachmodelle werden geladen…",
     "managed_server_port_conflict": "Ein anderer Prozess belegt diesen Port",
+    "managed_server_no_capacity": "Server antwortet, hat aber keine freie Sprach-Pipeline",
     "managed_start_cta": "Server starten",
     "managed_stop_cta": "Server stoppen",
     "managed_brain_setup_note": "Richtet zuerst das lokale Denkmodell ein: installiert bei Bedarf Ollama und lädt das Modell herunter (mehrere zusätzliche GB).",

@@ -20,9 +20,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import {
   PROVIDER_STATE_CHIPS,
   ProviderCard,
+  managedRuntimeBadge,
   type ProviderStateChip,
 } from "@/components/providers/ProviderTierSection";
-import type { ProviderDescriptor, ProviderTestResult } from "@/hooks/useProviders";
+import type {
+  ManagedServerRuntime,
+  ProviderDescriptor,
+  ProviderTestResult,
+} from "@/hooks/useProviders";
 import { useI18nStore, type UiLanguage } from "@/i18n";
 import enLocale from "@/i18n/locales/en.json";
 
@@ -1087,11 +1092,10 @@ describe("managed local realtime model setup", () => {
     expect(screen.getByText("Browse the full Ollama catalog")).toBeTruthy();
     expect(screen.getByText("Browse open-source speech models")).toBeTruthy();
     expect(screen.getByText("Advanced connection settings")).toBeTruthy();
-    fireEvent.click(screen.getByRole("combobox", { name: "Speak" }));
-    const unavailable = await screen.findByRole("option", {
+    const unavailable = screen.getByRole("option", {
       name: /ChatTTS.*not voice-tested yet/,
-    });
-    expect(unavailable.getAttribute("aria-disabled")).toBe("true");
+    }) as HTMLOptionElement;
+    expect(unavailable.disabled).toBe(true);
     expect(calls.some((call) => call.url.endsWith("/model-catalog"))).toBe(true);
 
     fireEvent.click(screen.getByText("Browse open-source speech models"));
@@ -1105,5 +1109,91 @@ describe("managed local realtime model setup", () => {
     fireEvent.change(search, { target: { value: "moss" } });
     expect(screen.getByText("MOSS-TTS-Nano 100M")).toBeTruthy();
     expect(screen.getByText("Integration pending")).toBeTruthy();
+  });
+});
+
+describe("managed server badge", () => {
+  /** A pool snapshot with the fields the rule actually reads. */
+  function pool(inUse: number, available: number) {
+    return {
+      size: inUse + available,
+      in_use: inUse,
+      available,
+      active: inUse,
+      draining: 0,
+      stuck: 0,
+    };
+  }
+
+  function runtime(overrides: Partial<ManagedServerRuntime>): ManagedServerRuntime {
+    return {
+      reachable: true,
+      ready: true,
+      available: true,
+      pool: pool(0, 1),
+      port: 8765,
+      pid: 4242,
+      owned: true,
+      stale: false,
+      ...overrides,
+    };
+  }
+
+  it("calls a server with a free pipeline running", () => {
+    expect(managedRuntimeBadge(runtime({}), true)?.key).toBe(
+      "apikeys_view.managed_server_running",
+    );
+  });
+
+  it("calls a busy-but-healthy server running, not broken", () => {
+    const busy = runtime({ available: false, pool: pool(1, 0) });
+    expect(managedRuntimeBadge(busy, true)?.key).toBe(
+      "apikeys_view.managed_server_running",
+    );
+  });
+
+  it("stops claiming 'running' while the model pool is still cold", () => {
+    // The live defect: the port answered, so the card stayed green through a
+    // ~60 s model load while every call failed on the same server.
+    const loading = runtime({ ready: false, available: false, pool: null });
+    const badge = managedRuntimeBadge(loading, true);
+    expect(badge?.key).toBe("apikeys_view.managed_server_starting");
+    expect(badge?.tone).toBe("warn");
+  });
+
+  it("flags a wedged pool that serves nobody", () => {
+    const wedged = runtime({ available: false, pool: pool(0, 0) });
+    expect(managedRuntimeBadge(wedged, true)?.key).toBe(
+      "apikeys_view.managed_server_no_capacity",
+    );
+  });
+
+  it("keeps a foreign listener a port conflict, never ours", () => {
+    const foreign = runtime({ owned: false });
+    expect(managedRuntimeBadge(foreign, false)?.key).toBe(
+      "apikeys_view.managed_server_port_conflict",
+    );
+  });
+
+  it("trusts an older backend that reports no readiness fields", () => {
+    const legacy: ManagedServerRuntime = {
+      reachable: true,
+      port: 8765,
+      pid: 1,
+      owned: true,
+      stale: false,
+    };
+    expect(managedRuntimeBadge(legacy, true)?.key).toBe(
+      "apikeys_view.managed_server_running",
+    );
+  });
+
+  it("reads an unreachable owned process as starting, and none as stopped", () => {
+    expect(
+      managedRuntimeBadge(runtime({ reachable: false }), true)?.key,
+    ).toBe("apikeys_view.managed_server_starting");
+    expect(
+      managedRuntimeBadge(runtime({ reachable: false, owned: false }), false)?.key,
+    ).toBe("apikeys_view.managed_server_stopped");
   });
 });
