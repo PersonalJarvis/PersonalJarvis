@@ -21,7 +21,6 @@ import {
   Files,
   FolderGit2,
   FolderPlus,
-  Globe2,
   GripVertical,
   Image as ImageIcon,
   LayoutGrid,
@@ -70,7 +69,6 @@ import {
 } from "./paneLayout";
 import { loadStoredArrangement, saveStoredArrangement, usePaneWeights } from "./usePaneWeights";
 import { ContinueInterrupted } from "./ContinueInterrupted";
-import { AgenticBrowser } from "./AgenticBrowser";
 import { DeckStage, type DeckAgent } from "./deck/DeckStage";
 import type { CardState } from "./deck/AgentCard";
 import { useDeckQueue } from "./deck/useDeckQueue";
@@ -838,21 +836,6 @@ export function AgenticGrid({
    */
   const [viewMode, setViewModeState] = useState<WorkspaceView>(() => storedViewMode() ?? "grid");
   const [explorerOpen, setExplorerOpen] = useState(false);
-  // The browser is a temporary lens over the workspace, not a fourth agent
-  // layout. Keeping it out of WorkspaceView avoids lying to the backend about
-  // which terminal surface should be restored after this local panel closes.
-  const [browserOpen, setBrowserOpen] = useState(false);
-  const browserToggleRef = useRef<HTMLButtonElement | null>(null);
-  const closeBrowser = useCallback(() => {
-    setBrowserOpen(false);
-    requestAnimationFrame(() => browserToggleRef.current?.focus());
-  }, []);
-  useEffect(() => {
-    // A browser page belongs to the workspace that opened it. A parent normally
-    // keys the grid by session ID, but this closes it safely for standalone
-    // consumers and tests that reuse the component across a workspace switch.
-    setBrowserOpen(false);
-  }, [session.id]);
   /**
    * Which agent's terminal is unfolded on the deck, if any.
    *
@@ -2330,7 +2313,6 @@ export function AgenticGrid({
             data-testid={testId}
             aria-pressed={viewMode === view}
             onClick={() => {
-              setBrowserOpen(false);
               setViewMode(view);
               // A conversation surface with no input box is a screenshot, so
               // both talking modes bring the composer with them. The deck is
@@ -2361,32 +2343,6 @@ export function AgenticGrid({
           className={cn(TOOLBAR_BTN, explorerOpen && TOOLBAR_BTN_ON)}
         >
           <Files className="h-4 w-4 shrink-0" aria-hidden />
-        </button>
-
-        {/* A real browser-engine surface over the live workspace. The panes
-            stay mounted and connected underneath; this button only changes
-            which surface receives the screen. */}
-        <button
-          ref={browserToggleRef}
-          type="button"
-          data-testid="agentic-browser-toggle"
-          aria-controls="agentic-browser-panel"
-          aria-expanded={browserOpen}
-          aria-pressed={browserOpen}
-          onClick={() => setBrowserOpen((open) => !open)}
-          title={
-            browserOpen
-              ? t("agentic_grid.browser.close")
-              : t("agentic_grid.browser.toggle")
-          }
-          aria-label={
-            browserOpen
-              ? t("agentic_grid.browser.close")
-              : t("agentic_grid.browser.toggle")
-          }
-          className={cn(TOOLBAR_BTN, browserOpen && TOOLBAR_BTN_ON)}
-        >
-          <Globe2 className="h-4 w-4 shrink-0" />
         </button>
 
         {/* Even out the sizes. Beside the grid/chat toggle because both are
@@ -2557,8 +2513,6 @@ export function AgenticGrid({
         )}
       </div>
 
-      {browserOpen && <AgenticBrowser onClose={closeBrowser} />}
-
       {/* ------------------------------------------------------------- grid */}
       {/*
         ONE container, and every pane is a direct child of it — placed by the
@@ -2588,7 +2542,7 @@ export function AgenticGrid({
         the element tree, so React re-parents nothing and no agent dies for a
         change of clothes.
       */}
-      <div className={cn("min-h-0 flex-1", browserOpen ? "hidden" : "flex")}>
+      <div className="flex min-h-0 flex-1">
         {/* ------------------------------------------------------ chat rail */}
         <aside
           data-testid="agentic-chat-rail"
@@ -2994,7 +2948,7 @@ export function AgenticGrid({
                     fontSize={fontSize}
                     geometryReady={gridMeasured}
                     focused={target === term.name}
-                    active={!browserOpen && (!chatView || onStage)}
+                    active={!chatView || onStage}
                     maximized={isMaximized}
                     layoutBusy={layoutBusy}
                     splitDisabled={atLimit || busy || working}
@@ -3284,7 +3238,6 @@ export function AgenticGrid({
         )}
       </Dialog.Root>
 
-      <div className={browserOpen ? "hidden" : "contents"}>
       {/* ------------------------------------------------- prompt bar + seam */}
       {/*
         The seam replaces the bar's top border, so there is exactly one line
@@ -3477,7 +3430,6 @@ export function AgenticGrid({
           onAttach={(files) => void attach({ paths: [], files })}
         />
         </div>
-      </div>
       </div>
 
       {/* The pane in hand, following the cursor.

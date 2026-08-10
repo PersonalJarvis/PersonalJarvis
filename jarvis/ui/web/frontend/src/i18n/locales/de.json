@@ -3895,24 +3895,6 @@
     }
   },
   "agentic_grid": {
-    "browser": {
-      "title": "In-App-Browser",
-      "toggle": "In-App-Browser öffnen",
-      "close": "In-App-Browser schließen",
-      "address_label": "Webadresse eingeben",
-      "address_placeholder": "Webadresse eingeben",
-      "open_another": "Andere Webadresse öffnen",
-      "go": "Los",
-      "home": "Startseite",
-      "open_external": "Eingegebene Adresse im Systembrowser öffnen",
-      "loading": "Seite wird geladen",
-      "frame_title": "Browserseite",
-      "invalid_address": "Gib eine gültige HTTP- oder HTTPS-Webadresse ein.",
-      "embed_hint": "Eingebettete Seiten melden ihre aktuelle Adresse nicht. Nutze den Systembrowser für Anmeldungen oder sensible Daten.",
-      "start_title": "Das Web, direkt in deinem Workspace",
-      "start_body": "Öffne eine Website, ohne deine Coding-Sitzung zu verlassen. Deine Agent-Terminals bleiben hinter dieser Seite verbunden.",
-      "start_action": "Webadresse eingeben"
-    },
     "continue": {
       "button": "Fortsetzen",
       "hint": "Prüfen, welche Coding-Sitzungen unterbrochen wurden, und sie weiterarbeiten lassen.",

@@ -2423,36 +2423,6 @@ describe("the workspace header row", () => {
     expect(screen.getByTestId("agentic-toolbar").textContent).toContain("project");
   });
 
-  it("opens the browser in the workspace while every agent pane stays mounted", async () => {
-    renderGrid();
-
-    const pane = screen.getByTestId("pane-Mika");
-    const toggle = screen.getByTestId("agentic-browser-toggle");
-    fireEvent.click(toggle);
-
-    expect(screen.getByTestId("agentic-browser")).toBeTruthy();
-    expect(screen.getByTestId("agentic-grid").parentElement?.className).toContain("hidden");
-    expect(screen.getByTestId("pane-Mika")).toBe(pane);
-    expect(screen.getByTestId("pane-Mika").dataset.active).toBe("no");
-
-    fireEvent.click(screen.getByTestId("agentic-browser-close"));
-
-    expect(screen.queryByTestId("agentic-browser")).toBeNull();
-    expect(screen.getByTestId("pane-Mika")).toBe(pane);
-    expect(screen.getByTestId("pane-Mika").dataset.active).toBe("yes");
-    await waitFor(() => expect(document.activeElement).toBe(toggle));
-  });
-
-  it("closes a browser page when the workspace changes", async () => {
-    const { rerender } = renderGrid();
-    fireEvent.click(screen.getByTestId("agentic-browser-toggle"));
-    expect(screen.getByTestId("agentic-browser")).toBeTruthy();
-
-    rerender({ session: { ...BASE, id: "another_workspace" } });
-
-    await waitFor(() => expect(screen.queryByTestId("agentic-browser")).toBeNull());
-  });
-
   it("expands the file explorer without remounting any live agent pane", async () => {
     renderGrid();
 
