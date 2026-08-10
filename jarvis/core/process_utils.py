@@ -1,9 +1,9 @@
-"""Cross-platform helpers for the Windows quirks a ``pythonw`` desktop app hits.
+"""Cross-platform helpers for the process quirks a desktop app hits.
 
-Two unrelated ones live here: spawning subprocesses without flashing console
-windows (``NO_WINDOW_CREATIONFLAGS``, below) and stopping Windows from replacing
-an unresponsive window with an opaque ghost (``disable_windows_app_ghosting``).
-Both are no-ops off Windows.
+The helpers cover a windowed Python process without standard streams, spawning
+subprocesses without flashing console windows (``NO_WINDOW_CREATIONFLAGS``),
+and stopping Windows from replacing an unresponsive window with an opaque ghost
+(``disable_windows_app_ghosting``). The Windows-only helpers are no-ops elsewhere.
 
 Background:
     The desktop app runs under ``pythonw.exe`` (no attached console). When a
@@ -32,10 +32,47 @@ parameter is silently ignored by the subprocess machinery.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import TextIO
+
+_NULL_STANDARD_STREAMS: list[TextIO] = []
+
+
+def ensure_standard_streams() -> None:
+    """Make ``stdout`` and ``stderr`` safe in a windowed Python process.
+
+    ``pythonw.exe`` and windowed PyInstaller bootloaders expose both streams as
+    ``None``. Libraries such as Uvicorn still call ``sys.stdout.isatty()`` while
+    configuring logging, and our own fatal-startup paths write to stderr. Give
+    those callers a real text stream backed by the platform null device. The
+    desktop file log remains the durable diagnostic surface; this only prevents
+    no-console launches from crashing while trying to report a crash.
+
+    Existing streams are preserved. On Windows, reconfigure them to UTF-8 when
+    the stream supports it, matching the historical launcher behavior.
+    """
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None:
+            replacement = open(  # noqa: SIM115 - intentionally process-lifetime
+                os.devnull,
+                "w",
+                encoding="utf-8",
+                errors="replace",
+            )
+            setattr(sys, name, replacement)
+            _NULL_STANDARD_STREAMS.append(replacement)
+            continue
+        if sys.platform == "win32":
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, OSError):
+                pass
+
 
 if sys.platform == "win32":
     NO_WINDOW_CREATIONFLAGS: int = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
@@ -125,5 +162,6 @@ def disable_windows_app_ghosting() -> bool:
 __all__ = [
     "NO_WINDOW_CREATIONFLAGS",
     "disable_windows_app_ghosting",
+    "ensure_standard_streams",
     "resolve_executable",
 ]

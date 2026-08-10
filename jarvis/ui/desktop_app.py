@@ -27,15 +27,20 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-# Windows UTF-8 fix (analogous to jarvis.__main__)
+from filelock import FileLock, Timeout
+
+from jarvis.core.branding import PRODUCT_NAME as WINDOW_TITLE
+from jarvis.core.config import DATA_DIR, JarvisConfig, load_config
+from jarvis.core.process_utils import ensure_standard_streams
+
+if TYPE_CHECKING:
+    from jarvis.ui.web.server import WebServer
+
+# Direct ``python -m jarvis.ui.desktop_app`` entry points bypass the launcher,
+# so they need the same pythonw/PyInstaller stream repair here as well.
+ensure_standard_streams()
+
 if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-    except (AttributeError, OSError):
-        # Nothing to log to yet — this IS the call that makes the streams
-        # usable, and no logger exists this early in the process.
-        pass
     try:
         from jarvis.ui.icon_utils import ensure_windows_app_identity
 
@@ -44,14 +49,6 @@ if sys.platform == "win32":
         # Taskbar-icon grouping is cosmetic and Windows-only; failing here must
         # not stop the app from starting on any other OS.
         pass
-
-from filelock import FileLock, Timeout
-
-from jarvis.core.branding import PRODUCT_NAME as WINDOW_TITLE
-from jarvis.core.config import DATA_DIR, JarvisConfig, load_config
-
-if TYPE_CHECKING:
-    from jarvis.ui.web.server import WebServer
 
 
 # ---------------------------------------------------------------------------

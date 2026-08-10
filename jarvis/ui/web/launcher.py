@@ -20,6 +20,8 @@ import sys
 import time
 
 from jarvis.core.branding import CONFIG_FILE_NAME
+from jarvis.core.process_utils import ensure_standard_streams
+from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness
 
 # Boot-profiling anchor (opt-in via JARVIS_BOOT_PROFILE=1). ``main()`` stamps the
 # earliest in-process moment our code runs; ``_run_headless`` emits one
@@ -29,13 +31,10 @@ from jarvis.core.branding import CONFIG_FILE_NAME
 # process. None means "not profiling" → no line is emitted (zero prod change).
 _BOOT_PROFILE_T0: float | None = None
 
-# Windows-UTF8-Fix
-if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, OSError):
-        pass
+# A windowed interpreter (pythonw / a GUI PyInstaller build) has no standard
+# streams. Uvicorn probes stdout while configuring its formatter, so repair the
+# streams before any desktop/backend construction can begin.
+ensure_standard_streams()
 
 # DPI awareness — claim PER_MONITOR_AWARE for the whole process BEFORE anything
 # imports pywebview. Windows honours only the FIRST process-awareness claim, and
@@ -46,8 +45,6 @@ if sys.platform == "win32":
 # x=-1989 while physically at x=-1326; clicks 1/4 hits vs 4/4 with the early
 # claim). Same root as the JarvisBar HiDPI shrink (commit 7a6e7d17). No-op off
 # Windows.
-from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness
-
 _ensure_dpi_awareness()
 
 # Taskbar-Icon-Fix (Windows): the unique AUMID must be set BEFORE pywebview
