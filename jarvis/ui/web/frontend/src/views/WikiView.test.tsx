@@ -274,6 +274,7 @@ describe("WikiView — populated tree", () => {
     fireEvent.click(expandButton);
 
     expect(workspace.getAttribute("data-graph-expanded")).toBe("true");
+    expect(workspace.classList.contains("z-[100]")).toBe(true);
     expect(screen.queryByTestId("wiki-tree-sidebar")).toBeNull();
     expect(screen.queryByTestId("wiki-backlinks-placeholder")).toBeNull();
 

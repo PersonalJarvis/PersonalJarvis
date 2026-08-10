@@ -326,6 +326,8 @@
     --surface-panel-alpha: 0.68;
     --surface-control-alpha: 0.82;
     --surface-stage-alpha: 0.7;
+    --surface-wiki-pane-alpha: 0.52;
+    --surface-wiki-stage-alpha: 0.5;
 
     /* --- Stages ----------------------------------------------------------
        The full-bleed canvases behind the knowledge maps. They are not chrome:
@@ -379,6 +381,8 @@
     --surface-panel-alpha: 0.58;
     --surface-control-alpha: 0.72;
     --surface-stage-alpha: 0.58;
+    --surface-wiki-pane-alpha: 0.36;
+    --surface-wiki-stage-alpha: 0.34;
 
     --stage-bg: 0 0% 4%;
     --stage-dot-rgb: 255 255 255;
@@ -695,6 +699,54 @@
 
   .jarvis-section-stage > [class~="bg-background"] {
     background-color: transparent;
+  }
+
+  /* The normal Wiki is assembled from nested full-height panes. Giving every
+     structural wrapper its own glass fill compounds the alpha and turns three
+     transparent layers into an almost opaque rectangle. Keep the workspace and
+     centre column clear, then paint exactly one restrained veil on each real
+     pane. */
+  .jarvis-section-stage #wiki-workspace,
+  .jarvis-section-stage
+    #wiki-workspace
+    > section[class~="bg-background"] {
+    background-color: transparent;
+  }
+
+  /* A transparent full-screen map must not reveal the app bar's labels under
+     its own toolbar. The wallpaper should continue through the overlay; the
+     shell controls should not. They return immediately when the map restores. */
+  main:has(
+      > .jarvis-section-stage
+        #wiki-workspace[data-graph-expanded="true"]
+    )
+    > :not(.jarvis-section-stage) {
+    visibility: hidden;
+  }
+
+  .jarvis-section-stage
+    #wiki-workspace
+    :where(
+      [data-testid="wiki-tree-sidebar"],
+      [data-testid="wiki-backlinks-panel"],
+      [data-testid="wiki-backlinks-placeholder"]
+    ) {
+    background-color: rgb(
+      var(--shell-rgb) / var(--surface-wiki-pane-alpha)
+    );
+    -webkit-backdrop-filter: blur(8px) saturate(1.04);
+    backdrop-filter: blur(8px) saturate(1.04);
+  }
+
+  .jarvis-section-stage
+    #wiki-workspace
+    > section
+    > [class~="bg-card/40"] {
+    background-color: rgb(
+      var(--shell-rgb) / var(--surface-wiki-pane-alpha)
+    );
+    -webkit-backdrop-filter: blur(8px) saturate(1.04);
+    backdrop-filter: blur(8px) saturate(1.04);
   }
 
   /* Staggered reveal on view mount — one orchestrated page-load moment.
@@ -1526,7 +1578,9 @@
    * window, which is the same mistake as a #000 terminal in a #12141a shell.
    */
   .wiki-space {
-    background-color: rgb(var(--shell-rgb) / var(--surface-stage-alpha));
+    background-color: rgb(
+      var(--shell-rgb) / var(--surface-wiki-stage-alpha)
+    );
     background-image:
       radial-gradient(
         ellipse 120% 90% at 50% 42%,

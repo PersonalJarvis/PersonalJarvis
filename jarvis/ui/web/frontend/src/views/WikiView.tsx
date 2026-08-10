@@ -426,7 +426,7 @@ export function WikiView(): JSX.Element {
             // the more room it has, and leaving the nav rail, the header and
             // two status strips around it was most of why it never looked
             // like anything. Fixed to the viewport, above everything.
-            isGraphExpanded && "fixed inset-0 z-50",
+            isGraphExpanded && "fixed inset-0 z-[100]",
           )}
           data-testid="wiki-workspace"
           data-graph-expanded={isGraphExpanded ? "true" : "false"}
