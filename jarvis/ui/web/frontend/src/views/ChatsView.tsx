@@ -210,12 +210,8 @@ function ConversationList({
   return (
     <aside
       style={{ width }}
-      className="relative isolate flex h-full shrink-0 flex-col"
+      className="flex h-full shrink-0 flex-col"
     >
-      <div
-        aria-hidden
-        className="jarvis-shell-surface pointer-events-none absolute inset-0 -z-10 backdrop-blur-md"
-      />
       <div className="flex items-center justify-between border-b border-border px-3 py-3">
         <span className="font-display text-sm font-semibold tracking-tight">
           {t("chats_view.history")}
