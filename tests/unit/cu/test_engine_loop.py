@@ -5,6 +5,7 @@ kill: duplicate actions on an unchanged screen, blind typing after a missed
 focus click, a second stale pointer action in one batch, and unverified
 "done" claims.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,7 +17,7 @@ import pytest
 pytest.importorskip("PIL", reason="pillow required for frame handling")
 
 import jarvis.cu.engine as engine_mod
-from jarvis.cu.capture import capture_stable_frame
+from jarvis.cu.capture import VisualProbe, capture_stable_frame
 from jarvis.cu.geometry import MonitorInfo
 
 MONITOR = MonitorInfo(left=0, top=0, width=192, height=108)
@@ -55,8 +56,14 @@ def _tools() -> dict[str, Any]:
     return {
         name: {"name": name}
         for name in (
-            "click", "type_text", "hotkey", "scroll", "drag",
-            "open_app", "switch_window", "click_element",
+            "click",
+            "type_text",
+            "hotkey",
+            "scroll",
+            "drag",
+            "open_app",
+            "switch_window",
+            "click_element",
         )
     }
 
@@ -70,7 +77,7 @@ def _ctx(brain: FakeBrain, executor: FakeExecutor) -> SimpleNamespace:
         step_budget=30,
         monitor="primary",
         main_monitor="primary",
-        settle_scale=0.0,          # no real sleeps in tests
+        settle_scale=0.0,  # no real sleeps in tests
         strict_verify=True,
         image_max_dimension=192,
         coordinate_space="auto",
@@ -86,19 +93,22 @@ def patched(monkeypatch, tmp_path):
     """Patch every OS touchpoint of the engine to deterministic fakes."""
     state = SimpleNamespace(
         screen_shade=30,
-        typed_lands=True,          # bool, or a list popped per verify call
+        typed_lands=True,  # bool, or a list popped per verify call
         region_changes_after_click=True,
         clicks_seen=0,
         clickables=[],
-        focus_hit=None,            # verify_click_focus_point verdict
-        capture_calls=0,           # capture_stable_frame invocations
+        focus_hit=None,  # verify_click_focus_point verdict
+        capture_calls=0,  # capture_stable_frame invocations
         foreground_handle=11,
         foreground_rect=(0, 0, 192, 108),
-        foreground_pid=None,       # set to an int for macOS-style app identity
+        foreground_pid=None,  # set to an int for macOS-style app identity
     )
 
     def fake_select_capture_target(
-        policy, *, main_monitor="primary", scope="window",
+        policy,
+        *,
+        main_monitor="primary",
+        scope="window",
     ):
         return MONITOR
 
@@ -114,12 +124,28 @@ def patched(monkeypatch, tmp_path):
         )
 
     def fake_grab_region(bbox, *, grab=None):
-        # After a click the "post" grab differs when the fake says so.
-        if state.region_changes_after_click and state.clicks_seen % 2 == 1:
+        # First call is the pre-action baseline. A successful fake click then
+        # leaves a persistent changed state for both confirmation captures.
+        if state.region_changes_after_click and state.clicks_seen >= 1:
             state.clicks_seen += 1
             return _solid(state.screen_shade + 40)
         state.clicks_seen += 1
         return _solid(state.screen_shade)
+
+    def fake_visual_probe(
+        _bbox,
+        *,
+        point=None,
+        radius=110,
+        local_only=False,
+    ):
+        changed = state.region_changes_after_click and state.clicks_seen >= 1
+        shade = state.screen_shade + (40 if changed else 0)
+        state.clicks_seen += 1
+        return VisualProbe(
+            global_thumb=(None if local_only else bytes((shade,)) * (96 * 54)),
+            local=(((2, 2), bytes((shade, 0, 0, 0)) * 4) if point is not None else None),
+        )
 
     async def fake_snapshot(*a, **kw):
         return [], "", None, state.clickables
@@ -133,15 +159,20 @@ def patched(monkeypatch, tmp_path):
         return state.focus_hit
 
     monkeypatch.setattr(
-        engine_mod, "select_capture_target", fake_select_capture_target,
+        engine_mod,
+        "select_capture_target",
+        fake_select_capture_target,
     )
     monkeypatch.setattr(engine_mod, "list_monitors", lambda: [MONITOR])
     monkeypatch.setattr(engine_mod, "capture_stable_frame", fake_capture)
     monkeypatch.setattr(engine_mod, "grab_region", fake_grab_region)
+    monkeypatch.setattr(engine_mod, "grab_visual_probe", fake_visual_probe)
     monkeypatch.setattr(engine_mod, "foreground_ui_snapshot", fake_snapshot)
     monkeypatch.setattr(engine_mod, "verify_typed_text", fake_verify_typed)
     monkeypatch.setattr(
-        engine_mod, "verify_click_focus_point", fake_verify_click_focus_point,
+        engine_mod,
+        "verify_click_focus_point",
+        fake_verify_click_focus_point,
     )
     monkeypatch.setattr(engine_mod, "_foreground_title", lambda: "Test Window")
     # The engine normalizes the target window via jarvis.platform.window_state;
@@ -149,7 +180,9 @@ def patched(monkeypatch, tmp_path):
     from jarvis.platform import window_state as ws
 
     monkeypatch.setattr(
-        ws, "normalize_foreground_window", lambda: (False, "test"),
+        ws,
+        "normalize_foreground_window",
+        lambda: (False, "test"),
     )
     monkeypatch.setattr(
         ws,
@@ -161,17 +194,16 @@ def patched(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr(
-        ws, "window_frame_rect", lambda _window: state.foreground_rect,
+        ws,
+        "window_frame_rect",
+        lambda _window: state.foreground_rect,
     )
     return state
 
 
 async def _run(ctx) -> list:
     task = SimpleNamespace(prompt="open the thing", env={}, timeout_s=60)
-    return [
-        chunk
-        async for chunk in engine_mod.run_cu_loop(task, ctx, cancel_token=None)
-    ]
+    return [chunk async for chunk in engine_mod.run_cu_loop(task, ctx, cancel_token=None)]
 
 
 def _final(chunks):
@@ -180,14 +212,105 @@ def _final(chunks):
     return finals[0]
 
 
+@pytest.mark.asyncio
+async def test_effect_wait_requires_persistent_local_change(monkeypatch):
+    pre_probe = VisualProbe(bytes((30,)) * (96 * 54), ((2, 2), b"a" * 16))
+    post_probe = VisualProbe(None, ((2, 2), b"b" * 16))
+    replies = iter((post_probe, post_probe))
+    monkeypatch.setattr(
+        engine_mod,
+        "grab_visual_probe",
+        lambda _bbox, **_kwargs: next(replies),
+    )
+
+    _latest, local_same, global_changed, confirmed = await engine_mod._wait_for_visual_effect(
+        pre_probe,
+        MONITOR,
+        timeout_s=0.35,
+        point=(96, 54),
+    )
+
+    assert local_same is False
+    assert global_changed is None
+    assert confirmed is True
+
+
+@pytest.mark.asyncio
+async def test_transient_visual_delta_is_not_accepted(monkeypatch):
+    pre = VisualProbe(bytes((30,)) * (96 * 54), ((2, 2), b"a" * 16))
+    changed = VisualProbe(None, ((2, 2), b"b" * 16))
+    unchanged = VisualProbe(bytes((30,)) * (96 * 54), ((2, 2), b"a" * 16))
+    replies = [changed, unchanged]
+
+    monkeypatch.setattr(
+        engine_mod,
+        "grab_visual_probe",
+        lambda _bbox, **_kwargs: replies.pop(0) if replies else unchanged,
+    )
+    monkeypatch.setattr(engine_mod, "_EFFECT_POLL_S", 0.0)
+
+    _latest, local_same, global_changed, confirmed = await engine_mod._wait_for_visual_effect(
+        pre,
+        MONITOR,
+        timeout_s=0.001,
+        point=(96, 54),
+    )
+
+    assert local_same is True
+    assert global_changed is False
+    assert confirmed is False
+
+
+@pytest.mark.asyncio
+async def test_missing_confirmation_does_not_leak_global_delta(monkeypatch):
+    pre = VisualProbe(bytes((30,)) * (96 * 54), ((2, 2), b"a" * 16))
+    changed = VisualProbe(bytes((90,)) * (96 * 54), ((2, 2), b"a" * 16))
+    replies = iter((changed, None))
+
+    monkeypatch.setattr(
+        engine_mod,
+        "grab_visual_probe",
+        lambda _bbox, **_kwargs: next(replies),
+    )
+
+    _latest, local_same, global_changed, confirmed = await engine_mod._wait_for_visual_effect(
+        pre,
+        MONITOR,
+        timeout_s=0.0,
+        point=(96, 54),
+    )
+
+    assert local_same is None
+    assert global_changed is None
+    assert confirmed is False
+
+
+@pytest.mark.asyncio
+async def test_open_app_wait_returns_on_foreground_transition(monkeypatch):
+    signatures = iter((("window", 1), ("window", 2)))
+
+    async def live_signature():
+        return next(signatures)
+
+    monkeypatch.setattr(engine_mod, "_live_window_state_signature", live_signature)
+    monkeypatch.setattr(engine_mod, "_EFFECT_POLL_S", 0.0)
+
+    assert await engine_mod._wait_for_foreground_transition(
+        ("window", 1),
+        timeout_s=1.0,
+    )
+
+
 # ---------------------------------------------------------------------------
 
 
 async def test_done_is_verified_and_proof_flows_to_stdout(patched):
-    brain = FakeBrain([
-        '{"action": "done", "reason": "it is visible"}',       # decide
-        '{"done": true, "proof": "the calculator shows 8"}',    # judge
-    ])
+    brain = FakeBrain(
+        [
+            '{"action": "done", "reason": "it is visible"}',  # decide
+            '{"done": true, "proof": "the calculator shows 8"}',  # judge
+        ]
+    )
     chunks = await _run(_ctx(brain, FakeExecutor()))
     final = _final(chunks)
     assert final.exit_code == 0
@@ -205,17 +328,23 @@ async def test_recent_missions_reach_the_decide_prompt_but_not_the_judge(patched
 
     cu_run_registry.clear_runs()
     cu_run_registry.register_run(
-        "prior1", "open the newest post of the profile on x.com", None,
+        "prior1",
+        "open the newest post of the profile on x.com",
+        None,
     )
     cu_run_registry.finish_run(
-        "prior1", "finished", exit_code=0,
+        "prior1",
+        "finished",
+        exit_code=0,
         result_text="[cu] done (verified: post visible in Safari)",
     )
     try:
-        brain = FakeBrain([
-            '{"action": "done", "reason": "it is visible"}',       # decide
-            '{"done": true, "proof": "the post is open"}',          # judge
-        ])
+        brain = FakeBrain(
+            [
+                '{"action": "done", "reason": "it is visible"}',  # decide
+                '{"done": true, "proof": "the post is open"}',  # judge
+            ]
+        )
         chunks = await _run(_ctx(brain, FakeExecutor()))
         final = _final(chunks)
         assert final.exit_code == 0
@@ -242,7 +371,10 @@ async def test_dispatch_refuses_action_after_screen_permission_revocation(
     )
 
     ok, detail = await engine_mod._dispatch_tool(
-        ctx, "click", {"x": 10, "y": 10}, trace_id=None,
+        ctx,
+        "click",
+        {"x": 10, "y": 10},
+        trace_id=None,
     )
 
     assert ok is False
@@ -252,8 +384,11 @@ async def test_dispatch_refuses_action_after_screen_permission_revocation(
 
 async def test_rejected_done_feeds_history_and_eventually_fails(patched):
     brain = FakeBrain(
-        ['{"action": "done", "reason": "sure"}',
-         '{"done": false, "proof": "the window is not open"}'] * 3,
+        [
+            '{"action": "done", "reason": "sure"}',
+            '{"done": false, "proof": "the window is not open"}',
+        ]
+        * 3,
     )
     chunks = await _run(_ctx(brain, FakeExecutor()))
     final = _final(chunks)
@@ -265,12 +400,14 @@ async def test_rejected_done_feeds_history_and_eventually_fails(patched):
 
 async def test_duplicate_click_on_unchanged_screen_is_refused(patched):
     patched.region_changes_after_click = True
-    brain = FakeBrain([
-        '{"action": "click", "x": 500, "y": 500, "target": "play"}',
-        '{"action": "click", "x": 502, "y": 498, "target": "play"}',  # same spot
-        '{"action": "done", "reason": "toggled"}',
-        '{"done": true, "proof": "playback is running"}',
-    ])
+    brain = FakeBrain(
+        [
+            '{"action": "click", "x": 500, "y": 500, "target": "play"}',
+            '{"action": "click", "x": 502, "y": 498, "target": "play"}',  # same spot
+            '{"action": "done", "reason": "toggled"}',
+            '{"done": true, "proof": "playback is running"}',
+        ]
+    )
     executor = FakeExecutor()
     chunks = await _run(_ctx(brain, executor))
     final = _final(chunks)
@@ -282,12 +419,13 @@ async def test_duplicate_click_on_unchanged_screen_is_refused(patched):
 
 async def test_type_that_does_not_land_blocks_the_rest_of_the_batch(patched):
     patched.typed_lands = False
-    brain = FakeBrain([
-        # Blind batch: type + enter. The type read-back fails -> enter must NOT run.
-        '[{"action":"type","text":"https://example.com"},'
-        '{"action":"key","keys":["enter"]}]',
-        '{"action": "fail", "reason": "cannot focus the address bar"}',
-    ])
+    brain = FakeBrain(
+        [
+            # Blind batch: type + enter. The type read-back fails -> enter must NOT run.
+            '[{"action":"type","text":"https://example.com"},{"action":"key","keys":["enter"]}]',
+            '{"action": "fail", "reason": "cannot focus the address bar"}',
+        ]
+    )
     executor = FakeExecutor()
     chunks = await _run(_ctx(brain, executor))
     final = _final(chunks)
@@ -299,12 +437,13 @@ async def test_type_that_does_not_land_blocks_the_rest_of_the_batch(patched):
 
 
 async def test_second_pointer_action_in_one_batch_is_skipped(patched):
-    brain = FakeBrain([
-        '[{"action":"click","x":100,"y":100},'
-        '{"action":"click","x":900,"y":900}]',
-        '{"action": "done", "reason": "clicked"}',
-        '{"done": true, "proof": "both dialogs handled"}',
-    ])
+    brain = FakeBrain(
+        [
+            '[{"action":"click","x":100,"y":100},{"action":"click","x":900,"y":900}]',
+            '{"action": "done", "reason": "clicked"}',
+            '{"done": true, "proof": "both dialogs handled"}',
+        ]
+    )
     executor = FakeExecutor()
     chunks = await _run(_ctx(brain, executor))
     assert _final(chunks).exit_code == 0
@@ -314,12 +453,13 @@ async def test_second_pointer_action_in_one_batch_is_skipped(patched):
 
 
 async def test_click_then_click_element_in_one_batch_is_skipped(patched):
-    brain = FakeBrain([
-        '[{"action":"click","x":100,"y":100},'
-        '{"action":"click_element","name":"Continue"}]',
-        '{"action": "done", "reason": "clicked"}',
-        '{"done": true, "proof": "the dialog advanced"}',
-    ])
+    brain = FakeBrain(
+        [
+            '[{"action":"click","x":100,"y":100},{"action":"click_element","name":"Continue"}]',
+            '{"action": "done", "reason": "clicked"}',
+            '{"done": true, "proof": "the dialog advanced"}',
+        ]
+    )
     executor = FakeExecutor()
 
     chunks = await _run(_ctx(brain, executor))
@@ -338,10 +478,12 @@ async def test_foreground_change_after_model_decision_refuses_action(patched):
                 patched.foreground_handle = 22
             return reply
 
-    brain = _FocusChangingBrain([
-        '{"action":"click","x":500,"y":500}',
-        '{"action":"fail","reason":"the target window changed"}',
-    ])
+    brain = _FocusChangingBrain(
+        [
+            '{"action":"click","x":500,"y":500}',
+            '{"action":"fail","reason":"the target window changed"}',
+        ]
+    )
     executor = FakeExecutor()
 
     chunks = await _run(_ctx(brain, executor))
@@ -365,10 +507,12 @@ async def test_same_app_window_swap_before_first_action_refuses(patched):
                 patched.foreground_handle = 22  # same app, different window
             return reply
 
-    brain = _FocusChangingBrain([
-        '{"action":"click","x":500,"y":500}',
-        '{"action":"fail","reason":"the target window changed"}',
-    ])
+    brain = _FocusChangingBrain(
+        [
+            '{"action":"click","x":500,"y":500}',
+            '{"action":"fail","reason":"the target window changed"}',
+        ]
+    )
     executor = FakeExecutor()
 
     chunks = await _run(_ctx(brain, executor))
@@ -388,17 +532,21 @@ async def test_same_app_churn_after_own_click_rebaselines_and_type_proceeds(patc
     class _ChurningExecutor(FakeExecutor):
         async def execute(self, tool, args, *, user_utterance, trace_id):
             result = await super().execute(
-                tool, args, user_utterance=user_utterance, trace_id=trace_id,
+                tool,
+                args,
+                user_utterance=user_utterance,
+                trace_id=trace_id,
             )
             if tool["name"] == "click":
                 state.foreground_handle = 5177  # dropdown became frontmost
             return result
 
-    brain = FakeBrain([
-        '[{"action":"click","x":500,"y":500},'
-        '{"action":"type","text":"https://example.com"}]',
-        '{"action":"fail","reason":"stop here"}',
-    ])
+    brain = FakeBrain(
+        [
+            '[{"action":"click","x":500,"y":500},{"action":"type","text":"https://example.com"}]',
+            '{"action":"fail","reason":"stop here"}',
+        ]
+    )
     executor = _ChurningExecutor()
 
     chunks = await _run(_ctx(brain, executor))
@@ -420,18 +568,22 @@ async def test_cross_app_steal_after_own_click_still_refuses_type(patched):
     class _StealingExecutor(FakeExecutor):
         async def execute(self, tool, args, *, user_utterance, trace_id):
             result = await super().execute(
-                tool, args, user_utterance=user_utterance, trace_id=trace_id,
+                tool,
+                args,
+                user_utterance=user_utterance,
+                trace_id=trace_id,
             )
             if tool["name"] == "click":
                 state.foreground_handle = 9001
                 state.foreground_pid = 990  # another app stole focus
             return result
 
-    brain = FakeBrain([
-        '[{"action":"click","x":500,"y":500},'
-        '{"action":"type","text":"https://example.com"}]',
-        '{"action":"fail","reason":"stop here"}',
-    ])
+    brain = FakeBrain(
+        [
+            '[{"action":"click","x":500,"y":500},{"action":"type","text":"https://example.com"}]',
+            '{"action":"fail","reason":"stop here"}',
+        ]
+    )
     executor = _StealingExecutor()
 
     chunks = await _run(_ctx(brain, executor))
@@ -456,9 +608,11 @@ async def test_foreground_change_during_capture_discards_stale_frame(
         "foreground_window",
         lambda: ws.WindowInfo("Test Window", handle=next(handles, 22)),
     )
-    brain = FakeBrain([
-        '{"action":"fail","reason":"fresh frame reached the model"}',
-    ])
+    brain = FakeBrain(
+        [
+            '{"action":"fail","reason":"fresh frame reached the model"}',
+        ]
+    )
     executor = FakeExecutor()
 
     chunks = await _run(_ctx(brain, executor))
@@ -470,12 +624,14 @@ async def test_foreground_change_during_capture_discards_stale_frame(
 
 
 async def test_coordinate_less_scroll_targets_capture_center_and_stales_batch(patched):
-    brain = FakeBrain([
-        '[{"action":"scroll","direction":"down","amount":2},'
-        '{"action":"click","x":900,"y":900}]',
-        '{"action": "done", "reason": "scrolled"}',
-        '{"done": true, "proof": "the target is visible"}',
-    ])
+    brain = FakeBrain(
+        [
+            '[{"action":"scroll","direction":"down","amount":2},'
+            '{"action":"click","x":900,"y":900}]',
+            '{"action": "done", "reason": "scrolled"}',
+            '{"done": true, "proof": "the target is visible"}',
+        ]
+    )
     executor = FakeExecutor()
 
     chunks = await _run(_ctx(brain, executor))
@@ -502,13 +658,15 @@ async def test_ineffective_scroll_fails_with_keyboard_hint(patched):
     # duplicate and the mission died as an opaque "no progress". An
     # ineffective scroll must FAIL with actionable feedback so the model can
     # switch to keyboard scrolling — and that keyboard fallback must run.
-    patched.region_changes_after_click = False   # pre == post → no effect
-    brain = FakeBrain([
-        '{"action":"scroll","direction":"down","amount":5}',
-        '{"action":"key","keys":["pagedown"]}',
-        '{"action": "done", "reason": "scrolled"}',
-        '{"done": true, "proof": "the unsubscribe link is visible"}',
-    ])
+    patched.region_changes_after_click = False  # pre == post → no effect
+    brain = FakeBrain(
+        [
+            '{"action":"scroll","direction":"down","amount":5}',
+            '{"action":"key","keys":["pagedown"]}',
+            '{"action": "done", "reason": "scrolled"}',
+            '{"done": true, "proof": "the unsubscribe link is visible"}',
+        ]
+    )
     executor = FakeExecutor()
 
     chunks = await _run(_ctx(brain, executor))
@@ -551,10 +709,12 @@ async def test_done_judge_reuses_the_step_frame_when_no_action_ran(patched):
     # judge must verify against THAT frame instead of paying a second
     # stability capture (live complaint 2026-07-02: the completion
     # confirmation took too long).
-    brain = FakeBrain([
-        '{"action": "done", "reason": "goal visible"}',
-        '{"done": true, "proof": "the channel is open"}',
-    ])
+    brain = FakeBrain(
+        [
+            '{"action": "done", "reason": "goal visible"}',
+            '{"done": true, "proof": "the channel is open"}',
+        ]
+    )
     executor = FakeExecutor()
     chunks = await _run(_ctx(brain, executor))
     assert _final(chunks).exit_code == 0
@@ -566,17 +726,16 @@ async def test_done_judge_reuses_the_step_frame_when_no_action_ran(patched):
 async def test_done_judge_recaptures_after_batch_actions(patched):
     # After any executed action the screen may differ from the perception
     # frame — the judge must then verify against a FRESH capture.
-    brain = FakeBrain([
-        '[{"action":"key","keys":["enter"]},'
-        '{"action":"done","reason":"submitted"}]',
-        '{"done": true, "proof": "the form is submitted"}',
-    ])
+    brain = FakeBrain(
+        [
+            '[{"action":"key","keys":["enter"]},{"action":"done","reason":"submitted"}]',
+            '{"done": true, "proof": "the form is submitted"}',
+        ]
+    )
     executor = FakeExecutor()
     chunks = await _run(_ctx(brain, executor))
     assert _final(chunks).exit_code == 0
-    assert patched.capture_calls == 2, (
-        "a done after executed actions needs a fresh judge frame"
-    )
+    assert patched.capture_calls == 2, "a done after executed actions needs a fresh judge frame"
 
 
 async def test_click_on_already_focused_target_passes_and_type_proceeds(patched):
@@ -585,13 +744,15 @@ async def test_click_on_already_focused_target_passes_and_type_proceeds(patched)
     # effect-check alone judged that a miss, truncated the batched type, and
     # the mission stalled AT its goal. Focus evidence must rescue the click.
     patched.region_changes_after_click = False
-    patched.focus_hit = True     # the click point sits in the focused control
-    brain = FakeBrain([
-        '[{"action":"click","x":300,"y":88,"target":"address bar"},'
-        '{"action":"type","text":"weather berlin"}]',
-        '{"action": "done", "reason": "typed the search"}',
-        '{"done": true, "proof": "the address bar shows weather berlin"}',
-    ])
+    patched.focus_hit = True  # the click point sits in the focused control
+    brain = FakeBrain(
+        [
+            '[{"action":"click","x":300,"y":88,"target":"address bar"},'
+            '{"action":"type","text":"weather berlin"}]',
+            '{"action": "done", "reason": "typed the search"}',
+            '{"done": true, "proof": "the address bar shows weather berlin"}',
+        ]
+    )
     executor = FakeExecutor()
     chunks = await _run(_ctx(brain, executor))
     assert _final(chunks).exit_code == 0
@@ -608,11 +769,13 @@ async def test_type_false_verdict_is_rechecked_once_before_failing(patched):
     # LATER than the injection returns — the first read-back sees stale
     # state (live incident 2026-07-02 18:00). One re-check absorbs that.
     patched.typed_lands = [False, True]
-    brain = FakeBrain([
-        '{"action":"type","text":"spotify"}',
-        '{"action": "done", "reason": "typed"}',
-        '{"done": true, "proof": "the search shows spotify"}',
-    ])
+    brain = FakeBrain(
+        [
+            '{"action":"type","text":"spotify"}',
+            '{"action": "done", "reason": "typed"}',
+            '{"done": true, "proof": "the search shows spotify"}',
+        ]
+    )
     executor = FakeExecutor()
     chunks = await _run(_ctx(brain, executor))
     assert _final(chunks).exit_code == 0
@@ -620,12 +783,14 @@ async def test_type_false_verdict_is_rechecked_once_before_failing(patched):
 
 
 async def test_missed_click_no_visible_change_is_reported_as_failure(patched):
-    patched.region_changes_after_click = False   # click voids: nothing changes
-    brain = FakeBrain([
-        '{"action": "click", "x": 500, "y": 500, "target": "button"}',
-        '{"found": false}',   # the zoom-refine probe finds nothing either
-        '{"action": "fail", "reason": "the button does not react"}',
-    ])
+    patched.region_changes_after_click = False  # click voids: nothing changes
+    brain = FakeBrain(
+        [
+            '{"action": "click", "x": 500, "y": 500, "target": "button"}',
+            '{"found": false}',  # the zoom-refine probe finds nothing either
+            '{"action": "fail", "reason": "the button does not react"}',
+        ]
+    )
     executor = FakeExecutor()
     chunks = await _run(_ctx(brain, executor))
     final = _final(chunks)
@@ -634,11 +799,13 @@ async def test_missed_click_no_visible_change_is_reported_as_failure(patched):
 
 
 async def test_clear_first_sends_platform_select_all(patched):
-    brain = FakeBrain([
-        '{"action":"type","text":"example.com","clear_first":true}',
-        '{"action": "done", "reason": "typed"}',
-        '{"done": true, "proof": "the address bar shows example.com"}',
-    ])
+    brain = FakeBrain(
+        [
+            '{"action":"type","text":"example.com","clear_first":true}',
+            '{"action": "done", "reason": "typed"}',
+            '{"done": true, "proof": "the address bar shows example.com"}',
+        ]
+    )
     executor = FakeExecutor()
     chunks = await _run(_ctx(brain, executor))
     assert _final(chunks).exit_code == 0
@@ -652,10 +819,12 @@ async def test_clear_first_sends_platform_select_all(patched):
 
 
 async def test_clear_first_aborts_typing_when_select_all_fails(patched):
-    brain = FakeBrain([
-        '{"action":"type","text":"replacement","clear_first":true}',
-        '{"action":"fail","reason":"keyboard shortcut unavailable"}',
-    ])
+    brain = FakeBrain(
+        [
+            '{"action":"type","text":"replacement","clear_first":true}',
+            '{"action":"fail","reason":"keyboard shortcut unavailable"}',
+        ]
+    )
     executor = FakeExecutor(failures={"hotkey"})
 
     chunks = await _run(_ctx(brain, executor))
@@ -670,8 +839,11 @@ async def test_cancelled_token_stops_immediately(patched):
     brain = FakeBrain([])
     task = SimpleNamespace(prompt="anything", env={}, timeout_s=60)
     chunks = [
-        c async for c in engine_mod.run_cu_loop(
-            task, _ctx(brain, FakeExecutor()), cancel_token=token,
+        c
+        async for c in engine_mod.run_cu_loop(
+            task,
+            _ctx(brain, FakeExecutor()),
+            cancel_token=token,
         )
     ]
     final = _final(chunks)
@@ -703,12 +875,14 @@ async def test_click_is_anchored_to_containing_element_center(patched):
     # Model points a few px off inside a small button whose center is
     # (145, 87): the dispatched click must hit the CENTER, not the estimate.
     patched.clickables = [("Send", "Button", (130, 80, 30, 14))]
-    brain = FakeBrain([
-        # norm (740, 787) on the 192x108 monitor -> raw point (142, 85).
-        '{"action": "click", "x": 740, "y": 787, "target": "Send"}',
-        '{"action": "done", "reason": "sent"}',
-        '{"done": true, "proof": "the message shows as sent"}',
-    ])
+    brain = FakeBrain(
+        [
+            # norm (740, 787) on the 192x108 monitor -> raw point (142, 85).
+            '{"action": "click", "x": 740, "y": 787, "target": "Send"}',
+            '{"action": "done", "reason": "sent"}',
+            '{"done": true, "proof": "the message shows as sent"}',
+        ]
+    )
     executor = FakeExecutor()
     chunks = await _run(_ctx(brain, executor))
     assert _final(chunks).exit_code == 0
@@ -720,11 +894,13 @@ async def test_container_sized_elements_never_snap(patched):
     # A rect covering most of the capture is a container — the raw point
     # must be kept.
     patched.clickables = [("Body", "Text", (0, 0, 190, 100))]
-    brain = FakeBrain([
-        '{"action": "click", "x": 500, "y": 500, "target": "middle"}',
-        '{"action": "done", "reason": "ok"}',
-        '{"done": true, "proof": "clicked"}',
-    ])
+    brain = FakeBrain(
+        [
+            '{"action": "click", "x": 500, "y": 500, "target": "middle"}',
+            '{"action": "done", "reason": "ok"}',
+            '{"done": true, "proof": "clicked"}',
+        ]
+    )
     executor = FakeExecutor()
     chunks = await _run(_ctx(brain, executor))
     assert _final(chunks).exit_code == 0
@@ -734,12 +910,14 @@ async def test_container_sized_elements_never_snap(patched):
 
 async def test_verified_miss_triggers_one_zoom_refined_retry(patched):
     patched.region_changes_after_click = False  # every click: no visible change
-    brain = FakeBrain([
-        '{"action": "click", "x": 500, "y": 500, "target": "tiny icon"}',
-        # The zoom-refine call answers with a corrected in-crop position.
-        '{"found": true, "x": 900, "y": 900}',
-        '{"action": "fail", "reason": "the icon does not react"}',
-    ])
+    brain = FakeBrain(
+        [
+            '{"action": "click", "x": 500, "y": 500, "target": "tiny icon"}',
+            # The zoom-refine call answers with a corrected in-crop position.
+            '{"found": true, "x": 900, "y": 900}',
+            '{"action": "fail", "reason": "the icon does not react"}',
+        ]
+    )
     executor = FakeExecutor()
     chunks = await _run(_ctx(brain, executor))
     final = _final(chunks)
@@ -747,10 +925,7 @@ async def test_verified_miss_triggers_one_zoom_refined_retry(patched):
     clicks = [args for (name, args) in executor.calls if name == "click"]
     assert len(clicks) == 2, "exactly one refined retry after the verified miss"
     assert (clicks[1]["x"], clicks[1]["y"]) != (clicks[0]["x"], clicks[0]["y"])
-    assert all(
-        args["_expected_window_signature"][0:2] == ("handle", 11)
-        for args in clicks
-    )
+    assert all(args["_expected_window_signature"][0:2] == ("handle", 11) for args in clicks)
 
 
 async def test_zoom_refine_refuses_click_after_foreground_switch(patched):
@@ -763,11 +938,13 @@ async def test_zoom_refine_refuses_click_after_foreground_switch(patched):
                 patched.foreground_handle = 22
             return reply
 
-    brain = _SwitchDuringRefineBrain([
-        '{"action": "click", "x": 500, "y": 500, "target": "tiny icon"}',
-        '{"found": true, "x": 900, "y": 900}',
-        '{"action": "fail", "reason": "the original window lost focus"}',
-    ])
+    brain = _SwitchDuringRefineBrain(
+        [
+            '{"action": "click", "x": 500, "y": 500, "target": "tiny icon"}',
+            '{"found": true, "x": 900, "y": 900}',
+            '{"action": "fail", "reason": "the original window lost focus"}',
+        ]
+    )
     executor = FakeExecutor()
 
     chunks = await _run(_ctx(brain, executor))

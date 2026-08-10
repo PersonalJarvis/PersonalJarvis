@@ -12,6 +12,7 @@ off-Windows; on a headless VPS the whole thing degrades to a best-effort no-op
 (the overlay singleton is already a no-op there, and a failed ``SetCursorPos``
 is swallowed by the caller).
 """
+
 from __future__ import annotations
 
 import logging
@@ -23,8 +24,11 @@ from jarvis.overlay.virtual_cursor import get_virtual_cursor, glide_cursor
 
 logger = logging.getLogger(__name__)
 
-# Default glide duration if neither caller nor config specifies one.
-DEFAULT_GLIDE_MS: int = 220
+# Default glide duration if neither caller nor config specifies one. Five
+# animation frames are still available when configured, but the default path
+# teleports and then verifies the landed position. The opt-in gold click pulse
+# remains visible; animation must not delay every otherwise-instant action.
+DEFAULT_GLIDE_MS: int = 0
 
 # Process-wide glide duration, set once at desktop bootstrap from
 # ``[computer_use].cursor_glide_ms``. Kept in a module global so a hot path
@@ -105,7 +109,8 @@ def glide_os_cursor(
     ping_jarvis_cursor()
     overlay = get_virtual_cursor()
     glide_cursor(
-        int(x), int(y),
+        int(x),
+        int(y),
         get_pos=get_pos,
         set_pos=set_pos,
         duration_s=max(0.0, duration_ms / 1000.0),

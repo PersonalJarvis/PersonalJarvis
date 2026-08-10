@@ -2099,7 +2099,7 @@ class ComputerUseConfig(BaseModel):
     # smoke (``scripts/virtual_cursor_demo.py``) has been verified on the
     # target machine.
     show_virtual_cursor: bool = False
-    cursor_glide_ms: int = Field(default=220, ge=0, le=2000)
+    cursor_glide_ms: int = Field(default=0, ge=0, le=2000)
     # Hybrid native Computer-Use (Wave 3, 2026-05-29). When true AND the active
     # provider is Gemini, the loop's per-step action decision uses Gemini's
     # native ``computer_use`` tool (CU-trained grounding) instead of the

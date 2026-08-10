@@ -2585,7 +2585,7 @@ class DesktopApp:
         try:
             from jarvis.control.cursor_motion import set_glide_ms
             if cu is not None:
-                set_glide_ms(int(getattr(cu, "cursor_glide_ms", 220)))
+                set_glide_ms(int(getattr(cu, "cursor_glide_ms", 0)))
         except ModuleNotFoundError as exc:
             if exc.name == "overlay":
                 logger.debug(

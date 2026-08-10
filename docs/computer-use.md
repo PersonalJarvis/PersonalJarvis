@@ -1,6 +1,6 @@
 # Computer-Use And Local Desktop Routing
 
-Status: 2026-07-02. ADR: [0008](adr/0008-computer-use-harness-in-process.md).
+Status: 2026-08-10. ADR: [0008](adr/0008-computer-use-harness-in-process.md).
 
 This page documents the current routing model for desktop actions. The main
 goal is to keep simple local actions deterministic and fast, while preserving
@@ -16,10 +16,10 @@ the actuation — but the structural defects of the legacy monolith are fixed:
 | Module | Responsibility |
 | --- | --- |
 | `jarvis/cu/geometry.py` | One `CoordinateMapper` per captured frame (model space -> image space -> screen input units, negative virtual-desktop origins and Retina points included) + the thread DPI pin that keeps capture, metrics and input in ONE coordinate space on mixed-DPI Windows. |
-| `jarvis/cu/capture.py` | UI-idle stable-frame capture (bounded re-grab until two thumbnails match — replaces fixed settle sleeps), downscale to `[computer_use].image_max_dimension` (default 1366; provider guidance), perceptual frame identity. |
+| `jarvis/cu/capture.py` | UI-idle stable-frame capture (bounded re-grab until two area-filtered thumbnails match), one call-scoped capture session per frame, deferred BGRX conversion, and reducing-gap downscale to `[computer_use].image_max_dimension` (default 1366). |
 | `jarvis/cu/conventions.py` | Coordinate conventions as a per-provider capability: Gemini family emits a 0-1000 normalized grid, Claude/OpenAI emit pixels on the sent image. Prompt block AND parsing derive from one resolution (`[computer_use].coordinate_space` pins it). |
-| `jarvis/cu/actuate/` | Platform-native input: Windows SendInput with absolute virtual-desktop positioning, macOS/Linux-X11 via pynput (points/pixels, no primary-screen clamping), Wayland/headless refuse honestly. `verified_move` turns silent misses into diagnosable failures. |
-| `jarvis/cu/verify.py` | Pre/post effect checks (local crop + global diff from one monitor-grab pair), accessibility read-back after typing, focus confirmation, human-handoff detection. |
+| `jarvis/cu/actuate/` | Platform-native input: Windows SendInput with absolute virtual-desktop positioning, macOS/Linux-X11 via pynput (points/pixels, no primary-screen clamping), Wayland/headless refuse honestly. `verified_move` turns silent misses into diagnosable failures; cursor animation remains configurable but adds no delay by default. |
+| `jarvis/cu/verify.py` | Pixel/UI comparison primitives, accessibility read-back after typing, focus confirmation, and human-handoff detection. The engine polls compact local/global probes and requires a persistent second observation before accepting a visual effect. |
 | `jarvis/cu/ledger.py` | Idempotency ledger: an action that already executed against a visually identical screen is refused deterministically — the double-type/double-click killer. |
 | `jarvis/cu/engine.py` | The perceive->act->verify state machine; one pointer action per frame; a failed effect check truncates the batch and forces re-perception; verified-done judge with the proof spoken in the user's language. Exit codes and readback contract match the legacy engine. |
 
@@ -33,6 +33,14 @@ runs on Windows/macOS/Linux); `--mode engine --engine v2|stable|current`
 compares the real engines with a scripted brain (accuracy, duplicate-action
 rate, per-step latency). `scripts/cu_bench.py` remains the end-to-end
 benchmark with live models.
+
+**2026-08-10 latency result:** on the same four-target engine rig, the tracked
+HEAD baseline took 7.30 s. Three post-change runs took 2.20 s, 2.36 s and
+2.69 s (median 2.36 s, **3.09x faster**). Every run delivered 4/4 first-hit
+clicks, zero duplicate clicks, exact-once typing, and zero blind repeat after
+the deliberate miss. A final run after the review-driven safety fixes took
+2.41 s (**3.03x**) with the same perfect oracles. The speed claim is tied to
+those accuracy oracles, not to the scripted completion message.
 
 ## Routing Model
 
@@ -156,6 +164,7 @@ max_scripted_steps = 10
 
 [computer_use]
 enabled = true
+cursor_glide_ms = 0  # set a positive value to opt into cursor animation
 max_steps = 100
 max_replans = 2
 per_step_timeout_s = 30.0

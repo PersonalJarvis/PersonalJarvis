@@ -168,6 +168,16 @@ reports subscription login, STT, TTS, desktop runtime, and platform readiness
 separately. The old provider id migrates at read time, so existing selections
 enter the stable pipeline without a destructive config rewrite.
 
+**Performance pass 2026-08-10 (Computer-Use).** Stable-frame acquisition and
+visual-effect verification now use the same OS-neutral MSS/Pillow path on
+Windows, macOS and Linux/X11: a call-scoped capture session, deferred BGRX
+conversion, area-filtered thumbnails, and bounded polling with persistent
+effect confirmation. Windows' native window capture remains a capability-
+gated first choice with the shared rectangle path as its fallback. The
+existing macOS Screen Recording gate, Wayland refusal and headless refusal are
+unchanged, so an unavailable capture backend never becomes permission to act
+blindly. The cross-platform tkinter engine rig remains the release oracle.
+
 ## Audit verdict summary
 
 **No hard breakers found.** No feature crashes on macOS or headless Linux;
