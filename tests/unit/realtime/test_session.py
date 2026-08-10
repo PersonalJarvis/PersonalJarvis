@@ -2033,6 +2033,96 @@ async def test_wrong_output_language_retries_once_before_releasing_pcm(
 
 
 @pytest.mark.asyncio
+async def test_prompted_retry_capability_routes_language_retry_via_send_text():
+    """A transport that keeps the cancelled answer in its conversation (the
+    self-hosted card) advertises ``supports_prompted_response_retry``; the one
+    language retry must then arrive as an explicit ``send_text`` request, not
+    a bare ``response.create`` against a history that already contains the
+    blocked answer (live 2026-08-10: that regenerated as one empty token and
+    the call went silent)."""
+    user_text = "What is kindness?"
+    wrong_text = (
+        "这是一个完整的中文回答，包含足够多的文字来可靠地识别语言。"
+    )
+    correct_text = (
+        "Kindness is the practice of treating other people with care "
+        "and respect."
+    )
+    wrong_pcm = b"\x02\x03" * 32
+    correct_pcm = b"\x10\x20" * 32
+
+    class _PromptedRetrySession(FakeSession):
+        supports_prompted_response_retry = True
+
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text=user_text,
+                is_final=True,
+            )
+            yield RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=wrong_pcm,
+                    sample_rate=24_000,
+                    timestamp_ns=0,
+                ),
+            )
+            yield RealtimeEvent(
+                type="output_transcript_delta",
+                text=wrong_text,
+            )
+            for _ in range(100):
+                if self.text_inputs:
+                    break
+                await asyncio.sleep(0.01)
+            yield RealtimeEvent(
+                type="output_transcript_delta",
+                text=correct_text,
+            )
+            yield RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=correct_pcm,
+                    sample_rate=24_000,
+                    timestamp_ns=0,
+                ),
+            )
+            yield RealtimeEvent(type="turn_complete")
+
+    class _PromptedRetryProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _PromptedRetrySession([])
+            return self.session
+
+    provider = _PromptedRetryProvider([])
+    jsons: list[dict] = []
+    binaries: list[bytes] = []
+    sess = RealtimeVoiceSession(
+        session_id="language-retry-prompted",
+        send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(reply_language="en"),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    # The original turn is the only bare response request; the retry itself
+    # travels as one explicit prompted request in the pinned language.
+    assert provider.session.response_requests == 1
+    assert len(provider.session.text_inputs) == 1
+    assert "English" in provider.session.text_inputs[0]
+    assert binaries == [correct_pcm]
+    assert sess._output_language_retries == 1  # noqa: SLF001
+    assert sess._output_language_failures == 0  # noqa: SLF001
+
+
+@pytest.mark.asyncio
 async def test_language_switch_mistranscript_reaches_realtime_provider():
     """The live ``auf jetzt`` false positive must not end the session."""
     provider = FakeProvider(

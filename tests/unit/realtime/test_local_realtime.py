@@ -521,6 +521,20 @@ def test_transport_rebuild_is_opt_in_and_off_by_default() -> None:
     assert opted_in.rebuild_on_transport_death is True
 
 
+def test_prompted_response_retry_is_opt_in_and_off_by_default() -> None:
+    """Hosted cards keep the bare response.create retry; only a transport
+    that keeps the cancelled answer in its conversation opts into the
+    send_text retry (2026-08-10: the local retry returned one empty token)."""
+    from jarvis.plugins.realtime.openai_realtime import _OpenAIRealtimeSession
+
+    session = _OpenAIRealtimeSession(**_session_kwargs())
+    assert session.supports_prompted_response_retry is False
+    opted_in = _OpenAIRealtimeSession(
+        **_session_kwargs(prompted_response_retry=True)
+    )
+    assert opted_in.supports_prompted_response_retry is True
+
+
 async def test_local_sessions_opt_into_transport_rebuild(monkeypatch) -> None:
     """The self-hosted card asks for the in-place rebuild: its server can
     crash and come back, and the call must survive that."""
@@ -541,6 +555,7 @@ async def test_local_sessions_opt_into_transport_rebuild(monkeypatch) -> None:
     assert captured["response_start_timeout_s"] > module._RESPONSE_STALL_S
     assert captured["disconnect_before_rebuild"] is True
     assert captured["rebuild_retry_window_s"] > 0.0
+    assert captured["prompted_response_retry"] is True
 
 
 async def test_connect_retries_until_the_server_is_back(monkeypatch) -> None:

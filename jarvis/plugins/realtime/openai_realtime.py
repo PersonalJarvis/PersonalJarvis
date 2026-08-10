@@ -316,6 +316,7 @@ class _OpenAIRealtimeSession:
         disconnect_before_rebuild: bool = False,
         rebuild_retry_window_s: float = 0.0,
         rebuild_retry_step_s: float = 1.0,
+        prompted_response_retry: bool = False,
         owns_client: bool = True,
     ) -> None:
         self._conn = connection
@@ -352,6 +353,16 @@ class _OpenAIRealtimeSession:
         self._disconnect_before_rebuild = bool(disconnect_before_rebuild)
         self._rebuild_retry_window_s = max(0.0, float(rebuild_retry_window_s))
         self._rebuild_retry_step_s = max(0.0, float(rebuild_retry_step_s))
+        # Retry contract for an answer blocked at the speech boundary. This
+        # transport keeps the cancelled response's text in the server-side
+        # conversation, so a bare response.create regenerates against a
+        # history that already contains the blocked answer — a small
+        # self-hosted brain then reads the turn as answered and returns an
+        # empty completion (live 2026-08-10 17:08: the one language retry
+        # came back as a single token and the call went silent). Opting in
+        # routes the retry through send_text(), which appends the explicit
+        # retry request as a fresh user item the model must actually answer.
+        self.supports_prompted_response_retry = bool(prompted_response_retry)
         self._connection_is_open = True
         self._events = connection.__aiter__()
         self.session_id = session_id
@@ -1270,6 +1281,7 @@ async def _open_realtime_session(
     disconnect_before_rebuild: bool = False,
     rebuild_retry_window_s: float = 0.0,
     rebuild_retry_step_s: float = 1.0,
+    prompted_response_retry: bool = False,
     owns_client: bool = True,
 ) -> _OpenAIRealtimeSession:
     """Open, configure and hand back a live session on ``client``.
@@ -1318,6 +1330,7 @@ async def _open_realtime_session(
         disconnect_before_rebuild=disconnect_before_rebuild,
         rebuild_retry_window_s=rebuild_retry_window_s,
         rebuild_retry_step_s=rebuild_retry_step_s,
+        prompted_response_retry=prompted_response_retry,
         owns_client=owns_client,
     )
     try:
@@ -2127,6 +2140,11 @@ class LocalRealtimeProvider:
             disconnect_before_rebuild=True,
             rebuild_retry_window_s=self._connect_retry_window_s(),
             rebuild_retry_step_s=_LOCAL_CONNECT_RETRY_STEP_S,
+            # The scrub-gate language retry must arrive as a fresh user item:
+            # this server keeps the cancelled answer in its conversation, and
+            # a bare response.create makes a small brain answer with an empty
+            # completion (live 2026-08-10 — the retry returned one token).
+            prompted_response_retry=True,
             # The client above is cached across sessions; closing this
             # session must not tear it down.
             owns_client=False,
