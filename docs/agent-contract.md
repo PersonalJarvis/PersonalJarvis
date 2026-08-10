@@ -481,14 +481,20 @@ Detail in [`docs/BUGS.md`](BUGS.md):
   (`git add -p` / pathspec-scoped). A large uncommitted diff is normal. On a
   corrupted-looking index/HEAD, recover via temp-index commit + `update-ref`
   CAS + safety branch (`git-rescue` on repo-wide disorder).
-- **Coding agents NEVER restart, quit, kill, or relaunch the desktop app.** Do
-  not call `POST /api/settings/restart-app`, `jarvis system restart`,
-  `Stop-Process`, or an equivalent process-control path. A task such as
-  "finish", "verify", or "fix it" is not restart approval, and `--yes` is not
-  human presence. When a Python-side change genuinely needs a fresh process,
-  state the reason and let the maintainer click Restart in the desktop UI. The
-  server rejects Control-API/Bearer restart requests so this contract remains
-  fail-closed when a prompt is missed.
+- **Desktop lifecycle actions are maintainer-gated.** Coding agents must not
+  restart, quit, kill, or relaunch the desktop app unless the maintainer
+  explicitly authorizes that exact lifecycle action in the current
+  conversation. A task such as "finish", "verify", or "fix it" is not restart
+  approval, and `--yes` is not human presence. Before an authorized action,
+  verify the exact Personal Jarvis PID and command line with read-only checks;
+  target only that process and never a name-wide Python/process set. Prefer the
+  supported in-app relauncher. If the UI is absent, an authorized agent may
+  terminate only the verified process and relaunch `jarvis.ui.web.launcher`
+  with the same interpreter and repository working directory. Verify the new
+  PID, API reachability, and desktop window afterward. Without explicit
+  approval, state why a fresh process is needed and let the maintainer click
+  Restart in the desktop UI. The server still rejects Control-API/Bearer
+  restart requests so unattended automation remains fail-closed.
 - **Jarvis is used as a DESKTOP APP, not a browser tab.** The window is an
   embedded WebView (`jarvis/ui/desktop_app.py`) with no address bar, no
   reload button and no dev tools, so "press Ctrl+R / F5", "hard-refresh",

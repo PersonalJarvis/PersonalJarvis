@@ -70,9 +70,12 @@ on unpinned libs; signing private keys ONLY in GH Actions secrets; no silent
 ## 9. Operational reality & git
 Working tree is SHARED: stage only YOUR files (`git add -p`/pathspec, never
 `git add -A`/`.`); auto-commit each logical step (Conventional Commits); never
-push automatically; never commit secrets. **Coding agents NEVER restart, quit,
-kill, or relaunch the desktop app** (no restart API/CLI, `Stop-Process`, or
-equivalent). If Python changes need a restart, explain why and let the maintainer
+push automatically; never commit secrets. Desktop lifecycle actions are
+maintainer-gated: agents may restart, quit, kill, or relaunch the desktop app
+ONLY after the maintainer explicitly authorizes that exact action in the current
+conversation. Generic "fix/finish/verify" approval is insufficient. Verify the
+exact Personal Jarvis PID + command first and never affect unrelated processes.
+Without explicit approval, explain why a restart is needed and let the maintainer
 click Restart in the desktop UI. The desktop WebView
 has no F5/console — frontend fix = `npm run build` in
 `jarvis/ui/web/frontend/`, nothing else: open windows reload themselves
