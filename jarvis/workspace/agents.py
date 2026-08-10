@@ -526,7 +526,14 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         # "shift+tab" fragment.
         chrome_fragments=("🌿", "tip: use"),
         spoken_aliases=("claude", "cloude", "claud", "clode", "klaude", "kloude"),
-        spoken_aliases_needing_suffix=("cloud", "clawed", "clod", "loud"),
+        spoken_aliases_needing_suffix=(
+            "cloud",
+            "clawed",
+            "clod",
+            "loud",
+            "cloth",
+            "glow",
+        ),
     ),
     "codex": make_cli_agent(
         "codex",

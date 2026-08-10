@@ -156,6 +156,26 @@ async def test_a_named_agent_is_honoured_over_the_inherited_one(
     assert [t.agent for t in registry.session.terminals] == ["codex", "claude", "claude"]
 
 
+async def test_live_recombined_pipeline_turn_opens_five_claude_panes(
+    manager: tuple[BrainManager, FakeBus], registry: Registry, tmp_path: Path
+) -> None:
+    """The production failure must stop before the background-worker route."""
+    mgr, bus = manager
+    await _open(registry, tmp_path, 3, agent="claude")
+    utterance = (
+        "Was geht ab? Du geile Sau! Geil, kannst du bitte "
+        "5 Cloth-Code-Terminal spawnen?"
+    )  # i18n-allow: production transcript under test
+
+    reply = await mgr._run_agentic_ide_spawn_fast_path(utterance)
+
+    assert reply is not None
+    assert registry.session is not None
+    assert len(registry.session.terminals) == 8
+    assert {term.agent for term in registry.session.terminals[3:]} == {"claude"}
+    assert _event_names(bus) == ["AgenticIdeTerminalsAdded", "NavigateSidebar"]
+
+
 async def test_spawn_and_prompt_queues_exactly_the_new_codex_fleet(
     manager: tuple[BrainManager, FakeBus],
     registry: Registry,

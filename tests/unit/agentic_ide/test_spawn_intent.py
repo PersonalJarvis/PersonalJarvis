@@ -180,6 +180,66 @@ def test_workspace_owns_a_terminal_spawn_even_though_it_names_the_vehicle() -> N
     assert intent.owns_turn(background, names=NAMES) is False
 
 
+def test_recombined_completed_turn_does_not_hide_a_later_spawn_clause() -> None:
+    """A voice fast-follow must route by its command clause, not stale smalltalk.
+
+    This is the exact 2026-08-09 production text after ContinuationWindow joined
+    a completed smalltalk turn to the next Agentic-IDE command. The leading
+    ``Was`` used to trigger the information-question veto for the whole string,
+    after which force-spawn created one background worker instead of five panes.
+    """
+    utterance = (
+        "Was geht ab? Du geile Sau! Geil, kannst du bitte "
+        "5 Cloth-Code-Terminal spawnen?"
+    )  # i18n-allow: production transcript under test
+
+    found = intent.detect_spawn(utterance, names=NAMES)
+
+    assert found is not None
+    assert found.count == 5
+    assert found.groups == (intent.SpawnGroup(count=5, agent="claude"),)
+    assert found.uncertain_cli == ()
+    assert intent.owns_turn(utterance, names=NAMES) is True
+
+
+def test_question_inside_the_spawn_clause_still_never_opens_panes() -> None:
+    utterance = (
+        "Was passiert, wenn ich 5 Claude-Code-Terminals spawne?"
+    )  # i18n-allow: spoken input under test
+
+    assert intent.detect_spawn(utterance, names=NAMES) is None
+    assert intent.owns_turn(utterance, names=NAMES) is False
+
+
+def test_discourse_prefixed_question_inside_spawn_clause_never_opens_panes() -> None:
+    utterance = (
+        "Was ist die Agentic IDE? Und was passiert, wenn ich "
+        "5 Claude-Code-Terminals spawne?"
+    )  # i18n-allow: spoken input under test
+
+    assert intent.detect_spawn(utterance, names=NAMES) is None
+    assert intent.owns_turn(utterance, names=NAMES) is False
+
+
+def test_punctuated_spanish_question_inside_spawn_clause_never_opens_panes() -> None:
+    utterance = (
+        "¿Qué es el IDE? ¿Y qué pasa si abro cinco terminales "
+        "de Claude Code?"
+    )  # i18n-allow: spoken input under test
+
+    assert intent.detect_spawn(utterance, names=NAMES) is None
+    assert intent.owns_turn(utterance, names=NAMES) is False
+
+
+def test_punctuated_spanish_second_person_request_still_opens_panes() -> None:
+    utterance = "¿Y puedes abrir cinco terminales de Claude Code?"  # i18n-allow
+
+    found = intent.detect_spawn(utterance, names=NAMES)
+
+    assert found is not None
+    assert found.groups == (intent.SpawnGroup(count=5, agent="claude"),)
+
+
 # --------------------------------------------------------------------------- #
 # Mixed fleets: "five Codex and three Claude Code terminals"                   #
 # --------------------------------------------------------------------------- #

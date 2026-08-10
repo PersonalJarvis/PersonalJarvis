@@ -1172,6 +1172,15 @@ _QUESTION_OPENER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A recombined turn can preserve the connector that introduced its latest
+# clause ("Und was passiert, wenn ...?"). Ignore only these bounded discourse
+# words when deciding whether that clause is an information question; second-
+# person requests such as "Und kannst du ...?" remain commands.
+_QUESTION_DISCOURSE_PREFIX_RE = re.compile(
+    r"^\s*¿?\s*(?:(?:und|and|y)\b[\s,;:–—-]*)+",  # i18n-allow: input vocab
+    re.IGNORECASE,
+)
+
 # Number words per locale. Capped at the workspace maximum: past it the count is
 # clamped anyway, so spelling out "twenty" buys nothing.
 _NUMBER_WORDS: dict[str, int] = {
@@ -1264,8 +1273,15 @@ def _spelling_pattern(spelling: str) -> str:
     """
     tokens = spelling.split()
     if len(tokens) > 1:
-        return r"\s+".join(re.escape(token) for token in tokens)
+        return _SPOKEN_NAME_SEPARATOR.join(re.escape(token) for token in tokens)
     return re.escape(spelling)
+
+
+# Speech providers alternate freely between whitespace and hyphens in product
+# names ("Claude Code" / "Claude-Code"). Treat both as the same spoken
+# boundary, including whitespace around a dash; punctuation outside a product
+# name remains untouched.
+_SPOKEN_NAME_SEPARATOR = r"(?:\s*[-‐‑–—]+\s*|\s+)"
 
 
 #: A plural ending on a product name. People count CLIs the way they count
@@ -1284,12 +1300,14 @@ def _agent_alternation() -> str:
     ``claude``) can never shadow it.
     """
     parts = [
-        rf"{_spelling_pattern(spelling)}{_PLURAL_SUFFIX}(?:\s+code)?"
+        rf"{_spelling_pattern(spelling)}{_PLURAL_SUFFIX}"
+        rf"(?:{_SPOKEN_NAME_SEPARATOR}code)?"
         for spellings in _agent_spellings().values()
         for spelling in spellings
     ]
     parts += [
-        rf"{_spelling_pattern(spelling)}\s+{re.escape(suffix)}{_PLURAL_SUFFIX}"
+        rf"{_spelling_pattern(spelling)}{_SPOKEN_NAME_SEPARATOR}"
+        rf"{re.escape(suffix)}{_PLURAL_SUFFIX}"
         for spelling, (_agent, suffix) in _agent_spellings_requiring_suffix().items()
     ]
     return "|".join(sorted(parts, key=len, reverse=True))
@@ -1320,7 +1338,8 @@ def _canonical_agent(raw: str) -> str | None:
     sentence's own verb away from the parser and drop the whole request.
     """
     standalone = _standalone_spellings()
-    name = " ".join(str(raw or "").casefold().split())
+    name = re.sub(r"[-‐‑–—]+", " ", str(raw or "").casefold())
+    name = " ".join(name.split())
     if name in standalone:
         return standalone[name]
     for spelling, (agent, suffix) in _agent_spellings_requiring_suffix().items():
@@ -2361,7 +2380,15 @@ def detect_spawn(
     agent_fleet = span is None and _is_agent_fleet(text, names)
     if span is None and not agent_fleet:
         return None
-    if _QUESTION_OPENER_RE.search(text) is not None:
+    # A fast follow-up can be recombined with the previous completed turn by
+    # the voice continuation window. Judge the clause that actually requests
+    # panes, not an unrelated earlier question (live 2026-08-09: "Was geht
+    # ab? ... bitte 5 Cloth-Code-Terminal spawnen" was sent to a background
+    # worker). A real information question still starts inside ``parse_text``
+    # and remains vetoed.
+    question_scope = span.parse_text if span is not None else text
+    question_scope = _QUESTION_DISCOURSE_PREFIX_RE.sub("", question_scope)
+    if _QUESTION_OPENER_RE.search(question_scope) is not None:
         return None
     addressed_text = span.parse_text if span is not None else text
     addressed_before_spawn = (

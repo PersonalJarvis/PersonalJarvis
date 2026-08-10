@@ -51,7 +51,7 @@ def test_the_other_cli_is_spelled_by_ear_too(spelling: str) -> None:
     assert _groups(f"open three {spelling} terminals") == [(3, "codex")]
 
 
-@pytest.mark.parametrize("spelling", ["Cloud", "Clawed", "Clod"])
+@pytest.mark.parametrize("spelling", ["Cloud", "Clawed", "Clod", "Cloth", "Glow"])
 def test_an_everyday_word_counts_only_with_the_products_second_word(
     spelling: str,
 ) -> None:
@@ -63,6 +63,18 @@ def test_an_everyday_word_counts_only_with_the_products_second_word(
     # Same word, no "code" behind it: the pane is opened, but no CLI is named,
     # so the registry inherits the last pane's agent instead of guessing.
     assert _groups(f"open two {spelling} terminals") == [(2, None)]
+
+
+def test_live_hyphenated_cloth_code_transcript_names_claude() -> None:
+    """The exact 2026-08-09 pipeline transcript must keep its count and CLI."""
+    assert _groups(
+        "Geil, kannst du bitte 5 Cloth-Code-Terminal spawnen?"
+    ) == [(5, "claude")]
+
+
+@pytest.mark.parametrize("separator", [" - ", "- ", " – "])
+def test_spaced_product_name_dashes_still_name_claude(separator: str) -> None:
+    assert _groups(f"open two Cloth{separator}Code terminals") == [(2, "claude")]
 
 
 def test_the_misspelling_survives_the_other_locales() -> None:
