@@ -1321,7 +1321,7 @@
     "realtime_model_managed": "Managed",
     "realtime_model_managed_hint": "ChatGPT selects the subscription model. Choose an API Realtime provider to pin a GPT Realtime model.",
     "guide_realtime_title": "Which model should I pick?",
-    "guide_realtime_body": "OpenAI API: GPT Realtime 2.1 is the current flagship and 2.1 Mini is the budget pick. ChatGPT subscription: OpenAI manages the model, so only the voice is selectable. Google: Gemini 3.1 Flash Live is the current Live flagship.",
+    "guide_realtime_body": "OpenAI API: GPT Realtime 2.1 is the current flagship and 2.1 Mini is the budget pick. Google: Gemini 3.1 Flash Live is the current Live flagship.",
     "guide_computer_use_title": "Which provider should power the Tool Model?",
     "guide_computer_use_body": "The Tool Model handles every action Jarvis takes for you — including Computer-Use, which reads screenshots of your screen, so it needs a model that understands images; the picker hides text-only models. If unsure, keep your main Brain provider and its default model.",
     "reco_title": "Personal recommendation",

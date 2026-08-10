@@ -1320,7 +1320,7 @@
     "realtime_model_managed": "Gestionado",
     "realtime_model_managed_hint": "ChatGPT selecciona el modelo de suscripción. Elige un proveedor Realtime por API para fijar un modelo GPT Realtime.",
     "guide_realtime_title": "¿Qué modelo debería elegir?",
-    "guide_realtime_body": "API de OpenAI: GPT Realtime 2.1 es el modelo insignia actual y 2.1 Mini es la opción económica. Suscripción de ChatGPT: OpenAI gestiona el modelo, por lo que solo se puede elegir la voz. Google: Gemini 3.1 Flash Live es el modelo insignia actual de Live.",
+    "guide_realtime_body": "API de OpenAI: GPT Realtime 2.1 es el modelo insignia actual y 2.1 Mini es la opción económica. Google: Gemini 3.1 Flash Live es el modelo insignia actual de Live.",
     "guide_computer_use_title": "¿Qué proveedor debería impulsar el Tool Model?",
     "guide_computer_use_body": "El Tool Model se encarga de cada acción que Jarvis realiza por ti — incluido Computer-Use, que lee capturas de tu pantalla y necesita un modelo que entienda imágenes; el selector oculta los modelos de solo texto. En caso de duda, quédate con tu proveedor Brain principal y su modelo predeterminado.",
     "reco_title": "Recomendación personal",
