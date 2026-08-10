@@ -684,14 +684,131 @@
       form,
       table,
       thead,
-      tbody
-    )[class~="bg-background"] {
+      tbody,
+      ul,
+      ol,
+      li,
+      label,
+      button
+    ):where(
+      [class~="bg-background"],
+      [class~="bg-background/20"],
+      [class~="bg-background/25"],
+      [class~="bg-background/30"],
+      [class~="bg-background/40"],
+      [class~="bg-background/50"],
+      [class~="bg-background/60"],
+      [class~="bg-background/70"],
+      [class~="bg-background/80"],
+      [class~="bg-background/90"],
+      [class~="bg-background/95"],
+      [class~="bg-muted"],
+      [class~="bg-muted/20"],
+      [class~="bg-muted/25"],
+      [class~="bg-muted/30"],
+      [class~="bg-muted/40"],
+      [class~="bg-muted/50"]
+    ) {
     background-color: hsl(var(--card) / var(--surface-panel-alpha));
   }
 
   .jarvis-section-stage
-    :where(input, textarea, select)[class~="bg-background"] {
+    :where(input, textarea, select, [role="combobox"]):where(
+      [class~="bg-background"],
+      [class~="bg-background/20"],
+      [class~="bg-background/25"],
+      [class~="bg-background/30"],
+      [class~="bg-background/40"],
+      [class~="bg-background/50"],
+      [class~="bg-background/60"],
+      [class~="bg-background/70"],
+      [class~="bg-background/80"],
+      [class~="bg-background/90"],
+      [class~="bg-background/95"],
+      [class~="bg-muted"],
+      [class~="bg-muted/20"],
+      [class~="bg-muted/25"],
+      [class~="bg-muted/30"],
+      [class~="bg-muted/40"],
+      [class~="bg-muted/50"]
+    ) {
     background-color: hsl(var(--background) / var(--surface-control-alpha));
+  }
+
+  /* Profile and several older dashboards used a 30% scrim instead of a real
+     content surface. On detailed wallpaper that drops muted labels below the
+     George Voice contrast baseline, so these cards now use the same 60% glass
+     while the artwork remains clearly visible around and through them. */
+  .jarvis-section-stage :where([class~="bg-scrim/30"]) {
+    background-color: hsl(var(--card) / var(--surface-card-alpha));
+  }
+
+  /* BoardCard previously supplied only a 1.5–5.5% sheen gradient. That is an
+     edge highlight, not a readable surface, and it made both Board and Profile
+     dissolve into detailed wallpaper. Keep the sheen, but give it the same
+     card glass that George Voice uses underneath. */
+  .jarvis-section-stage
+    :where(
+      [class~="from-sheen/[0.055]"][class~="to-sheen/[0.015]"]
+    ) {
+    background-color: hsl(var(--card) / var(--surface-card-alpha));
+  }
+
+  /* Selected and status cards used colour washes as their only background.
+     Layer the wash over the shared glass instead: state stays recognisable,
+     but provider forms, output cards and branded feedback remain as readable
+     as their neutral neighbours. */
+  .jarvis-section-stage
+    :where(div, section, article, li, label, button):where(
+      [class~="bg-primary/5"],
+      [class~="bg-primary/10"],
+      [class~="bg-primary/[0.04]"],
+      [class~="bg-primary/[0.05]"],
+      [class~="bg-primary/[0.06]"],
+      [class~="bg-primary/[0.07]"],
+      [class~="bg-destructive/[0.05]"],
+      [class~="bg-[#5865F2]/10"]
+    ) {
+    background-color: hsl(var(--card) / var(--surface-card-alpha));
+    background-image: linear-gradient(
+      var(--surface-tint-color),
+      var(--surface-tint-color)
+    );
+  }
+
+  .jarvis-section-stage
+    :where([class~="bg-primary/[0.04]"]) {
+    --surface-tint-color: hsl(var(--primary) / 0.04);
+  }
+
+  .jarvis-section-stage
+    :where([class~="bg-primary/5"], [class~="bg-primary/[0.05]"]) {
+    --surface-tint-color: hsl(var(--primary) / 0.05);
+  }
+
+  .jarvis-section-stage
+    :where([class~="bg-primary/[0.06]"]) {
+    --surface-tint-color: hsl(var(--primary) / 0.06);
+  }
+
+  .jarvis-section-stage
+    :where([class~="bg-primary/[0.07]"]) {
+    --surface-tint-color: hsl(var(--primary) / 0.07);
+  }
+
+  .jarvis-section-stage
+    :where([class~="bg-primary/10"]) {
+    --surface-tint-color: hsl(var(--primary) / 0.1);
+  }
+
+  .jarvis-section-stage
+    :where([class~="bg-destructive/[0.05]"]) {
+    --surface-tint-color: hsl(var(--destructive) / 0.05);
+  }
+
+  .jarvis-section-stage
+    :where([class~="bg-[#5865F2]/10"]) {
+    --surface-tint-color: rgb(88 101 242 / 0.1);
   }
 
   .jarvis-section-stage > [class~="bg-background"] {
