@@ -3895,6 +3895,24 @@
     }
   },
   "agentic_grid": {
+    "browser": {
+      "title": "Navegador integrado",
+      "toggle": "Abrir el navegador integrado",
+      "close": "Cerrar el navegador integrado",
+      "address_label": "Escribir una dirección web",
+      "address_placeholder": "Escribir una dirección web",
+      "open_another": "Abrir otra dirección web",
+      "go": "Ir",
+      "home": "Página de inicio",
+      "open_external": "Abrir la dirección escrita en el navegador del sistema",
+      "loading": "Cargando página",
+      "frame_title": "Página del navegador",
+      "invalid_address": "Escribe una dirección web HTTP o HTTPS válida.",
+      "embed_hint": "Las páginas integradas no muestran su dirección actual. Usa el navegador del sistema para iniciar sesión o introducir datos sensibles.",
+      "start_title": "La web, dentro de tu espacio de trabajo",
+      "start_body": "Abre un sitio web sin salir de tu sesión de programación. Tus terminales de agentes siguen conectados detrás de esta página.",
+      "start_action": "Escribir una dirección web"
+    },
     "continue": {
       "button": "Continuar",
       "hint": "Comprueba qué sesiones de programación se interrumpieron y pídeles que sigan.",

@@ -3895,6 +3895,24 @@
     }
   },
   "agentic_grid": {
+    "browser": {
+      "title": "In-app browser",
+      "toggle": "Open the in-app browser",
+      "close": "Close the in-app browser",
+      "address_label": "Enter a web address",
+      "address_placeholder": "Enter a web address",
+      "open_another": "Open another web address",
+      "go": "Go",
+      "home": "Start page",
+      "open_external": "Open the entered address in the system browser",
+      "loading": "Loading page",
+      "frame_title": "Browser page",
+      "invalid_address": "Enter a valid HTTP or HTTPS web address.",
+      "embed_hint": "Embedded pages do not expose their current address. Use the system browser for sign-in or sensitive data.",
+      "start_title": "The web, inside your workspace",
+      "start_body": "Open a website without leaving your coding session. Your agent terminals stay connected behind this page.",
+      "start_action": "Enter a web address"
+    },
     "continue": {
       "button": "Continue",
       "hint": "Check which coding sessions were interrupted and tell them to carry on.",
