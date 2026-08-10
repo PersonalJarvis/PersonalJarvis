@@ -521,6 +521,25 @@ describe("Agentic IDE launcher", () => {
     expect(rail.className).not.toContain("hidden");
   });
 
+  it("keeps every reading-mode miniature visible on the dark workspace", async () => {
+    render(<AgenticIdeView />);
+    await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
+    await openAgents();
+    fireEvent.click(screen.getAllByText("workspace_launcher.agents.all")[0]);
+    fireEvent.click(screen.getByRole("button", { name: /choose the view/i }));
+
+    for (const view of ["grid", "chat", "deck"] as const) {
+      const panes = screen
+        .getByTestId(`view-choice-${view}`)
+        .querySelectorAll("[data-view-preview-pane]");
+      expect(panes).toHaveLength(4);
+      for (const pane of panes) {
+        expect(pane.className).toContain("border-foreground/20");
+        expect(pane.className).toContain("bg-foreground/");
+      }
+    }
+  });
+
   it("keeps an aggregate agent split across backward navigation", async () => {
     render(<AgenticIdeView />);
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());

@@ -595,7 +595,18 @@ function ViewOption({
   );
 }
 
-/* Miniatures of the three modes, drawn with rules like the rest of the wizard. */
+/*
+ * Miniatures of the three modes, drawn with rules like the rest of the wizard.
+ *
+ * These panes use the foreground token at low opacity instead of the already
+ * dim border/muted tokens. On the matte dark theme, tinting a 14%-light border
+ * again made the geometry nearly disappear; this keeps the contrast local to
+ * the diagrams and gives the outlines roughly twice their former luminance.
+ */
+const VIEW_PREVIEW_PANE =
+  "border-foreground/20 bg-foreground/[0.08]";
+const VIEW_PREVIEW_PANE_ACTIVE =
+  "border-foreground/20 bg-foreground/[0.14]";
 
 function GridPreview() {
   return (
@@ -603,7 +614,8 @@ function GridPreview() {
       {[0, 1, 2, 3].map((i) => (
         <span
           key={i}
-          className="block h-9 border border-border/70 bg-muted/30"
+          data-view-preview-pane
+          className={cn("block h-9 border", VIEW_PREVIEW_PANE)}
         />
       ))}
     </span>
@@ -617,14 +629,18 @@ function ChatPreview() {
         {[0, 1, 2].map((i) => (
           <span
             key={i}
+            data-view-preview-pane
             className={cn(
-              "block flex-1 border border-border/70",
-              i === 0 ? "bg-muted/60" : "bg-muted/20",
+              "block flex-1 border",
+              i === 0 ? VIEW_PREVIEW_PANE_ACTIVE : VIEW_PREVIEW_PANE,
             )}
           />
         ))}
       </span>
-      <span className="block h-[4.875rem] flex-1 border border-border/70 bg-muted/30" />
+      <span
+        data-view-preview-pane
+        className={cn("block h-[4.875rem] flex-1 border", VIEW_PREVIEW_PANE)}
+      />
     </span>
   );
 }
@@ -643,7 +659,11 @@ function DeckPreview() {
     <span aria-hidden className="flex h-[4.875rem] items-center justify-center gap-2">
       <span className="flex flex-col gap-1.5">
         {[0, 1].map((i) => (
-          <span key={i} className="block h-6 w-8 border border-border/70 bg-muted/20" />
+          <span
+            key={i}
+            data-view-preview-pane
+            className={cn("block h-6 w-8 border", VIEW_PREVIEW_PANE)}
+          />
         ))}
       </span>
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/60 bg-primary/10">
@@ -651,7 +671,11 @@ function DeckPreview() {
       </span>
       <span className="flex flex-col gap-1.5">
         {[0, 1].map((i) => (
-          <span key={i} className="block h-6 w-8 border border-border/70 bg-muted/20" />
+          <span
+            key={i}
+            data-view-preview-pane
+            className={cn("block h-6 w-8 border", VIEW_PREVIEW_PANE)}
+          />
         ))}
       </span>
     </span>
