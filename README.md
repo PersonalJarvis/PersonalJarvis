@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <b>An open-source voice agent that operates your computer instead of just answering questions about it.</b>
+  <b>An open-source voice agent that operates your computer instead of just answering questions about it — and it can run entirely on your own hardware.</b>
 </p>
 
 ---
@@ -26,9 +26,11 @@ itself. Anything heavier goes to a coding-agent worker (Claude Code, Codex CLI, 
 or an in-process worker on whatever API key you already have), which runs in isolation,
 gets checked by a critic, and reports back in the language you spoke.
 
-You pick the provider: Gemini, Claude, OpenAI, or OpenRouter, one setting for each. It can
-rewrite its own configuration, and it runs on a headless server just as well as on a
-desktop with a microphone.
+Every tier has a keyless local option, so the whole assistant can run on your own hardware
+with no cloud account anywhere in the chain — details under **Runs on your own hardware**
+below. If you would rather use a hosted model, you pick the provider per tier: Gemini,
+Claude, OpenAI, or OpenRouter, one setting for each. It can rewrite its own configuration,
+and it runs on a headless server just as well as on a desktop with a microphone.
 
 ## What you can say
 
@@ -67,6 +69,27 @@ instead of just an answer.
 <p align="center">
   <sub>One tab per tier, each with its own provider, and you only need keys for the tiers you use. Every provider says how it bills: a subscription login you already have, or an API key charged per token.</sub>
 </p>
+
+## Runs on your own hardware
+
+Hosted providers are a choice here, not a requirement. Every layer that could reach for a
+cloud account has a local option that needs no API key and no signup, so a complete install
+can keep your voice, your screen and your files on the machine they started on.
+
+| Layer | Keyless local option | What it costs you |
+|---|---|---|
+| **Conversation** (realtime) | A self-hosted server speaking the OpenAI Realtime protocol. The install panel checks the machine and sets up a managed one in a click, or you point it at any address of your own. | About 12 GB of GPU or unified memory for a good experience. Still marked experimental. |
+| **Brain** (decisions, tools) | Ollama, found automatically at `http://localhost:11434`, or any OpenAI-compatible server. | Pull a tools-capable model, e.g. `ollama pull qwen3.5`. |
+| **Speech to text** | Whisper large-v3 on device, or NVIDIA's Nemotron 3.5 streaming model. | Whisper is a one-time 3 GB download and wants a graphics card; Nemotron is ~690 MB, covers 40 languages, and runs several times faster than real time on a plain CPU. |
+| **Text to speech** | Piper on this machine, plus Kokoro and Qwen3-TTS voice profiles. | A voice download in the hundreds of megabytes. |
+
+Mixing is normal and expected: a local recognizer with a hosted brain, or a local brain
+with a hosted voice. Nothing forces the whole chain one way.
+
+Two capabilities stay outside this promise, and it would be dishonest to imply otherwise.
+The outbound phone call goes over Twilio, which is a hosted service by definition, and the
+coding-agent workers run on whichever agent CLI or API key you point them at. Everything in
+the table above is genuinely local.
 
 ## Demo
 
