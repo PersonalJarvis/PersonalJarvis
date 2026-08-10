@@ -74,17 +74,8 @@ const LINK_FADED = "rgba(106, 169, 255, 0.06)";
 const NODE_FADED = "#2c3340";
 const PARTICLE_COLOUR = "#cfe4ff";
 
-/**
- * The colour the scene clears to.
- *
- * Not transparent, and not by choice: once a post-processing pass is on the
- * composer the renderer clears opaque, so anything painted behind the canvas
- * in CSS is never seen again. A near-black with a blue cast does the same job
- * from inside — the frame reads as depth rather than as a switched-off screen.
- * The CSS layer stays as the fallback for a machine where the bloom pass fails
- * to load.
- */
-const SPACE_COLOUR = "#05070d";
+/** Let the shared glass stage and desktop artwork remain visible through WebGL. */
+const SPACE_COLOUR = "rgba(0,0,0,0)";
 
 export interface WikiGraph3DProps {
   graphData: { nodes: RenderNode[]; links: RenderEdge[] };
@@ -283,50 +274,6 @@ export function WikiGraph3D({
     },
     [isNearHover],
   );
-
-  /**
-   * The glow.
-   *
-   * A force graph drawn as flat-shaded spheres reads as a diagram. The same
-   * graph with the bright parts bleeding light reads as something with depth
-   * and mass — and it costs one post-processing pass, because the renderer
-   * already hands out its composer. The threshold is low so the node colours
-   * themselves bloom, and the strength stays under the point where labels turn
-   * into smears.
-   *
-   * Loaded on demand: the pass is part of three.js's addons, and this whole
-   * component is already behind a lazy import, so a flat-map reader never
-   * downloads a line of it.
-   */
-  useEffect(() => {
-    let cancelled = false;
-    let installed: { dispose?: () => void } | null = null;
-    void (async () => {
-      const [{ UnrealBloomPass }, { Vector2 }] = await Promise.all([
-        import("three/examples/jsm/postprocessing/UnrealBloomPass.js"),
-        import("three"),
-      ]);
-      const composer = graphRef.current?.postProcessingComposer?.();
-      if (cancelled || !composer) return;
-      const pass = new UnrealBloomPass(
-        new Vector2(Math.max(width, 1), Math.max(height, 1)),
-        // strength, radius, threshold
-        1.15,
-        0.85,
-        0.08,
-      );
-      composer.addPass(pass);
-      installed = pass;
-    })();
-    return () => {
-      cancelled = true;
-      installed?.dispose?.();
-    };
-    // Deliberately once per mount: the pass reads the canvas size from the
-    // composer on every resize itself, so re-adding it per resize would only
-    // stack passes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const nodeThreeObject = useCallback(
     (node: NodeObject<RenderNode>): SpriteText | null => {

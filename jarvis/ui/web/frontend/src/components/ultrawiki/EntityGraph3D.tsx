@@ -80,17 +80,8 @@ const SELECTED_SCALE = 1.4;
  */
 const SPHERE_SCALE = 0.5;
 
-/**
- * The colour the scene clears to.
- *
- * Not transparent, and not by choice: once a post-processing pass is on the
- * composer the renderer clears opaque, so anything painted behind the canvas
- * in CSS is never seen again. A near-black with a blue cast does the same job
- * from inside — the frame reads as depth rather than as a switched-off screen,
- * and the warm nodes have something cold to sit against. The CSS layer stays
- * as the fallback for a machine where the bloom pass fails to load.
- */
-const SPACE_COLOUR = "#05070d";
+/** Let the shared glass stage and desktop artwork remain visible through WebGL. */
+const SPACE_COLOUR = "rgba(0,0,0,0)";
 
 /** Focus colours: everything unrelated to what you point at recedes. */
 const LINK_REST = "rgba(255, 214, 10, 0.16)";
@@ -315,41 +306,6 @@ export function EntityGraph3D({
     (link: ExploreRenderEdge) => (touchesHover(link) ? 3 : 0),
     [touchesHover],
   );
-
-  /**
-   * The glow — the single change that turns a field of flat discs into
-   * something with light in it. One post-processing pass on the composer the
-   * renderer already exposes; the threshold sits below the warm end of the
-   * recency ramp so recent topics bloom and old ones stay quiet, which makes
-   * the encoding easier to read rather than harder.
-   */
-  useEffect(() => {
-    let cancelled = false;
-    let installed: { dispose?: () => void } | null = null;
-    void (async () => {
-      const [{ UnrealBloomPass }, { Vector2 }] = await Promise.all([
-        import("three/examples/jsm/postprocessing/UnrealBloomPass.js"),
-        import("three"),
-      ]);
-      const composer = graphRef.current?.postProcessingComposer?.();
-      if (cancelled || !composer) return;
-      const pass = new UnrealBloomPass(
-        new Vector2(Math.max(width, 1), Math.max(height, 1)),
-        0.9,
-        0.8,
-        0.16,
-      );
-      composer.addPass(pass);
-      installed = pass;
-    })();
-    return () => {
-      cancelled = true;
-      installed?.dispose?.();
-    };
-    // Once per mount: the pass follows the composer's own resizes, so re-adding
-    // it per resize would only stack passes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   return (
     // The wrapper is what the camera work listens on to know the user has

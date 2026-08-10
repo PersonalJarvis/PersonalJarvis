@@ -319,6 +319,14 @@
        must read as "the app, blurred" rather than a grey rectangle. */
     --shell-rgb: 252 251 248;
 
+    /* Shared translucent surfaces. George Voice is the visual reference:
+       enough local contrast to read, while the desktop artwork remains part
+       of the page instead of disappearing behind opaque application chrome. */
+    --surface-card-alpha: 0.72;
+    --surface-panel-alpha: 0.68;
+    --surface-control-alpha: 0.82;
+    --surface-stage-alpha: 0.7;
+
     /* --- Stages ----------------------------------------------------------
        The full-bleed canvases behind the knowledge maps. They are not chrome:
        a force graph needs its own depth cue, so it gets its own ground, its
@@ -328,8 +336,8 @@
     --stage-dot-rgb: 43 43 51;
     --stage-dot-strong: 0.28;
     --stage-dot-soft: 0.16;
-    --stage-wash-rgb: 120 148 200;
-    --stage-wash-strength: 0.16;
+    --stage-wash-rgb: 168 107 0;
+    --stage-wash-strength: 0.08;
     --stage-vignette-rgb: 43 40 32;
     --stage-vignette-strength: 0.1;
 
@@ -367,12 +375,17 @@
     --sheen-rgb: 255 255 255;
     --shell-rgb: 10 10 10;
 
+    --surface-card-alpha: 0.6;
+    --surface-panel-alpha: 0.58;
+    --surface-control-alpha: 0.72;
+    --surface-stage-alpha: 0.58;
+
     --stage-bg: 0 0% 4%;
     --stage-dot-rgb: 255 255 255;
     --stage-dot-strong: 0.5;
     --stage-dot-soft: 0.35;
-    --stage-wash-rgb: 40 78 140;
-    --stage-wash-strength: 0.22;
+    --stage-wash-rgb: 255 214 10;
+    --stage-wash-strength: 0.055;
     --stage-vignette-rgb: 0 0 0;
     --stage-vignette-strength: 0.62;
 
@@ -497,21 +510,21 @@
   }
 
   .jarvis-panel-surface {
-    background: rgb(var(--shell-rgb) / 0.1);
+    background: rgb(var(--shell-rgb) / var(--surface-panel-alpha));
   }
 
   .jarvis-message-surface {
     background: linear-gradient(
       135deg,
-      rgb(var(--shell-rgb) / 0.28),
-      rgb(var(--shell-rgb) / 0.14)
+      rgb(var(--shell-rgb) / var(--surface-card-alpha)),
+      rgb(var(--shell-rgb) / calc(var(--surface-card-alpha) * 0.82))
     );
     -webkit-backdrop-filter: blur(12px) saturate(1.08);
     backdrop-filter: blur(12px) saturate(1.08);
   }
 
   .jarvis-input-surface {
-    background: rgb(var(--shell-rgb) / 0.16);
+    background: rgb(var(--shell-rgb) / var(--surface-control-alpha));
     -webkit-backdrop-filter: blur(14px) saturate(1.08);
     backdrop-filter: blur(14px) saturate(1.08);
   }
@@ -524,30 +537,12 @@
     );
   }
 
-  :root:not(.dark) .jarvis-panel-surface {
-    background: rgb(var(--shell-rgb) / 0.24);
-  }
-
-  :root:not(.dark) .jarvis-message-surface {
-    background: linear-gradient(
-      135deg,
-      rgb(var(--shell-rgb) / 0.52),
-      rgb(var(--shell-rgb) / 0.3)
-    );
-  }
-
-  :root:not(.dark) .jarvis-input-surface {
-    background: rgb(var(--shell-rgb) / 0.4);
-  }
-
   /* Section-level grounds disappear everywhere the wallpaper is active. The
      selectors intentionally stop at page roots and purpose-built stages: cards,
      dialogs and data tables retain their own hierarchy and remain readable. */
   .jarvis-section-stage > [class~="bg-background"],
-  .jarvis-section-stage section[class~="bg-background"],
   .jarvis-section-stage .agents-board-stage,
-  .jarvis-section-stage .uw-stage,
-  .jarvis-section-stage .wiki-space {
+  .jarvis-section-stage .uw-stage {
     background-color: transparent;
   }
 
@@ -651,6 +646,57 @@
 }
 
 @layer utilities {
+  /*
+   * One contrast system for every workspace section. Older views chose their
+   * own card opacity (or an opaque background), which made navigation feel
+   * like switching products. Exact class-token selectors preserve semantic
+   * colours and interaction variants while converging resting surfaces on the
+   * George Voice glass balance.
+   */
+  .jarvis-section-stage
+    :where(
+      [class~="bg-card"],
+      [class~="bg-card/20"],
+      [class~="bg-card/25"],
+      [class~="bg-card/30"],
+      [class~="bg-card/40"],
+      [class~="bg-card/50"],
+      [class~="bg-card/60"],
+      [class~="bg-card/70"],
+      [class~="bg-card/80"],
+      [class~="bg-card/90"],
+      [class~="bg-card/95"]
+    ) {
+    background-color: hsl(var(--card) / var(--surface-card-alpha));
+  }
+
+  .jarvis-section-stage
+    :where(
+      div,
+      aside,
+      section,
+      article,
+      header,
+      footer,
+      main,
+      nav,
+      form,
+      table,
+      thead,
+      tbody
+    )[class~="bg-background"] {
+    background-color: hsl(var(--card) / var(--surface-panel-alpha));
+  }
+
+  .jarvis-section-stage
+    :where(input, textarea, select)[class~="bg-background"] {
+    background-color: hsl(var(--background) / var(--surface-control-alpha));
+  }
+
+  .jarvis-section-stage > [class~="bg-background"] {
+    background-color: transparent;
+  }
+
   /* Staggered reveal on view mount — one orchestrated page-load moment.
      Pair with an inline `animationDelay` for the stagger cadence. */
   @keyframes profile-rise {
@@ -1480,7 +1526,7 @@
    * window, which is the same mistake as a #000 terminal in a #12141a shell.
    */
   .wiki-space {
-    background-color: hsl(var(--stage-bg));
+    background-color: rgb(var(--shell-rgb) / var(--surface-stage-alpha));
     background-image:
       radial-gradient(
         ellipse 120% 90% at 50% 42%,
@@ -1499,6 +1545,8 @@
         transparent 0.6px
       );
     background-size: 100% 100%, 190px 190px, 97px 97px;
+    -webkit-backdrop-filter: blur(4px) saturate(0.94);
+    backdrop-filter: blur(4px) saturate(0.94);
   }
 
   .wiki-space-vignette {
