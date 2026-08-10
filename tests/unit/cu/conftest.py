@@ -32,3 +32,20 @@ def _screen_recording_gate_open(
     monkeypatch.setattr(
         capture, "_require_macos_screen_recording_permission", lambda: None
     )
+
+
+@pytest.fixture(autouse=True)
+def _forget_learned_token_headroom() -> None:
+    """Clear the per-model token-headroom memory between tests.
+
+    ``brain_call`` remembers process-wide which (provider, model) pairs cannot
+    finish their JSON inside the small per-call cap, so the next step starts at
+    the headroom instead of re-discovering it. That memory is deliberately
+    global; leaking it across tests would make a truncation test's outcome
+    depend on execution order.
+    """
+    from jarvis.cu.brain_call import _reset_headroom_memory_for_tests
+
+    _reset_headroom_memory_for_tests()
+    yield
+    _reset_headroom_memory_for_tests()

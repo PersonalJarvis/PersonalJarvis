@@ -51,11 +51,27 @@ class FakeGlobalHotkeys:
         # registration, mirroring the real package raising on an unknown key
         # name — used to prove a single bad combo does NOT disable the rest.
         self.register_error_combos: set[str] = set()
+        # Test knob: reproduce the real poller's fatal flaw. HotkeyChecker.run
+        # binds ``id_list = self.hotkeys.keys()`` once and iterates that LIVE
+        # view forever, so ANY registry write while it polls raises
+        # "dictionary changed size during iteration" INSIDE the thread and
+        # kills it — silently taking every global hotkey with it (live
+        # 2026-08-10). The crash never surfaces to the caller, so the fake
+        # records it and drops the live count instead of raising.
+        self.strict_poller = False
+        self.poller_crashed = False
 
     # ------------------------------------------------------------------
     # Real API surface (what HotkeyTrigger imports as ``gh``)
     # ------------------------------------------------------------------
+    def _note_registry_write(self) -> None:
+        """Kill the poller when the registry is written while it is live."""
+        if self.strict_poller and self._live > 0:
+            self.poller_crashed = True
+            self._live = 0
+
     def register_hotkeys(self, bindings: list[list]) -> None:
+        self._note_registry_write()
         self.register_calls.append(bindings)
         if self.register_error is not None:
             raise self.register_error
@@ -73,6 +89,7 @@ class FakeGlobalHotkeys:
             self.registered[combo] = (on_press, on_release)
 
     def remove_hotkeys(self, bindings: list[str]) -> None:
+        self._note_registry_write()
         self.remove_calls.append(bindings)
         for _binding in bindings:
             # Faithful to the real module: ``_binding.replace(" ", "")``.

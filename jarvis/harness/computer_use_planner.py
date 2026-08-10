@@ -14,6 +14,62 @@ from jarvis.brain.manager import (
 
 log = logging.getLogger(__name__)
 
+# Wordings that mean "the provider is momentarily overloaded / had a blip", NOT
+# "your account is broken". Kept separate from the manager's classifier because
+# only Computer-Use pays the full price for confusing the two: a mission runs one
+# vision call PER STEP, so a single 30-second capacity spike used to knock the
+# only funded vision brain out for the WHOLE mission (live 2026-08-10 18:39:25 —
+# Gemini answered 503 "This model is currently experiencing high demand", CU
+# mission-blocked it, fell through to two out-of-credit providers and told the
+# user "I can't see the screen right now").
+_TRANSIENT_MARKERS: tuple[str, ...] = (
+    "service unavailable",
+    "unavailable",
+    "overloaded",
+    "high demand",
+    "try again later",
+    "temporarily",
+    "internal server error",
+    "bad gateway",
+    "gateway timeout",
+    "timed out",
+    "timeout",
+    "connection reset",
+    "connection aborted",
+    "server disconnected",
+)
+
+#: HTTP codes that are capacity/infra, never credentials.
+_TRANSIENT_STATUS: frozenset[int] = frozenset({500, 502, 503, 504, 529})
+
+#: How many transient failures one (provider, model) may take before CU stops
+#: offering it for the rest of the mission. One blip is forgiven; a provider
+#: that is genuinely down falls out instead of costing every step a round-trip.
+_MAX_TRANSIENT_PER_CANDIDATE = 2
+
+
+def is_transient_provider_error(exc: Exception, detail: str | None = None) -> bool:
+    """True when *exc* reads as a capacity/infra blip worth one more try.
+
+    Deliberately narrow: an account or credential problem (401/402/403, quota,
+    billing) must NEVER land here, or CU would hammer a dead key on every step
+    instead of degrading to the honest "check your keys/credit" readback.
+    """
+    from jarvis.brain.manager import (  # noqa: PLC0415
+        _http_status_code,
+        _is_account_blocked_exc,
+        _is_missing_key_exc,
+        _is_rate_limit_exc,
+    )
+
+    msg = (detail if detail is not None else str(exc)).lower()
+    if _is_rate_limit_exc(exc) or _is_missing_key_exc(msg) or _is_account_blocked_exc(msg):
+        return False
+    code = _http_status_code(msg)
+    if code is not None:
+        return code in _TRANSIENT_STATUS
+    return any(marker in msg for marker in _TRANSIENT_MARKERS)
+
 
 @dataclass(frozen=True)
 class ProviderAttemptError:
@@ -32,6 +88,9 @@ class ComputerUsePlannerSelector:
     errors: list[ProviderAttemptError] = field(default_factory=list)
     mission_blocked: set[tuple[str, str | None]] = field(default_factory=set)
     blind_skipped: int = 0
+    #: Transient (capacity/infra) failures counted per candidate — see
+    #: ``_MAX_TRANSIENT_PER_CANDIDATE``.
+    transient_hits: dict[tuple[str, str | None], int] = field(default_factory=dict)
 
     def iter_candidates(
         self, *, images_attached: bool,
@@ -120,6 +179,22 @@ class ComputerUsePlannerSelector:
                 dead_providers.add(provider)
             return
 
+        if kind == "overloaded":
+            # A capacity blip is not a broken provider. Blocking it for the rest
+            # of the mission is what turned a 30-second Gemini spike into "CU has
+            # no eyes at all" (live 2026-08-10). Forgive the first hit; a second
+            # one means the outage is real, so the candidate falls out normally.
+            key = (provider, model)
+            hits = self.transient_hits.get(key, 0) + 1
+            self.transient_hits[key] = hits
+            if hits < _MAX_TRANSIENT_PER_CANDIDATE:
+                log.info(
+                    "[cu] %s(%s) had a transient failure (%d/%d) — kept in the "
+                    "chain for the next step",
+                    provider, model, hits, _MAX_TRANSIENT_PER_CANDIDATE,
+                )
+                return
+
         self.mission_blocked.add((provider, model))
 
     def error_message(self, *, images_attached: bool, attempted: int) -> str:
@@ -155,6 +230,8 @@ class ComputerUsePlannerSelector:
         kind = _classify_provider_error(detail, default="call_fail")
         if kind == "call_fail" and _looks_invalid_auth_error(detail):
             return "missing_key"
+        if kind == "call_fail" and is_transient_provider_error(exc, detail):
+            return "overloaded"
         return kind
 
 

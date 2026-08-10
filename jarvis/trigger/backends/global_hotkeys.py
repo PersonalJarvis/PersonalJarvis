@@ -25,8 +25,10 @@ module on a host without the package must stay clean.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
+import time
 
 log = logging.getLogger(__name__)
 
@@ -142,6 +144,68 @@ def _reset_checker_state_for_tests() -> None:
         _CHECKER_REFCOUNT = 0
 
 
+# --------------------------------------------------------------------------
+# Registry-mutation guard.
+#
+# ``HotkeyChecker.run`` binds ``id_list = self.hotkeys.keys()`` ONCE and then
+# iterates that LIVE dict view every 20 ms for the life of the thread. Any
+# register/remove from another thread therefore raises
+# ``RuntimeError: dictionary changed size during iteration`` INSIDE the poller,
+# which kills it — and with it EVERY global hotkey for the rest of the process
+# (live 2026-08-10 18:39:29: arming and releasing the Computer-Use cancel key
+# while the voice trigger's checker was polling killed the poller, so the
+# Escape kill-switch and the call/dictation shortcuts were silently dead from
+# then on).
+#
+# The library offers no lock, so the only correct sequence is: pause the
+# poller, let it leave its loop, mutate, restart. The pause is bounded by
+# ``_CHECKER_SETTLE_S`` — a fraction of a second in which no hotkey fires,
+# which is invisible next to losing them entirely.
+# --------------------------------------------------------------------------
+
+#: Poller loop period is 20 ms; this is comfortably more than one pass, so the
+#: old thread is provably gone before the registry is touched (which also rules
+#: out two live pollers double-firing a press across the restart).
+_CHECKER_SETTLE_S = 0.06
+
+#: Serializes our own registry writes against each other. Re-entrant: a nested
+#: guard (register -> pre-remove) must not deadlock.
+_MUTATION_LOCK = threading.RLock()
+
+
+@contextlib.contextmanager
+def _registry_mutation(gh):
+    """Hold the shared checker still while the hotkey registry is written."""
+    with _MUTATION_LOCK:
+        paused = False
+        with _CHECKER_LOCK:
+            if _CHECKER_REFCOUNT > 0:
+                try:
+                    gh.stop_checking_hotkeys()
+                    paused = True
+                except Exception:  # noqa: BLE001 — never block the mutation
+                    log.debug("Could not pause the hotkey checker", exc_info=True)
+        if paused:
+            time.sleep(_CHECKER_SETTLE_S)
+        try:
+            yield
+        finally:
+            if paused:
+                with _CHECKER_LOCK:
+                    # Only restart while someone still wants the checker — a
+                    # stop() during the mutation must not resurrect it.
+                    if _CHECKER_REFCOUNT > 0:
+                        try:
+                            gh.start_checking_hotkeys()
+                        except Exception:  # noqa: BLE001
+                            log.error(
+                                "Hotkey checker could not be restarted after a "
+                                "registry change — shortcuts are dead until the "
+                                "next re-arm.",
+                                exc_info=True,
+                            )
+
+
 def _normalize_combo(combo: str) -> str:
     """`ctrl+right_alt+j` -> `control + alt + j`."""
     parts = [p.strip().lower() for p in combo.split("+")]
@@ -255,59 +319,66 @@ class GlobalHotkeysBackend:
         # EVERY hotkey dies. Removing an unregistered combo is a no-op. Done
         # per-combo so one un-removable combo cannot abort the cleanup of the
         # others (the real remove_hotkeys raises on an unknown key mid-list).
-        for cs in combo_strings:
-            try:
-                gh.remove_hotkeys([cs])
-            except Exception:  # noqa: BLE001 — best-effort cleanup of stale state
-                log.debug("Pre-register cleanup of %r skipped", cs, exc_info=True)
-
-        # Register each binding INDIVIDUALLY. The old single
-        # ``register_hotkeys(all)`` was all-or-nothing: one unknown key name
-        # (e.g. a numpad combo emitted under the wrong token) raised and took
-        # EVERY hotkey down with it — the "I set a key and now nothing works"
-        # report. Now a bad combo is skipped and logged; the rest stay live. An
-        # exception must never propagate — it would crash the whole voice
-        # pipeline at ``async with HotkeyTrigger(...)`` — so we degrade instead.
+        #
+        # Every write below happens under ``_registry_mutation``: a second
+        # trigger's poller may be running right now, and the library iterates a
+        # LIVE view of the very dict these calls resize (see the guard).
         registered_rows: list[list] = []
         registered_strings: list[str] = []
-        for row in bindings:
-            try:
-                gh.register_hotkeys([row])
-            except Exception:  # noqa: BLE001 — skip the bad combo, keep the rest
-                log.error(
-                    "Hotkey combo %r could not be registered (unknown key / "
-                    "invalid combo) — skipping it; the other hotkeys stay active.",
-                    row[0],
-                    exc_info=True,
-                )
-                continue
-            registered_rows.append(row)
-            registered_strings.append(row[0])
+        with _registry_mutation(gh):
+            for cs in combo_strings:
+                try:
+                    gh.remove_hotkeys([cs])
+                except Exception:  # noqa: BLE001 — best-effort cleanup of stale state
+                    log.debug("Pre-register cleanup of %r skipped", cs, exc_info=True)
 
-        # Second pass: the compatibility chords. Skipping one is normal, not a
-        # fault — it means the same chord is already armed, either because
-        # another action named it outright or because two bindings produced the
-        # same variant. The library keys its registry off the token ORDER, so a
-        # hand-written jarvis.toml could spell an existing chord differently and
-        # slip past its duplicate check; comparing the token SETS ourselves is
-        # what keeps that from arming one physical press twice.
-        taken = {frozenset(c.replace(" ", "").split("+")) for c in registered_strings}
-        for row in compat:
-            keys = frozenset(row[0].replace(" ", "").split("+"))
-            if keys in taken:
-                continue
-            try:
-                gh.register_hotkeys([row])
-            except Exception:  # noqa: BLE001 — the primary chord is what matters
-                log.debug(
-                    "Compatibility chord %r not armed (already registered).",
-                    row[0],
-                    exc_info=True,
-                )
-                continue
-            taken.add(keys)
-            registered_rows.append(row)
-            registered_strings.append(row[0])
+            # Register each binding INDIVIDUALLY. The old single
+            # ``register_hotkeys(all)`` was all-or-nothing: one unknown key name
+            # (e.g. a numpad combo emitted under the wrong token) raised and took
+            # EVERY hotkey down with it — the "I set a key and now nothing works"
+            # report. Now a bad combo is skipped and logged; the rest stay live. An
+            # exception must never propagate — it would crash the whole voice
+            # pipeline at ``async with HotkeyTrigger(...)`` — so we degrade instead.
+            for row in bindings:
+                try:
+                    gh.register_hotkeys([row])
+                except Exception:  # noqa: BLE001 — skip the bad combo, keep the rest
+                    log.error(
+                        "Hotkey combo %r could not be registered (unknown key / "
+                        "invalid combo) — skipping it; the other hotkeys stay active.",
+                        row[0],
+                        exc_info=True,
+                    )
+                    continue
+                registered_rows.append(row)
+                registered_strings.append(row[0])
+
+            # Second pass: the compatibility chords. Skipping one is normal, not a
+            # fault — it means the same chord is already armed, either because
+            # another action named it outright or because two bindings produced the
+            # same variant. The library keys its registry off the token ORDER, so a
+            # hand-written jarvis.toml could spell an existing chord differently and
+            # slip past its duplicate check; comparing the token SETS ourselves is
+            # what keeps that from arming one physical press twice.
+            taken = {
+                frozenset(c.replace(" ", "").split("+")) for c in registered_strings
+            }
+            for row in compat:
+                keys = frozenset(row[0].replace(" ", "").split("+"))
+                if keys in taken:
+                    continue
+                try:
+                    gh.register_hotkeys([row])
+                except Exception:  # noqa: BLE001 — the primary chord is what matters
+                    log.debug(
+                        "Compatibility chord %r not armed (already registered).",
+                        row[0],
+                        exc_info=True,
+                    )
+                    continue
+                taken.add(keys)
+                registered_rows.append(row)
+                registered_strings.append(row[0])
 
         if not registered_rows:
             # Package present but NOT ONE combo registered — degrade like a hard
@@ -346,13 +417,14 @@ class GlobalHotkeysBackend:
             self._combo_strings = []
             return
         if self._combo_strings:
-            try:
-                # Correct format: a list of combo STRINGS (NOT the binding
-                # rows). Passing the rows is the bug that left stale state.
-                gh.remove_hotkeys(self._combo_strings)
-            except Exception:  # noqa: BLE001 — teardown must never propagate
-                log.debug("remove_hotkeys during teardown failed (non-fatal)",
-                          exc_info=True)
+            with _registry_mutation(gh):
+                try:
+                    # Correct format: a list of combo STRINGS (NOT the binding
+                    # rows). Passing the rows is the bug that left stale state.
+                    gh.remove_hotkeys(self._combo_strings)
+                except Exception:  # noqa: BLE001 — teardown must never propagate
+                    log.debug("remove_hotkeys during teardown failed (non-fatal)",
+                              exc_info=True)
         self._registered = []
         self._combo_strings = []
         self._gh = None
@@ -378,5 +450,7 @@ __all__ = [
     "_start_checker_once",
     "_stop_checker_once",
     "_reset_checker_state_for_tests",
+    "_registry_mutation",
     "_CHECKER_LOCK",
+    "_CHECKER_SETTLE_S",
 ]

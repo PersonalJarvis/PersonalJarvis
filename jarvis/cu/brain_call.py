@@ -19,6 +19,7 @@ credential readback the legacy engine had.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -53,6 +54,45 @@ PromptBuilder = Callable[[str, Any], tuple[str, str]]
 #: Change-triggered: one INFO line per identity switch instead of one per
 #: step, so the log names the brain that ACTUALLY steps without flooding.
 _serving_logged: tuple[str, str | None] | None = None
+
+#: Pause before the single in-place retry of a transient provider failure —
+#: long enough for a capacity spike to pass, short enough that the user does
+#: not perceive a stall on top of the failed call.
+_TRANSIENT_RETRY_DELAY_S = 0.6
+
+#: (provider, model) pairs that already proved they cannot finish their JSON
+#: inside the small per-call cap. Process-global on purpose: the truncation is
+#: a property of the MODEL (thinking-by-default, or a gateway with no reasoning
+#: knob), not of one mission — see :func:`_starting_tokens`.
+_NEEDS_HEADROOM: set[tuple[str, str | None]] = set()
+
+
+def _headroom_tokens(max_tokens: int) -> int:
+    """The ceiling a truncated candidate is (re-)tried with."""
+    return max(2048, max_tokens * 4)
+
+
+def _starting_tokens(
+    provider: str, model: str | None, max_tokens: int, *, early_stop_json: bool,
+) -> int:
+    """The cap the FIRST attempt uses for this candidate.
+
+    A model that hit the cap once will hit it again on the very next step, so
+    re-discovering it per step costs a wasted round-trip every single time —
+    live 2026-08-10: EVERY Gemini step logged "hit the 320-token cap …
+    retrying once with 2048" and spent ~3 s of a ~9 s decision on the reply
+    that was thrown away. Once seen, start at the headroom directly. Safe only
+    with the early-stop aggregator, which cuts the stream at the JSON boundary
+    — so the raised ceiling costs nothing when the reply is short.
+    """
+    if early_stop_json and (provider, model) in _NEEDS_HEADROOM:
+        return _headroom_tokens(max_tokens)
+    return max_tokens
+
+
+def _reset_headroom_memory_for_tests() -> None:
+    """Clear the learned per-model headroom — test-isolation hook only."""
+    _NEEDS_HEADROOM.clear()
 
 
 def _log_serving(provider: str, model: str | None) -> None:
@@ -225,6 +265,7 @@ async def call_vision_brain(
     )
     from jarvis.harness.computer_use_planner import (  # noqa: PLC0415
         ComputerUsePlannerSelector,
+        is_transient_provider_error,
         iter_last_resort_vision,
     )
 
@@ -308,11 +349,16 @@ async def call_vision_brain(
             )
             return await agg(brain.complete(req))
 
-        result = await _once(max_tokens)
+        start_tokens = _starting_tokens(
+            provider, model, max_tokens, early_stop_json=early_stop_json,
+        )
+        result = await _once(start_tokens)
         text = (result.text or "").strip()
+        retry_tokens = _headroom_tokens(max_tokens)
         if (
             early_stop_json
             and text
+            and start_tokens < retry_tokens
             and not has_complete_json_action(text)
             and is_length_truncated(result.finish_reason, text)
         ):
@@ -321,12 +367,15 @@ async def call_vision_brain(
             # the budget despite the reasoning hint (or a provider without a
             # thinking knob at all). ONE retry with real headroom; the
             # early-stop aggregator still cuts the stream at the JSON
-            # boundary, so the extra ceiling costs nothing on success.
-            retry_tokens = max(2048, max_tokens * 4)
+            # boundary, so the extra ceiling costs nothing on success. The
+            # candidate is remembered so the NEXT step starts at the headroom
+            # instead of paying for this discovery again.
+            _NEEDS_HEADROOM.add((provider, model))
             logger.info(
                 "[cu] %s(%s) reply hit the %d-token cap before completing "
-                "its JSON — retrying once with %d",
-                provider, model, max_tokens, retry_tokens,
+                "its JSON — retrying once with %d (and starting there from "
+                "now on)",
+                provider, model, start_tokens, retry_tokens,
             )
             result = await _once(retry_tokens)
             text = (result.text or "").strip()
@@ -335,12 +384,38 @@ async def call_vision_brain(
             return None
         return BrainReply(text=text, provider=provider, model=model)
 
+    async def _try_with_transient_retry(
+        provider: str, model: str | None, brain: Any,
+    ) -> BrainReply | None:
+        """``_try`` plus ONE in-place retry for a capacity/infra blip.
+
+        Falling straight through to the next provider on a 503 is what left a
+        mission blind while its only funded vision brain was merely busy (live
+        2026-08-10 18:39: Gemini answered "experiencing high demand", CU moved
+        on to two out-of-credit providers and told the user it could not see
+        the screen). Credential and quota failures are excluded by
+        ``is_transient_provider_error`` — those must still fall through
+        immediately so the honest "check your keys/credit" readback survives.
+        """
+        try:
+            return await _try(provider, model, brain)
+        except Exception as exc:  # noqa: BLE001
+            if not is_transient_provider_error(exc):
+                raise
+            logger.info(
+                "[cu] %s(%s) hit a transient failure (%s) — one retry before "
+                "falling through to the next provider",
+                provider, model, str(exc)[:160],
+            )
+        await asyncio.sleep(_TRANSIENT_RETRY_DELAY_S)
+        return await _try(provider, model, brain)
+
     for idx, provider, model, brain in selector.iter_candidates(
         images_attached=images_attached,
     ):
         attempted += 1
         try:
-            reply = await _try(provider, model, brain)
+            reply = await _try_with_transient_retry(provider, model, brain)
         except Exception as exc:  # noqa: BLE001
             selector.record_failure(provider, model, exc)
             logger.warning("[cu] brain provider %s(%s) failed: %s", provider, model, exc)

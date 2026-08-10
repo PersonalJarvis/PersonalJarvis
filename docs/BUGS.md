@@ -8735,3 +8735,50 @@ guards), `test_session_postmortem.py`, `test_realtime_probe_eval.py`,
 `test_realtime_forensics.py`. Probe caveat: the local recognizer rides the
 configured cloud STT; an exhausted quota mutes the harness's grounding
 half — the transport metrics stay valid.
+
+---
+
+## BUG-126: Computer-Use went blind on a busy server, then crawled — and killed every global hotkey on its way out (HIGH, FIXED 2026-08-10)
+
+**Symptoms (one voice session, 18:39–18:43, goal "open Elon's post").** The
+first mission announced *"I can't see the screen right now"* although a funded
+vision key was configured. The second and third missions did work, but every
+single step took ~9 s, so the user hung up before anything finished. Nothing in
+the UI said why, and the Escape cancel key stopped responding afterwards.
+
+**Three independent roots in the same run:**
+
+1. **A capacity blip was treated as a broken credential.** Gemini answered
+   `503 … This model is currently experiencing high demand … usually
+   temporary`. `_classify_provider_error` has no bucket for infra failures, so
+   it fell to the `call_fail` default and `ComputerUsePlannerSelector`
+   mission-blocked the candidate. The chain then walked into OpenRouter (402,
+   no credits) and OpenAI (429, no credits) and raised
+   `CUNoVisionProviderError` — the honest "no eyes" readback, for a provider
+   that served a full mission three minutes later. Fix:
+   `is_transient_provider_error` (capacity/infra codes and wordings, with
+   credential/quota/rate-limit failures explicitly excluded), ONE in-place
+   retry after 0.6 s, and a per-candidate transient budget so a first blip is
+   forgiven while a real outage still falls out of the chain.
+2. **The token headroom was re-discovered on every step.** `_DECIDE_MAX_TOKENS`
+   is 320; the vision model cut its JSON at the cap on EVERY decision, so the
+   existing one-shot headroom retry fired every time and the first reply was
+   always thrown away — ~3 s of each ~9 s step. Truncation is a property of the
+   MODEL, not of one call, so `brain_call` now remembers the (provider, model)
+   pair in `_NEEDS_HEADROOM` and starts subsequent calls at the headroom. Safe
+   only because the early-stop aggregator cuts the stream at the JSON boundary,
+   so the raised ceiling costs nothing on a short reply.
+3. **Arming the cancel key killed the hotkey poller.** `HotkeyChecker.run`
+   binds `id_list = self.hotkeys.keys()` once and iterates that LIVE dict view
+   every 20 ms. Arming `cu_cancel=[escape]` from the mission thread resized the
+   dict mid-iteration → `RuntimeError: dictionary changed size during
+   iteration` inside the poller thread, which died silently and took the Escape
+   kill-switch plus the call/dictation shortcuts with it for the rest of the
+   process. The library exposes no lock, so `_registry_mutation` pauses the
+   shared poller, waits out one loop period, writes, and restarts it.
+
+**Guards:** `tests/unit/cu/test_brain_call_resilience.py` (transient retry,
+account failures never retried, per-mission transient budget, learned
+headroom), `tests/unit/trigger/test_hotkey_registry_mutation_guard.py` (the
+`FakeGlobalHotkeys.strict_poller` knob reproduces the live thread death — the
+guard test fails without `_registry_mutation`).
