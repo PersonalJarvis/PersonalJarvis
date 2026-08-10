@@ -11,15 +11,20 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
-## [1.3.0] — 2026-08-09
+## [1.3.0] — 2026-08-10
 
 This release makes fully-local voice a plug-and-go experience: the app now
 installs and supervises everything itself — including Ollama — connects in
 milliseconds instead of seconds, and lets you choose the brain model that
-fits your machine.
+fits your machine. It also adds a desktop wallpaper picker, gives every
+dropdown the app's own theme, and withdraws the unfinished ChatGPT
+subscription voice option until it works dependably.
 
 ### Added
 
+- A desktop wallpaper picker: choose the desktop surface's background from
+  a thumbnail catalog, reachable from the sidebar and by voice
+  ("wallpaper", "Hintergrundbild", "fondo de pantalla").
 - The app installs and starts Ollama itself when local models are selected:
   runtime detection distinguishes not-installed / stopped / running, each
   with the right one-click fix (winget or the official installer on Windows,
@@ -60,6 +65,17 @@ fits your machine.
   with venvs created by a different Python.
 - The curated local-model catalog was refreshed to the current generation
   and is verified against the live Ollama library.
+- Every dropdown in the app now uses the shared themed select instead of
+  the operating system's native control, so menus look the same on every
+  platform (a guard test keeps native selects from coming back).
+
+### Removed
+
+- The "ChatGPT subscription (Codex)" voice card no longer appears in the
+  provider settings: subscription voice over Codex's experimental Realtime
+  protocol is not reliable enough to offer yet. An already-selected
+  configuration keeps working, and the option returns once the transport
+  holds calls dependably.
 
 ### Fixed
 
