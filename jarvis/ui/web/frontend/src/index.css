@@ -277,27 +277,27 @@
    */
   :root {
     /* --- Light: warm paper, dark gold ------------------------------------ */
-    --background: 45 40% 98%; /* #FCFBF8 warm paper */
+    --background: 42 33% 96%; /* warm ivory behind the artwork */
     --foreground: 240 9% 18%; /* #2B2B33 warm near-black */
-    --card: 0 0% 100%; /* #FFFFFF — cards lift OFF the paper */
+    --card: 42 33% 96%; /* ivory glass, never a white plastic rectangle */
     --card-foreground: 240 9% 18%;
-    --popover: 0 0% 100%;
+    --popover: 42 33% 97%;
     --popover-foreground: 240 9% 18%;
     /* #A86B00. The signal-yellow of the dark theme is 1.4:1 on paper — a
        button nobody can read. This is the same gold the light terminal theme
        already uses for its cursor, at 5.1:1 against --background. */
     --primary: 38 100% 33%;
     --primary-foreground: 0 0% 100%; /* white on gold */
-    --secondary: 45 27% 94%; /* #F4F2EC recessed surface */
+    --secondary: 42 22% 90%; /* warm recessed surface */
     --secondary-foreground: 240 9% 18%;
-    --muted: 45 27% 94%;
-    --muted-foreground: 240 5% 44%; /* #6B6B76 — 4.9:1, still body-text legal */
+    --muted: 42 22% 90%;
+    --muted-foreground: 240 6% 30%;
     --accent: 38 100% 33%;
     --accent-foreground: 0 0% 100%;
     --destructive: 6 63% 46%; /* #C0392B — the light terminal's red */
     --destructive-foreground: 0 0% 100%;
-    --border: 44 18% 88%; /* #E6E3DB */
-    --input: 45 30% 96%;
+    --border: 40 14% 72%;
+    --input: 42 22% 90%;
     --ring: 38 100% 33%;
     --radius: 0.75rem;
 
@@ -314,23 +314,23 @@
     --sheen-rgb: 43 43 51;
     /* The ground colour of the app shell as channels, for glass pills that
        must read as "the app, blurred" rather than a grey rectangle. */
-    --shell-rgb: 252 251 248;
+    --shell-rgb: 246 242 232;
 
-    /* Shared translucent surfaces. George Voice is the visual reference:
-       enough local contrast to read, while the desktop artwork remains part
-       of the page instead of disappearing behind opaque application chrome. */
-    --surface-card-alpha: 0.72;
-    --surface-panel-alpha: 0.68;
-    --surface-control-alpha: 0.82;
-    --surface-stage-alpha: 0.7;
-    --surface-wiki-pane-alpha: 0.52;
-    --surface-wiki-stage-alpha: 0.5;
+    /* Light mode changes the interface ink, not the chosen wallpaper. Shared
+       surfaces therefore keep no colour fill; borders, blur and state tints
+       provide structure without laying an ivory sheet over the artwork. */
+    --surface-card-alpha: 0;
+    --surface-panel-alpha: 0;
+    --surface-control-alpha: 0;
+    --surface-stage-alpha: 0;
+    --surface-wiki-pane-alpha: 0;
+    --surface-wiki-stage-alpha: 0;
 
     /* --- Stages ----------------------------------------------------------
        The full-bleed canvases behind the knowledge maps. They are not chrome:
        a force graph needs its own depth cue, so it gets its own ground, its
-       own centre-of-gravity glow, and its own dot field. Light mode keeps the
-       depth and inverts the material — pale sky with ink-dark stars. */
+       own centre-of-gravity glow, and its own dot field. Light mode exposes
+       the wallpaper while retaining ink-dark stars and gold state cues. */
     --stage-bg: 45 40% 97%;
     --stage-dot-rgb: 43 43 51;
     --stage-dot-strong: 0.28;
@@ -443,10 +443,9 @@
    * Full-bleed desktop artwork behind the normal app sections.
    *
    * The source image is intentionally identical in both themes. Dark mode
-   * keeps its ink-and-gold character; light mode lets the warm paper shell show
-   * through so existing foreground tokens remain readable. The independent
-   * veil carries the edge contrast for chrome without baking a theme into the
-   * asset itself.
+   * keeps its contrast veil; light mode displays the selected artwork without
+   * tinting, fading or recolouring it. This keeps future light and dark
+   * wallpapers under the user's control instead of baking a theme into them.
    */
   .jarvis-desktop-wallpaper {
     background-position: center;
@@ -474,24 +473,12 @@
   }
 
   :root:not(.dark) .jarvis-desktop-wallpaper {
-    filter: saturate(0.58) brightness(1.18) contrast(0.82);
-    opacity: 0.38;
+    filter: none;
+    opacity: 1;
   }
 
   :root:not(.dark) .jarvis-desktop-wallpaper-veil {
-    background:
-      linear-gradient(
-        180deg,
-        rgb(var(--shell-rgb) / 0.7) 0%,
-        rgb(var(--shell-rgb) / 0.28) 28%,
-        rgb(var(--shell-rgb) / 0.2) 68%,
-        rgb(var(--shell-rgb) / 0.66) 100%
-      ),
-      radial-gradient(
-        ellipse at 52% 42%,
-        transparent 18%,
-        rgb(var(--shell-rgb) / 0.32) 100%
-      );
+    background: transparent;
   }
 
   /*
@@ -531,11 +518,7 @@
   }
 
   :root:not(.dark) .jarvis-shell-surface {
-    background: linear-gradient(
-      180deg,
-      rgb(var(--shell-rgb) / 0.38),
-      rgb(var(--shell-rgb) / 0.18)
-    );
+    background: transparent;
   }
 
   /* Section-level grounds disappear everywhere the wallpaper is active. The
@@ -809,6 +792,65 @@
   .jarvis-section-stage
     :where([class~="bg-[#5865F2]/10"]) {
     --surface-tint-color: rgb(88 101 242 / 0.1);
+  }
+
+  /* Light mode uses transparent glass rather than stacked white sheets. A
+     restrained blur separates content from the artwork while the
+     warm inset highlight preserves the same glass hierarchy as dark mode. */
+  :root:not(.dark)
+    .jarvis-section-stage
+    :where(
+      [class~="bg-card"],
+      [class~="bg-card/20"],
+      [class~="bg-card/25"],
+      [class~="bg-card/30"],
+      [class~="bg-card/40"],
+      [class~="bg-card/50"],
+      [class~="bg-card/60"],
+      [class~="bg-card/70"],
+      [class~="bg-card/80"],
+      [class~="bg-card/90"],
+      [class~="bg-card/95"],
+      [class~="bg-background"],
+      [class~="bg-background/20"],
+      [class~="bg-background/25"],
+      [class~="bg-background/30"],
+      [class~="bg-background/40"],
+      [class~="bg-background/50"],
+      [class~="bg-background/60"],
+      [class~="bg-background/70"],
+      [class~="bg-background/80"],
+      [class~="bg-background/90"],
+      [class~="bg-background/95"],
+      [class~="bg-muted"],
+      [class~="bg-muted/20"],
+      [class~="bg-muted/25"],
+      [class~="bg-muted/30"],
+      [class~="bg-muted/40"],
+      [class~="bg-muted/50"],
+      [class~="bg-scrim/30"],
+      [class~="from-sheen/[0.055]"][class~="to-sheen/[0.015]"],
+      [class~="bg-primary/5"],
+      [class~="bg-primary/10"],
+      [class~="bg-primary/[0.04]"],
+      [class~="bg-primary/[0.05]"],
+      [class~="bg-primary/[0.06]"],
+      [class~="bg-primary/[0.07]"],
+      [class~="bg-destructive/[0.05]"],
+      [class~="bg-[#5865F2]/10"]
+    ) {
+    -webkit-backdrop-filter: blur(12px) saturate(0.92);
+    backdrop-filter: blur(12px) saturate(0.92);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.42),
+      0 10px 26px rgb(var(--scrim-rgb) / 0.07);
+  }
+
+  :root:not(.dark) .jarvis-section-stage .card-outline,
+  :root:not(.dark)
+    .jarvis-section-stage
+    :where(div, section, article)[class~="bg-border"] {
+    background-color: transparent;
   }
 
   .jarvis-section-stage > [class~="bg-background"] {
@@ -1643,6 +1685,7 @@
   }
 
   :root:not(.dark) .uw-stage {
+    background-color: transparent;
     background-image:
       linear-gradient(rgb(var(--accent-rgb) / 0.07) 1px, transparent 1px),
       linear-gradient(90deg, rgb(var(--accent-rgb) / 0.07) 1px, transparent 1px);
