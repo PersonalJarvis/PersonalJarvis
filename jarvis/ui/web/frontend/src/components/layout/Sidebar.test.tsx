@@ -529,6 +529,16 @@ describe("Sidebar icon rail", () => {
     expect(useEventStore.getState().activeSection).toBe("agentic-ide");
   });
 
+  test("keeps the rail canvas transparent and the active control glassy", () => {
+    renderSidebar(SIDEBAR_RAIL_WIDTH);
+
+    const sidebar = screen.getByTestId("sidebar");
+    expect(sidebar.querySelector(".jarvis-shell-surface")).toBeNull();
+    expect(screen.getByTestId("nav-row-chats").classList).toContain(
+      "jarvis-message-surface",
+    );
+  });
+
   test("keeps the wake-word hint and realtime control off the rail", () => {
     // Both are label-shaped controls that cannot say anything useful in 64 px.
     // They step aside rather than being clipped into unreadable stubs.

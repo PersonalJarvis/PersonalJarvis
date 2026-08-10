@@ -348,29 +348,6 @@ export function Sidebar({
       data-railed={railed ? "true" : "false"}
       className="relative isolate flex h-full shrink-0 flex-col"
     >
-      {/*
-        The frosted backing, as a SEPARATE non-scrolling layer.
-
-        It used to be `bg-card/40 backdrop-blur` on this <aside> itself — which
-        made the element carrying `backdrop-filter` the ancestor of the
-        scrolling <nav> below. WebKit composites such an element from a backdrop
-        snapshot that it does NOT reliably invalidate when a descendant scrolls,
-        so on macOS the sidebar kept PAINTING the rows at their old offsets
-        while hit-testing them at the new ones: the pointer sat on one entry and
-        the click landed on another a couple of rows up, worst at the top of the
-        list and correct again at the bottom, until something forced a full
-        repaint. Chromium (the Windows WebView2) composites this case eagerly,
-        which is why it only ever showed up on a Mac.
-
-        Splitting the blur out fixes the cause rather than the symptom: nothing
-        that scrolls lives inside a backdrop-filtered element any more. The
-        layer is `-z-10` inside an `isolate` stacking context, so it paints
-        behind the rows and cannot swallow their clicks.
-      */}
-      <div
-        aria-hidden
-        className="jarvis-shell-surface pointer-events-none absolute inset-0 -z-10 backdrop-blur-md"
-      />
       <div className={cn("border-b border-border", railed ? "px-2 py-3" : "px-4 py-4")}>
         <div
           className={cn(
@@ -446,7 +423,7 @@ export function Sidebar({
               aria-label={railed ? t("sidebar.expand") : t("sidebar.collapse")}
               className={cn(
                 "flex shrink-0 items-center justify-center rounded-md text-muted-foreground",
-                "transition-colors hover:bg-accent/60 hover:text-foreground",
+                "transition-colors hover:bg-background/20 hover:text-foreground",
                 "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
                 railed ? "h-7 w-7" : "-mr-1 h-7 w-7",
               )}
@@ -461,7 +438,7 @@ export function Sidebar({
         </div>
         {!railed && (
           <>
-            <div className="mt-3 min-h-[20px] rounded-md bg-background/40 px-2 py-1.5 text-xs text-muted-foreground">
+            <div className="jarvis-input-surface mt-3 min-h-[20px] rounded-md px-2 py-1.5 text-xs text-muted-foreground">
               {transcription ? (
                 <span
                   className={cn(
@@ -537,7 +514,7 @@ export function Sidebar({
           type="button"
           onClick={() => setActive("apikeys")}
           className={cn(
-            "group flex w-full items-center rounded-lg border border-border bg-background/40 text-left transition-colors hover:border-primary/40 hover:bg-background/60",
+            "jarvis-message-surface group flex w-full items-center rounded-lg border border-border text-left transition-colors hover:border-primary/40",
             railed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2",
           )}
           // On the rail the card shrinks to its status dot, so everything it
@@ -634,9 +611,9 @@ function NavRow({
         className={cn(
           "group relative flex w-full items-center rounded-lg text-sm transition-all",
           railed ? "justify-center px-0 py-2" : "gap-3 px-3 py-2",
-          "hover:bg-background/60",
+          "hover:bg-background/20",
           active
-            ? "bg-background text-foreground shadow-[inset_2px_0_0_hsl(var(--primary))]"
+            ? "jarvis-message-surface text-foreground shadow-[inset_2px_0_0_hsl(var(--primary))]"
             : "text-muted-foreground hover:text-foreground",
         )}
       >

@@ -307,19 +307,6 @@ interface EventStore {
   wsWarming: boolean;
   activeSection: SectionId;
   /**
-   * Has the user pulled the app's module rail back out over a coding surface?
-   *
-   * The coding sections open WITHOUT it — a wall of agent output is what those
-   * screens are for, and a column of twenty section icons beside it is the app
-   * talking about itself. One button brings it back, and leaving the section
-   * puts it away again, so "open the chat and the rail is gone" stays true
-   * every time rather than only the first time.
-   *
-   * Shell state kept in the store rather than in `App` because the button that
-   * flips it lives inside the coding surface, several lazy boundaries down.
-   */
-  navRevealed: boolean;
-  /**
    * True when this document is a detached solo window (`?solo=1`): it renders
    * exactly one section with no app chrome and must ignore cross-window
    * broadcasts that would switch its section (voice navigation targets the
@@ -404,7 +391,6 @@ interface EventStore {
   setWarming: (warming: boolean) => void;
   clearEvents: () => void;
   setActiveSection: (s: SectionId) => void;
-  setNavRevealed: (revealed: boolean) => void;
   setDetachedViews: (views: SectionId[]) => void;
   setTranscription: (text: string, isFinal: boolean) => void;
   pushToast: (
@@ -477,7 +463,6 @@ export const useEventStore = create<EventStore>((set, get) => ({
   activeSection: initialSectionFromSearch(
     typeof window === "undefined" ? "" : window.location.search,
   ),
-  navRevealed: false,
   solo: soloWindowFromSearch(
     typeof window === "undefined" ? "" : window.location.search,
   ),
@@ -517,10 +502,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   setConnected: (c) => set({ connected: c }),
   setWarming: (warming) => set({ wsWarming: warming }),
   clearEvents: () => set({ events: [] }),
-  // Leaving a section puts the rail away again, so a coding surface is entered
-  // without it EVERY time rather than only the first time.
-  setActiveSection: (s) => set({ activeSection: s, navRevealed: false }),
-  setNavRevealed: (revealed) => set({ navRevealed: revealed }),
+  setActiveSection: (s) => set({ activeSection: s }),
   setDetachedViews: (views) => set({ detachedViews: views }),
 
   setTranscription: (text, isFinal) =>

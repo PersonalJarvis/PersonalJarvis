@@ -33,15 +33,6 @@ import jarvisDesktopWallpaper from "@/assets/jarvis-desktop-wallpaper.webp";
 const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
 
 /**
- * The sections that open without the app's module rail.
- *
- * These screens are focused workspaces, so navigation steps aside. The shared
- * wallpaper remains the product ground while terminal panes keep the opaque
- * surfaces their output needs.
- */
-const CODING_SECTIONS = new Set(["agentic-ide", "chat-workspace", "agentic-ide-classic"]);
-
-/**
  * The shared visual ground for every app section.
  *
  * The image and its theme veil are separate layers: the artwork can stay crisp
@@ -188,30 +179,9 @@ export default function App() {
     [navCollapsed, sidebar],
   );
 
-  /*
-   * On a coding surface the rail is gone until it is asked for.
-   *
-   * Not merely narrower — absent, along with the seam beside it. The button
-   * that brings it back sits inside the coding surface itself (see
-   * `NavRevealButton`), where the eye already is; parking it on the app chrome
-   * would mean looking away from the work to find the way back to it.
-   */
   const activeSection = useEventStore((s) => s.activeSection);
-  const navRevealed = useEventStore((s) => s.navRevealed);
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
-  /*
-   * A detached IDE leaves a placeholder in the main window, not a coding
-   * surface. The actual IDE normally carries its own menu-reveal control, but
-   * it is deliberately unmounted while detached to protect the PTY streams.
-   * Treating the placeholder like the IDE therefore hid the only navigation
-   * with no control left to bring it back. Give that state the regular shell
-   * so every other section remains reachable while the IDE stays detached.
-   */
-  const codingDetached =
-    !solo && detachedViews.some((view) => CODING_SECTIONS.has(view));
-  const codingSurface = CODING_SECTIONS.has(activeSection) && !codingDetached;
-  const railHidden = codingSurface && !navRevealed;
 
   /*
    * The realtime broker must exist exactly ONCE across all windows: it
@@ -255,24 +225,20 @@ export default function App() {
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
       <DesktopWallpaper />
 
-      {!railHidden && (
-        <>
-          <Sidebar
-            width={sidebar.size}
-            collapsed={navCollapsed}
-            onToggleCollapsed={toggleNav}
-          />
+      <Sidebar
+        width={sidebar.size}
+        collapsed={navCollapsed}
+        onToggleCollapsed={toggleNav}
+      />
 
-          <PaneResizer
-            orientation="vertical"
-            onPointerDown={startSidebarResize}
-            onDoubleClick={sidebar.reset}
-            onNudge={sidebar.nudge}
-            active={sidebar.isResizing}
-            title="Drag to resize the sidebar — double-click to reset"
-          />
-        </>
-      )}
+      <PaneResizer
+        orientation="vertical"
+        onPointerDown={startSidebarResize}
+        onDoubleClick={sidebar.reset}
+        onNudge={sidebar.nudge}
+        active={sidebar.isResizing}
+        title="Drag to resize the sidebar — double-click to reset"
+      />
 
       <main className="relative z-10 flex min-w-0 flex-1 flex-col">
         {/* App-wide macOS permission alert — topmost so a missing grant is

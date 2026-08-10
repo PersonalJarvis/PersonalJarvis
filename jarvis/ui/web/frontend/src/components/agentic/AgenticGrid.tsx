@@ -71,7 +71,6 @@ import { ContinueInterrupted } from "./ContinueInterrupted";
 import { DeckStage, type DeckAgent } from "./deck/DeckStage";
 import type { CardState } from "./deck/AgentCard";
 import { useDeckQueue } from "./deck/useDeckQueue";
-import { NavRevealButton } from "@/components/layout/NavRevealButton";
 import { PaneNotifications } from "./PaneNotifications";
 import { isVoiceActive } from "./VoiceBubble";
 import { PromptPreview } from "./PromptPreview";
@@ -2253,12 +2252,6 @@ export function AgenticGrid({
         data-testid="agentic-toolbar"
         className="flex shrink-0 flex-nowrap items-center gap-2 border-b border-border px-2 py-1"
       >
-        {/* This section hides the app's module rail (see `CODING_SECTIONS` in
-            App.tsx), so the way back has to be ON this row — otherwise the
-            workspace is a place you can enter and not leave. First in the line,
-            where every editor puts it. */}
-        <NavRevealButton />
-
         {workspaceBar ?? (
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <FolderGit2 className="h-4 w-4 shrink-0 text-primary" />
@@ -2547,15 +2540,13 @@ export function AgenticGrid({
           )}
         >
           {/*
-            The column's own head: the way back to the app, and its name.
+            The column's own head and name.
 
             Not "AGENTS" in small caps any more. This column lists the
             conversations you are having, grouped by the folder they are in —
-            "Chat" is what that is, and the panel glyph beside it is where the
-            app's navigation went (this section hides it, see App.tsx).
+            "Chat" is what that is.
           */}
           <div className="flex h-11 shrink-0 items-center gap-1 px-2">
-            <NavRevealButton />
             <span className="flex-1 truncate px-1 text-sm font-semibold tracking-tight">
               Chat
             </span>

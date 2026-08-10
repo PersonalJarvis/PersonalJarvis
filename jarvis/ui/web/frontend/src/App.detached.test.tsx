@@ -62,7 +62,6 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
   useEventStore.setState({
     activeSection: "chats",
-    navRevealed: false,
     solo: false,
     detachedViews: [],
   });
@@ -86,7 +85,6 @@ describe("App shell around detached coding views", () => {
   it("keeps the sidebar reachable in the main window", () => {
     useEventStore.setState({
       activeSection: "agentic-ide",
-      navRevealed: false,
       detachedViews: ["agentic-ide"],
     });
 
@@ -96,16 +94,16 @@ describe("App shell around detached coding views", () => {
     expect(screen.getByTestId("sidebar-resizer")).toBeTruthy();
   });
 
-  it("hides the sidebar but keeps the shared ground for an attached coding workspace", () => {
+  it("keeps the navigation rail visible in an attached coding workspace", () => {
     useEventStore.setState({
       activeSection: "agentic-ide",
-      navRevealed: false,
       detachedViews: [],
     });
 
     render(<App />);
 
-    expect(screen.queryByTestId("sidebar")).toBeNull();
+    expect(screen.getByTestId("sidebar")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-resizer")).toBeTruthy();
     expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
     expect(
       screen.getByTestId("main-view").parentElement?.classList.contains("jarvis-section-stage"),

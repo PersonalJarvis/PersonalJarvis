@@ -40,7 +40,6 @@ import {
   fetchAgentAccounts,
   groupFor,
 } from "@/lib/agentAccountsApi";
-import { NavRevealButton } from "@/components/layout/NavRevealButton";
 import { openScratchProject } from "@/lib/chatLibraryApi";
 import { TopBarActions } from "@/components/layout/TopBar";
 import { WorkspaceBar } from "@/components/agentic/WorkspaceBar";
@@ -883,12 +882,6 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // ---------------------------------------------------------------- launcher
   return (
     <div className="flex h-full min-h-0 flex-col" ref={shellRef}>
-      {/* The grid puts this in its own toolbar; the launcher has no such row,
-          and this section hides the app's module rail — so without it the
-          screen a user lands on with nothing open has no way back to the app. */}
-      <div className="flex shrink-0 items-center px-2 pt-2">
-        <NavRevealButton />
-      </div>
       {renderBar(false)}
       <div className="min-h-0 flex-1">
         <WorkspaceLauncher
