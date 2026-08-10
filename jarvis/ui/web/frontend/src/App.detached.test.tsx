@@ -74,6 +74,12 @@ afterEach(() => {
 });
 
 describe("App shell around detached coding views", () => {
+  it("renders the desktop wallpaper behind normal app sections", () => {
+    render(<App />);
+
+    expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
+  });
+
   it("keeps the sidebar reachable in the main window", () => {
     useEventStore.setState({
       activeSection: "agentic-ide",
@@ -97,6 +103,7 @@ describe("App shell around detached coding views", () => {
     render(<App />);
 
     expect(screen.queryByTestId("sidebar")).toBeNull();
+    expect(screen.queryByTestId("jarvis-desktop-wallpaper")).toBeNull();
   });
 
   it("keeps a detached solo window chrome-free", () => {
@@ -110,5 +117,6 @@ describe("App shell around detached coding views", () => {
 
     expect(screen.queryByTestId("sidebar")).toBeNull();
     expect(screen.queryByTestId("topbar")).toBeNull();
+    expect(screen.queryByTestId("jarvis-desktop-wallpaper")).toBeNull();
   });
 });

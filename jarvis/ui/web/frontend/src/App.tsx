@@ -27,6 +27,7 @@ import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
 import { installDictationFocusTracker } from "@/lib/dictationTarget";
 import { SubscriptionRealtimeTransportBroker } from "@/components/voice/SubscriptionRealtimeTransportBroker";
+import jarvisDesktopWallpaper from "@/assets/jarvis-desktop-wallpaper.webp";
 
 /** Where the collapsed/expanded choice for the nav sidebar is remembered. */
 const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
@@ -42,6 +43,30 @@ const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
  * second. Both step aside here and stay exactly as they are everywhere else.
  */
 const CODING_SECTIONS = new Set(["agentic-ide", "chat-workspace", "agentic-ide-classic"]);
+
+/**
+ * The shared visual ground for every normal app section.
+ *
+ * The image and its theme veil are separate layers: the artwork can stay crisp
+ * while light and dark mode independently tune contrast through semantic theme
+ * channels in index.css. Coding workspaces deliberately omit the layer because
+ * terminal output needs a neutral, distraction-free ground.
+ */
+function DesktopWallpaper() {
+  return (
+    <div
+      aria-hidden
+      data-testid="jarvis-desktop-wallpaper"
+      className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
+    >
+      <div
+        className="jarvis-desktop-wallpaper absolute inset-0"
+        style={{ backgroundImage: `url(${jarvisDesktopWallpaper})` }}
+      />
+      <div className="jarvis-desktop-wallpaper-veil absolute inset-0" />
+    </div>
+  );
+}
 
 export default function App() {
   useWebSocket();
@@ -214,7 +239,8 @@ export default function App() {
    */
   if (solo) {
     return (
-      <div className="relative flex h-screen w-screen overflow-hidden bg-background text-foreground">
+      <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
+        {!codingSurface && <DesktopWallpaper />}
         {brokerMounted && <SubscriptionRealtimeTransportBroker />}
         <main className="relative z-10 flex min-w-0 flex-1 flex-col">
           <div className="min-h-0 flex-1">
@@ -229,17 +255,9 @@ export default function App() {
   }
 
   return (
-    <div className="relative flex h-screen w-screen overflow-hidden bg-background text-foreground">
+    <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
-      {!codingSurface && (
-        <>
-          <div className="pointer-events-none fixed inset-0 jarvis-grid opacity-40" aria-hidden />
-          <div
-            className="pointer-events-none fixed right-[-10%] top-[-20%] h-[600px] w-[600px] jarvis-glow"
-            aria-hidden
-          />
-        </>
-      )}
+      {!codingSurface && <DesktopWallpaper />}
 
       {!railHidden && (
         <>

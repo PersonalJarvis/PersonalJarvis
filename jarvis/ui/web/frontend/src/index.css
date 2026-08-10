@@ -425,6 +425,61 @@
 }
 
 @layer components {
+  /*
+   * Full-bleed desktop artwork behind the normal app sections.
+   *
+   * The source image is intentionally identical in both themes. Dark mode
+   * keeps its ink-and-gold character; light mode lets the warm paper shell show
+   * through so existing foreground tokens remain readable. The independent
+   * veil carries the edge contrast for chrome without baking a theme into the
+   * asset itself.
+   */
+  .jarvis-desktop-wallpaper {
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    filter: saturate(0.92) brightness(0.78) contrast(1.08);
+    opacity: 0.94;
+    transform: scale(1.002);
+  }
+
+  .jarvis-desktop-wallpaper-veil {
+    background:
+      linear-gradient(
+        180deg,
+        rgb(var(--shell-rgb) / 0.3) 0%,
+        transparent 18%,
+        transparent 72%,
+        rgb(var(--shell-rgb) / 0.34) 100%
+      ),
+      radial-gradient(
+        ellipse at 52% 42%,
+        transparent 24%,
+        rgb(var(--shell-rgb) / 0.16) 100%
+      );
+  }
+
+  :root:not(.dark) .jarvis-desktop-wallpaper {
+    filter: saturate(0.58) brightness(1.18) contrast(0.82);
+    opacity: 0.38;
+  }
+
+  :root:not(.dark) .jarvis-desktop-wallpaper-veil {
+    background:
+      linear-gradient(
+        180deg,
+        rgb(var(--shell-rgb) / 0.7) 0%,
+        rgb(var(--shell-rgb) / 0.28) 28%,
+        rgb(var(--shell-rgb) / 0.2) 68%,
+        rgb(var(--shell-rgb) / 0.66) 100%
+      ),
+      radial-gradient(
+        ellipse at 52% 42%,
+        transparent 18%,
+        rgb(var(--shell-rgb) / 0.32) 100%
+      );
+  }
+
   /* Subtle grid pattern in the background — gives a dashboard feel without
      distracting. Drawn in the accent so it reads as the app's own texture;
      slightly stronger on paper, where a 4 % line simply disappears. */
