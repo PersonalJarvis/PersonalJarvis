@@ -853,6 +853,74 @@
     background-color: transparent;
   }
 
+  /* Radix portals and hand-built pickers render under <body>, outside the
+     section stage above. Keep those floating surfaces on the same clear glass
+     system so Light mode never reintroduces an opaque white sheet. */
+  :root:not(.dark)
+    :where([class~="bg-popover"], [class~="bg-popover/95"]),
+  :root:not(.dark)
+    :where([role="dialog"], [role="menu"], [role="tooltip"]):where(
+      [class~="bg-card"],
+      [class~="bg-card/95"],
+      [class~="bg-background"],
+      [class~="bg-background/95"]
+    ) {
+    background-color: transparent;
+    -webkit-backdrop-filter: blur(16px) saturate(0.92);
+    backdrop-filter: blur(16px) saturate(0.92);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.42),
+      0 18px 44px rgb(var(--scrim-rgb) / 0.14);
+  }
+
+  :root:not(.dark)
+    [role="dialog"]
+    :where(
+      [class~="bg-card"],
+      [class~="bg-card/40"],
+      [class~="bg-card/50"],
+      [class~="bg-card/60"],
+      [class~="bg-card/70"],
+      [class~="bg-card/80"],
+      [class~="bg-card/90"],
+      [class~="bg-card/95"],
+      [class~="bg-background"],
+      [class~="bg-background/40"],
+      [class~="bg-background/50"],
+      [class~="bg-background/60"],
+      [class~="bg-background/70"],
+      [class~="bg-background/80"],
+      [class~="bg-background/90"],
+      [class~="bg-background/95"],
+      [class~="bg-muted"],
+      [class~="bg-muted/20"],
+      [class~="bg-muted/30"],
+      [class~="bg-muted/40"],
+      [class~="bg-muted/50"]
+    ) {
+    background-color: transparent;
+  }
+
+  /* Modal backdrops may blur the wallpaper, but must not tint it white or
+     black. Semantic colour washes inside the modal remain untouched. */
+  :root:not(.dark)
+    :where(
+      [class~="bg-scrim/40"],
+      [class~="bg-scrim/50"],
+      [class~="bg-scrim/60"],
+      [class~="bg-scrim/70"],
+      [class~="bg-scrim/80"],
+      [class~="bg-scrim/90"],
+      [class~="bg-background/70"],
+      [class~="bg-background/80"],
+      [class~="bg-background/90"],
+      [class~="bg-[#090909]/75"]
+    )[class~="fixed"][class~="inset-0"] {
+    background-color: transparent;
+    -webkit-backdrop-filter: blur(4px) saturate(0.92);
+    backdrop-filter: blur(4px) saturate(0.92);
+  }
+
   .jarvis-section-stage > [class~="bg-background"] {
     background-color: transparent;
   }
