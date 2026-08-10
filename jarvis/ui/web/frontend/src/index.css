@@ -700,9 +700,8 @@
 
   /* The normal Wiki is assembled from nested full-height panes. Giving every
      structural wrapper its own glass fill compounds the alpha and turns three
-     transparent layers into an almost opaque rectangle. Keep the workspace and
-     centre column clear, then paint exactly one restrained veil on each real
-     pane. */
+     transparent layers into an almost opaque rectangle. Keep the workspace,
+     centre column and side panes clear so the desktop artwork stays visible. */
   .jarvis-section-stage #wiki-workspace,
   .jarvis-section-stage
     #wiki-workspace
@@ -728,22 +727,18 @@
       [data-testid="wiki-backlinks-panel"],
       [data-testid="wiki-backlinks-placeholder"]
     ) {
-    background-color: rgb(
-      var(--shell-rgb) / var(--surface-wiki-pane-alpha)
-    );
-    -webkit-backdrop-filter: blur(8px) saturate(1.04);
-    backdrop-filter: blur(8px) saturate(1.04);
+    background-color: transparent;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 
   .jarvis-section-stage
     #wiki-workspace
     > section
     > [class~="bg-card/40"] {
-    background-color: rgb(
-      var(--shell-rgb) / var(--surface-wiki-pane-alpha)
-    );
-    -webkit-backdrop-filter: blur(8px) saturate(1.04);
-    backdrop-filter: blur(8px) saturate(1.04);
+    background-color: transparent;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 
   /* Staggered reveal on view mount — one orchestrated page-load moment.
@@ -1554,58 +1549,29 @@
     );
   }
 
-  /*
-   * The space the 3D memory map floats in.
-   *
-   * The WebGL canvas is transparent on purpose, so everything behind it is
-   * plain CSS: no textures to download, no extra draw calls, nothing for the
-   * GPU to carry. Three layers, and each one earns its place —
-   *
-   *  - a deep wash off centre, so the frame is a volume rather than a flat
-   *    rectangle;
-   *  - two very faint dot fields at different sizes, which is what gives the
-   *    orbiting network something to move AGAINST. Without them a slow
-   *    rotation is nearly invisible: the nodes shift, but with no fixed
-   *    reference the eye reads it as drift rather than depth.
-   *  - a vignette that pulls the attention back to the middle.
-   *
-   * Light mode keeps all three and swaps the material: pale sky instead of
-   * deep space, ink-dark specks instead of white ones. The alternative —
-   * leaving the space black on a paper-white app — punches a hole in the
-   * window, which is the same mistake as a #000 terminal in a #12141a shell.
-   */
+  /* The WebGL canvas and every layer around it remain clear so the desktop
+     artwork is the single background behind both 3D knowledge maps. */
   .wiki-space {
-    background-color: rgb(
-      var(--shell-rgb) / var(--surface-wiki-stage-alpha)
-    );
-    background-image:
-      radial-gradient(
-        ellipse 120% 90% at 50% 42%,
-        rgb(var(--stage-wash-rgb) / var(--stage-wash-strength)) 0%,
-        rgb(var(--stage-wash-rgb) / calc(var(--stage-wash-strength) * 0.55)) 45%,
-        transparent 78%
-      ),
-      radial-gradient(
-        circle at 18% 24%,
-        rgb(var(--stage-dot-rgb) / var(--stage-dot-strong)) 0.6px,
-        transparent 0.7px
-      ),
-      radial-gradient(
-        circle at 72% 68%,
-        rgb(var(--stage-dot-rgb) / var(--stage-dot-soft)) 0.5px,
-        transparent 0.6px
-      );
-    background-size: 100% 100%, 190px 190px, 97px 97px;
-    -webkit-backdrop-filter: blur(4px) saturate(0.94);
-    backdrop-filter: blur(4px) saturate(0.94);
+    background: transparent;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 
   .wiki-space-vignette {
-    background: radial-gradient(
-      ellipse at 50% 50%,
-      transparent 38%,
-      rgb(var(--stage-vignette-rgb) / var(--stage-vignette-strength)) 100%
-    );
+    background: transparent;
+  }
+
+  /* UltraWiki wraps both projections in one stage. Clear its decorative
+     layers only for the spatial view so the flat map keeps its depth cues. */
+  .jarvis-section-stage .uw-stage[data-dimension="3d"] {
+    background: transparent;
+  }
+
+  .jarvis-section-stage
+    .uw-stage[data-dimension="3d"]
+    > :where(.uw-stage-glow, .uw-stage-vignette) {
+    background: transparent;
+    filter: none;
   }
 
   /* The floating control pills over the stage (floor slider, legend, counts).

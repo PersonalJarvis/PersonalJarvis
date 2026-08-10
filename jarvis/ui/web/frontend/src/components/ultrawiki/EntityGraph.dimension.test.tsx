@@ -127,6 +127,9 @@ describe("EntityGraph 2D/3D switch", () => {
 
     expect(await screen.findByTestId("explore-graph-2d-stub")).toBeDefined();
     expect(screen.queryByTestId("explore-graph-3d-stub")).toBeNull();
+    expect(
+      screen.getByTestId("explore-entity-graph").getAttribute("data-dimension"),
+    ).toBe("2d");
   });
 
   it("swaps to the 3D scene and keeps the map's own controls", async () => {
@@ -141,6 +144,9 @@ describe("EntityGraph 2D/3D switch", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("explore-graph-2d-stub")).toBeNull();
     });
+    expect(
+      screen.getByTestId("explore-entity-graph").getAttribute("data-dimension"),
+    ).toBe("3d");
     // The mention floor and the expand button describe the data and the panel,
     // not the projection — losing them on the way into 3D would be a downgrade.
     expect(screen.getByTestId("explore-graph-floor")).toBeDefined();

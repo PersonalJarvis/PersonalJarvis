@@ -214,6 +214,7 @@ export function EntityGraph({
       id="explore-entity-graph"
       data-testid="explore-entity-graph"
       data-expanded={isExpanded ? "true" : "false"}
+      data-dimension={dimension}
       ref={containerRef}
       className={cn(
         "uw-stage relative h-full min-h-0 w-full min-w-0 overflow-hidden",
