@@ -120,22 +120,11 @@ def _credential_presence(request: Request) -> dict[str, bool]:
     out: dict[str, bool] = {}
     for spec in _providers.PROVIDERS:
         try:
-            if spec.id == "codex-subscription-realtime":
-                # This card is judged by the ISOLATED voice profile; the
-                # generic probe would read the ORDINARY Codex login and make
-                # the device-parity report lie in both directions. A busy
-                # snapshot reads as absent (fail-closed) — the report is a
-                # point-in-time diagnostic, not a gate.
-                payload = _providers._codex_subscription_status_payload(
-                    binary_path
+            present = bool(
+                _providers._is_credential_present(
+                    spec, binary_path if spec.id == "codex" else None
                 )
-                present = bool(payload.get("connected"))
-            else:
-                present = bool(
-                    _providers._is_credential_present(
-                        spec, binary_path if spec.id == "codex" else None
-                    )
-                )
+            )
         except Exception as exc:  # noqa: BLE001 — an unreadable slot reads as absent
             log.debug("setup-report: credential probe for %s failed: %s", spec.id, exc)
             present = False

@@ -23,8 +23,6 @@ import inspect
 import logging
 import threading
 import time
-from collections.abc import Mapping
-from types import SimpleNamespace
 from typing import Any, Final, Literal, get_args
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -470,8 +468,6 @@ def _spec_to_payload(
     active_computer_use: str | None = None,
     active_dictation: str | None = None,
     local_model_override: str | None = None,
-    codex_subscription_ready: bool | None = None,
-    codex_subscription_status: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if spec.tier == "brain":
         active = spec.id == active_brain
@@ -516,32 +512,7 @@ def _spec_to_payload(
     }
     codex_status = None
     if spec.auth_mode == "codex":
-        from_isolated_snapshot = (
-            spec.id == "codex-subscription-realtime" and codex_subscription_status is not None
-        )
-        codex_status = (
-            dict(codex_subscription_status)
-            if from_isolated_snapshot
-            else CodexAuthService(_codex_binary_path()).status().to_dict()
-        )
-        if spec.id == "codex-subscription-realtime" and codex_subscription_ready is not None:
-            codex_status["connected"] = codex_subscription_ready
-            if codex_subscription_ready:
-                codex_status["mode"] = "chatgpt"
-                codex_status["message"] = "Connected via ChatGPT."
-            else:
-                codex_status["mode"] = "not_connected"
-                # The isolated snapshot's message carries the precise
-                # diagnosis (for example the exact required Codex version)
-                # that the card's detail line renders — keep it. A status
-                # read from the ORDINARY Codex profile is exactly what the
-                # authoritative override corrects, so its message must not
-                # survive; nor may an empty message reach the card.
-                if not from_isolated_snapshot or not str(codex_status.get("message") or "").strip():
-                    codex_status["message"] = (
-                        "ChatGPT subscription voice is not ready. "
-                        "Reconnect with ChatGPT and review the setup status."
-                    )
+        codex_status = CodexAuthService(_codex_binary_path()).status().to_dict()
     antigravity_status = None
     if spec.id == "antigravity":
         from jarvis.google_cli.auth_service import GoogleCliAuthService
@@ -624,8 +595,6 @@ def _spec_to_payload(
         "configured": (
             bool(antigravity_status["connected"])
             if antigravity_status is not None
-            else codex_subscription_ready
-            if spec.id == "codex-subscription-realtime" and codex_subscription_ready is not None
             else bool(codex_status["connected"] and codex_status["mode"] == "chatgpt")
             if codex_status is not None and not spec.secret_keys
             else _is_credential_present(
@@ -635,11 +604,8 @@ def _spec_to_payload(
         ),
         "active": active,
         "cli_installed": (
-            # During a transient busy window the isolated snapshot cannot say
-            # whether the CLI exists; answer from the PATH probe instead of
-            # rendering a false "not installed" install prompt.
             _cli_installed(spec)
-            if codex_status is None or codex_status.get("reason_code") == "busy"
+            if codex_status is None
             else bool(codex_status["installed"])
         ),
         # Overlay, not a new tier (see the CU-own-provider plan): a brain
@@ -1076,10 +1042,6 @@ async def _provider_credential_present_for_binary_async(
     binary_path: str | None,
 ) -> bool:
     """Probe sync keyrings and Codex's authoritative auth store off-loop."""
-    if spec.id == "codex-subscription-realtime":
-        from jarvis.codex_app_server import codex_subscription_login_ready
-
-        return await codex_subscription_login_ready(binary_path)
     return await asyncio.to_thread(_is_credential_present, spec, binary_path)
 
 
@@ -1154,11 +1116,6 @@ async def list_providers(request: Request) -> dict[str, Any]:
     # follows is then a memo hit. See ``_warm_active_polish``.
     await _warm_active_polish(request)
     active_dictation = _active_polish(request)
-    codex_subscription_status = await asyncio.to_thread(
-        _codex_subscription_status_payload,
-        _codex_binary_path(request),
-    )
-    codex_subscription_ready = bool(codex_subscription_status["connected"])
     # When a local STT provider is ALREADY the active one, its card must report
     # on the checkpoint the config names — not the catalog default. Otherwise a
     # user who pinned a different Whisper size in jarvis.toml would read a
@@ -1187,8 +1144,6 @@ async def list_providers(request: Request) -> dict[str, Any]:
                 active_computer_use=active_computer_use,
                 active_dictation=active_dictation,
                 local_model_override=local_model_override,
-                codex_subscription_ready=codex_subscription_ready,
-                codex_subscription_status=codex_subscription_status,
             )
             for spec in PROVIDERS
             # A hidden spec is withdrawn from the catalog: no card, no CLI
@@ -1243,36 +1198,6 @@ async def _run_tier_test(spec: ProviderSpec, cfg: Any, *, model: str | None = No
         from jarvis.dictation.polish_probe import probe_polish_family
 
         return await probe_polish_family(family, cfg, model=model or "")
-    if spec.id == "codex-subscription-realtime":
-        # This card is judged by the ISOLATED voice profile, never the
-        # ordinary Codex login: the default codex_status seam would answer
-        # "ok — Connected." for a user whose normal `codex login` works but
-        # whose voice profile was never connected (and "not connected" for
-        # the normal case of a voice-only login).
-        payload = await asyncio.to_thread(
-            _codex_subscription_status_payload,
-            getattr(getattr(cfg, "codex", None), "binary_path", "") or None,
-        )
-        if payload.get("reason_code") in {"busy", "login_in_progress"}:
-            # Transient — the same instant renders "checking" (or "finish the
-            # login") on the card and unknown on the tab dot; a not_configured
-            # verdict here would be the one dissenting surface. rate_limited
-            # is the existing "transient, integration fine" status in the
-            # test vocabulary, and the payload message carries the honest
-            # wording for whichever transient state this is.
-            return _provider_test.ProviderTestResult(
-                spec.id,
-                _provider_test.RATE_LIMITED,
-                str(payload.get("message") or "")
-                or "The ChatGPT voice status is still being checked — try again in a moment.",
-            )
-        isolated_status = SimpleNamespace(
-            connected=bool(payload.get("connected")),
-            message=str(payload.get("message") or ""),
-        )
-        return await _provider_test.run_provider_test(
-            spec, cfg, codex_status=lambda: isolated_status, model=model
-        )
     return await _provider_test.run_provider_test(
         spec, cfg, model=model, timeout_s=_tier_test_budget_s(spec)
     )
@@ -1446,60 +1371,10 @@ async def _tier_section_health(
             subject_id=spec.id,
         )
     try:
-        if spec.id == "codex-subscription-realtime":
-            # One snapshot call answers both "configured?" and "busy?" — a
-            # second probe would wait out the same busy window twice.
-            codex_payload = await asyncio.to_thread(_codex_subscription_status_payload, binary_path)
-            if codex_payload.get("reason_code") == "busy":
-                # Transiently unknown is not "needs setup": the amber dot
-                # with "not connected" would contradict a card that says
-                # "checking — one moment".
-                return SectionHealth(
-                    status=_section_health.UNKNOWN,
-                    reason="busy",
-                    detail=f"{spec.label}: status check in progress",
-                    subject_id=spec.id,
-                )
-            if codex_payload.get("reason_code") == "login_in_progress":
-                # The user is mid-login; an amber "not connected" dot would
-                # contradict the card telling them to finish that login.
-                return SectionHealth(
-                    status=_section_health.UNKNOWN,
-                    reason="login_in_progress",
-                    detail=f"{spec.label}: login in progress",
-                    subject_id=spec.id,
-                )
-            if codex_payload.get("reason_code") == "plan_unsupported":
-                # Connected but permanently refused: "not connected or
-                # configured" would name the wrong remedy in the hover text.
-                return SectionHealth(
-                    status=_section_health.NEEDS_SETUP,
-                    reason="plan_unsupported",
-                    detail=(
-                        f"{spec.label}: "
-                        f"{codex_payload.get('message') or 'ChatGPT plan not supported'}"
-                    ),
-                    subject_id=spec.id,
-                )
-            if codex_payload.get("reason_code") in {
-                "lifecycle_unavailable",
-                "not_installed",
-            }:
-                # Same rule: the hover text must name the actual remedy (an
-                # unsupported host, or installing the pinned release) — never
-                # "not connected or configured".
-                return SectionHealth(
-                    status=_section_health.NEEDS_SETUP,
-                    reason=str(codex_payload.get("reason_code")),
-                    detail=(f"{spec.label}: {codex_payload.get('message') or 'not available'}"),
-                    subject_id=spec.id,
-                )
-            configured = bool(codex_payload.get("connected"))
-        else:
-            configured = await _provider_credential_present_for_binary_async(
-                spec,
-                binary_path,
-            )
+        configured = await _provider_credential_present_for_binary_async(
+            spec,
+            binary_path,
+        )
     except Exception:  # noqa: BLE001 — a probe failure is "not set up", not a crash
         configured = False
     if not configured:
@@ -3595,57 +3470,10 @@ async def _openai_realtime_voice_sample(
     return bytes(pcm), output_rate
 
 
-async def _codex_subscription_voice_sample(
-    api_key: str, *, model: str, voice: str, text: str, language: str
-) -> tuple[bytes, int]:
-    """Sample the subscription voice through its ChatGPT-Live transport."""
-    del api_key, model
-    from jarvis.plugins.realtime.codex_subscription import (  # noqa: PLC0415
-        CodexSubscriptionRealtimeProvider,
-    )
-    from jarvis.realtime.protocol import RealtimeSessionConfig  # noqa: PLC0415
-
-    provider = CodexSubscriptionRealtimeProvider(
-        binary_path=_codex_binary_path(),
-        # A preview sends no microphone audio and needs no input recognizer.
-        input_transcriber_factory=lambda: None,
-    )
-    session = await provider.open_session(
-        RealtimeSessionConfig(
-            instructions="Speak only the trusted sample text supplied by the client.",
-            language=language,
-            voice=voice,
-        )
-    )
-    pcm = bytearray()
-    sample_rate = int(getattr(provider, "output_sample_rate", 24_000) or 24_000)
-    try:
-        await session.send_speech(text)
-        async for event in session.receive():
-            if event.type == "audio_delta" and event.audio is not None:
-                pcm += bytes(event.audio.pcm)
-                sample_rate = int(event.audio.sample_rate or sample_rate)
-            elif event.type == "error":
-                raise RuntimeError(str(event.error or "subscription preview failed"))
-            elif event.type == "turn_complete":
-                break
-    finally:
-        await session.close()
-    return bytes(pcm), sample_rate
-
-
-# Capability metadata read by the generic route below. Subscription auth is
-# verified by the adapter itself; requiring an API key here would recreate the
-# exact billing-path parity bug this sampler closes.
-_codex_subscription_voice_sample.requires_api_key = False  # type: ignore[attr-defined]
-_codex_subscription_voice_sample.timeout_s = 50.0  # type: ignore[attr-defined]
-
-
 # Only providers whose preview transport can run without an interactive media
 # offer appear here. A cataloged provider may intentionally omit a sampler;
 # ``preview_available`` keeps the UI from rendering a button that cannot work.
 _REALTIME_PREVIEW_SAMPLERS: dict[str, Any] = {
-    "codex-subscription-realtime": _codex_subscription_voice_sample,
     "gemini-live": _gemini_live_voice_sample,
     "openai-realtime": _openai_realtime_voice_sample,
 }
@@ -4535,35 +4363,6 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     }
 
 
-async def _release_codex_transports_for_voice_switch() -> None:
-    """Release warm/previous Codex voice leases before changing providers."""
-    from jarvis.codex_app_server import (  # noqa: PLC0415
-        close_shared_codex_app_servers,
-    )
-
-    try:
-        await asyncio.wait_for(
-            asyncio.shield(close_shared_codex_app_servers()),
-            timeout=15.0,
-        )
-    except TimeoutError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "The previous ChatGPT subscription voice transport is still "
-                "stopping. Try the provider switch again in a moment."
-            ),
-        ) from exc
-    except Exception as exc:  # noqa: BLE001 - a leaked lease must block the switch
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "The previous ChatGPT subscription voice transport could not "
-                "be stopped safely. Try the provider switch again."
-            ),
-        ) from exc
-
-
 @router.post("/realtime/switch")
 async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     """Switch the active realtime provider.
@@ -4593,60 +4392,7 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 "the experimental transport before activating it."
             ),
         )
-    codex_transport_released = False
-    if spec.id == "codex-subscription-realtime":
-        # One snapshot call answers both "configured?" and "busy?". A busy
-        # window is transient — telling the user to "connect first" while the
-        # card says "checking" would send them to re-do a working login.
-        codex_payload = await asyncio.to_thread(
-            _codex_subscription_status_payload, _codex_binary_path(request)
-        )
-        if codex_payload.get("reason_code") == "busy":
-            # A warm transport reports the shared profile as busy. During an
-            # explicit provider switch that is the resource to hand off, not
-            # a reason to dead-end the button. Release it and judge the fresh
-            # post-handoff status once; a real login/profile mutation remains
-            # busy and still fails honestly below.
-            await _release_codex_transports_for_voice_switch()
-            codex_transport_released = True
-            codex_payload = await asyncio.to_thread(
-                _codex_subscription_status_payload,
-                _codex_binary_path(request),
-            )
-            if codex_payload.get("reason_code") == "busy":
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "The ChatGPT subscription voice status is being checked. "
-                        "Try again in a moment."
-                    ),
-                )
-        if codex_payload.get("reason_code") == "login_in_progress":
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "The ChatGPT subscription login is still running. Finish "
-                    "it in the browser window, then activate."
-                ),
-            )
-        if codex_payload.get("reason_code") != "plan_unsupported" and not (
-            codex_payload.get("connected")
-        ):
-            # Answer with the payload's precise diagnosis — the generic "no
-            # configured credentials" would be wrong for most codex states.
-            raise HTTPException(
-                status_code=409,
-                detail=str(
-                    codex_payload.get("message")
-                    or "Connect the dedicated ChatGPT subscription voice login."
-                ),
-            )
-        # plan_unsupported deliberately passes through: verify_activation
-        # re-judges the LIVE account, which is the only way the sticky block
-        # can clear when the plan changed back.
-        credential_present = True
-    else:
-        credential_present = await _provider_credential_present_async(spec, request)
+    credential_present = await _provider_credential_present_async(spec, request)
     if not credential_present:
         raise HTTPException(
             status_code=409,
@@ -4655,13 +4401,6 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                 "Connect or configure this provider first."
             ),
         )
-    if spec.id == "codex-subscription-realtime" and not codex_transport_released:
-        # The realtime activation probe needs the same single-profile App Server
-        # lease as a warm classic subscription session. Release the old owner
-        # first, then let the actual realtime provider verify and keep its own
-        # transport warm.
-        await _release_codex_transports_for_voice_switch()
-        codex_transport_released = True
     try:
         from jarvis.core.registry import load
         from jarvis.realtime.protocol import RealtimeProvider
@@ -4685,39 +4424,14 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             detail=("The provider's activation check timed out. Try again in a moment."),
         ) from exc
     except Exception as exc:  # noqa: BLE001 - provider gate returns a safe 409
-        # A refused plan already recorded its sticky diagnosis where it was
-        # discovered (require_chatgpt_login) — the live call path shares it.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    # The replacement provider is viable. A non-Codex replacement must release
-    # any warm subscription transport before the active call is reopened. The
-    # Codex branch already released the previous owner before its live probe;
-    # closing again here would throw away the newly verified warm transport.
-    if spec.id != "codex-subscription-realtime":
-        await _release_codex_transports_for_voice_switch()
-    if spec.id == "codex-subscription-realtime":
-        from jarvis.codex_app_server import set_codex_subscription_activation_block
-
-        # A passed activation is the proof the account works again. Off-loop:
-        # the helper takes the login mutex, which worker threads may hold
-        # across filesystem work.
-        await asyncio.to_thread(set_codex_subscription_activation_block, None)
 
     cfg = _resolve_cfg(request)
     from jarvis.voice.subscription_profile import subscription_voice_selected
 
-    stale_subscription_profile = bool(
-        spec.id == "codex-subscription-realtime"
-        and cfg is not None
-        and subscription_voice_selected(cfg)
-    )
-    configured_mode = str(
+    effective_mode = str(
         getattr(getattr(cfg, "voice", None), "mode", "pipeline") or "pipeline"
     ).strip().lower()
-    # Releases that routed this Realtime card through the classic composition
-    # persisted both the profile and Pipeline mode. That pair is repairable
-    # migration damage, not a user choice: selecting the same Realtime provider
-    # once restores Realtime. Ordinary provider switches preserve the mode.
-    effective_mode = "realtime" if stale_subscription_profile else configured_mode
 
     if body.persist:
         try:
@@ -4727,6 +4441,8 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             )
 
             if cfg is not None and subscription_voice_selected(cfg):
+                # Switching to a Realtime provider retires the classic
+                # subscription voice profile in the same atomic write.
                 set_realtime_voice_selection(
                     body.provider,
                     profile="",
@@ -4742,8 +4458,6 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     if cfg is not None and getattr(cfg, "voice", None) is not None:
         try:
             cfg.voice.profile = ""
-            if stale_subscription_profile:
-                cfg.voice.mode = "realtime"
         except Exception as exc:  # noqa: BLE001 - detached config is harmless
             log.debug("In-memory voice.profile update skipped: %s", exc)
     if cfg is not None and getattr(cfg, "brain", None) is not None:

@@ -142,7 +142,9 @@ def test_realtime_switch_exposes_experimental_acknowledgement() -> None:
     command = get_command("realtime-switch")
     assert command is not None
     properties = command.params["properties"]
-    assert "codex-subscription-realtime" in properties["provider"]["enum"]
+    # Removed 2026-08-10 with its adapter — the enum must not offer it.
+    assert "codex-subscription-realtime" not in properties["provider"]["enum"]
+    assert "openai-realtime" in properties["provider"]["enum"]
     assert properties["accept_experimental"] == {
         "type": "boolean",
         "default": False,

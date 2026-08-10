@@ -123,9 +123,6 @@
     "cu_model": "qwen3.5:4b",
     "model": "qwen3.5:4b"
   },
-  "brain.providers.codex-subscription-realtime": {
-    "voice": "cove"
-  },
   "brain.providers.grok": {
     "tool_model": "grok-4.5",
     "cu_model": "grok-4.5"

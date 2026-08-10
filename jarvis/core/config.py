@@ -3951,24 +3951,24 @@ _LEGACY_CODEX_REALTIME_HEALED: set[Path] = set()
 
 
 def _heal_legacy_codex_realtime_once(path: Path) -> None:
-    """Retire the Pipeline profile accidentally persisted by old Realtime UI."""
+    """Route a removed Codex Realtime selection onto the stable composition."""
     if path in _LEGACY_CODEX_REALTIME_HEALED:
         return
     _LEGACY_CODEX_REALTIME_HEALED.add(path)
     try:
-        from jarvis.core.config_writer import migrate_legacy_codex_realtime_selection
+        from jarvis.core.config_writer import migrate_removed_codex_realtime_provider
 
-        migrated = migrate_legacy_codex_realtime_selection(path=path)
+        migrated = migrate_removed_codex_realtime_provider(path=path)
     except Exception:  # noqa: BLE001 - a boot migration must not block startup
         logging.getLogger(__name__).warning(
-            "Could not repair the legacy Codex Realtime voice selection.",
+            "Could not migrate the removed Codex Realtime voice selection.",
             exc_info=True,
         )
         return
     if migrated:
         logging.getLogger(__name__).warning(
-            "Repaired legacy Codex Realtime configuration: removed the "
-            "Pipeline-only voice profile and restored Realtime mode."
+            "Migrated the removed codex-subscription-realtime selection to "
+            "the stable ChatGPT subscription voice profile (Pipeline mode)."
         )
 
 
@@ -4007,9 +4007,9 @@ def load_config(
     """
     if config_file is None:
         config_file = resolve_config_path()
-        # An earlier Codex-subscription implementation silently rewrote the
-        # Realtime selection as a Pipeline profile. Heal the exact persisted
-        # triple before the first parse so the UI and runtime see one state.
+        # The codex-subscription-realtime adapter was removed 2026-08-10. A
+        # config still pinning it is routed onto the stable subscription
+        # profile before the first parse so the UI and runtime see one state.
         _heal_legacy_codex_realtime_once(config_file)
         # One-time dictation-shortcut backfill BEFORE the file is read, so the
         # very first boot after the update already sees the healed values

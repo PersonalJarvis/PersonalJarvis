@@ -88,8 +88,10 @@ def test_get_spec_lookup() -> None:
     assert get_spec("does-not-exist") is None
 
 
-def test_codex_subscription_realtime_is_visible_in_provider_catalog() -> None:
-    assert "codex-subscription-realtime" in {spec.id for spec in PROVIDERS}
+def test_codex_subscription_realtime_is_removed_from_provider_catalog() -> None:
+    """Removed 2026-08-10 with its adapter; the stable subscription voice
+    runs as a classic-pipeline profile, not a realtime card."""
+    assert "codex-subscription-realtime" not in {spec.id for spec in PROVIDERS}
 
 
 def test_groq_stt_is_last_and_not_recommended() -> None:

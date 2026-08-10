@@ -126,20 +126,9 @@ def test_current_stt_and_cartesia_model_rosters() -> None:
 
 
 def test_current_realtime_models_and_voices() -> None:
-    # ChatGPT-Live (v3) picks the model server-side — one honest entry, no
-    # fake choice (client model fields are rejected; verified 2026-08-01).
-    assert _ids(REALTIME_MODELS["codex-subscription-realtime"]) == {"auto"}
-    assert _ids(REALTIME_VOICES["codex-subscription-realtime"]) == {
-        "cove",
-        "juniper",
-        "maple",
-        "spruce",
-        "ember",
-        "vale",
-        "breeze",
-        "arbor",
-        "sol",
-    }
+    # codex-subscription-realtime was removed 2026-08-10 with its adapter.
+    assert "codex-subscription-realtime" not in REALTIME_MODELS
+    assert "codex-subscription-realtime" not in REALTIME_VOICES
     assert {
         "gpt-realtime",
         "gpt-realtime-mini",

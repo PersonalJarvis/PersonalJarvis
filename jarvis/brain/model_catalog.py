@@ -488,14 +488,11 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
 # they target dedicated translation/transcription sessions, not the general
 # duplex voice-agent protocol implemented by this adapter.
 REALTIME_MODELS: dict[str, list[ModelInfo]] = {
-    # ChatGPT-Live (Codex v3): the SERVER chooses the model — a client
-    # `session.model` is rejected outright, and the old v1 protocol (which
-    # accepted a model) answers 403 since the ChatGPT-Live launch (both
-    # verified live 2026-08-01). One honest entry instead of a fake choice;
-    # model selection lives on the metered OpenAI Realtime card.
-    "codex-subscription-realtime": _curated(
-        [("auto", "ChatGPT-Live (model chosen by OpenAI)")]
-    ),
+    # codex-subscription-realtime was REMOVED 2026-08-10 together with its
+    # adapter: Codex's experimental app-server realtime surface never held a
+    # dependable call. Subscription voice continues over the classic pipeline
+    # (voice.profile = "codex-subscription-voice"), which needs no realtime
+    # model catalog entry.
     # local-realtime: the served model is whatever its operator loaded, so the
     # only honest curated entry is "ask the server". The adapter resolves it
     # through /v1/models at connect time (same as the local brain card), and a
@@ -543,22 +540,6 @@ REALTIME_MODELS: dict[str, list[ModelInfo]] = {
 # gemini-live: verified 2026-07-10 against the Live API capabilities guide,
 # which now permits the complete 30-voice Gemini prebuilt roster.
 REALTIME_VOICES: dict[str, list[ModelInfo]] = {
-    # Codex app-server ChatGPT-Live v3 voices. ``cove`` is the v3 default, so it
-    # leads the picker just as each realtime model catalog leads with its
-    # adapter default.
-    "codex-subscription-realtime": _ids(
-        [
-            "cove",
-            "juniper",
-            "maple",
-            "spruce",
-            "ember",
-            "vale",
-            "breeze",
-            "arbor",
-            "sol",
-        ]
-    ),
     # A self-hosted server ships whatever voices its operator installed, and a
     # list of OpenAI voice names would be a guess the server then rejects. One
     # honest entry: the adapter sends no voice override and the server uses its

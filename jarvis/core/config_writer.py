@@ -1301,17 +1301,20 @@ def set_realtime_voice_selection(
         _atomic_write(path, out)
 
 
-def migrate_legacy_codex_realtime_selection(
+def migrate_removed_codex_realtime_provider(
     *, path: Path = DEFAULT_CONFIG_FILE
 ) -> bool:
-    """Repair the exact Realtime-to-Pipeline state written by the old switch.
+    """Route a removed Codex Realtime selection onto the stable composition.
 
-    Older builds represented the Codex Realtime card as the classic
-    ``codex-subscription-voice`` profile and persisted Pipeline mode. The card
-    then appeared active while the Realtime mode control refused to switch,
-    leaving no in-app recovery path. Only that exact three-key legacy state is
-    changed; explicit Pipeline configurations using any other provider remain
-    untouched.
+    The ``codex-subscription-realtime`` adapter was removed 2026-08-10 (the
+    experimental Codex app-server realtime surface never held a dependable
+    call). A config still pinning it would boot into Realtime mode with no
+    resolvable provider and silently lose subscription voice. Instead, the
+    pin is cleared from every explicit slot and — when it was the PRIMARY
+    selection — the install lands on the classic subscription composition
+    (``voice.profile = "codex-subscription-voice"``, Pipeline mode), which
+    keeps voice on the same ChatGPT login. Configs not naming the removed
+    provider are never touched.
     """
     if path == DEFAULT_CONFIG_FILE:
         from jarvis.core.config import resolve_config_path
@@ -1320,6 +1323,7 @@ def migrate_legacy_codex_realtime_selection(
     if not path.exists():
         return False
 
+    removed = "codex-subscription-realtime"
     with _WRITE_LOCK:
         raw = path.read_text(encoding="utf-8")
         had_bom = raw.startswith(_BOM)
@@ -1328,20 +1332,27 @@ def migrate_legacy_codex_realtime_selection(
         doc: TOMLDocument = tomlkit.parse(raw)
         brain = doc.get("brain")
         realtime = brain.get("realtime") if brain is not None else None
-        voice = doc.get("voice")
-        if (
-            realtime is None
-            or voice is None
-            or str(realtime.get("provider") or "").strip()
-            != "codex-subscription-realtime"
-            or str(voice.get("profile") or "").strip()
-            != "codex-subscription-voice"
-            or str(voice.get("mode") or "").strip().lower() != "pipeline"
-        ):
+        if realtime is None:
+            return False
+        slots = ("provider", "fallback_provider", "fallback_provider_2")
+        pinned = [
+            slot
+            for slot in slots
+            if str(realtime.get(slot) or "").strip() == removed
+        ]
+        if not pinned:
             return False
 
-        voice["profile"] = ""
-        voice["mode"] = "realtime"
+        was_primary = "provider" in pinned
+        for slot in pinned:
+            realtime[slot] = ""
+        if was_primary:
+            voice = doc.get("voice")
+            if voice is None:
+                voice = tomlkit.table()
+                doc["voice"] = voice
+            voice["profile"] = "codex-subscription-voice"
+            voice["mode"] = "pipeline"
         out = tomlkit.dumps(doc)
         if had_bom:
             out = _BOM + out

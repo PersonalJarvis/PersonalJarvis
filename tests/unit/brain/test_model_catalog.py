@@ -754,25 +754,12 @@ class TestModelClassification:
 
 
 class TestRealtimeCatalog:
-    def test_codex_subscription_catalog_matches_app_server_v3(self) -> None:
+    def test_removed_codex_subscription_catalog_is_gone(self) -> None:
+        """codex-subscription-realtime was removed 2026-08-10 with its adapter."""
         from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
 
-        # v3 (ChatGPT-Live): the server chooses the model; the voice roster
-        # below is the server-confirmed nine (verified live 2026-08-01).
-        assert [m.id for m in REALTIME_MODELS["codex-subscription-realtime"]] == [
-            "auto"
-        ]
-        assert [v.id for v in REALTIME_VOICES["codex-subscription-realtime"]] == [
-            "cove",
-            "juniper",
-            "maple",
-            "spruce",
-            "ember",
-            "vale",
-            "breeze",
-            "arbor",
-            "sol",
-        ]
+        assert "codex-subscription-realtime" not in REALTIME_MODELS
+        assert "codex-subscription-realtime" not in REALTIME_VOICES
 
     def test_openai_realtime_models_lead_with_the_hardcoded_default(self) -> None:
         from jarvis.brain.model_catalog import REALTIME_MODELS

@@ -751,33 +751,11 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # ── Realtime ──────────────────────────────────────────────────────────
     # Realtime voice providers share the provider-neutral RealtimeProvider
     # contract. Subscription and API billing remain independently selectable.
-    ProviderSpec(
-        id="codex-subscription-realtime",
-        label="ChatGPT subscription (Codex)",
-        tier="realtime",
-        auth_mode="codex",
-        secret_keys=(),
-        dashboard_url=None,
-        login_cli=("codex", "login"),
-        install_hint="npm i -g @openai/codex@0.147.0",
-        signup_url="https://chatgpt.com",
-        credential_help=(
-            "Beta — subscription voice through Codex is not finished yet and "
-            "can break without notice. Uses the ChatGPT plan signed in through "
-            "Codex. The voice itself needs no API key, and the app never switches "
-            "it silently to metered API voice: if it cannot start, the call stops. "
-            "Select an API Realtime provider if you want usage billing. Jarvis "
-            "transcribes your side of the call with the provider selected in "
-            "Speech-to-Text, so a cloud recognizer can still bill its configured "
-            "key; choose an on-device one to keep input transcription local."
-        ),
-        experimental=True,
-        # Withdrawn for v1.3.0: subscription voice over Codex's experimental
-        # Realtime protocol is not reliable enough to offer. The plugin and
-        # its plumbing stay shipped so an existing selection keeps resolving;
-        # unhide once the transport holds a call dependably.
-        hidden=True,
-    ),
+    # The former "ChatGPT subscription (Codex)" realtime card was removed
+    # 2026-08-10 together with its plugin: Codex's experimental realtime
+    # surface never held a dependable call. Subscription voice continues as
+    # the stable classic-pipeline composition (voice.profile =
+    # "codex-subscription-voice") over the audited app-server text protocol.
     ProviderSpec(
         id="openai-realtime",
         label="OpenAI Realtime",

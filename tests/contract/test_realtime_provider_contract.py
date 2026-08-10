@@ -10,9 +10,6 @@ from typing import Any
 
 import pytest
 
-from jarvis.plugins.realtime.codex_subscription import (
-    CodexSubscriptionRealtimeProvider,
-)
 from jarvis.plugins.realtime.gemini_live import GeminiLiveProvider
 from jarvis.plugins.realtime.openai_realtime import (
     LocalRealtimeProvider,
@@ -21,11 +18,11 @@ from jarvis.plugins.realtime.openai_realtime import (
 from jarvis.realtime.protocol import RealtimeEvent, RealtimeProvider
 from jarvis.realtime.session import RealtimeVoiceSession
 
-_CAPABILITY_LIMITED_PROVIDER_CLASSES = tuple(
-    provider_cls
-    for provider_cls in (CodexSubscriptionRealtimeProvider,)
-    if not bool(getattr(provider_cls, "supports_direct_tools", True))
-)
+# Every installed provider that declares supports_direct_tools=False must pass
+# the delegate/decline contracts below. Empty today (the capability-limited
+# codex-subscription-realtime adapter was removed 2026-08-10); the harness
+# stays so a future external-login provider is pinned automatically.
+_CAPABILITY_LIMITED_PROVIDER_CLASSES: tuple[type[Any], ...] = ()
 
 
 def _session_config(tool_mode: str) -> SimpleNamespace:
@@ -110,20 +107,6 @@ def test_provider_is_structurally_conformant(provider_cls, provider_id, input_ra
     assert provider.input_sample_rate == input_rate
     assert provider.output_sample_rate == 24_000
     assert provider.credential_candidates
-
-
-def test_subscription_provider_is_structurally_conformant_without_api_key() -> None:
-    provider = CodexSubscriptionRealtimeProvider()
-
-    assert isinstance(provider, RealtimeProvider)
-    assert provider.supports_realtime is True
-    assert provider.name == "codex-subscription-realtime"
-    assert provider.input_sample_rate == 24_000
-    assert provider.output_sample_rate == 24_000
-    assert provider.credential_candidates == ()
-    # Jarvis owns the WebRTC peer in-process (ChatGPT-Live carries audio on
-    # the media track), so no UI has to broker a signalling offer any more.
-    assert provider.requires_webrtc_offer is False
 
 
 @pytest.mark.parametrize("provider_cls", _CAPABILITY_LIMITED_PROVIDER_CLASSES)
@@ -228,7 +211,6 @@ async def test_unconfigured_local_provider_probe_is_false() -> None:
     [
         Path("jarvis/plugins/realtime/openai_realtime.py"),
         Path("jarvis/plugins/realtime/gemini_live.py"),
-        Path("jarvis/plugins/realtime/codex_subscription.py"),
     ],
 )
 def test_plugin_module_imports_no_jarvis_modules(path: Path):

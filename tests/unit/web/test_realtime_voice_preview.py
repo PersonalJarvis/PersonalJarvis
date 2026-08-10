@@ -43,7 +43,6 @@ def test_every_preview_sampler_has_a_cataloged_realtime_provider() -> None:
     from jarvis.brain.model_catalog import REALTIME_VOICES
 
     assert set(provider_routes._REALTIME_PREVIEW_SAMPLERS) <= set(REALTIME_VOICES)
-    assert "codex-subscription-realtime" in provider_routes._REALTIME_PREVIEW_SAMPLERS
 
 
 def test_unknown_provider_is_404() -> None:
@@ -87,9 +86,11 @@ def test_missing_credential_is_409(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "credentials" in response.json()["detail"]
 
 
-def test_subscription_preview_does_not_require_an_api_key(
+def test_keyless_preview_does_not_require_an_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """``requires_api_key = False`` is a generic sampler capability: a keyless
+    provider's preview must not be blocked on a missing credential."""
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _pid: None)
 
     async def sampler(*_args, **_kwargs) -> tuple[bytes, int]:
@@ -98,14 +99,14 @@ def test_subscription_preview_does_not_require_an_api_key(
     sampler.requires_api_key = False  # type: ignore[attr-defined]
     monkeypatch.setitem(
         provider_routes._REALTIME_PREVIEW_SAMPLERS,
-        "codex-subscription-realtime",
+        "local-realtime",
         sampler,
     )
 
     response = _preview(
         TestClient(_app()),
-        "codex-subscription-realtime",
-        voice="cove",
+        "local-realtime",
+        voice="auto",
     )
 
     assert response.status_code == 200

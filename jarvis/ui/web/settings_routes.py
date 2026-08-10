@@ -287,13 +287,9 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     realtime_available = prov is not None
     realtime_availability_pending = False
     codex_status: dict[str, object] | None = None
-    if prov == "codex-subscription-realtime":
-        # Runtime discovery deliberately fails open on ``busy`` because the
-        # authoritative session opener can protect an in-flight/live call.
-        # A STATUS surface must not convert that unknown answer into "ready":
-        # the provider card says checking and mode persistence returns 409, so
-        # this route reports the same pending truth while retaining the
-        # resolved provider/model labels for display.
+    if profile:
+        # The classic subscription composition is judged by the ISOLATED
+        # voice-profile login, surfaced below as subscription_voice_capability.
         from jarvis.ui.web.provider_routes import (
             _codex_binary_path,
             _codex_subscription_status_payload,
@@ -303,10 +299,6 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
             _codex_subscription_status_payload,
             _codex_binary_path(request),
         )
-        reason_code = str(codex_status.get("reason_code") or "")
-        if reason_code in {"busy", "login_in_progress"}:
-            realtime_available = False
-            realtime_availability_pending = True
     requires_webrtc_offer = (
         False
         if profile
@@ -413,39 +405,6 @@ async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, obj
                 status_code=400,
                 detail="no realtime provider is configured and ready",
             )
-        if prov == "codex-subscription-realtime":
-            # The availability bool fails OPEN on a transient busy window (by
-            # design — the session opener verifies live). PERSISTING the mode
-            # is a standing decision, so it gates on the actual payload: a
-            # busy window answers "try again", a logged-out pinned provider
-            # is refused instead of pinning a mode that cannot start.
-            from jarvis.ui.web.provider_routes import (
-                _codex_binary_path,
-                _codex_subscription_status_payload,
-            )
-
-            payload = await asyncio.to_thread(
-                _codex_subscription_status_payload,
-                _codex_binary_path(request),
-            )
-            if payload.get("reason_code") in {"busy", "login_in_progress"}:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "The ChatGPT subscription voice status is being "
-                        "checked. Try again in a moment."
-                    ),
-                )
-            if not payload.get("connected"):
-                # The payload's precise diagnosis (plan refused, login
-                # required, …) beats the generic sentence.
-                raise HTTPException(
-                    status_code=400,
-                    detail=str(
-                        payload.get("message")
-                        or "no realtime provider is configured and ready"
-                    ),
-                )
 
     if cfg is not None and getattr(cfg, "voice", None) is not None:
         try:

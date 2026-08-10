@@ -85,14 +85,17 @@ def test_realtime_voice_selection_persists_all_three_values_once(
     assert 'mode = "realtime"' in content
 
 
-def test_load_config_repairs_already_active_legacy_codex_realtime_state(
+def test_load_config_migrates_removed_codex_realtime_primary(
     tmp_path: Path,
     monkeypatch,
 ):
+    """A config still pinning the removed codex-subscription-realtime adapter
+    boots onto the stable subscription composition instead of a dead
+    Realtime mode (adapter removed 2026-08-10)."""
     toml = tmp_path / "jarvis.toml"
     toml.write_text(
         '[brain.realtime]\nprovider = "codex-subscription-realtime"\n\n'
-        '[voice]\nmode = "pipeline"\nprofile = "codex-subscription-voice"\n',
+        '[voice]\nmode = "realtime"\nprofile = ""\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(cfg_mod, "resolve_config_path", lambda: toml)
@@ -101,12 +104,33 @@ def test_load_config_repairs_already_active_legacy_codex_realtime_state(
     loaded = cfg_mod.load_config()
 
     assert loaded.brain.realtime is not None
-    assert loaded.brain.realtime.provider == "codex-subscription-realtime"
-    assert loaded.voice.mode == "realtime"
-    assert loaded.voice.profile == ""
+    assert loaded.brain.realtime.provider == ""
+    assert loaded.voice.mode == "pipeline"
+    assert loaded.voice.profile == "codex-subscription-voice"
     content = toml.read_text(encoding="utf-8")
-    assert 'mode = "realtime"' in content
-    assert 'profile = ""' in content
+    assert 'provider = ""' in content
+    assert 'mode = "pipeline"' in content
+    assert 'profile = "codex-subscription-voice"' in content
+
+
+def test_load_config_leaves_other_realtime_selections_untouched(
+    tmp_path: Path,
+    monkeypatch,
+):
+    toml = tmp_path / "jarvis.toml"
+    toml.write_text(
+        '[brain.realtime]\nprovider = "openai-realtime"\n\n'
+        '[voice]\nmode = "realtime"\nprofile = ""\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cfg_mod, "resolve_config_path", lambda: toml)
+    cfg_mod._LEGACY_CODEX_REALTIME_HEALED.discard(toml)
+
+    loaded = cfg_mod.load_config()
+
+    assert loaded.brain.realtime is not None
+    assert loaded.brain.realtime.provider == "openai-realtime"
+    assert loaded.voice.mode == "realtime"
 
 
 def test_realtime_tier_field_accepts_brain_tier_config():

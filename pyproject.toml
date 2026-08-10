@@ -567,7 +567,11 @@ discord = "jarvis.channels.discord:DiscordChannel"
 [project.entry-points."jarvis.realtime"]
 # Provider-neutral speech-to-speech plugins. Every adapter loads lazily; the
 # orchestrator chooses a credential-ready family and crosses families on failure.
-codex-subscription-realtime = "jarvis.plugins.realtime.codex_subscription:CodexSubscriptionRealtimeProvider"
+# The former codex-subscription-realtime adapter was removed 2026-08-10: the
+# Codex app-server realtime surface is experimental, has no turn-boundary or
+# tool events, and never held a dependable call. The ChatGPT plan keeps voice
+# through the stable classic-pipeline composition (voice.profile =
+# "codex-subscription-voice"), which uses the audited app-server TEXT protocol.
 openai-realtime = "jarvis.plugins.realtime.openai_realtime:OpenAIRealtimeProvider"
 gemini-live = "jarvis.plugins.realtime.gemini_live:GeminiLiveProvider"
 # Self-hosted endpoint speaking the same realtime protocol — the local option

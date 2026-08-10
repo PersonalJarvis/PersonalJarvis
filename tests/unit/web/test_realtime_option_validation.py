@@ -110,19 +110,12 @@ def test_get_realtime_options_reports_preview_capability(
     api_response = client.get(
         "/api/providers/openai-realtime/realtime-options"
     )
-    subscription_response = client.get(
+    removed_response = client.get(
         "/api/providers/codex-subscription-realtime/realtime-options"
     )
 
     assert api_response.status_code == 200
     assert api_response.json()["preview_available"] is True
-    assert subscription_response.status_code == 200
-    body = subscription_response.json()
-    assert body["preview_available"] is True
-    assert body["models"] == [
-        {"id": "auto", "label": "ChatGPT-Live (model chosen by OpenAI)"}
-    ]
-    assert body["voices"][0] == {"id": "cove", "label": "cove"}
-    assert "configured-tts" not in {voice["id"] for voice in body["voices"]}
-    assert body["current_model"] == ""
-    assert body["current_voice"] == ""
+    # The subscription realtime card was removed 2026-08-10; its options
+    # endpoint answers 404 like any other unknown provider id.
+    assert removed_response.status_code == 404
