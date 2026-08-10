@@ -31,6 +31,8 @@ requires Windows. The ``.lnk`` builders (``build_create_script`` /
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 import os
 import subprocess
@@ -68,11 +70,18 @@ _QUERY_SENTINEL = "<<<JARVIS_TASK>>>"
 
 @dataclass(frozen=True, slots=True)
 class _TaskInfo:
-    """The action of the current scheduled task (read back for drift detection)."""
+    """The action of the current scheduled task (read back for drift detection).
+
+    ``enabled`` mirrors the task's own ``State``. A task can be switched off in
+    Task Scheduler (or by a "startup optimizer") while still existing with a
+    perfectly matching action — the read-back therefore has to carry it, or
+    status() reports "enabled and current" for a task that never fires.
+    """
 
     execute: str
     arguments: str
     working_dir: str
+    enabled: bool = True
 
 
 def _startup_dir() -> Path:
@@ -156,16 +165,48 @@ def build_register_task_script(
     )
 
 
+def _ps_emit_field(sentinel: str, expression: str) -> str:
+    """Pure: one PowerShell line that prints ``expression`` base64-of-UTF-8.
+
+    Why not print the value directly? Windows PowerShell 5.1 encodes a
+    REDIRECTED stdout with ``[Console]::OutputEncoding`` — the OEM code page
+    (cp850/cp437) — while Python's ``text=True`` decodes with the ANSI code
+    page (cp1252). The two agree on ASCII, which is why this stayed invisible in
+    English-only testing — but any accented or umlauted character in a user
+    profile or project path came back corrupted, and some do not survive at all:
+    byte 0x81 (u-umlaut in cp850) has no cp1252 mapping, so it RAISES inside
+    subprocess's reader thread and the caller gets nothing. Either way
+    ``_norm(readback) != _norm(spec)``, so the task/shortcut was reported as
+    "points at a different install" forever — at every single login, on every
+    profile whose name is not plain ASCII. Base64 is pure ASCII, so it survives
+    any code page byte for byte and the value is reconstructed exactly (AP-7's
+    encoding class, the read-side twin of the ``utf-8-sig`` fix in
+    ``_run_powershell_elevated``).
+    """
+    return (
+        f"Write-Output ('{sentinel}' + [Convert]::ToBase64String("
+        f"$enc.GetBytes([string]({expression}))))\n"
+    )
+
+
 def build_query_task_script(task_name: str) -> str:
-    """Pure: non-elevated PowerShell that prints the task action via sentinels."""
+    """Pure: non-elevated PowerShell that prints the task action via sentinels.
+
+    Emits FOUR fields: Execute, Arguments, WorkingDirectory and the task
+    ``State`` — a disabled task still has a matching action, so without the
+    state a switched-off autostart reads as "enabled and current".
+    """
     return (
         "$ErrorActionPreference = 'SilentlyContinue'\n"
-        f"$t = Get-ScheduledTask -TaskName '{_ps_lit(task_name)}'\n"
+        "$enc = [System.Text.Encoding]::UTF8\n"
+        f"$t = Get-ScheduledTask -TaskName '{_ps_lit(task_name)}' | "
+        "Select-Object -First 1\n"
         "if ($t) {\n"
         "  $a = $t.Actions | Select-Object -First 1\n"
-        f"  Write-Output ('{_QUERY_SENTINEL}' + $a.Execute)\n"
-        f"  Write-Output ('{_QUERY_SENTINEL}' + $a.Arguments)\n"
-        f"  Write-Output ('{_QUERY_SENTINEL}' + $a.WorkingDirectory)\n"
+        f"  {_ps_emit_field(_QUERY_SENTINEL, '$a.Execute')}"
+        f"  {_ps_emit_field(_QUERY_SENTINEL, '$a.Arguments')}"
+        f"  {_ps_emit_field(_QUERY_SENTINEL, '$a.WorkingDirectory')}"
+        f"  {_ps_emit_field(_QUERY_SENTINEL, '$t.State')}"
         "}\n"
     )
 
@@ -182,16 +223,46 @@ def build_unregister_task_script(task_name: str) -> str:
     )
 
 
+def _sentinel_fields(stdout: str, sentinel: str) -> list[str]:
+    """Pure: the base64-of-UTF-8 payloads behind ``sentinel``, decoded.
+
+    A payload that is not valid base64 (a PowerShell host that emitted a
+    warning on the same line, a truncated pipe) is dropped rather than guessed
+    at, so the caller's "fewer fields than expected = drift, not a match" rule
+    stays the single place that decides what a partial read-back means.
+    """
+    out: list[str] = []
+    for line in stdout.splitlines():
+        # lstrip: a UTF-8 BOM or stray whitespace must not hide the sentinel.
+        stripped = line.lstrip("\ufeff \t")
+        if not stripped.startswith(sentinel):
+            continue
+        payload = stripped[len(sentinel):].strip()
+        if not payload:
+            out.append("")    # an empty field is a legitimate value ("no args")
+            continue
+        try:
+            out.append(base64.b64decode(payload, validate=True).decode("utf-8"))
+        except (binascii.Error, ValueError, UnicodeDecodeError) as exc:
+            log.debug("undecodable read-back field %r: %s", payload, exc)
+    return out
+
+
 def parse_task_query(stdout: str) -> _TaskInfo | None:
     """Pure: parse :func:`build_query_task_script` output. ``None`` if absent."""
-    fields = [
-        line[len(_QUERY_SENTINEL):]
-        for line in stdout.splitlines()
-        if line.startswith(_QUERY_SENTINEL)
-    ]
+    fields = _sentinel_fields(stdout, _QUERY_SENTINEL)
     if len(fields) < 3:
         return None
-    return _TaskInfo(execute=fields[0], arguments=fields[1], working_dir=fields[2])
+    # A read-back without the 4th field is treated as enabled: only an explicit
+    # "Disabled" may switch autostart off, so a truncated state can never raise
+    # a false alarm about a task that is in fact running.
+    state = fields[3].strip().lower() if len(fields) > 3 else ""
+    return _TaskInfo(
+        execute=fields[0],
+        arguments=fields[1],
+        working_dir=fields[2],
+        enabled=state != "disabled",
+    )
 
 
 def build_create_script(link: Path, spec: LaunchSpec, *, icon: str | None = None) -> str:
@@ -225,14 +296,19 @@ def build_create_script(link: Path, spec: LaunchSpec, *, icon: str | None = None
 
 
 def build_read_script(link: Path) -> str:
-    """Pure: PowerShell that prints TargetPath/Arguments/WorkingDirectory."""
+    """Pure: PowerShell that prints TargetPath/Arguments/WorkingDirectory.
+
+    Base64-encoded for the same reason as the task query — see
+    :func:`_ps_emit_field`.
+    """
     return (
         "$ErrorActionPreference = 'Stop'\n"
+        "$enc = [System.Text.Encoding]::UTF8\n"
         "$ws = New-Object -ComObject WScript.Shell\n"
         f"$sc = $ws.CreateShortcut('{_ps_lit(link)}')\n"
-        f"Write-Output ('{_READBACK_SENTINEL}' + $sc.TargetPath)\n"
-        f"Write-Output ('{_READBACK_SENTINEL}' + $sc.Arguments)\n"
-        f"Write-Output ('{_READBACK_SENTINEL}' + $sc.WorkingDirectory)\n"
+        f"{_ps_emit_field(_READBACK_SENTINEL, '$sc.TargetPath')}"
+        f"{_ps_emit_field(_READBACK_SENTINEL, '$sc.Arguments')}"
+        f"{_ps_emit_field(_READBACK_SENTINEL, '$sc.WorkingDirectory')}"
     )
 
 
@@ -291,10 +367,18 @@ def _tag_shortcut_aumid(link: Path) -> bool:
 
 
 def _run_powershell(script: str) -> subprocess.CompletedProcess[str]:
+    # encoding/errors are pinned rather than left to the locale: without them
+    # Python decodes the pipe with the ANSI code page while PowerShell wrote it
+    # with the OEM one, and an undecodable byte raises UnicodeDecodeError out of
+    # a read-back that the callers translate into "no entry" (see
+    # _ps_emit_field). The payloads themselves are base64 (pure ASCII), so this
+    # only has to survive whatever a PowerShell host prints around them.
     return subprocess.run(
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
         capture_output=True,
         text=True,
+        encoding="utf-8-sig",
+        errors="replace",
         check=True,
         timeout=30,
         creationflags=NO_WINDOW_CREATIONFLAGS,
@@ -322,12 +406,33 @@ def _run_powershell_elevated(script: str) -> bool:
         # Escape any single-quote in the temp path (e.g. a login like O'Brien →
         # C:\Users\O'Brien\...\Temp) before baking it into the single-quoted PS arg.
         safe_path = path.replace("'", "''")
+        # The path is additionally wrapped in LITERAL double quotes inside the
+        # argument element. Start-Process joins -ArgumentList with single spaces
+        # into one raw command line and quotes NOTHING, so on a host whose temp
+        # directory contains a space — an account named "John Doe"
+        # (C:\Users\John Doe\AppData\Local\Temp\...), or a redirected
+        # TEMP=D:\My Temp — the elevated PowerShell received "-File C:\Users\John"
+        # and aborted. The user saw the UAC prompt, approved it, and autostart
+        # still fell back to the throttled .lnk while the log claimed the prompt
+        # had been declined.
         launcher = (
             "$ErrorActionPreference = 'Stop'\n"
             "try {\n"
             "  $p = Start-Process -FilePath powershell -ArgumentList "
             "@('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden',"
-            f"'-File','{safe_path}') -Verb RunAs -Wait -PassThru\n"
+            f"'-File','\"{safe_path}\"') -Verb RunAs -Wait -PassThru\n"
+            # `exit $null` exits with code 0 — measured on Windows 11,
+            # 2026-08-10. `Start-Process -Verb RunAs -Wait -PassThru` can hand
+            # back a process object whose ExitCode is $null, because the
+            # elevated child is launched through ShellExecute and is not always
+            # associated with the returned object. This function then reported
+            # SUCCESS for a registration that never happened, and install()
+            # took the success branch: it deleted the .lnk fallback this whole
+            # module is built around and logged "scheduled task registered".
+            # Autostart was dead on both paths with the log claiming otherwise.
+            # Fail safe instead — a false negative only costs a redundant .lnk,
+            # which the next boot reconcile removes once the probe sees the task.
+            "  if ($null -eq $p -or $null -eq $p.ExitCode) { exit 1 }\n"
             "  exit $p.ExitCode\n"
             "} catch { exit 1 }\n"
         )
@@ -400,18 +505,35 @@ class WindowsAutostart:
     def status(self, spec: LaunchSpec) -> AutostartStatus:
         info = self._task_probe()
         if info is not None:
-            matches = self._task_matches(info, spec)
+            action_matches = self._task_matches(info, spec)
+            if not info.enabled:
+                # A task can be switched off in Task Scheduler, by a group
+                # policy or by a "startup optimizer" while its action still
+                # points at exactly this install. Reporting that as "enabled
+                # and current" left the Settings toggle showing autostart ON
+                # for a task that never fires — and, because install() treats
+                # a matching task as done, the .lnk fallback was not written
+                # either, so autostart was dead on BOTH paths.
+                detail = (
+                    "The logon scheduled task exists but is disabled, so Jarvis "
+                    "does not start at login — re-enable instant start in "
+                    "Settings to switch it back on."
+                )
+            elif action_matches:
+                detail = (
+                    "Autostart enabled via scheduled task — instant start at login."
+                )
+            else:
+                detail = (
+                    "Scheduled task points at a different install "
+                    "(re-enable in Settings to refresh)."
+                )
             return AutostartStatus(
                 supported=True,
                 installed=True,
-                matches_spec=matches,
+                matches_spec=action_matches and info.enabled,
                 entry_path=self._task_entry_path(),
-                detail=(
-                    "Autostart enabled via scheduled task — instant start at login."
-                    if matches
-                    else "Scheduled task points at a different install "
-                    "(re-enable in Settings to refresh)."
-                ),
+                detail=detail,
             )
         if self._shortcut_present():
             return AutostartStatus(
@@ -434,8 +556,11 @@ class WindowsAutostart:
 
     def install(self, spec: LaunchSpec, *, interactive: bool = False) -> AutostartStatus:
         # Already correct → idempotent no-op (the common boot case once enabled).
+        # "Correct" includes being switched ON: a disabled task matches the spec
+        # but never fires, so it must fall through to the refresh/fallback path
+        # below instead of being reported as done.
         info = self._task_probe()
-        if info is not None and self._task_matches(info, spec):
+        if info is not None and info.enabled and self._task_matches(info, spec):
             # ...except for a leftover fallback .lnk. A boot whose task probe
             # transiently failed (PowerShell is slow under login load, and a
             # failed query is treated as "no task") writes the shortcut, and
@@ -464,14 +589,18 @@ class WindowsAutostart:
                 "Autostart task not granted (UAC declined) — using startup shortcut fallback."
             )
         elif info is not None:
-            # Non-interactive boot reconcile found a *stale* task (path drift — the
-            # BUG-006 restore-trap class). We cannot unregister + re-register it
-            # without elevation here, so surface it loudly: the user must re-enable
-            # instant start in Settings (one UAC prompt) to refresh it. The .lnk
-            # fallback below keeps autostart working (delayed) meanwhile.
+            # Non-interactive boot reconcile found a task it cannot repair: either
+            # *stale* (path drift — the BUG-006 restore-trap class) or *disabled*.
+            # Re-registering needs elevation, which the silent reconcile must never
+            # prompt for, so surface it loudly: the user must re-enable instant
+            # start in Settings (one UAC prompt) to refresh it. The .lnk fallback
+            # below keeps autostart working (delayed) meanwhile.
             log.warning(
-                "Autostart scheduled task is stale (points at a different install); "
-                "re-enable instant start in Settings to refresh it. Using shortcut fallback."
+                "Autostart scheduled task is %s; re-enable instant start in "
+                "Settings to refresh it. Using shortcut fallback.",
+                "disabled and will not fire"
+                if not info.enabled
+                else "stale (points at a different install)",
             )
 
         # Boot reconcile, or declined UAC: ensure the no-elevation fallback. Never
@@ -532,11 +661,7 @@ class WindowsAutostart:
         except Exception as exc:  # noqa: BLE001 — unreadable → not a match
             log.debug("shortcut read failed: %s", exc)
             return False
-        fields = [
-            line[len(_READBACK_SENTINEL):]
-            for line in result.stdout.splitlines()
-            if line.startswith(_READBACK_SENTINEL)
-        ]
+        fields = _sentinel_fields(result.stdout, _READBACK_SENTINEL)
         if len(fields) < 3:
             # A truncated read-back is "unknown", not "matches". Padding the
             # missing fields with "" made a half-failed COM read compare equal

@@ -119,21 +119,63 @@ def test_parse_task_query_roundtrips_register_fields() -> None:
     assert out.execute == r"C:\Python\pythonw.exe"
     assert out.arguments == "-m jarvis.ui.web.launcher"
     assert out.working_dir == r"C:\Users\u\Personal Jarvis"
+    assert out.enabled is True
 
 
 def test_parse_task_query_returns_none_when_absent() -> None:
     assert parse_task_query("") is None
 
 
-def build_fake_query_output() -> str:
+def test_parse_task_query_survives_non_ascii_paths() -> None:
+    """A profile whose name is not plain ASCII read back as drift forever.
+
+    PowerShell 5.1 writes a redirected stdout with the OEM code page while
+    Python decoded it with the ANSI one, so every accented path came back
+    corrupted and never compared equal to the live spec. U+00FC is the sharpest
+    case: cp850 encodes it as 0x81, which cp1252 cannot decode at all. The
+    read-back is base64-of-UTF-8 now, which no code page can corrupt.
+    """
+    program = "C:\\Users\\test-\u00fc\u00e9\\pythonw.exe"
+    workdir = "C:\\projects\\caf\u00e9-\u00fc"
+    out = parse_task_query(
+        build_fake_query_output(execute=program, working_dir=workdir)
+    )
+    assert out is not None
+    assert out.execute == program
+    assert out.working_dir == workdir
+
+
+def test_parse_task_query_reports_a_disabled_task() -> None:
+    out = parse_task_query(build_fake_query_output(state="Disabled"))
+    assert out is not None
+    assert out.enabled is False
+
+
+def test_parse_task_query_treats_a_missing_state_as_enabled() -> None:
+    """Only an explicit "Disabled" may switch autostart off — a truncated
+    read-back must never raise a false alarm about a task that does fire."""
+    out = parse_task_query(build_fake_query_output(state=None))
+    assert out is not None
+    assert out.enabled is True
+
+
+def build_fake_query_output(
+    *,
+    execute: str = r"C:\Python\pythonw.exe",
+    arguments: str = "-m jarvis.ui.web.launcher",
+    working_dir: str = r"C:\Users\u\Personal Jarvis",
+    state: str | None = "Ready",
+) -> str:
+    import base64
+
     from jarvis.autostart.windows import _QUERY_SENTINEL
 
+    fields = [execute, arguments, working_dir]
+    if state is not None:
+        fields.append(state)
     return "\n".join(
-        [
-            _QUERY_SENTINEL + r"C:\Python\pythonw.exe",
-            _QUERY_SENTINEL + "-m jarvis.ui.web.launcher",
-            _QUERY_SENTINEL + r"C:\Users\u\Personal Jarvis",
-        ]
+        _QUERY_SENTINEL + base64.b64encode(f.encode("utf-8")).decode("ascii")
+        for f in fields
     )
 
 
@@ -329,12 +371,14 @@ def test_truncated_shortcut_readback_is_drift_not_a_match(monkeypatch) -> None:
     # Padding the missing fields with "" made a half-failed COM read compare
     # equal to a spec with no args/working dir — reporting a stale shortcut as
     # current and suppressing the refresh that would have fixed it.
+    import base64
     import subprocess
     from pathlib import Path
 
     from jarvis.autostart import windows as win_mod
 
     bare = LaunchSpec(program=r"C:\Python\pythonw.exe", args=(), working_dir="")
+    encoded = base64.b64encode(bare.program.encode("utf-8")).decode("ascii")
     monkeypatch.setattr(Path, "exists", lambda self: True)
     monkeypatch.setattr(
         win_mod,
@@ -342,8 +386,113 @@ def test_truncated_shortcut_readback_is_drift_not_a_match(monkeypatch) -> None:
         lambda script: subprocess.CompletedProcess(
             ["powershell"],
             0,
-            stdout=win_mod._READBACK_SENTINEL + bare.program + "\n",
+            stdout=win_mod._READBACK_SENTINEL + encoded + "\n",
             stderr="",
         ),
     )
     assert WindowsAutostart()._default_shortcut_matches(bare) is False
+
+
+# --------------------------------------------------------------------------- #
+# A task that exists but is switched OFF (the Windows twin of the audit's      #
+# Linux `Hidden=true` finding: status contradicting the real OS state)         #
+# --------------------------------------------------------------------------- #
+
+_DISABLED_INFO = _TaskInfo(
+    execute=_SPEC.program,
+    arguments="-m jarvis.ui.web.launcher",
+    working_dir=_SPEC.working_dir,
+    enabled=False,
+)
+
+
+def test_status_reports_a_disabled_task_as_not_current() -> None:
+    # The action still matches this install, so the old read-back said
+    # "Autostart enabled via scheduled task" for a task that never fires.
+    mgr, _ = _mk(task_info=_DISABLED_INFO)
+    st = mgr.status(_SPEC)
+    assert st.installed is True
+    assert st.matches_spec is False
+    assert "disabled" in st.detail.lower()
+
+
+def test_install_noninteractive_writes_the_fallback_for_a_disabled_task() -> None:
+    # Worst case of the old behaviour: install() saw a matching action, called
+    # itself done, and skipped the .lnk — so autostart was dead on BOTH paths.
+    mgr, calls = _mk(task_info=_DISABLED_INFO)
+    mgr.install(_SPEC, interactive=False)
+    assert "write_shortcut" in calls
+    assert "elevate_register" not in calls  # the boot reconcile never prompts
+
+
+def test_install_interactive_reregisters_a_disabled_task() -> None:
+    mgr, calls = _mk(task_info=_DISABLED_INFO, elevate_ok=True)
+    st = mgr.install(_SPEC, interactive=True)
+    assert "elevate_register" in calls
+    assert st.matches_spec is True
+
+
+# --------------------------------------------------------------------------- #
+# Elevated launcher: the temp script path must survive a space                 #
+# --------------------------------------------------------------------------- #
+
+
+def test_elevated_launcher_quotes_a_temp_path_with_spaces(monkeypatch) -> None:
+    """Start-Process joins -ArgumentList with spaces and quotes nothing.
+
+    On an account named "John Doe" the elevated PowerShell received
+    ``-File C:\\Users\\John`` and aborted, so the user approved a UAC prompt and
+    autostart still fell back to the throttled .lnk — logged as "UAC declined".
+    """
+    import os
+    import subprocess
+
+    from jarvis.autostart import windows as win_mod
+
+    spaced = r"C:\Users\John Doe\AppData\Local\Temp\tmp_autostart.ps1"
+    fd = os.open(os.devnull, os.O_WRONLY)
+    monkeypatch.setattr(win_mod.tempfile, "mkstemp", lambda suffix="": (fd, spaced))
+    monkeypatch.setattr(win_mod.os, "unlink", lambda _path: None)
+
+    seen: list[str] = []
+
+    def _fake_run(argv, **_kwargs):
+        seen.append(argv[-1])
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(win_mod.subprocess, "run", _fake_run)
+
+    assert win_mod._run_powershell_elevated("exit 0") is True
+    assert f"'-File','\"{spaced}\"'" in seen[0]
+
+
+def test_elevated_launcher_fails_safe_on_a_null_exit_code(monkeypatch) -> None:
+    """`exit $null` exits 0 — measured on Windows 11, 2026-08-10.
+
+    Start-Process -Verb RunAs -Wait -PassThru can return a process object whose
+    ExitCode is $null, so a registration that never happened was reported as
+    success: install() then deleted the .lnk fallback and logged "scheduled
+    task registered", leaving autostart dead on both paths.
+    """
+    import os
+    import subprocess
+
+    from jarvis.autostart import windows as win_mod
+
+    fd = os.open(os.devnull, os.O_WRONLY)
+    monkeypatch.setattr(win_mod.tempfile, "mkstemp", lambda suffix="": (fd, "x.ps1"))
+    monkeypatch.setattr(win_mod.os, "unlink", lambda _path: None)
+
+    seen: list[str] = []
+
+    def _fake_run(argv, **_kwargs):
+        seen.append(argv[-1])
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(win_mod.subprocess, "run", _fake_run)
+    win_mod._run_powershell_elevated("exit 0")
+
+    launcher = seen[0]
+    assert "if ($null -eq $p -or $null -eq $p.ExitCode) { exit 1 }" in launcher
+    # The guard must come BEFORE the forwarding exit, or it changes nothing.
+    assert launcher.index("$null -eq $p.ExitCode") < launcher.index("exit $p.ExitCode")
