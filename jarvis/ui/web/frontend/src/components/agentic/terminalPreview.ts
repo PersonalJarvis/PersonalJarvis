@@ -112,7 +112,7 @@ function cleanPreviewRow(value: string): string {
     .replace(/\\[rn]/g, "")
     .replace(/\\t/g, "  ")
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
-    .trimEnd();
+    .trim();
 }
 
 interface TerminalBufferLike {

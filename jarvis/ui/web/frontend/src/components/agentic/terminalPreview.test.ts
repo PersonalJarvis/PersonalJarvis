@@ -10,7 +10,7 @@ import {
 
 describe("terminal preview", () => {
   it("reads the live xterm screen rather than raw terminal output", () => {
-    const lines = ["old scrollback", "prompt", "", "tests passed", "", ""];
+    const lines = ["old scrollback", "  prompt", "", "tests passed", "", ""];
     const preview = readTerminalPreview(
       {
         rows: 5,

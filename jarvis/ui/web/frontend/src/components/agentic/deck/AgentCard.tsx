@@ -155,12 +155,12 @@ export function AgentCard({
         data-testid={`deck-card-terminal-${name}`}
         aria-label={`Live terminal output for ${name}`}
         className={cn(
-          "relative min-h-[9rem] flex-1 overflow-hidden rounded-xl border border-border/80",
-          "bg-background/95 shadow-inner backdrop-blur-sm",
+          "relative min-h-[9rem] flex-1 overflow-hidden rounded-xl border border-white/25",
+          "bg-zinc-950/90 shadow-inner backdrop-blur-sm",
         )}
       >
         {terminal.length > 0 ? (
-          <div className="h-full overflow-hidden p-3 font-mono text-xs leading-[1.55] text-foreground/90">
+          <div className="h-full overflow-hidden p-3 font-mono text-xs leading-[1.55] text-zinc-100">
             {terminal.map((line, index) => (
               <div
                 key={`${index}-${line}`}
@@ -172,7 +172,7 @@ export function AgentCard({
             ))}
           </div>
         ) : (
-          <div className="flex h-full min-h-[9rem] items-center justify-center px-3 text-center font-mono text-xs text-muted-foreground/70">
+          <div className="flex h-full min-h-[9rem] items-center justify-center px-3 text-center font-mono text-xs text-zinc-400">
             Waiting for live terminal output...
           </div>
         )}
