@@ -126,6 +126,22 @@ _EXTENDED_VKS = frozenset({
 })
 
 
+class SendInputRefused(OSError):
+    """``SendInput`` accepted only part of an input batch (or none of it).
+
+    An ``OSError`` subclass so existing ``except OSError`` / ``except
+    Exception`` handlers around actuation keep working unchanged. ``injected``
+    is the extra fact they could not get before: how many events the OS took
+    before it stopped. Pointer callers need exactly that number to tell whether
+    a button-DOWN is still held and a recovery release is owed.
+    """
+
+    def __init__(self, message: str, *, injected: int, total: int) -> None:
+        super().__init__(message)
+        self.injected = injected
+        self.total = total
+
+
 def resolve_vk(key: str) -> int | None:
     """Virtual-key code for a key name, or ``None`` for an unknown key."""
     k = key.strip().lower()
@@ -259,10 +275,110 @@ class WindowsActuator(Actuator):
     def _send(self, events: list) -> None:
         t = self._t
         arr = (t.INPUT * len(events))(*events)
-        sent = t.send_input(len(events), arr, t.ctypes.sizeof(t.INPUT))
-        if sent != len(events):
-            err = t.ctypes.get_last_error()
-            raise t.ctypes.WinError(err if err else None)
+        sent = int(t.send_input(len(events), arr, t.ctypes.sizeof(t.INPUT)))
+        if sent == len(events):
+            return
+        err = t.ctypes.get_last_error()
+        # Read the code ctypes SAVED for us, and say so plainly when there is
+        # none. ``WinError(None)`` reads the THREAD's last-error instead, which
+        # the ``use_last_error=True`` wrapper has already restored to whatever
+        # it was before the call — so a refused injection used to surface as
+        # "OSError: [Errno 0] The operation completed successfully", the least
+        # diagnosable message a failed actuation could carry.
+        reason = t.ctypes.FormatError(err).strip() if err else "no Win32 error reported"
+        raise SendInputRefused(
+            f"SendInput injected {sent} of {len(events)} events "
+            f"(last_error={err}: {reason})",
+            injected=sent,
+            total=len(events),
+        )
+
+    def _send_pointer_batch(
+        self, events: list, button_states: list[int], *, button: str,
+    ) -> None:
+        """Send a batch that presses ``button``, never leaving it held down.
+
+        ``button_states[i]`` is ``+1`` when ``events[i]`` presses the button,
+        ``-1`` when it releases, ``0`` otherwise.
+
+        SendInput fills a batch element by element and stops at the first
+        rejection — UIPI blocks the rest the moment a higher-integrity window
+        takes the foreground mid-batch. A partly accepted ``[move, down, up]``
+        therefore lands the DOWN and drops its UP: the physical button stays
+        pressed and the whole desktop is unusable until the user clicks to
+        clear it. :meth:`drag_from_cursor` already pays for that lesson in a
+        try/finally; the click paths raised straight through it.
+
+        The recovery release is sent ONLY when the injected prefix actually
+        leaves the button down. A batch refused outright must not inject a
+        stray WM_*BUTTONUP that no press ever preceded.
+        """
+        try:
+            self._send(events)
+        except SendInputRefused as exc:
+            if sum(button_states[: exc.injected]) <= 0:
+                raise
+            try:
+                self._send([self._mouse_input(0, 0, 0, _MOUSE_FLAGS_UP[button])])
+                logger.warning(
+                    "SendInput refused a %s-click batch after the button went "
+                    "down; released it again to keep the desktop usable.",
+                    button,
+                )
+            except Exception:  # noqa: BLE001 — recovery is best-effort by nature
+                logger.error(
+                    "Could not release the %s mouse button after a refused click "
+                    "batch — it may still be held down.", button, exc_info=True,
+                )
+            raise
+
+    def _send_press_release(self, downs: list, ups: list) -> None:
+        """Press ``downs`` in order, release in reverse — even when a press fails.
+
+        ``ups[i]`` MUST be the release event for ``downs[i]`` (same order, same
+        length); the reverse release order is applied here, so callers describe
+        key pairs instead of hand-rolling two mirrored lists.
+
+        ``SendInput`` reports how many events it actually inserted, and a
+        partial insert is a real outcome: UIPI truncates injection the moment
+        the foreground window belongs to a higher-integrity process (Task
+        Manager, an elevated app, the secure desktop appearing mid-combo), and
+        so does any other Win32 failure inside the batch. Sending the downs and
+        the ups as ONE array meant that failure raised with the modifiers
+        already in the input stream and their key-ups never emitted — so Ctrl /
+        Alt / Shift / Win stayed logically HELD for the rest of the session:
+        every later click became a modified click, typing turned into
+        shortcuts, and nothing but tapping the physical key could clear it.
+
+        The mouse path in this same backend already guards exactly this case
+        ("a stuck pressed button makes the whole desktop unusable",
+        :meth:`drag_from_cursor` and :meth:`_send_pointer_batch`); the keyboard
+        path did not.
+
+        Like the pointer recovery, this releases only the keys the OS actually
+        took (``downs[:injected]``): a batch refused outright must not inject a
+        stray WM_KEYUP for a key that was never pressed, which applications
+        watching raw key transitions do react to.
+        """
+        try:
+            self._send(downs)
+        except SendInputRefused as exc:
+            held = list(reversed(ups[: exc.injected]))
+            if not held:
+                raise
+            try:
+                self._send(held)
+                logger.warning(
+                    "SendInput refused a key batch after %d key(s) went down; "
+                    "released them again to keep the keyboard usable.", len(held),
+                )
+            except Exception:  # noqa: BLE001 — recovery is best-effort by nature
+                logger.error(
+                    "Could not release %d key(s) after a refused batch — a "
+                    "modifier may still be held down.", len(held), exc_info=True,
+                )
+            raise
+        self._send(list(reversed(ups)))
 
     def _abs_move_event(self, x: int, y: int):
         vx, vy, vw, vh = self._virtual_bounds()
@@ -293,10 +409,13 @@ class WindowsActuator(Actuator):
             )
         with input_space():
             events = [self._abs_move_event(x, y)]
+            states = [0]    # the move neither presses nor releases
             for _ in range(2 if double else 1):
                 events.append(self._mouse_input(0, 0, 0, _MOUSE_FLAGS_DOWN[b]))
+                states.append(1)
                 events.append(self._mouse_input(0, 0, 0, _MOUSE_FLAGS_UP[b]))
-            self._send(events)
+                states.append(-1)
+            self._send_pointer_batch(events, states, button=b)
 
     def click_at_cursor(
         self,
@@ -328,10 +447,13 @@ class WindowsActuator(Actuator):
             )
         with input_space():
             events = []
+            states: list[int] = []
             for _ in range(2 if double else 1):
                 events.append(self._mouse_input(0, 0, 0, _MOUSE_FLAGS_DOWN[b]))
+                states.append(1)
                 events.append(self._mouse_input(0, 0, 0, _MOUSE_FLAGS_UP[b]))
-            self._send(events)
+                states.append(-1)
+            self._send_pointer_batch(events, states, button=b)
 
     def drag(
         self, x1: int, y1: int, x2: int, y2: int, *, duration_s: float = 0.4,
@@ -405,14 +527,13 @@ class WindowsActuator(Actuator):
                 f |= _KEYEVENTF_EXTENDEDKEY
             return f
 
-        events = [
-            self._key_input(vk, 0, flags(vk, keyup=False)) for vk in vk_codes
-        ] + [
-            self._key_input(vk, 0, flags(vk, keyup=True))
-            for vk in reversed(vk_codes)
-        ]
+        # Presses and releases go out as two batches rather than one array, so
+        # a refused press can still be undone — see _send_press_release. The
+        # emitted order is unchanged: modifiers first, released last.
+        downs = [self._key_input(vk, 0, flags(vk, keyup=False)) for vk in vk_codes]
+        ups = [self._key_input(vk, 0, flags(vk, keyup=True)) for vk in vk_codes]
         with input_space():
-            self._send(events)
+            self._send_press_release(downs, ups)
 
     def type_text(self, text: str, *, delay_s: float = 0.02) -> None:
         with input_space():
