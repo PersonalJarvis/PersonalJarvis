@@ -214,7 +214,7 @@ function ConversationList({
     >
       <div
         aria-hidden
-        className="jarvis-panel-surface pointer-events-none absolute inset-0 -z-10 backdrop-blur-md"
+        className="jarvis-shell-surface pointer-events-none absolute inset-0 -z-10 backdrop-blur-md"
       />
       <div className="flex items-center justify-between border-b border-border px-3 py-3">
         <span className="font-display text-sm font-semibold tracking-tight">
