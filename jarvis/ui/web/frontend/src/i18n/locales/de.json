@@ -3728,6 +3728,12 @@
     "paste_unavailable": "Zwischenablage konnte nicht gelesen werden.",
     "paste_failed": "Hier kann nicht eingefügt werden."
   },
+  "workspace_bar": {
+    "open_workspaces": "Offene Arbeitsbereiche",
+    "workspace_summary_one": "{workspace}, Arbeitsbereich {index}, 1 Terminal",
+    "workspace_summary_many": "{workspace}, Arbeitsbereich {index}, {count} Terminals",
+    "new_workspace": "Neuer Arbeitsbereich"
+  },
   "workspace_launcher": {
     "wizard": {
       "new_workspace": "Neuer Arbeitsbereich",
@@ -3895,6 +3901,10 @@
     }
   },
   "agentic_grid": {
+    "toolbar": {
+      "more_controls": "Weitere Arbeitsbereich-Steuerelemente",
+      "close_controls": "Arbeitsbereich-Steuerelemente schließen"
+    },
     "continue": {
       "button": "Fortsetzen",
       "hint": "Prüfen, welche Coding-Sitzungen unterbrochen wurden, und sie weiterarbeiten lassen.",

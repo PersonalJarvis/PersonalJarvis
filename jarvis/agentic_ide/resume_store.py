@@ -238,7 +238,7 @@ class Snapshot:
 
         **The bug this exists for.** Remembering closed folders (so opening one
         new workspace could not wipe out the twelve panes you shut down an hour
-        ago) turned the restore point into an archive of the last ten folders
+        ago) turned the restore point into an archive of recently used folders
         ever opened — and "Resume all sessions" reopened all ten. Restarting
         therefore brought back Tuesday's folders beside today's, each one
         carrying the same call-signs out of the same pool, so the deduplicator
@@ -374,7 +374,7 @@ def save(snapshot: Snapshot) -> None:
 # How many workspaces one restore point may remember. Above the number that can
 # be open at once, so folders you closed earlier survive alongside what is open
 # now — and bounded, so the offer stays a screen rather than an archive.
-MAX_REMEMBERED_WORKSPACES = 10
+MAX_REMEMBERED_WORKSPACES = 20
 
 
 def _merged_with_stored(snapshot: Snapshot) -> Snapshot:

@@ -30,6 +30,7 @@ import {
   Minus,
   MoveHorizontal,
   Moon,
+  MoreHorizontal,
   Plus,
   Power,
   Search,
@@ -2299,6 +2300,8 @@ export function AgenticGrid({
           </span>
         )}
 
+        <ToolbarOverflow>
+
         {/* Focus mode — the explicit switch into "Jarvis codes with me here".
             A quiet glyph that lights up while the mode is on; the one-time
             intro dialog and the tooltip carry the explanation. */}
@@ -2534,6 +2537,7 @@ export function AgenticGrid({
             {appActions}
           </div>
         )}
+        </ToolbarOverflow>
       </div>
 
       {/* ------------------------------------------------------------- grid */}
@@ -3614,6 +3618,67 @@ function ViewMenu({
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Keep every workspace tab visible in the desktop's narrowest supported window.
+ *
+ * At normal widths this wrapper is `display: contents`, so the toolbar keeps
+ * its exact established order and spacing. Below 900 px the controls stay
+ * mounted but move behind one overflow button; live status controls therefore
+ * keep their state and polling while the tab bar receives its reserved width.
+ */
+function ToolbarOverflow({ children }: { children: React.ReactNode }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const closeAndRestoreFocus = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+  return (
+    <div className="contents max-[900px]:relative max-[900px]:block max-[900px]:shrink-0">
+      <button
+        ref={triggerRef}
+        type="button"
+        data-testid="agentic-toolbar-overflow"
+        aria-expanded={open}
+        aria-controls="agentic-toolbar-overflow-panel"
+        aria-label={t("agentic_grid.toolbar.more_controls")}
+        title={t("agentic_grid.toolbar.more_controls")}
+        onClick={() => setOpen((current) => !current)}
+        className={cn(TOOLBAR_BTN, "hidden max-[900px]:flex")}
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+      {open && (
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label={t("agentic_grid.toolbar.close_controls")}
+          className="fixed inset-0 z-40 hidden cursor-default max-[900px]:block"
+          onClick={() => setOpen(false)}
+        />
+      )}
+      <div
+        id="agentic-toolbar-overflow-panel"
+        data-testid="agentic-toolbar-overflow-panel"
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          closeAndRestoreFocus();
+        }}
+        className={cn(
+          "contents",
+          open
+            ? "max-[900px]:absolute max-[900px]:right-0 max-[900px]:top-full max-[900px]:z-50 max-[900px]:mt-1 max-[900px]:flex max-[900px]:w-[min(22rem,calc(100vw-1rem))] max-[900px]:flex-wrap max-[900px]:items-center max-[900px]:justify-end max-[900px]:gap-1 max-[900px]:rounded-xl max-[900px]:border max-[900px]:border-border max-[900px]:bg-card max-[900px]:p-2 max-[900px]:shadow-xl"
+            : "max-[900px]:hidden",
+        )}
+      >
+        {children}
+      </div>
     </div>
   );
 }

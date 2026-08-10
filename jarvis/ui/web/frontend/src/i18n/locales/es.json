@@ -3728,6 +3728,12 @@
     "paste_unavailable": "No se pudo leer el portapapeles.",
     "paste_failed": "Aquí no se puede pegar."
   },
+  "workspace_bar": {
+    "open_workspaces": "Espacios de trabajo abiertos",
+    "workspace_summary_one": "{workspace}, espacio de trabajo {index}, 1 terminal",
+    "workspace_summary_many": "{workspace}, espacio de trabajo {index}, {count} terminales",
+    "new_workspace": "Nuevo espacio de trabajo"
+  },
   "workspace_launcher": {
     "wizard": {
       "new_workspace": "Nuevo espacio de trabajo",
@@ -3895,6 +3901,10 @@
     }
   },
   "agentic_grid": {
+    "toolbar": {
+      "more_controls": "Más controles del espacio de trabajo",
+      "close_controls": "Cerrar controles del espacio de trabajo"
+    },
     "continue": {
       "button": "Continuar",
       "hint": "Comprueba qué sesiones de programación se interrumpieron y pídeles que sigan.",

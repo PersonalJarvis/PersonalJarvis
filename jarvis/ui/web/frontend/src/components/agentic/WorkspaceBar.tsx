@@ -25,11 +25,40 @@
  * another one — it addresses the workspace by name instead of making the user
  * switch first, drop second, and remember which pane had focus.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, FolderGit2, Pencil, Plus, X } from "lucide-react";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { WorkspaceCard } from "@/lib/agenticIdeApi";
 import { dragCarriesFiles, extractPaneDrop, type PaneDropPayload } from "./paneDrop";
+
+/** Names remain useful through six tabs; after that, numbered icons scan better. */
+const COMPACT_FROM_WORKSPACES = 7;
+const FULL_TAB_TARGET_PX = 112;
+const FULL_ADD_BUTTON_PX = 116;
+const COMPACT_TAB_TARGET_PX = 36;
+const COMPACT_ADD_BUTTON_PX = 28;
+const ADD_TAB_FOCUS_ID = "__add_workspace__";
+
+type WorkspaceDensity = "full" | "compact" | "ordinal";
+
+/** Pick the smallest readable presentation for the space the toolbar left us. */
+function densityFor(width: number | null, workspaceCount: number): WorkspaceDensity {
+  const measured = width !== null;
+  if (
+    measured &&
+    width < workspaceCount * COMPACT_TAB_TARGET_PX + COMPACT_ADD_BUTTON_PX
+  ) {
+    return "ordinal";
+  }
+  if (
+    workspaceCount >= COMPACT_FROM_WORKSPACES ||
+    (measured && width < workspaceCount * FULL_TAB_TARGET_PX + FULL_ADD_BUTTON_PX)
+  ) {
+    return "compact";
+  }
+  return "full";
+}
 
 interface WorkspaceBarProps {
   workspaces: WorkspaceCard[];
@@ -80,6 +109,8 @@ export function WorkspaceBar({
   actions,
   embedded = false,
 }: WorkspaceBarProps) {
+  const t = useT();
+  const barRef = useRef<HTMLDivElement>(null);
   // Which tab has its close button armed. One at a time, and cleared on every
   // other interaction, so an armed X can never be clicked by accident later.
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -88,6 +119,11 @@ export function WorkspaceBar({
   // Which tab a file drag is currently over. One at a time — a drag has one
   // position — so this is an id rather than a set.
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [barWidth, setBarWidth] = useState<number | null>(null);
+  const [rovingFocusId, setRovingFocusId] = useState(
+    addingNew ? ADD_TAB_FOCUS_ID : (activeId ?? workspaces[0]?.id ?? ADD_TAB_FOCUS_ID),
+  );
+  const workspaceIdKey = workspaces.map((workspace) => workspace.id).join("\u0000");
   const full = workspaces.length >= maxWorkspaces;
 
   // A drag that ends anywhere else owes this bar no `dragleave`, and a tab left
@@ -167,6 +203,71 @@ export function WorkspaceBar({
    */
   const hasTabs = workspaces.length > 0;
 
+  // The surrounding toolbar owns a variable number of icon controls. Count
+  // alone cannot know how much width they leave, so the tab density follows the
+  // space the bar actually receives and updates as the desktop window changes.
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!hasTabs || !bar) return;
+    const update = (width: number) => {
+      if (width >= 0 && Number.isFinite(width)) setBarWidth(width);
+    };
+    update(bar.getBoundingClientRect().width);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      update(entries[0]?.contentRect.width ?? bar.getBoundingClientRect().width);
+    });
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, [hasTabs]);
+
+  // An external workspace switch becomes the roving tab stop too. Keeping the
+  // value in React state avoids imperative DOM mutations leaving two tab stops
+  // behind after a parent rerender.
+  useEffect(() => {
+    setRovingFocusId(
+      addingNew ? ADD_TAB_FOCUS_ID : (activeId ?? workspaces[0]?.id ?? ADD_TAB_FOCUS_ID),
+    );
+  }, [activeId, addingNew]);
+
+  // A refreshed array with the same IDs is not a navigation event. Only repair
+  // roving focus when its actual target disappeared (or Add became disabled).
+  useEffect(() => {
+    setRovingFocusId((current) => {
+      const stillAvailable =
+        current === ADD_TAB_FOCUS_ID
+          ? !full
+          : workspaces.some((workspace) => workspace.id === current);
+      if (stillAvailable) return current;
+      return activeId ?? workspaces[0]?.id ?? (!full ? ADD_TAB_FOCUS_ID : current);
+    });
+  }, [workspaceIdKey, full]);
+
+  const density = densityFor(barWidth, workspaces.length);
+  const compact = density !== "full";
+  const ordinalOnly = density === "ordinal";
+
+  /** Standard roving focus for a tablist with up to thirteen focus targets. */
+  const moveTabFocus = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const tabs = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]:not(:disabled)'),
+    );
+    const current = (event.target as HTMLElement).closest<HTMLElement>('[role="tab"]');
+    const currentIndex = current ? tabs.indexOf(current) : -1;
+    if (currentIndex < 0 || tabs.length === 0) return;
+    event.preventDefault();
+    let nextIndex = currentIndex;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = tabs.length - 1;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % tabs.length;
+    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+    const next = tabs[nextIndex];
+    if (!next) return;
+    setRovingFocusId(next.dataset.workspaceFocusId ?? ADD_TAB_FOCUS_ID);
+    next.focus();
+  };
+
   // Nothing open, nothing to add to and no controls to carry: the wizard IS the
   // screen, and an empty bar above it would be furniture.
   if (!hasTabs && !actions) return null;
@@ -175,22 +276,54 @@ export function WorkspaceBar({
     <div
       className={cn(
         "flex items-center gap-2",
-        embedded ? "min-w-0 flex-1" : "border-b border-border px-2 py-1",
+        embedded ? "min-w-[12rem] flex-1" : "border-b border-border px-2 py-1",
       )}
     >
       {!hasTabs && <div className="min-w-0 flex-1" />}
       {hasTabs && (
       <div
+        ref={barRef}
         data-testid="workspace-bar"
-        className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-jarvis"
+        data-density={density}
+        className={cn(
+          "flex min-w-0 flex-1 items-center overflow-hidden",
+          ordinalOnly ? "gap-px" : "gap-1",
+        )}
         role="tablist"
-        aria-label="Open workspaces"
+        aria-label={t("workspace_bar.open_workspaces")}
+        onKeyDown={moveTabFocus}
       >
-      {workspaces.map((workspace) => {
+      {workspaces.map((workspace, index) => {
         const selected = !addingNew && workspace.id === activeId;
         const armed = confirming === workspace.id;
         const renaming = editing === workspace.id;
         const dropping = dropTarget === workspace.id;
+        const summary = t(
+          workspace.terminals === 1
+            ? "workspace_bar.workspace_summary_one"
+            : "workspace_bar.workspace_summary_many",
+        )
+          .replace("{workspace}", workspace.name)
+          .replace("{index}", String(index + 1))
+          .replace("{count}", String(workspace.terminals));
+        const overlayAlignment =
+          index === 0
+            ? "left-0"
+            : index === workspaces.length - 1
+              ? "right-0"
+              : "left-1/2 -translate-x-1/2";
+        const ordinalRenamePosition =
+          index === 0
+            ? "left-0"
+            : index === workspaces.length - 1
+              ? "right-5"
+              : "left-1/2 -translate-x-full";
+        const ordinalClosePosition =
+          index === 0
+            ? "left-5"
+            : index === workspaces.length - 1
+              ? "right-0"
+              : "left-1/2";
         return (
           <div
             key={workspace.id}
@@ -209,9 +342,18 @@ export function WorkspaceBar({
              * anything else in this row. One filled surface carries "you are
              * here"; the glyph keeps the colour because it is the smallest of
              * the four and reads at a glance across a wide bar.
-             */
+            */
             className={cn(
-              "group/tab flex shrink-0 items-center gap-1.5 rounded-control border px-2 py-1 transition-colors",
+              "group/tab relative flex items-center gap-1.5 rounded-control border py-1 transition-colors",
+              compact
+                ? ordinalOnly
+                  ? "min-w-0 flex-1 basis-0 justify-center px-0"
+                  : renaming
+                    ? "min-w-0 flex-[10_1_0%] px-1"
+                    : armed
+                      ? "min-w-0 flex-[8_1_0%] px-1"
+                      : "min-w-0 flex-1 basis-0 justify-center px-1 hover:flex-[3_1_0%] focus-within:flex-[3_1_0%]"
+                : "min-w-[2.5rem] max-w-[18rem] shrink px-2",
               dropping
                 ? "border-dashed border-primary bg-primary/10"
                 : selected
@@ -221,7 +363,12 @@ export function WorkspaceBar({
           >
             {renaming ? (
               <form
-                className="flex items-center gap-1"
+                className={cn(
+                  "flex items-center gap-1",
+                  ordinalOnly &&
+                    "absolute top-0 z-30 rounded-control border border-border bg-secondary p-0.5 shadow-lg",
+                  ordinalOnly && overlayAlignment,
+                )}
                 onSubmit={(event) => {
                   event.preventDefault();
                   void commitRename(workspace);
@@ -239,7 +386,10 @@ export function WorkspaceBar({
                   onKeyDown={(event) => {
                     if (event.key === "Escape") setEditing(null);
                   }}
-                  className="w-40 rounded border border-primary/40 bg-background px-2 py-0.5 text-sm outline-none focus:border-primary disabled:opacity-60"
+                  className={cn(
+                    "rounded border border-primary/40 bg-background px-2 py-0.5 text-sm outline-none focus:border-primary disabled:opacity-60",
+                    ordinalOnly ? "w-24" : "w-40",
+                  )}
                 />
                 <button
                   type="submit"
@@ -266,24 +416,34 @@ export function WorkspaceBar({
                   type="button"
                   role="tab"
                   aria-selected={selected}
+                  aria-label={summary}
+                  tabIndex={rovingFocusId === workspace.id ? 0 : -1}
+                  data-workspace-focus-id={workspace.id}
                   disabled={busy}
                   data-testid={`workspace-tab-${workspace.id}`}
-                  title={workspace.folder}
+                  title={compact ? `${summary} — ${workspace.folder}` : workspace.folder}
                   onClick={() => {
                     setConfirming(null);
                     if (!selected) onSelect(workspace.id);
                   }}
-                  className="flex min-w-0 items-center gap-2 text-left disabled:cursor-not-allowed disabled:opacity-60"
+                  onFocus={() => setRovingFocusId(workspace.id)}
+                  className={cn(
+                    "flex min-w-0 items-center text-left disabled:cursor-not-allowed disabled:opacity-60",
+                    compact ? "flex-1 justify-center gap-1" : "gap-2",
+                  )}
                 >
-                  <FolderGit2
-                    className={cn(
-                      "h-3.5 w-3.5 shrink-0",
-                      selected ? "text-primary" : "text-muted-foreground",
-                    )}
-                  />
+                  {!ordinalOnly && (
+                    <FolderGit2
+                      className={cn(
+                        "h-3.5 w-3.5 shrink-0",
+                        selected ? "text-primary" : "text-muted-foreground",
+                      )}
+                    />
+                  )}
                   <span
                     className={cn(
                       "max-w-[14rem] truncate text-sm",
+                      compact && "sr-only",
                       selected
                         ? "font-medium text-foreground"
                         : "text-muted-foreground",
@@ -291,7 +451,19 @@ export function WorkspaceBar({
                   >
                     {workspace.name}
                   </span>
-                  <PaneCount workspace={workspace} selected={selected} />
+                  {compact ? (
+                    <span
+                      data-testid={`workspace-ordinal-${workspace.id}`}
+                      className={cn(
+                        "font-mono text-[11px] tabular-nums",
+                        selected ? "font-semibold text-foreground" : "text-muted-foreground",
+                      )}
+                    >
+                      {index + 1}
+                    </span>
+                  ) : (
+                    <PaneCount workspace={workspace} selected={selected} />
+                  )}
                 </button>
 
                 <button
@@ -301,7 +473,11 @@ export function WorkspaceBar({
                   disabled={busy}
                   data-testid={`workspace-rename-${workspace.id}`}
                   onClick={() => beginRename(workspace)}
-                  className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/tab:opacity-100 disabled:opacity-40"
+                  className={cn(
+                    "flex h-5 w-5 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover/tab:opacity-100 disabled:opacity-40",
+                    compact && "absolute z-20 bg-secondary/95",
+                    compact && (ordinalOnly ? ordinalRenamePosition : "left-0"),
+                  )}
                 >
                   <Pencil className="h-3 w-3" />
                 </button>
@@ -309,7 +485,14 @@ export function WorkspaceBar({
             )}
 
             {!renaming && armed ? (
-              <span className="flex items-center gap-1">
+              <span
+                className={cn(
+                  "flex items-center gap-1",
+                  ordinalOnly &&
+                    "absolute top-0 z-30 rounded-control border border-border bg-secondary p-0.5 shadow-lg",
+                  ordinalOnly && overlayAlignment,
+                )}
+              >
                 <button
                   type="button"
                   disabled={busy}
@@ -342,7 +525,12 @@ export function WorkspaceBar({
                 onClick={() => setConfirming(workspace.id)}
                 className={cn(
                   "flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-opacity hover:bg-destructive/20 hover:text-destructive",
-                  selected
+                  compact
+                    ? cn(
+                        "absolute z-20 bg-secondary/95 opacity-0 focus-visible:opacity-100 group-hover/tab:opacity-100",
+                        ordinalOnly ? ordinalClosePosition : "right-0",
+                      )
+                    : selected
                     ? "opacity-100"
                     : "opacity-0 focus-visible:opacity-100 group-hover/tab:opacity-100",
                 )}
@@ -358,6 +546,8 @@ export function WorkspaceBar({
         type="button"
         role="tab"
         aria-selected={addingNew}
+        tabIndex={rovingFocusId === ADD_TAB_FOCUS_ID ? 0 : -1}
+        data-workspace-focus-id={ADD_TAB_FOCUS_ID}
         disabled={busy || full}
         data-testid="workspace-add"
         title={
@@ -369,15 +559,23 @@ export function WorkspaceBar({
           setConfirming(null);
           onAdd();
         }}
+        onFocus={() => setRovingFocusId(ADD_TAB_FOCUS_ID)}
         className={cn(
-          "flex shrink-0 items-center gap-1.5 rounded-lg border border-transparent px-2 py-1 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+          "flex shrink-0 items-center rounded-lg border border-transparent text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+          ordinalOnly
+            ? "h-7 w-6 justify-center p-0"
+            : compact
+              ? "h-7 w-7 justify-center p-0"
+              : "gap-1.5 px-2 py-1",
           addingNew
             ? "border-primary/50 bg-primary/10 text-primary"
             : "text-muted-foreground hover:bg-secondary hover:text-foreground",
         )}
       >
         <Plus className="h-3.5 w-3.5" />
-        New workspace
+        <span className={cn(compact && "sr-only")}>
+          {t("workspace_bar.new_workspace")}
+        </span>
       </button>
       </div>
       )}

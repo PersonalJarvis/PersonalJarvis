@@ -458,6 +458,10 @@ async def test_the_workspace_cap_is_refused_in_plain_language(
         await _open(registry, one_too_many, [{"agent": "claude"}])
 
 
+def test_workspace_capacity_is_larger_than_the_original_six_tabs() -> None:
+    assert session_mod.MAX_WORKSPACES == 12
+
+
 # --------------------------------------------------------------------- attach
 async def _noop_output(_text: str) -> None:
     return None

@@ -2415,6 +2415,30 @@ describe("the workspace header row", () => {
     ).toBe(true);
   });
 
+  it("keeps crowded toolbar controls in one narrow-window overflow panel", () => {
+    renderGrid(BASE, {
+      workspaceBar: <div data-testid="stand-in-tabs">tabs</div>,
+      appActions: <button type="button">Restart</button>,
+    });
+
+    const trigger = screen.getByTestId("agentic-toolbar-overflow");
+    fireEvent.click(trigger);
+    const panel = screen.getByTestId("agentic-toolbar-overflow-panel");
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(panel.contains(screen.getByTestId("agentic-focus-toggle"))).toBe(true);
+    expect(panel.contains(screen.getByRole("button", { name: "Restart" }))).toBe(true);
+    expect(
+      (screen.getByRole("button", {
+        name: "Close workspace controls",
+      }) as HTMLButtonElement).tabIndex,
+    ).toBe(-1);
+
+    fireEvent.focus(screen.getByTestId("agentic-focus-toggle"));
+    fireEvent.keyDown(panel, { key: "Escape" });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it("names the project itself when no tabs were handed to it", () => {
     // The wizard and the component tests render the grid on its own. Without
     // the tabs the row would otherwise open with no idea which folder it is.

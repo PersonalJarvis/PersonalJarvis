@@ -3728,6 +3728,12 @@
     "paste_unavailable": "Could not read the clipboard.",
     "paste_failed": "Cannot paste here."
   },
+  "workspace_bar": {
+    "open_workspaces": "Open workspaces",
+    "workspace_summary_one": "{workspace}, workspace {index}, 1 terminal",
+    "workspace_summary_many": "{workspace}, workspace {index}, {count} terminals",
+    "new_workspace": "New workspace"
+  },
   "workspace_launcher": {
     "wizard": {
       "new_workspace": "New workspace",
@@ -3895,6 +3901,10 @@
     }
   },
   "agentic_grid": {
+    "toolbar": {
+      "more_controls": "More workspace controls",
+      "close_controls": "Close workspace controls"
+    },
     "continue": {
       "button": "Continue",
       "hint": "Check which coding sessions were interrupted and tell them to carry on.",

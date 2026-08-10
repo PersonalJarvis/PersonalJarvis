@@ -263,9 +263,9 @@ MOVE_POSITIONS = ("swap", "left", "right", "above", "below")
 MAX_PROMPT_CHARS = 6000
 # How many workspaces may be open at once. Not a technical ceiling — a real one
 # costs a folder's worth of running coding agents, so the cap exists to keep an
-# accidental click from spawning them, and the number is what still fits in a
-# row of tabs the user can read.
-MAX_WORKSPACES = 6
+# accidental click from spawning them. The workspace bar compacts crowded tabs
+# into numbered folder icons, which keeps this larger set on one visible row.
+MAX_WORKSPACES = 12
 # How long to wait for the pane to SHOW the prompt before pressing Enter, and
 # how finely to look. This replaced a fixed 120 ms delay: the wait is not really
 # about debouncing, it is about the pane having taken the text at all. A pane

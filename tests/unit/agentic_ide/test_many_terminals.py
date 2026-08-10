@@ -1,10 +1,10 @@
 """What holds — and what does not — once a workspace has far more than 12 panes.
 
-The cap was 12 and is now 100 per workspace, with up to 6 workspaces. Twelve was
-small enough that several things could get away with being O(n) in disguise or
-quietly bounded; a hundred is not. These tests pin the parts that must scale and
-name the ones that are deliberately bounded, so raising the cap again is a
-measurement rather than a hope.
+The cap was 12 and is now 100 per workspace, with up to 12 workspaces. Twelve
+panes was small enough that several things could get away with being O(n) in
+disguise or quietly bounded; a hundred is not. These tests pin the parts that
+must scale and name the ones that are deliberately bounded, so raising the cap
+again is a measurement rather than a hope.
 """
 
 from __future__ import annotations
