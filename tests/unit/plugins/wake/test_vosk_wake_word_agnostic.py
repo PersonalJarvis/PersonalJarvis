@@ -586,6 +586,119 @@ def test_a_contested_shape_that_loses_the_competition_does_not_fire(
     assert p.stats()["suppressed_shape_competition"] == 1
 
 
+# --- a wake call STANDS ALONE (live forensic 2026-08-10) ---------------------
+#
+# Three fires in 94 s while the user dictated German to a coding agent: the
+# grammar forced flowing speech onto 'Hey George' and the verify let it
+# through — twice via the acoustic competition, with unrelated German words
+# ('herr tracks', 'aufbürdet' — i18n-allow: live-log recognition content)
+# at the span, both conf 1.0), once via the SPELLING path itself (the en
+# model heard a literal 'hey george' inside German flow). What every genuine
+# call has and all three fires lack: silence immediately BEFORE the phrase.
+# Mid-speech no-fire is the accepted product trade-off, so lead-in speech is
+# a hard rejection for BOTH confirm paths — word-agnostic (timings only).
+
+
+_GEORGE_LEAD_IN = [
+    # Flowing dictation right up to the phrase's doorstep. i18n-allow:
+    # recognition content under test.
+    _w("und", 0.30, 0.45, conf=1.0),
+    _w("dann", 0.45, 0.70, conf=1.0),
+    _w("machen", 0.70, 1.05, conf=1.0),
+    _w("wir", 1.05, 1.18, conf=1.0),
+]
+_GEORGE_GRAMMAR = {
+    "text": "hey george",
+    "result": [
+        {"word": "hey", "start": 1.50, "end": 1.72, "conf": 1.0},
+        {"word": "george", "start": 1.72, "end": 2.15, "conf": 1.0},
+    ],
+}
+
+
+def test_a_mid_speech_shape_fire_is_rejected_by_lead_in_speech(monkeypatch) -> None:
+    """LIVE (2026-08-10 19:59:27): free ear 'aufbürdet' (i18n-allow:
+    recognition content quoted from the live log), shape UNDECIDED, the
+    competition kept the phrase at conf 1.0 mid-stream — and it fired."""
+    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
+    free = {
+        "text": "und dann machen wir aufbürdet",  # i18n-allow: recognition content under test
+        "result": [*_GEORGE_LEAD_IN, _w("aufbürdet", 1.45, 2.20, conf=1.0)],  # i18n-allow
+    }
+
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(_GEORGE_GRAMMAR, free))
+    assert p._verify_window(_loud_window(3.0), fail_open=True) is False
+    assert p.stats()["suppressed_lead_speech"] == 1
+
+
+def test_a_mid_speech_spelled_phrase_is_rejected_by_lead_in_speech(
+    monkeypatch,
+) -> None:
+    """LIVE (2026-08-10 19:58:34): the en free ear SPELLED 'hey george' out of
+    flowing German — the accept-only spelling path cannot be the way around
+    the isolation rule, or mentioning the wake word mid-sentence fires."""
+    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
+    free = {
+        "text": "und dann machen wir hey george",  # i18n-allow: recognition content under test
+        "result": [
+            *_GEORGE_LEAD_IN,
+            _w("hey", 1.50, 1.72, conf=1.0),
+            _w("george", 1.72, 2.15, conf=1.0),
+        ],
+    }
+
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(_GEORGE_GRAMMAR, free))
+    assert p._verify_window(_loud_window(3.0), fail_open=True) is False
+
+
+def test_an_isolated_call_still_fires_with_nothing_before_it(monkeypatch) -> None:
+    """The genuine quiet-room call is untouched: no lead-in words at all."""
+    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
+    free = {
+        "text": "gorsch",
+        "result": [_w("gorsch", 1.50, 2.15, conf=0.6)],
+    }
+
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(_GEORGE_GRAMMAR, free))
+    assert p._verify_window(_loud_window(3.0), fail_open=True) is True
+    assert p.stats()["suppressed_lead_speech"] == 0
+
+
+def test_a_call_after_a_natural_pause_still_fires(monkeypatch) -> None:
+    """~0.75 s of quiet before the phrase is a natural pause, not a staged one
+    — earlier speech beyond the lead window must not eat the wake."""
+    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
+    free = {
+        "text": "fertig gorsch",  # i18n-allow: recognition content under test
+        "result": [
+            # ends 0.75 s before the phrase — a natural pause
+            _w("fertig", 0.30, 0.75, conf=1.0),  # i18n-allow
+            _w("gorsch", 1.50, 2.15, conf=0.6),
+        ],
+    }
+
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(_GEORGE_GRAMMAR, free))
+    assert p._verify_window(_loud_window(3.0), fail_open=True) is True
+
+
+def test_trailing_command_speech_is_never_lead_in(monkeypatch) -> None:
+    """Only the LEADING side is gated: the wake+command breath (2026-07-25)
+    has all its extra words AFTER the phrase and keeps firing."""
+    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
+    free = {
+        "text": "gorsch wie ist das wetter",  # i18n-allow: recognition content under test
+        "result": [
+            _w("gorsch", 1.50, 2.15, conf=0.6),
+            _w("wie", 2.55, 2.70, conf=1.0),
+            _w("ist", 2.70, 2.82, conf=1.0),
+            _w("das", 2.82, 2.95, conf=1.0),
+        ],
+    }
+
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(_GEORGE_GRAMMAR, free))
+    assert p._verify_window(_loud_window(3.0), fail_open=True) is True
+
+
 # --- diagnosability: a suppressed wake must leave a trace (2026-07-25) --------
 
 

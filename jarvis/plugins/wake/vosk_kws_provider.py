@@ -263,6 +263,33 @@ SHAPE_WAKE = "wake"            # looks like a call — competition confirms as b
 SHAPE_UNDECIDED = "undecided"  # tokenisation/confidence contradicts — competition decides
 SHAPE_SPEECH = "speech"        # too much sound, or no name-sized body: never a wake
 
+# --- leading isolation: a wake call STANDS ALONE (live forensic 2026-08-10) --
+# Three fires in 94 s while the user dictated German to a coding agent
+# (19:57:53 'herr tracks' undecided, 19:58:34 'hey george' SPELLED by the en
+# model out of German flow, 19:59:27 'aufbürdet' undecided; i18n-allow:
+# recognition content quoted from the live log). Two leaked through
+# the acoustic competition — which measurably does not discriminate mid-stream
+# audio (the forced grammar happily keeps the phrase at conf 1.0 inside flowing
+# speech) — and one through the spelling path itself, so no per-path tightening
+# can close the class.
+#
+# What every genuine call has and every one of these fires lacks is word-
+# agnostic and durational (AP-27-safe): a wake call stands alone, with silence
+# immediately BEFORE it, while a forced hit on conversation has the previous
+# word ending at the phrase's doorstep. Mid-speech no-fire is the ACCEPTED
+# product trade-off (the maintainer explicitly chose it over mid-speech
+# recall), so lead-in speech is a HARD rejection for BOTH confirm paths.
+# Only the LEADING side is gated — trailing speech is the legitimate
+# wake+command breath (2026-07-25) and stays untouched.
+#
+# Bounds: voiced overlap of strictly-preceding free-decode words with the
+# ``_ISOLATION_LEAD_S`` window before the span may not exceed
+# ``_ISOLATION_MAX_LEAD_VOICED_S`` (a syllable of slack for breath sounds and
+# decoder timing jitter). Combined with the span's own 0.3 s guard this asks
+# for ~0.65 s of quiet before the phrase — a natural pause, not a staged one.
+_ISOLATION_LEAD_S = 0.6
+_ISOLATION_MAX_LEAD_VOICED_S = 0.25
+
 # --- acoustic competition for the SHAPE path (live forensic 2026-07-17) -----
 # The shape gate accepts anything that LOOKS like a wake call — which a call of
 # a DIFFERENT name also does. Live: "hey nova" confirmed (shape) for the phrase
@@ -678,6 +705,7 @@ class VoskKwsProvider:
         self._stat_early_shown = 0
         self._stat_early_retracted = 0
         self._stat_suppressed_shape_competition = 0
+        self._stat_suppressed_lead_speech = 0
         # Rate limiter for the verify-suppression log. Every rejection used to
         # be DEBUG-only, so a dropped GENUINE wake left no production trace at
         # all: the log could not tell "never heard" from "heard, verified,
@@ -914,6 +942,7 @@ class VoskKwsProvider:
             "suppressed_shape_competition": (
                 self._stat_suppressed_shape_competition
             ),
+            "suppressed_lead_speech": self._stat_suppressed_lead_speech,
         }
 
     # -- early candidate (visual-only) ----------------------------------------
@@ -1205,6 +1234,33 @@ class VoskKwsProvider:
                 if w.get("end", 0.0) >= span_a and w.get("start", 0.0) <= span_b
             ]
             free_local = " ".join(w.get("word", "") for w in local_words)
+
+            # 4) leading isolation — a wake call STANDS ALONE (see the
+            # _ISOLATION_* note). Voiced duration of strictly-preceding free
+            # words inside the lead window; a HARD rejection for both confirm
+            # paths, ahead of spelling and shape alike, because the spelled
+            # path leaked too (live 2026-08-10: the en model spelled
+            # 'hey george' out of flowing German dictation). Reads only word
+            # TIMINGS, never text (AP-27).
+            lead_a = span_a - _ISOLATION_LEAD_S
+            lead_voiced = 0.0
+            for w in fres.get("result", []):
+                if float(w.get("end", 0.0)) >= span_a:
+                    continue  # candidate-adjacent or later: not lead-in
+                lead_voiced += max(
+                    0.0,
+                    min(float(w.get("end", 0.0)), span_a)
+                    - max(float(w.get("start", 0.0)), lead_a),
+                )
+            if lead_voiced > _ISOLATION_MAX_LEAD_VOICED_S:
+                self._stat_suppressed_lead_speech += 1
+                self._log_suppression(
+                    "lead-in speech %.2fs in the %.1fs before the span — "
+                    "a wake call stands alone, this was mid-speech",
+                    lead_voiced,
+                    _ISOLATION_LEAD_S,
+                )
+                return False
             # OPEN (2026-07-25, measured): a wake spoken in ONE breath with the
             # command is materially less likely to fire than an isolated call.
             # A command word starting inside the trailing 0.3 s slack is counted
