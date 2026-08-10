@@ -138,10 +138,13 @@ class JarvisTray:
         )
 
     def _run(self) -> None:
-        # Lazy import to keep startup cheap.
-        from pystray import Icon  # type: ignore[import-untyped]
-
         try:
+            # Lazy import to keep startup cheap. It belongs inside the guarded
+            # region: optional desktop dependencies may be absent on a repaired
+            # or legacy install, and a daemon-thread traceback must never be the
+            # only signal that the tray could not start.
+            from pystray import Icon  # type: ignore[import-untyped]
+
             icon_image = _make_icon(self._state)
             self._icon = Icon(
                 "jarvis",
@@ -150,6 +153,14 @@ class JarvisTray:
                 menu=self._build_menu(),
             )
             self._icon.run()
+        except ModuleNotFoundError as exc:
+            log.warning(
+                "Tray not started: optional desktop dependency %r is unavailable. "
+                "Repair the installation with the advertised [full] profile; "
+                "continuing without a tray.",
+                exc.name or "unknown",
+            )
+            self._icon = None
         except Exception:  # noqa: BLE001 — a missing tray host must not die silently (AD-6)
             log.warning(
                 "Tray icon could not start (no notification-area / AppIndicator "

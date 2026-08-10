@@ -164,6 +164,19 @@ def test_tray_start_spawns_thread_with_display(monkeypatch) -> None:
     assert ran == [True]
 
 
+def test_tray_run_degrades_when_pystray_is_missing(monkeypatch, caplog) -> None:
+    """A damaged legacy install must not leak an exception from its tray thread."""
+    monkeypatch.setitem(sys.modules, "pystray", None)
+    tray = JarvisTray()
+
+    with caplog.at_level(logging.WARNING):
+        tray._run()
+
+    assert tray._icon is None
+    assert "desktop dependency 'pystray' is unavailable" in caplog.text
+    assert "[full] profile" in caplog.text
+
+
 def test_tray_menu_strings_are_english() -> None:
     src = Path(tray_mod.__file__).read_text(encoding="utf-8")
     for german in (
