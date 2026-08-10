@@ -1945,9 +1945,17 @@ export function managedRuntimeBadge(
   if (runtime.reachable) {
     return { key: "apikeys_view.managed_server_port_conflict", tone: "warn" };
   }
-  return runtime.owned
-    ? { key: "apikeys_view.managed_server_starting", tone: "warn" }
-    : { key: "apikeys_view.managed_server_stopped", tone: "muted" };
+  if (runtime.owned) {
+    return { key: "apikeys_view.managed_server_starting", tone: "warn" };
+  }
+  // Two consecutive readiness timeouts mean whole five-minute boot budgets
+  // burned with nothing to show — "Server stopped" would hide a crash loop
+  // behind the same muted badge as a deliberate stop (live 2026-08-09, four
+  // reaped generations in forty minutes read as an endless quiet "starting").
+  if ((runtime.boot?.failed_streak ?? 0) >= 2) {
+    return { key: "apikeys_view.managed_server_crash_loop", tone: "warn" };
+  }
+  return { key: "apikeys_view.managed_server_stopped", tone: "muted" };
 }
 
 /**
@@ -2302,6 +2310,26 @@ function ManagedServerPanel({
           >
             {t(runtimeBadge.key)}
           </span>
+          {runtimeBadge.key === "apikeys_view.managed_server_starting" &&
+            runtime?.boot?.starting &&
+            runtime.boot.stage_label && (
+              <span className="text-muted-foreground">
+                {typeof runtime.boot.remaining_s === "number" &&
+                runtime.boot.remaining_s > 0
+                  ? `${runtime.boot.stage_label} · ${t(
+                      "apikeys_view.managed_server_starting_eta",
+                    ).replace(
+                      "{0}",
+                      String(
+                        Math.max(
+                          10,
+                          Math.round(runtime.boot.remaining_s / 10) * 10,
+                        ),
+                      ),
+                    )}`
+                  : runtime.boot.stage_label}
+              </span>
+            )}
           {runtime && !runtime.reachable && !runtime.owned && (
             <Button
               size="sm"

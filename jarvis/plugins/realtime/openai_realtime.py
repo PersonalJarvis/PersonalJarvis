@@ -1430,6 +1430,11 @@ _LOCAL_POOL_PROBE_TIMEOUT_S = 0.35
 #: reported unavailable" told nobody what to do (live 2026-08-09 11:50:47).
 #: English on purpose: these are backend strings, and the spoken failure
 #: sentence is localized separately by the session's language resolver.
+#: The starting sentence is only the fallback: when the supervisor can see
+#: the boot stage and a measured ETA, ``_local_starting_reason`` upgrades it
+#: to "loading the speaking voice, about 40 seconds left" (the static
+#: "about a minute" undersold a 65-second model switch, live 2026-08-10
+#: 20:16:49).
 _LOCAL_REASON_STARTING = (
     "The local voice server is not answering yet — it is starting in the "
     "background. Try the call again in about a minute."
@@ -1702,6 +1707,43 @@ class LocalRealtimeProvider:
         """
         return self._duplex_unavailable_reason
 
+    @staticmethod
+    def _local_starting_reason(supervisor: Any) -> str:
+        """The boot refusal, upgraded with the live stage and honest ETA.
+
+        Falls back to the static sentence whenever the supervisor cannot
+        prove a stage or a measured remaining time — a progress hint must
+        never invent one.
+        """
+        try:
+            boot = supervisor.boot_snapshot()
+            if not isinstance(boot, dict) or not boot.get("starting"):
+                return _LOCAL_REASON_STARTING
+            label = boot.get("stage_label")
+            remaining = boot.get("remaining_s")
+            if isinstance(label, str) and label:
+                if (
+                    isinstance(remaining, (int, float))
+                    and not isinstance(remaining, bool)
+                    and remaining > 0
+                ):
+                    # Tens of seconds is the honest resolution of a model
+                    # load; a to-the-second countdown would imply precision
+                    # the median of five boots does not have.
+                    rounded = max(10, round(float(remaining) / 10.0) * 10)
+                    return (
+                        "The local voice server is starting — currently "
+                        f"{label}, about {rounded} seconds left. Try the "
+                        "call again shortly."
+                    )
+                return (
+                    "The local voice server is starting — currently "
+                    f"{label}. Try the call again in about a minute."
+                )
+        except Exception:  # noqa: BLE001 - a progress hint never breaks the verdict
+            log.debug("local-realtime: boot progress hint failed", exc_info=True)
+        return _LOCAL_REASON_STARTING
+
     async def can_open_duplex_session(self) -> bool:
         self._duplex_unavailable_reason = ""
         if not self._base_url:
@@ -1740,10 +1782,10 @@ class LocalRealtimeProvider:
                     "local-realtime: pool capacity probe failed",
                     exc_info=True,
                 )
-                self._duplex_unavailable_reason = _LOCAL_REASON_STARTING
+                self._duplex_unavailable_reason = self._local_starting_reason(supervisor)
                 return False
             if pool is None:
-                self._duplex_unavailable_reason = _LOCAL_REASON_STARTING
+                self._duplex_unavailable_reason = self._local_starting_reason(supervisor)
                 return False
             if int(pool.get("available", 0)) > 0:
                 self._duplex_unavailable_reason = ""
@@ -1819,7 +1861,7 @@ class LocalRealtimeProvider:
                 "local-realtime: managed server is still starting in the "
                 "background; refusing to hold this call on Connecting"
             )
-            self._duplex_unavailable_reason = _LOCAL_REASON_STARTING
+            self._duplex_unavailable_reason = self._local_starting_reason(supervisor)
         return False
 
     async def _resolve_model(self) -> str:

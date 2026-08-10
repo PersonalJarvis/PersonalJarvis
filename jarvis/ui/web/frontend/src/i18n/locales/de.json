@@ -1181,6 +1181,8 @@
     "managed_server_running": "Server läuft",
     "managed_server_stopped": "Server gestoppt",
     "managed_server_starting": "Server startet — Sprachmodelle werden geladen…",
+    "managed_server_starting_eta": "noch etwa {0} s",
+    "managed_server_crash_loop": "Server startet wiederholt nicht — bitte das Server-Log prüfen",
     "managed_server_port_conflict": "Ein anderer Prozess belegt diesen Port",
     "managed_server_no_capacity": "Server antwortet, hat aber keine freie Sprach-Pipeline",
     "managed_start_cta": "Server starten",

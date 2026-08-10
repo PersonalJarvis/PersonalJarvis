@@ -1197,4 +1197,26 @@ describe("managed server badge", () => {
       managedRuntimeBadge(runtime({ reachable: false, owned: false }), false)?.key,
     ).toBe("apikeys_view.managed_server_stopped");
   });
+
+  it("names a crash loop instead of hiding it behind 'stopped'", () => {
+    // Live 2026-08-09: four consecutive readiness timeouts read as a quiet
+    // muted badge; two burned five-minute boot budgets deserve a warning.
+    const looping = runtime({
+      reachable: false,
+      owned: false,
+      boot: { failed_streak: 2, starting: false },
+    });
+    const badge = managedRuntimeBadge(looping, true);
+    expect(badge?.key).toBe("apikeys_view.managed_server_crash_loop");
+    expect(badge?.tone).toBe("warn");
+    // One failure is still normal churn, not a loop.
+    const single = runtime({
+      reachable: false,
+      owned: false,
+      boot: { failed_streak: 1, starting: false },
+    });
+    expect(managedRuntimeBadge(single, true)?.key).toBe(
+      "apikeys_view.managed_server_stopped",
+    );
+  });
 });

@@ -50,9 +50,7 @@ def _spawn_ready(monkeypatch, tmp_path: Path) -> list[dict[str, Any]]:
     return spawned
 
 
-def test_model_switch_never_interrupts_an_active_voice_call(
-    monkeypatch, tmp_path
-) -> None:
+def test_model_switch_never_interrupts_an_active_voice_call(monkeypatch, tmp_path) -> None:
     from jarvis.realtime.local_server import install
 
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
@@ -73,12 +71,15 @@ def test_model_switch_never_interrupts_an_active_voice_call(
         lambda **kwargs: pytest.fail("an active call must not be stopped"),
     )
 
-    assert supervisor.replace_idle_managed_runtime(
-        current_command=command,
-        launch_command=f"{command} --model_name qwen3.5:4b",
-        base_url="http://127.0.0.1:8765",
-        reason="test-switch",
-    ) == "refused:call-active"
+    assert (
+        supervisor.replace_idle_managed_runtime(
+            current_command=command,
+            launch_command=f"{command} --model_name qwen3.5:4b",
+            base_url="http://127.0.0.1:8765",
+            reason="test-switch",
+        )
+        == "refused:call-active"
+    )
 
 
 # ── Address parsing ──────────────────────────────────────────────────────
@@ -121,6 +122,7 @@ def test_runtime_probe_requires_a_valid_loaded_pool(monkeypatch) -> None:
             {"index": 3, "state": "stuck", "session_id": "private"},
         ],
     }
+
     class _Connection:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             pass
@@ -202,10 +204,10 @@ def test_managed_readiness_timeout_cleans_up_the_zombie(monkeypatch, tmp_path) -
     monkeypatch.setattr(
         supervisor,
         "_cleanup_timed_out_generation",
-        lambda **kwargs: cleaned.append(
-            (kwargs["install_root"], kwargs["expected_generation"])
-        )
-        or ("completed", "stopped pid 4711"),
+        lambda **kwargs: (
+            cleaned.append((kwargs["install_root"], kwargs["expected_generation"]))
+            or ("completed", "stopped pid 4711")
+        ),
     )
 
     assert not supervisor.wait_until_ready(
@@ -333,9 +335,7 @@ def test_an_alive_owned_process_is_not_double_spawned(monkeypatch, tmp_path) -> 
     assert outcome == "already-running"
 
 
-def test_slow_managed_cold_start_survives_beyond_interactive_budget(
-    monkeypatch, tmp_path
-) -> None:
+def test_slow_managed_cold_start_survives_beyond_interactive_budget(monkeypatch, tmp_path) -> None:
     """A healthy cold boot observed at 122 s must not be mistaken for a zombie."""
     from jarvis.realtime.local_server import install
 
@@ -379,9 +379,7 @@ def test_slow_managed_cold_start_survives_beyond_interactive_budget(
     assert outcome == "already-running"
 
 
-def test_an_owned_managed_zombie_is_replaced_after_startup_deadline(
-    monkeypatch, tmp_path
-) -> None:
+def test_an_owned_managed_zombie_is_replaced_after_startup_deadline(monkeypatch, tmp_path) -> None:
     from jarvis.realtime.local_server import install
 
     supervisor._reset_for_tests()
@@ -403,9 +401,7 @@ def test_an_owned_managed_zombie_is_replaced_after_startup_deadline(
     monkeypatch.setattr(supervisor, "_port_open", lambda *args, **kwargs: False)
     monkeypatch.setattr(supervisor, "_process_create_time", lambda pid: 1000.0)
     killed: list[int] = []
-    monkeypatch.setattr(
-        supervisor, "_kill_pid_tree", lambda pid: killed.append(pid) or True
-    )
+    monkeypatch.setattr(supervisor, "_kill_pid_tree", lambda pid: killed.append(pid) or True)
     monkeypatch.setattr(supervisor, "_kill_by_install_root", lambda root: (0, 0))
     spawned: list[str] = []
     monkeypatch.setattr(
@@ -426,9 +422,7 @@ def test_an_owned_managed_zombie_is_replaced_after_startup_deadline(
     assert spawned and "--ws_host 127.0.0.1" in spawned[0]
 
 
-def test_managed_spawn_uses_the_bounded_voice_brain_command(
-    monkeypatch, tmp_path
-) -> None:
+def test_managed_spawn_uses_the_bounded_voice_brain_command(monkeypatch, tmp_path) -> None:
     """The resource-safe profile must reach Popen, not just a helper test."""
     from jarvis.realtime.local_server import install
 
@@ -469,9 +463,7 @@ def test_a_running_install_blocks_the_spawn(monkeypatch, tmp_path) -> None:
     from jarvis.realtime.local_server import install
 
     _spawn_ready(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        install, "snapshot", lambda: {"running": True, "phase": "deps"}
-    )
+    monkeypatch.setattr(install, "snapshot", lambda: {"running": True, "phase": "deps"})
     entrypoint = install.install_root() / "venv" / "server.exe"
     outcome = supervisor.ensure_running(
         launch_command=f'"{entrypoint}" --mode realtime',
@@ -601,9 +593,7 @@ def test_spawn_is_windowless_and_records_ownership(monkeypatch, tmp_path) -> Non
         assert creationflags & supervisor._WINDOWS_BREAKAWAY_FROM_JOB
     else:
         assert creationflags == 0
-    record = json.loads(
-        (tmp_path / "local_realtime_server.pid.json").read_text(encoding="utf-8")
-    )
+    record = json.loads((tmp_path / "local_realtime_server.pid.json").read_text(encoding="utf-8"))
     assert record["pid"] == 4711
     assert record["port"] == 8765
     assert record["command"] == "serve --flag"
@@ -840,9 +830,7 @@ def test_a_ready_owned_legacy_ollama_backend_is_migrated(monkeypatch, tmp_path) 
     assert "--responses_api_reasoning_effort none" in spawned[0]
 
 
-def test_ollama_backend_migration_never_interrupts_an_active_call(
-    monkeypatch, tmp_path
-) -> None:
+def test_ollama_backend_migration_never_interrupts_an_active_call(monkeypatch, tmp_path) -> None:
     from jarvis.realtime.local_server import install
 
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
@@ -889,9 +877,7 @@ def test_ollama_backend_migration_never_interrupts_an_active_call(
     )
 
 
-def test_ollama_backend_migration_defers_when_pool_state_is_unknown(
-    monkeypatch, tmp_path
-) -> None:
+def test_ollama_backend_migration_defers_when_pool_state_is_unknown(monkeypatch, tmp_path) -> None:
     from jarvis.realtime.local_server import install
 
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
@@ -977,9 +963,7 @@ def test_a_ready_owned_loopback_bind_is_not_restarted(monkeypatch, tmp_path) -> 
     )
 
 
-def test_an_abandoned_owned_pool_is_replaced_generation_safely(
-    monkeypatch, tmp_path
-) -> None:
+def test_an_abandoned_owned_pool_is_replaced_generation_safely(monkeypatch, tmp_path) -> None:
     from jarvis.realtime.local_server import install
 
     supervisor._reset_for_tests()
@@ -1029,9 +1013,7 @@ def test_an_abandoned_owned_pool_is_replaced_generation_safely(
     assert spawned == [supervisor._force_stable_turn_detection(command)]
 
 
-def test_unavailable_pool_replacement_skips_a_newer_generation(
-    monkeypatch, tmp_path
-) -> None:
+def test_unavailable_pool_replacement_skips_a_newer_generation(monkeypatch, tmp_path) -> None:
     from jarvis.realtime.local_server import install
 
     root = tmp_path / "local_realtime"
@@ -1293,9 +1275,7 @@ def test_spawn_retries_without_breakaway_when_the_host_job_forbids_it(
     assert attempts == [flags, flags & ~supervisor._WINDOWS_BREAKAWAY_FROM_JOB]
 
 
-def test_runtime_monitor_restarts_and_rewarms_a_dead_owned_server(
-    monkeypatch, tmp_path
-) -> None:
+def test_runtime_monitor_restarts_and_rewarms_a_dead_owned_server(monkeypatch, tmp_path) -> None:
     from jarvis.realtime.local_server import install
 
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
@@ -1333,9 +1313,7 @@ def test_runtime_monitor_restarts_and_rewarms_a_dead_owned_server(
     assert calls == ["ensure:watchdog-exit", "ready", "marker", "brain"]
 
 
-def test_runtime_monitor_replaces_an_abandoned_pool_after_the_grace(
-    monkeypatch, tmp_path
-) -> None:
+def test_runtime_monitor_replaces_an_abandoned_pool_after_the_grace(monkeypatch, tmp_path) -> None:
     root = tmp_path / "local_realtime"
     command = f'"{root / "server.exe"}" --mode realtime'
     generation = (4711, 1000.0, "generation-a")
@@ -1376,9 +1354,7 @@ def test_runtime_monitor_replaces_an_abandoned_pool_after_the_grace(
     assert revives[0]["unavailable_generation"] == generation
 
 
-def test_runtime_monitor_does_not_replace_a_connected_full_pool(
-    monkeypatch, tmp_path
-) -> None:
+def test_runtime_monitor_does_not_replace_a_connected_full_pool(monkeypatch, tmp_path) -> None:
     root = tmp_path / "local_realtime"
     command = f'"{root / "server.exe"}" --mode realtime'
     pool = {
@@ -1418,9 +1394,7 @@ def test_runtime_monitor_does_not_replace_a_connected_full_pool(
     )
 
 
-def test_runtime_monitor_is_singleton_for_one_managed_generation(
-    monkeypatch, tmp_path
-) -> None:
+def test_runtime_monitor_is_singleton_for_one_managed_generation(monkeypatch, tmp_path) -> None:
     from jarvis.realtime.local_server import install
 
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
@@ -1551,9 +1525,7 @@ def test_managed_identity_follows_a_uv_python_console_script(tmp_path) -> None:
 
 
 @pytest.mark.skipif(os.name != "nt", reason="uv Windows console-script handoff")
-def test_ready_listener_replaces_a_dead_launcher_as_owner(
-    monkeypatch, tmp_path
-) -> None:
+def test_ready_listener_replaces_a_dead_launcher_as_owner(monkeypatch, tmp_path) -> None:
     import psutil
 
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
@@ -1627,6 +1599,7 @@ def test_status_reports_reachable_and_ownership(monkeypatch, tmp_path) -> None:
         "pid": None,
         "owned": False,
         "stale": False,
+        "boot": {"failed_streak": 0, "starting": False},
     }
 
 
@@ -1780,3 +1753,108 @@ def test_hf_symlink_workaround_is_windows_only(monkeypatch) -> None:
         assert "HF_HUB_DISABLE_SYMLINKS" not in env
     assert env.get("PYTHONFAULTHANDLER") == "1"
     assert env.get("PYTHONUNBUFFERED") == "1"
+
+
+# ── Boot progress in status ──────────────────────────────────────────────
+def _write_booting_pidfile(tmp_path: Path, *, spawned_ago_s: float) -> None:
+    (tmp_path / "local_realtime_server.pid.json").write_text(
+        json.dumps(
+            {
+                "pid": 4711,
+                "create_time": 1000.0,
+                "port": 8765,
+                "command": "serve",
+                "spawned_at": time.time() - spawned_ago_s,
+                "spawn_token": "boot-test-token",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_status_reports_stage_and_eta_while_an_owned_child_boots(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(supervisor, "_port_open", lambda port, timeout=1.0: False)
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: None)
+    monkeypatch.setattr(supervisor, "_process_create_time", lambda pid: 1000.0)
+    _write_booting_pidfile(tmp_path, spawned_ago_s=20.0)
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    (tmp_path / "local_realtime_server.log").write_text(
+        f"{stamp},100 - speech_to_speech.TTS.qwen3_tts_handler - INFO - "
+        "Loading Qwen3-TTS model: Qwen/Qwen3-TTS\n",
+        encoding="utf-8",
+    )
+    from jarvis.realtime.local_server import boot_progress
+
+    earlier_generation = "an-earlier-generation"
+    boot_progress.record_ready(
+        tmp_path / "local_realtime_server.boot.json",
+        token=earlier_generation,
+        duration_s=80.0,
+    )
+
+    boot = supervisor.status("http://127.0.0.1:8765")["boot"]
+
+    assert boot["starting"] is True
+    assert boot["stage"] == "voice-model"
+    assert boot["stage_label"] == "loading the speaking voice"
+    assert boot["expected_total_s"] == 80.0
+    assert 50.0 <= boot["remaining_s"] <= 65.0
+    assert boot["failed_streak"] == 0
+
+
+def test_status_records_the_boot_duration_once_when_the_pool_turns_ready(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(supervisor, "_port_open", lambda port, timeout=1.0: True)
+    monkeypatch.setattr(
+        supervisor,
+        "probe_runtime",
+        lambda *args, **kwargs: {
+            "size": 1,
+            "in_use": 0,
+            "available": 1,
+            "active": 0,
+            "draining": 0,
+            "stuck": 0,
+        },
+    )
+    monkeypatch.setattr(supervisor, "_process_create_time", lambda pid: 1000.0)
+    _write_booting_pidfile(tmp_path, spawned_ago_s=64.0)
+    from jarvis.realtime.local_server import boot_progress
+
+    first = supervisor.status("http://127.0.0.1:8765")
+    second = supervisor.status("http://127.0.0.1:8765")
+
+    assert first["boot"]["starting"] is False
+    assert second["boot"]["starting"] is False
+    stats = boot_progress.load_stats(tmp_path / "local_realtime_server.boot.json")
+    assert len(stats["durations_s"]) == 1
+    assert 63.0 <= stats["durations_s"][0] <= 70.0
+
+
+def test_readiness_timeout_cleanup_counts_toward_the_crash_loop_streak(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: None)
+    monkeypatch.setattr(supervisor, "_process_create_time", lambda pid: 1000.0)
+    monkeypatch.setattr(
+        supervisor, "_stop_owned_unlocked", lambda **kwargs: (True, "stopped pid 4711")
+    )
+    _write_booting_pidfile(tmp_path, spawned_ago_s=400.0)
+    generation = supervisor._owned_generation()
+    assert generation is not None
+
+    outcome, _message = supervisor._cleanup_timed_out_generation(
+        base_url="http://127.0.0.1:8765",
+        install_root=tmp_path / "local_realtime",
+        expected_generation=generation,
+    )
+
+    from jarvis.realtime.local_server import boot_progress
+
+    assert outcome == "completed"
+    stats = boot_progress.load_stats(tmp_path / "local_realtime_server.boot.json")
+    assert stats["failed_streak"] == 1

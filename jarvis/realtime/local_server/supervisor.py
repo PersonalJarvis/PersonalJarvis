@@ -92,9 +92,7 @@ _DEFAULT_PORT = 8765
 
 _WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 _WINDOWS_DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
-_WINDOWS_BREAKAWAY_FROM_JOB = getattr(
-    subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000
-)
+_WINDOWS_BREAKAWAY_FROM_JOB = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
 
 _LOCK = threading.Lock()
 _last_spawn_at: float = float("-inf")
@@ -126,6 +124,10 @@ def _server_log() -> Path:
 
 def _spawn_lock() -> Path:
     return _data_dir() / "local_realtime_server.spawn.lock"
+
+
+def _boot_stats() -> Path:
+    return _data_dir() / "local_realtime_server.boot.json"
 
 
 # ── Address handling ─────────────────────────────────────────────────────
@@ -205,9 +207,7 @@ def probe_runtime(base_url: str, timeout: float = 0.75) -> dict[str, int] | None
     if target_host is None:
         return None
     connection_type = (
-        http.client.HTTPSConnection
-        if target.scheme == "https"
-        else http.client.HTTPConnection
+        http.client.HTTPSConnection if target.scheme == "https" else http.client.HTTPConnection
     )
     connection = connection_type(
         target_host,
@@ -301,6 +301,7 @@ def wait_until_ready(
         if cancel_event is not None and cancel_event.is_set():
             return False
         if probe_runtime(base_url, timeout=min(0.75, max(0.05, timeout))) is not None:
+            _record_boot_ready_once()
             return True
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -595,6 +596,122 @@ def hardened_child_env(*, inject_openai_key: bool) -> dict[str, str]:
     return env
 
 
+# ── Boot progress ────────────────────────────────────────────────────────
+
+
+def _record_boot_ready_once() -> None:
+    """Persist the just-observed boot completion, once per spawn generation.
+
+    Callers race to be the first observer (status polls, the readiness
+    waiter, the monitor revive); the per-token guard in the stats file makes
+    every observation after the first a no-op. The duration sanity bound
+    keeps a long-running server's status polls from recording hours as a
+    "boot".
+    """
+    try:
+        record = _read_pidfile() or {}
+        token = record.get("spawn_token")
+        spawned_at = _json_float(record.get("spawned_at"))
+        if not isinstance(token, str) or not token or spawned_at is None:
+            return
+        duration = time.time() - spawned_at
+        if not 0 < duration <= RUNTIME_READY_TIMEOUT_S + 60.0:
+            return
+        from jarvis.realtime.local_server import boot_progress  # lazy (AP-26)
+
+        boot_progress.record_ready(_boot_stats(), token=token, duration_s=duration)
+    except Exception:  # noqa: BLE001 - statistics must never break readiness
+        log.debug("supervisor: boot-duration record failed", exc_info=True)
+
+
+def _record_boot_timeout(token: str) -> None:
+    """Count one readiness timeout toward the consecutive-failure streak."""
+    try:
+        from jarvis.realtime.local_server import boot_progress  # lazy (AP-26)
+
+        boot_progress.record_timeout(_boot_stats(), token=token)
+    except Exception:  # noqa: BLE001 - statistics must never break cleanup
+        log.debug("supervisor: boot-timeout record failed", exc_info=True)
+
+
+def _boot_status(*, booting: bool) -> dict[str, object]:
+    """The boot sub-verdict of :func:`status`, safe on every failure path."""
+    from jarvis.realtime.local_server import boot_progress  # lazy (AP-26)
+
+    stats = boot_progress.load_stats(_boot_stats())
+    payload: dict[str, object] = {
+        "failed_streak": stats["failed_streak"],
+        "starting": False,
+    }
+    if not booting:
+        return payload
+    record = _read_pidfile() or {}
+    spawned_at = _json_float(record.get("spawned_at"))
+    if spawned_at is None:
+        return payload
+    elapsed = max(0.0, time.time() - spawned_at)
+    stage = boot_progress.parse_boot_stage(
+        boot_progress.read_log_tail(_server_log()), spawned_at=spawned_at
+    )
+    expected = boot_progress.expected_boot_s(stats)
+    remaining: float | None = None
+    # Past twice the historical boot time the countdown would be a lie;
+    # showing only the stage is the honest degradation.
+    if expected is not None and elapsed <= 2.0 * expected:
+        remaining = max(5.0, expected - elapsed)
+    payload.update(
+        {
+            "starting": True,
+            "stage": stage[0] if stage else None,
+            "stage_label": stage[1] if stage else None,
+            "elapsed_s": round(elapsed, 1),
+            "expected_total_s": expected,
+            "remaining_s": round(remaining) if remaining is not None else None,
+        }
+    )
+    return payload
+
+
+def boot_snapshot() -> dict[str, object]:
+    """Live boot progress of the owned child, for user-facing refusals.
+
+    Lighter than :func:`status`: no port or pool probe — the caller already
+    holds a "not ready" verdict and only needs the stage and the honest ETA.
+    """
+    try:
+        _pid, alive = _owned_process()
+        return _boot_status(booting=alive)
+    except Exception:  # noqa: BLE001 - a progress hint never breaks a verdict
+        log.debug("supervisor: boot snapshot failed", exc_info=True)
+        return {"failed_streak": 0, "starting": False}
+
+
+def _log_crash_tail() -> None:
+    """One bounded forensic tail when the owned server exits unexpectedly.
+
+    A silently dying native child (live 2026-08-10 18:41) previously left
+    nothing but readiness-poll noise; whatever the server managed to say
+    last belongs in the desktop log next to the recovery decision.
+    """
+    try:
+        from jarvis.realtime.local_server import boot_progress  # lazy (AP-26)
+
+        tail = boot_progress.crash_tail(boot_progress.read_log_tail(_server_log()))
+        if tail:
+            log.warning(
+                "local-realtime monitor: owned server process exited "
+                "unexpectedly; last server-log lines:\n%s",
+                "\n".join(tail),
+            )
+        else:
+            log.warning(
+                "local-realtime monitor: owned server process exited "
+                "unexpectedly and left no substantive log tail"
+            )
+    except Exception:  # noqa: BLE001 - forensics must never break recovery
+        log.debug("supervisor: crash-tail capture failed", exc_info=True)
+
+
 # ── Status ───────────────────────────────────────────────────────────────
 
 
@@ -604,6 +721,10 @@ def status(base_url: str = "") -> dict[str, object]:
     pid, alive = _owned_process()
     reachable = _is_loopback(host) and _port_open(port, timeout=0.25)
     pool = probe_runtime(base_url, timeout=0.5) if reachable else None
+    if pool is not None and alive:
+        # The UI polls this while the card is open, which makes it the most
+        # reliable first observer of a completed boot (token-guarded).
+        _record_boot_ready_once()
     return {
         "reachable": reachable,
         "ready": pool is not None,
@@ -613,6 +734,7 @@ def status(base_url: str = "") -> dict[str, object]:
         "pid": pid,
         "owned": alive,
         "stale": pid is not None and not alive,
+        "boot": _boot_status(booting=alive and pool is None),
     }
 
 
@@ -881,36 +1003,26 @@ def ensure_running(
         _pid, alive = _owned_process()
         if managed_root is not None and alive:
             owned_command = _verified_owned_command()
-            owned_root = (
-                managed_install_root(owned_command) if owned_command is not None else None
-            )
+            owned_root = managed_install_root(owned_command) if owned_command is not None else None
             unsafe_bind = bool(owned_command and not _uses_loopback_bind(owned_command))
             slow_ollama_backend = bool(
                 owned_command and _needs_ollama_backend_migration(owned_command)
             )
             unstable_turn_detection = bool(
-                owned_command
-                and _needs_stable_turn_detection_migration(owned_command)
+                owned_command and _needs_stable_turn_detection_migration(owned_command)
             )
             latency_migration = slow_ollama_backend or unstable_turn_detection
             if (
                 latency_migration
                 and not unsafe_bind
-                and (
-                    pool is None
-                    or pool.get("active", pool["in_use"]) > 0
-                )
+                and (pool is None or pool.get("active", pool["in_use"]) > 0)
             ):
                 # Latency migration is never a reason to terminate somebody's
                 # live call or a generation whose state cannot be proven. The
                 # next verified-idle connect can replace this generation.
                 return "already-running"
             if owned_root is not None and (
-                unsafe_bind
-                or (
-                    latency_migration
-                    and replace_unavailable_generation is None
-                )
+                unsafe_bind or (latency_migration and replace_unavailable_generation is None)
             ):
                 # Managed servers survive app exits, so an upgrade can inherit
                 # a healthy legacy generation. Only a verified owned process
@@ -1130,11 +1242,7 @@ def _server_creationflags(*, platform_name: str | None = None) -> int:
     platform = os.name if platform_name is None else platform_name
     if platform != "nt":
         return NO_WINDOW_CREATIONFLAGS
-    return (
-        _WINDOWS_NO_WINDOW
-        | _WINDOWS_DETACHED_PROCESS
-        | _WINDOWS_BREAKAWAY_FROM_JOB
-    )
+    return _WINDOWS_NO_WINDOW | _WINDOWS_DETACHED_PROCESS | _WINDOWS_BREAKAWAY_FROM_JOB
 
 
 def _spawn(command: str, *, reason: str) -> int | None:
@@ -1238,11 +1346,7 @@ def start_runtime_monitor(*, launch_command: str, base_url: str) -> bool:
 
     global _monitor_thread, _monitor_stop, _monitor_key
     with _MONITOR_LOCK:
-        if (
-            _monitor_thread is not None
-            and _monitor_thread.is_alive()
-            and _monitor_key == key
-        ):
+        if _monitor_thread is not None and _monitor_thread.is_alive() and _monitor_key == key:
             return False
         if _monitor_stop is not None:
             _monitor_stop.set()
@@ -1314,12 +1418,20 @@ def _runtime_monitor(
     unready_since: float | None = None
     unhealthy_kind = ""
     last_outcome = ""
+    # The monitor only arms on a verified ready server, so the first
+    # alive→gone transition it sees is a genuine unexpected exit.
+    was_alive = True
     try:
         while not stop_event.wait(RUNTIME_MONITOR_POLL_S):
             try:
                 if managed_install_root(launch_command) is None:
                     return
                 _pid, alive = _owned_process()
+                if alive:
+                    was_alive = True
+                elif was_alive:
+                    was_alive = False
+                    _log_crash_tail()
                 if not alive:
                     # A healthy listener without our ownership is foreign. Do
                     # not fight it or keep trying to adopt it.
@@ -1339,9 +1451,7 @@ def _runtime_monitor(
                         log.info("local-realtime monitor: crashed runtime recovered")
                         unready_since = None
                         unhealthy_kind = ""
-                        next_pool_probe = (
-                            time.monotonic() + RUNTIME_MONITOR_POOL_INTERVAL_S
-                        )
+                        next_pool_probe = time.monotonic() + RUNTIME_MONITOR_POOL_INTERVAL_S
                     elif outcome != last_outcome:
                         log.warning(
                             "local-realtime monitor: crash recovery deferred (%s)",
@@ -1390,8 +1500,7 @@ def _runtime_monitor(
                         outcome = "refused:unverified-generation"
                         if outcome != last_outcome:
                             log.warning(
-                                "local-realtime monitor: unavailable recovery "
-                                "deferred (%s)",
+                                "local-realtime monitor: unavailable recovery deferred (%s)",
                                 outcome,
                             )
                         last_outcome = outcome
@@ -1407,9 +1516,7 @@ def _runtime_monitor(
                     log.info("local-realtime monitor: wedged runtime recovered")
                     unready_since = None
                     unhealthy_kind = ""
-                    next_pool_probe = (
-                        time.monotonic() + RUNTIME_MONITOR_POOL_INTERVAL_S
-                    )
+                    next_pool_probe = time.monotonic() + RUNTIME_MONITOR_POOL_INTERVAL_S
                 elif outcome != last_outcome:
                     log.warning(
                         "local-realtime monitor: unready recovery deferred (%s)",
@@ -1470,9 +1577,7 @@ def _stop_owned_unlocked(
     # Always sweep after the parent-tree kill. A failed bind can leave a
     # second managed process alive even though the recorded parent stopped;
     # returning early here was the orphan leak seen in the live incident.
-    swept, survivors = (
-        _kill_by_install_root(install_root) if install_root is not None else (0, 0)
-    )
+    swept, survivors = _kill_by_install_root(install_root) if install_root is not None else (0, 0)
     if survivors:
         if owner_stopped:
             clear_pidfile()
@@ -1512,6 +1617,10 @@ def _cleanup_timed_out_generation(
             owned_only=True,
             install_root=install_root,
         )
+        # Whatever the stop outcome, this generation provably never became
+        # ready inside its whole budget — that is the crash-loop signal the
+        # provider card surfaces after repeated failures.
+        _record_boot_timeout(expected_generation[2])
         return ("completed" if changed else "failed"), message
 
 
@@ -1819,9 +1928,7 @@ def warm_brain(*, launch_command: str, timeout: float = 5.0) -> bool:
     return True
 
 
-def prepare_voice_brain_command(
-    launch_command: str, *, timeout: float = 30.0
-) -> str:
+def prepare_voice_brain_command(launch_command: str, *, timeout: float = 30.0) -> str:
     """Return a managed-server command using a bounded Ollama context profile.
 
     Ollama documents that its OpenAI-compatible API has no context-size field;
@@ -1865,8 +1972,7 @@ def prepare_voice_brain_command(
                 ) from exc
             _prepared_voice_models.add(cache_key)
             log.info(
-                "local-realtime supervisor: prepared bounded Ollama model %s "
-                "from %s (num_ctx=%s)",
+                "local-realtime supervisor: prepared bounded Ollama model %s from %s (num_ctx=%s)",
                 voice_model,
                 source_model,
                 VOICE_BRAIN_CONTEXT_TOKENS,
@@ -1911,10 +2017,7 @@ def _effective_owned_launch_command(configured_command: str) -> str:
     if configured_root is None:
         return configured_command
     active_command = _verified_owned_command()
-    if (
-        active_command is not None
-        and managed_install_root(active_command) == configured_root
-    ):
+    if active_command is not None and managed_install_root(active_command) == configured_root:
         return active_command
     return configured_command
 

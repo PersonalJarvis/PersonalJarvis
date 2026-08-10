@@ -1181,6 +1181,8 @@
     "managed_server_running": "Servidor en marcha",
     "managed_server_stopped": "Servidor detenido",
     "managed_server_starting": "Servidor iniciándose — cargando los modelos de voz…",
+    "managed_server_starting_eta": "quedan unos {0} s",
+    "managed_server_crash_loop": "El servidor no consigue arrancar — revisa el registro del servidor",
     "managed_server_port_conflict": "Otro proceso está sirviendo en este puerto",
     "managed_server_no_capacity": "El servidor responde pero no tiene ninguna canalización de voz libre",
     "managed_start_cta": "Iniciar servidor",

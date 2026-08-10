@@ -857,6 +857,21 @@ export interface ManagedServerRuntime {
   owned: boolean;
   /** A pidfile exists but its process is gone. */
   stale: boolean;
+  /**
+   * Live boot verdict while an owned child loads its models, plus the
+   * consecutive readiness-timeout streak that survives a reaped child.
+   * `stage_label` is a backend English sentence fragment rendered verbatim
+   * (managed-card doctrine: substance from the server, chrome localized).
+   */
+  boot?: {
+    failed_streak?: number;
+    starting?: boolean;
+    stage?: string | null;
+    stage_label?: string | null;
+    elapsed_s?: number;
+    expected_total_s?: number | null;
+    remaining_s?: number | null;
+  } | null;
 }
 
 /** Honest go/no-go report for the one-click managed install. */
