@@ -398,6 +398,77 @@ def test_expand_combo_keys_splits_known_combos_only():
 
 
 # ---------------------------------------------------------------------------
+# key_combo must never strand a modifier in the down state
+# ---------------------------------------------------------------------------
+
+def _combo_actuator(refuse_after: int | None = None):
+    """Recording WindowsActuator whose first _send optionally reports a partial
+    injection, the way SendInput does when UIPI truncates a batch."""
+    from jarvis.cu.actuate.windows import SendInputRefused, WindowsActuator
+
+    actuator = WindowsActuator.__new__(WindowsActuator)
+    actuator._t = None
+    actuator._key_input = lambda vk, scan, flags: (vk, scan, flags)
+    sent: list[list[tuple[int, int, int]]] = []
+
+    def _send(events):
+        batch = list(events)
+        sent.append(batch)
+        if refuse_after is not None and len(sent) == 1:
+            raise SendInputRefused(
+                "refused", injected=refuse_after, total=len(batch),
+            )
+
+    actuator._send = _send
+    return actuator, sent
+
+
+def test_key_combo_presses_in_order_and_releases_in_reverse():
+    from jarvis.cu.actuate.windows import _KEYEVENTF_KEYUP
+
+    actuator, sent = _combo_actuator()
+    actuator.key_combo(["ctrl", "shift", "t"])
+
+    assert sent[0] == [(0x11, 0, 0), (0x10, 0, 0), (0x54, 0, 0)]
+    assert sent[1] == [
+        (0x54, 0, _KEYEVENTF_KEYUP),
+        (0x10, 0, _KEYEVENTF_KEYUP),
+        (0x11, 0, _KEYEVENTF_KEYUP),
+    ]
+
+
+def test_key_combo_releases_the_keys_a_refused_batch_already_pressed():
+    """SendInput fills a batch element by element and stops at the first
+    rejection. Sending downs and ups as ONE array meant a truncated press
+    raised with Ctrl/Alt/Shift/Win logically HELD for the rest of the session:
+    every later click became a modified click and typing turned into shortcuts,
+    with no way back short of tapping the physical key."""
+    from jarvis.cu.actuate.windows import _KEYEVENTF_KEYUP, SendInputRefused
+
+    actuator, sent = _combo_actuator(refuse_after=2)
+
+    with pytest.raises(SendInputRefused):
+        actuator.key_combo(["ctrl", "shift", "t"])
+
+    assert len(sent) == 2
+    # Exactly the two keys the OS took, released innermost-first.
+    assert sent[1] == [(0x10, 0, _KEYEVENTF_KEYUP), (0x11, 0, _KEYEVENTF_KEYUP)]
+
+
+def test_key_combo_sends_no_stray_keyup_when_nothing_was_injected():
+    """A batch refused outright must not inject a WM_KEYUP for a key that was
+    never pressed — applications that watch raw key transitions react to it."""
+    from jarvis.cu.actuate.windows import SendInputRefused
+
+    actuator, sent = _combo_actuator(refuse_after=0)
+
+    with pytest.raises(SendInputRefused):
+        actuator.key_combo(["ctrl", "c"])
+
+    assert len(sent) == 1
+
+
+# ---------------------------------------------------------------------------
 # Backend selection on the current host (read-only construction)
 # ---------------------------------------------------------------------------
 
