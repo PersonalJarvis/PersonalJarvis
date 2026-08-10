@@ -33,7 +33,7 @@
     "allow_sapi5_fallback": false
   },
   "brain": {
-    "primary": "local-openai",
+    "primary": "openrouter",
     "fallback": "openrouter",
     "deep_brain": "claude-cli",
     "routing_provider": "grok",
@@ -113,7 +113,7 @@
     "provider": "grok"
   },
   "brain.computer_use": {
-    "provider": "ollama"
+    "provider": "grok"
   },
   "brain.providers.grok-realtime": {
     "voice": "lux"
