@@ -424,6 +424,9 @@ class _ProviderEvent:
     tool_args: dict[str, Any] | None = None
     handoff_id: str | None = None
     provider_turn_id: str | None = None
+    # A provider acknowledgement of an interrupt Jarvis already issued must
+    # never be interpreted as a second user barge-in by the session layer.
+    self_initiated: bool = False
     # output_transcript_delta only: locally recovered vetting material — see
     # RealtimeEvent.shadow in jarvis/realtime/protocol.py.
     shadow: bool = False
@@ -825,6 +828,17 @@ class _CodexSubscriptionRealtimeSession:
         # counter makes ``receive`` drop every remaining frame of the response
         # that was cut off. Read by the receive loop, which keeps its own copy.
         self._output_drop_barrier = 0
+        # ``response.cancelled`` can trail our interrupt by several queue
+        # iterations.  By then the user's FINAL may already have re-authorized
+        # the next response, so response state alone cannot identify ownership.
+        self._last_local_interrupt_barrier = 0
+        self._last_local_interrupt_at = 0.0
+        # Set only while yielding a real speech-start edge.  An interrupt made
+        # synchronously by the session in that window cuts the OLD response and
+        # must preserve the utterance that just opened; safety/delegation cuts
+        # still retire their response normally.
+        self._speech_start_interrupt_expected = False
+        self._preserve_entitlement_interrupt_barrier = 0
         # Set by ``interrupt(retire_input_entitlement=True)`` (delegation
         # paths only), consumed by the receive loop's barrier handler: the
         # delegated utterance's response entitlement is withdrawn so the far
@@ -1465,8 +1479,11 @@ class _CodexSubscriptionRealtimeSession:
                 refusal_storm_noted = False
             return response_allowed
 
-        def _close_response(*, spent: bool) -> None:
+        def _close_response(*, spent: bool, consume_generation: bool = True) -> None:
             """Close the open response; ``spent`` retires its entitlement.
+
+            ``consume_generation=False`` is reserved for an acknowledgement of
+            the barge-in that opened the current user utterance.
 
             Only the far end can prove its response is over — a terminal item,
             a cancel, a new response it announces, a handoff, or an invented
@@ -1479,7 +1496,7 @@ class _CodexSubscriptionRealtimeSession:
             nonlocal consumed_input_generation, active_response_generation
             nonlocal response_allowed, response_open, response_opened_at
             nonlocal response_rejected_at, entitlement_spent
-            if response_allowed and active_response_generation:
+            if consume_generation and response_allowed and active_response_generation:
                 # Always advances: one utterance authorizes ONE response, and
                 # the continuation path above — never a second grounding
                 # claim on the same utterance — is what reopens it.
@@ -1846,7 +1863,13 @@ class _CodexSubscriptionRealtimeSession:
                     )
                     _cancel_completion()
                     _reset_assistant_capture()
-                    _close_response(spent=True)
+                    preserve_entitlement = (
+                        output_barrier == self._preserve_entitlement_interrupt_barrier
+                    )
+                    _close_response(
+                        spent=not preserve_entitlement,
+                        consume_generation=not preserve_entitlement,
+                    )
                     if self._retire_entitlement_pending:
                         # A DELEGATION took this turn: the utterance it was
                         # dispatched for must not re-authorize the far end's
@@ -2042,7 +2065,11 @@ class _CodexSubscriptionRealtimeSession:
                         # cough) revokes its own generation below, and the reply
                         # it interrupted must then be able to continue.
                         _close_response(spent=False)
-                        yield _ProviderEvent(type="speech_started")
+                        self._speech_start_interrupt_expected = True
+                        try:
+                            yield _ProviderEvent(type="speech_started")
+                        finally:
+                            self._speech_start_interrupt_expected = False
                     elif payload.kind == _SPEECH_DISCARDED:
                         # The endpointer opened an utterance and then judged it
                         # too short to be speech. It carries no text and must
@@ -2704,22 +2731,48 @@ class _CodexSubscriptionRealtimeSession:
                         user_final_emitted = False
                         missing_boundary_emitted = False
                         _reset_assistant_capture()
-                        yield _ProviderEvent(
-                            type="speech_started",
-                            item_id=self._last_input_item_id or None,
-                        )
+                        self._speech_start_interrupt_expected = True
+                        try:
+                            yield _ProviderEvent(
+                                type="speech_started",
+                                item_id=self._last_input_item_id or None,
+                            )
+                        finally:
+                            self._speech_start_interrupt_expected = False
                     elif item_type == "response.cancelled":
                         _cancel_completion()
                         cancelled_response_was_allowed = response_allowed
+                        now = asyncio.get_running_loop().time()
+                        self_initiated = bool(
+                            self._last_local_interrupt_barrier
+                            and now - self._last_local_interrupt_at <= _POST_INTERRUPT_GRACE_S
+                        )
+                        preserve_entitlement = bool(
+                            self_initiated
+                            and self._last_local_interrupt_barrier
+                            == self._preserve_entitlement_interrupt_barrier
+                        )
                         # This is a response boundary even when Jarvis caused
                         # the cancellation. A later ``response.done`` belongs
                         # to the same generation and must not be mistaken for
                         # another ungrounded response.
                         completion_emitted = True
                         self._assistant_delta_text = ""
-                        _close_response(spent=True)
+                        _close_response(
+                            spent=not preserve_entitlement,
+                            consume_generation=not preserve_entitlement,
+                        )
+                        if self_initiated:
+                            self._diag["self_initiated_cancellations"] += 1
+                            self._last_local_interrupt_barrier = 0
+                            self._last_local_interrupt_at = 0.0
+                            if preserve_entitlement:
+                                self._preserve_entitlement_interrupt_barrier = 0
                         if cancelled_response_was_allowed:
-                            yield _ProviderEvent(type="interrupted")
+                            yield _ProviderEvent(
+                                type="interrupted",
+                                self_initiated=self_initiated,
+                            )
                     elif item_type == "handoff_request":
                         # Exact Codex 0.146 routes this item into a normal Codex
                         # turn even with clientManagedHandoffs enabled; that flag
@@ -3093,6 +3146,12 @@ class _CodexSubscriptionRealtimeSession:
         independent review 2026-08-05).
         """
         self._output_drop_barrier += 1
+        self._last_local_interrupt_barrier = self._output_drop_barrier
+        self._last_local_interrupt_at = asyncio.get_running_loop().time()
+        if self._speech_start_interrupt_expected and not retire_input_entitlement:
+            self._preserve_entitlement_interrupt_barrier = self._output_drop_barrier
+        else:
+            self._preserve_entitlement_interrupt_barrier = 0
         if retire_input_entitlement:
             self._retire_entitlement_pending = True
         self._interrupt_pending_truncation = True

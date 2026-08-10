@@ -2272,6 +2272,94 @@ async def test_provider_speech_start_does_not_duplicate_local_boundary() -> None
 
 
 @pytest.mark.asyncio
+async def test_own_cancel_ack_keeps_the_speech_turn_answerable() -> None:
+    """A delayed cancel acknowledgement is not a second user barge-in.
+
+    Live protocol v3 delivered ``response.cancelled`` after the local FINAL
+    had already re-authorized the response. Treating that acknowledgement as
+    an external interrupt both split the recorded turn and consumed the only
+    entitlement for the answer, leaving a healthy session permanently mute.
+    """
+    transcriber = _ScheduledInputTranscriber(
+        [
+            (0.02, InputTranscriptEvent(kind="speech_started")),
+            (0.0, InputTranscriptEvent(kind="transcript", text="Hello", is_final=True)),
+        ]
+    )
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.0,
+                _Notification(
+                    "thread/realtime/transcript/delta",
+                    {
+                        "threadId": "thread-1",
+                        "role": "assistant",
+                        "delta": "Unsolicited opener.",
+                    },
+                ),
+            ),
+            (
+                0.04,
+                _Notification(
+                    "thread/realtime/transcript/delta",
+                    {
+                        "threadId": "thread-1",
+                        "role": "assistant",
+                        "delta": "Answer head. ",
+                    },
+                ),
+            ),
+            (
+                0.01,
+                _Notification(
+                    "thread/realtime/itemAdded",
+                    {
+                        "threadId": "thread-1",
+                        "item": {"type": "response.cancelled"},
+                    },
+                ),
+            ),
+            (
+                0.01,
+                _Notification(
+                    "thread/realtime/transcript/delta",
+                    {
+                        "threadId": "thread-1",
+                        "role": "assistant",
+                        "delta": "Answer tail.",
+                    },
+                ),
+            ),
+        ]
+    )
+    session = await _provider(
+        client,
+        input_transcriber_factory=lambda: transcriber,
+    ).open_session(RealtimeSessionConfig())
+
+    events = []
+    async with asyncio.timeout(1.0):
+        async for event in session.receive():
+            events.append(event)
+            if event.type == "speech_started":
+                await session.interrupt()
+            if event.type == "output_transcript_delta" and event.text == "Answer tail.":
+                break
+
+    assert [event.text for event in events if event.type == "output_transcript_delta"] == [
+        "Answer head. ",
+        "Answer tail.",
+    ]
+    cancelled = [event for event in events if event.type == "interrupted"]
+    assert len(cancelled) == 1
+    assert cancelled[0].self_initiated is True
+    assert session.diagnostics().get("self_initiated_cancellations", 0) == 1
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_a_refused_response_does_not_deafen_the_next_real_turn() -> None:
     """AD-1: one refusal must not decide the rest of the call.
 
