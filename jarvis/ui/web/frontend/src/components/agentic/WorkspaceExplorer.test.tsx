@@ -1,19 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const pushToast = vi.fn();
-let nativeFileActions = true;
-
-vi.mock("@/store/events", () => ({
-  useEventStore: (selector: (state: { pushToast: typeof pushToast }) => unknown) =>
-    selector({ pushToast }),
-}));
-
-vi.mock("@/hooks/useCapabilities", () => ({
-  useCapabilities: () => ({
-    data: { native_file_actions: nativeFileActions, platform: "win32" },
-  }),
-}));
 
 vi.mock("@/i18n", () => ({
   useT: () => (key: string) =>
@@ -25,14 +11,12 @@ vi.mock("@/i18n", () => ({
       "agentic_grid.explorer.loading": "Loading…",
       "agentic_grid.explorer.empty": "Empty folder",
       "agentic_grid.explorer.load_failed": "The folder could not be loaded.",
-      "agentic_grid.explorer.open_failed": "The file could not be opened.",
-      "agentic_grid.explorer.open_file": "Open file",
-      "agentic_grid.explorer.open_unavailable": "File opening is available in the desktop app.",
+      "agentic_grid.explorer.open_file": "Open in app",
       "agentic_grid.explorer.file": "File",
       "agentic_grid.explorer.folder": "Folder",
       "agentic_grid.explorer.symlink": "Symbolic link",
       "agentic_grid.explorer.open_hint":
-        "Double-click a file to open it in your system editor.",
+        "Click a file to open it here in the workspace.",
       "agentic_grid.explorer.truncated":
         "This folder has more entries than can be shown at once.",
     })[key] ?? key,
@@ -40,7 +24,6 @@ vi.mock("@/i18n", () => ({
 
 vi.mock("@/lib/agenticIdeApi", () => ({
   fetchWorkspaceFiles: vi.fn(),
-  openTerminalTarget: vi.fn(),
 }));
 
 import * as api from "@/lib/agenticIdeApi";
@@ -49,7 +32,6 @@ import { WorkspaceExplorer } from "./WorkspaceExplorer";
 describe("WorkspaceExplorer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    nativeFileActions = true;
     vi.mocked(api.fetchWorkspaceFiles).mockImplementation(async (_workspace, path = "") => {
       if (path === "src") {
         return {
@@ -104,19 +86,16 @@ describe("WorkspaceExplorer", () => {
         ],
       };
     });
-    vi.mocked(api.openTerminalTarget).mockResolvedValue({
-      opened: true,
-      kind: "file",
-      path: "src/main.ts",
-    });
   });
 
-  it("lazy-loads the complete tree and opens files from their relative paths", async () => {
+  it("lazy-loads the complete tree and previews files from their relative paths", async () => {
+    const onOpenFile = vi.fn();
     render(
       <WorkspaceExplorer
         workspaceId="workspace-1"
         rootName="fallback"
         onClose={vi.fn()}
+        onOpenFile={onOpenFile}
       />,
     );
 
@@ -138,36 +117,25 @@ describe("WorkspaceExplorer", () => {
     expect(await screen.findByText("main.ts")).toBeTruthy();
     expect(api.fetchWorkspaceFiles).toHaveBeenCalledWith("workspace-1", "src");
 
-    fireEvent.doubleClick(screen.getByRole("treeitem", { name: /main\.ts/i }));
-    await waitFor(() =>
-      expect(api.openTerminalTarget).toHaveBeenCalledWith(
-        "workspace-1",
-        "src/main.ts",
-      ),
-    );
+    fireEvent.click(screen.getByRole("treeitem", { name: /main\.ts/i }));
+    expect(onOpenFile).toHaveBeenCalledWith("src/main.ts", expect.any(HTMLElement));
 
-    fireEvent.click(screen.getByRole("button", { name: "Open file main.ts" }));
-    await waitFor(() =>
-      expect(api.openTerminalTarget).toHaveBeenCalledTimes(2),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Open in app main.ts" }));
+    expect(onOpenFile).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps open failures visible and lets the close button collapse the panel", async () => {
+  it("lets the close button collapse the panel", async () => {
     const onClose = vi.fn();
-    vi.mocked(api.openTerminalTarget).mockRejectedValue(new Error("No editor is available."));
     render(
       <WorkspaceExplorer
         workspaceId="workspace-1"
         rootName="project"
         onClose={onClose}
+        onOpenFile={vi.fn()}
       />,
     );
 
-    const file = await screen.findByRole("treeitem", { name: /\.gitignore/i });
-    fireEvent.doubleClick(file);
-    await waitFor(() =>
-      expect(pushToast).toHaveBeenCalledWith("error", "No editor is available."),
-    );
+    await screen.findByRole("treeitem", { name: /\.gitignore/i });
 
     fireEvent.click(screen.getByRole("button", { name: "Close the explorer" }));
     expect(onClose).toHaveBeenCalledOnce();
@@ -181,6 +149,7 @@ describe("WorkspaceExplorer", () => {
         workspaceId="workspace-1"
         rootName="project"
         onClose={vi.fn()}
+        onOpenFile={vi.fn()}
       />,
     );
 
@@ -189,23 +158,4 @@ describe("WorkspaceExplorer", () => {
     );
   });
 
-  it("disables native file opening outside the desktop app", async () => {
-    nativeFileActions = false;
-    render(
-      <WorkspaceExplorer
-        workspaceId="workspace-1"
-        rootName="project"
-        onClose={vi.fn()}
-      />,
-    );
-
-    const file = await screen.findByRole("treeitem", { name: /\.gitignore/i });
-    const openButton = screen.getByRole("button", {
-      name: /File opening is available in the desktop app\. \.gitignore/i,
-    });
-    expect((openButton as HTMLButtonElement).disabled).toBe(true);
-
-    fireEvent.doubleClick(file);
-    expect(api.openTerminalTarget).not.toHaveBeenCalled();
-  });
 });

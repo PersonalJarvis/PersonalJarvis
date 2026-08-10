@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronRight,
-  ExternalLink,
+  FileSearch,
   Link2,
   Loader2,
   RefreshCw,
@@ -16,15 +16,12 @@ import {
 } from "lucide-react";
 
 import { useThemeValue } from "@/hooks/useTheme";
-import { useCapabilities } from "@/hooks/useCapabilities";
 import { useT } from "@/i18n";
 import {
   fetchWorkspaceFiles,
-  openTerminalTarget,
   type WorkspaceFileItem,
 } from "@/lib/agenticIdeApi";
 import { cn } from "@/lib/utils";
-import { useEventStore } from "@/store/events";
 
 import { materialFileIcon, useMaterialFileIcons } from "./materialFileIcons";
 
@@ -39,24 +36,23 @@ interface WorkspaceExplorerProps {
   workspaceId: string;
   rootName: string;
   onClose: () => void;
+  onOpenFile: (path: string, trigger?: HTMLElement) => void;
 }
 
 export function WorkspaceExplorer({
   workspaceId,
   rootName,
   onClose,
+  onOpenFile,
 }: WorkspaceExplorerProps) {
   const t = useT();
   const theme = useThemeValue();
-  const capabilities = useCapabilities();
   useMaterialFileIcons();
   const tRef = useRef(t);
   tRef.current = t;
-  const pushToast = useEventStore((state) => state.pushToast);
   const [directories, setDirectories] = useState<Record<string, DirectoryState>>({});
   const [openPaths, setOpenPaths] = useState<Set<string>>(() => new Set([""]));
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [openingPath, setOpeningPath] = useState<string | null>(null);
   const [resolvedRootName, setResolvedRootName] = useState(rootName);
 
   const loadDirectory = useCallback(
@@ -124,22 +120,11 @@ export function WorkspaceExplorer({
   );
 
   const openFile = useCallback(
-    async (path: string) => {
-      if (openingPath === path) return;
-      setOpeningPath(path);
-      try {
-        await openTerminalTarget(workspaceId, path);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : "";
-        pushToast(
-          "error",
-          detail || t("agentic_grid.explorer.open_failed"),
-        );
-      } finally {
-        setOpeningPath((current) => (current === path ? null : current));
-      }
+    (path: string, trigger?: HTMLElement) => {
+      setSelectedPath(path);
+      onOpenFile(path, trigger);
     },
-    [openingPath, pushToast, t, workspaceId],
+    [onOpenFile],
   );
 
   const refresh = () => {
@@ -150,8 +135,6 @@ export function WorkspaceExplorer({
   };
 
   const rootOpen = openPaths.has("");
-  const nativeFileActions = capabilities.data?.native_file_actions === true;
-
   return (
     <aside
       id="workspace-explorer"
@@ -232,23 +215,17 @@ export function WorkspaceExplorer({
               directories={directories}
               openPaths={openPaths}
               selectedPath={selectedPath}
-              openingPath={openingPath}
-              nativeFileActions={nativeFileActions}
               theme={theme}
               onToggle={toggleDirectory}
               onSelect={setSelectedPath}
-              onOpenFile={(path) => void openFile(path)}
+              onOpenFile={openFile}
             />
           )}
         </div>
       </div>
 
       <footer className="shrink-0 border-t border-border/60 px-3 py-2 text-[10px] leading-relaxed text-muted-foreground">
-        {t(
-          nativeFileActions
-            ? "agentic_grid.explorer.open_hint"
-            : "agentic_grid.explorer.open_unavailable",
-        )}
+        {t("agentic_grid.explorer.open_hint")}
       </footer>
     </aside>
   );
@@ -260,8 +237,6 @@ function TreeLevel({
   directories,
   openPaths,
   selectedPath,
-  openingPath,
-  nativeFileActions,
   theme,
   onToggle,
   onSelect,
@@ -272,12 +247,10 @@ function TreeLevel({
   directories: Record<string, DirectoryState>;
   openPaths: Set<string>;
   selectedPath: string | null;
-  openingPath: string | null;
-  nativeFileActions: boolean;
   theme: "dark" | "light";
   onToggle: (path: string) => void;
   onSelect: (path: string) => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, trigger?: HTMLElement) => void;
 }) {
   const t = useT();
   const directory = directories[parentPath];
@@ -321,7 +294,7 @@ function TreeLevel({
           theme,
         });
         const isFile = !entry.is_directory && !entry.is_symlink;
-        const canOpen = isFile && nativeFileActions;
+        const canOpen = isFile;
         const typeName = entry.is_symlink
           ? t("agentic_grid.explorer.symlink")
           : entry.is_directory
@@ -344,17 +317,15 @@ function TreeLevel({
                 aria-selected={selected}
                 aria-label={`${entry.name}, ${typeName}`}
                 title={`${typeName} · ${entry.path}`}
-                onClick={() => {
+                onClick={(event) => {
                   onSelect(entry.path);
                   if (expandable) onToggle(entry.path);
-                }}
-                onDoubleClick={() => {
-                  if (canOpen) onOpenFile(entry.path);
+                  if (canOpen) onOpenFile(entry.path, event.currentTarget);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && canOpen) {
                     event.preventDefault();
-                    onOpenFile(entry.path);
+                    onOpenFile(entry.path, event.currentTarget);
                   }
                 }}
                 className="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left text-[12px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring/60"
@@ -385,28 +356,15 @@ function TreeLevel({
               {isFile && (
                 <button
                   type="button"
-                  onClick={() => {
-                    if (!canOpen) return;
+                  onClick={(event) => {
                     onSelect(entry.path);
-                    onOpenFile(entry.path);
+                    onOpenFile(entry.path, event.currentTarget);
                   }}
-                  disabled={!canOpen || openingPath === entry.path}
-                  aria-label={`${t(canOpen ? "agentic_grid.explorer.open_file" : "agentic_grid.explorer.open_unavailable")} ${entry.name}`}
-                  title={t(
-                    canOpen
-                      ? "agentic_grid.explorer.open_file"
-                      : "agentic_grid.explorer.open_unavailable",
-                  )}
-                  className="mr-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-muted-foreground/70 opacity-70 transition hover:bg-primary/10 hover:text-primary hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-30"
+                  aria-label={`${t("agentic_grid.explorer.open_file")} ${entry.name}`}
+                  title={t("agentic_grid.explorer.open_file")}
+                  className="mr-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-muted-foreground/70 opacity-70 transition hover:bg-primary/10 hover:text-primary hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/60"
                 >
-                  {openingPath === entry.path ? (
-                    <Loader2
-                      className="h-3 w-3 animate-spin motion-reduce:animate-none"
-                      aria-hidden
-                    />
-                  ) : (
-                    <ExternalLink className="h-3 w-3" aria-hidden />
-                  )}
+                  <FileSearch className="h-3 w-3" aria-hidden />
                 </button>
               )}
             </div>
@@ -418,8 +376,6 @@ function TreeLevel({
                 directories={directories}
                 openPaths={openPaths}
                 selectedPath={selectedPath}
-                openingPath={openingPath}
-                nativeFileActions={nativeFileActions}
                 theme={theme}
                 onToggle={onToggle}
                 onSelect={onSelect}

@@ -14,6 +14,8 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``POST   /terminal-target/open``       → open a path printed by one terminal
 * ``GET    /workspaces``                 → every open workspace, in tab order
 * ``GET    /workspaces/{id}/files``      → browse that workspace's file tree
+* ``GET    /workspaces/{id}/file``       → stream one workspace file in-app
+* ``GET    /workspaces/{id}/file-preview`` → readable text or a binary preview
 * ``PUT    /workspaces/active``          → bring one to the front (null = wizard)
 * ``PATCH  /workspaces/{workspace_id}``  → rename one workspace tab
 * ``DELETE /workspaces/{workspace_id}``  → close that one and stop its agents
@@ -53,6 +55,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 import re
 from dataclasses import asdict
 from pathlib import Path
@@ -68,6 +71,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from jarvis.agentic_ide import (
@@ -647,6 +651,19 @@ class WorkspaceFilesResponse(BaseModel):
     entries: list[WorkspaceFileItem]
     truncated: bool = False
     error: str | None = None
+
+
+class WorkspaceFilePreviewResponse(BaseModel):
+    """A bounded in-app preview without exposing an absolute host path."""
+
+    workspace_id: str
+    path: str
+    name: str
+    size: int
+    media_type: str
+    text: str | None = None
+    truncated: bool = False
+    hex_preview: str | None = None
 
 
 class SearchResponse(BaseModel):
@@ -1398,6 +1415,106 @@ def _resolve_terminal_target(workspace_folder: str, printed: str) -> Path:
     if not (target.is_file() or target.is_dir()):
         raise ValueError("terminal target is not openable")
     return target
+
+
+_WORKSPACE_PREVIEW_MAX_CHARS = 2 * 1024 * 1024
+_WORKSPACE_HEX_PREVIEW_BYTES = 256
+_WORKSPACE_FILE_CSP = (
+    "default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
+    "media-src 'self'; sandbox"
+)
+
+
+def _resolve_workspace_file(workspace_id: str, path: str) -> Path:
+    """Resolve one file inside an open workspace without leaking host paths."""
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="That workspace is not open.")
+    try:
+        target = _resolve_terminal_target(session.folder, path)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="That workspace file is unavailable.") from exc
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="That workspace file is unavailable.")
+    return target
+
+
+def _read_workspace_file_preview(target: Path) -> dict[str, object]:
+    """Extract readable text, with a small hexadecimal fallback for any binary."""
+    size = target.stat().st_size
+    media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    text: str | None = None
+    truncated = False
+
+    # Lazy import keeps document parsers off the application boot path (AP-26).
+    from jarvis.ultrawiki.extract import MAX_DOCUMENT_BYTES, extract_text
+
+    if size <= MAX_DOCUMENT_BYTES:
+        extracted = extract_text(target, filename=target.name, mime=media_type)
+        if extracted.ok:
+            text = extracted.text[:_WORKSPACE_PREVIEW_MAX_CHARS]
+            truncated = len(extracted.text) > _WORKSPACE_PREVIEW_MAX_CHARS
+
+    hex_preview: str | None = None
+    if text is None and size > 0:
+        with target.open("rb") as handle:
+            head = handle.read(_WORKSPACE_HEX_PREVIEW_BYTES)
+        hex_preview = " ".join(f"{byte:02X}" for byte in head)
+
+    return {
+        "name": target.name,
+        "size": size,
+        "media_type": media_type,
+        "text": text,
+        "truncated": truncated,
+        "hex_preview": hex_preview,
+    }
+
+
+@router.get(
+    "/workspaces/{workspace_id}/file",
+    summary="View one file from an open workspace",
+)
+async def get_workspace_file(workspace_id: str, path: str) -> FileResponse:
+    """Stream any workspace file for an in-app native viewer.
+
+    Active document formats receive a script-blocking CSP. Resolution follows
+    symlinks and rejects every target outside the selected workspace.
+    """
+    target = await asyncio.to_thread(_resolve_workspace_file, workspace_id, path)
+    media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    return FileResponse(
+        target,
+        media_type=media_type,
+        filename=target.name,
+        content_disposition_type="inline",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": _WORKSPACE_FILE_CSP,
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.get(
+    "/workspaces/{workspace_id}/file-preview",
+    response_model=WorkspaceFilePreviewResponse,
+    summary="Preview one file from an open workspace",
+)
+async def get_workspace_file_preview(
+    workspace_id: str, path: str
+) -> WorkspaceFilePreviewResponse:
+    """Return bounded readable text or a safe hexadecimal fallback."""
+    target = await asyncio.to_thread(_resolve_workspace_file, workspace_id, path)
+    try:
+        preview = await asyncio.to_thread(_read_workspace_file_preview, target)
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="That workspace file is unavailable.") from exc
+    return WorkspaceFilePreviewResponse(
+        workspace_id=workspace_id,
+        path=path.replace("\\", "/"),
+        **preview,
+    )
 
 
 @router.post(

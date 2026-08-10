@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -144,3 +145,81 @@ async def test_workspace_route_hides_unknown_and_escaping_paths(workspace: Path)
     with pytest.raises(HTTPException) as traversal:
         await routes.get_workspace_files("workspace-1", "..")
     assert traversal.value.status_code == 404
+
+
+async def test_workspace_file_route_streams_inline_without_exposing_host_path(
+    workspace: Path,
+) -> None:
+    document = workspace / "docs" / "guide.pdf"
+    document.parent.mkdir()
+    document.write_bytes(b"%PDF-1.4\npreview")
+
+    response = await routes.get_workspace_file("workspace-1", "docs/guide.pdf")
+
+    assert Path(response.path) == document
+    assert response.media_type == "application/pdf"
+    assert response.headers["content-disposition"].startswith("inline;")
+    assert response.headers["cache-control"] == "no-store"
+    assert "sandbox" in response.headers["content-security-policy"]
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert str(workspace) not in repr(response.headers)
+
+
+async def test_workspace_file_preview_extracts_text_and_office_documents(
+    workspace: Path,
+) -> None:
+    markdown = workspace / "README.md"
+    markdown.write_text("# In-app preview\n", encoding="utf-8")
+    docx = workspace / "proposal.docx"
+    with zipfile.ZipFile(docx, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            "<w:body><w:p><w:r><w:t>Office text</w:t></w:r></w:p></w:body>"
+            "</w:document>",
+        )
+
+    text_preview = await routes.get_workspace_file_preview("workspace-1", "README.md")
+    office_preview = await routes.get_workspace_file_preview("workspace-1", "proposal.docx")
+
+    assert text_preview.text == "# In-app preview"
+    assert text_preview.path == "README.md"
+    assert str(workspace) not in text_preview.model_dump_json()
+    assert office_preview.text is not None
+    assert "Office text" in office_preview.text
+
+
+async def test_workspace_file_preview_uses_bounded_hex_for_unknown_binary(
+    workspace: Path,
+) -> None:
+    binary = workspace / "archive.bin"
+    binary.write_bytes(bytes((0, 255, 42)))
+
+    preview = await routes.get_workspace_file_preview("workspace-1", "archive.bin")
+
+    assert preview.text is None
+    assert preview.hex_preview == "00 FF 2A"
+    assert preview.size == 3
+
+
+@pytest.mark.parametrize("path", ["..", "missing.txt", "."])
+async def test_workspace_file_routes_hide_unavailable_targets(
+    workspace: Path, path: str
+) -> None:
+    with pytest.raises(HTTPException) as unavailable:
+        await routes.get_workspace_file_preview("workspace-1", path)
+    assert unavailable.value.status_code == 404
+
+
+async def test_workspace_file_route_rejects_symlink_escape(workspace: Path) -> None:
+    outside = workspace.parent / "outside-secret.txt"
+    outside.write_text("not workspace content", encoding="utf-8")
+    link = workspace / "linked.txt"
+    try:
+        os.symlink(outside, link)
+    except (NotImplementedError, OSError):
+        pytest.skip("File symlinks are unavailable on this host")
+
+    with pytest.raises(HTTPException) as unavailable:
+        await routes.get_workspace_file_preview("workspace-1", "linked.txt")
+    assert unavailable.value.status_code == 404

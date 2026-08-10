@@ -1792,7 +1792,7 @@
     "safety_description": "Patterns die ohne Nachfrage ausgeführt werden, auch bei Risk-Tier 'ask'. Vermeidet Confirmation-Fatigue.",
     "appearance": {
       "title": "Erscheinungsbild",
-      "description": "Das Farbschema der gesamten App. Dunkel ist die Voreinstellung; Hell ist ein warmer Papier-Look. Wechselt sofort.",
+      "description": "Ändert die Farben der Oberfläche, ohne dein Hintergrundbild zu tönen. Dunkel ist die Voreinstellung und der Wechsel erfolgt sofort.",
       "dark": "Dunkel",
       "light": "Hell",
       "system": "System",
@@ -3942,13 +3942,23 @@
       "empty": "Leerer Ordner",
       "load_failed": "Der Ordner konnte nicht geladen werden.",
       "open_failed": "Die Datei konnte nicht geöffnet werden.",
-      "open_file": "Datei öffnen",
+      "open_file": "In der App öffnen",
       "open_unavailable": "Dateien können in der Desktop-App geöffnet werden.",
       "file": "Datei",
       "folder": "Ordner",
       "symlink": "Symbolische Verknüpfung",
-      "open_hint": "Doppelklick oder die Öffnen-Schaltfläche öffnet eine Datei.",
+      "open_hint": "Eine Datei anklicken, um sie direkt im Workspace zu öffnen.",
       "truncated": "Dieser Ordner enthält mehr Einträge, als gleichzeitig angezeigt werden können."
+    },
+    "viewer": {
+      "title": "Dateivorschau",
+      "close": "Dateivorschau schließen",
+      "loading": "Datei wird geöffnet…",
+      "failed": "Diese Datei konnte nicht dargestellt werden.",
+      "empty": "Diese Datei enthält keine darstellbare Vorschau.",
+      "binary": "Dieses Format wird als Binärvorschau angezeigt.",
+      "remote_image": "Externes Bild blockiert: {0}",
+      "truncated": "Die Vorschau ist gekürzt, weil die Datei sehr groß ist."
     },
     "arrange": {
       "carrying": "auf ein Terminal ziehen",

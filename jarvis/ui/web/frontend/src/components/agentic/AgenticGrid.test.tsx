@@ -61,6 +61,9 @@ vi.mock("@/lib/agenticIdeApi", () => ({
     entries: [],
     truncated: false,
   })),
+  fetchWorkspaceFilePreview: vi.fn(),
+  workspaceFileUrl: (workspaceId: string, path: string) =>
+    `/api/agentic-ide/workspaces/${workspaceId}/file?path=${encodeURIComponent(path)}`,
   openTerminalTarget: vi.fn(),
   promptTerminal: vi.fn(),
   // Reached from the toolbar's settings panel, which the grid always renders.
@@ -2464,6 +2467,48 @@ describe("the workspace header row", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close the explorer" }));
     expect(screen.queryByTestId("workspace-explorer")).toBeNull();
     expect(screen.getByTestId("pane-Mika")).toBe(pane);
+  });
+
+  it("opens workspace files in-app without remounting a live agent pane", async () => {
+    vi.mocked(api.fetchWorkspaceFiles).mockResolvedValueOnce({
+      workspace_id: "ide_test",
+      root_name: "project",
+      path: "",
+      entries: [
+        {
+          name: "README.md",
+          path: "README.md",
+          is_directory: false,
+          is_symlink: false,
+          size: 18,
+        },
+      ],
+      truncated: false,
+    });
+    vi.mocked(api.fetchWorkspaceFilePreview).mockResolvedValueOnce({
+      workspace_id: "ide_test",
+      path: "README.md",
+      name: "README.md",
+      size: 18,
+      media_type: "text/markdown",
+      text: "# Inside the IDE",
+      truncated: false,
+      hex_preview: null,
+    });
+    renderGrid();
+
+    const pane = screen.getByTestId("pane-Mika");
+    fireEvent.click(screen.getByTestId("workspace-explorer-toggle"));
+    const file = await screen.findByRole("treeitem", { name: /README\.md/i });
+    fireEvent.click(file);
+
+    expect(await screen.findByRole("heading", { name: "Inside the IDE" })).toBeTruthy();
+    expect(screen.getByTestId("workspace-file-viewer")).toBeTruthy();
+    expect(screen.getByTestId("pane-Mika")).toBe(pane);
+    fireEvent.click(screen.getByRole("button", { name: "Close file preview" }));
+    expect(screen.queryByTestId("workspace-file-viewer")).toBeNull();
+    expect(screen.getByTestId("pane-Mika")).toBe(pane);
+    await waitFor(() => expect(document.activeElement).toBe(file));
   });
 
   it("resizes the right-hand explorer from its left seam", async () => {

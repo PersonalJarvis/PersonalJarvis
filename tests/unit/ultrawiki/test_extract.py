@@ -425,6 +425,17 @@ def test_an_xml_entity_bomb_is_refused_rather_than_expanded():
     assert len(result.text) < 10_000
 
 
+def test_a_high_ratio_office_zip_bomb_is_refused_before_decompression():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", b"<w:t>repeat</w:t>" * 250_000)
+
+    result = extract_text(buffer.getvalue(), filename="bomb.docx")
+
+    assert not result.ok
+    assert result.text == ""
+
+
 def test_a_zip_that_is_not_really_a_zip_never_raises():
     result = extract_text(b"PK\x03\x04garbage-not-an-archive", filename="x.docx")
     assert isinstance(result, ExtractResult)

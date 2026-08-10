@@ -59,6 +59,17 @@ export interface WorkspaceFilesResponse {
   error?: string | null;
 }
 
+export interface WorkspaceFilePreviewResponse {
+  workspace_id: string;
+  path: string;
+  name: string;
+  size: number;
+  media_type: string;
+  text: string | null;
+  truncated: boolean;
+  hex_preview: string | null;
+}
+
 export interface SearchResponse {
   query: string;
   entries: FolderItem[];
@@ -726,6 +737,30 @@ export function fetchWorkspaceFiles(
   const query = path ? `?path=${encodeURIComponent(path)}` : "";
   return getJson<WorkspaceFilesResponse>(
     `/api/agentic-ide/workspaces/${encodeURIComponent(workspaceId)}/files${query}`,
+  );
+}
+
+function workspaceFileUrlFor(
+  workspaceId: string,
+  path: string,
+  endpoint: "file" | "file-preview",
+): string {
+  const query = new URLSearchParams({ path });
+  return `/api/agentic-ide/workspaces/${encodeURIComponent(workspaceId)}/${endpoint}?${query.toString()}`;
+}
+
+/** A same-origin URL suitable for an image, media element, or sandboxed frame. */
+export function workspaceFileUrl(workspaceId: string, path: string): string {
+  return workspaceFileUrlFor(workspaceId, path, "file");
+}
+
+/** Extract a bounded, safe text or hexadecimal preview for a workspace file. */
+export function fetchWorkspaceFilePreview(
+  workspaceId: string,
+  path: string,
+): Promise<WorkspaceFilePreviewResponse> {
+  return getJson<WorkspaceFilePreviewResponse>(
+    workspaceFileUrlFor(workspaceId, path, "file-preview"),
   );
 }
 

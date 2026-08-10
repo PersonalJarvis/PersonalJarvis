@@ -1792,7 +1792,7 @@
     "safety_description": "Patrones ejecutados sin confirmación, incluso en nivel de riesgo 'preguntar'. Evita la fatiga de confirmaciones.",
     "appearance": {
       "title": "Apariencia",
-      "description": "El tema de color de toda la aplicación. Oscuro es el predeterminado; claro es un aspecto de papel cálido. Cambia al instante.",
+      "description": "Cambia los colores de la interfaz sin teñir el fondo de pantalla. Oscuro es el predeterminado y el cambio es instantáneo.",
       "dark": "Oscuro",
       "light": "Claro",
       "system": "Sistema",
@@ -3942,13 +3942,23 @@
       "empty": "Carpeta vacía",
       "load_failed": "No se pudo cargar la carpeta.",
       "open_failed": "No se pudo abrir el archivo.",
-      "open_file": "Abrir archivo",
+      "open_file": "Abrir en la aplicación",
       "open_unavailable": "Los archivos se pueden abrir en la aplicación de escritorio.",
       "file": "Archivo",
       "folder": "Carpeta",
       "symlink": "Enlace simbólico",
-      "open_hint": "Haz doble clic en un archivo o usa su botón para abrirlo.",
+      "open_hint": "Haz clic en un archivo para abrirlo aquí en el espacio de trabajo.",
       "truncated": "Esta carpeta tiene más entradas de las que se pueden mostrar a la vez."
+    },
+    "viewer": {
+      "title": "Vista previa del archivo",
+      "close": "Cerrar la vista previa",
+      "loading": "Abriendo archivo…",
+      "failed": "No se pudo mostrar este archivo.",
+      "empty": "Este archivo no tiene contenido que se pueda previsualizar.",
+      "binary": "Este formato se muestra como vista previa binaria.",
+      "remote_image": "Imagen externa bloqueada: {0}",
+      "truncated": "La vista previa está truncada porque el archivo es grande."
     },
     "arrange": {
       "carrying": "suéltalo sobre un terminal",

@@ -83,6 +83,13 @@ _MAX_TEXT_CHARS = 64 * 1024 * 1024
 #: into a silent empty item instead of an honest oversized one.
 MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
 
+# Archive extraction limits. A DOCX can be only a few kilobytes on disk while
+# claiming gigabytes of repeated XML after decompression, so the compressed
+# file limit above is necessary but not sufficient.
+_MAX_ZIP_MEMBERS = 4096
+_MAX_ZIP_COMPRESSION_RATIO = 200
+_ZIP_RATIO_CHECK_MIN_BYTES = 1024 * 1024
+
 #: Leading magic → kind. Order matters: ZIP-based office formats share the
 #: `PK` signature and are separated afterwards by their inner layout.
 _MAGIC: tuple[tuple[bytes, str], ...] = (
@@ -561,8 +568,27 @@ def _zip_members(data: bytes | Path, predicate: Any) -> list[tuple[str, bytes]]:
     try:
         source: Any = data if isinstance(data, Path) else io.BytesIO(data)
         with zipfile.ZipFile(source) as archive:
-            names = [n for n in archive.namelist() if predicate(n)]
-            return [(name, archive.read(name)) for name in names]
+            members = archive.infolist()
+            if len(members) > _MAX_ZIP_MEMBERS:
+                log.warning("extract: refusing archive with too many members")
+                return []
+            selected = [member for member in members if predicate(member.filename)]
+            if sum(member.file_size for member in selected) > MAX_DOCUMENT_BYTES:
+                log.warning("extract: refusing archive with oversized extracted content")
+                return []
+            for member in selected:
+                if member.file_size > MAX_DOCUMENT_BYTES:
+                    log.warning("extract: refusing oversized archive member")
+                    return []
+                if member.file_size < _ZIP_RATIO_CHECK_MIN_BYTES:
+                    continue
+                if member.compress_size == 0:
+                    log.warning("extract: refusing archive member with invalid compression size")
+                    return []
+                if member.file_size / member.compress_size > _MAX_ZIP_COMPRESSION_RATIO:
+                    log.warning("extract: refusing archive member with unsafe compression ratio")
+                    return []
+            return [(member.filename, archive.read(member)) for member in selected]
     except Exception:  # noqa: BLE001 — a broken archive yields nothing, never raises
         log.debug("zip member read failed", exc_info=True)
         return []

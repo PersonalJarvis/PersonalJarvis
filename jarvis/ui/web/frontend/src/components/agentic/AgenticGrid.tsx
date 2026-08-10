@@ -80,6 +80,7 @@ import { PromptPreview } from "./PromptPreview";
 import { PromptEditor } from "./PromptEditor";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { WorkspaceExplorer } from "./WorkspaceExplorer";
+import { WorkspaceFileViewer } from "./WorkspaceFileViewer";
 import { usePaneFileDrag } from "./paneFileDrag";
 import {
   chatTerminalIdentity,
@@ -846,6 +847,8 @@ export function AgenticGrid({
    */
   const [viewMode, setViewModeState] = useState<WorkspaceView>(() => storedViewMode() ?? "grid");
   const [explorerOpen, setExplorerOpen] = useState(false);
+  const [openedWorkspaceFile, setOpenedWorkspaceFile] = useState<string | null>(null);
+  const openedWorkspaceFileTrigger = useRef<HTMLElement | null>(null);
   /**
    * Which agent's terminal is unfolded on the deck, if any.
    *
@@ -870,6 +873,21 @@ export function AgenticGrid({
   }, []);
   const chatView = viewMode === "chat";
   const deckView = viewMode === "deck";
+
+  useEffect(() => {
+    setOpenedWorkspaceFile(null);
+    openedWorkspaceFileTrigger.current = null;
+  }, [session.id]);
+
+  const closeWorkspaceFile = useCallback(() => {
+    setOpenedWorkspaceFile(null);
+    window.requestAnimationFrame(() => openedWorkspaceFileTrigger.current?.focus());
+  }, []);
+
+  const openWorkspaceFile = useCallback((path: string, trigger?: HTMLElement) => {
+    if (trigger) openedWorkspaceFileTrigger.current = trigger;
+    setOpenedWorkspaceFile(path);
+  }, []);
 
   /*
    * Which pane the chat stage shows. Kept apart from `target` (the pane the
@@ -1354,6 +1372,13 @@ export function AgenticGrid({
    * machine is the same arrangement at that machine's own sizes.
    */
   const canvasRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (openedWorkspaceFile) canvas.setAttribute("inert", "");
+    else canvas.removeAttribute("inert");
+  }, [openedWorkspaceFile]);
 
   /*
    * The panes and seams as ELEMENTS, so a drag can move them itself.
@@ -2875,6 +2900,7 @@ export function AgenticGrid({
         ref={canvasRef}
         data-testid="agentic-grid-canvas"
         className="relative h-full w-full"
+        aria-hidden={openedWorkspaceFile !== null}
       >
         {session.terminals.map((term, index) => {
           const box = layout.boxes[index];
@@ -3166,7 +3192,7 @@ export function AgenticGrid({
         Folded open, the terminal takes the surface and this layer shrinks to
         the strip that carries the way back.
       */}
-      {deckView && deckExpanded !== null && (
+      {!openedWorkspaceFile && deckView && deckExpanded !== null && (
         <div
           data-testid="deck-open-pane-header"
           className="absolute inset-x-0 top-0 z-30 flex items-center gap-2 px-3"
@@ -3188,7 +3214,7 @@ export function AgenticGrid({
           <span className="truncate text-xs text-muted-foreground">{deckExpanded}</span>
         </div>
       )}
-      {deckView && deckExpanded === null && (
+      {!openedWorkspaceFile && deckView && deckExpanded === null && (
         <div className="absolute inset-0 z-10">
           <DeckStage
             agents={deckAgents}
@@ -3207,6 +3233,14 @@ export function AgenticGrid({
             onWake={deck.wake}
           />
         </div>
+      )}
+      {openedWorkspaceFile && (
+        <WorkspaceFileViewer
+          workspaceId={session.id}
+          path={openedWorkspaceFile}
+          onClose={closeWorkspaceFile}
+          onOpenFile={openWorkspaceFile}
+        />
       )}
       </div>
 
@@ -3257,6 +3291,7 @@ export function AgenticGrid({
                 workspaceId={session.id}
                 rootName={project.name}
                 onClose={() => setExplorerOpen(false)}
+                onOpenFile={openWorkspaceFile}
               />
             </div>
           </>

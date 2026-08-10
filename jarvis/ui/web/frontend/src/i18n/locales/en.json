@@ -1792,7 +1792,7 @@
     "safety_description": "Patterns executed without confirmation, even at risk-tier 'ask'. Avoids confirmation fatigue.",
     "appearance": {
       "title": "Appearance",
-      "description": "The colour theme of the whole app. Dark is the default; light is a warm paper look. Switches instantly.",
+      "description": "Changes the interface colours without tinting your wallpaper. Dark is the default and switching is instant.",
       "dark": "Dark",
       "light": "Light",
       "system": "System",
@@ -3942,13 +3942,23 @@
       "empty": "Empty folder",
       "load_failed": "The folder could not be loaded.",
       "open_failed": "The file could not be opened.",
-      "open_file": "Open file",
+      "open_file": "Open in app",
       "open_unavailable": "File opening is available in the desktop app.",
       "file": "File",
       "folder": "Folder",
       "symlink": "Symbolic link",
-      "open_hint": "Double-click a file or use its open button.",
+      "open_hint": "Click a file to open it here in the workspace.",
       "truncated": "This folder has more entries than can be shown at once."
+    },
+    "viewer": {
+      "title": "File preview",
+      "close": "Close file preview",
+      "loading": "Opening file…",
+      "failed": "This file could not be displayed.",
+      "empty": "This file has no previewable content.",
+      "binary": "This format is shown as a binary preview.",
+      "remote_image": "External image blocked: {0}",
+      "truncated": "The preview is truncated because the file is large."
     },
     "arrange": {
       "carrying": "drop it on a terminal",
