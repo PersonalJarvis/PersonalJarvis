@@ -430,6 +430,154 @@ describe("PluginsView publishes OAuth success immediately", () => {
   });
 });
 
+function installImmediateConnectionFetch(
+  plugin: Record<string, unknown>,
+  startPayload?: Record<string, unknown>,
+) {
+  const probe = { catalogReads: 0 };
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/marketplace/plugins") {
+      probe.catalogReads += 1;
+      if (probe.catalogReads > 1) return new Promise<Response>(() => {});
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          version: 1,
+          schema_version: "t",
+          total: 1,
+          connected: 0,
+          plugins: [plugin],
+        }),
+      } as Response;
+    }
+    if (url.endsWith("/connect/pat")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ status: "connected" }),
+      } as Response;
+    }
+    if (url.endsWith("/connect/start") && startPayload) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => startPayload,
+      } as Response;
+    }
+    if (url === "/api/settings/open-external") {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ opened: true }),
+      } as Response;
+    }
+    if (url.includes("/connect/poll/")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "connected", plugin_id: plugin.id }),
+      } as Response;
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  });
+  (globalThis as unknown as { fetch: typeof fetch }).fetch =
+    fetchMock as unknown as typeof fetch;
+  return probe;
+}
+
+describe("PluginsView publishes every supported connection path immediately", () => {
+  it("publishes a PAT connection before catalog revalidation finishes", async () => {
+    const probe = installImmediateConnectionFetch({
+      id: "token_service",
+      display_name: "Token Service",
+      description: "Token-authenticated service",
+      category: "Developer",
+      logo_slug: "keybase",
+      auth: {
+        mode: "pat_paste",
+        token_creation_url: "https://tokens.example.test",
+        token_prefix: "",
+        instruction_md: "Create a token.",
+      },
+      status: "not_connected",
+      live_callable: false,
+    });
+
+    renderPluginsView();
+    fireEvent.click(await screen.findByRole("button", { name: "Connect plugin" }));
+    fireEvent.change(await screen.findByPlaceholderText("Token"), {
+      target: { value: "test-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+
+    await screen.findByRole("button", { name: "Disconnect plugin" });
+    expect(probe.catalogReads).toBeGreaterThan(1);
+  });
+
+  it("publishes a DCR browser-OAuth connection before revalidation finishes", async () => {
+    const probe = installImmediateConnectionFetch(
+      {
+        id: "dcr_service",
+        display_name: "DCR Service",
+        description: "Dynamic OAuth service",
+        category: "Productivity",
+        logo_slug: "oauth",
+        auth: { mode: "hosted_mcp_oauth_dcr" },
+        status: "not_connected",
+        live_callable: false,
+      },
+      {
+        flow_id: "dcr-flow",
+        plugin_id: "dcr_service",
+        kind: "browser_redirect",
+        open_url: "https://oauth.example.test/authorize",
+        expires_at_ms: null,
+      },
+    );
+
+    renderPluginsView();
+    fireEvent.click(await screen.findByRole("button", { name: "Connect plugin" }));
+
+    await screen.findByText("DCR Service connected");
+    expect(screen.getByRole("button", { name: "Disconnect plugin" })).toBeDefined();
+    expect(probe.catalogReads).toBeGreaterThan(1);
+  });
+
+  it("publishes a device-flow connection before revalidation finishes", async () => {
+    const probe = installImmediateConnectionFetch(
+      {
+        id: "device_service",
+        display_name: "Device Service",
+        description: "Device-code OAuth service",
+        category: "Developer",
+        logo_slug: "auth0",
+        auth: { mode: "oauth_device_flow" },
+        status: "not_connected",
+        live_callable: false,
+      },
+      {
+        flow_id: "device-flow",
+        plugin_id: "device_service",
+        kind: "device_flow",
+        open_url: null,
+        user_code: "ABCD-EFGH",
+        verification_uri: "https://device.example.test",
+        verification_uri_complete: null,
+        expires_at_ms: Date.now() + 300_000,
+      },
+    );
+
+    renderPluginsView();
+    fireEvent.click(await screen.findByRole("button", { name: "Connect plugin" }));
+
+    await screen.findByText("Device Service connected");
+    expect(screen.getByRole("button", { name: "Disconnect plugin" })).toBeDefined();
+    expect(probe.catalogReads).toBeGreaterThan(1);
+  });
+});
+
 describe("PluginsView keeps revoked plugins visible", () => {
   it("shows a needs_reauth plugin under Installed with a Reconnect-needed badge", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
