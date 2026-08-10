@@ -317,6 +317,7 @@ class _OpenAIRealtimeSession:
         rebuild_retry_window_s: float = 0.0,
         rebuild_retry_step_s: float = 1.0,
         prompted_response_retry: bool = False,
+        renders_surface_fallback: bool = False,
         owns_client: bool = True,
     ) -> None:
         self._conn = connection
@@ -363,6 +364,12 @@ class _OpenAIRealtimeSession:
         # routes the retry through send_text(), which appends the explicit
         # retry request as a fresh user item the model must actually answer.
         self.supports_prompted_response_retry = bool(prompted_response_retry)
+        # Whether the SESSION is the only path to this provider's voice. A
+        # self-hosted server exposes no sibling TTS endpoint and has one
+        # pipeline slot, so a scrub-cancelled turn can only become audible
+        # again through the live session itself; the orchestrator then sends
+        # its safety-net phrase here instead of the (voiceless) surface.
+        self.renders_surface_fallback = bool(renders_surface_fallback)
         self._connection_is_open = True
         self._events = connection.__aiter__()
         self.session_id = session_id
@@ -1282,6 +1289,7 @@ async def _open_realtime_session(
     rebuild_retry_window_s: float = 0.0,
     rebuild_retry_step_s: float = 1.0,
     prompted_response_retry: bool = False,
+    renders_surface_fallback: bool = False,
     owns_client: bool = True,
 ) -> _OpenAIRealtimeSession:
     """Open, configure and hand back a live session on ``client``.
@@ -1331,6 +1339,7 @@ async def _open_realtime_session(
         rebuild_retry_window_s=rebuild_retry_window_s,
         rebuild_retry_step_s=rebuild_retry_step_s,
         prompted_response_retry=prompted_response_retry,
+        renders_surface_fallback=renders_surface_fallback,
         owns_client=owns_client,
     )
     try:
@@ -2145,6 +2154,11 @@ class LocalRealtimeProvider:
             # a bare response.create makes a small brain answer with an empty
             # completion (live 2026-08-10 — the retry returned one token).
             prompted_response_retry=True,
+            # This server's voice exists only behind the live session (one
+            # pipeline slot, no sibling TTS endpoint): the scrub gate's
+            # safety-net phrase must ride the session itself, or a cancelled
+            # turn stays completely silent under strict mode separation.
+            renders_surface_fallback=True,
             # The client above is cached across sessions; closing this
             # session must not tear it down.
             owns_client=False,

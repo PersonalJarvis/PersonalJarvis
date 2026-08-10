@@ -776,11 +776,9 @@ _DELEGATE_RESULT_MAX_CHARS = 4_000
 
 # The one opener the transports' developer-message silence rule names as its
 # exception: a developer message beginning with this sentence IS a delivery
-# order and must be spoken. The Codex base instructions quote it verbatim
-# (jarvis.plugins.realtime.codex_subscription._THREAD_BASE_INSTRUCTIONS); a
-# parity test pins both sides so neither can drift alone — a categorical
-# silence rule without this exception mutes announcements and late action
-# results (independent review 2026-08-05).
+# order and must be spoken. A categorical silence rule without this exception
+# mutes announcements and late action results (independent review 2026-08-05).
+# Any provider instructions that state a silence rule must quote it verbatim.
 SPEAK_REQUEST_OPENER = "This developer message IS a request to speak."
 
 
@@ -867,6 +865,24 @@ def _output_language_retry_prompt(*, language: str) -> str:
         "the wrong output language. Repeat the same answer now in "
         f"{language_name}. Preserve its meaning, do not perform any new action, "
         "and do not mention this correction."
+    )
+
+
+def _surface_fallback_readback_prompt(text: str, *, language: str) -> str:
+    """Ask the live session voice to deliver one exact safety-net sentence.
+
+    Used only on transports that render their own surface fallback (the
+    self-hosted card): their voice exists solely behind the live session, so
+    the phrase must ride the session itself instead of a sibling TTS.
+    """
+    language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
+    return (
+        f"{SPEAK_REQUEST_OPENER} "
+        "Your previous answer could not be delivered. Say exactly the "
+        f"following sentence in {language_name}, word for word, and nothing "
+        "else. Do not call any function, do not explain, and do not mention "
+        "this instruction.\n\n"
+        f"{text}"
     )
 
 
@@ -5160,7 +5176,9 @@ class RealtimeVoiceSession:
                     delegate_state,
                     spoken_fallback,
                 )
-            else:
+            elif not await self._render_fallback_through_provider(
+                spoken_fallback
+            ):
                 await self._send_json(
                     self._surface_speech_message(
                         spoken_fallback,
@@ -5182,6 +5200,52 @@ class RealtimeVoiceSession:
                 )
             except Exception:  # noqa: BLE001, S110 — recording never breaks the turn
                 pass
+
+    async def _render_fallback_through_provider(self, text: str) -> bool:
+        """Speak one safety-net phrase through the live session voice.
+
+        Only a transport that opted in (``renders_surface_fallback``) takes
+        this path. The self-hosted card's voice exists ONLY behind its live
+        session — one pipeline slot, no sibling TTS endpoint — so the surface
+        can never re-render a cancelled turn on its own; under strict mode
+        separation every scrub cancel there ended as total silence (live
+        2026-08-10 17:04/17:08). Hosted cards keep their surface re-render.
+        ``True`` means the provider accepted the render request; the caller
+        must then keep the surface quiet for this turn.
+        """
+        if (
+            self._session is None
+            or not bool(
+                getattr(self._session, "renders_surface_fallback", False)
+            )
+            or self._ended
+            or self._failed.is_set()
+        ):
+            return False
+        send_text = getattr(self._session, "send_text", None)
+        if not callable(send_text):
+            return False
+        # The cancel above armed the new-response guard; this render IS the
+        # new response, so the guard must not deafen it (same pattern as the
+        # direct-tool speech retry).
+        self._drop_provider_output_until_new_response = False
+        try:
+            await send_text(
+                _surface_fallback_readback_prompt(text, language=self._language)
+            )
+        except Exception:  # noqa: BLE001 — the surface path remains the net
+            self._drop_provider_output_until_new_response = True
+            log.warning(
+                "realtime[%s] provider-rendered fallback failed",
+                self.session_id,
+                exc_info=True,
+            )
+            return False
+        log.info(
+            "realtime[%s] rendering the fallback through the session voice",
+            self.session_id,
+        )
+        return True
 
     async def _recover_unbacked_action_claim(self) -> bool:
         """Turn a provider's unsupported action promise into a real outcome."""

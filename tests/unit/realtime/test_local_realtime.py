@@ -535,6 +535,20 @@ def test_prompted_response_retry_is_opt_in_and_off_by_default() -> None:
     assert opted_in.supports_prompted_response_retry is True
 
 
+def test_surface_fallback_render_is_opt_in_and_off_by_default() -> None:
+    """Hosted cards keep the surface re-render (their TTS sibling exists);
+    only a transport whose voice lives solely behind the live session claims
+    the session-voice fallback render."""
+    from jarvis.plugins.realtime.openai_realtime import _OpenAIRealtimeSession
+
+    session = _OpenAIRealtimeSession(**_session_kwargs())
+    assert session.renders_surface_fallback is False
+    opted_in = _OpenAIRealtimeSession(
+        **_session_kwargs(renders_surface_fallback=True)
+    )
+    assert opted_in.renders_surface_fallback is True
+
+
 async def test_local_sessions_opt_into_transport_rebuild(monkeypatch) -> None:
     """The self-hosted card asks for the in-place rebuild: its server can
     crash and come back, and the call must survive that."""
@@ -556,6 +570,7 @@ async def test_local_sessions_opt_into_transport_rebuild(monkeypatch) -> None:
     assert captured["disconnect_before_rebuild"] is True
     assert captured["rebuild_retry_window_s"] > 0.0
     assert captured["prompted_response_retry"] is True
+    assert captured["renders_surface_fallback"] is True
 
 
 async def test_connect_retries_until_the_server_is_back(monkeypatch) -> None:

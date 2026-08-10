@@ -2123,6 +2123,90 @@ async def test_prompted_retry_capability_routes_language_retry_via_send_text():
 
 
 @pytest.mark.asyncio
+async def test_session_voice_renders_the_fallback_when_it_owns_the_only_tts():
+    """A transport whose voice exists only behind the live session (the
+    self-hosted card) opts into ``renders_surface_fallback``: after the one
+    language retry also fails, the safety-net phrase must ride the session
+    itself instead of the surface's ``error_spoken`` path — the surface has
+    no realtime-scoped TTS there and kept the whole turn silent (live
+    2026-08-10 17:04/17:08)."""
+    user_text = "What is kindness?"
+    wrong_text = (
+        "这是一个完整的中文回答，包含足够多的文字来可靠地识别语言。"
+    )
+    wrong_pcm = b"\x02\x03" * 32
+
+    class _SelfRenderingSession(FakeSession):
+        supports_prompted_response_retry = True
+        renders_surface_fallback = True
+
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text=user_text,
+                is_final=True,
+            )
+            yield RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=wrong_pcm,
+                    sample_rate=24_000,
+                    timestamp_ns=0,
+                ),
+            )
+            yield RealtimeEvent(
+                type="output_transcript_delta",
+                text=wrong_text,
+            )
+            for _ in range(100):
+                if self.text_inputs:
+                    break
+                await asyncio.sleep(0.01)
+            # The prompted retry ALSO comes back in the wrong language, so
+            # the session must fall through to the safety-net phrase.
+            yield RealtimeEvent(
+                type="output_transcript_delta",
+                text=wrong_text,
+            )
+            for _ in range(100):
+                if len(self.text_inputs) >= 2:
+                    break
+                await asyncio.sleep(0.01)
+            yield RealtimeEvent(type="turn_complete")
+
+    class _SelfRenderingProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _SelfRenderingSession([])
+            return self.session
+
+    provider = _SelfRenderingProvider([])
+    jsons: list[dict] = []
+    binaries: list[bytes] = []
+    sess = RealtimeVoiceSession(
+        session_id="fallback-session-voice",
+        send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(reply_language="en"),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    # Retry first, then the session-voice fallback render — and no
+    # error_spoken detour to a surface TTS that does not exist there.
+    assert len(provider.session.text_inputs) == 2
+    assert "English" in provider.session.text_inputs[0]
+    failure_phrase = sess._output_language_failure_phrase("en")  # noqa: SLF001
+    assert failure_phrase in provider.session.text_inputs[1]
+    assert [item for item in jsons if item.get("type") == "error_spoken"] == []
+    assert sess._output_language_failures == 1  # noqa: SLF001
+
+
+@pytest.mark.asyncio
 async def test_language_switch_mistranscript_reaches_realtime_provider():
     """The live ``auf jetzt`` false positive must not end the session."""
     provider = FakeProvider(
