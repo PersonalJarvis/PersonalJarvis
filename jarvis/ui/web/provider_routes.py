@@ -1191,6 +1191,9 @@ async def list_providers(request: Request) -> dict[str, Any]:
                 codex_subscription_status=codex_subscription_status,
             )
             for spec in PROVIDERS
+            # A hidden spec is withdrawn from the catalog: no card, no CLI
+            # row. Its runtime plumbing stays live for an existing selection.
+            if not spec.hidden
         ]
 
     return {"providers": await asyncio.to_thread(_build)}

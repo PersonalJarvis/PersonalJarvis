@@ -105,6 +105,13 @@ class ProviderSpec:
     # shows a clear badge and fallback note, while runtime selection remains
     # capability-driven. This is presentation only and never gates behavior.
     experimental: bool = False
+    # Withdrawn from the public catalog: ``/api/providers`` does not serve the
+    # card, so the settings UI offers no way to select the provider. This is
+    # presentation-gating only (AP-21): all runtime plumbing — config
+    # validation, status probes, an already-persisted selection, an explicit
+    # API/CLI switch — keeps working. A release gate for transports that
+    # shipped visibly before they were reliable, not a removal.
+    hidden: bool = False
 
 
 def provider_billing(spec: ProviderSpec) -> Billing:
@@ -765,6 +772,11 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "key; choose an on-device one to keep input transcription local."
         ),
         experimental=True,
+        # Withdrawn for v1.3.0: subscription voice over Codex's experimental
+        # Realtime protocol is not reliable enough to offer. The plugin and
+        # its plumbing stay shipped so an existing selection keeps resolving;
+        # unhide once the transport holds a call dependably.
+        hidden=True,
     ),
     ProviderSpec(
         id="openai-realtime",

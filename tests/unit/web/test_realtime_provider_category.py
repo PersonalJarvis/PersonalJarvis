@@ -79,6 +79,30 @@ def test_list_providers_includes_active_realtime_provider(monkeypatch):
     assert realtime["configured"] is True
 
 
+def test_list_providers_omits_hidden_codex_subscription_card(monkeypatch):
+    """Withdrawn for v1.3.0: subscription voice over Codex's experimental
+    Realtime protocol is not reliable enough to offer, so the catalog must
+    not serve the card (and with it, the settings UI must not render one)."""
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    client = TestClient(_app())
+
+    resp = client.get("/api/providers")
+
+    assert resp.status_code == 200
+    ids = {provider["id"] for provider in resp.json()["providers"]}
+    assert "codex-subscription-realtime" not in ids
+
+
+def test_hidden_spec_stays_resolvable_for_existing_selections():
+    """``hidden`` is presentation-gating only (AP-21): the spec keeps
+    resolving so an already-persisted selection and the explicit API/CLI
+    switch path keep working exactly as before."""
+    spec = get_spec("codex-subscription-realtime")
+    assert spec is not None
+    assert spec.hidden is True
+    assert spec.tier == "realtime"
+
+
 def test_list_providers_resolves_gemini_only_fresh_install(monkeypatch):
     monkeypatch.setattr(cfg_mod, "get_secret", _only_gemini_key)
     client = TestClient(_app())
