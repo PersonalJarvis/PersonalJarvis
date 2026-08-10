@@ -248,6 +248,21 @@ describe("AgenticTerminal layout", () => {
     expect(terminalHarness.wheel.current).not.toBeNull();
   });
 
+  it("keeps conversation history in the header without a scrollbar overlay", () => {
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+      />,
+    );
+
+    expect(screen.getByTestId("pane-conversation-Dana")).toBeTruthy();
+    expect(screen.queryByRole("scrollbar")).toBeNull();
+    expect(screen.queryByTestId("pane-scroll-history-Dana")).toBeNull();
+  });
+
   it("keeps the wheel on terminal history even while the CLI tracks the mouse", () => {
     render(
       <AgenticTerminal

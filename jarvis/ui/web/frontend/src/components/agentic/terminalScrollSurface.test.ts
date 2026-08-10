@@ -3,10 +3,6 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   bindTerminalScrollRegion,
   captureWheelForTerminalHistory,
-  forwardWheelToTerminal,
-  lineAtThumbTop,
-  readTerminalScrollView,
-  scrollThumbGeometry,
 } from "./terminalScrollSurface";
 
 function write(term: Terminal, data: string): Promise<void> {
@@ -52,48 +48,6 @@ function wheel(init: WheelEventInit): WheelEvent {
 }
 
 describe("terminalScrollSurface", () => {
-  it("reads the exact xterm position for every pane the same way", () => {
-    const term = terminalDouble("none", "normal", { baseY: 80, viewportY: 40 });
-    const view = readTerminalScrollView(term);
-
-    expect(view).toEqual({
-      rows: 24,
-      maxLine: 80,
-      line: 40,
-      altScreen: false,
-      hiddenHistory: 0,
-    });
-    expect(scrollThumbGeometry(view, 208)).toEqual({ top: 80, height: 48 });
-    expect(lineAtThumbTop(view, 0, 208)).toBe(0);
-    expect(lineAtThumbTop(view, 80, 208)).toBe(40);
-    expect(lineAtThumbTop(view, 160, 208)).toBe(80);
-  });
-
-  it("fills the whole track before any history exists — never a fake position", () => {
-    const empty = readTerminalScrollView(terminalDouble("none", "normal"));
-    expect(empty.maxLine).toBe(0);
-    expect(scrollThumbGeometry(empty, 200)).toEqual({ top: 0, height: 200 });
-
-    const alt = readTerminalScrollView(terminalDouble("any", "alternate"));
-    expect(alt.altScreen).toBe(true);
-    expect(scrollThumbGeometry(alt, 200)).toEqual({ top: 0, height: 200 });
-  });
-
-  it("reports scrollback an alternate-screen app is standing in front of", () => {
-    // The alt buffer has no history of its own, but the conversation the app
-    // covered is still in the normal buffer — the rail says where it went
-    // instead of implying it is gone.
-    const alt = readTerminalScrollView(
-      terminalDouble("any", "alternate", { normalBaseY: 420 }),
-    );
-    expect(alt.hiddenHistory).toBe(420);
-    // A normal-buffer pane never reports hidden history: its own is reachable.
-    const plain = readTerminalScrollView(
-      terminalDouble("none", "normal", { baseY: 80, normalBaseY: 80 }),
-    );
-    expect(plain.hiddenHistory).toBe(0);
-  });
-
   it("keeps the wheel on xterm history while a normal-buffer CLI tracks the mouse", () => {
     const term = terminalDouble("any", "normal", { baseY: 300, viewportY: 300 });
     const handler = captureWheelForTerminalHistory(term);
@@ -157,25 +111,6 @@ describe("terminalScrollSurface", () => {
     } finally {
       term.dispose();
     }
-  });
-
-  it("forwards a rail wheel to the xterm screen unchanged", () => {
-    const host = document.createElement("div");
-    const screen = document.createElement("div");
-    screen.className = "xterm-screen";
-    host.append(screen);
-    const seen: WheelEvent[] = [];
-    screen.addEventListener("wheel", (event) => seen.push(event));
-
-    forwardWheelToTerminal(
-      host,
-      wheel({ deltaY: 120, deltaX: 5, shiftKey: true }),
-    );
-
-    expect(seen).toHaveLength(1);
-    expect(seen[0].deltaY).toBe(120);
-    expect(seen[0].deltaX).toBe(5);
-    expect(seen[0].shiftKey).toBe(true);
   });
 
   it("contains wheel input inside the terminal region", () => {

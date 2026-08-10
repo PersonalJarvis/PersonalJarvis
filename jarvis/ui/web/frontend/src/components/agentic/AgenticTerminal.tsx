@@ -115,8 +115,10 @@ import {
   PARKED_RECHECK_MS,
 } from "./offscreenBuffer";
 import { installQuerySuppression } from "./terminalQueries";
-import { PaneScrollRail } from "./PaneScrollRail";
-import { captureWheelForTerminalHistory } from "./terminalScrollSurface";
+import {
+  bindTerminalScrollRegion,
+  captureWheelForTerminalHistory,
+} from "./terminalScrollSurface";
 import {
   openPaneSocket,
   type PaneSocket,
@@ -488,8 +490,8 @@ export function AgenticTerminal({
   // briefly shows the pane's old viewport (often its first prompt) and visibly
   // jumps to the live prompt one frame later.
   const [tailReady, setTailReady] = useState(active);
-  // The terminal itself stays in a ref. This small epoch only tells the scroll
-  // rail that the ref now points at a new instance after a restart.
+  // The terminal itself stays in a ref. This small epoch tells appearance and
+  // font effects that the ref now points at a new instance after a restart.
   const [terminalEpoch, setTerminalEpoch] = useState(0);
   /*
    * Is a replay currently rebuilding this pane behind the curtain?
@@ -541,9 +543,7 @@ export function AgenticTerminal({
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
   /** Briefly true right after a delivery — draws the eye to the right pane. */
   const [justDelivered, setJustDelivered] = useState(false);
-  /** The pane's recorded conversation, opened from the header book button or
-   * a click on the scroll rail's grip. Lives HERE and not in the rail so the
-   * entry point survives the CLI flipping its scroll-owner mode mid-session. */
+  /** The pane's recorded conversation, opened from the header book button. */
   const [historyOpen, setHistoryOpen] = useState(false);
   // Latest callbacks/appearance without re-running the connect effect.
   const onStatusRef = useRef(onStatus);
@@ -583,6 +583,12 @@ export function AgenticTerminal({
   activeRef.current = active;
   focusedRef.current = focused;
   layoutBusyRef.current = layoutBusy;
+
+  useEffect(() => {
+    const region = terminalRegionRef.current;
+    if (!region) return;
+    return bindTerminalScrollRegion(region);
+  }, []);
 
   useEffect(() => {
     if (!geometryReady) return;
@@ -1773,17 +1779,6 @@ export function AgenticTerminal({
           // the unused ground belongs on.
           data-layout-busy={layoutBusy ? "true" : "false"}
           className="agentic-terminal-host h-full min-h-0 w-full overflow-hidden"
-        />
-        <PaneScrollRail
-          name={name}
-          controlsId={terminalRegionId}
-          regionRef={terminalRegionRef}
-          hostRef={containerRef}
-          terminalRef={termRef}
-          epoch={terminalEpoch}
-          appearance={appearance}
-          onFocus={onFocus}
-          onOpenHistory={() => setHistoryOpen(true)}
         />
         <PaneConversationDialog
           terminal={name}
