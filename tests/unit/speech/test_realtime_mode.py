@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 import jarvis.speech.pipeline as pipeline_mod
-from jarvis.core.events import MessageSent
+from jarvis.core.events import MessageSent, SpeechSpoken
 from jarvis.core.protocols import AudioChunk
 from jarvis.sessions.constants import (
     HANGUP_ERROR,
@@ -34,6 +34,14 @@ class _FakePlayer:
 
     def stop(self) -> None:
         self.stopped += 1
+
+
+class _RecordingBus:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    async def publish(self, event: object) -> None:
+        self.events.append(event)
 
 
 class _FakeTTS:
@@ -385,6 +393,7 @@ async def test_error_spoken_renders_through_realtime_scoped_surface_tts(
     pipeline_tts = _FakeTTS(pipeline_pcm)
     surface_tts = _FakeTTS(surface_pcm)
     pipe._tts = pipeline_tts
+    pipe._bus = _RecordingBus()
     resolved: dict[str, object] = {}
     spoken_delivered = asyncio.Event()
 
@@ -405,6 +414,8 @@ async def test_error_spoken_renders_through_realtime_scoped_surface_tts(
                     "type": "error_spoken",
                     "text": "The grounded reply.",
                     "language": "en",
+                    "spoken_kind": "withheld",
+                    "detail": "response identity mismatch",
                 }
             )
             spoken_delivered.set()
@@ -425,6 +436,11 @@ async def test_error_spoken_renders_through_realtime_scoped_surface_tts(
     assert [text for text, _lang in surface_tts.calls] == ["The grounded reply."]
     assert pipeline_tts.calls == []
     assert surface_pcm in pipe._player.pcm
+    await asyncio.sleep(0)
+    spoken = [event for event in pipe._bus.events if isinstance(event, SpeechSpoken)]
+    assert len(spoken) == 1
+    assert spoken[0].spoken_kind == "withheld"
+    assert spoken[0].detail == "response identity mismatch"
 
     pipe._hangup_event.set()
     assert await asyncio.wait_for(task, timeout=0.5) == HANGUP_HOTKEY

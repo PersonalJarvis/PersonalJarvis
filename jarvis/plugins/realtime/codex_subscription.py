@@ -1056,6 +1056,12 @@ class _CodexSubscriptionRealtimeSession:
         # during the legitimate response remain visible.
         local_input_generation = 0
         consumed_input_generation = 0
+        # The provider may deliver one delayed FINAL caption for the same
+        # microphone generation after the local recognizer already emitted its
+        # authoritative final.  Retain that one as fallback metadata, but do
+        # not let every later invented caption borrow the still-unconsumed
+        # generation and masquerade as the user.
+        server_user_final_generation = 0
         active_response_generation = 0
         response_open = False
         response_allowed = False
@@ -2455,15 +2461,27 @@ class _CodexSubscriptionRealtimeSession:
                             # it with its own latency — that caption is the
                             # documented fallback for this turn and is retained
                             # even though it arrived past the energy window.
-                            if fresh_input:
+                            if (
+                                fresh_input
+                                and local_input_generation
+                                > server_user_final_generation
+                            ):
+                                server_user_final_generation = local_input_generation
                                 self._server_user_preview = text
                                 ungrounded_final_captions = 0
                                 log.info(
                                     "A late server user transcript arrived past "
                                     "the energy window; retained as the fallback "
-                                    "for the utterance the endpointer confirmed"
+                                    "for the utterance the endpointer confirmed "
+                                    "without closing its active response"
                                 )
-                                _close_response(spent=True)
+                                # This caption describes the SAME microphone
+                                # utterance the local final already grounded.
+                                # ChatGPT-Live can deliver it while assistant
+                                # PCM is streaming, so treating it as a new
+                                # user-turn boundary splits one answer into
+                                # fabricated response identities and refuses
+                                # the remainder as ungrounded.
                                 continue
                             # Neither energy nor a fresh utterance: this is the
                             # far end inventing a user turn. ONE is survivable
@@ -2538,6 +2556,10 @@ class _CodexSubscriptionRealtimeSession:
                         # recognizer reports it could not deliver.
                         local_owns_final = self._local_grounding_active()
                         if user_final_emitted:
+                            server_user_final_generation = max(
+                                server_user_final_generation,
+                                local_input_generation,
+                            )
                             continue
                         if local_owns_final and not local_transcript_failed:
                             self._server_user_preview = text

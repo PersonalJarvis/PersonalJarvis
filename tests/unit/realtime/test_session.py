@@ -5452,17 +5452,25 @@ async def test_delegate_does_not_retry_an_internal_type_error():
 
 
 @pytest.mark.asyncio
-async def test_scrub_cancel_records_spoken_fallback_on_the_spoken_track():
-    """BUG-056: the 15:13 session's transcript ended at a truncated reply with
-    no trace of the safety abort. The scrub cancel must persist its spoken
-    fallback as a SpeechSpoken(withheld) event carrying the detector names in
-    ``detail``, so the exported transcript shows what happened and why."""
+async def test_scrub_cancel_waits_for_audible_receipt_before_claiming_speech():
+    """A queued fallback is not evidence that the user heard it.
+
+    Live 2026-08-09 20:47: the Codex subscription has no realtime-scoped
+    fallback TTS, yet the session published ``SpeechSpoken`` and the inspector
+    claimed "An error occurred" was spoken. The surface owns the playback
+    receipt, so the session may only send the request with its audit metadata.
+    """
     provider = FakeProvider([])
     bus = FakeBus()
+    sent: list[dict] = []
+
+    async def _capture_json(message):
+        sent.append(message)
+
     sess = RealtimeVoiceSession(
         session_id="scrub-cancel-record",
         send_binary=lambda _data: asyncio.sleep(0),
-        send_json=lambda _message: asyncio.sleep(0),
+        send_json=_capture_json,
         provider=provider,
         config=_cfg(),
         bus=bus,
@@ -5475,10 +5483,11 @@ async def test_scrub_cancel_records_spoken_fallback_on_the_spoken_track():
     await sess.end(reason="test")
 
     spoken = [event for event in bus.events if isinstance(event, SpeechSpoken)]
-    assert len(spoken) == 1
-    assert spoken[0].spoken_kind == "withheld"
-    assert spoken[0].detail == reason
-    assert spoken[0].text == sess._gate.fallback_phrase()
+    assert spoken == []
+    fallbacks = [message for message in sent if message.get("type") == "error_spoken"]
+    assert fallbacks[-1]["spoken_kind"] == "withheld"
+    assert fallbacks[-1]["detail"] == reason
+    assert fallbacks[-1]["text"] == sess._gate.fallback_phrase()
 
 
 @pytest.mark.asyncio
@@ -7316,6 +7325,57 @@ async def test_a_handoff_declined_through_provider_speech_closes_its_turn():
 
     # The transport declares rebuild_on_transport_death, so ENDING the
     # stream would only make the pump reopen it. End the call instead.
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_grounded_final_releases_barge_in_withhold_for_automatic_transport():
+    """An automatic response may already exist when the local final arrives.
+
+    Live 2026-08-10: the Codex subscription opened its replacement response
+    before local transcription completed.  ``_response_requested_for_turn``
+    therefore skipped the manual request branch that used to be the only place
+    clearing the barge-in guard; three complete replies were discarded and the
+    first audible frame arrived 23.3 seconds into the session.
+    """
+    provider = SubscriptionLikeProvider([])
+    binaries = []
+    sess = _half_duplex_session(provider, binaries=binaries)
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    session = provider.session
+
+    sess._drop_provider_output_until_new_response = True  # noqa: SLF001
+    sess._response_requested_for_turn = True  # noqa: SLF001
+    await session.queue.put(
+        RealtimeEvent(
+            type="input_transcript",
+            text="Hello there.",
+            is_final=True,
+        )
+    )
+    await _wait_until(lambda: sess._last_user_text == "Hello there.")  # noqa: SLF001
+    await _wait_until(  # noqa: SLF001
+        lambda: sess._drop_provider_output_until_new_response is False
+    )
+    await session.queue.put(
+        RealtimeEvent(
+            type="output_transcript_delta",
+            text="This is the complete answer to your question.",
+            is_final=True,
+            provider_turn_id="replacement-response",
+        )
+    )
+    fresh_audio = _pcm_chunk()
+    await session.queue.put(
+        RealtimeEvent(
+            type="audio_delta",
+            audio=fresh_audio,
+            provider_turn_id="replacement-response",
+        )
+    )
+
+    await _wait_until(lambda: bool(binaries))
+    assert binaries == [fresh_audio.pcm]
     await sess.end(reason="test")
 
 

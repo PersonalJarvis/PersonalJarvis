@@ -8368,7 +8368,14 @@ class SpeechPipeline:
                             self._emit_spoken(
                                 cleaned,
                                 language,
-                                SPOKEN_KIND_REPLY,
+                                str(
+                                    message.get("spoken_kind", "")
+                                    or SPOKEN_KIND_REPLY
+                                ),
+                                detail=(
+                                    str(message.get("detail", "") or "")
+                                    or None
+                                ),
                                 tts=surface_tts,
                             )
                     except Exception as exc:  # noqa: BLE001 -- final voice fallback

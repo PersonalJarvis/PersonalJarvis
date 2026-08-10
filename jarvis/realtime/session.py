@@ -3566,6 +3566,29 @@ class RealtimeVoiceSession:
                     if (
                         event.is_final
                         and input_observed
+                        and not self._delegate_required_for_turn
+                        and bool(
+                            getattr(
+                                self._session,
+                                "isolates_response_generations",
+                                False,
+                            )
+                        )
+                    ):
+                        # A locally grounded FINAL is the generation boundary
+                        # the post-barge-in guard was waiting for.  Automatic
+                        # transports can already have marked a response as
+                        # requested before this final arrives, so clearing only
+                        # inside the request_response branch below left the
+                        # guard latched forever (live 2026-08-10: 23.3 s to the
+                        # first audible frame and three complete replies
+                        # discarded).  Generation isolation keeps late PCM from
+                        # the interrupted response out; delegated turns retain
+                        # their separate ownership guard.
+                        self._drop_provider_output_until_new_response = False
+                    if (
+                        event.is_final
+                        and input_observed
                         and not self._response_requested_for_turn
                     ):
                         if not self._delegate_required_for_turn:
@@ -4789,6 +4812,8 @@ class RealtimeVoiceSession:
         text: str,
         *,
         language: str | None = None,
+        spoken_kind: str = SPOKEN_KIND_REPLY,
+        detail: str | None = None,
     ) -> dict[str, Any]:
         """Build one ``error_spoken`` payload for the surface's classic TTS.
 
@@ -4813,6 +4838,11 @@ class RealtimeVoiceSession:
             "type": "error_spoken",
             "text": text,
             "language": output_language,
+            # Queueing is not proof of playback. The desktop surface carries
+            # these fields onto SpeechSpoken only after AudioPlayer confirms
+            # that it accepted audible frames.
+            "spoken_kind": spoken_kind,
+            "detail": detail,
             # Which realtime engine this line belongs to. The desktop surface
             # resolves its realtime-scoped TTS from ambient state that is only
             # set once a handshake SUCCEEDED, so a notice about a handshake
@@ -5101,27 +5131,23 @@ class RealtimeVoiceSession:
                 )
             else:
                 await self._send_json(
-                    self._surface_speech_message(spoken_fallback)
-                )
-        except Exception:  # noqa: BLE001, S110 — surface may already be gone
-            pass
-        # Keep the transcript honest (BUG-056): the 15:13 session recorded a
-        # reply truncated to "Du hast zwei" with NO trace of why the audible
-        # answer stopped. Persist the spoken fallback on the spoken track so
-        # the exported transcript shows the abort and its detector names.
-        if self._bus is not None:
-            try:
-                from jarvis.core.events import SpeechSpoken
-
-                await self._bus.publish(
-                    SpeechSpoken(
-                        **self._event_trace_kwargs(),
-                        source_layer=f"realtime.{self.active_provider}",
-                        text=spoken_fallback,
-                        language=self._language,
+                    self._surface_speech_message(
+                        spoken_fallback,
                         spoken_kind=SPOKEN_KIND_WITHHELD,
                         detail=reason,
                     )
+                )
+        except Exception:  # noqa: BLE001, S110 — surface may already be gone
+            pass
+        # Keep the diagnostic honest without claiming playback. The surface
+        # publishes SpeechSpoken only after its AudioPlayer confirms audible
+        # frames; a text-only fallback remains an ErrorOccurred record.
+        if self._bus is not None:
+            try:
+                await self._publish_error(
+                    "RealtimeOutputWithheld",
+                    reason,
+                    recoverable=True,
                 )
             except Exception:  # noqa: BLE001, S110 — recording never breaks the turn
                 pass
@@ -5553,6 +5579,23 @@ class RealtimeVoiceSession:
         # mismatched event, cancel the unsafe generation once, then allow
         # subsequent events of the new identity to start cleanly.
         self._response_identity_drops += 1
+        if not self._turn_id:
+            # A rollover after the local turn already closed has no user turn
+            # to apologize inside. Surfacing a fallback here both lies when no
+            # fallback TTS exists and leaks that text into the next real turn.
+            # Retire the stale binding and adopt the successor silently; its
+            # next event can still open a genuine turn if input races output.
+            log.warning(
+                "realtime[%s] dropped an unsequenced provider response "
+                "rollover after the local turn had already closed",
+                self.session_id,
+            )
+            if active_id not in self._completed_provider_response_ids:
+                self._completed_provider_response_ids.append(active_id)
+            self._gate.drain()
+            self._active_provider_response_id = response_id
+            self._gate.begin_response(response_id)
+            return False
         drop_before_cancel = self._drop_provider_output_until_new_response
         await self._cancel_unsafe_output(
             reason=(

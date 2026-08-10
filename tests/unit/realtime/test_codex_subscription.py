@@ -3265,6 +3265,89 @@ async def test_a_final_rejudges_the_open_refused_response_immediately() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_late_server_user_caption_does_not_split_the_active_answer() -> None:
+    """A second transcript source is not a second response boundary.
+
+    Live 2026-08-09 20:47: the locally grounded final opened the real answer,
+    then ChatGPT-Live's slower caption for the same microphone audio arrived
+    while that answer was streaming. Closing the response on that caption
+    fabricated a new response identity for the next PCM frame, refused the
+    rest as ungrounded, and left the user waiting 15 seconds for no audio.
+    """
+    loud = (1000).to_bytes(2, "little", signed=True) * 480
+    transcriber = _ScheduledInputTranscriber(
+        [
+            (0.01, InputTranscriptEvent(kind="speech_started")),
+            (
+                0.02,
+                InputTranscriptEvent(
+                    kind="transcript",
+                    text="What is up?",
+                    is_final=True,
+                ),
+            ),
+        ]
+    )
+    endpoint = _FakeAudioEndpoint(
+        output_schedule=[
+            (0.10, loud),
+            (0.30, loud),
+            (0.10, loud),
+        ]
+    )
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.15,
+                _Notification(
+                    "thread/realtime/transcript/done",
+                    {
+                        "threadId": "thread-1",
+                        "role": "user",
+                        "text": "What is up?",
+                    },
+                ),
+            ),
+            (
+                0.40,
+                _Notification(
+                    "thread/realtime/transcript/delta",
+                    {
+                        "threadId": "thread-1",
+                        "role": "assistant",
+                        "delta": "The complete answer.",
+                    },
+                ),
+            ),
+        ]
+    )
+    session = await _provider(
+        client,
+        endpoint=endpoint,
+        input_transcriber_factory=lambda: transcriber,
+    ).open_session(RealtimeSessionConfig())
+
+    events = await _collect_until(
+        session,
+        stop_after=1,
+        kind="output_transcript_delta",
+        timeout_s=2.0,
+    )
+
+    audio = [event for event in events if event.type == "audio_delta"]
+    response_ids = {
+        event.provider_turn_id
+        for event in events
+        if event.type in {"audio_delta", "output_transcript_delta"}
+    }
+    assert len(audio) == 3, "the late duplicate caption must not cut the answer"
+    assert len(response_ids) == 1
+    assert session.diagnostics().get("response_splices", 0) == 0
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_a_discarded_utterance_keeps_its_response_window(
     monkeypatch,
 ) -> None:

@@ -400,3 +400,30 @@ async def test_a_superseding_response_flows_after_the_stale_one_is_cancelled() -
     assert len(cancels) == 1, (
         "exactly one cancel: the stale identity, never the superseding one"
     )
+
+
+async def test_an_idle_response_rollover_never_leaks_an_apology_into_the_next_turn() -> None:
+    """A late identity race after turn completion has no audible owner.
+
+    Live 2026-08-09 20:47: the old turn had already returned to listening when
+    a mismatched provider response arrived. The generic fallback was queued on
+    no turn, falsely recorded as spoken, then prepended to the next answer.
+    """
+    messages: list[dict[str, Any]] = []
+    session = _session(messages=messages)
+    session._active_provider_response_id = "resp-a"
+    session._gate.begin_response("resp-a")
+
+    accepted = await session._accept_provider_response_event(
+        RealtimeEvent(
+            type="output_transcript_delta",
+            text="stale successor",
+            provider_turn_id="resp-b",
+        )
+    )
+
+    assert accepted is False
+    assert "".join(session._output_transcript) == ""
+    assert not any(message.get("type") == "error_spoken" for message in messages)
+    assert session._scrub_cancelled_for_turn is False
+    assert session._active_provider_response_id == "resp-b"
