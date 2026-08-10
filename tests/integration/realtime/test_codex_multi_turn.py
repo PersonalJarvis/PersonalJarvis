@@ -46,6 +46,7 @@ OUTPUT_RATE = 24_000
 #: cannot quietly drift into testing a provider that does not exist.
 CODEX_CAPABILITIES: dict[str, bool] = {
     "creates_responses_automatically": True,
+    "supports_prompted_response_retry": True,
     "isolates_response_generations": True,
     "supports_direct_tools": False,
     "supports_tool_updates": False,
@@ -79,6 +80,9 @@ class _CodexShapedWire:
     creates_responses_automatically = CODEX_CAPABILITIES[
         "creates_responses_automatically"
     ]
+    supports_prompted_response_retry = CODEX_CAPABILITIES[
+        "supports_prompted_response_retry"
+    ]
     isolates_response_generations = CODEX_CAPABILITIES[
         "isolates_response_generations"
     ]
@@ -94,6 +98,7 @@ class _CodexShapedWire:
         self.sent_audio: list[AudioChunk] = []
         self.spoken: list[str] = []
         self.texts: list[str] = []
+        self.text_appended = asyncio.Event()
         self.session_updates: list[dict[str, Any]] = []
         self.response_requests = 0
         self.interrupts = 0
@@ -134,6 +139,7 @@ class _CodexShapedWire:
 
     async def send_text(self, text: str) -> None:
         self.texts.append(text)
+        self.text_appended.set()
 
     async def send_speech(self, text: str) -> None:
         self.spoken.append(text)
@@ -370,6 +376,80 @@ def test_the_fake_mirrors_the_real_codex_capability_tuple() -> None:
     # without it cannot reproduce the turn shapes below.
     assert callable(getattr(_CodexSubscriptionRealtimeSession, "send_speech", None))
     assert callable(getattr(_CodexShapedWire, "send_speech", None))
+
+
+@pytest.mark.asyncio
+async def test_wrong_language_uses_prompted_subscription_retry() -> None:
+    """The subscription's ordinary response request is intentionally a no-op.
+
+    Once the scrub gate blocks a wrong-language answer, the replacement must
+    therefore travel through the adapter's trusted prompt capability; otherwise
+    the turn waits forever and the next utterance inherits the interrupt state.
+    """
+    session, _provider, wire, surface = await _open_call()
+    wrong_pcm = _pcm(value=700)
+    correct_pcm = _pcm(value=1300)
+    try:
+        since = surface.mark()
+        wire.push(
+            RealtimeEvent(type="speech_started"),
+            RealtimeEvent(
+                type="input_transcript",
+                text="What is kindness?",
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=wrong_pcm,
+                    sample_rate=OUTPUT_RATE,
+                    timestamp_ns=0,
+                ),
+            ),
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text=(
+                    "Esta es una respuesta completa en español con suficientes "
+                    "palabras para identificar claramente el idioma."
+                ),
+            ),
+            RealtimeEvent(type="turn_complete"),
+        )
+
+        await asyncio.wait_for(wire.text_appended.wait(), TIMEOUT_S)
+        assert "English" in wire.texts[-1]
+        assert wire.response_requests == 1, (
+            "the dead automatic-response request was used for the retry"
+        )
+        assert surface.binary == [], "blocked wrong-language PCM reached playback"
+
+        wire.push(
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text=(
+                    "Kindness means treating other people with consistent care "
+                    "and respect."
+                ),
+            ),
+            RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=correct_pcm,
+                    sample_rate=OUTPUT_RATE,
+                    timestamp_ns=0,
+                ),
+            ),
+            RealtimeEvent(type="turn_complete"),
+        )
+        await surface.wait_json(
+            lambda message: message.get("type") == "turn_complete",
+            since=since,
+        )
+
+        assert surface.binary == [correct_pcm]
+        await _assert_at_rest(session, wire, note="after a prompted language retry")
+    finally:
+        await _end(session)
 
 
 # -- the headline case ------------------------------------------------------

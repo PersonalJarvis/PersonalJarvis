@@ -164,15 +164,12 @@ _EVENT_QUEUE_MAX = 256
 SPEECH_STARTED = "speech_started"
 TRANSCRIPT = "transcript"
 TRANSCRIPT_FAILED = "transcript_failed"
+SPEECH_DISCARDED = "speech_discarded"
 
-# A discarded (too short) utterance is reported through the LOG, deliberately
-# not as a new event kind. This stream has exactly one reader, and it branches
-# on the two kinds above and routes everything else through a fallback that
-# wipes the provider's own user-transcript preview — so a new kind would make
-# every cough destroy the very fallback the failure path exists to promote.
-# Nothing waits on a close for a discarded utterance either (the transport ends
-# its turns on its own boundaries, not on this stream), so the honest fix is
-# observability, not a wire change.
+# A discarded (too short or confidently boilerplate) utterance must close the
+# ``speech_started`` edge it already emitted. The subscription adapter handles
+# this kind explicitly: it preserves any provider-side caption as a fallback,
+# but does not surface a transcription error when the audio was not a real turn.
 _DISCARD_STREAK_WARN = 5
 
 
@@ -595,6 +592,9 @@ class LocalInputTranscriber:
         self._speech_ms = 0
         if voiced_ms < _MIN_VOICED_MS or not pcm:
             self._note_discarded(voiced_ms)
+            self._emit(
+                InputTranscriptEvent(kind=SPEECH_DISCARDED, voiced_ms=voiced_ms)
+            )
             return
         # Only a qualifying utterance vouches for a server-side transcript; a
         # cough must not open the door that the energy gate just closed.
@@ -912,10 +912,10 @@ class LocalInputTranscriber:
             # keyword ban on real speech). Live 2026-08-06 17:39:57 the
             # recognizer delivered a subtitle outro as a genuine turn: it
             # grounded a response the user never asked for AND flipped the
-            # call's output language on its way through. Treated as a failed
-            # transcript, so the far end's own caption for the same audio can
-            # still stand in — the endpointer only vouched for ENERGY, and
-            # energy is what a speaker leak has too.
+            # call's output language on its way through. This closes as a
+            # discard rather than a recognizer failure: the far end's caption
+            # can still stand in, but a speaker leak must not raise a visible
+            # "transcription unavailable" error when none arrives.
             log.info(
                 "Discarding a %d ms local input transcript as silence "
                 "boilerplate: %r",
@@ -923,7 +923,7 @@ class LocalInputTranscriber:
                 text[:80],
             )
             self._emit(
-                InputTranscriptEvent(kind=TRANSCRIPT_FAILED, voiced_ms=voiced_ms)
+                InputTranscriptEvent(kind=SPEECH_DISCARDED, voiced_ms=voiced_ms)
             )
             return
         log.info(
@@ -1054,10 +1054,15 @@ class LocalInputTranscriber:
         A dropped ``speech_started`` does not merely lose a bar update: the
         adapter counts it as the proof that a human spoke, so losing one makes
         the next genuine answer look like a self-echo and get interrupted.
-        Transcript events are the droppable ones.
+        The matching ``speech_discarded`` edge is equally load-bearing: losing
+        it leaves the adapter believing that utterance is still open. Ordinary
+        transcript events are the droppable ones.
         """
         for index, queued in enumerate(self._events):
-            if queued is not None and queued.kind != SPEECH_STARTED:
+            if queued is not None and queued.kind not in {
+                SPEECH_STARTED,
+                SPEECH_DISCARDED,
+            }:
                 del self._events[index]
                 log.warning(
                     "Local input transcript queue is full; dropped one %s "
@@ -1096,6 +1101,7 @@ class LocalInputTranscriber:
 
 
 __all__ = [
+    "SPEECH_DISCARDED",
     "SPEECH_STARTED",
     "TRANSCRIPT",
     "TRANSCRIPT_FAILED",

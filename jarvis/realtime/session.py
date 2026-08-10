@@ -858,6 +858,18 @@ def _direct_tool_result_retry_prompt(*, language: str) -> str:
     )
 
 
+def _output_language_retry_prompt(*, language: str) -> str:
+    """Request one replacement for an answer blocked at the speech boundary."""
+    language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
+    return (
+        f"{SPEAK_REQUEST_OPENER} "
+        "Your immediately preceding answer was not delivered because it used "
+        "the wrong output language. Repeat the same answer now in "
+        f"{language_name}. Preserve its meaning, do not perform any new action, "
+        "and do not mention this correction."
+    )
+
+
 # Several equivalent progress lines per language: one fixed sentence on every
 # slow turn reads robotic (live feedback 2026-07-17 08:47, three "Ich bin noch
 # dran." in one session). Each entry must stay short, promise nothing about
@@ -4976,6 +4988,25 @@ class RealtimeVoiceSession:
                     )
                 await send_text(
                     _direct_tool_result_retry_prompt(language=self._language)
+                )
+            elif bool(
+                getattr(
+                    self._session,
+                    "supports_prompted_response_retry",
+                    False,
+                )
+            ):
+                # Some server-VAD transports create only the original response
+                # automatically; their ordinary request_response() is a no-op.
+                # A trusted developer append is the capability they expose for
+                # an explicit replacement after the original was blocked.
+                send_text = getattr(self._session, "send_text", None)
+                if not callable(send_text):
+                    raise RuntimeError(
+                        "provider advertises prompted retries without send_text"
+                    )
+                await send_text(
+                    _output_language_retry_prompt(language=self._language)
                 )
             else:
                 try:

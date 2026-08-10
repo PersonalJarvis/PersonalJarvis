@@ -753,6 +753,10 @@ class _CodexSubscriptionRealtimeSession:
     supports_tool_updates = False
     supports_direct_tools = False
     creates_responses_automatically = True
+    # Server VAD creates the first answer, but request_response() cannot create
+    # a replacement after Jarvis blocks it. A trusted text append is the
+    # transport's explicit retry mechanism.
+    supports_prompted_response_retry = True
     isolates_response_generations = True
     rebuild_on_transport_death = True
     direct_speech_is_authoritative = True
@@ -987,6 +991,10 @@ class _CodexSubscriptionRealtimeSession:
         sequence_boundary_pending = False
         stream_ended = False
         local_transcript_failed = False
+        # Silence/too-short is not a recognizer outage. It may still fall back
+        # to a provider caption for the same audio, but must not manufacture a
+        # user-visible transcription error when no caption arrives.
+        local_transcript_discarded = False
         user_final_emitted = False
         # The "we could not transcribe this turn" notice is emitted once per
         # turn, but it must NOT latch ``user_final_emitted``: a genuine
@@ -1724,7 +1732,11 @@ class _CodexSubscriptionRealtimeSession:
             was permanently recorded as empty.
             """
             nonlocal missing_boundary_emitted
-            if not local_transcript_failed or user_final_emitted:
+            if (
+                not local_transcript_failed
+                or local_transcript_discarded
+                or user_final_emitted
+            ):
                 return None
             if missing_boundary_emitted:
                 return None
@@ -2006,6 +2018,7 @@ class _CodexSubscriptionRealtimeSession:
                         local_input_generation += 1
                         user_utterance_open = True
                         local_transcript_failed = False
+                        local_transcript_discarded = False
                         user_final_emitted = False
                         missing_boundary_emitted = False
                         ungrounded_final_captions = 0
@@ -2042,6 +2055,8 @@ class _CodexSubscriptionRealtimeSession:
                         # instead of being refused on the spot (the BUG-124
                         # amplifier: a 200 ms "hm?" got its real answer cut).
                         user_utterance_open = False
+                        local_transcript_failed = True
+                        local_transcript_discarded = True
                         discarded_generation = local_input_generation
                         discarded_at = asyncio.get_running_loop().time()
                         log.debug(
@@ -2079,6 +2094,7 @@ class _CodexSubscriptionRealtimeSession:
                         preview = self._server_user_preview
                         self._server_user_preview = ""
                         local_transcript_failed = True
+                        local_transcript_discarded = False
                         if preview and not user_final_emitted:
                             user_final_emitted = True
                             log.info(
@@ -2096,6 +2112,7 @@ class _CodexSubscriptionRealtimeSession:
                         if payload.is_final:
                             user_utterance_open = False
                             local_transcript_failed = False
+                            local_transcript_discarded = False
                             user_final_emitted = True
                             first_user_final_seen = True
                             if response_open and not response_allowed:
@@ -2566,6 +2583,7 @@ class _CodexSubscriptionRealtimeSession:
                         else:
                             user_final_emitted = True
                             local_transcript_failed = False
+                            local_transcript_discarded = False
                         yield _ProviderEvent(
                             type="input_transcript",
                             text=text,
@@ -2663,14 +2681,28 @@ class _CodexSubscriptionRealtimeSession:
                         continue
                     item_type = str(item.get("type", "") or "")
                     if item_type == "input_audio_buffer.speech_started":
+                        item_id = str(item.get("item_id", "") or "")
+                        if self._local_grounding_active():
+                            # The local endpointer already emitted the one
+                            # authoritative boundary for this microphone audio.
+                            # ChatGPT-Live's duplicate commonly arrives after
+                            # the assistant response has opened; forwarding it
+                            # as another barge-in cancels that valid response
+                            # and leaves later generations behind the interrupt
+                            # barrier. Retain only the id needed by its caption.
+                            self._last_input_item_id = item_id
+                            self._diag[
+                                "duplicate_provider_speech_starts_suppressed"
+                            ] += 1
+                            continue
                         _cancel_completion()
                         completion_emitted = False
                         self._assistant_delta_text = ""
-                        self._last_input_item_id = str(item.get("item_id", "") or "")
-                        if not self._local_grounding_active():
-                            local_transcript_failed = False
-                            user_final_emitted = False
-                            missing_boundary_emitted = False
+                        self._last_input_item_id = item_id
+                        local_transcript_failed = False
+                        local_transcript_discarded = False
+                        user_final_emitted = False
+                        missing_boundary_emitted = False
                         _reset_assistant_capture()
                         yield _ProviderEvent(
                             type="speech_started",

@@ -2206,6 +2206,72 @@ async def _collect_until(session, *, stop_after: int, kind: str, timeout_s: floa
 
 
 @pytest.mark.asyncio
+async def test_provider_speech_start_does_not_duplicate_local_boundary() -> None:
+    """A late server VAD edge is the same utterance, not a new barge-in.
+
+    ChatGPT-Live commonly sends it after the locally grounded final, while the
+    answer is already opening. Forwarding both boundaries cancels that answer
+    and strands the following response generation behind the interrupt barrier.
+    """
+    transcriber = _ScheduledInputTranscriber(
+        [
+            (0.01, InputTranscriptEvent(kind="speech_started")),
+            (
+                0.0,
+                InputTranscriptEvent(kind="transcript", text="Hello", is_final=True),
+            ),
+        ]
+    )
+    client = _Client()
+    client.subscription = _ScheduledSubscription(
+        [
+            (
+                0.04,
+                _Notification(
+                    "thread/realtime/itemAdded",
+                    {
+                        "threadId": "thread-1",
+                        "item": {
+                            "type": "input_audio_buffer.speech_started",
+                            "item_id": "input-1",
+                        },
+                    },
+                ),
+            ),
+            (
+                0.02,
+                _Notification(
+                    "thread/realtime/transcript/delta",
+                    {
+                        "threadId": "thread-1",
+                        "role": "assistant",
+                        "delta": "Hi there.",
+                    },
+                ),
+            ),
+        ]
+    )
+    session = await _provider(
+        client,
+        input_transcriber_factory=lambda: transcriber,
+    ).open_session(RealtimeSessionConfig())
+
+    events = await _collect_until(
+        session,
+        stop_after=1,
+        kind="output_transcript_delta",
+        timeout_s=1.0,
+    )
+
+    assert [event.type for event in events].count("speech_started") == 1
+    assert [event.text for event in events if event.type == "output_transcript_delta"] == [
+        "Hi there."
+    ]
+    assert session.diagnostics().get("duplicate_provider_speech_starts_suppressed", 0) == 1
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_a_refused_response_does_not_deafen_the_next_real_turn() -> None:
     """AD-1: one refusal must not decide the rest of the call.
 

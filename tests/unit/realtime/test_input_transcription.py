@@ -175,17 +175,12 @@ async def test_a_blip_of_noise_never_becomes_a_transcript() -> None:
     transcriber = LocalInputTranscriber(sample_rate=RATE, stt_factory=lambda: stt)
 
     _speak(transcriber, speech_chunks=8)  # 160 ms - too short to be speech
-    events = await _drain(transcriber, 1)
+    events = await _drain(transcriber, 2)
 
     assert events[0].kind == module.SPEECH_STARTED
+    assert events[1].kind == module.SPEECH_DISCARDED
+    assert events[1].voiced_ms == 160
     assert stt.calls == 0
-    # Nothing follows it on the wire. The discard is reported through the log,
-    # NOT as a new event kind: this stream's one reader routes any unknown kind
-    # through a fallback that wipes the provider's own user-transcript preview,
-    # so a per-cough event would destroy the very fallback that the failure path
-    # exists to promote.
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(transcriber.next_event(), timeout=0.05)
     await transcriber.close()
 
 
@@ -335,9 +330,9 @@ async def test_silence_boilerplate_never_becomes_a_grounded_turn() -> None:
     The endpointer only ever vouches for ENERGY, and a speaker leak has energy
     too — so a Whisper-family model produced its end-card boilerplate over
     that leak, the far end answered a question nobody asked, and the call's
-    output language flipped to English on the way through. It must land as a
-    FAILED transcript, so the far end's own caption for the same audio can
-    still stand in for the turn.
+    output language flipped to English on the way through. It must close as a
+    discarded utterance, so a provider caption can still stand in without a
+    false transcription failure when none arrives.
     """
     stt = _FakeSTT("Thank you for watching!")
     transcriber = LocalInputTranscriber(sample_rate=RATE, stt_factory=lambda: stt)
@@ -345,7 +340,7 @@ async def test_silence_boilerplate_never_becomes_a_grounded_turn() -> None:
 
     events = await _drain(transcriber, 2)
     assert events[0].kind == module.SPEECH_STARTED
-    assert events[1].kind == module.TRANSCRIPT_FAILED
+    assert events[1].kind == module.SPEECH_DISCARDED
     await transcriber.close()
 
 
