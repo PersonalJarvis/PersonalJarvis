@@ -22,10 +22,25 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = ResizeObserverPolyfill;
 }
 
+const deckVoice = vi.hoisted(() => ({
+  state: "idle" as string,
+  transcription: "",
+  assistantName: "Ben",
+}));
 const pushToast = vi.fn();
 vi.mock("@/store/events", () => ({
   useEventStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({ pushToast, voiceState: "idle" }),
+    selector({
+      pushToast,
+      voiceState: deckVoice.state,
+      transcription: deckVoice.transcription,
+      assistantName: deckVoice.assistantName,
+    }),
+}));
+
+vi.mock("@/lib/voiceApi", () => ({
+  requestVoiceCall: vi.fn(async () => ({ armed: true })),
+  requestVoiceHangup: vi.fn(async () => ({ stopped: true })),
 }));
 
 vi.mock("@/hooks/useTheme", () => ({ useThemeValue: () => "dark" }));
@@ -94,6 +109,7 @@ vi.mock("./VoiceOrb", () => ({
 
 import { AgenticGrid } from "./AgenticGrid";
 import * as api from "@/lib/agenticIdeApi";
+import * as voiceApi from "@/lib/voiceApi";
 import type { SessionState, TerminalState } from "@/lib/agenticIdeApi";
 
 function pane(name: string, column: number, index: number): TerminalState {
@@ -162,6 +178,9 @@ const toDeck = () => fireEvent.click(screen.getByTestId("agentic-view-mode-deck"
 
 beforeEach(() => {
   window.localStorage.clear();
+  deckVoice.state = "idle";
+  deckVoice.transcription = "";
+  deckVoice.assistantName = "Ben";
 });
 
 afterEach(() => {
@@ -205,7 +224,35 @@ describe("the room", () => {
     renderGrid();
     toDeck();
 
-    expect(screen.getByTestId("deck-orb-caption").textContent).toMatch(/tap the orb/i);
+    expect(screen.getByTestId("deck-orb-caption").textContent).toMatch(
+      /say the wake word/i,
+    );
+    expect(screen.getByTestId("deck-voice-action")).toBeTruthy();
+  });
+
+  it("starts voice directly from the deck instead of opening another orb", async () => {
+    const openBubble = vi.fn();
+    renderGrid(FOUR, { voiceOpen: false, onToggleVoice: openBubble });
+    toDeck();
+
+    fireEvent.click(screen.getByTestId("deck-orb"));
+
+    await waitFor(() => expect(voiceApi.requestVoiceCall).toHaveBeenCalledTimes(1));
+    expect(openBubble).not.toHaveBeenCalled();
+  });
+
+  it("shows live speech and lets the same control end the conversation", async () => {
+    deckVoice.state = "listening";
+    deckVoice.transcription = "hand the test failure to T2";
+    renderGrid();
+    toDeck();
+
+    expect(screen.getByTestId("deck-orb-caption").textContent).toContain(
+      "hand the test failure to T2",
+    );
+    fireEvent.click(screen.getByTestId("deck-voice-action"));
+
+    await waitFor(() => expect(voiceApi.requestVoiceHangup).toHaveBeenCalledTimes(1));
   });
 
   it("has no seams to drag — there is no layout to size here", () => {

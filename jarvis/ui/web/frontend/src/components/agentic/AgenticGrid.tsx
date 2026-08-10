@@ -74,7 +74,7 @@ import { DeckStage, type DeckAgent } from "./deck/DeckStage";
 import type { CardState } from "./deck/AgentCard";
 import { useDeckQueue } from "./deck/useDeckQueue";
 import { PaneNotifications } from "./PaneNotifications";
-import { isVoiceActive } from "./VoiceBubble";
+import { isVoiceActive } from "./useVoiceCall";
 import { PromptPreview } from "./PromptPreview";
 import { PromptEditor } from "./PromptEditor";
 import { WorkspaceSettings } from "./WorkspaceSettings";
@@ -1126,16 +1126,6 @@ export function AgenticGrid({
    * describing a terminal differently from the grid beside it.
    */
   const deck = useDeckQueue(deckView && onScreen);
-  /*
-   * The orb's state, read straight from the store the voice pipeline feeds.
-   *
-   * Subscribed in this very large component only because the deck's orb is
-   * ON it — the floating bubble keeps its own subscription for exactly the
-   * opposite reason (see VoiceBubble: it exists so voice state does not
-   * re-render every terminal). The cost is paid back by the selector being a
-   * single string: it changes a handful of times per turn, not per frame.
-   */
-  const voiceState = (useEventStore((s) => s.voiceState) ?? "idle") as VoiceState;
   const deckAgents: DeckAgent[] = useMemo(() => {
     if (!deckView) return [];
     return session.terminals
@@ -3201,9 +3191,6 @@ export function AgenticGrid({
         <div className="absolute inset-0 z-10">
           <DeckStage
             agents={deckAgents}
-            voiceState={voiceState}
-            listening={voiceOpen && isVoiceActive(voiceState)}
-            onToggleVoice={onToggleVoice}
             expanded={deckExpanded}
             onToggleExpand={toggleDeckExpand}
             onToggleHold={toggleDeckHold}

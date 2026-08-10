@@ -66,7 +66,6 @@ import { cn } from "@/lib/utils";
 import { useEventStore, type VoiceState } from "@/store/events";
 import {
   fetchTtsVolume,
-  requestVoiceCall,
   requestVoiceHangup,
   setTtsVolume,
 } from "@/lib/voiceApi";
@@ -86,6 +85,7 @@ import {
 } from "./paneDrop";
 import { VoiceOrb } from "./VoiceOrb";
 import { VoiceBubbleNotice } from "./VoiceBubbleNotice";
+import { useVoiceCall } from "./useVoiceCall";
 
 const OPEN_KEY = "jarvis.agenticIde.voiceBubbleOpen";
 const POS_KEY = "jarvis.agenticIde.voiceBubblePos";
@@ -169,18 +169,6 @@ const STATUS_KEY: Record<VoiceState, string> = {
   error: "agentic_grid.voice_bubble.error",
 };
 
-/** Is a conversation running — the half of the toggle a click would end?
- * A paused session counts: it is held, not gone, and the honest click on it
- * is still "hang up". */
-export function isVoiceActive(state: VoiceState): boolean {
-  return (
-    state === "listening" ||
-    state === "thinking" ||
-    state === "speaking" ||
-    state === "paused"
-  );
-}
-
 type DropPhase = "idle" | "over" | "reading";
 
 interface DropReceipt {
@@ -235,14 +223,13 @@ export function VoiceBubble({
   onJumpToPane?: (workspaceId: string, pane: string) => void;
 }) {
   const t = useT();
-  const voiceState = (useEventStore((s) => s.voiceState) ?? "idle") as VoiceState;
+  const { active, busy, connecting, toggleCall, voiceState } = useVoiceCall();
   const transcription = useEventStore((s) => s.transcription) ?? "";
   const assistantName =
     (useEventStore((s) => s.assistantName) ?? "").trim() ||
     t("agentic_grid.voice_bubble.assistant_fallback");
   const pushToast = useEventStore((s) => s.pushToast);
 
-  const [busy, setBusy] = useState(false);
   const [dropPhase, setDropPhase] = useState<DropPhase>("idle");
   const [dropTarget, setDropTarget] = useState("");
   const [receipts, setReceipts] = useState<DropReceipt[]>([]);
@@ -250,7 +237,6 @@ export function VoiceBubble({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const prevVolumeRef = useRef(1);
 
-  const active = isVoiceActive(voiceState);
   const mounted = open && onScreen;
 
   /*
@@ -413,27 +399,6 @@ export function VoiceBubble({
   }, [dropPhase]);
 
   // ------------------------------------------------------------------ voice
-  const toggleCall = useCallback(async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      if (active) {
-        await requestVoiceHangup();
-      } else {
-        const { armed } = await requestVoiceCall();
-        // A refusal is an answer: a session already runs, or activation is
-        // blocked (the app window is hidden). Say so instead of a dead click.
-        if (!armed) {
-          pushToast("warning", t("agentic_grid.voice_bubble.start_failed"));
-        }
-      }
-    } catch (error) {
-      pushToast("error", (error as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, active, pushToast, t]);
-
   const closeBubble = useCallback(() => {
     // X is the "put the voice away" gesture: a running conversation ends with
     // it. Fired without awaiting — the bubble should leave the screen on the
@@ -632,7 +597,7 @@ export function VoiceBubble({
             if (dropPhase === "over") setDropPhase("idle");
           }}
           onDrop={(event) => void handleDrop(event)}
-          disabled={busy || dropPhase === "reading"}
+          disabled={busy || connecting || dropPhase === "reading"}
           aria-pressed={active}
           title={
             active
@@ -661,7 +626,7 @@ export function VoiceBubble({
               ? "[filter:saturate(1)_brightness(1)]"
               : "[filter:saturate(0.45)_brightness(0.72)] hover:[filter:saturate(0.7)_brightness(0.85)]",
             dropPhase === "over" && "scale-[1.04]",
-            (busy || dropPhase === "reading") && "cursor-wait opacity-80",
+            (busy || connecting || dropPhase === "reading") && "cursor-wait opacity-80",
           )}
         >
           <VoiceOrb state={voiceState} size={132} />
@@ -809,7 +774,7 @@ export function VoiceBubble({
           type="button"
           data-no-drag
           data-testid="voice-bubble-mic"
-          disabled={busy}
+          disabled={busy || connecting}
           aria-pressed={active}
           onClick={() => void toggleCall()}
           title={
