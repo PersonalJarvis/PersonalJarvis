@@ -80,11 +80,90 @@ export function captureWheelForTerminalHistory(
   };
 }
 
-/** Keep terminal wheel input from falling through to the workspace scroller. */
+/**
+ * The xterm surface, which owns every wheel inside itself.
+ *
+ * Matched by class rather than by the pane's own host element because it is the
+ * boundary that matters: `captureWheelForTerminalHistory` and xterm's viewport
+ * between them decide what a notch means in there, and neither may be
+ * second-guessed from a parent listener.
+ */
+const TERMINAL_SURFACE_CLASS = "xterm";
+
+/** A sub-pixel left at either end is a rounding artefact, not somewhere to go. */
+const SCROLL_END_EPSILON_PX = 1;
+
+/** Does this element scroll its own overflow rather than spill it? */
+function scrollsItsOwnOverflow(element: Element): boolean {
+  // Absent in some test environments; there nothing claims the wheel, which is
+  // the behaviour this replaces.
+  if (typeof getComputedStyle !== "function") return false;
+  const overflowY = getComputedStyle(element).overflowY;
+  return overflowY === "auto" || overflowY === "scroll";
+}
+
+/** Has `element` anywhere left to go in the direction the wheel is pointing? */
+function hasScrollRoom(element: Element, deltaY: number): boolean {
+  const { scrollHeight, clientHeight, scrollTop } = element as HTMLElement;
+  if (scrollHeight - clientHeight <= SCROLL_END_EPSILON_PX) return false;
+  return deltaY < 0
+    ? scrollTop > SCROLL_END_EPSILON_PX
+    : scrollTop + clientHeight < scrollHeight - SCROLL_END_EPSILON_PX;
+}
+
+/**
+ * Is something between the wheel and the pane going to scroll on its own?
+ *
+ * Walked from the event's target outwards, and the terminal wins wherever it is
+ * met: xterm's viewport is itself a real scroller, so a candidate found INSIDE
+ * the terminal surface would otherwise be answered here as well as by xterm.
+ * The answer is therefore held until the walk has passed the whole chain up to
+ * the pane, rather than returned at the first scrollable element.
+ */
+function absorbsWheel(
+  target: EventTarget | null,
+  region: HTMLElement,
+  deltaY: number,
+): boolean {
+  let node = target instanceof Element ? target : null;
+  let absorber: Element | null = null;
+  while (node && node !== region) {
+    if (node.classList.contains(TERMINAL_SURFACE_CLASS)) return false;
+    if (!absorber && scrollsItsOwnOverflow(node) && hasScrollRoom(node, deltaY)) {
+      absorber = node;
+    }
+    node = node.parentElement;
+  }
+  return absorber !== null;
+}
+
+/**
+ * Keep terminal wheel input from falling through to the workspace scroller.
+ *
+ * The containment is unconditional and always was: whatever a notch means
+ * inside a pane, the section behind it must not move. A workspace is one
+ * screenful by rule, and a pane that let the page scroll under it would carry
+ * every other pane away with it.
+ *
+ * Cancelling the notch is a SEPARATE question, and answering both with one line
+ * is what broke the prompt receipt. That card is drawn inside the terminal
+ * region — it has to be, it points at the pane it is talking about — and a long
+ * delivered prompt scrolls inside it (`max-h-56 overflow-y-auto` in
+ * ./PromptReceipt). Cancelling every wheel in the region cancelled that one too,
+ * so the receipt could be opened, could show that it had more text, and could
+ * not be read past its first fifty-six pixels.
+ *
+ * So the default is only prevented when nothing between the pointer and the
+ * pane is going to act on it. The terminal itself is untouched by the
+ * distinction: its subtree is excluded outright (see `absorbsWheel`), which is
+ * also why this cannot disturb the scroll contract the panes were tuned for.
+ */
 export function bindTerminalScrollRegion(region: HTMLElement): () => void {
   const containWheel = (event: WheelEvent) => {
     event.stopPropagation();
-    if (!event.defaultPrevented) event.preventDefault();
+    if (event.defaultPrevented) return;
+    if (absorbsWheel(event.target, region, event.deltaY)) return;
+    event.preventDefault();
   };
   region.addEventListener("wheel", containWheel, { passive: false });
   return () => region.removeEventListener("wheel", containWheel);

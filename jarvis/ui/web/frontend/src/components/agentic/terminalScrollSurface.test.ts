@@ -120,13 +120,110 @@ describe("terminalScrollSurface", () => {
     document.body.addEventListener("wheel", parentSaw);
     const unbind = bindTerminalScrollRegion(region);
 
-    region.dispatchEvent(
-      new WheelEvent("wheel", { deltaY: 120, bubbles: true, cancelable: true }),
-    );
+    const event = new WheelEvent("wheel", {
+      deltaY: 120,
+      bubbles: true,
+      cancelable: true,
+    });
+    region.dispatchEvent(event);
     expect(parentSaw).not.toHaveBeenCalled();
+    // Nothing in there scrolls on its own, so the notch is cancelled too.
+    expect(event.defaultPrevented).toBe(true);
 
     unbind();
     document.body.removeEventListener("wheel", parentSaw);
     region.remove();
+  });
+
+  /**
+   * The prompt receipt is drawn INSIDE the terminal region — it has to be, it
+   * points at the pane it is talking about — and a long delivered prompt
+   * scrolls within it. Cancelling every wheel in the region cancelled that one
+   * as well, so the card could show that it had more text and could not be read
+   * past it.
+   */
+  describe("overlays drawn inside the region", () => {
+    /** A box that really has somewhere to scroll, as jsdom does not lay out. */
+    function scrollBox({ scrollTop = 0 } = {}): HTMLElement {
+      const box = document.createElement("div");
+      box.style.overflowY = "auto";
+      Object.defineProperties(box, {
+        scrollHeight: { value: 400, configurable: true },
+        clientHeight: { value: 200, configurable: true },
+        scrollTop: { value: scrollTop, writable: true, configurable: true },
+      });
+      return box;
+    }
+
+    /** Region → overlay → the element the pointer is actually over. */
+    function paneWith(overlay: HTMLElement): {
+      region: HTMLElement;
+      target: HTMLElement;
+      unbind: () => void;
+    } {
+      const region = document.createElement("div");
+      const target = document.createElement("span");
+      overlay.append(target);
+      region.append(overlay);
+      document.body.append(region);
+      return { region, target, unbind: bindTerminalScrollRegion(region) };
+    }
+
+    function wheelOn(target: HTMLElement, deltaY: number): WheelEvent {
+      const event = new WheelEvent("wheel", {
+        deltaY,
+        bubbles: true,
+        cancelable: true,
+      });
+      target.dispatchEvent(event);
+      return event;
+    }
+
+    it("leaves the notch to a scrollable card that still has room", () => {
+      const { region, target, unbind } = paneWith(scrollBox());
+      const parentSaw = vi.fn();
+      document.body.addEventListener("wheel", parentSaw);
+
+      const event = wheelOn(target, 120);
+      expect(event.defaultPrevented).toBe(false);
+      // Still contained: the workspace behind the pane must not move either way.
+      expect(parentSaw).not.toHaveBeenCalled();
+
+      unbind();
+      document.body.removeEventListener("wheel", parentSaw);
+      region.remove();
+    });
+
+    it("takes it back once that card has reached the end it is heading for", () => {
+      // Parked at the top: there is room downwards and none upwards, and only
+      // the second of those may fall through to a scroll chain.
+      const { region, target, unbind } = paneWith(scrollBox({ scrollTop: 0 }));
+
+      expect(wheelOn(target, 120).defaultPrevented).toBe(false);
+      expect(wheelOn(target, -120).defaultPrevented).toBe(true);
+
+      unbind();
+      region.remove();
+    });
+
+    it("never hands a wheel inside the terminal back to the browser", () => {
+      // xterm's viewport is a real scroller, and it is answered by xterm's own
+      // handlers — a parent listener must not add native scrolling on top.
+      const surface = document.createElement("div");
+      surface.className = "xterm";
+      const viewport = scrollBox({ scrollTop: 80 });
+      viewport.className = "xterm-viewport";
+      surface.append(viewport);
+
+      const region = document.createElement("div");
+      region.append(surface);
+      document.body.append(region);
+      const unbind = bindTerminalScrollRegion(region);
+
+      expect(wheelOn(viewport, 120).defaultPrevented).toBe(true);
+
+      unbind();
+      region.remove();
+    });
   });
 });
