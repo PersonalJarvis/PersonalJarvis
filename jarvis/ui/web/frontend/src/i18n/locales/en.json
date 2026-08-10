@@ -3932,7 +3932,12 @@
       "empty": "Empty folder",
       "load_failed": "The folder could not be loaded.",
       "open_failed": "The file could not be opened.",
-      "open_hint": "Double-click a file to open it in your system editor.",
+      "open_file": "Open file",
+      "open_unavailable": "File opening is available in the desktop app.",
+      "file": "File",
+      "folder": "Folder",
+      "symlink": "Symbolic link",
+      "open_hint": "Double-click a file or use its open button.",
       "truncated": "This folder has more entries than can be shown at once."
     },
     "arrange": {

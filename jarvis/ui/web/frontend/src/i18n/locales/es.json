@@ -3932,7 +3932,12 @@
       "empty": "Carpeta vacía",
       "load_failed": "No se pudo cargar la carpeta.",
       "open_failed": "No se pudo abrir el archivo.",
-      "open_hint": "Haz doble clic en un archivo para abrirlo en el editor del sistema.",
+      "open_file": "Abrir archivo",
+      "open_unavailable": "Los archivos se pueden abrir en la aplicación de escritorio.",
+      "file": "Archivo",
+      "folder": "Carpeta",
+      "symlink": "Enlace simbólico",
+      "open_hint": "Haz doble clic en un archivo o usa su botón para abrirlo.",
       "truncated": "Esta carpeta tiene más entradas de las que se pueden mostrar a la vez."
     },
     "arrange": {

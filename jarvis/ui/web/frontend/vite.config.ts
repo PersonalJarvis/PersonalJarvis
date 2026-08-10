@@ -1,10 +1,71 @@
 /// <reference types="vitest" />
+import fs from "node:fs";
 import { defineConfig } from "vite";
+import type { Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 
+const MATERIAL_ICON_ROUTE = "/assets/material-file-icons";
+const materialIconSource = path.resolve(
+  __dirname,
+  "node_modules/material-icon-theme/icons",
+);
+
+/**
+ * Keep the complete icon theme out of the Agentic IDE JavaScript chunk.
+ * Development serves the pinned package directly; production copies the same
+ * MIT-licensed SVGs beside the static assets for offline desktop use.
+ */
+function materialIconAssets(): Plugin {
+  let outputDirectory = "";
+
+  return {
+    name: "material-file-icon-assets",
+    configResolved(config) {
+      outputDirectory = path.resolve(config.root, config.build.outDir);
+    },
+    configureServer(server) {
+      server.middlewares.use(MATERIAL_ICON_ROUTE, (request, response, next) => {
+        let requestedFile = "";
+        try {
+          requestedFile = decodeURIComponent(request.url ?? "")
+            .split("?", 1)[0]
+            .replace(/^\/+/, "");
+        } catch {
+          next();
+          return;
+        }
+        if (!/^[a-zA-Z0-9_.-]+\.svg$/.test(requestedFile)) {
+          next();
+          return;
+        }
+
+        const sourceFile = path.resolve(materialIconSource, requestedFile);
+        if (
+          path.dirname(sourceFile) !== materialIconSource ||
+          !fs.existsSync(sourceFile)
+        ) {
+          next();
+          return;
+        }
+
+        response.setHeader("Content-Type", "image/svg+xml");
+        response.setHeader("Cache-Control", "public, max-age=3600");
+        fs.createReadStream(sourceFile).pipe(response);
+      });
+    },
+    writeBundle() {
+      fs.cpSync(
+        materialIconSource,
+        path.join(outputDirectory, "assets", "material-file-icons"),
+        { recursive: true },
+      );
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), materialIconAssets()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

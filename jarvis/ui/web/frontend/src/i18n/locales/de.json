@@ -3932,7 +3932,12 @@
       "empty": "Leerer Ordner",
       "load_failed": "Der Ordner konnte nicht geladen werden.",
       "open_failed": "Die Datei konnte nicht geöffnet werden.",
-      "open_hint": "Doppelklick öffnet eine Datei im System-Editor.",
+      "open_file": "Datei öffnen",
+      "open_unavailable": "Dateien können in der Desktop-App geöffnet werden.",
+      "file": "Datei",
+      "folder": "Ordner",
+      "symlink": "Symbolische Verknüpfung",
+      "open_hint": "Doppelklick oder die Öffnen-Schaltfläche öffnet eine Datei.",
       "truncated": "Dieser Ordner enthält mehr Einträge, als gleichzeitig angezeigt werden können."
     },
     "arrange": {

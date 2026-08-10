@@ -30,6 +30,7 @@
     "framer-motion": "^12.38.0",
     "html-to-image": "^1.11.13",
     "lucide-react": "^0.445.0",
+    "material-icon-theme": "5.37.0",
     "qrcode.react": "^4.2.0",
     "react": "^18.3.1",
     "react-arborist": "^3.5.0",

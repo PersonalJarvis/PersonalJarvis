@@ -8,18 +8,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronRight,
-  File,
-  FileCode2,
-  FileText,
-  Folder,
-  FolderOpen,
-  Image as ImageIcon,
+  ExternalLink,
   Link2,
   Loader2,
   RefreshCw,
   X,
 } from "lucide-react";
 
+import { useThemeValue } from "@/hooks/useTheme";
+import { useCapabilities } from "@/hooks/useCapabilities";
 import { useT } from "@/i18n";
 import {
   fetchWorkspaceFiles,
@@ -28,6 +25,8 @@ import {
 } from "@/lib/agenticIdeApi";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
+
+import { materialFileIcon, useMaterialFileIcons } from "./materialFileIcons";
 
 interface DirectoryState {
   entries: WorkspaceFileItem[];
@@ -48,12 +47,16 @@ export function WorkspaceExplorer({
   onClose,
 }: WorkspaceExplorerProps) {
   const t = useT();
+  const theme = useThemeValue();
+  const capabilities = useCapabilities();
+  useMaterialFileIcons();
   const tRef = useRef(t);
   tRef.current = t;
   const pushToast = useEventStore((state) => state.pushToast);
   const [directories, setDirectories] = useState<Record<string, DirectoryState>>({});
   const [openPaths, setOpenPaths] = useState<Set<string>>(() => new Set([""]));
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [openingPath, setOpeningPath] = useState<string | null>(null);
   const [resolvedRootName, setResolvedRootName] = useState(rootName);
 
   const loadDirectory = useCallback(
@@ -122,6 +125,8 @@ export function WorkspaceExplorer({
 
   const openFile = useCallback(
     async (path: string) => {
+      if (openingPath === path) return;
+      setOpeningPath(path);
       try {
         await openTerminalTarget(workspaceId, path);
       } catch (error) {
@@ -130,9 +135,11 @@ export function WorkspaceExplorer({
           "error",
           detail || t("agentic_grid.explorer.open_failed"),
         );
+      } finally {
+        setOpeningPath((current) => (current === path ? null : current));
       }
     },
-    [pushToast, t, workspaceId],
+    [openingPath, pushToast, t, workspaceId],
   );
 
   const refresh = () => {
@@ -143,6 +150,7 @@ export function WorkspaceExplorer({
   };
 
   const rootOpen = openPaths.has("");
+  const nativeFileActions = capabilities.data?.native_file_actions === true;
 
   return (
     <aside
@@ -193,9 +201,26 @@ export function WorkspaceExplorer({
               aria-hidden
             />
             {rootOpen ? (
-              <FolderOpen className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+              <MaterialEntryIcon
+                icon={materialFileIcon({
+                  name: resolvedRootName,
+                  directory: true,
+                  open: true,
+                  root: true,
+                  theme,
+                })}
+                className="h-4 w-4"
+              />
             ) : (
-              <Folder className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+              <MaterialEntryIcon
+                icon={materialFileIcon({
+                  name: resolvedRootName,
+                  directory: true,
+                  root: true,
+                  theme,
+                })}
+                className="h-4 w-4"
+              />
             )}
             <span className="truncate">{resolvedRootName}</span>
           </button>
@@ -207,6 +232,9 @@ export function WorkspaceExplorer({
               directories={directories}
               openPaths={openPaths}
               selectedPath={selectedPath}
+              openingPath={openingPath}
+              nativeFileActions={nativeFileActions}
+              theme={theme}
               onToggle={toggleDirectory}
               onSelect={setSelectedPath}
               onOpenFile={(path) => void openFile(path)}
@@ -216,7 +244,11 @@ export function WorkspaceExplorer({
       </div>
 
       <footer className="shrink-0 border-t border-border/60 px-3 py-2 text-[10px] leading-relaxed text-muted-foreground">
-        {t("agentic_grid.explorer.open_hint")}
+        {t(
+          nativeFileActions
+            ? "agentic_grid.explorer.open_hint"
+            : "agentic_grid.explorer.open_unavailable",
+        )}
       </footer>
     </aside>
   );
@@ -228,6 +260,9 @@ function TreeLevel({
   directories,
   openPaths,
   selectedPath,
+  openingPath,
+  nativeFileActions,
+  theme,
   onToggle,
   onSelect,
   onOpenFile,
@@ -237,6 +272,9 @@ function TreeLevel({
   directories: Record<string, DirectoryState>;
   openPaths: Set<string>;
   selectedPath: string | null;
+  openingPath: string | null;
+  nativeFileActions: boolean;
+  theme: "dark" | "light";
   onToggle: (path: string) => void;
   onSelect: (path: string) => void;
   onOpenFile: (path: string) => void;
@@ -275,66 +313,103 @@ function TreeLevel({
         const expandable = entry.is_directory && !entry.is_symlink;
         const isOpen = expandable && openPaths.has(entry.path);
         const selected = selectedPath === entry.path;
-        const EntryIcon = iconFor(entry, isOpen);
+        const icon = materialFileIcon({
+          name: entry.name,
+          path: entry.path,
+          directory: expandable,
+          open: isOpen,
+          theme,
+        });
+        const isFile = !entry.is_directory && !entry.is_symlink;
+        const canOpen = isFile && nativeFileActions;
+        const typeName = entry.is_symlink
+          ? t("agentic_grid.explorer.symlink")
+          : entry.is_directory
+            ? t("agentic_grid.explorer.folder")
+            : fileTypeName(entry.name, icon.id, t("agentic_grid.explorer.file"));
         return (
           <div key={entry.path}>
-            <button
-              type="button"
-              role="treeitem"
-              aria-expanded={expandable ? isOpen : undefined}
-              aria-selected={selected}
-              title={entry.path}
-              onClick={() => {
-                onSelect(entry.path);
-                if (expandable) onToggle(entry.path);
-              }}
-              onDoubleClick={() => {
-                if (!entry.is_directory && !entry.is_symlink) onOpenFile(entry.path);
-              }}
-              onKeyDown={(event) => {
-                if (
-                  event.key === "Enter" &&
-                  !entry.is_directory &&
-                  !entry.is_symlink
-                ) {
-                  event.preventDefault();
-                  onOpenFile(entry.path);
-                }
-              }}
+            <div
               className={cn(
-                "group flex h-6 w-full items-center gap-1.5 rounded-control pr-2 text-left text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/60",
+                "group flex h-7 w-full items-center rounded-control transition-colors",
                 selected
                   ? "bg-primary/10 text-foreground shadow-[inset_2px_0_0_hsl(var(--primary))]"
                   : "text-muted-foreground hover:bg-secondary/65 hover:text-foreground",
               )}
-              style={{ paddingLeft: `${depth * 12}px` }}
             >
-              {expandable ? (
-                <ChevronRight
-                  className={cn(
-                    "h-3 w-3 shrink-0 transition-transform",
-                    isOpen && "rotate-90",
-                  )}
-                  aria-hidden
-                />
-              ) : (
-                <span className="w-3 shrink-0" aria-hidden />
-              )}
-              <EntryIcon
-                className={cn(
-                  "h-3.5 w-3.5 shrink-0",
-                  expandable
-                    ? "text-primary/80"
-                    : entry.is_symlink
-                      ? "text-muted-foreground/70"
-                      : selected
-                        ? "text-primary"
-                        : "text-muted-foreground group-hover:text-foreground/80",
+              <button
+                type="button"
+                role="treeitem"
+                aria-expanded={expandable ? isOpen : undefined}
+                aria-selected={selected}
+                aria-label={`${entry.name}, ${typeName}`}
+                title={`${typeName} · ${entry.path}`}
+                onClick={() => {
+                  onSelect(entry.path);
+                  if (expandable) onToggle(entry.path);
+                }}
+                onDoubleClick={() => {
+                  if (canOpen) onOpenFile(entry.path);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && canOpen) {
+                    event.preventDefault();
+                    onOpenFile(entry.path);
+                  }
+                }}
+                className="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left text-[12px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring/60"
+                style={{ paddingLeft: `${depth * 12}px` }}
+              >
+                {expandable ? (
+                  <ChevronRight
+                    className={cn(
+                      "h-3 w-3 shrink-0 transition-transform",
+                      isOpen && "rotate-90",
+                    )}
+                    aria-hidden
+                  />
+                ) : (
+                  <span className="w-3 shrink-0" aria-hidden />
                 )}
-                aria-hidden
-              />
-              <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-            </button>
+                {entry.is_symlink ? (
+                  <Link2
+                    className="h-4 w-4 shrink-0 text-muted-foreground/70"
+                    aria-hidden
+                  />
+                ) : (
+                  <MaterialEntryIcon icon={icon} className="h-4 w-4" />
+                )}
+                <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+              </button>
+
+              {isFile && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!canOpen) return;
+                    onSelect(entry.path);
+                    onOpenFile(entry.path);
+                  }}
+                  disabled={!canOpen || openingPath === entry.path}
+                  aria-label={`${t(canOpen ? "agentic_grid.explorer.open_file" : "agentic_grid.explorer.open_unavailable")} ${entry.name}`}
+                  title={t(
+                    canOpen
+                      ? "agentic_grid.explorer.open_file"
+                      : "agentic_grid.explorer.open_unavailable",
+                  )}
+                  className="mr-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-muted-foreground/70 opacity-70 transition hover:bg-primary/10 hover:text-primary hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-30"
+                >
+                  {openingPath === entry.path ? (
+                    <Loader2
+                      className="h-3 w-3 animate-spin motion-reduce:animate-none"
+                      aria-hidden
+                    />
+                  ) : (
+                    <ExternalLink className="h-3 w-3" aria-hidden />
+                  )}
+                </button>
+              )}
+            </div>
 
             {isOpen && (
               <TreeLevel
@@ -343,6 +418,9 @@ function TreeLevel({
                 directories={directories}
                 openPaths={openPaths}
                 selectedPath={selectedPath}
+                openingPath={openingPath}
+                nativeFileActions={nativeFileActions}
+                theme={theme}
                 onToggle={onToggle}
                 onSelect={onSelect}
                 onOpenFile={onOpenFile}
@@ -373,18 +451,43 @@ function TreeLevel({
   );
 }
 
-function iconFor(entry: WorkspaceFileItem, open: boolean) {
-  if (entry.is_symlink) return Link2;
-  if (entry.is_directory) return open ? FolderOpen : Folder;
-  const name = entry.name.toLowerCase();
-  if (/\.(png|jpe?g|gif|webp|svg|ico|bmp)$/.test(name)) return ImageIcon;
-  if (/\.(md|mdx|txt|rst|log)$/.test(name)) return FileText;
-  if (
-    /\.(py|js|jsx|ts|tsx|css|scss|html|rs|go|java|c|cc|cpp|h|hpp|sh|ps1|toml|ya?ml|json)$/.test(
-      name,
-    )
-  ) {
-    return FileCode2;
+const TECHNICAL_FILE_TYPES: Record<string, string> = {
+  csharp: "C#",
+  cpp: "C++",
+  docker: "Docker",
+  javascript: "JavaScript",
+  markdown: "Markdown",
+  nodejs: "Node.js",
+  powershell: "PowerShell",
+  react_ts: "React TypeScript",
+  readme: "Markdown README",
+  typescript: "TypeScript",
+};
+
+function fileTypeName(name: string, iconId: string, genericLabel: string) {
+  if (TECHNICAL_FILE_TYPES[iconId]) return TECHNICAL_FILE_TYPES[iconId];
+  const dotIndex = name.lastIndexOf(".");
+  if (dotIndex > -1 && dotIndex < name.length - 1) {
+    return name.slice(dotIndex + 1).toUpperCase();
   }
-  return File;
+  return genericLabel;
+}
+
+function MaterialEntryIcon({
+  icon,
+  className,
+}: {
+  icon: ReturnType<typeof materialFileIcon>;
+  className?: string;
+}) {
+  return (
+    <img
+      src={icon.src}
+      alt=""
+      aria-hidden
+      draggable={false}
+      data-material-icon={icon.id}
+      className={cn("shrink-0 select-none", className)}
+    />
+  );
 }
