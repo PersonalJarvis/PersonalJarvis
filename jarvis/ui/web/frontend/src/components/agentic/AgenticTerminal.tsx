@@ -95,6 +95,7 @@ import {
   type SplitAgentChoice,
 } from "./AgentPicker";
 import { describeExit, explainExit } from "./paneExit";
+import { PaneActivityPill } from "./PaneActivityPill";
 import { PaneRecap } from "./PaneRecap";
 import { attachToTerminal } from "@/lib/agenticIdeApi";
 import type { RecapReason, RecapSource } from "@/lib/agenticIdeApi";
@@ -248,6 +249,14 @@ const MAX_TERMINAL_NAME = 40;
  * keeps its last honest geometry and the viewer shows as much of it as fits,
  * which costs a clipped line in a narrow tile and keeps the agent alive. A
  * clamp would instead hand the agent a size no window is actually showing.
+ *
+ * "Shows as much of it as fits" is a promise about the LOCAL grid as well.
+ * Refusing the size while still fit()ing xterm to the narrow tile left the
+ * two halves disagreeing — the agent laying lines out for 80+ columns, the
+ * viewer re-wrapping them at 25 — and every pane under the floors came back
+ * as shredded one-word fragments (reported 2026-08-10). So below the floors
+ * the grid is PINNED to the geometry the agent draws for (see `agentSize`),
+ * and the tile's overflow-hidden container does the clipping.
  *
  * Both the resize path and the connect-time handshake below refuse anything
  * under these floors; the backend enforces the same ones
@@ -478,6 +487,17 @@ export function AgenticTerminal({
   // Mirrored into state purely so the header can show/hide the restart button;
   // it transitions a handful of times per pane, never per output chunk.
   const [visibleStatus, setVisibleStatus] = useState<PaneStatus>("connecting");
+  /*
+   * What the socket said ABOUT that status, in the user's words.
+   *
+   * Kept here as well as handed to `onStatus` because the two readers need it
+   * at different times. The grid shows it once, in a tooltip; the pane has to
+   * keep saying it — an exit reason written into the terminal scrolls away the
+   * moment anything else is drawn, and the trouble line is written at most once
+   * per KIND of trouble (see `troubleShown`), so a user who looked away has no
+   * way back to it at all. The notice below is that way back.
+   */
+  const [statusDetail, setStatusDetail] = useState<string>("");
   /*
    * Has this pane's agent drawn anything yet?
    *
@@ -766,7 +786,20 @@ export function AgenticTerminal({
       input: (data) => term.input(data),
     });
     try {
-      fit.fit();
+      // The same floors the resize path holds (see MIN_REAL_COLS). A pane
+      // mounted straight into a narrow tile must keep the 80x24 the terminal
+      // was built with — the geometry the connect handshake announces — rather
+      // than fit itself below what its agent is about to draw for.
+      const proposed = fit.proposeDimensions();
+      if (
+        proposed &&
+        Number.isFinite(proposed.cols) &&
+        Number.isFinite(proposed.rows) &&
+        proposed.cols >= MIN_REAL_COLS &&
+        proposed.rows >= MIN_REAL_ROWS
+      ) {
+        fit.fit();
+      }
     } catch {
       /* not measured yet — the ResizeObserver below will fit */
     }
@@ -774,6 +807,7 @@ export function AgenticTerminal({
     const report = (status: PaneStatus, detail?: string) => {
       statusRef.current = status;
       setVisibleStatus(status);
+      setStatusDetail(detail ?? "");
       onStatusRef.current?.(status, detail);
     };
 
@@ -1155,6 +1189,25 @@ export function AgenticTerminal({
      */
     let sentSize: { cols: number; rows: number } | null = null;
 
+    /*
+     * The geometry the agent is DRAWING for, as best this pane knows: the
+     * connect-time handshake until a resize is delivered, then that resize.
+     *
+     * Needed because refusing to announce a size (below) is only half of the
+     * floors' contract. The PTY keeps its working geometry — so the local
+     * grid has to keep it too. Fitting the viewer below what the agent lays
+     * its lines out for re-wraps every one of them at the narrower measure,
+     * and the TUI's cursor moves then land on rows that no longer hold what
+     * they held when it drew them: a five-pane grid came back as panes full
+     * of shredded one-word fragments (reported 2026-08-10). Pinned to this
+     * geometry instead, a narrow tile shows the top-left of an honest frame
+     * and clips the rest — which is what the floors' comment promised.
+     */
+    let agentSize = {
+      cols: term.cols >= MIN_REAL_COLS ? term.cols : 80,
+      rows: term.rows >= MIN_REAL_ROWS ? term.rows : 24,
+    };
+
     const viewerMayOwn = () =>
       activeRef.current &&
       !documentHidden() &&
@@ -1168,6 +1221,36 @@ export function AgenticTerminal({
       // wrecks the agent's full-screen drawing. Skip while not measurable; the
       // ResizeObserver fires again when the pane comes back.
       if (container.clientWidth < 8 || container.clientHeight < 8) return;
+      // Measured WITHOUT being applied yet: a size the floors refuse must not
+      // shrink the local grid either (see agentSize above).
+      let proposed: { cols: number; rows: number } | undefined;
+      try {
+        proposed = fit.proposeDimensions();
+      } catch {
+        return;
+      }
+      if (
+        !proposed ||
+        !Number.isFinite(proposed.cols) ||
+        !Number.isFinite(proposed.rows)
+      ) {
+        return;
+      }
+      if (proposed.cols < MIN_REAL_COLS || proposed.rows < MIN_REAL_ROWS) {
+        // Too narrow to hand to the agent — keep drawing at the geometry the
+        // agent still formats for; the tile clips what it cannot show.
+        if (term.cols !== agentSize.cols || term.rows !== agentSize.rows) {
+          try {
+            term.resize(agentSize.cols, agentSize.rows);
+          } catch {
+            /* mid-teardown — nothing left to pin */
+          }
+        }
+        // Still the un-park moment: a pane squeezed under the floors is being
+        // looked at all the same.
+        revealIfOnScreen();
+        return;
+      }
       try {
         fit.fit();
       } catch {
@@ -1195,7 +1278,10 @@ export function AgenticTerminal({
       ) {
         return;
       }
-      if (socket?.send({ t: claimOwner ? "claim" : "r", ...size })) sentSize = size;
+      if (socket?.send({ t: claimOwner ? "claim" : "r", ...size })) {
+        sentSize = size;
+        agentSize = size;
+      }
     };
     resizeRef.current = sendResize;
     const claimResize = () => {
@@ -1213,9 +1299,12 @@ export function AgenticTerminal({
         // `sendResize` refuses to SEND but which used to travel here as the
         // handshake geometry, spawning (or resizing) the PTY one column wide.
         // A size under the plausibility floor is treated as "not measured yet";
-        // the real one follows from `onOpen`'s fit as soon as the cell settles.
-        cols: term.cols >= MIN_REAL_COLS ? term.cols : 80,
-        rows: term.rows >= MIN_REAL_ROWS ? term.rows : 24,
+        // the real one follows from `onOpen`'s fit as soon as the cell
+        // settles. `agentSize` captured exactly that at its declaration, and
+        // using it HERE is what keeps the pinned local grid and the spawned
+        // PTY agreeing about the pane's geometry.
+        cols: agentSize.cols,
+        rows: agentSize.rows,
         appearance: appearanceRef.current,
         claimOwner: viewerMayOwn(),
       },
@@ -1300,7 +1389,8 @@ export function AgenticTerminal({
           if (
             activeRef.current &&
             focusedRef.current &&
-            (document.activeElement === null || document.activeElement === document.body)
+            (document.activeElement === null ||
+              document.activeElement === document.body)
           ) {
             term.focus();
           }
@@ -1755,8 +1845,17 @@ export function AgenticTerminal({
         // only standing accent. The old per-pane drop shadows made a grid of
         // twelve read as twelve floating cards — a tiling terminal is a wall,
         // and a wall needs edges, not elevation.
-        "relative flex h-full w-full flex-col overflow-hidden rounded-lg border backdrop-blur-[4px] transition-shadow",
-        focused && "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.3)]",
+        //
+        // The border colour is part of the transition, not just the shadow.
+        // Every state below changes BOTH, and animating only one made the
+        // change arrive twice: the edge snapped to yellow on the frame the
+        // click landed, and the ring around it faded in over the next 150 ms.
+        // On a grid where the focused pane is the one standing accent, that
+        // read as a flicker rather than as a pane taking focus.
+        "relative flex h-full w-full flex-col overflow-hidden rounded-lg border backdrop-blur-[4px]",
+        "transition-[box-shadow,border-color,opacity] duration-150 ease-out motion-reduce:transition-none",
+        focused &&
+          "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.3)]",
         dragging && "border-primary shadow-[0_0_0_2px_hsl(var(--primary)/0.5)]",
         // A prompt just landed here. Two seconds of ring, for the one job the
         // receipt below cannot do: telling the user WHICH pane out of eight to
@@ -1771,14 +1870,32 @@ export function AgenticTerminal({
       )}
       style={{
         background: chrome.shell,
-        borderColor: focused ? undefined : chrome.border,
+        /*
+         * The edge, and WHO is allowed to paint it.
+         *
+         * An inline colour beats every class, so this property decides whether
+         * the three accent states above are drawn at all. It used to yield to
+         * `focused` alone — which meant a pane being dragged, or one that had
+         * just been handed a prompt, kept its plain grey edge and showed only
+         * the shadow half of its own highlight. All three yield now.
+         *
+         * What is left is the resting pane, and its edge is where the pane's
+         * lifecycle can be read from across the workspace rather than by
+         * landing on it: dimmer once the agent has exited, the terminal's own
+         * red when it failed, unchanged while it is connecting or live. See
+         * `PANE_CHROME.edge` for why only those two states are marked.
+         */
+        borderColor:
+          focused || dragging || justDelivered
+            ? undefined
+            : chrome.edge[visibleStatus],
       }}
       data-testid={`agentic-pane-${name}`}
     >
       <PaneHeader
         workspaceId={workspaceId}
-        dead={visibleStatus === "exited" || visibleStatus === "error"}
-        onRestart={onRestart}
+        status={visibleStatus}
+        statusDetail={statusDetail}
         onArrangeStart={onArrangeStart}
         arranging={arranging}
         name={name}
@@ -1799,6 +1916,19 @@ export function AgenticTerminal({
         onClose={onClose}
         splitDisabled={splitDisabled}
         onOpenConversation={() => setHistoryOpen(true)}
+      />
+      {/*
+        What went wrong, kept on screen for as long as it is true — and the one
+        way out of it. See PaneStatusNotice for why this is a row of its own
+        rather than a second button in the header.
+      */}
+      <PaneStatusNotice
+        name={name}
+        displayName={displayName}
+        status={visibleStatus}
+        detail={statusDetail}
+        light={appearance === "light"}
+        onRestart={onRestart}
       />
       {/*
         Keep the visual inset OUTSIDE xterm's measured host. FitAddon reads the
@@ -1921,8 +2051,8 @@ function PaneHeader({
   onRename,
   onClose,
   splitDisabled,
-  dead,
-  onRestart,
+  status,
+  statusDetail,
   onArrangeStart,
   arranging = false,
   onOpenConversation,
@@ -1945,9 +2075,10 @@ function PaneHeader({
   onRename?: (name: string) => Promise<boolean>;
   onClose?: () => void;
   splitDisabled: boolean;
-  /** The agent in this pane has exited or failed — offer to start it again. */
-  dead: boolean;
-  onRestart?: () => void;
+  /** The socket's own view of this pane — the badge beside the call-sign. */
+  status: PaneStatus;
+  /** Whatever the socket said about that status, read in the badge's tooltip. */
+  statusDetail?: string;
   /** Press on the header picks the pane up; absent leaves it undraggable. */
   onArrangeStart?: (event: React.PointerEvent) => void;
   arranging?: boolean;
@@ -1956,6 +2087,10 @@ function PaneHeader({
 }) {
   const t = useT();
   const light = appearance === "light";
+  // What the split menu hangs off. The pane clips everything inside it, so the
+  // menu is measured against this bar and drawn in front of the window — see
+  // `anchorTo` in ./AgentPicker.
+  const headerRef = useRef<HTMLElement | null>(null);
   // Which split button opened the CLI picker, if any.
   const [picking, setPicking] = useState<SplitDirection | null>(null);
   // The call-sign editor: null while the badge is just a badge, otherwise the
@@ -1992,6 +2127,7 @@ function PaneHeader({
 
   return (
     <header
+      ref={headerRef}
       data-testid={`pane-header-${name}`}
       // The grip. It is the header itself rather than a separate handle icon,
       // because that is where the gesture is already expected — every window on
@@ -2011,17 +2147,56 @@ function PaneHeader({
             }
           : undefined
       }
+      /*
+       * Double-click the title bar to fill the workspace, and again to go back.
+       *
+       * The same gesture every window manager on every desktop already binds,
+       * and the pane header is already the title bar — it is dragged like one.
+       * The button beside it stays, because a gesture nothing on screen
+       * advertises cannot be the only way in (the same rule the rename pencil
+       * follows); this is the way people who never look for a button get there.
+       *
+       * Safe beside the drag above: `paneArrange` only lifts a pane once the
+       * pointer has travelled `DRAG_THRESHOLD_PX`, so two clicks in one place
+       * are two clicks and never a move. The control check is the same one — a
+       * double-click on Close is a close, twice, not a maximize — and the
+       * call-sign stops the event itself, because a double-click there already
+       * means rename.
+       */
+      onDoubleClick={
+        onToggleMaximize
+          ? (event) => {
+              const target = event.target as HTMLElement | null;
+              if (target?.closest("button, a, input, [role='menuitem']"))
+                return;
+              onToggleMaximize();
+            }
+          : undefined
+      }
       title={
         onArrangeStart
-          ? `Drag ${name} by this bar to move it — drop it on another terminal to swap, or near an edge to place it there`
-          : undefined
+          ? `Drag ${name} by this bar to move it — drop it on another terminal to swap, or near an edge to place it there. Double-click to fill the workspace.`
+          : onToggleMaximize
+            ? `Double-click to make ${name} fill the workspace`
+            : undefined
       }
       className={cn(
         // No tinted strip of its own: the header shares the terminal's ground
         // and the border underneath is enough to say where the output begins.
         // Twelve tinted bands across the workspace were twelve horizontal
         // stripes the eye had to skip on the way to the text that matters.
-        "group/header relative flex items-center justify-between gap-1.5 border-b px-2 py-0.5",
+        //
+        // `min-h-7` rather than height by content: the bar holds a 24 px action
+        // cluster, a 20 px rename field and a 16 px badge, and each of them
+        // comes and goes on its own schedule (hover, rename, a status change).
+        // Sized by whatever is in it, the header grew and shrank by a couple of
+        // pixels under the pointer — and every one of those pixels is a row the
+        // terminal underneath has to be refitted for. A floor holds it still.
+        //
+        // `overflow-hidden` is the other half of that promise: the left group
+        // truncates and the action cluster keeps its width, so a narrow pane
+        // ends in an ellipsis rather than pushing its own buttons off the edge.
+        "group/header relative flex min-h-7 items-center justify-between gap-1.5 overflow-hidden border-b px-2 py-0.5",
         onArrangeStart && (arranging ? "cursor-grabbing" : "cursor-grab"),
       )}
       style={{
@@ -2040,9 +2215,15 @@ function PaneHeader({
            * A form rather than a bare input so Enter saves the way it does in
            * every other name field in the app, and Escape closes it — the two
            * keys somebody renaming a pane will reach for without looking.
+           *
+           * It SHRINKS. A fixed 128 px field plus its two buttons is wider than
+           * a pane in a twelve-pane wall has to spare, and beside an action
+           * cluster that keeps its own width the surplus went somewhere: the
+           * save and cancel buttons were pushed under the cluster, so the one
+           * control the user needed next was the one they could not reach.
            */
           <form
-            className="flex shrink-0 items-center gap-1"
+            className="flex min-w-0 flex-1 items-center gap-1"
             onSubmit={(event) => {
               event.preventDefault();
               void commitRename();
@@ -2064,12 +2245,14 @@ function PaneHeader({
                 event.stopPropagation();
               }}
               className={cn(
-                "w-32 rounded-md px-2 py-0.5 font-display text-[13px] font-semibold tracking-tight outline-none",
-                "border border-primary/50 focus:border-primary disabled:opacity-60",
+                "w-full min-w-0 max-w-[9rem] rounded-md px-2 py-0.5 font-display text-[13px] font-semibold tracking-tight outline-none",
+                "border border-primary/50 transition-colors focus:border-primary disabled:opacity-60",
               )}
               style={{
                 color: light ? "#2b2b33" : "#e8e8ec",
-                background: light ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.06)",
+                background: light
+                  ? "rgba(0,0,0,0.04)"
+                  : "rgba(255,255,255,0.06)",
               }}
             />
             <button
@@ -2077,7 +2260,11 @@ function PaneHeader({
               disabled={saving || !draft.trim()}
               aria-label={`Save name for ${name}`}
               data-testid={`pane-rename-save-${name}`}
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-primary hover:bg-primary/15 disabled:opacity-40"
+              className={cn(
+                "flex h-5 w-5 shrink-0 items-center justify-center rounded text-primary",
+                "transition-colors duration-150 hover:bg-primary/15 disabled:opacity-40",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/70",
+              )}
             >
               {saving ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -2090,7 +2277,11 @@ function PaneHeader({
               disabled={saving}
               aria-label={`Cancel renaming ${name}`}
               onClick={() => setDraft(null)}
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted"
+              className={cn(
+                "flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground",
+                "transition-colors duration-150 hover:bg-muted hover:text-foreground",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/70",
+              )}
             >
               <X className="h-3 w-3" />
             </button>
@@ -2102,7 +2293,18 @@ function PaneHeader({
               // already uses for "rename this", so it is offered here too — but
               // it is never the only way in, because nothing on screen advertises
               // it. The pencil beside it is what makes the feature findable.
-              onDoubleClick={onRename ? () => setDraft(name) : undefined}
+              //
+              // The event stops here: the bar underneath reads a double-click as
+              // "fill the workspace", and one gesture must not do two things.
+              // The call-sign is the more specific target, so it wins.
+              onDoubleClick={
+                onRename
+                  ? (event) => {
+                      event.stopPropagation();
+                      setDraft(name);
+                    }
+                  : undefined
+              }
               title={onRename ? `${name} — double-click to rename` : undefined}
               // The focused pane's call-sign is the workspace's one standing
               // accent; every other name is plain text. A filled badge on all
@@ -2112,7 +2314,9 @@ function PaneHeader({
                 "shrink-0 rounded-md px-1.5 py-0.5 font-display text-[13px] font-semibold tracking-tight",
                 focused ? "bg-primary/20 text-primary" : "",
               )}
-              style={focused ? undefined : { color: light ? "#2b2b33" : "#e8e8ec" }}
+              style={
+                focused ? undefined : { color: light ? "#2b2b33" : "#e8e8ec" }
+              }
             >
               {name}
             </span>
@@ -2137,6 +2341,31 @@ function PaneHeader({
             )}
           </>
         )}
+        {/*
+          The pane's own state, in the colour language the rest of the section
+          already speaks (see ./PaneActivityPill, which owns the vocabulary and
+          is the same badge the chat rail shows).
+
+          Only three of the four states are news. `live` is a property of the
+          PIPE — true for nearly every pane nearly all the time — so a standing
+          dot on all twelve headers would mark nothing, which is exactly the
+          badge the activity pill was written to replace. It is kept in the DOM
+          and fades in with the rest of the header's controls, so the answer is
+          one hover away for anyone who wants it, while `connecting`, `exited`
+          and `error` announce themselves whether or not anyone is pointing.
+        */}
+        <span
+          data-testid={`pane-status-${name}`}
+          data-status={status}
+          className={cn(
+            "flex shrink-0 items-center transition-opacity duration-200",
+            status === "live"
+              ? "opacity-0 group-hover/header:opacity-60"
+              : "opacity-100",
+          )}
+        >
+          <PaneActivityPill status={status} detail={statusDetail} />
+        </span>
         <PaneRecap
           name={name}
           displayName={displayName}
@@ -2158,7 +2387,10 @@ function PaneHeader({
             which pane bills which plan is the whole point. */}
         {accountLabel && (
           <span
-            className="max-w-[8rem] shrink-0 truncate rounded-full px-1.5 text-[10px] tracking-wide"
+            // Allowed to give way (`min-w-0`, no `shrink-0`): which seat a pane
+            // bills is worth a badge, but never worth pushing the call-sign or
+            // the pane's own state off a narrow header to say it.
+            className="min-w-0 max-w-[8rem] truncate rounded-full px-1.5 text-[10px] tracking-wide"
             style={{
               color: light ? "#6b6b73" : "#9a9aa5",
               backgroundColor: light ? "#00000010" : "#ffffff12",
@@ -2170,27 +2402,6 @@ function PaneHeader({
           </span>
         )}
       </div>
-
-      {/* Restart is an EVENT, not furniture — a dead agent must announce
-          itself whether or not anyone hovers, so it sits outside the cluster
-          that hides. */}
-      {dead && (
-        <button
-          type="button"
-          aria-label={`Restart ${name}`}
-          title={`Start a fresh ${displayName} in ${name}`}
-          data-testid={`pane-restart-${name}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onRestart?.();
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-          className="mr-1 flex shrink-0 items-center gap-1 rounded bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/30"
-        >
-          <RotateCcw className="h-3 w-3" />
-          Restart
-        </button>
-      )}
 
       {/* Pane actions appear where the eye already is: on the pane under the
           pointer, on the focused pane, and while one of their menus is open.
@@ -2277,6 +2488,12 @@ function PaneHeader({
           testId={`pane-split-menu-${picking}-${name}`}
           itemTestId={(agent) => `pane-split-${picking}-${name}-${agent}`}
           className="right-2 top-full mt-1"
+          // Measured against this bar and drawn in front of the window. A pane
+          // is `overflow-hidden` by necessity, so a menu positioned inside one
+          // is cut off at its edge — in a twelve-pane wall that left a sliver
+          // of the first entry and nothing to pick from. It also flips above
+          // the header when the pane sits at the bottom of the screen.
+          anchorTo={headerRef.current}
           onDismiss={() => setPicking(null)}
           onPick={(agent) => {
             setPicking(null);
@@ -2325,17 +2542,156 @@ function PaneAction({
       }}
       onMouseDown={(e) => e.stopPropagation()}
       className={cn(
-        "flex h-6 w-6 items-center justify-center rounded transition-colors disabled:cursor-not-allowed disabled:opacity-30",
+        "flex h-6 w-6 shrink-0 items-center justify-center rounded",
+        // Colour AND background, over the same 150 ms: hovering used to change
+        // only the ground behind the glyph, which on a translucent pane is a
+        // very small amount of contrast to confirm the pointer is on target.
+        "transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-30",
+        // Reachable by keyboard and visibly so. The cluster is revealed by
+        // `focus-within`, which is worth nothing if the focused button then
+        // looks identical to its four neighbours.
+        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/70",
+        // The resting colour is a CLASS rather than an inline style, and that is
+        // load-bearing rather than tidiness: an inline `color` beats every
+        // class, so the hover colour below would simply never take effect.
+        light ? "text-[#55555e]" : "text-[#a8a8b2]",
         danger
           ? "hover:bg-destructive/20 hover:text-destructive"
           : light
-            ? "hover:bg-scrim/10"
-            : "hover:bg-sheen/10",
+            ? "hover:bg-scrim/10 hover:text-[#2b2b33]"
+            : "hover:bg-sheen/10 hover:text-[#e8e8ec]",
       )}
-      style={{ color: light ? "#55555e" : "#a8a8b2" }}
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * The two tones a pane notice comes in, resolved against the PANE's own ground.
+ *
+ * Not the app's `--destructive` / amber tokens, and that is the whole reason
+ * this table exists rather than a call to the section's shared `Notice`: the
+ * terminal appearance is a separate setting from the app theme (plenty of
+ * people run dark panes in a light app, and the reverse — see the appearance
+ * note in ./AgenticGrid). A token picked for the app would land on the wrong
+ * ground in exactly those two configurations, which is where a warning is least
+ * affordable. The hues are the ones the pane's own palette already uses for
+ * yellow and red (./terminalThemes), so a notice reads as part of the terminal
+ * rather than as the app leaning in over it.
+ */
+const NOTICE_TONE: Record<
+  "warning" | "error",
+  Record<TerminalAppearance, { border: string; text: string }>
+> = {
+  warning: {
+    light: { border: "rgba(154,103,0,0.65)", text: "#8a5a00" },
+    dark: { border: "rgba(255,214,10,0.55)", text: "#ffd479" },
+  },
+  error: {
+    light: { border: "rgba(192,57,43,0.7)", text: "#b3261e" },
+    dark: { border: "rgba(255,107,94,0.6)", text: "#ff8b80" },
+  },
+};
+
+/**
+ * What went wrong in this pane, and the one way out of it.
+ *
+ * ## Why a row of its own rather than a badge
+ *
+ * Both halves of this used to be somewhere else, and neither survived being
+ * there. The reason was written INTO the terminal — an exit banner, or one
+ * trouble line per kind of trouble (see `troubleShown`) — where the next thing
+ * the pane draws scrolls it away and nothing brings it back; a user returning
+ * to a dead pane found a still screen and no sentence explaining it. The way
+ * out was a small button in the header, in the cluster that hides until the
+ * pane is hovered or focused, competing for width with five others.
+ *
+ * A dead pane can afford the height. Its terminal is not being drawn into any
+ * more, so the ~24 px this costs comes out of a static screen — and it buys the
+ * two things that pane owes the user: what happened, and what to press.
+ *
+ * ## Why the live states show nothing
+ *
+ * `connecting` and `live` are answered better elsewhere and answered already:
+ * the starting overlay covers a pane that has not painted yet, and the badge in
+ * the header carries the state for anyone who looks. A standing strip for them
+ * would take a row off every healthy pane in the workspace to say "fine".
+ */
+function PaneStatusNotice({
+  name,
+  displayName,
+  status,
+  detail,
+  light,
+  onRestart,
+}: {
+  name: string;
+  displayName: string;
+  status: PaneStatus;
+  detail?: string;
+  light: boolean;
+  onRestart?: () => void;
+}) {
+  if (status !== "exited" && status !== "error") return null;
+  const tone = NOTICE_TONE[status === "error" ? "error" : "warning"][
+    light ? "light" : "dark"
+  ];
+  /*
+   * The two details are written for different sentences and cannot be shown the
+   * same way. A trouble message is already one ("This terminal is no longer part
+   * of the open workspace."); an exit reason is a CLAUSE — `explainExit` returns
+   * "stopped", or "stopped unexpectedly (exit code 2) — use Restart to bring it
+   * back" — which needs the agent's name in front of it to be a sentence at all.
+   * Shown raw, a dead pane said nothing but "stopped".
+   */
+  const message =
+    status === "error"
+      ? detail || `${name} could not be reached.`
+      : detail
+        ? `${displayName} ${detail}`
+        : `${displayName} is no longer running in ${name}.`;
+  return (
+    <div
+      data-testid={`pane-notice-${name}`}
+      data-tone={status === "error" ? "error" : "warning"}
+      // Announced once, quietly. `polite` rather than `assertive`: a pane going
+      // quiet is news, but it is never more urgent than the sentence a screen
+      // reader is in the middle of.
+      role="status"
+      aria-live="polite"
+      // The shared section's notice shape — a rule down the left edge, no fill,
+      // no icon — one size down for a pane header's scale. A filled box here
+      // would read as a second, louder terminal sitting on top of the first.
+      className="flex shrink-0 items-center gap-2 border-l-2 px-2 py-1 text-[11px] leading-tight"
+      style={{ borderColor: tone.border, color: tone.text }}
+    >
+      <span className="min-w-0 flex-1 truncate" title={message}>
+        {message}
+      </span>
+      {onRestart && (
+        <button
+          type="button"
+          aria-label={`Restart ${name}`}
+          title={`Start a fresh ${displayName} in ${name}`}
+          data-testid={`pane-restart-${name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRestart();
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className={cn(
+            "flex shrink-0 items-center gap-1 rounded bg-primary/20 px-2 py-0.5",
+            "text-[11px] font-medium text-primary",
+            "transition-colors duration-150 hover:bg-primary/30",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/70",
+          )}
+        >
+          <RotateCcw className="h-3 w-3" aria-hidden="true" />
+          Restart
+        </button>
+      )}
+    </div>
   );
 }
 

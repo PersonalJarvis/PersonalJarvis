@@ -2929,29 +2929,57 @@ export function AgenticGrid({
                   !isMaximized &&
                   !layoutBusy &&
                   "transition-[left,top,width,height] duration-300 ease-out motion-reduce:transition-none",
-                selectedTerminals.has(term.name) &&
-                  "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                /*
+                 * The three rings below are drawn WITHOUT an offset, and that
+                 * is arithmetic rather than taste.
+                 *
+                 * Neighbouring panes sit `GRID_GAP_PX` apart, and each of them
+                 * gives up half of that on a shared side (see `paneBoxStyle`).
+                 * A pane therefore owns exactly `HALF_GAP_PX` — 2 px — outside
+                 * its own box before it is standing on its neighbour. A ring
+                 * with `ring-offset-2` needs FOUR: two for the offset band and
+                 * two for the ring itself. Marking one pane consequently drew
+                 * over the edge of the pane beside it, and drew the offset band
+                 * in the app's opaque background — a hard grey stripe across
+                 * glass that is otherwise showing the desktop through it.
+                 *
+                 * At `ring-2` and no offset the ring fills precisely the gap
+                 * this pane owns and stops in the middle of it. Two selected
+                 * neighbours meet; neither covers the other.
+                 */
+                selectedTerminals.has(term.name) && "ring-2 ring-primary",
                 // Just arrived — see `justOpened`. Second to the selection ring
                 // deliberately: selection is a thing the user is DOING, and it
                 // must keep its own answer while panes come and go.
                 justOpened.has(term.name) &&
                   !selectedTerminals.has(term.name) &&
-                  "ring-2 ring-primary/70 ring-offset-2 ring-offset-background",
+                  "ring-2 ring-primary/70",
                 // Just landed after a drag — same ring, same reasoning: the
                 // move happened, and the grid says WHERE.
                 justMoved?.name === term.name &&
                   !selectedTerminals.has(term.name) &&
-                  "ring-2 ring-primary/70 ring-offset-2 ring-offset-background",
+                  "ring-2 ring-primary/70",
                 chatView || deckView
                   ? onStage
-                    ? // On the deck the unfolded terminal sits ABOVE the room
-                      // it came from (`z-20` over the stage's own layer), so
-                      // the cards stay where they were and folding it away
-                      // puts the user back exactly where they left off.
-                      cn(
-                        "rounded-xl border border-border shadow-lg",
-                        deckView && "z-20",
-                      )
+                    ? /*
+                       * ONE edge per pane, in every view.
+                       *
+                       * This cell used to add `rounded-xl border border-border`
+                       * of its own around a pane that already draws a rounded
+                       * border in the TERMINAL's colours — two hairlines, at
+                       * two different radii (12 px outside an 8 px corner), so
+                       * every corner of the staged pane showed a sliver of app
+                       * chrome curving around the pane's own. In grid view the
+                       * same pane has a single edge, which is what made the
+                       * switch to chat look like a different component rather
+                       * than the same one enlarged.
+                       *
+                       * The lift stays: a staged pane genuinely IS raised above
+                       * the rail beside it, and on the deck it sits above the
+                       * room it came from (`z-20` over the stage's own layer),
+                       * so folding it away puts the user back where they were.
+                       */
+                      cn("shadow-lg", deckView && "z-20")
                         : "hidden"
                       : maximized !== null && !isMaximized && "hidden",
                   )}

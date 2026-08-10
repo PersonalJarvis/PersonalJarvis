@@ -230,14 +230,14 @@ describe("AgentAllocation", () => {
     expect(screen.getByText("2 / 5")).toBeTruthy();
   });
 
-  it("applies one selected subscription to every terminal of an agent", () => {
+  it("applies one selected subscription to every terminal of an agent", async () => {
     render(<Harness count={3} accounts={ACCOUNTS} />);
     fireEvent.click(screen.getAllByRole("button", { name: "All" })[0]);
 
-    fireEvent.change(
+    fireEvent.click(
       screen.getByRole("combobox", { name: "Subscription for Claude Code" }),
-      { target: { value: "claude:work" } },
     );
+    fireEvent.click(await screen.findByText("Work seat"));
 
     expect(plan().map((pane) => pane.account)).toEqual([
       "claude:work",

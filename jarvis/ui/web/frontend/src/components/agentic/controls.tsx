@@ -31,6 +31,23 @@
 import { forwardRef } from "react";
 import { cn } from "@/lib/utils";
 
+/**
+ * The ONE way a control in this section says it has keyboard focus.
+ *
+ * Exported rather than kept private because the terminal panes cannot use the
+ * controls below and still need this: a pane header is coloured by the
+ * TERMINAL's appearance — a light pane inside a dark app is a supported
+ * combination — so its buttons carry their own palette rather than the theme's.
+ * What they must not carry is their own idea of what "focused" looks like.
+ *
+ * Until this became shared, the pane header simply had none: every one of its
+ * five actions was reachable by Tab and invisible once it got there, which on a
+ * wall of a dozen panes means a keyboard user has no way to tell which terminal
+ * they are about to close.
+ */
+export const FOCUS_RING =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60";
+
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   /**
    * `primary` starts something and there is at most one per screen; `quiet` is
@@ -43,7 +60,7 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 const BASE =
   "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-control px-3 " +
   "text-sm font-medium transition-colors " +
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 " +
+  `${FOCUS_RING} ` +
   "disabled:cursor-not-allowed disabled:opacity-40";
 
 const VARIANTS: Record<NonNullable<ButtonProps["variant"]>, string> = {
@@ -100,7 +117,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
           "inline-flex shrink-0 items-center justify-center rounded-control " +
             "text-muted-foreground transition-colors " +
             "hover:bg-secondary hover:text-foreground " +
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 " +
+            `${FOCUS_RING} ` +
             "disabled:cursor-not-allowed disabled:opacity-40",
           size === "sm" ? "h-6 w-6" : "h-8 w-8",
           className,
@@ -133,34 +150,6 @@ export const Field = forwardRef<
       )}
       {...rest}
     />
-  );
-});
-
-/**
- * A native select at the same scale.
- *
- * Native rather than a custom menu because the two places it is used — which
- * coding CLI runs in a pane, which subscription it opens on — are short lists
- * where the OS control is better than anything worth reimplementing: it is
- * keyboard-navigable, it scrolls, and on a phone it becomes the platform picker.
- */
-export const Select = forwardRef<
-  HTMLSelectElement,
-  React.SelectHTMLAttributes<HTMLSelectElement>
->(function Select({ className, children, ...rest }, ref) {
-  return (
-    <select
-      ref={ref}
-      className={cn(
-        "h-8 max-w-full rounded-control border border-border bg-background px-2 text-sm " +
-          "text-foreground outline-none transition-colors focus:border-primary/60 " +
-          "disabled:cursor-not-allowed disabled:opacity-40",
-        className,
-      )}
-      {...rest}
-    >
-      {children}
-    </select>
   );
 });
 

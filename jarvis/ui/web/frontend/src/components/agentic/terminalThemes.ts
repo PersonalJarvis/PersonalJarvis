@@ -83,12 +83,71 @@ export function themeFor(appearance: TerminalAppearance): ITheme {
 }
 
 /**
+ * The lifecycle a pane's frame reports, mirroring `PaneStatus` in
+ * ./AgenticTerminal.
+ *
+ * Declared here rather than imported so the colour module stays a leaf — the
+ * terminal already imports this file, and a second edge would be a cycle. The
+ * two unions are checked against each other structurally at every use site:
+ * indexing `edge` with a `PaneStatus` stops compiling the moment one of them
+ * grows a member the other does not have, which is the point.
+ */
+export type PaneEdgeState = "connecting" | "live" | "exited" | "error";
+
+export interface PaneChrome {
+  /** The translucent ground the pane — header AND terminal — is drawn on. */
+  shell: string;
+  /** The pane's resting edge, and the rule under its header. */
+  border: string;
+  /** The edge that says what this pane's agent is doing. */
+  edge: Record<PaneEdgeState, string>;
+}
+
+/**
  * Chrome (pane frame) colours that go with each terminal theme.
  *
  * These alphas mirror the shared section-panel glass tokens. Keeping the tint
  * on this single layer lets xterm remain clear while preserving text contrast.
+ *
+ * ## Why the edge is a state and not a decoration
+ *
+ * A wall of twelve panes has one thing every reader is looking for: which of
+ * them still needs them. The activity pill answers that per pane, but a pill is
+ * something you READ — you have to land on the pane first. The edge is what the
+ * eye can sweep, so it carries exactly one distinction and carries it quietly:
+ *
+ * * `connecting` / `live` — the resting edge. The overwhelming majority of
+ *   panes are here, and a workspace where everything is marked marks nothing.
+ * * `exited` — dimmer than resting. The agent is gone; the pane recedes rather
+ *   than shouting, because a finished terminal is not a problem.
+ * * `error` — the CLI's own red, at an alpha that reads across a room without
+ *   turning the pane into an alert box.
+ *
+ * The red is the matching terminal theme's own `red` slot rather than the app's
+ * `--destructive`, and that is deliberate: terminal appearance is a separate
+ * setting from the app theme (a light pane inside a dark app is a supported
+ * combination), so a token picked for the app lands on the wrong ground exactly
+ * when the two disagree.
  */
-export const PANE_CHROME: Record<TerminalAppearance, { shell: string; border: string }> = {
-  light: { shell: "rgba(252, 251, 248, 0.68)", border: "rgba(0,0,0,0.10)" },
-  dark: { shell: "rgba(10, 10, 10, 0.58)", border: "rgba(255,255,255,0.10)" },
+export const PANE_CHROME: Record<TerminalAppearance, PaneChrome> = {
+  light: {
+    shell: "rgba(252, 251, 248, 0.68)",
+    border: "rgba(0,0,0,0.10)",
+    edge: {
+      connecting: "rgba(0,0,0,0.10)",
+      live: "rgba(0,0,0,0.10)",
+      exited: "rgba(0,0,0,0.05)",
+      error: "rgba(192,57,43,0.45)",
+    },
+  },
+  dark: {
+    shell: "rgba(10, 10, 10, 0.58)",
+    border: "rgba(255,255,255,0.10)",
+    edge: {
+      connecting: "rgba(255,255,255,0.10)",
+      live: "rgba(255,255,255,0.10)",
+      exited: "rgba(255,255,255,0.05)",
+      error: "rgba(255,107,94,0.50)",
+    },
+  },
 };

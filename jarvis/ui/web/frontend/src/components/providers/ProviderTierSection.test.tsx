@@ -1092,10 +1092,11 @@ describe("managed local realtime model setup", () => {
     expect(screen.getByText("Browse the full Ollama catalog")).toBeTruthy();
     expect(screen.getByText("Browse open-source speech models")).toBeTruthy();
     expect(screen.getByText("Advanced connection settings")).toBeTruthy();
-    const unavailable = screen.getByRole("option", {
+    fireEvent.click(screen.getByRole("combobox", { name: "Speak" }));
+    const unavailable = await screen.findByRole("option", {
       name: /ChatTTS.*not voice-tested yet/,
-    }) as HTMLOptionElement;
-    expect(unavailable.disabled).toBe(true);
+    });
+    expect(unavailable.getAttribute("aria-disabled")).toBe("true");
     expect(calls.some((call) => call.url.endsWith("/model-catalog"))).toBe(true);
 
     fireEvent.click(screen.getByText("Browse open-source speech models"));

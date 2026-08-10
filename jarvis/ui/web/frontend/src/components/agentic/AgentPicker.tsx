@@ -21,6 +21,8 @@
  * this side. An entry that is not installed stays listed but disabled, so the
  * absence is visible and explains itself rather than silently not being there.
  */
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
 /** A coding CLI an "open a terminal" action may start. */
@@ -51,6 +53,38 @@ export function offersAgentChoice(agents?: SplitAgentChoice[]): boolean {
   return (agents ?? []).filter((a) => a.installed).length > 1;
 }
 
+/** The menu's own footprint, used to decide whether it still fits below. */
+const MENU_WIDTH_PX = 240;
+const MENU_GAP_PX = 4;
+/** Never hang closer than this to a window edge. */
+const VIEWPORT_MARGIN_PX = 8;
+
+type FixedPlacement = { left: number; top: number; maxHeight: number };
+
+/**
+ * Where a detached menu hangs, measured from the element it belongs to.
+ *
+ * Right-aligned with the anchor, because that is where the buttons that open
+ * it sit, and flipped above it when the space below is the shorter of the two.
+ * Both numbers are clamped into the window: a pane in the last column would
+ * otherwise put half the menu past the right edge, where it is unreachable.
+ */
+function placeMenu(rect: DOMRect, viewport: { width: number; height: number }): FixedPlacement {
+  const below = viewport.height - rect.bottom - MENU_GAP_PX - VIEWPORT_MARGIN_PX;
+  const above = rect.top - MENU_GAP_PX - VIEWPORT_MARGIN_PX;
+  const dropsDown = below >= above;
+  const maxHeight = Math.max(96, Math.min(dropsDown ? below : above, viewport.height * 0.7));
+  const left = Math.max(
+    VIEWPORT_MARGIN_PX,
+    Math.min(rect.right - MENU_WIDTH_PX, viewport.width - MENU_WIDTH_PX - VIEWPORT_MARGIN_PX),
+  );
+  return {
+    left,
+    top: dropsDown ? rect.bottom + MENU_GAP_PX : Math.max(VIEWPORT_MARGIN_PX, rect.top - MENU_GAP_PX - maxHeight),
+    maxHeight,
+  };
+}
+
 export function AgentPickerMenu({
   title,
   ariaLabel,
@@ -60,6 +94,7 @@ export function AgentPickerMenu({
   testId,
   itemTestId,
   className,
+  anchorTo,
 }: {
   /** The line above the entries — "Open beside — what?". */
   title: string;
@@ -72,9 +107,68 @@ export function AgentPickerMenu({
   itemTestId: (agent: string) => string;
   /** Where the menu hangs — the caller owns the anchoring. */
   className?: string;
+  /**
+   * Hang the menu off this element, through a portal, instead of inside the
+   * caller's own box.
+   *
+   * For surfaces that CLIP: a terminal pane is `overflow-hidden` (it has to be
+   * — xterm's canvas must not paint past the frame), so a menu positioned
+   * inside one is cut off at the pane's edge, and a pane six rows tall showed
+   * a sliver of the first entry and nothing else. Rendering into the body puts
+   * the list back in front of the window rather than inside a box the size of
+   * the thing it was opened from. Absent, the menu stays where it always was.
+   */
+  anchorTo?: HTMLElement | null;
 }) {
   const first = agents.find((a) => a.installed);
-  return (
+  const [placement, setPlacement] = useState<FixedPlacement | null>(null);
+
+  /*
+   * Re-measure while the menu is open, not once when it opened.
+   *
+   * The pane it hangs off is in a grid that moves: a seam being dragged, a
+   * sibling closing, the window resized. A menu that kept its opening
+   * coordinates would drift away from the button that spawned it. Passive
+   * capture on scroll, so a scroller anywhere between here and the body counts.
+   */
+  useEffect(() => {
+    if (!anchorTo) return;
+    const measure = () =>
+      setPlacement(
+        placeMenu(anchorTo.getBoundingClientRect(), {
+          width: window.innerWidth || 0,
+          height: window.innerHeight || 0,
+        }),
+      );
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [anchorTo]);
+
+  const detached = anchorTo != null && typeof document !== "undefined";
+  /*
+   * Undefined while the menu hangs inside its caller (the classes place it);
+   * the measured rectangle once it has been detached; and, for the single
+   * frame between mounting and measuring, hidden rather than absent — the
+   * entries keep their tab order and the autofocus below still lands, and
+   * nobody sees a menu in the top-left corner on its way to where it belongs.
+   */
+  const menuStyle: React.CSSProperties | undefined = !detached
+    ? undefined
+    : placement
+      ? {
+          position: "fixed",
+          left: placement.left,
+          top: placement.top,
+          width: MENU_WIDTH_PX,
+          maxHeight: placement.maxHeight,
+        }
+      : { visibility: "hidden" };
+  const menu = (
     <>
       {/* Click-anywhere-else to dismiss, without a global listener that would
           outlive the surface that opened this. */}
@@ -83,13 +177,19 @@ export function AgentPickerMenu({
         role="menu"
         aria-label={ariaLabel}
         data-testid={testId}
+        data-detached={detached ? "true" : undefined}
+        style={menuStyle}
         className={cn(
           // Scrolls rather than growing past the window: the list is every CLI
           // the backend registered, and that is six entries on a machine with
           // the usual set installed — more than fits under a button near the
           // top of a laptop screen.
-          "absolute z-50 max-h-[70vh] w-60 overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl scrollbar-jarvis",
-          className,
+          "z-50 max-h-[70vh] w-60 overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl scrollbar-jarvis",
+          "animate-in fade-in-0 zoom-in-95 duration-150",
+          // The caller's anchoring classes describe a box INSIDE its own
+          // element ("right-2 top-full"), which is the very thing a detached
+          // menu is escaping. Its coordinates come from the measurement above.
+          detached ? "fixed" : cn("absolute", className),
         )}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
@@ -134,4 +234,10 @@ export function AgentPickerMenu({
       </div>
     </>
   );
+
+  // Rendered where it was measured against — the window — so the pane that
+  // opened it cannot clip it. Before the first measurement the menu is still
+  // mounted (its entries keep their focus order and are reachable by keyboard);
+  // it simply has no coordinates for one frame.
+  return detached ? createPortal(menu, document.body) : menu;
 }

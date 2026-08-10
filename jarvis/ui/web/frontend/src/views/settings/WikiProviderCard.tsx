@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { BookOpen, ChevronDown, Info, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BrandedSelect } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import type { BrainModelSaveResult } from "@/hooks/useProviders";
@@ -19,7 +20,7 @@ const FOLLOW_PRIMARY = "";
  * dedicated Wiki-curator provider + (optional) model via
  * `GET/PUT /api/settings/wiki-provider`.
  *
- * The provider `<select>` is fed by the endpoint's `available` matrix (agent
+ * The provider picker is fed by the endpoint's `available` matrix (agent
  * providers such as Codex are labelled, keyless ones flagged). The model pick
  * uses the shared searchable {@link BrainModelSelector} against the chosen
  * provider's live catalog (`GET /api/providers/{id}/models`) — the same picker
@@ -153,21 +154,24 @@ export function WikiProviderCard() {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <SettingsField label={t("wiki_provider.provider_label")}>
-              <select
-                aria-label={t("wiki_provider.provider_label")}
+              <BrandedSelect
+                ariaLabel={t("wiki_provider.provider_label")}
                 value={providerValue}
-                onChange={(e) => handleProviderChange(e.target.value)}
+                onValueChange={handleProviderChange}
                 className={settingsInputCls}
-              >
-                <option value={FOLLOW_PRIMARY}>{t("wiki_provider.follow_primary")}</option>
-                {data.available
-                  .filter((p) => p.provider !== FOLLOW_PRIMARY)
-                  .map((p) => (
-                    <option key={p.provider} value={p.provider}>
-                      {providerOptionLabel(p)}
-                    </option>
-                  ))}
-              </select>
+                options={[
+                  {
+                    value: FOLLOW_PRIMARY,
+                    label: t("wiki_provider.follow_primary"),
+                  },
+                  ...data.available
+                    .filter((item) => item.provider !== FOLLOW_PRIMARY)
+                    .map((item) => ({
+                      value: item.provider,
+                      label: providerOptionLabel(item),
+                    })),
+                ]}
+              />
             </SettingsField>
 
             {providerValue === FOLLOW_PRIMARY ? (

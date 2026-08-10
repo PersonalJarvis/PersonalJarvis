@@ -10,6 +10,8 @@ const terminalHarness = vi.hoisted(() => ({
   size: { cols: 80, rows: 24 },
   /** Every frame the pane hands its socket. Returns whether it went out. */
   send: vi.fn<(payload: unknown) => boolean>(() => true),
+  /** Every explicit grid resize — how the pane pins itself below the floors. */
+  resize: vi.fn<(cols: number, rows: number) => void>(),
   /** The live socket's handlers, so a test can play a reconnect. */
   handlers: { current: null as Record<string, (...args: never[]) => void> | null },
   /** Everything the pane types into the terminal on the user's behalf. */
@@ -136,7 +138,9 @@ vi.mock("@xterm/xterm", () => ({
       terminalHarness.viewport.viewportY = line;
     }
     reset() {}
-    resize() {}
+    resize(cols: number, rows: number) {
+      terminalHarness.resize(cols, rows);
+    }
     dispose() {}
     clearTextureAtlas() {}
   },
@@ -146,6 +150,12 @@ vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class {
     fit() {
       terminalHarness.fit();
+    }
+    // The pane measures before it applies (see `sendResize`), so the double
+    // answers with whatever size the test has staged — the same value fit()
+    // would land on.
+    proposeDimensions() {
+      return { ...terminalHarness.size };
     }
   },
 }));
@@ -175,6 +185,7 @@ vi.mock("@/lib/editActions", () => ({ attachTerminalBridge: () => undefined }));
 vi.mock("@/lib/agenticIdeApi", () => ({ attachToTerminal: vi.fn() }));
 
 import { AgenticTerminal, REBUILD_QUIET_MS } from "./AgenticTerminal";
+import { PANE_CHROME } from "./terminalThemes";
 
 /**
  * Past the quiet window a rebuilt pane waits out, plus the reveal frame behind
@@ -937,6 +948,65 @@ describe("pane header actions", () => {
     expect(screen.getByTestId("pane-close-Dana")).toBeTruthy();
   });
 
+  it("fills the workspace on a double-click of the title bar", () => {
+    const onToggleMaximize = vi.fn();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        onToggleMaximize={onToggleMaximize}
+      />,
+    );
+
+    fireEvent.doubleClick(screen.getByTestId("pane-header-Dana"));
+
+    expect(onToggleMaximize).toHaveBeenCalledTimes(1);
+  });
+
+  it("renames instead of maximizing when the call-sign is the target", () => {
+    const onToggleMaximize = vi.fn();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        onToggleMaximize={onToggleMaximize}
+        onRename={async () => true}
+      />,
+    );
+
+    // The call-sign is the more specific target and stops the event, so the
+    // bar underneath never sees it — one gesture, one meaning.
+    fireEvent.doubleClick(screen.getByText("Dana"));
+
+    expect(screen.getByTestId("pane-rename-input-Dana")).toBeTruthy();
+    expect(onToggleMaximize).not.toHaveBeenCalled();
+  });
+
+  it("leaves a double-click on one of its own buttons to that button", () => {
+    const onToggleMaximize = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        onToggleMaximize={onToggleMaximize}
+        onClose={onClose}
+      />,
+    );
+
+    // Two clicks on Close are two closes, never a maximize — the same guard
+    // the drag grip uses, for the same reason.
+    fireEvent.doubleClick(screen.getByTestId("pane-close-Dana"));
+
+    expect(onToggleMaximize).not.toHaveBeenCalled();
+  });
+
   it("keeps every action visible on the focused pane", () => {
     render(
       <AgenticTerminal
@@ -1089,6 +1159,7 @@ describe("pane refit", () => {
     terminalHarness.fit.mockClear();
     terminalHarness.send.mockClear();
     terminalHarness.send.mockImplementation(() => true);
+    terminalHarness.resize.mockClear();
     terminalHarness.handlers.current = null;
     terminalHarness.size = { cols: 80, rows: 24 };
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
@@ -1215,6 +1286,29 @@ describe("pane refit", () => {
       cols: 90,
       rows: 30,
     });
+  });
+
+  it("keeps the local grid at the agent's geometry while below the floors", () => {
+    // Refusing the size is only half of the contract (test above). The other
+    // half is the LOCAL grid: fit()ing xterm to a 17-column tile while the
+    // agent keeps laying its lines out for 80 re-wraps every one of them at
+    // the narrower measure, and the TUI's cursor moves then land on rows that
+    // no longer hold what they held when it drew them. A five-pane grid came
+    // back as panes full of shredded one-word fragments (reported
+    // 2026-08-10). So below the floors nothing is fit at all — the grid is
+    // pinned back to the geometry the agent was last told, and the tile's
+    // overflow-hidden container clips the rest.
+    const view = render(pane(false));
+    settle();
+    terminalHarness.fit.mockClear();
+    terminalHarness.resize.mockClear();
+
+    terminalHarness.size = { cols: 17, rows: 6 };
+    view.rerender(pane(true));
+    settle();
+
+    expect(terminalHarness.fit).not.toHaveBeenCalled();
+    expect(terminalHarness.resize).toHaveBeenCalledWith(80, 24);
   });
 
   it("tells a fresh socket the pane's size whatever the last one heard", () => {
@@ -1569,5 +1663,197 @@ describe("terminal text size across a rebuild", () => {
     // restarted pane came back in the palette it opened with.
     expect(newest().options.fontSize).toBe(18);
     expect(newest().options.theme).not.toEqual(openedWith);
+  });
+});
+
+/**
+ * What a pane says about its own state, and where it says it.
+ *
+ * Both halves used to live somewhere that lost them. The reason a pane died was
+ * written INTO the terminal, where the next thing drawn scrolls it away and the
+ * one-line-per-kind-of-trouble guard means it is never written again; the way
+ * out was a button in the hover-only action cluster. The badge and the notice
+ * below are the durable versions of each.
+ */
+describe("pane status", () => {
+  beforeEach(() => {
+    globalThis.ResizeObserver = ResizeObserverHarness;
+    terminalHarness.handlers.current = null;
+    terminalHarness.write.mockClear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const pane = (props: Record<string, unknown> = {}) => (
+    <AgenticTerminal
+      name="Dana"
+      displayName="Claude Code"
+      appearance="dark"
+      fontSize={13}
+      {...props}
+    />
+  );
+
+  it("opens carrying its connecting state, with no notice to answer yet", () => {
+    render(pane());
+
+    expect(screen.getByTestId("pane-status-Dana").dataset.status).toBe(
+      "connecting",
+    );
+    expect(screen.getByTestId("pane-activity").dataset.icon).toBe("spinner");
+    expect(screen.queryByTestId("pane-notice-Dana")).toBeNull();
+  });
+
+  /**
+   * `live` is a property of the PIPE and true for nearly every pane nearly all
+   * the time, so a standing dot on twelve headers marks nothing. It stays in
+   * the DOM and fades in with the header's other controls.
+   */
+  it("keeps a healthy pane's badge quiet until the header is hovered", () => {
+    render(pane());
+
+    act(() => {
+      terminalHarness.handlers.current?.onReady?.(
+        { resumed: false, reattached: false, lastPrompt: null } as never,
+      );
+    });
+
+    const badge = screen.getByTestId("pane-status-Dana");
+    expect(badge.dataset.status).toBe("live");
+    expect(badge.className).toContain("opacity-0");
+    expect(badge.className).toContain("group-hover/header:opacity-60");
+    expect(screen.queryByTestId("pane-notice-Dana")).toBeNull();
+  });
+
+  it("says what happened when the agent exits, and offers the way back", () => {
+    const onRestart = vi.fn();
+    render(pane({ onRestart }));
+
+    act(() => {
+      terminalHarness.handlers.current?.onExit?.(0 as never);
+    });
+
+    expect(screen.getByTestId("pane-status-Dana").dataset.status).toBe("exited");
+    const notice = screen.getByTestId("pane-notice-Dana");
+    expect(notice.dataset.tone).toBe("warning");
+    // The exit reason is a CLAUSE ("stopped"), so the notice puts the agent in
+    // front of it rather than showing a strip that reads as one bare word.
+    expect(notice.textContent).toContain("Claude Code stopped");
+
+    fireEvent.click(screen.getByTestId("pane-restart-Dana"));
+    expect(onRestart).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks an unreachable pane as an error rather than a warning", () => {
+    render(pane({ onRestart: () => undefined }));
+
+    act(() => {
+      terminalHarness.handlers.current?.onTrouble?.(
+        "This pane could not be reached." as never,
+        false as never,
+      );
+    });
+
+    expect(screen.getByTestId("pane-status-Dana").dataset.status).toBe("error");
+    const notice = screen.getByTestId("pane-notice-Dana");
+    expect(notice.dataset.tone).toBe("error");
+    expect(notice.textContent).toContain("could not be reached");
+  });
+
+  /*
+   * The edge, read the way the browser reads it.
+   *
+   * jsdom re-serialises a colour the moment it is assigned, and it does not
+   * agree with the source spelling about spaces — so the expected value is put
+   * through the SAME assignment rather than compared as a string. Otherwise
+   * this test is about `rgba(0,0,0,0.05)` versus `rgba(0, 0, 0, 0.05)`, which
+   * is a fact about jsdom and not about the pane.
+   */
+  const asBorderColor = (value: string) => {
+    const probe = document.createElement("div");
+    probe.style.borderColor = value;
+    return probe.style.borderColor;
+  };
+
+  /**
+   * The edge is what a reader can SWEEP — the badge and the notice both have to
+   * be landed on first. A pane whose agent is gone recedes; one that failed
+   * carries the terminal's own red.
+   */
+  it("carries the pane's lifecycle in its edge", () => {
+    render(pane({ onRestart: () => undefined }));
+    const frame = screen.getByTestId("agentic-pane-Dana");
+    const resting = frame.style.borderColor;
+
+    expect(resting).toBe(asBorderColor(PANE_CHROME.dark.edge.connecting));
+
+    act(() => {
+      terminalHarness.handlers.current?.onExit?.(0 as never);
+    });
+    expect(frame.style.borderColor).toBe(
+      asBorderColor(PANE_CHROME.dark.edge.exited),
+    );
+    // Dimmer than resting rather than another colour — a finished terminal is
+    // not a problem, so it steps back instead of announcing itself.
+    expect(frame.style.borderColor).not.toBe(resting);
+
+    act(() => {
+      terminalHarness.handlers.current?.onTrouble?.(
+        "This pane could not be reached." as never,
+        false as never,
+      );
+    });
+    expect(frame.style.borderColor).toBe(
+      asBorderColor(PANE_CHROME.dark.edge.error),
+    );
+  });
+
+  /**
+   * The three accent states paint the edge through a CLASS, and an inline
+   * colour beats every class. So this is not a style preference — leaving the
+   * property set is what stopped a dragged pane, and one that had just been
+   * handed a prompt, from showing anything but the shadow half of its own
+   * highlight.
+   */
+  it("lets the accent states own the edge outright", () => {
+    const view = render(pane({ focused: true }));
+    const frame = screen.getByTestId("agentic-pane-Dana");
+
+    expect(frame.style.borderColor).toBe("");
+    expect(frame.className).toContain("border-primary/60");
+
+    view.rerender(pane({ focused: false }));
+    expect(frame.style.borderColor).not.toBe("");
+
+    // A prompt just landed: two seconds of ring, edge included.
+    act(() => {
+      terminalHarness.handlers.current?.onPrompt?.(
+        { text: "Run the tests", at: 2, chars: 13 } as never,
+      );
+    });
+    expect(frame.style.borderColor).toBe("");
+  });
+
+  /**
+   * A scheduled retry is not a dead pane. Calling it an error there is what
+   * painted a whole grid red over a backend that was merely restarting — the
+   * notice must stand down with it.
+   */
+  it("takes the notice away again while the socket is only retrying", () => {
+    render(pane());
+
+    act(() => {
+      terminalHarness.handlers.current?.onTrouble?.(
+        "Reconnecting…" as never,
+        true as never,
+      );
+    });
+
+    expect(screen.getByTestId("pane-status-Dana").dataset.status).toBe(
+      "connecting",
+    );
+    expect(screen.queryByTestId("pane-notice-Dana")).toBeNull();
   });
 });

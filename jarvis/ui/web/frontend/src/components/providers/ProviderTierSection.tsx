@@ -8,6 +8,7 @@ import { CuModelSelector } from "@/components/CuModelSelector";
 import { RealtimeOptionsControl } from "@/components/RealtimeOptionsControl";
 import { ProviderBillingBadge } from "@/components/ProviderBillingBadge";
 import { Button } from "@/components/ui/button";
+import { BrandedSelect } from "@/components/ui/select";
 import {
   codexLogout,
   loginAntigravity,
@@ -2361,21 +2362,26 @@ function ManagedServerPanel({
                 <Brain className="h-3.5 w-3.5 text-muted-foreground" />
                 {t("apikeys_view.managed_thinking_title")}
               </span>
-              <select
-                aria-label={t("apikeys_view.managed_thinking_title")}
+              <BrandedSelect
+                ariaLabel={t("apikeys_view.managed_thinking_title")}
                 value={selectedBrain}
-                onChange={(event) => setSelectedBrain(event.target.value)}
+                onValueChange={setSelectedBrain}
                 disabled={setupBusy}
-                className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
-              >
-                {catalog.brain.models.map((choice) => (
-                  <option key={choice.id} value={choice.id} disabled={!choice.fits}>
-                    {choice.label} · ~{choice.size_gb} GB
-                    {choice.recommended ? ` · ${t("apikeys_view.managed_brain_recommended")}` : ""}
-                    {!choice.fits ? ` · ${t("apikeys_view.managed_brain_no_fit")}` : ""}
-                  </option>
-                ))}
-              </select>
+                className="h-8 px-2 text-xs"
+                options={catalog.brain.models.map((choice) => ({
+                  value: choice.id,
+                  label: `${choice.label} · ~${choice.size_gb} GB${
+                    choice.recommended
+                      ? ` · ${t("apikeys_view.managed_brain_recommended")}`
+                      : ""
+                  }${
+                    choice.fits
+                      ? ""
+                      : ` · ${t("apikeys_view.managed_brain_no_fit")}`
+                  }`,
+                  disabled: !choice.fits,
+                }))}
+              />
             </label>
 
             <label className="space-y-1 rounded-md border border-border/60 bg-background/50 p-2">
@@ -2383,29 +2389,28 @@ function ManagedServerPanel({
                 <Volume2 className="h-3.5 w-3.5 text-muted-foreground" />
                 {t("apikeys_view.managed_speaking_title")}
               </span>
-              <select
-                aria-label={t("apikeys_view.managed_speaking_title")}
+              <BrandedSelect
+                ariaLabel={t("apikeys_view.managed_speaking_title")}
                 value={selectedVoice}
-                onChange={(event) => setSelectedVoice(event.target.value)}
+                onValueChange={setSelectedVoice}
                 disabled={setupBusy}
-                className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
-              >
-                {catalog.models.map((choice) => (
-                  <option
-                    key={choice.id}
-                    value={choice.id}
-                    disabled={!choice.selectable}
-                  >
-                    {choice.label}
-                    {choice.recommended ? ` · ${t("apikeys_view.managed_brain_recommended")}` : ""}
-                    {!choice.selectable
+                className="h-8 px-2 text-xs"
+                options={catalog.models.map((choice) => ({
+                  value: choice.id,
+                  label: `${choice.label}${
+                    choice.recommended
+                      ? ` · ${t("apikeys_view.managed_brain_recommended")}`
+                      : ""
+                  }${
+                    !choice.selectable
                       ? ` · ${t("apikeys_view.managed_voice_unavailable")}`
                       : choice.runtime_ready === false
                         ? ` · ${t("apikeys_view.managed_voice_install_required")}`
-                        : ""}
-                  </option>
-                ))}
-              </select>
+                        : ""
+                  }`,
+                  disabled: !choice.selectable,
+                }))}
+              />
             </label>
           </div>
 

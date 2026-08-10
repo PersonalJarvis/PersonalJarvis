@@ -1,16 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Settings,
   Mic,
   Keyboard,
   Loader2,
   Languages,
-  ChevronDown,
-  Check,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { BrandedSelect } from "@/components/ui/select";
 import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
 import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
@@ -192,75 +191,19 @@ function LanguageDropdown({
   onChange: (code: WakeLanguage) => void;
   disabled?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  const selected = (options as string[]).includes(value)
-    ? labelFor(value as WakeLanguage)
-    : null;
-
   return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className="flex w-full items-center justify-between rounded-md border border-primary/40 bg-background px-3 py-2 text-sm transition-colors hover:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
-      >
-        <span className={selected ? "text-foreground" : "text-muted-foreground"}>
-          {selected ?? placeholder}
-        </span>
-        <ChevronDown
-          className={`h-4 w-4 shrink-0 text-primary transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-      {open && (
-        <ul
-          role="listbox"
-          className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-primary/40 bg-card shadow-lg shadow-scrim/50"
-        >
-          {options.map((code) => {
-            const active = code === value;
-            return (
-              <li key={code} role="option" aria-selected={active}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onChange(code);
-                    setOpen(false);
-                  }}
-                  className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors ${
-                    active
-                      ? "bg-primary/15 font-medium text-primary"
-                      : "text-foreground hover:bg-primary/10 hover:text-primary"
-                  }`}
-                >
-                  {labelFor(code)}
-                  {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
+    <BrandedSelect
+      value={value}
+      onValueChange={(code) => onChange(code as WakeLanguage)}
+      ariaLabel={placeholder}
+      placeholder={placeholder}
+      disabled={disabled}
+      className="border-primary/40"
+      options={options.map((code) => ({
+        value: code,
+        label: labelFor(code),
+      }))}
+    />
   );
 }
 
@@ -542,18 +485,17 @@ function WakeWordPanel() {
           <label className="mt-4 block text-xs font-medium text-muted-foreground">
             {t("settings_view.wake_word.engine_label")}
           </label>
-          <select
+          <BrandedSelect
             value={engine}
-            onChange={(e) => setEngine(e.target.value)}
+            onValueChange={setEngine}
+            ariaLabel={t("settings_view.wake_word.engine_label")}
             disabled={loading}
-            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
-          >
-            {WAKE_ENGINES.map((eng) => (
-              <option key={eng} value={eng}>
-                {t(WAKE_ENGINE_I18N_KEY[eng])}
-              </option>
-            ))}
-          </select>
+            className="mt-1"
+            options={WAKE_ENGINES.map((wakeEngine) => ({
+              value: wakeEngine,
+              label: t(WAKE_ENGINE_I18N_KEY[wakeEngine]),
+            }))}
+          />
 
           {/* Custom ONNX model path */}
           {engine === "custom_onnx" && (

@@ -83,6 +83,11 @@ vi.mock("@xterm/xterm", () => ({
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class {
     fit() {}
+    // The pane measures before it applies (see `sendResize`) — answer with the
+    // stand-in terminal's own 80x24 so every fit stays above the floors.
+    proposeDimensions() {
+      return { cols: 80, rows: 24 };
+    }
   },
 }));
 vi.mock("@xterm/addon-web-links", () => ({ WebLinksAddon: class {} }));
