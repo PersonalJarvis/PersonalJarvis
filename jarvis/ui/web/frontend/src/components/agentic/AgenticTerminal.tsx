@@ -611,6 +611,10 @@ export function AgenticTerminal({
     const activateLink = createTerminalLinkActivator(linkOptions);
     const term = new Terminal({
       convertEol: false,
+      // The pane shell supplies the shared section glass. xterm otherwise
+      // paints an opaque canvas over it, hiding both that glass and the desktop
+      // artwork even when the surrounding React container is translucent.
+      allowTransparency: true,
       // Shared with the measurement in ./../../lib/terminalFont: a pane that
       // measured a different stack from the one it draws with is the bug that
       // module exists to prevent.
@@ -1699,7 +1703,7 @@ export function AgenticTerminal({
         // only standing accent. The old per-pane drop shadows made a grid of
         // twelve read as twelve floating cards — a tiling terminal is a wall,
         // and a wall needs edges, not elevation.
-        "relative flex h-full w-full flex-col overflow-hidden rounded-lg border transition-shadow",
+        "relative flex h-full w-full flex-col overflow-hidden rounded-lg border backdrop-blur-[4px] transition-shadow",
         focused && "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.3)]",
         dragging && "border-primary shadow-[0_0_0_2px_hsl(var(--primary)/0.5)]",
         // A prompt just landed here. Two seconds of ring, for the one job the

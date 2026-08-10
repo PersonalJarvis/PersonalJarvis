@@ -1462,6 +1462,25 @@ describe("terminal text size across a rebuild", () => {
 
   const newest = () => terminalHarness.instances[terminalHarness.instances.length - 1];
 
+  it("keeps the xterm canvas clear over the shared translucent pane shell", () => {
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+      />,
+    );
+
+    expect(newest().options.allowTransparency).toBe(true);
+    expect(
+      (newest().options.theme as Record<string, unknown>).background,
+    ).toBe("rgba(0, 0, 0, 0)");
+    expect(screen.getByTestId("agentic-pane-Dana").style.background).toBe(
+      "rgba(10, 10, 10, 0.58)",
+    );
+  });
+
   it("builds a replacement terminal at the size the user is looking at", () => {
     const view = render(
       <AgenticTerminal name="Dana" displayName="Claude Code" appearance="dark" fontSize={13} />,

@@ -488,10 +488,11 @@ describe("Sidebar icon rail", () => {
     renderSidebar(SIDEBAR_DEFAULT_WIDTH);
 
     expect(screen.getByTestId("sidebar").dataset.railed).toBe("false");
-    // The label is ON the row, which is the whole point of the wide layout.
-    expect(
-      screen.getByTestId("nav-row-agentic-ide").textContent?.trim(),
-    ).not.toBe("");
+    // The label is ON the row, and names the workspace rather than carrying
+    // the retired generic "Chat" label shown in the product screenshot.
+    expect(screen.getByTestId("nav-row-agentic-ide").textContent).toContain(
+      "Agentic IDE",
+    );
   });
 
   test("drops to icons once dragged past the snap point", () => {

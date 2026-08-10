@@ -11,14 +11,16 @@ import type { ITheme } from "@xterm/xterm";
  * ground: darker, more saturated hues, with the "bright" row kept genuinely
  * distinguishable rather than lighter.
  *
- * Both themes are checked against WCAG AA for body text (>= 4.5:1 against
- * their own background), which is the difference between a terminal you can
- * read for an hour and one you squint at.
+ * The xterm canvas itself stays transparent. The stable reading ground comes
+ * from the translucent pane shell below it, so the desktop artwork remains
+ * visible without stacking two dark fills into an effectively opaque panel.
  */
 
-/** Warm paper for light mode. Reads like an editor, not like a console. */
+const TRANSPARENT_TERMINAL_BACKGROUND = "rgba(0, 0, 0, 0)";
+
+/** Warm-paper contrast palette for light mode. */
 export const LIGHT_TERMINAL_THEME: ITheme = {
-  background: "#fcfbf8",
+  background: TRANSPARENT_TERMINAL_BACKGROUND,
   foreground: "#2b2b33",
   cursor: "#a86b00",
   cursorAccent: "#fcfbf8",
@@ -43,14 +45,14 @@ export const LIGHT_TERMINAL_THEME: ITheme = {
 };
 
 /**
- * Deep slate — matches the app shell rather than being pure black.
+ * Deep-slate contrast palette for dark mode.
  *
  * This is what most people see: the panes follow the app's theme, and the app
- * defaults to dark (`hooks/useTheme`). Not pure black on purpose — a #000 pane
- * inside a #12141a shell reads as a hole punched in the window.
+ * defaults to dark (`hooks/useTheme`). The canvas stays clear; the translucent
+ * pane shell below it supplies the dark reading ground.
  */
 export const DARK_TERMINAL_THEME: ITheme = {
-  background: "#12141a",
+  background: TRANSPARENT_TERMINAL_BACKGROUND,
   foreground: "#e8e8ec",
   cursor: "#ffd60a",
   cursorAccent: "#12141a",
@@ -80,8 +82,13 @@ export function themeFor(appearance: TerminalAppearance): ITheme {
   return appearance === "dark" ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME;
 }
 
-/** Chrome (pane frame) colours that go with each terminal theme. */
+/**
+ * Chrome (pane frame) colours that go with each terminal theme.
+ *
+ * These alphas mirror the shared section-panel glass tokens. Keeping the tint
+ * on this single layer lets xterm remain clear while preserving text contrast.
+ */
 export const PANE_CHROME: Record<TerminalAppearance, { shell: string; border: string }> = {
-  light: { shell: "#fcfbf8", border: "rgba(0,0,0,0.10)" },
-  dark: { shell: "#12141a", border: "rgba(255,255,255,0.10)" },
+  light: { shell: "rgba(252, 251, 248, 0.68)", border: "rgba(0,0,0,0.10)" },
+  dark: { shell: "rgba(10, 10, 10, 0.58)", border: "rgba(255,255,255,0.10)" },
 };

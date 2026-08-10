@@ -151,16 +151,16 @@ const NAV_GROUPS: NavItem[][] = [
     { id: "socials", labelKey: "nav.socials", icon: Share2 },
     { id: "feedback", labelKey: "nav.feedback", icon: MessageSquareWarning },
   ],
-  // 5) The coding chat — its own bottom group on purpose. It is not one more
+  // 5) The Agentic IDE — its own bottom group on purpose. It is not one more
   // page among the tools above: opening it puts real coding agents to work in a
   // folder and can narrow the assistant to that workspace, so it sits apart
   // with its own divider rather than blending into the list.
   [
     {
       id: "agentic-ide",
-      labelKey: "nav.chat_workspace",
+      labelKey: "nav.agentic_ide",
       icon: MessagesSquare,
-      fallbackLabel: "Chat",
+      fallbackLabel: "Agentic IDE",
       // The classic grid is the same destination as far as the row is
       // concerned: someone who stepped back into it should still see where
       // they are in the navigation.
