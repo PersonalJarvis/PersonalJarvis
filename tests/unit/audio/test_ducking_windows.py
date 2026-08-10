@@ -221,6 +221,74 @@ def test_restore_uses_what_was_recorded_not_the_current_mode(fake_pycaw):
 
 
 # --------------------------------------------------------------------------- #
+# A restore that never landed must not strand the user's audio                 #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_still_ducked_session_is_re_adopted_by_the_next_turn(fake_pycaw):
+    """Volume mode: the app sat at the duck level FOREVER after a failed undo.
+
+    The next sweep read the already-lowered volume, ``prev > target`` stayed
+    false, so the pid was never reported again — and restore() is only ever
+    asked about pids that mute_others returned.
+    """
+    session = _FakeSession(4321, "spotify.exe", master=0.8)
+    fake_pycaw.extend([session])
+    ducker = WindowsPycawDucker(duck_volume_percent=20)
+
+    ducker.mute_others(own_pid=1, never=frozenset())     # 0.8 -> 0.2
+    # ...and the restore never happens (Jarvis killed, COMError, shutdown race).
+
+    second = ducker.mute_others(own_pid=1, never=frozenset())
+    assert second == [4321]
+
+    ducker.restore(second)
+    assert session.SimpleAudioVolume.master == pytest.approx(0.8)
+    assert ducker._saved == {}
+
+
+def test_a_session_we_muted_is_re_adopted_but_a_user_muted_one_is_not(fake_pycaw):
+    """Mute mode had the same hole, and the harsher symptom: silence for good."""
+    ours = _FakeSession(4321, "spotify.exe")
+    theirs = _FakeSession(4322, "chrome.exe", muted=True)
+    fake_pycaw.extend([ours, theirs])
+    ducker = WindowsPycawDucker()
+
+    assert ducker.mute_others(own_pid=1, never=frozenset()) == [4321]
+    # No restore happens; both sessions now read back as muted.
+
+    assert ducker.mute_others(own_pid=1, never=frozenset()) == [4321]
+
+    ducker.restore([4321])
+    assert ours.SimpleAudioVolume.muted is False
+    assert theirs.SimpleAudioVolume.muted is True    # never ours to touch
+
+
+def test_restore_forgets_a_session_it_successfully_undid(fake_pycaw):
+    """The re-adoption record must not survive a restore that DID land —
+    otherwise a later pid reuse would unmute a stranger."""
+    session = _FakeSession(4321, "spotify.exe")
+    fake_pycaw.extend([session])
+    ducker = WindowsPycawDucker()
+
+    ducker.restore(ducker.mute_others(own_pid=1, never=frozenset()))
+
+    assert ducker._muted_by_us == set()
+    assert ducker.mute_others(own_pid=1, never=frozenset()) == [4321]
+
+
+def test_one_pid_with_several_sessions_yields_one_token(fake_pycaw):
+    """A process can own more than one audio session; reporting the pid once
+    per session inflated the "muted N sessions" count the controller logs."""
+    fake_pycaw.extend([
+        _FakeSession(4321, "chrome.exe"),
+        _FakeSession(4321, "chrome.exe"),
+    ])
+
+    assert WindowsPycawDucker().mute_others(own_pid=1, never=frozenset()) == [4321]
+
+
+# --------------------------------------------------------------------------- #
 # Config wiring                                                                #
 # --------------------------------------------------------------------------- #
 

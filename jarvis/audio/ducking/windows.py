@@ -52,8 +52,13 @@ class WindowsPycawDucker:
     def __init__(self, *, duck_volume_percent: int = 0) -> None:
         self._duck = max(0, min(100, int(duck_volume_percent)))
         #: pid -> master volume scalar before we lowered it. Only used in
-        #: volume mode; mute mode needs no state (unmute is unconditional).
+        #: volume mode; mute mode records the pid in ``_muted_by_us`` instead.
         self._saved: dict[int, float] = {}
+        #: pids we hard-muted ourselves (mute mode). A muted session is
+        #: otherwise indistinguishable from one the USER silenced — and we must
+        #: never turn those back on — so without this record a mute whose
+        #: restore did not land could never be retried. See ``mute_others``.
+        self._muted_by_us: set[int] = set()
 
     @classmethod
     def from_config(cls, cfg: Any | None) -> WindowsPycawDucker:
@@ -73,15 +78,36 @@ class WindowsPycawDucker:
         the system-sounds session (PID 0 / no process), and the name allowlist.
         Returns the PIDs actually ducked so restore() touches only those.
 
-        Sessions the user already silenced are left alone in BOTH modes — we
-        only ever touch something currently audible, so restore can never turn
-        an app back on that the user had muted.
+        Sessions the user already silenced are left alone — we only ever touch
+        something currently audible, so restore can never turn an app back on
+        that the user had muted.
+
+        A session that is *still ducked from a previous voice turn* is re-adopted
+        into this turn's token list. Without that, a restore which never landed
+        (Jarvis killed mid-session, a COMError on that one session, a shutdown
+        that raced the unmute) stranded the app for good: in volume mode the next
+        sweep reads the already-lowered level, ``prev > target`` stays false, so
+        the pid is never reported again and the user's music sits at the duck
+        volume forever; in mute mode the session simply reads as muted and is
+        skipped as "the user's". The macOS backend has carried this re-adoption
+        since its own stranded-token bug; this one never got it.
+
+        Note the one imprecision the pid-keyed bookkeeping keeps: a process with
+        several concurrent audio sessions has them restored to a single level.
+        The returned list is deduplicated so the token count is honest.
         """
         from pycaw.pycaw import AudioUtilities
 
         skip = _normalized_never(never)
         target = self._duck / 100.0
         ducked: list[int] = []
+        seen: set[int] = set()
+
+        def _claim(pid: int) -> None:
+            if pid not in seen:
+                seen.add(pid)
+                ducked.append(pid)
+
         for session in AudioUtilities.GetAllSessions():
             try:
                 pid = session.ProcessId
@@ -95,17 +121,35 @@ class WindowsPycawDucker:
                     if name in skip:
                         continue
                 vol = session.SimpleAudioVolume
-                if vol.GetMute():  # already silent — nothing of ours to undo
+                if vol.GetMute():
+                    # Silent. Either the USER muted it — never our business — or
+                    # we did and the unmute never landed, which only our own
+                    # record can tell apart.
+                    if pid in self._muted_by_us:
+                        log.info(
+                            "ducking: re-adopting pid %d (still muted by us from "
+                            "an earlier session whose restore did not land)", pid,
+                        )
+                        _claim(pid)
                     continue
                 if self._duck <= 0:
                     vol.SetMute(1, None)
-                    ducked.append(pid)
+                    self._muted_by_us.add(pid)
+                    _claim(pid)
                     continue
                 prev = float(vol.GetMasterVolume())
                 if prev > target:
                     vol.SetMasterVolume(target, None)
                     self._saved[pid] = prev
-                    ducked.append(pid)
+                    _claim(pid)
+                elif pid in self._saved:
+                    # Sitting at (or below) the duck level while we still hold
+                    # the level it had before — same stranded case as above.
+                    log.info(
+                        "ducking: re-adopting pid %d (still at the duck volume "
+                        "with an unrestored level of %.2f)", pid, self._saved[pid],
+                    )
+                    _claim(pid)
             except Exception:  # noqa: BLE001 — COMError on protected sessions; skip
                 log.debug("ducking mute skip", exc_info=True)
         return ducked
@@ -124,7 +168,9 @@ class WindowsPycawDucker:
         want = set(pids)
         if not want:
             return
+        failed: set[int] = set()
         for session in AudioUtilities.GetAllSessions():
+            pid = 0
             try:
                 pid = session.ProcessId
                 if pid not in want:
@@ -136,8 +182,20 @@ class WindowsPycawDucker:
                     session.SimpleAudioVolume.SetMasterVolume(prev, None)
             except Exception:  # noqa: BLE001
                 log.debug("ducking restore skip", exc_info=True)
+                if pid in want:
+                    failed.add(pid)
         # Drop the bookkeeping for every requested pid, including sessions that
         # disappeared while ducked — otherwise a closed app's entry would sit
         # here forever and a later pid reuse would restore a stranger's volume.
-        for pid in want:
+        # A session that is still THERE but whose undo raised is the exception:
+        # keep its record so the next mute_others re-adopts and retries it,
+        # because dropping it strands the app at the duck volume with nothing
+        # left that knows how to put it back.
+        if failed:
+            log.warning(
+                "ducking: %d session(s) could not be restored — keeping their "
+                "recorded level so the next voice turn retries them", len(failed),
+            )
+        for pid in want - failed:
             self._saved.pop(pid, None)
+            self._muted_by_us.discard(pid)
