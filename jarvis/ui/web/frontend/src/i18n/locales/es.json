@@ -3922,6 +3922,18 @@
       "already": "Todos los terminales ya tienen el mismo tamaño.",
       "grid_only": "Los tamaños se igualan en la cuadrícula de terminales: aquí no hay bordes que igualar."
     },
+    "explorer": {
+      "title": "Explorador",
+      "toggle": "Mostrar u ocultar el explorador del espacio de trabajo",
+      "refresh": "Actualizar el árbol de archivos",
+      "close": "Cerrar el explorador",
+      "loading": "Cargando…",
+      "empty": "Carpeta vacía",
+      "load_failed": "No se pudo cargar la carpeta.",
+      "open_failed": "No se pudo abrir el archivo.",
+      "open_hint": "Haz doble clic en un archivo para abrirlo en el editor del sistema.",
+      "truncated": "Esta carpeta tiene más entradas de las que se pueden mostrar a la vez."
+    },
     "arrange": {
       "carrying": "suéltalo sobre un terminal",
       "swap": "Intercambiar con {0}",

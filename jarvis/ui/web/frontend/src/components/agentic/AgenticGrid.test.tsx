@@ -54,6 +54,14 @@ vi.mock("@/lib/agenticIdeApi", () => ({
     workspace_id: "ide_test",
     terminals: [],
   })),
+  fetchWorkspaceFiles: vi.fn(async () => ({
+    workspace_id: "ide_test",
+    root_name: "project",
+    path: "",
+    entries: [],
+    truncated: false,
+  })),
+  openTerminalTarget: vi.fn(),
   promptTerminal: vi.fn(),
   // Reached from the toolbar's settings panel, which the grid always renders.
   setIdeActiveAccount: vi.fn(),
@@ -2413,6 +2421,22 @@ describe("the workspace header row", () => {
     renderGrid();
 
     expect(screen.getByTestId("agentic-toolbar").textContent).toContain("project");
+  });
+
+  it("expands the file explorer without remounting any live agent pane", async () => {
+    renderGrid();
+
+    const pane = screen.getByTestId("pane-Mika");
+    const toggle = screen.getByTestId("workspace-explorer-toggle");
+    fireEvent.click(toggle);
+
+    expect(await screen.findByTestId("workspace-explorer")).toBeTruthy();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByTestId("pane-Mika")).toBe(pane);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close the explorer" }));
+    expect(screen.queryByTestId("workspace-explorer")).toBeNull();
+    expect(screen.getByTestId("pane-Mika")).toBe(pane);
   });
 });
 

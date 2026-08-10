@@ -18,6 +18,7 @@ recursive walk — because this runs when a session starts and its result is wha
 gets folded into the voice turn's context (AP-9: awareness work stays off the
 hot path; here it is computed once and cached in the session).
 """
+
 from __future__ import annotations
 
 import os
@@ -80,6 +81,7 @@ _INSTRUCTION_FILES: tuple[str, ...] = (
 )
 
 _MAX_ENTRIES = 400
+_MAX_WORKSPACE_ENTRIES = 2_000
 _MAX_SKILLS = 60
 
 
@@ -91,6 +93,27 @@ class FolderEntry:
     path: str
     is_project: bool
     is_repo: bool
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceEntry:
+    """One direct child of a directory inside an open workspace."""
+
+    name: str
+    path: str
+    is_directory: bool
+    is_symlink: bool
+    size: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceListing:
+    """A bounded, workspace-relative directory listing for the file explorer."""
+
+    path: str
+    entries: tuple[WorkspaceEntry, ...]
+    truncated: bool = False
+    error: str | None = None
 
 
 @dataclass(slots=True)
@@ -249,6 +272,85 @@ def list_dir(
     # almost always a project.
     entries.sort(key=lambda e: (not e.is_project, e.name.lower()))
     return entries, None
+
+
+def list_workspace_dir(
+    root: str | Path,
+    relative: str | Path = "",
+    *,
+    limit: int = _MAX_WORKSPACE_ENTRIES,
+) -> WorkspaceListing:
+    """List one directory without ever escaping the open workspace.
+
+    The explorer loads one level at a time, so even a large repository stays
+    cheap to open. Hidden entries are intentionally included: source control,
+    agent instructions, and environment examples are normal project files.
+    Symlinks are shown but never reported as expandable directories, which
+    prevents a link inside the workspace from becoming a browser for another
+    part of the machine.
+    """
+    root_path = Path(root).expanduser().resolve(strict=True)
+    relative_path = Path(relative or ".")
+    if relative_path.is_absolute():
+        raise ValueError("Workspace paths must be relative.")
+
+    try:
+        target = (root_path / relative_path).resolve(strict=True)
+        target.relative_to(root_path)
+    except (OSError, ValueError) as exc:
+        raise ValueError("That folder is outside the open workspace.") from exc
+    if not target.is_dir():
+        raise NotADirectoryError("That workspace path is not a folder.")
+
+    normalized_path = "" if target == root_path else target.relative_to(root_path).as_posix()
+    entries: list[WorkspaceEntry] = []
+    truncated = False
+    try:
+        with os.scandir(target) as it:
+            for item in it:
+                if len(entries) >= max(1, limit):
+                    truncated = True
+                    break
+                try:
+                    is_symlink = item.is_symlink()
+                    is_directory = item.is_dir(follow_symlinks=False)
+                    size = None
+                    if not is_directory and not is_symlink:
+                        size = item.stat(follow_symlinks=False).st_size
+                except OSError:
+                    # A file can disappear between scandir and stat. The next
+                    # refresh will reflect it; one racing entry must not blank
+                    # the rest of the folder.
+                    continue
+                child = Path(item.path).relative_to(root_path).as_posix()
+                entries.append(
+                    WorkspaceEntry(
+                        name=item.name,
+                        path=child,
+                        is_directory=is_directory,
+                        is_symlink=is_symlink,
+                        size=size,
+                    )
+                )
+    except PermissionError:
+        return WorkspaceListing(
+            path=normalized_path,
+            entries=(),
+            error="This folder cannot be read with the current permissions.",
+        )
+    except OSError:
+        return WorkspaceListing(
+            path=normalized_path,
+            entries=(),
+            error="This folder could not be read.",
+        )
+
+    entries.sort(key=lambda entry: (not entry.is_directory, entry.name.casefold()))
+    return WorkspaceListing(
+        path=normalized_path,
+        entries=tuple(entries),
+        truncated=truncated,
+    )
 
 
 def search_folders(
@@ -458,7 +560,10 @@ def probe_project(path: str | Path) -> ProjectProfile:
 __all__ = [
     "FolderEntry",
     "ProjectProfile",
+    "WorkspaceEntry",
+    "WorkspaceListing",
     "list_dir",
+    "list_workspace_dir",
     "probe_project",
     "search_folders",
     "start_points",

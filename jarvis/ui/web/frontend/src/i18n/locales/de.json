@@ -3922,6 +3922,18 @@
       "already": "Alle Terminals haben bereits dieselbe Größe.",
       "grid_only": "Größen gleichen sich im Terminal-Raster an — hier gibt es keine Grenzen zum Angleichen."
     },
+    "explorer": {
+      "title": "Explorer",
+      "toggle": "Workspace-Explorer ein- oder ausblenden",
+      "refresh": "Dateibaum aktualisieren",
+      "close": "Explorer schließen",
+      "loading": "Wird geladen…",
+      "empty": "Leerer Ordner",
+      "load_failed": "Der Ordner konnte nicht geladen werden.",
+      "open_failed": "Die Datei konnte nicht geöffnet werden.",
+      "open_hint": "Doppelklick öffnet eine Datei im System-Editor.",
+      "truncated": "Dieser Ordner enthält mehr Einträge, als gleichzeitig angezeigt werden können."
+    },
     "arrange": {
       "carrying": "auf ein Terminal ziehen",
       "swap": "Mit {0} tauschen",

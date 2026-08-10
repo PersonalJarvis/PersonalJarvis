@@ -41,6 +41,24 @@ export interface FoldersResponse {
   device_name?: string | null;
 }
 
+export interface WorkspaceFileItem {
+  name: string;
+  /** POSIX-style path relative to the workspace root. */
+  path: string;
+  is_directory: boolean;
+  is_symlink: boolean;
+  size?: number | null;
+}
+
+export interface WorkspaceFilesResponse {
+  workspace_id: string;
+  root_name: string;
+  path: string;
+  entries: WorkspaceFileItem[];
+  truncated: boolean;
+  error?: string | null;
+}
+
 export interface SearchResponse {
   query: string;
   entries: FolderItem[];
@@ -698,6 +716,17 @@ export function refreshTerminalRecap(
 export function fetchFolders(path?: string | null): Promise<FoldersResponse> {
   const query = path ? `?path=${encodeURIComponent(path)}` : "";
   return getJson<FoldersResponse>(`/api/agentic-ide/folders${query}`);
+}
+
+/** Load one level of an open workspace's file tree. */
+export function fetchWorkspaceFiles(
+  workspaceId: string,
+  path = "",
+): Promise<WorkspaceFilesResponse> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : "";
+  return getJson<WorkspaceFilesResponse>(
+    `/api/agentic-ide/workspaces/${encodeURIComponent(workspaceId)}/files${query}`,
+  );
 }
 
 export function searchFolders(

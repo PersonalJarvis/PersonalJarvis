@@ -18,6 +18,7 @@ import {
   Check,
   ChevronUp,
   FileText,
+  Files,
   FolderGit2,
   FolderPlus,
   GripVertical,
@@ -76,6 +77,7 @@ import { isVoiceActive } from "./VoiceBubble";
 import { PromptPreview } from "./PromptPreview";
 import { PromptEditor } from "./PromptEditor";
 import { WorkspaceSettings } from "./WorkspaceSettings";
+import { WorkspaceExplorer } from "./WorkspaceExplorer";
 import { usePaneFileDrag } from "./paneFileDrag";
 import {
   chatTerminalIdentity,
@@ -833,6 +835,7 @@ export function AgenticGrid({
    * screen, not workspace state worth a round-trip.
    */
   const [viewMode, setViewModeState] = useState<WorkspaceView>(() => storedViewMode() ?? "grid");
+  const [explorerOpen, setExplorerOpen] = useState(false);
   /**
    * Which agent's terminal is unfolded on the deck, if any.
    *
@@ -2325,6 +2328,23 @@ export function AgenticGrid({
           </button>
         ))}
 
+        {/* The current workspace's files, in the familiar editor-explorer
+            position. It is an independent panel rather than a fourth reading
+            mode: opening it must not hide or remount a live terminal. */}
+        <button
+          type="button"
+          data-testid="workspace-explorer-toggle"
+          aria-pressed={explorerOpen}
+          aria-expanded={explorerOpen}
+          aria-controls="workspace-explorer"
+          onClick={() => setExplorerOpen((open) => !open)}
+          title={t("agentic_grid.explorer.toggle")}
+          aria-label={t("agentic_grid.explorer.toggle")}
+          className={cn(TOOLBAR_BTN, explorerOpen && TOOLBAR_BTN_ON)}
+        >
+          <Files className="h-4 w-4 shrink-0" aria-hidden />
+        </button>
+
         {/* Even out the sizes. Beside the grid/chat toggle because both are
             about the SHAPE of the workspace rather than what is in it, and
             before the appearance controls because it changes the panes
@@ -2523,6 +2543,26 @@ export function AgenticGrid({
         change of clothes.
       */}
       <div className="flex min-h-0 flex-1">
+        {/* This zero-width host is ALWAYS present. Only its child mounts when
+            the explorer is open, so toggling the panel never shifts the live
+            terminal children in React's sibling order (and therefore never
+            tears down their PTY sockets). */}
+        <div
+          className={cn(
+            "h-full shrink-0 overflow-hidden transition-[width] duration-200 motion-reduce:transition-none",
+            explorerOpen ? "w-[280px]" : "w-0",
+          )}
+          aria-hidden={!explorerOpen}
+        >
+          {explorerOpen && (
+            <WorkspaceExplorer
+              workspaceId={session.id}
+              rootName={project.name}
+              onClose={() => setExplorerOpen(false)}
+            />
+          )}
+        </div>
+
         {/* ------------------------------------------------------ chat rail */}
         <aside
           data-testid="agentic-chat-rail"

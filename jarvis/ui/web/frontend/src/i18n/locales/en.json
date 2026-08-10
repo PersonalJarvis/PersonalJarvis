@@ -3922,6 +3922,18 @@
       "already": "Every terminal already has the same size.",
       "grid_only": "Sizes even out in the terminal grid — there are no boundaries to even here."
     },
+    "explorer": {
+      "title": "Explorer",
+      "toggle": "Show or hide the workspace explorer",
+      "refresh": "Refresh the file tree",
+      "close": "Close the explorer",
+      "loading": "Loading…",
+      "empty": "Empty folder",
+      "load_failed": "The folder could not be loaded.",
+      "open_failed": "The file could not be opened.",
+      "open_hint": "Double-click a file to open it in your system editor.",
+      "truncated": "This folder has more entries than can be shown at once."
+    },
     "arrange": {
       "carrying": "drop it on a terminal",
       "swap": "Swap with {0}",

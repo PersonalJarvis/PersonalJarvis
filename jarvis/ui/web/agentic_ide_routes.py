@@ -13,6 +13,7 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``POST   /folders/native``             → open it and return what was picked
 * ``POST   /terminal-target/open``       → open a path printed by one terminal
 * ``GET    /workspaces``                 → every open workspace, in tab order
+* ``GET    /workspaces/{id}/files``      → browse that workspace's file tree
 * ``PUT    /workspaces/active``          → bring one to the front (null = wizard)
 * ``PATCH  /workspaces/{workspace_id}``  → rename one workspace tab
 * ``DELETE /workspaces/{workspace_id}``  → close that one and stop its agents
@@ -91,7 +92,12 @@ from jarvis.agentic_ide.fleet_actions import (
     terminals_closed_event,
     wait_for_prompt_ready,
 )
-from jarvis.agentic_ide.folders import list_dir, search_folders, start_points
+from jarvis.agentic_ide.folders import (
+    list_dir,
+    list_workspace_dir,
+    search_folders,
+    start_points,
+)
 from jarvis.agentic_ide.names import default_names
 from jarvis.agentic_ide.session import (
     AGENT_DISPLAY,
@@ -622,6 +628,25 @@ class FoldersResponse(BaseModel):
     # label the start points with the device rather than the account folder
     # ("Administrator" tells the user nothing about which computer this is).
     device_name: str | None = None
+
+
+class WorkspaceFileItem(BaseModel):
+    """One workspace-relative entry in the IDE file explorer."""
+
+    name: str
+    path: str = Field(description="POSIX-style path relative to the workspace root.")
+    is_directory: bool
+    is_symlink: bool = False
+    size: int | None = None
+
+
+class WorkspaceFilesResponse(BaseModel):
+    workspace_id: str
+    root_name: str
+    path: str
+    entries: list[WorkspaceFileItem]
+    truncated: bool = False
+    error: str | None = None
 
 
 class SearchResponse(BaseModel):
@@ -1207,6 +1232,36 @@ async def get_folders(path: str | None = None, include_hidden: bool = False) -> 
         entries=[FolderItem(**asdict(e)) for e in found],
         error=error,
         device_name=device_name(),
+    )
+
+
+@router.get(
+    "/workspaces/{workspace_id}/files",
+    response_model=WorkspaceFilesResponse,
+    summary="Browse files in an open workspace",
+)
+async def get_workspace_files(workspace_id: str, path: str = "") -> WorkspaceFilesResponse:
+    """One lazy-loaded level of the workspace's file tree.
+
+    Paths on the wire are relative to the selected workspace. The filesystem
+    helper resolves them again and rejects traversal and symlink escapes before
+    touching a directory, so this endpoint cannot become a general host browser.
+    """
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    try:
+        listing = await asyncio.to_thread(list_workspace_dir, session.folder, path)
+    except (OSError, ValueError):
+        raise HTTPException(status_code=404, detail="Workspace folder not found.") from None
+
+    return WorkspaceFilesResponse(
+        workspace_id=workspace_id,
+        root_name=Path(session.folder).name or str(session.folder),
+        path=listing.path,
+        entries=[WorkspaceFileItem(**asdict(entry)) for entry in listing.entries],
+        truncated=listing.truncated,
+        error=listing.error,
     )
 
 
@@ -1907,7 +1962,7 @@ async def get_deck_queue() -> dict:
 
 @router.post("/deck/hold/{name}", summary="Take a pane over from the Command Deck")
 async def set_deck_hold(name: str, req: DeckHoldRequest) -> dict:
-    """"I'll take this one" — and handing it back.
+    """ "I'll take this one" — and handing it back.
 
     The honest limit on the deck's promise. A pane can hold a question only the
     user can settle, and while they are dealing with it the deck must stop
@@ -1924,7 +1979,7 @@ async def set_deck_hold(name: str, req: DeckHoldRequest) -> dict:
 
 @router.post("/deck/ack", summary="Answer a Command Deck report")
 async def ack_deck_report(req: DeckAckRequest) -> dict:
-    """"Tell me that one" / "later" / "drop it", from voice or from the lane.
+    """ "Tell me that one" / "later" / "drop it", from voice or from the lane.
 
     Not a 404 for an unknown id: a report goes away when its pane does, and a
     click that lands a moment after that got the outcome it wanted. `found`
