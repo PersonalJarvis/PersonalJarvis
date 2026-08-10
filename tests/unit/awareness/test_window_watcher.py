@@ -188,6 +188,84 @@ async def test_stop_idempotent_no_start() -> None:
 
 
 @pytest.mark.asyncio
+async def test_unresolvable_window_is_not_published_as_a_frame() -> None:
+    """``_resolve_window_meta`` answers ("", 0, "") for a probe that failed.
+
+    Publishing that handed PrivacyFilter two empty strings, which match no
+    block pattern and fall through to ``default_allow_for_unknown`` — so an
+    unidentifiable window was waved through AND overwrote
+    ``state.current_frame``, blanking the foreground context the brain reads.
+    The POSIX poller already refused exactly this; Win32 never did.
+    """
+    bus, manager, privacy = _make_components()
+    received: list[FrameUpdated] = []
+    blocked: list[AwarenessCaptureBlocked] = []
+    bus.subscribe(FrameUpdated, _async_collect(received))
+    bus.subscribe(AwarenessCaptureBlocked, _async_collect(blocked))
+
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_resolve_window_meta",
+        staticmethod(lambda hwnd: ("", 0, "")),
+    ):
+        watcher._loop = asyncio.get_running_loop()
+        watcher._safe_enqueue((time.time_ns(), 100))
+        await watcher._drain_once()
+
+    assert received == []
+    assert blocked == []
+    assert manager.state.current_frame is None
+
+
+@pytest.mark.asyncio
+async def test_a_title_less_window_still_publishes_when_the_process_is_known() -> None:
+    """Only a TOTALLY unreadable probe is discarded: a window with no caption
+    but a known owner still says which app is focused, and the process-based
+    privacy rules can act on it."""
+    bus, manager, privacy = _make_components()
+    received: list[FrameUpdated] = []
+    bus.subscribe(FrameUpdated, _async_collect(received))
+
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_resolve_window_meta",
+        staticmethod(lambda hwnd: ("", 4321, "notepad.exe")),
+    ):
+        watcher._loop = asyncio.get_running_loop()
+        watcher._safe_enqueue((time.time_ns(), 100))
+        await watcher._drain_once()
+
+    assert len(received) == 1
+    assert received[0].process_name == "notepad.exe"
+
+
+@pytest.mark.asyncio
+async def test_a_backward_clock_step_does_not_dedupe_away_later_frames() -> None:
+    """The dedupe delta comes from the WALL clock, which can step backwards
+    (NTP correction, a resumed VM). A negative delta is also "< 50 ms", so one
+    backward step used to swallow every further event for the focused window
+    and freeze focus tracking on that app until the clock caught up."""
+    bus, manager, privacy = _make_components()
+    received: list[FrameUpdated] = []
+    bus.subscribe(FrameUpdated, _async_collect(received))
+
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_resolve_window_meta",
+        staticmethod(lambda hwnd: ("My Doc - Notepad", 1, "notepad.exe")),
+    ):
+        watcher._loop = asyncio.get_running_loop()
+        ts = time.time_ns()
+        watcher._safe_enqueue((ts, 100))
+        await watcher._drain_once()
+        # The clock jumps a minute back; the same window is focused again.
+        watcher._safe_enqueue((ts - 60_000_000_000, 100))
+        await watcher._drain_once()
+
+    assert len(received) == 2
+
+
+@pytest.mark.asyncio
 async def test_resolve_meta_failure_skips_frame_no_crash() -> None:
     """If _resolve_window_meta raises: the frame is dropped, no crash."""
     bus, manager, privacy = _make_components()

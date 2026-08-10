@@ -176,6 +176,9 @@ class WindowFocusWatcher:
         # Sync-Side (Win32)
         self._pump_thread: threading.Thread | None = None
         self._hook_handle: int | None = None
+        # Guards the read-and-clear of _hook_handle: the pump thread and stop()
+        # both release the hook, from different threads. See _take_hook_handle.
+        self._hook_lock: threading.Lock = threading.Lock()
         self._stop_event_handle: int | None = None
         # The WINEVENTPROC instance MUST be kept alive — otherwise it is
         # GC'd, the C pointer dangles, and Win32 calls invalid memory.
@@ -298,7 +301,8 @@ class WindowFocusWatcher:
                     )
 
             # P4: Defensive UnhookWinEvent (primary path is in pump-loop finally)
-            if self._hook_handle is not None:
+            hook_handle = self._take_hook_handle()
+            if hook_handle is not None:
                 try:
                     import ctypes  # noqa: PLC0415
 
@@ -307,12 +311,11 @@ class WindowFocusWatcher:
                     u32 = ctypes.WinDLL("user32", use_last_error=True)
                     u32.UnhookWinEvent.argtypes = [ctypes.c_void_p]
                     u32.UnhookWinEvent.restype = ctypes.c_int
-                    u32.UnhookWinEvent(self._hook_handle)
+                    u32.UnhookWinEvent(hook_handle)
                 except Exception:  # noqa: BLE001, S110
                     # Defensive Win32 cleanup — do not escalate errors,
                     # otherwise the next phase step in stop() would hang.
                     pass
-                self._hook_handle = None
 
             # P5: CloseHandle stop_event
             if self._stop_event_handle is not None:
@@ -340,6 +343,22 @@ class WindowFocusWatcher:
         finally:
             self._started = False
             self._stopping = False
+
+    def _take_hook_handle(self) -> int | None:
+        """Atomically claim the hook handle so exactly ONE caller unhooks it.
+
+        Both ``stop()``'s defensive P4 and the pump thread's ``finally`` release
+        the hook, and P3's join is explicitly allowed to TIME OUT — so a pump
+        thread that is merely slow can be inside its cleanup while ``stop()``
+        reads the very same handle. Calling ``UnhookWinEvent`` twice on one
+        handle has a use-after-free shape: the second call either no-ops or,
+        once Win32 has recycled that handle value for a hook installed
+        elsewhere in the process, tears down SOMEONE ELSE's hook. Read-and-clear
+        under a lock makes the loser of that race see ``None`` and do nothing.
+        """
+        with self._hook_lock:
+            handle, self._hook_handle = self._hook_handle, None
+            return handle
 
     def _reset_frame_state(self) -> None:
         """Drop queued frames and per-run change-detection state.
@@ -498,15 +517,17 @@ class WindowFocusWatcher:
         except Exception:  # noqa: BLE001
             logger.exception("WindowFocusWatcher pump-loop crashed")
         finally:
-            # Unregister hook — on the SAME thread that registered it.
-            if self._hook_handle is not None:
+            # Unregister hook — on the SAME thread that registered it. Claimed
+            # atomically so a stop() whose join timed out cannot unhook the same
+            # handle a second time (see _take_hook_handle).
+            handle = self._take_hook_handle()
+            if handle is not None:
                 try:
-                    user32.UnhookWinEvent(self._hook_handle)
+                    user32.UnhookWinEvent(handle)
                 except Exception:  # noqa: BLE001, S110
                     # Defensive Win32 cleanup — do not escalate errors,
                     # otherwise the next phase step in stop() would hang.
                     pass
-                self._hook_handle = None
             self._wineventproc_ref = None
 
     # ---- Async-Side ---------------------------------------------------------
@@ -546,7 +567,16 @@ class WindowFocusWatcher:
         # Dedupe: Win32 sometimes emits 2-3 EVENT_SYSTEM_FOREGROUND events
         # within <50 ms during Alt+Tab. We filter here instead of in the
         # callback (HN4).
-        if hwnd == self._last_hwnd and (ts_ns - self._last_emit_ns) < _HWND_DEDUPE_NS:
+        #
+        # The lower bound matters: these timestamps come from time.time_ns(),
+        # a WALL clock that can step BACKWARDS (an NTP correction, the user
+        # fixing the clock, a VM resuming from suspend). A negative delta is
+        # also "< 50 ms", so a single backward step used to swallow every
+        # further event for the window that happened to be focused across it —
+        # focus tracking silently froze on that app until the clock caught up.
+        # A backward jump is not a duplicate, so it must not dedupe.
+        since_last_ns = ts_ns - self._last_emit_ns
+        if hwnd == self._last_hwnd and 0 <= since_last_ns < _HWND_DEDUPE_NS:
             return
 
         # Retrieve window title + PID + process name from hwnd — ctypes
@@ -557,6 +587,24 @@ class WindowFocusWatcher:
             )
         except Exception:  # noqa: BLE001
             logger.debug("Window-meta lookup failed for hwnd=%d", hwnd, exc_info=True)
+            return
+
+        if not window_title.strip() and not process_name.strip():
+            # Nothing at all could be read about this window. _resolve_window_meta
+            # answers ("", 0, "") both for a genuine probe failure and for a
+            # window whose owner exited mid-lookup, and that is NOT a frame:
+            # publishing it handed PrivacyFilter two empty strings, which match
+            # no block pattern and therefore fall through to
+            # "default_allow_for_unknown" — so an unidentifiable window was
+            # waved through AND overwrote state.current_frame, blanking the
+            # foreground context the brain reads until the next app switch.
+            # The POSIX poller in this same class already refuses exactly this
+            # ("the privacy filter must never be handed an empty title to wave
+            # through"); the Win32 path never got the same guard.
+            logger.debug(
+                "Win32 window meta unresolvable for hwnd=%d — probe discarded, "
+                "frame not published", hwnd,
+            )
             return
 
         await self._emit_frame(
