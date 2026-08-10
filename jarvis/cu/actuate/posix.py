@@ -325,14 +325,20 @@ class PosixActuator(Actuator):
             self._pyautogui.scroll(dy)
 
     def key_combo(self, keys: list[str]) -> None:
-        # Accept "ctrl+t" combined tokens like the Windows backend. The
-        # self_input stamp keeps a Jarvis-typed Esc from tripping the
-        # Escape-to-cancel listener (jarvis.cu.indicator).
+        # Accept "ctrl+t" combined tokens like the Windows backend. Two
+        # different self-input stamps, answering two different questions:
+        # ``stamp_if_escape`` keeps a Jarvis-typed Esc from tripping the
+        # Escape-to-cancel listener (jarvis.cu.indicator), and
+        # ``synthetic_input`` keeps this keystroke from firing Jarvis's OWN
+        # global shortcuts (jarvis.platform.self_input) — on macOS the paste
+        # chord ``cmd+v`` literally spells the default dictation hotkey.
         from jarvis.cu.actuate.windows import expand_combo_keys  # noqa: PLC0415
         from jarvis.cu.indicator.self_input import stamp_if_escape  # noqa: PLC0415
+        from jarvis.platform.self_input import synthetic_input  # noqa: PLC0415
 
         expanded = expand_combo_keys([str(k) for k in keys])
         stamp_if_escape(expanded)
+        resolved: list[Any] = []
         if self._keyboard is None:
             aliases = {"cmd", "command", "meta", "super", "win", "windows", "lwin"}
             mapped: list[str] = []
@@ -349,9 +355,11 @@ class PosixActuator(Actuator):
                     mapped.append("num" + normalized[6:])
                 else:
                     mapped.append(normalized)
-            self._pyautogui.hotkey(*mapped)
+            with synthetic_input():
+                self._pyautogui.hotkey(*mapped)
             return
-        resolved: list[Any] = []
+        # Resolution stays OUTSIDE the window: an unknown key raises, and a
+        # raise that never posted a keystroke has nothing to attribute.
         for k in expanded:
             kl = k.strip().lower()
             if kl in self._keys:
@@ -360,10 +368,11 @@ class PosixActuator(Actuator):
                 resolved.append(kl)
             else:
                 raise ValueError(f"Unknown key: {k!r}")
-        for r in resolved:
-            self._keyboard.press(r)
-        for r in reversed(resolved):
-            self._keyboard.release(r)
+        with synthetic_input():
+            for r in resolved:
+                self._keyboard.press(r)
+            for r in reversed(resolved):
+                self._keyboard.release(r)
 
     @staticmethod
     def _quartz_button_spec(quartz: Any, button: str) -> tuple[Any, Any, Any, Any]:
@@ -454,6 +463,11 @@ class PosixActuator(Actuator):
         can stay honest about a partial/failed type instead of claiming a full
         success (the base contract widens ``None`` -> dropped-count).
         """
+        # Typing is synthetic input too, and it runs for seconds — the window
+        # is held open for the whole burst rather than stamped per character
+        # (jarvis.platform.self_input).
+        from jarvis.platform.self_input import synthetic_input  # noqa: PLC0415
+
         if self._keyboard is None:
             # pyautogui.typewrite silently DROPS every non-ASCII character
             # (umlauts, eszett, accents, CJK), and Linux always runs on this fallback (the
@@ -461,27 +475,30 @@ class PosixActuator(Actuator):
             # kernel headers). Route non-ASCII through `xdotool type`, which
             # synthesizes arbitrary Unicode on X11 and is provisioned by the
             # installer since deep-dive 2026-07-15 H-01.
-            if not text.isascii() and self._xdotool_type(text, delay_s=delay_s):
+            with synthetic_input():
+                if not text.isascii() and self._xdotool_type(text, delay_s=delay_s):
+                    return 0
+                dropped = 0
+                if not text.isascii():
+                    # Only non-ASCII codepoints are lost; pyautogui still types
+                    # the ASCII portion of a mixed string, so count exactly the
+                    # losses.
+                    dropped = sum(1 for char in text if not char.isascii())
+                    logger.warning(
+                        "[cu] typing non-ASCII text via pyautogui — %d character(s) "
+                        "outside ASCII will be dropped (install xdotool or pynput "
+                        "for Unicode input).",
+                        dropped,
+                    )
+                self._pyautogui.typewrite(text, interval=delay_s)
+                return dropped
+        with synthetic_input():
+            if delay_s <= 0:
+                self._keyboard.type(text)
                 return 0
-            dropped = 0
-            if not text.isascii():
-                # Only non-ASCII codepoints are lost; pyautogui still types the
-                # ASCII portion of a mixed string, so count exactly the losses.
-                dropped = sum(1 for char in text if not char.isascii())
-                logger.warning(
-                    "[cu] typing non-ASCII text via pyautogui — %d character(s) "
-                    "outside ASCII will be dropped (install xdotool or pynput "
-                    "for Unicode input).",
-                    dropped,
-                )
-            self._pyautogui.typewrite(text, interval=delay_s)
-            return dropped
-        if delay_s <= 0:
-            self._keyboard.type(text)
-            return 0
-        for char in text:
-            self._keyboard.type(char)
-            time.sleep(delay_s)
+            for char in text:
+                self._keyboard.type(char)
+                time.sleep(delay_s)
         return 0
 
     @staticmethod
