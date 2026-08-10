@@ -18,6 +18,7 @@ import {
   MessageSquareWarning,
   ScrollText,
   MessagesSquare,
+  Image as ImageIcon,
   Loader2,
   type LucideIcon,
   ChevronRight,
@@ -145,6 +146,14 @@ const NAV_GROUPS: NavItem[][] = [
       fallbackLabel: "Voice",
     },
     { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
+    // Appearance. Sits with the configuration group rather than with the
+    // content views: it changes how the app looks, not what it holds.
+    {
+      id: "wallpaper",
+      labelKey: "nav.wallpaper",
+      icon: ImageIcon,
+      fallbackLabel: "Wallpaper",
+    },
   ],
   // 4) Social links + in-app feedback.
   [

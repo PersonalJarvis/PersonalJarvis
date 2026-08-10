@@ -27,7 +27,8 @@ import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
 import { installDictationFocusTracker } from "@/lib/dictationTarget";
 import { SubscriptionRealtimeTransportBroker } from "@/components/voice/SubscriptionRealtimeTransportBroker";
-import jarvisDesktopWallpaper from "@/assets/jarvis-desktop-wallpaper.webp";
+import { useDesktopWallpaper } from "@/hooks/useDesktopWallpaper";
+import { installWallpaperSync } from "@/store/wallpaper";
 
 /** Where the collapsed/expanded choice for the nav sidebar is remembered. */
 const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
@@ -38,8 +39,13 @@ const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
  * The image and its theme veil are separate layers: the artwork can stay crisp
  * while light and dark mode independently tune contrast through semantic theme
  * channels in index.css. Focused workspaces keep their content surfaces on top.
+ *
+ * Which artwork is shown belongs to the user — see the Wallpaper section. The
+ * picture that ships with the app remains the default, and the one every
+ * failure path returns to.
  */
 function DesktopWallpaper() {
+  const wallpaperUrl = useDesktopWallpaper();
   return (
     <div
       aria-hidden
@@ -48,7 +54,7 @@ function DesktopWallpaper() {
     >
       <div
         className="jarvis-desktop-wallpaper absolute inset-0"
-        style={{ backgroundImage: `url(${jarvisDesktopWallpaper})` }}
+        style={{ backgroundImage: `url(${wallpaperUrl})` }}
       />
       <div className="jarvis-desktop-wallpaper-veil absolute inset-0" />
     </div>
@@ -83,6 +89,13 @@ export default function App() {
    * including the terminals of the Agentic IDE.
    */
   useEffect(() => installDictationFocusTracker(), []);
+
+  /*
+   * Follow the wallpaper choice across windows. Picking one in the main window
+   * should not leave a detached window wearing the previous picture until it
+   * happens to reload.
+   */
+  useEffect(() => installWallpaperSync(), []);
 
   /*
    * Resync the detached-window registry once per document. The WS events keep

@@ -56,6 +56,7 @@ from .schema import (
     event_to_ws_envelope,
 )
 from .surface_security import SurfaceSecurity, set_browser_login_required
+from .wallpapers import register_wallpaper_routes
 
 if TYPE_CHECKING:
     import uvicorn
@@ -1423,6 +1424,11 @@ class WebServer:
                     for s in discover_shells()
                 ]
             }
+
+        # The wallpaper picker. Registered here, with the REST routes, rather
+        # than beside the static mounts: those are skipped entirely in dev mode,
+        # and the picker has to work against the Vite dev server too.
+        register_wallpaper_routes(app)
 
     # ------------------------------------------------------------------
     # WebSocket

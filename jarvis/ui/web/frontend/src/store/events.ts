@@ -67,6 +67,7 @@ export type SectionId =
   | "contacts"
   | "feedback"
   | "agent-instructions"
+  | "wallpaper"
   | "dictionary"
   | "dictation"
   // The three tabs added by the merged voice section. "dictation" (default
@@ -111,6 +112,7 @@ export const SECTION_IDS = [
   "contacts",
   "feedback",
   "agent-instructions",
+  "wallpaper",
   "dictionary",
   "dictation",
   // `satisfies` only catches array entries that are missing from the union,
@@ -175,6 +177,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   contacts: "Contacts",
   feedback: "Feedback",
   "agent-instructions": "Agent Instructions",
+  wallpaper: "Wallpaper",
   dictionary: "Dictionary",
   dictation: "Dictation",
   // Plain English, deliberately NOT the "{name} Voice" brand: these labels are

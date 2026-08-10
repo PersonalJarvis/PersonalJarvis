@@ -148,6 +148,9 @@ const TelephonySetupView = lazyView(() =>
     default: m.TelephonySetupView,
   })),
 );
+const WallpaperView = lazyView(() =>
+  import("@/views/WallpaperView").then((m) => ({ default: m.WallpaperView })),
+);
 
 type IdleWindow = Window & {
   requestIdleCallback?: (
@@ -418,6 +421,8 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <FeedbackView />;
     case "agent-instructions":
       return <AgentInstructionsView />;
+    case "wallpaper":
+      return <WallpaperView />;
     // Deliberately nothing: the coding workspace is rendered by the STICKY
     // branch in `MainView` above, which keeps it mounted across section
     // changes. This switch is not rendered at all while one of those ids is
