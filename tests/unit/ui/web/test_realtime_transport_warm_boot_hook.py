@@ -68,6 +68,41 @@ async def test_boot_hook_schedules_the_warm_with_the_server_config(
     assert calls == [cfg]
 
 
+async def test_the_prespawn_runs_before_the_boot_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The managed local server loads its models for 45-90 s in its OWN
+    process; the spawn-only prestart must not sit behind the warm's boot
+    delay — every second of that delay was a second the local voice could
+    not answer, for nothing."""
+    monkeypatch.setattr(web_server, "REALTIME_WARM_BOOT_DELAY_S", 30.0)
+    warm_calls: list[Any] = []
+    _record_warm(monkeypatch, warm_calls)
+    prespawned = asyncio.Event()
+    prespawn_calls: list[Any] = []
+
+    async def _fake_prespawn(cfg: Any) -> None:
+        prespawn_calls.append(cfg)
+        prespawned.set()
+
+    monkeypatch.setattr(
+        realtime_factory, "realtime_prespawn_transports", _fake_prespawn
+    )
+    cfg = object()
+    srv = _StubServer(cfg)
+    srv._schedule_realtime_transport_warm()
+    task = srv._realtime_warm_task
+    assert task is not None
+    try:
+        await asyncio.wait_for(prespawned.wait(), timeout=2.0)
+        assert prespawn_calls == [cfg]
+        assert warm_calls == []  # the full warm still waits out the delay
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
 async def test_repeated_scheduling_warms_exactly_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

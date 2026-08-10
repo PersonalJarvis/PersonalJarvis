@@ -2221,6 +2221,23 @@ class WebServer:
         and it says so at warning level.
         """
         try:
+            # Spawn-only prestart BEFORE the boot delay: the managed local
+            # server loads its models for 45-90 s in a SEPARATE process, so
+            # firing its spawn first costs the boot nothing and moves local
+            # voice readiness forward by the whole delay. The full warm below
+            # keeps its delay — it is what spawns app-servers and verifies
+            # accounts inside THIS process.
+            from jarvis.realtime.factory import realtime_prespawn_transports
+
+            await realtime_prespawn_transports(self.cfg)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 -- prespawn is advisory, never fatal
+            logger.opt(exception=exc).debug(
+                "Realtime transport prespawn failed — the regular warm below "
+                "still covers the start."
+            )
+        try:
             await asyncio.sleep(REALTIME_WARM_BOOT_DELAY_S)
             from jarvis.realtime.factory import realtime_warm_selected_transports
 

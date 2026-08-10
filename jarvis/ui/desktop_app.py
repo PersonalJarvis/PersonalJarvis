@@ -3154,6 +3154,29 @@ class DesktopApp:
                 "lifecycle; it will warm once and not re-arm after calls."
             )
 
+        # Spawn-only prestart BEFORE the gates below. The managed local
+        # server's models load 45-90 s in a SEPARATE process, so parking its
+        # spawn behind the voice gate (+ delay) pushed local-voice readiness
+        # past the two-minute mark on every boot for nothing — the gate
+        # exists to keep the ChatGPT app-server spawn and account round trip
+        # out of the boot's CPU/disk window, and a prespawn is neither. The
+        # full warm (readiness, brain residency) stays behind the gates
+        # exactly as before, and AP-26 holds: nothing on the boot path awaits
+        # this worker.
+        try:
+            from jarvis.core.config import load_config
+            from jarvis.realtime.factory import realtime_prespawn_transports
+
+            prespawn_cfg = await asyncio.to_thread(load_config)
+            await realtime_prespawn_transports(prespawn_cfg)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — prespawning is advisory, never fatal
+            _warm_log_exc.warning(
+                "Realtime transport prespawn failed; the local server starts "
+                "with the regular transport warm instead."
+            )
+
         try:
             await asyncio.wait_for(
                 voice_usable.wait(), timeout=_REALTIME_WARM_VOICE_GATE_S

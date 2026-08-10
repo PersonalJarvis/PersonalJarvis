@@ -305,6 +305,44 @@ async def realtime_warm_selected_transports(cfg: Any) -> None:
             )
 
 
+async def realtime_prespawn_transports(cfg: Any) -> None:
+    """Fire the spawn-only prestart for every explicitly selected provider.
+
+    Runs BEFORE the warm worker's gates on purpose: the transport that
+    declares this capability today is the managed local server, whose models
+    load 45-90 s in a SEPARATE process — the earlier that spawn fires, the
+    earlier the first call can connect, and nothing on the boot path ever
+    waits for it. Unlike eager warming, position does not matter here: a
+    prespawn is bounded to starting a process, so an explicitly configured
+    FALLBACK is prestarted too — that fallback sitting stone cold is exactly
+    what stranded the first call of 2026-08-10, when the subscription primary
+    was down and the local fallback had never been started. A capability
+    probe, never a provider-id check (AP-21); an installed-but-unselected
+    plugin must never spawn a process on its own. Best-effort by contract —
+    one broken plugin never stops the others and no failure reaches the
+    caller.
+
+    Gated on the same voice-mode switch as warming: prestarting a server for
+    a feature this install runs through the classic pipeline is pure cost.
+    """
+    if not _realtime_is_the_configured_voice_mode(cfg):
+        log.debug(
+            "Realtime transport prespawn skipped: realtime is not the "
+            "configured voice mode."
+        )
+        return
+    for provider_id in _explicit_provider_ids(cfg):
+        try:
+            provider_cls = load(_GROUP, provider_id, protocol=RealtimeProvider)
+            prespawn = getattr(provider_cls, "prespawn_transport", None)
+            if callable(prespawn):
+                await prespawn(cfg)
+        except Exception as exc:  # noqa: BLE001 - one broken plugin is skipped
+            log.warning(
+                "Realtime transport prespawn failed for %s: %s", provider_id, exc
+            )
+
+
 #: The ChatGPT plan is its own quota pool, not metered platform usage. It is a
 #: DISTINCT family from ``openai``: a 429 on one says nothing about the other.
 _CHATGPT_SUBSCRIPTION_FAMILY = "openai-chatgpt-subscription"
@@ -455,5 +493,6 @@ __all__ = [
     "realtime_available_provider",
     "realtime_handshake_budget_s",
     "realtime_implicit_usage_fallback_allowed",
+    "realtime_prespawn_transports",
     "realtime_requires_webrtc_offer",
 ]

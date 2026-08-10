@@ -1578,6 +1578,16 @@ class LocalRealtimeProvider:
     # and quietly routing a call into one the user did not pick is the opposite
     # of what a local card is for.
     implicit_usage_fallback_allowed = False
+    # Eagerly warmed even when configured as a FALLBACK. This card is a local
+    # process: warming costs no account round-trip and no metered tokens,
+    # while its cold start is the longest of any transport (45-90 s of model
+    # loading). Live 2026-08-10: with a subscription primary whose token had
+    # expired, the un-warmed local fallback was still stone cold when the
+    # first call arrived — the call died with "try again in about a minute"
+    # on a machine that could have answered it. The GPU-oversubscription
+    # caveat behind opt-in fallback warming targets stacking MULTIPLE native
+    # model stacks; this is the single local stack the user explicitly chose.
+    eager_warm_as_fallback = True
     # Small self-hosted brains prefill the whole instruction block EVERY turn;
     # the full ~24k-char profile cost 7.8 s of LLM time per answer against
     # qwen2.5:7b (live 2026-08-07). The session builder honors this capability
@@ -1961,6 +1971,56 @@ class LocalRealtimeProvider:
             return True
         log.info("local-realtime: revive skipped (%s)", outcome)
         return False
+
+    @classmethod
+    async def prespawn_transport(cls, cfg: Any) -> bool:
+        """Spawn-only prestart, safe to fire the moment the app boots.
+
+        The managed local server pays the longest cold start of any transport
+        (measured 52-90 s of model loading, see the connect window above), and
+        it loads in its OWN process — so every second the warm worker spends
+        behind its voice gate is a second the local voice cannot answer for no
+        reason. This capability only STARTS the server and arms the crash
+        monitor; readiness, the smoke-marker repair, and brain residency stay
+        with :meth:`warm_transport`, which runs behind the gates exactly as
+        before. Discovered by name (AP-21); best-effort by contract — no
+        failure here may reach the caller.
+        """
+        try:
+            provider = cls.from_runtime_config(cfg)
+            if (
+                not provider._base_url
+                or not provider._launch_command
+                or not provider._server_is_local_process()
+            ):
+                return False
+            if _launch_command_target_state(provider._launch_command) == "missing":
+                # The regular warm logs the actionable "reinstall or clear it"
+                # message moments later; a second copy here would be noise.
+                return False
+            import importlib  # lazy (AP-26)
+
+            def _spawn_only() -> bool:
+                supervisor = importlib.import_module("jarvis.realtime.local_server.supervisor")
+                outcome = str(
+                    supervisor.ensure_running(
+                        launch_command=provider._launch_command,
+                        base_url=provider._base_url,
+                        reason="boot-prespawn",
+                    )
+                )
+                if outcome not in ("spawned", "already-running"):
+                    return False
+                supervisor.start_runtime_monitor(
+                    launch_command=provider._launch_command,
+                    base_url=provider._base_url,
+                )
+                return True
+
+            return bool(await asyncio.to_thread(_spawn_only))
+        except Exception:  # noqa: BLE001 — prespawning is best-effort by contract
+            log.debug("local-realtime: prespawn_transport failed", exc_info=True)
+            return False
 
     @classmethod
     async def warm_transport(cls, cfg: Any) -> bool:

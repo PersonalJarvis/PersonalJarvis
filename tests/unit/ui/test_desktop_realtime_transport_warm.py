@@ -73,6 +73,15 @@ def recorder(monkeypatch):
     return rec
 
 
+@pytest.fixture
+def prespawn_recorder(monkeypatch):
+    import jarvis.realtime.factory as factory_mod
+
+    rec = _WarmRecorder()
+    monkeypatch.setattr(factory_mod, "realtime_prespawn_transports", rec)
+    return rec
+
+
 async def _start_worker(bus: _FakeBus) -> asyncio.Task[None]:
     # The worker never touches ``self``; a bare instance keeps the test free of
     # the desktop app's window/tray construction.
@@ -107,6 +116,31 @@ async def test_worker_waits_for_voice_usable_before_warming(fast_warm, recorder)
         await bus.publish(VoiceBootStatus(source_layer="test", ready=True))
         await asyncio.wait_for(recorder.seen.wait(), timeout=2.0)
         assert recorder.calls == 1
+    finally:
+        await _stop(task)
+
+
+async def test_prespawn_fires_before_the_voice_gate(
+    monkeypatch, recorder, prespawn_recorder
+):
+    """The managed local server loads its models for 45-90 s in its OWN
+    process, so its spawn must not sit behind the voice gate. Live
+    2026-08-10: the pipeline never reported usable, the warm sat out the
+    full 45 s gate on every boot, and the server was first started by the
+    first call — which it then rejected with "try again in about a minute".
+    The full warm stays gated (AP-26); only the spawn-only prestart moves.
+    """
+    monkeypatch.setattr(da, "_REALTIME_WARM_DELAY_S", 0.0)
+    # A gate long enough that a leaked early WARM would be caught below.
+    monkeypatch.setattr(da, "_REALTIME_WARM_VOICE_GATE_S", 5.0)
+    monkeypatch.setattr(da, "_REALTIME_WARM_MIN_INTERVAL_S", 0.0)
+
+    bus = _FakeBus()
+    task = await _start_worker(bus)
+    try:
+        await asyncio.wait_for(prespawn_recorder.seen.wait(), timeout=2.0)
+        assert prespawn_recorder.calls == 1
+        assert recorder.calls == 0  # the full warm still waits on the gate
     finally:
         await _stop(task)
 

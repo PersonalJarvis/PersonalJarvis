@@ -1071,3 +1071,103 @@ async def test_warm_transport_requires_an_address_and_a_command() -> None:
 async def test_warm_transport_never_raises(monkeypatch) -> None:
     """Best-effort by contract: no failure may reach the warm worker."""
     assert await LocalRealtimeProvider.warm_transport(None) is False
+
+
+# ── Boot-time prespawn (prespawn_transport capability) ───────────────────
+def test_local_realtime_is_eagerly_warmed_as_a_fallback() -> None:
+    """Live 2026-08-10: with an expired subscription primary, the un-warmed
+    local FALLBACK was still stone cold when the first call arrived — the
+    call died on a machine that could have answered it. A local stack costs
+    no account round-trip to warm, so it must not sit out fallback warming."""
+    assert LocalRealtimeProvider.eager_warm_as_fallback is True
+
+
+async def test_prespawn_spawns_and_arms_the_monitor_without_waiting(
+    monkeypatch, tmp_path
+) -> None:
+    """The boot-time prestart only spawns: readiness and brain residency stay
+    with warm_transport, so the prespawn can run before the warm worker's
+    gates without ever blocking a boot."""
+    from jarvis.realtime.local_server import supervisor
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        supervisor,
+        "ensure_running",
+        lambda **kwargs: calls.append(f"run:{kwargs['reason']}") or "spawned",
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "start_runtime_monitor",
+        lambda **kwargs: calls.append("monitor") or True,
+    )
+
+    def forbidden(*args: Any, **kwargs: Any) -> bool:
+        raise AssertionError("prespawn must never block on readiness or the brain")
+
+    monkeypatch.setattr(supervisor, "wait_until_ready", forbidden)
+    monkeypatch.setattr(supervisor, "warm_brain", forbidden)
+    exe = tmp_path / "server"
+    exe.write_bytes(b"")
+    cfg = _warm_cfg("http://localhost:8765", f'"{exe}" --model_name m')
+    assert await LocalRealtimeProvider.prespawn_transport(cfg) is True
+    assert calls == ["run:boot-prespawn", "monitor"]
+
+
+async def test_prespawn_does_not_arm_the_monitor_on_a_refused_spawn(
+    monkeypatch, tmp_path
+) -> None:
+    from jarvis.realtime.local_server import supervisor
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        supervisor, "ensure_running", lambda **kwargs: "refused:rate-limited"
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "start_runtime_monitor",
+        lambda **kwargs: calls.append("monitor") or True,
+    )
+    exe = tmp_path / "server"
+    exe.write_bytes(b"")
+    cfg = _warm_cfg("http://localhost:8765", f'"{exe}" --model_name m')
+    assert await LocalRealtimeProvider.prespawn_transport(cfg) is False
+    assert calls == []
+
+
+async def test_prespawn_requires_an_address_and_a_local_command(
+    monkeypatch, tmp_path
+) -> None:
+    from jarvis.realtime.local_server import supervisor
+
+    def forbidden(**kwargs: Any) -> str:
+        raise AssertionError("nothing may spawn without a local endpoint")
+
+    monkeypatch.setattr(supervisor, "ensure_running", forbidden)
+    assert await LocalRealtimeProvider.prespawn_transport(_warm_cfg("", "serve")) is False
+    assert (
+        await LocalRealtimeProvider.prespawn_transport(
+            _warm_cfg("http://localhost:8765", "")
+        )
+        is False
+    )
+    # A LAN endpoint is never spawned here — wrong host.
+    assert (
+        await LocalRealtimeProvider.prespawn_transport(
+            _warm_cfg("http://gpu.lan:8443", "serve")
+        )
+        is False
+    )
+    # A deleted managed install must not burn the spawn rate limit at boot.
+    gone = tmp_path / "venv" / "Scripts" / "speech-to-speech.exe"
+    assert (
+        await LocalRealtimeProvider.prespawn_transport(
+            _warm_cfg("http://localhost:8765", f'"{gone}" --model_name m')
+        )
+        is False
+    )
+
+
+async def test_prespawn_never_raises() -> None:
+    """Best-effort by contract: no failure may reach the boot worker."""
+    assert await LocalRealtimeProvider.prespawn_transport(None) is False

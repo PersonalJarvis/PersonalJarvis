@@ -369,6 +369,76 @@ async def test_warm_selected_transports_does_not_prewarm_a_heavy_fallback(
     assert fallback.calls == 0
 
 
+class _PrespawnProbe:
+    """Minimal realtime provider exposing the spawn-only prestart."""
+
+    supports_realtime = True
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def prespawn_transport(self, cfg) -> bool:  # noqa: ANN001 - probe shape
+        del cfg
+        self.calls += 1
+        return True
+
+
+@pytest.mark.asyncio
+async def test_prespawn_reaches_every_explicit_slot(monkeypatch) -> None:
+    """Unlike eager warming, the prestart is position-blind: a stone-cold
+    explicitly configured FALLBACK is what stranded the 2026-08-10 first call
+    when the primary was down. Providers without the capability are skipped
+    (AP-21), and one broken plugin never stops the others."""
+    primary = _PrespawnProbe()
+    fallback = _PrespawnProbe()
+    loaded = {"primary": primary, "plain": _NoWarmProbe(), "fallback": fallback}
+
+    def _load(_group, pid, protocol=None):  # noqa: ANN001 - probe shape
+        if pid == "broken":
+            raise RuntimeError("plugin exploded")
+        return loaded[pid]
+
+    monkeypatch.setattr(
+        factory,
+        "_explicit_provider_ids",
+        lambda _cfg: ["primary", "plain", "broken", "fallback"],
+    )
+    monkeypatch.setattr(factory, "load", _load)
+
+    await factory.realtime_prespawn_transports(_cfg())
+
+    assert primary.calls == 1
+    assert fallback.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_prespawn_skips_a_pipeline_mode_install(monkeypatch) -> None:
+    """A stale realtime pin must not spawn a server for a disabled feature."""
+    probe = _PrespawnProbe()
+    monkeypatch.setattr(factory, "_explicit_provider_ids", lambda _cfg: ["probe"])
+    monkeypatch.setattr(
+        factory, "load", lambda _group, _pid, protocol=None: probe
+    )
+
+    await factory.realtime_prespawn_transports(_cfg(mode="pipeline"))
+
+    assert probe.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_prespawn_ignores_unselected_plugins(monkeypatch) -> None:
+    """An installed but unselected plugin must never spawn a process."""
+    probe = _PrespawnProbe()
+    monkeypatch.setattr(factory, "_explicit_provider_ids", lambda _cfg: [])
+    monkeypatch.setattr(
+        factory, "load", lambda _group, _pid, protocol=None: probe
+    )
+
+    await factory.realtime_prespawn_transports(_cfg())
+
+    assert probe.calls == 0
+
+
 @pytest.mark.asyncio
 async def test_warm_selected_transports_survives_one_broken_provider(
     monkeypatch,
