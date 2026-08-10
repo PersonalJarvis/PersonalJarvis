@@ -316,15 +316,18 @@
        must read as "the app, blurred" rather than a grey rectangle. */
     --shell-rgb: 246 242 232;
 
-    /* Light mode changes the interface ink, not the chosen wallpaper. Shared
-       surfaces therefore keep no colour fill; borders, blur and state tints
-       provide structure without laying an ivory sheet over the artwork. */
-    --surface-card-alpha: 0;
-    --surface-panel-alpha: 0;
-    --surface-control-alpha: 0;
-    --surface-stage-alpha: 0;
-    --surface-wiki-pane-alpha: 0;
-    --surface-wiki-stage-alpha: 0;
+    /* Light mode changes the interface ink, not the chosen wallpaper. Fully
+       transparent surfaces were tried first, but with user-chosen wallpapers
+       (any subject, any brightness) ink regularly landed on same-value artwork
+       and disappeared. Light therefore carries the same glass system as dark,
+       tuned slightly lighter: the artwork stays visible around and through
+       every panel, and text always sits on a predictable ground. */
+    --surface-card-alpha: 0.52;
+    --surface-panel-alpha: 0.5;
+    --surface-control-alpha: 0.66;
+    --surface-stage-alpha: 0.5;
+    --surface-wiki-pane-alpha: 0.3;
+    --surface-wiki-stage-alpha: 0.28;
 
     /* --- Stages ----------------------------------------------------------
        The full-bleed canvases behind the knowledge maps. They are not chrome:
@@ -472,13 +475,13 @@
       );
   }
 
+  /* Light keeps the artwork untinted (no darkening filter), but it retains
+     the contrast veil: the veil is built from --shell-rgb, so on paper it
+     settles the edges of the frame — where chrome text lives — with a faint
+     ivory wash instead of dimming the artwork's centre. */
   :root:not(.dark) .jarvis-desktop-wallpaper {
     filter: none;
     opacity: 1;
-  }
-
-  :root:not(.dark) .jarvis-desktop-wallpaper-veil {
-    background: transparent;
   }
 
   /*
@@ -517,10 +520,6 @@
     backdrop-filter: blur(14px) saturate(1.08);
   }
 
-  :root:not(.dark) .jarvis-shell-surface {
-    background: transparent;
-  }
-
   /* Section-level grounds disappear everywhere the wallpaper is active. The
      selectors intentionally stop at page roots and purpose-built stages: cards,
      dialogs and data tables retain their own hierarchy and remain readable. */
@@ -528,6 +527,38 @@
   .jarvis-section-stage .agents-board-stage,
   .jarvis-section-stage .uw-stage {
     background-color: transparent;
+  }
+
+  /*
+   * Wallpaper readability floor.
+   *
+   * Everything inside a section stage may end up directly on user-chosen
+   * artwork — 500 wallpapers of any brightness, in either theme. Nothing can
+   * be tuned per image, so the floor works locally instead:
+   *
+   * 1. An inherited text halo. text-shadow cascades to every descendant, so a
+   *    single declaration protects all ink in the stage. The halo pulls
+   *    towards the theme's own ground (near-black in dark, paper in light);
+   *    on calm surfaces it is invisible, on busy artwork it restores the
+   *    missing contrast — the same trick desktop OSes use for icon labels.
+   * 2. Scoped token floors. Muted ink and hairline borders are re-declared on
+   *    the stage only: strong enough to survive artwork, while popovers and
+   *    dialogs outside the stage keep the quieter global values.
+   */
+  .dark .jarvis-section-stage {
+    --muted-foreground: 0 0% 68%;
+    --border: 0 0% 24%;
+    text-shadow:
+      0 1px 2px rgb(var(--scrim-rgb) / 0.55),
+      0 0 12px rgb(var(--scrim-rgb) / 0.35);
+  }
+
+  :root:not(.dark) .jarvis-section-stage {
+    --muted-foreground: 240 8% 24%;
+    --border: 40 14% 58%;
+    text-shadow:
+      0 1px 2px rgb(var(--shell-rgb) / 0.85),
+      0 0 12px rgb(var(--shell-rgb) / 0.6);
   }
 
   /* Subtle grid pattern in the background — gives a dashboard feel without
