@@ -27,7 +27,18 @@ vi.mock("@/lib/agenticIdeApi", () => ({
 }));
 
 import * as api from "@/lib/agenticIdeApi";
+import { extractPaneDrop } from "./paneDrop";
 import { WorkspaceExplorer } from "./WorkspaceExplorer";
+
+/** Minimal DataTransfer stand-in — jsdom has no real one. */
+function fakeDataTransfer(): DataTransfer {
+  const store = new Map<string, string>();
+  return {
+    setData: (type: string, value: string) => store.set(type, value),
+    getData: (type: string) => store.get(type) ?? "",
+    files: [],
+  } as unknown as DataTransfer;
+}
 
 describe("WorkspaceExplorer", () => {
   beforeEach(() => {
@@ -158,4 +169,61 @@ describe("WorkspaceExplorer", () => {
     );
   });
 
+  it("hands a dragged row to a pane as an absolute path", async () => {
+    render(
+      <WorkspaceExplorer
+        workspaceId="workspace-1"
+        rootName="project"
+        rootPath="/home/me/project"
+        onClose={vi.fn()}
+        onOpenFile={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("README.md");
+    const row = screen.getByTestId("explorer-entry-README.md");
+    expect(row.getAttribute("draggable")).toBe("true");
+
+    const dataTransfer = fakeDataTransfer();
+    fireEvent.dragStart(row, { dataTransfer });
+    // What a terminal pane will actually read out of the drop.
+    expect(extractPaneDrop(dataTransfer).paths).toEqual([
+      "/home/me/project/README.md",
+    ]);
+  });
+
+  it("lets a FOLDER be dragged too, not only a file", async () => {
+    render(
+      <WorkspaceExplorer
+        workspaceId="workspace-1"
+        rootName="project"
+        rootPath="/home/me/project"
+        onClose={vi.fn()}
+        onOpenFile={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("src");
+    const dataTransfer = fakeDataTransfer();
+    fireEvent.dragStart(screen.getByTestId("explorer-entry-src"), { dataTransfer });
+    expect(extractPaneDrop(dataTransfer).paths).toEqual(["/home/me/project/src"]);
+  });
+
+  it("does not offer a drag before the workspace folder is known", async () => {
+    // A row that lifts but carries nothing would swallow the click that opens
+    // the file, so it must not lift at all.
+    render(
+      <WorkspaceExplorer
+        workspaceId="workspace-1"
+        rootName="project"
+        onClose={vi.fn()}
+        onOpenFile={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("README.md");
+    expect(
+      screen.getByTestId("explorer-entry-README.md").getAttribute("draggable"),
+    ).toBe("false");
+  });
 });

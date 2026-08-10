@@ -3318,6 +3318,7 @@ export function AgenticGrid({
               <WorkspaceExplorer
                 workspaceId={session.id}
                 rootName={project.name}
+                rootPath={session.folder}
                 onClose={() => setExplorerOpen(false)}
                 onOpenFile={openWorkspaceFile}
               />

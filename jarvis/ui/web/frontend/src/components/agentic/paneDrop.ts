@@ -29,6 +29,21 @@ export interface PaneDropPayload {
   files: File[];
 }
 
+/**
+ * The drag type the app's OWN file explorer uses.
+ *
+ * A drag that starts inside the page could dress itself up as a `file://` URI
+ * and travel the same route as an Explorer drag, but that round-trip is lossy
+ * exactly where it matters: a Windows drive letter and a UNC share
+ * (`\\server\share`) do not survive being parsed back out of a URL, and the
+ * failure is silent — the agent is handed a path to nowhere.
+ *
+ * So an in-app drag carries the path VERBATIM under its own type. It is
+ * newline-separated for the same reason the wire format is: one gesture may
+ * eventually mean several entries.
+ */
+export const WORKSPACE_PATH_TYPE = "application/x-jarvis-workspace-path";
+
 /** True when this payload has nothing worth sending. */
 export function isEmptyPayload(payload: PaneDropPayload): boolean {
   return payload.paths.length === 0 && payload.files.length === 0;
@@ -46,19 +61,24 @@ export function isEmptyPayload(payload: PaneDropPayload): boolean {
  * * `Files` — a real drag out of Explorer, Finder, or a file manager.
  * * `text/uri-list` — the one shape some Linux file managers send instead, so
  *   dropping a file there keeps working.
+ * * `WORKSPACE_PATH_TYPE` — a row lifted out of the app's own file explorer.
  * * **`text/plain` ALONE is not a file.** That is what selected TEXT looks
  *   like, and text is what a user drags by accident: brush over terminal
  *   output with the mouse held down and the browser lifts the selection into a
  *   drag nobody asked for. A pane that arms on this announces "drop your file
  *   here" at someone holding nothing (BUG-110).
  *
- * An internal mission card carries neither type, so tossing one across the grid
- * stays invisible to the panes it flies over.
+ * An internal mission card carries none of these types, so tossing one across
+ * the grid stays invisible to the panes it flies over.
  */
 export function dragCarriesFiles(dt: DataTransfer | null): boolean {
   if (!dt) return false;
   const types = Array.from(dt.types ?? []);
-  return types.includes("Files") || types.includes("text/uri-list");
+  return (
+    types.includes("Files") ||
+    types.includes("text/uri-list") ||
+    types.includes(WORKSPACE_PATH_TYPE)
+  );
 }
 
 /**
@@ -106,6 +126,19 @@ function looksLikePath(value: string): boolean {
 export function extractPaneDrop(dt: DataTransfer | null): PaneDropPayload {
   const out: PaneDropPayload = { paths: [], files: [] };
   if (!dt) return out;
+
+  // The app's own explorer, when it is the source. Trusted as-is and taken
+  // INSTEAD of the text forms rather than alongside them: the same drag also
+  // carries `text/plain` for the benefit of anything that only understands
+  // text, and reading both would attach every entry twice.
+  const internal = dt.getData(WORKSPACE_PATH_TYPE) || "";
+  if (internal.trim()) {
+    for (const line of internal.split(/[\r\n]+/)) {
+      const candidate = line.trim();
+      if (candidate) out.paths.push(candidate);
+    }
+    return out;
+  }
 
   const raw = dt.getData("text/uri-list") || dt.getData("text/plain") || "";
   for (const line of raw.split(/[\r\n]+/)) {

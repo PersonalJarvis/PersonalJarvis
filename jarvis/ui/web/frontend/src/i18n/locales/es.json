@@ -3949,6 +3949,7 @@
       "folder": "Carpeta",
       "symlink": "Enlace simbólico",
       "open_hint": "Haz clic en un archivo para abrirlo aquí en el espacio de trabajo.",
+      "drag_hint": "Haz clic en un archivo para abrirlo aquí. Arrástralo a una terminal para entregárselo a ese agente.",
       "truncated": "Esta carpeta tiene más entradas de las que se pueden mostrar a la vez."
     },
     "viewer": {

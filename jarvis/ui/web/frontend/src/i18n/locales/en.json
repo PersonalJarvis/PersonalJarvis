@@ -3949,6 +3949,7 @@
       "folder": "Folder",
       "symlink": "Symbolic link",
       "open_hint": "Click a file to open it here in the workspace.",
+      "drag_hint": "Click a file to open it here. Drag one onto a terminal to hand it to that agent.",
       "truncated": "This folder has more entries than can be shown at once."
     },
     "viewer": {

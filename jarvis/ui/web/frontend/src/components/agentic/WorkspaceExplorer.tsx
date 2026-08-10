@@ -23,6 +23,7 @@ import {
 } from "@/lib/agenticIdeApi";
 import { cn } from "@/lib/utils";
 
+import { setWorkspaceEntryDrag } from "./explorerDrag";
 import { materialFileIcon, useMaterialFileIcons } from "./materialFileIcons";
 
 interface DirectoryState {
@@ -35,6 +36,15 @@ interface DirectoryState {
 interface WorkspaceExplorerProps {
   workspaceId: string;
   rootName: string;
+  /**
+   * Absolute path of the workspace folder — what makes the rows draggable.
+   *
+   * The listing endpoint only ever returns paths relative to it, and a pane
+   * needs the absolute one to tell a file inside the workspace from one outside
+   * it. Optional because a caller that has not resolved the folder yet should
+   * still get a working tree; the rows simply do not lift.
+   */
+  rootPath?: string;
   onClose: () => void;
   onOpenFile: (path: string, trigger?: HTMLElement) => void;
 }
@@ -42,6 +52,7 @@ interface WorkspaceExplorerProps {
 export function WorkspaceExplorer({
   workspaceId,
   rootName,
+  rootPath,
   onClose,
   onOpenFile,
 }: WorkspaceExplorerProps) {
@@ -216,6 +227,7 @@ export function WorkspaceExplorer({
               openPaths={openPaths}
               selectedPath={selectedPath}
               theme={theme}
+              rootPath={rootPath}
               onToggle={toggleDirectory}
               onSelect={setSelectedPath}
               onOpenFile={openFile}
@@ -225,7 +237,9 @@ export function WorkspaceExplorer({
       </div>
 
       <footer className="shrink-0 border-t border-border/60 px-3 py-2 text-[10px] leading-relaxed text-muted-foreground">
-        {t("agentic_grid.explorer.open_hint")}
+        {rootPath
+          ? t("agentic_grid.explorer.drag_hint")
+          : t("agentic_grid.explorer.open_hint")}
       </footer>
     </aside>
   );
@@ -238,6 +252,7 @@ function TreeLevel({
   openPaths,
   selectedPath,
   theme,
+  rootPath,
   onToggle,
   onSelect,
   onOpenFile,
@@ -248,6 +263,7 @@ function TreeLevel({
   openPaths: Set<string>;
   selectedPath: string | null;
   theme: "dark" | "light";
+  rootPath?: string;
   onToggle: (path: string) => void;
   onSelect: (path: string) => void;
   onOpenFile: (path: string, trigger?: HTMLElement) => void;
@@ -303,6 +319,26 @@ function TreeLevel({
         return (
           <div key={entry.path}>
             <div
+              // Draggable on the ROW rather than on the button inside it, so the
+              // ghost the browser draws under the cursor is the whole line —
+              // icon, name and indentation — instead of a cropped label.
+              //
+              // Cancelled when the path cannot be built (no workspace root yet):
+              // a drag that carries nothing still suppresses the click that
+              // would have opened the file, which reads as a dead row.
+              draggable={Boolean(rootPath)}
+              data-testid={`explorer-entry-${entry.path}`}
+              onDragStart={(event) => {
+                if (
+                  !rootPath ||
+                  !setWorkspaceEntryDrag(event.dataTransfer, {
+                    root: rootPath,
+                    path: entry.path,
+                  })
+                ) {
+                  event.preventDefault();
+                }
+              }}
               className={cn(
                 "group flex h-7 w-full items-center rounded-control transition-colors",
                 selected
@@ -377,6 +413,7 @@ function TreeLevel({
                 openPaths={openPaths}
                 selectedPath={selectedPath}
                 theme={theme}
+                rootPath={rootPath}
                 onToggle={onToggle}
                 onSelect={onSelect}
                 onOpenFile={onOpenFile}

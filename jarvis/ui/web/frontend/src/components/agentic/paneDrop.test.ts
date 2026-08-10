@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  WORKSPACE_PATH_TYPE,
   dragCarriesFiles,
   extractPaneDrop,
   extractPasteFiles,
@@ -11,11 +12,15 @@ import {
 function dt(opts: {
   uriList?: string;
   text?: string;
+  workspacePath?: string;
   files?: File[];
 }): DataTransfer {
   return {
-    getData: (type: string) =>
-      type === "text/uri-list" ? (opts.uriList ?? "") : (opts.text ?? ""),
+    getData: (type: string) => {
+      if (type === "text/uri-list") return opts.uriList ?? "";
+      if (type === WORKSPACE_PATH_TYPE) return opts.workspacePath ?? "";
+      return opts.text ?? "";
+    },
     files: opts.files ?? [],
     items: (opts.files ?? []).map((file) => ({
       kind: "file" as const,
@@ -85,6 +90,28 @@ describe("reading a drop onto a terminal pane", () => {
     expect(isEmptyPayload(extractPaneDrop(null))).toBe(true);
     expect(isEmptyPayload(extractPaneDrop(dt({})))).toBe(true);
   });
+
+  it("takes a row dragged out of the app's own explorer verbatim", () => {
+    // A UNC path is the case the URI round-trip cannot survive, which is why
+    // the in-app drag carries the path under its own type.
+    const payload = extractPaneDrop(
+      dt({ workspacePath: "\\\\nas\\share\\project\\docs\\plan.md" }),
+    );
+    expect(payload.paths).toEqual(["\\\\nas\\share\\project\\docs\\plan.md"]);
+  });
+
+  it("does not attach an explorer row twice when the drag also carries text", () => {
+    // The explorer fills text/plain and text/uri-list too, for drop targets
+    // outside this page. A pane must still see exactly one file.
+    const payload = extractPaneDrop(
+      dt({
+        workspacePath: "C:\\work\\project\\README.md",
+        uriList: "file:///C:/work/project/README.md",
+        text: "C:\\work\\project\\README.md",
+      }),
+    );
+    expect(payload.paths).toEqual(["C:\\work\\project\\README.md"]);
+  });
 });
 
 describe("deciding whether a drag in flight is worth offering a pane for", () => {
@@ -99,6 +126,10 @@ describe("deciding whether a drag in flight is worth offering a pane for", () =>
 
   it("recognises the uri-list some Linux file managers send instead", () => {
     expect(dragCarriesFiles(inFlight(["text/uri-list"]))).toBe(true);
+  });
+
+  it("recognises a row lifted out of the app's own explorer", () => {
+    expect(dragCarriesFiles(inFlight([WORKSPACE_PATH_TYPE]))).toBe(true);
   });
 
   it("ignores dragged TEXT — nobody holding a selection is offering a file", () => {

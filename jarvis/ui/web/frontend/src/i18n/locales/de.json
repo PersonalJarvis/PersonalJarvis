@@ -3949,6 +3949,7 @@
       "folder": "Ordner",
       "symlink": "Symbolische Verknüpfung",
       "open_hint": "Eine Datei anklicken, um sie direkt im Workspace zu öffnen.",
+      "drag_hint": "Eine Datei anklicken, um sie hier zu öffnen. Auf ein Terminal ziehen, um sie dem Agenten zu übergeben.",
       "truncated": "Dieser Ordner enthält mehr Einträge, als gleichzeitig angezeigt werden können."
     },
     "viewer": {

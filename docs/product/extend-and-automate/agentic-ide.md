@@ -104,9 +104,10 @@ shows exact prompts and their recorded submission states.
 ### Add Files and Screenshots
 
 Drop a project file directly on a pane to type its path without submitting it;
-add your instruction, then press Enter. Drop or paste a screenshot or document
-on the prompt bar to let Jarvis extract or describe its contents for the
-prepared brief.
+add your instruction, then press Enter. Drag it either from your computer's own
+file manager or from the workspace explorer beside the grid — a folder works the
+same way as a file. Drop or paste a screenshot or document on the prompt bar to
+let Jarvis extract or describe its contents for the prepared brief.
 
 External files and clipboard images are copied into the Git-ignored
 `.jarvis/drops` folder; project files stay where they are. Later drops clean up
