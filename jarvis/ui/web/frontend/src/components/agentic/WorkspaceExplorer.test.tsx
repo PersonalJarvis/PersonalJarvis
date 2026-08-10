@@ -94,9 +94,9 @@ describe("WorkspaceExplorer", () => {
     );
 
     expect(await screen.findByText(".gitignore")).toBeTruthy();
-    expect(screen.getByTestId("workspace-explorer").className).toContain(
-      "jarvis-panel-surface",
-    );
+    const explorer = screen.getByTestId("workspace-explorer");
+    expect(explorer.className).toContain("border-l");
+    expect(explorer.style.background).toContain("0.22");
     expect(screen.getByText("project")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("treeitem", { name: /src/i }));

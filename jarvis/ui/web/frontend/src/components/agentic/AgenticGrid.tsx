@@ -2589,26 +2589,6 @@ export function AgenticGrid({
         change of clothes.
       */}
       <div className={cn("min-h-0 flex-1", browserOpen ? "hidden" : "flex")}>
-        {/* This zero-width host is ALWAYS present. Only its child mounts when
-            the explorer is open, so toggling the panel never shifts the live
-            terminal children in React's sibling order (and therefore never
-            tears down their PTY sockets). */}
-        <div
-          className={cn(
-            "h-full shrink-0 overflow-hidden transition-[width] duration-200 motion-reduce:transition-none",
-            explorerOpen ? "w-[280px]" : "w-0",
-          )}
-          aria-hidden={!explorerOpen}
-        >
-          {explorerOpen && (
-            <WorkspaceExplorer
-              workspaceId={session.id}
-              rootName={project.name}
-              onClose={() => setExplorerOpen(false)}
-            />
-          )}
-        </div>
-
         {/* ------------------------------------------------------ chat rail */}
         <aside
           data-testid="agentic-chat-rail"
@@ -3254,6 +3234,27 @@ export function AgenticGrid({
         </div>
       )}
       </div>
+
+      {/* The explorer owns the right edge. This zero-width host is ALWAYS
+          present, so opening or closing it changes only width and never the
+          sibling identity of a live terminal or its PTY socket. */}
+      <div
+        data-testid="workspace-explorer-host"
+        className={cn(
+          "h-full shrink-0 overflow-hidden transition-[width] duration-200 motion-reduce:transition-none",
+          explorerOpen ? "w-[280px]" : "w-0",
+        )}
+        aria-hidden={!explorerOpen}
+      >
+        {explorerOpen && (
+          <WorkspaceExplorer
+            workspaceId={session.id}
+            rootName={project.name}
+            onClose={() => setExplorerOpen(false)}
+          />
+        )}
+      </div>
+
       </div>
 
       {/* Closing a terminal kills a working agent, so it always asks first. */}

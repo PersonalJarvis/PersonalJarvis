@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 from collections import deque
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # Directory names that are never interesting as a project root and would bury
 # the real folders in the picker.
@@ -114,6 +114,22 @@ class WorkspaceListing:
     entries: tuple[WorkspaceEntry, ...]
     truncated: bool = False
     error: str | None = None
+
+
+def _workspace_relative_parts(relative: str | Path) -> tuple[str, ...]:
+    """Parse one wire path consistently on Windows, macOS, and Linux.
+
+    Explorer paths are POSIX-style on the wire. Splitting them before the
+    native ``Path`` join keeps ordinary separators stable; the resolved native
+    path still passes the workspace-containment check below, which also catches
+    Windows drive, UNC, and backslash traversal forms without rejecting valid
+    Unix filenames that happen to contain a colon or backslash.
+    """
+    raw = os.fspath(relative) or "."
+    posix = PurePosixPath(raw)
+    if posix.is_absolute() or ".." in posix.parts:
+        raise ValueError("That folder is outside the open workspace.")
+    return tuple(part for part in posix.parts if part not in {"", "."})
 
 
 @dataclass(slots=True)
@@ -290,12 +306,10 @@ def list_workspace_dir(
     part of the machine.
     """
     root_path = Path(root).expanduser().resolve(strict=True)
-    relative_path = Path(relative or ".")
-    if relative_path.is_absolute():
-        raise ValueError("Workspace paths must be relative.")
+    relative_parts = _workspace_relative_parts(relative)
 
     try:
-        target = (root_path / relative_path).resolve(strict=True)
+        target = root_path.joinpath(*relative_parts).resolve(strict=True)
         target.relative_to(root_path)
     except (OSError, ValueError) as exc:
         raise ValueError("That folder is outside the open workspace.") from exc

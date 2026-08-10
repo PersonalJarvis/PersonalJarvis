@@ -2463,6 +2463,9 @@ describe("the workspace header row", () => {
     expect(await screen.findByTestId("workspace-explorer")).toBeTruthy();
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByTestId("pane-Mika")).toBe(pane);
+    expect(screen.getByTestId("agentic-grid").nextElementSibling).toBe(
+      screen.getByTestId("workspace-explorer-host"),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Close the explorer" }));
     expect(screen.queryByTestId("workspace-explorer")).toBeNull();

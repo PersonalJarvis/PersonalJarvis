@@ -148,7 +148,8 @@ export function WorkspaceExplorer({
     <aside
       id="workspace-explorer"
       data-testid="workspace-explorer"
-      className="jarvis-panel-surface flex h-full w-[280px] shrink-0 flex-col border-r border-border/70 backdrop-blur-xl"
+      className="flex h-full w-[280px] shrink-0 flex-col border-l border-border/55 backdrop-blur-md"
+      style={{ background: "rgb(var(--shell-rgb) / 0.22)" }}
       aria-label={t("agentic_grid.explorer.title")}
     >
       <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3">

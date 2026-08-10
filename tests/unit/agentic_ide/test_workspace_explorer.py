@@ -46,13 +46,51 @@ def test_nested_listing_keeps_every_path_workspace_relative(tmp_path: Path) -> N
     assert str(tmp_path) not in repr(listing)
 
 
-@pytest.mark.parametrize("path", ["..", "../outside", "src/../../outside"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "..",
+        "../outside",
+        "src/../../outside",
+        r"..\outside",
+        "/etc",
+        "C:/Windows",
+        r"C:\Windows",
+        r"\\server\share",
+    ],
+)
 def test_listing_rejects_workspace_traversal(tmp_path: Path, path: str) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path.parent / "outside").mkdir(exist_ok=True)
 
     with pytest.raises(ValueError, match="outside the open workspace"):
         list_workspace_dir(tmp_path, path)
+
+
+def test_listing_uses_portable_wire_paths_for_unicode_and_spaces(tmp_path: Path) -> None:
+    nested = tmp_path / "folder with space" / "unicode-Δ"
+    nested.mkdir(parents=True)
+    (nested / "overview-π.md").write_text("ready\n", encoding="utf-8")
+
+    listing = list_workspace_dir(tmp_path, "folder with space/unicode-Δ")
+
+    assert listing.path == "folder with space/unicode-Δ"
+    assert [entry.path for entry in listing.entries] == [
+        "folder with space/unicode-Δ/overview-π.md"
+    ]
+    assert all("\\" not in entry.path for entry in listing.entries)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="These characters are Windows separators")
+def test_unix_names_that_resemble_windows_paths_remain_browsable(tmp_path: Path) -> None:
+    for name in ("C:notes", r"folder\name"):
+        folder = tmp_path / name
+        folder.mkdir()
+        (folder / "entry.txt").write_text("ready\n", encoding="utf-8")
+
+        listing = list_workspace_dir(tmp_path, name)
+
+        assert [entry.name for entry in listing.entries] == ["entry.txt"]
 
 
 def test_symlinked_directories_are_visible_but_not_expandable(tmp_path: Path) -> None:
