@@ -127,10 +127,11 @@ const MOTIONS: Record<VoiceState, Motion> = {
  * at rest, every beat hit the `Math.min(1, …)` ceiling, and the result was a
  * pulse nobody could see.
  */
-const BASE_SCALE = 0.86;
+// Kept identical to the spawned desktop renderer (`ui/orb/voice_orb.py`).
+const BASE_SCALE = 0.75;
 
 /** How much of the remaining headroom a full-volume moment claims. */
-const LEVEL_SWELL = 0.12;
+const LEVEL_SWELL = 0.1;
 
 type Rgb = readonly [number, number, number];
 

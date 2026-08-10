@@ -80,7 +80,11 @@ vi.mock("@xterm/xterm", () => ({
   },
 }));
 
-vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit() {} } }));
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: class {
+    fit() {}
+  },
+}));
 vi.mock("@xterm/addon-web-links", () => ({ WebLinksAddon: class {} }));
 vi.mock("@xterm/addon-canvas", () => ({ CanvasAddon: class {} }));
 vi.mock("@xterm/addon-unicode11", () => ({ Unicode11Addon: class {} }));
@@ -102,6 +106,10 @@ vi.mock("@/lib/agenticIdeApi", () => ({ attachToTerminal: vi.fn() }));
 
 import { AgenticTerminal } from "./AgenticTerminal";
 import { OFFSCREEN_MAX_HOLD_MS } from "./offscreenBuffer";
+import {
+  clearTerminalPreview,
+  subscribeTerminalPreview,
+} from "./terminalPreview";
 
 class ResizeObserverHarness implements ResizeObserver {
   constructor(_callback: ResizeObserverCallback) {}
@@ -114,8 +122,10 @@ class IntersectionObserverHarness {
   constructor(private readonly callback: IntersectionObserverCallback) {
     harness.fire = (intersecting: boolean) => {
       this.callback(
-        harness.observed.map((target) => ({ target, isIntersecting: intersecting })) as
-          unknown as IntersectionObserverEntry[],
+        harness.observed.map((target) => ({
+          target,
+          isIntersecting: intersecting,
+        })) as unknown as IntersectionObserverEntry[],
         this as unknown as IntersectionObserver,
       );
     };
@@ -156,6 +166,7 @@ describe("AgenticTerminal off-screen output", () => {
   });
 
   afterEach(() => {
+    clearTerminalPreview("Dana");
     vi.restoreAllMocks();
   });
 
@@ -178,6 +189,17 @@ describe("AgenticTerminal off-screen output", () => {
 
     act(() => harness.fire?.(true));
     expect(harness.writes).toEqual(["frame one frame two frame three"]);
+  });
+
+  it("keeps the same hidden xterm live while its deck card is watching", () => {
+    const unsubscribe = subscribeTerminalPreview("Dana", () => undefined);
+    mount();
+    act(() => harness.fire?.(false));
+
+    act(() => harness.handlers?.onOutput("live deck output"));
+
+    expect(harness.writes).toContain("live deck output");
+    unsubscribe();
   });
 
   it("writes a flooded hidden pane out rather than losing its frame", () => {
@@ -289,8 +311,15 @@ describe("AgenticTerminal off-screen output", () => {
     // On screen by measurement — jsdom reports a zero box otherwise, which
     // would (correctly) read as "no area, still off screen".
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
-      top: 10, bottom: 400, left: 10, right: 400, width: 390, height: 390,
-      x: 10, y: 10, toJSON: () => ({}),
+      top: 10,
+      bottom: 400,
+      left: 10,
+      right: 400,
+      width: 390,
+      height: 390,
+      x: 10,
+      y: 10,
+      toJSON: () => ({}),
     } as DOMRect);
 
     act(() => {
@@ -310,8 +339,15 @@ describe("AgenticTerminal off-screen output", () => {
     act(() => harness.fire?.(false));
 
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
-      top: 10, bottom: 400, left: 10, right: 400, width: 390, height: 390,
-      x: 10, y: 10, toJSON: () => ({}),
+      top: 10,
+      bottom: 400,
+      left: 10,
+      right: 400,
+      width: 390,
+      height: 390,
+      x: 10,
+      y: 10,
+      toJSON: () => ({}),
     } as DOMRect);
 
     act(() => harness.handlers?.onOutput("the prompt Jarvis just typed"));
@@ -325,8 +361,15 @@ describe("AgenticTerminal off-screen output", () => {
     act(() => harness.fire?.(false));
 
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
-      top: 4000, bottom: 4400, left: 10, right: 400, width: 390, height: 390,
-      x: 10, y: 4000, toJSON: () => ({}),
+      top: 4000,
+      bottom: 4400,
+      left: 10,
+      right: 400,
+      width: 390,
+      height: 390,
+      x: 10,
+      y: 4000,
+      toJSON: () => ({}),
     } as DOMRect);
 
     act(() => harness.handlers?.onOutput("nobody is looking at this"));

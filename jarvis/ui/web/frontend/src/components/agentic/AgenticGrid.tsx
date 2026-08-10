@@ -1121,10 +1121,10 @@ export function AgenticGrid({
   /*
    * The Command Deck's own two feeds: the report lane, and the cards.
    *
-   * Both are derived rather than held. A card is exactly what the pane already
-   * reports — its recap, its activity, its hold — read through the same
-   * `activityOf` every other surface uses, so the deck cannot end up
-   * describing a terminal differently from the grid beside it.
+   * Both are derived rather than held. A card takes its identity, activity and
+   * hold from the pane, then mirrors the pane's parsed xterm screen directly.
+   * `activityOf` remains the shared state resolver, so the deck cannot describe
+   * a terminal differently from the grid beside it.
    */
   const deck = useDeckQueue(deckView && onScreen);
   const deckAgents: DeckAgent[] = useMemo(() => {
@@ -1147,9 +1147,6 @@ export function AgenticGrid({
           name: term.name,
           agent: term.agent,
           agentLabel: term.display_name,
-          // The polled recap first, the one the workspace state carried until
-          // then — a card opens with a sentence rather than with a blank.
-          task: recaps[term.name]?.recap ?? term.recap ?? "",
           state,
         };
       });

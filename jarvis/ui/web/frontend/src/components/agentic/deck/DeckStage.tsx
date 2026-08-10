@@ -1,12 +1,9 @@
 /**
  * The Command Deck: the conversation is the subject, the terminals recede.
  *
- * Grid and chat both put terminal output on screen and differ in how much. The
- * deck differs in KIND — the orb is centre stage, each agent is a card around
- * it, and the terminals are folded away until you ask for one. That is not a
- * styling choice: it is what the mode is for. You brief by voice, Jarvis runs
- * the floor, and the work comes back to you as a spoken report rather than as
- * something you have to notice.
+ * Grid and chat both put full terminals on screen. The deck keeps the orb at
+ * centre stage and shows each terminal as a compact live viewport, so the user
+ * can see what is really running without giving every pane the whole canvas.
  *
  * ## What this component does and does not own
  *
@@ -41,7 +38,6 @@ export interface DeckAgent {
   name: string;
   agent: string;
   agentLabel: string;
-  task: string;
   state: CardState;
 }
 
@@ -77,7 +73,10 @@ function voiceDetail(
   assistantName: string,
 ): string {
   if (state === "idle") {
-    return t("agentic_grid.voice_bubble.talk_title").replace("{0}", assistantName);
+    return t("agentic_grid.voice_bubble.talk_title").replace(
+      "{0}",
+      assistantName,
+    );
   }
   if (state === "connecting") return t("voice_state.warming_hint");
   if (state === "listening") return t("voice_state.ready_title");
@@ -117,7 +116,9 @@ export function DeckStage({
 }: DeckStageProps) {
   const t = useT();
   const { active, busy, connecting, toggleCall, voiceState } = useVoiceCall();
-  const transcription = (useEventStore((store) => store.transcription) ?? "").trim();
+  const transcription = (
+    useEventStore((store) => store.transcription) ?? ""
+  ).trim();
   const assistantName =
     (useEventStore((store) => store.assistantName) ?? "").trim() ||
     t("agentic_grid.voice_bubble.assistant_fallback");
@@ -146,7 +147,8 @@ export function DeckStage({
             "relative isolate w-full max-w-2xl shrink-0 overflow-hidden rounded-[1.75rem] border",
             "border-border/70 bg-card/80 px-4 py-3 shadow-[0_18px_55px_-30px_rgb(var(--scrim-rgb)/0.8)]",
             "backdrop-blur-xl sm:px-6 sm:py-4",
-            active && "border-primary/35 shadow-[0_18px_60px_-28px_rgb(var(--accent-rgb)/0.5)]",
+            active &&
+              "border-primary/35 shadow-[0_18px_60px_-28px_rgb(var(--accent-rgb)/0.5)]",
           )}
         >
           <span
@@ -154,18 +156,7 @@ export function DeckStage({
             className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-primary/10 blur-3xl"
           />
           <div className="relative flex flex-col items-center gap-3 sm:flex-row sm:gap-6">
-            <div
-              data-state={voiceState}
-              className="agentic-voice-orb-stage relative grid h-32 w-32 shrink-0 place-items-center sm:h-36 sm:w-36"
-            >
-              <span
-                aria-hidden
-                className="agentic-voice-orb-ring agentic-voice-orb-ring-a"
-              />
-              <span
-                aria-hidden
-                className="agentic-voice-orb-ring agentic-voice-orb-ring-b"
-              />
+            <div className="relative grid h-32 w-32 shrink-0 place-items-center sm:h-36 sm:w-36">
               <button
                 type="button"
                 data-testid="deck-orb"
@@ -175,7 +166,10 @@ export function DeckStage({
                 aria-label={
                   active
                     ? t("agentic_grid.voice_bubble.hang_up")
-                    : t("agentic_grid.voice_bubble.talk").replace("{0}", assistantName)
+                    : t("agentic_grid.voice_bubble.talk").replace(
+                        "{0}",
+                        assistantName,
+                      )
                 }
                 title={
                   active
@@ -186,13 +180,10 @@ export function DeckStage({
                       )
                 }
                 className={cn(
-                  "relative z-10 rounded-full outline-none transition-[transform,filter,opacity] duration-500",
+                  "relative z-10 rounded-full outline-none transition-[transform,opacity] duration-500",
                   "drop-shadow-[0_12px_24px_rgba(0,0,0,0.32)]",
                   "hover:scale-[1.025] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-primary/60",
                   "motion-reduce:transform-none disabled:cursor-wait disabled:opacity-70",
-                  active || connecting
-                    ? "[filter:saturate(1)_brightness(1)]"
-                    : "[filter:saturate(0.5)_brightness(0.82)] hover:[filter:saturate(0.78)_brightness(0.94)]",
                 )}
               >
                 <VoiceOrb state={voiceState} size={116} />
@@ -268,8 +259,8 @@ export function DeckStage({
             className="flex flex-col items-center gap-3 pt-6 text-center"
           >
             <p className="max-w-sm text-sm text-muted-foreground">
-              No agents in this workspace yet. Open one and you can start handing
-              out work by voice.
+              No agents in this workspace yet. Open one and you can start
+              handing out work by voice.
             </p>
             {onOpenTerminal && (
               <button
@@ -299,7 +290,6 @@ export function DeckStage({
                 name={entry.name}
                 agent={entry.agent}
                 agentLabel={entry.agentLabel}
-                task={entry.task}
                 state={entry.state}
                 expanded={expanded === entry.name}
                 reporting={reporting.has(entry.name)}

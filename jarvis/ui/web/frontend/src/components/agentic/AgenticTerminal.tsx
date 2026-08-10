@@ -75,6 +75,13 @@ import {
   type TerminalAppearance,
 } from "./terminalThemes";
 import {
+  clearTerminalPreview,
+  publishTerminalPreview,
+  readTerminalPreview,
+  registerTerminalPreviewSource,
+  terminalPreviewRequested,
+} from "./terminalPreview";
+import {
   extractPaneDrop,
   extractPasteFiles,
   isEmptyPayload,
@@ -138,6 +145,9 @@ import { useT } from "@/i18n";
  * the user long since watched play out.
  */
 const RECEIPT_MAX_AGE_MS = 30 * 60 * 1000;
+
+/** React cards need fresh output, but not one render for every PTY frame. */
+const TERMINAL_PREVIEW_REFRESH_MS = 160;
 
 type PreservedTerminalViewport = {
   line: number;
@@ -796,6 +806,8 @@ export function AgenticTerminal({
     let parkedCheckedAt = 0;
     /** The pending deadline flush, if this pane is holding anything. */
     let holdTimer: number | undefined;
+    /** The deck sees at most one parsed-screen snapshot per short frame. */
+    let previewTimer: number | undefined;
 
     const cancelHoldTimer = () => {
       if (holdTimer === undefined) return;
@@ -818,6 +830,30 @@ export function AgenticTerminal({
       }
       afterFlush?.();
     };
+
+    const publishPreview = () => {
+      previewTimer = undefined;
+      if (disposed || !terminalPreviewRequested(name)) return;
+      publishTerminalPreview(name, readTerminalPreview(term));
+    };
+
+    const schedulePreview = () => {
+      if (previewTimer !== undefined || !terminalPreviewRequested(name)) return;
+      previewTimer = window.setTimeout(
+        publishPreview,
+        TERMINAL_PREVIEW_REFRESH_MS,
+      );
+    };
+
+    /** Flush queued output, then snapshot after xterm has parsed every write. */
+    const requestPreview = () => {
+      if (disposed || !terminalPreviewRequested(name)) return;
+      flushHeld(() => term.write("", schedulePreview));
+    };
+    const unregisterPreviewSource = registerTerminalPreviewSource(
+      name,
+      requestPreview,
+    );
 
     /** Make sure the held output has a flush coming, without moving one nearer. */
     const armHoldTimer = () => {
@@ -970,8 +1006,15 @@ export function AgenticTerminal({
       // at it. Cheap to call per chunk: React bails out on an unchanged value.
       setPainted(true);
       if (!paneVisible) recheckParked();
-      if (paneVisible) {
-        term.write(text, afterWrite);
+      if (paneVisible || terminalPreviewRequested(name)) {
+        // The card is a view onto THIS xterm buffer. A hidden pane therefore
+        // keeps parsing while its deck card is visible, but it never opens a
+        // second socket or mounts another agent-owning terminal component.
+        if (!paneVisible) flushHeld();
+        term.write(text, () => {
+          schedulePreview();
+          afterWrite?.();
+        });
         return;
       }
       offscreen.push(text);
@@ -1420,6 +1463,9 @@ export function AgenticTerminal({
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onDocumentVisible);
       }
+      if (previewTimer !== undefined) window.clearTimeout(previewTimer);
+      unregisterPreviewSource();
+      clearTerminalPreview(name);
       ro.disconnect();
       io?.disconnect();
       disposeFontSync();

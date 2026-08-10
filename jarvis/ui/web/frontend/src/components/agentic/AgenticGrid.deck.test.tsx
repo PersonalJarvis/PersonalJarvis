@@ -9,7 +9,14 @@
  * and every state a card can be in comes from the pane rather than from the
  * deck's own opinion.
  */
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 class ResizeObserverPolyfill {
@@ -71,8 +78,14 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   markPaneNotificationsRead: vi.fn(async () => 0),
   clearPaneNotifications: vi.fn(async () => undefined),
   syncAgenticIdeSurface: vi.fn(async () => undefined),
-  fetchTerminalRecaps: vi.fn(async () => ({ workspace_id: "ide_test", terminals: [] })),
-  fetchTerminalActivity: vi.fn(async () => ({ workspace_id: "ide_test", terminals: [] })),
+  fetchTerminalRecaps: vi.fn(async () => ({
+    workspace_id: "ide_test",
+    terminals: [],
+  })),
+  fetchTerminalActivity: vi.fn(async () => ({
+    workspace_id: "ide_test",
+    terminals: [],
+  })),
   fetchInterrupted: vi.fn(async () => ({
     count: 0,
     continuable_count: 0,
@@ -99,15 +112,23 @@ vi.mock("@/lib/agenticIdeApi", () => ({
 
 /** xterm needs a real canvas; the deck only ever asks whether it is mounted. */
 vi.mock("./AgenticTerminal", () => ({
-  AgenticTerminal: ({ name }: { name: string }) => <div data-testid={`pane-${name}`}>{name}</div>,
+  AgenticTerminal: ({ name }: { name: string }) => (
+    <div data-testid={`pane-${name}`}>{name}</div>
+  ),
 }));
 
 /** The orb draws to a canvas jsdom does not have. */
 vi.mock("./VoiceOrb", () => ({
-  VoiceOrb: ({ state }: { state: string }) => <div data-testid="voice-orb" data-state={state} />,
+  VoiceOrb: ({ state }: { state: string }) => (
+    <div data-testid="voice-orb" data-state={state} />
+  ),
 }));
 
 import { AgenticGrid } from "./AgenticGrid";
+import {
+  clearTerminalPreview,
+  publishTerminalPreview,
+} from "./terminalPreview";
 import * as api from "@/lib/agenticIdeApi";
 import * as voiceApi from "@/lib/voiceApi";
 import type { SessionState, TerminalState } from "@/lib/agenticIdeApi";
@@ -174,13 +195,17 @@ function renderGrid(session = FOUR, extra: Record<string, unknown> = {}) {
   return { onSessionChanged };
 }
 
-const toDeck = () => fireEvent.click(screen.getByTestId("agentic-view-mode-deck"));
+const toDeck = () =>
+  fireEvent.click(screen.getByTestId("agentic-view-mode-deck"));
 
 beforeEach(() => {
   window.localStorage.clear();
   deckVoice.state = "idle";
   deckVoice.transcription = "";
   deckVoice.assistantName = "Ben";
+  for (const name of ["Mika", "Nova", "Aria", "Kai", "T1", "T2"]) {
+    clearTerminalPreview(name);
+  }
 });
 
 afterEach(() => {
@@ -200,7 +225,9 @@ describe("the room", () => {
       // the iron rule of this whole section and the thing a new mode is most
       // likely to break.
       expect(screen.getByTestId(`pane-${name}`)).toBeTruthy();
-      expect(screen.getByTestId(`pane-cell-${name}`).className).toContain("hidden");
+      expect(screen.getByTestId(`pane-cell-${name}`).className).toContain(
+        "hidden",
+      );
       expect(screen.getByTestId(`deck-card-${name}`)).toBeTruthy();
     }
   });
@@ -237,7 +264,9 @@ describe("the room", () => {
 
     fireEvent.click(screen.getByTestId("deck-orb"));
 
-    await waitFor(() => expect(voiceApi.requestVoiceCall).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(voiceApi.requestVoiceCall).toHaveBeenCalledTimes(1),
+    );
     expect(openBubble).not.toHaveBeenCalled();
   });
 
@@ -252,7 +281,9 @@ describe("the room", () => {
     );
     fireEvent.click(screen.getByTestId("deck-voice-action"));
 
-    await waitFor(() => expect(voiceApi.requestVoiceHangup).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(voiceApi.requestVoiceHangup).toHaveBeenCalledTimes(1),
+    );
   });
 
   it("has no seams to drag — there is no layout to size here", () => {
@@ -297,7 +328,9 @@ describe("unfolding a terminal", () => {
 
     fireEvent.click(screen.getByTestId("deck-card-expand-Nova"));
 
-    expect(screen.getByTestId("pane-cell-Nova").className).not.toContain("hidden");
+    expect(screen.getByTestId("pane-cell-Nova").className).not.toContain(
+      "hidden",
+    );
     expect(screen.getByTestId("deck-fold-away")).toBeTruthy();
     // One at a time: two unfolded terminals is the grid, and the grid is one
     // button away.
@@ -371,7 +404,7 @@ describe("the cards", () => {
 
     expect(screen.getByTestId("deck-cards").className).toContain("max-w-6xl");
     expect(screen.getByTestId("deck-card-Mika").className).toContain(
-      "min-h-[13rem]",
+      "min-h-[15rem]",
     );
   });
 
@@ -379,32 +412,25 @@ describe("the cards", () => {
     vi.mocked(api.fetchTerminalActivity).mockResolvedValue({
       workspace_id: "ide_test",
       terminals: [
-        { name: "Mika", activity: "working", activity_since: 1, worked: true, status: "live" },
-        { name: "Nova", activity: "asking", activity_since: 1, worked: true, status: "live" },
-        { name: "Aria", activity: "waiting", activity_since: 1, worked: false, status: "live" },
-      ],
-    } as never);
-    renderGrid();
-    toDeck();
-
-    await waitFor(() =>
-      expect(screen.getByTestId("deck-card-Mika").getAttribute("data-state")).toBe("working"),
-    );
-    expect(screen.getByTestId("deck-card-Nova").getAttribute("data-state")).toBe("asking");
-    expect(screen.getByTestId("deck-card-Aria").getAttribute("data-state")).toBe("waiting");
-  });
-
-  it("show what the agent is on, from its own recap", async () => {
-    vi.mocked(api.fetchTerminalRecaps).mockResolvedValue({
-      workspace_id: "ide_test",
-      terminals: [
         {
           name: "Mika",
-          recap: "Fixing the wake-path tests",
-          recap_detail: "",
           activity: "working",
           activity_since: 1,
           worked: true,
+          status: "live",
+        },
+        {
+          name: "Nova",
+          activity: "asking",
+          activity_since: 1,
+          worked: true,
+          status: "live",
+        },
+        {
+          name: "Aria",
+          activity: "waiting",
+          activity_since: 1,
+          worked: false,
           status: "live",
         },
       ],
@@ -413,9 +439,33 @@ describe("the cards", () => {
     toDeck();
 
     await waitFor(() =>
-      expect(screen.getByTestId("deck-card-task-Mika").textContent).toContain(
-        "Fixing the wake-path tests",
-      ),
+      expect(
+        screen.getByTestId("deck-card-Mika").getAttribute("data-state"),
+      ).toBe("working"),
+    );
+    expect(
+      screen.getByTestId("deck-card-Nova").getAttribute("data-state"),
+    ).toBe("asking");
+    expect(
+      screen.getByTestId("deck-card-Aria").getAttribute("data-state"),
+    ).toBe("waiting");
+  });
+
+  it("shows what is actually running in the terminal instead of its recap", async () => {
+    renderGrid();
+    toDeck();
+    act(() => {
+      publishTerminalPreview("Mika", [
+        "$ npm run test",
+        "23 tests passed",
+        "Waiting for changes...",
+      ]);
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("deck-card-terminal-Mika").textContent,
+      ).toContain("23 tests passed"),
     );
   });
 
@@ -425,7 +475,9 @@ describe("the cards", () => {
 
     fireEvent.click(screen.getByTestId("deck-card-hold-Mika"));
 
-    await waitFor(() => expect(api.setDeckHold).toHaveBeenCalledWith("Mika", true));
+    await waitFor(() =>
+      expect(api.setDeckHold).toHaveBeenCalledWith("Mika", true),
+    );
   });
 
   it("show a held pane as the user's, whatever it is doing", () => {
@@ -436,21 +488,28 @@ describe("the cards", () => {
     renderGrid(session);
     toDeck();
 
-    expect(screen.getByTestId("deck-card-Mika").getAttribute("data-state")).toBe("held");
+    expect(
+      screen.getByTestId("deck-card-Mika").getAttribute("data-state"),
+    ).toBe("held");
   });
 
   it("report a refused hold instead of showing it as taken", async () => {
     // A client that shows a pane as held while the server disagrees is the
     // worse of the two failures: the user stops watching a pane Jarvis is
     // still assigning work to.
-    vi.mocked(api.setDeckHold).mockRejectedValue(new Error("No terminal called 'Mika'."));
+    vi.mocked(api.setDeckHold).mockRejectedValue(
+      new Error("No terminal called 'Mika'."),
+    );
     renderGrid();
     toDeck();
 
     fireEvent.click(screen.getByTestId("deck-card-hold-Mika"));
 
     await waitFor(() =>
-      expect(pushToast).toHaveBeenCalledWith("error", "No terminal called 'Mika'."),
+      expect(pushToast).toHaveBeenCalledWith(
+        "error",
+        "No terminal called 'Mika'.",
+      ),
     );
   });
 });
@@ -489,7 +548,9 @@ describe("the report lane", () => {
     renderGrid();
     toDeck();
 
-    await waitFor(() => expect(screen.getByTestId("deck-lane-hear-Nova")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByTestId("deck-lane-hear-Nova")).toBeTruthy(),
+    );
     expect(screen.getByTestId("deck-lane-count").textContent).toBe("1");
     expect(screen.getByTestId("deck-card-dot-Nova")).toBeTruthy();
   });
@@ -502,7 +563,9 @@ describe("the report lane", () => {
 
     fireEvent.click(hear);
 
-    await waitFor(() => expect(api.ackDeckReport).toHaveBeenCalledWith("sr1", "next"));
+    await waitFor(() =>
+      expect(api.ackDeckReport).toHaveBeenCalledWith("sr1", "next"),
+    );
   });
 
   it("drops one the user has already seen", async () => {
@@ -513,21 +576,28 @@ describe("the report lane", () => {
 
     fireEvent.click(drop);
 
-    await waitFor(() => expect(api.ackDeckReport).toHaveBeenCalledWith("sr1", "drop"));
+    await waitFor(() =>
+      expect(api.ackDeckReport).toHaveBeenCalledWith("sr1", "drop"),
+    );
   });
 
   it("says it has gone quiet rather than looking broken", async () => {
     // An unanswered line settles the queue on purpose — repeating yourself at
     // somebody reading code is nagging. But a surface that silently stops
     // talking is indistinguishable from one that crashed, so it says which.
-    vi.mocked(api.fetchDeckQueue).mockResolvedValue({ ...ONE_WAITING, sleeping: true });
+    vi.mocked(api.fetchDeckQueue).mockResolvedValue({
+      ...ONE_WAITING,
+      sleeping: true,
+    });
     renderGrid();
     toDeck();
 
     const wake = await screen.findByTestId("deck-lane-wake");
     fireEvent.click(wake);
 
-    await waitFor(() => expect(api.ackDeckReport).toHaveBeenCalledWith("sr1", "next"));
+    await waitFor(() =>
+      expect(api.ackDeckReport).toHaveBeenCalledWith("sr1", "next"),
+    );
   });
 
   it("asks for nothing at all while the deck is not the view", () => {

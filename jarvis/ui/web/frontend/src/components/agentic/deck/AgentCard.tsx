@@ -1,12 +1,12 @@
 /**
- * One agent, as a person at the table rather than as a terminal.
+ * One agent and a compact live view of its real terminal.
  *
  * The Command Deck's whole premise is that you are not reading terminals — you
  * are running a team. So a card answers the three things you would ask about a
- * colleague and nothing else: who they are, what they are on, and whether they
- * need you. The terminal itself is one tap away and folded up until then,
- * because a wall of scrolling output is precisely what this mode exists to
- * stop being the subject of the screen.
+ * colleague: who they are, what is actually happening in their terminal, and
+ * whether they need you. The card mirrors the existing xterm buffer; it never
+ * owns a socket or an agent. Expanding it therefore reveals the very same
+ * terminal rather than creating a second session.
  *
  * ## The ring
  *
@@ -29,6 +29,7 @@
 import { Hand, Loader2, MessageCircleQuestion, Terminal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AgentMark } from "../AgentMark";
+import { useTerminalPreview } from "../terminalPreview";
 
 /** What a card is showing, resolved by the stage rather than by the card. */
 export type CardState = "working" | "waiting" | "asking" | "held" | "dead";
@@ -39,8 +40,6 @@ export interface AgentCardProps {
   agent: string;
   /** That CLI's own name, for the mark's alt text. */
   agentLabel: string;
-  /** What this agent is on, in one line — the pane's own recap. */
-  task: string;
   state: CardState;
   /** Is this card's terminal unfolded right now? */
   expanded: boolean;
@@ -74,7 +73,6 @@ export function AgentCard({
   name,
   agent,
   agentLabel,
-  task,
   state,
   expanded,
   reporting = false,
@@ -82,13 +80,14 @@ export function AgentCard({
   onToggleHold,
 }: AgentCardProps) {
   const held = state === "held";
+  const terminal = useTerminalPreview(name);
   return (
     <div
       data-testid={`deck-card-${name}`}
       data-state={state}
       data-expanded={expanded ? "yes" : "no"}
       className={cn(
-        "group relative flex min-h-[13rem] min-w-0 flex-col gap-4 rounded-xl border bg-card/60 p-5",
+        "group relative flex min-h-[15rem] min-w-0 flex-col gap-4 rounded-xl border bg-card/60 p-5",
         "transition-colors",
         RING[state],
         held && "opacity-70",
@@ -107,7 +106,12 @@ export function AgentCard({
         >
           {/* Plain, not boxed: the ring around it is already the frame, and a
               tile inside a ring is two borders for one thing. */}
-          <AgentMark agent={agent} label={agentLabel} variant="plain" size="md" />
+          <AgentMark
+            agent={agent}
+            label={agentLabel}
+            variant="plain"
+            size="md"
+          />
           {reporting && (
             <span
               data-testid={`deck-card-dot-${name}`}
@@ -147,17 +151,32 @@ export function AgentCard({
         </span>
       </div>
 
-      {/*
-        What they are on. Always rendered, even empty — a card that changes
-        height when a recap arrives makes the whole table twitch every few
-        seconds, which is the opposite of what a calm surface is for.
-      */}
-      <p
-        data-testid={`deck-card-task-${name}`}
-        className="line-clamp-3 min-h-[3.75rem] text-sm leading-relaxed text-muted-foreground"
+      <div
+        data-testid={`deck-card-terminal-${name}`}
+        aria-label={`Live terminal output for ${name}`}
+        className={cn(
+          "relative min-h-[9rem] flex-1 overflow-hidden rounded-xl border border-border/80",
+          "bg-background/95 shadow-inner backdrop-blur-sm",
+        )}
       >
-        {task}
-      </p>
+        {terminal.length > 0 ? (
+          <div className="h-full overflow-hidden p-3 font-mono text-xs leading-[1.55] text-foreground/90">
+            {terminal.map((line, index) => (
+              <div
+                key={`${index}-${line}`}
+                className="min-h-[1.55em] truncate whitespace-pre"
+                title={line || undefined}
+              >
+                {line || "\u00a0"}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex h-full min-h-[9rem] items-center justify-center px-3 text-center font-mono text-xs text-muted-foreground/70">
+            Waiting for live terminal output...
+          </div>
+        )}
+      </div>
 
       <div className="flex items-center gap-2">
         <button
@@ -189,7 +208,8 @@ export function AgentCard({
             "ml-auto inline-flex items-center gap-1.5 rounded-control px-2 py-1 text-xs",
             "text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-            held && "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary",
+            held &&
+              "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary",
           )}
         >
           <Hand className="h-3.5 w-3.5 shrink-0" />
