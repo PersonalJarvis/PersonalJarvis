@@ -8782,3 +8782,43 @@ account failures never retried, per-mission transient budget, learned
 headroom), `tests/unit/trigger/test_hotkey_registry_mutation_guard.py` (the
 `FakeGlobalHotkeys.strict_poller` knob reproduces the live thread death — the
 guard test fails without `_registry_mutation`).
+
+## BUG-127: three false wakes in 94 seconds — flowing dictation walked through every verify gate (HIGH, FIXED 2026-08-10)
+
+**Symptoms (2026-08-10 19:57–19:59).** While the user dictated German to a
+coding agent, the Vosk KWS engine fired 'Hey George' three times in 94 s;
+each phantom session had to be killed by hotkey. The log shows all three
+verify paths leaking in one window: `verify OK (undecided)` with the free
+ear hearing unrelated German at the span (twice, de model, competition kept
+the phrase at conf 1.0), and `verify OK (spelled)` where the EN model
+spelled a literal 'hey george' out of German flow.
+
+**Root.** The verify asked every question about what was said AT the
+candidate span, and none about what was said immediately BEFORE it. The
+grammar stage happily forces flowing speech onto the phrase; mid-stream, the
+acoustic competition measurably does not discriminate (the forced grammar
+keeps the phrase at conf 1.0 inside continuous speech), and the spelling
+path is accept-only by design — so once dictation supplies enough sound
+material, some window eventually satisfies one of the routes. No per-path
+tightening can close a class that leaks through ALL paths at once.
+
+**Fix.** A fourth HARD check in `_verify_window` (leading isolation): a wake
+call STANDS ALONE. If the free decode carries more than 0.25 s of voiced
+lead-in inside the 0.6 s window before the span, the candidate is rejected
+ahead of BOTH confirm paths. Word-agnostic and durational (AP-27-safe: word
+timings only, never text); mid-speech no-fire is the accepted product
+trade-off, and only the LEADING side is gated so the wake+command breath
+(2026-07-25) stays intact. Bounds are `__init__`-threaded like every sibling
+threshold; a new `suppressed_lead_speech` stat surfaces in the
+wake-detectors heartbeat.
+
+**Guards:** `tests/unit/plugins/wake/test_vosk_wake_word_agnostic.py`
+("stands alone" section: both live fire classes pinned as rejections, the
+isolated call / natural pause / trailing-command breaths pinned as fires,
+and the sibling-rescue path pinned as unable to bypass the gate).
+
+**OPEN follow-up.** `jarvis/speech/rolling_whisper_wake.py` (the stt_match
+wake path) verifies via a transcript too and has NO equivalent
+before-the-phrase isolation gate — the identical false-wake class is
+plausibly still open there whenever that engine is active. Port the same
+word-agnostic lead-in check to its match site, calibrated on real windows.

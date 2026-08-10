@@ -699,6 +699,31 @@ def test_trailing_command_speech_is_never_lead_in(monkeypatch) -> None:
     assert p._verify_window(_loud_window(3.0), fail_open=True) is True
 
 
+def test_the_sibling_rescue_cannot_bypass_the_isolation_gate(monkeypatch) -> None:
+    """The sibling rescue verifies through the SAME window check (the
+    fail-closed ``_early_check``): a sibling model whose free ear also heard
+    flowing speech right up to the span must not resurrect a mid-speech
+    candidate the primary model already rejected. Secondary rescue paths are
+    exactly where earlier gates in this file leaked, so this is pinned."""
+    p = VoskKwsProvider(
+        "Hey George",
+        model_path="primary",
+        model_paths=["primary", "sibling"],
+        keyword="george",
+    )
+    free = {
+        "text": "und dann machen wir aufbürdet",  # i18n-allow
+        "result": [*_GEORGE_LEAD_IN, _w("aufbürdet", 1.45, 2.20, conf=1.0)],  # i18n-allow
+    }
+
+    def _take(model_path, kind):  # noqa: ANN001
+        assert model_path == "sibling", "the rescue must verify on the sibling"
+        return _StubRec(free if kind == "free" else _GEORGE_GRAMMAR)
+
+    monkeypatch.setattr(p, "_take_verify_rec", _take)
+    assert p._early_check(_loud_window(3.0), "sibling") is False
+
+
 # --- diagnosability: a suppressed wake must leave a trace (2026-07-25) --------
 
 

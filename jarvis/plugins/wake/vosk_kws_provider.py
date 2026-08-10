@@ -602,6 +602,8 @@ class VoskKwsProvider:
         cooldown_s: float = _COOLDOWN_S,
         rejected_candidate_backoff_s: float = _REJECTED_CANDIDATE_BACKOFF_S,
         confirm_tail_s: float = _CONFIRM_TAIL_S,
+        isolation_lead_s: float = _ISOLATION_LEAD_S,
+        isolation_max_lead_voiced_s: float = _ISOLATION_MAX_LEAD_VOICED_S,
         # Production poll-loop parity: peak-normalize the confirm window to
         # -3 dBFS (gain capped at 40 dB) exactly like the other wake paths.
         target_peak: float = 0.7079,
@@ -644,6 +646,8 @@ class VoskKwsProvider:
             0.0, float(rejected_candidate_backoff_s)
         )
         self._confirm_tail_bytes = int(float(confirm_tail_s) * sample_rate) * 2
+        self._isolation_lead_s = float(isolation_lead_s)
+        self._isolation_max_lead_voiced_s = float(isolation_max_lead_voiced_s)
         self._target_peak = float(target_peak)
         self._max_gain = float(max_gain)
         self._models: dict[str, Any] = {}
@@ -1112,7 +1116,7 @@ class VoskKwsProvider:
         fail_open: bool,
         model_path: str | None = None,
     ) -> bool:
-        """Three checks over the given window; ALL must pass before a fire.
+        """Four checks over the given window; ALL must pass before a fire.
 
         Why this shape (live forensic 2026-07-06, "Hey Ruben" fired on plain
         room speech every few minutes): the streaming PARTIAL that makes the
@@ -1133,6 +1137,10 @@ class VoskKwsProvider:
            OVERLAPPING the span (±0.3 s) — the permissive sound match then
            judges what was said AT the candidate's position instead of
            fishing the best pair out of three seconds of conversation.
+        4. **Leading isolation**: a wake call STANDS ALONE — voiced free-decode
+           words immediately BEFORE the span reject the candidate outright,
+           ahead of both confirm paths (see the ``_ISOLATION_*`` note; live
+           forensic 2026-08-10, three mid-dictation fires in 94 s).
 
         On infrastructure errors the ``fail_open`` polarity decides: the
         authoritative confirm accepts (a broken confirm must never eat a real
@@ -1242,7 +1250,7 @@ class VoskKwsProvider:
             # path leaked too (live 2026-08-10: the en model spelled
             # 'hey george' out of flowing German dictation). Reads only word
             # TIMINGS, never text (AP-27).
-            lead_a = span_a - _ISOLATION_LEAD_S
+            lead_a = span_a - self._isolation_lead_s
             lead_voiced = 0.0
             for w in fres.get("result", []):
                 if float(w.get("end", 0.0)) >= span_a:
@@ -1252,13 +1260,13 @@ class VoskKwsProvider:
                     min(float(w.get("end", 0.0)), span_a)
                     - max(float(w.get("start", 0.0)), lead_a),
                 )
-            if lead_voiced > _ISOLATION_MAX_LEAD_VOICED_S:
+            if lead_voiced > self._isolation_max_lead_voiced_s:
                 self._stat_suppressed_lead_speech += 1
                 self._log_suppression(
                     "lead-in speech %.2fs in the %.1fs before the span — "
                     "a wake call stands alone, this was mid-speech",
                     lead_voiced,
-                    _ISOLATION_LEAD_S,
+                    self._isolation_lead_s,
                 )
                 return False
             # OPEN (2026-07-25, measured): a wake spoken in ONE breath with the
