@@ -322,10 +322,13 @@
        and disappeared. Light therefore carries the same glass system as dark,
        tuned slightly lighter: the artwork stays visible around and through
        every panel, and text always sits on a predictable ground. */
-    --surface-card-alpha: 0.52;
-    --surface-panel-alpha: 0.5;
-    --surface-control-alpha: 0.66;
-    --surface-stage-alpha: 0.5;
+    /* Matched to the dark theme's values: light used to run ~8 points more
+       transparent, and on bright, busy artwork the ivory glass stopped being
+       a ground at all — ink landed on the wallpaper itself and washed out. */
+    --surface-card-alpha: 0.6;
+    --surface-panel-alpha: 0.58;
+    --surface-control-alpha: 0.72;
+    --surface-stage-alpha: 0.58;
     --surface-wiki-pane-alpha: 0.3;
     --surface-wiki-stage-alpha: 0.28;
 
@@ -554,11 +557,16 @@
   }
 
   :root:not(.dark) .jarvis-section-stage {
-    --muted-foreground: 240 8% 24%;
-    --border: 40 14% 58%;
+    --muted-foreground: 240 9% 20%;
+    --border: 40 14% 52%;
+    /* Three layers instead of two: the tight 6px ring is what keeps small
+       labels legible when the artwork behind the glass is both bright AND
+       busy — the wide 14px wash alone blurs into such wallpapers. On calm
+       paper all three are ivory-on-ivory and invisible. */
     text-shadow:
-      0 1px 2px rgb(var(--shell-rgb) / 0.85),
-      0 0 12px rgb(var(--shell-rgb) / 0.6);
+      0 1px 2px rgb(var(--shell-rgb) / 0.95),
+      0 0 6px rgb(var(--shell-rgb) / 0.8),
+      0 0 14px rgb(var(--shell-rgb) / 0.55);
   }
 
   /*
@@ -897,6 +905,33 @@
     box-shadow:
       inset 0 1px 0 rgb(255 255 255 / 0.42),
       0 10px 26px rgb(var(--scrim-rgb) / 0.07);
+  }
+
+  /* Views quiet their secondary labels with alpha variants of the muted ink
+     (text-muted-foreground/40 … /80). On plain paper that hierarchy reads
+     fine; over bright artwork the text alpha stacks with the translucent
+     glass and those labels vanish completely — the reported symptom. Inside
+     the light stage the variants converge on one readable floor; hierarchy
+     survives through the size and weight steps the views already use. */
+  :root:not(.dark)
+    .jarvis-section-stage
+    :where(
+      [class~="text-muted-foreground/40"],
+      [class~="text-muted-foreground/45"],
+      [class~="text-muted-foreground/50"],
+      [class~="text-muted-foreground/60"]
+    ) {
+    color: hsl(var(--muted-foreground) / 0.78);
+  }
+
+  :root:not(.dark)
+    .jarvis-section-stage
+    :where(
+      [class~="text-muted-foreground/70"],
+      [class~="text-muted-foreground/75"],
+      [class~="text-muted-foreground/80"]
+    ) {
+    color: hsl(var(--muted-foreground) / 0.9);
   }
 
   :root:not(.dark) .jarvis-section-stage .card-outline,
