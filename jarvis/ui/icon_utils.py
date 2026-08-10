@@ -1104,21 +1104,28 @@ def ensure_linux_desktop_entry(applications_dir: Path | None = None) -> bool:
     try:
         from jarvis.assets import bundled_app_icon_png
         from jarvis.core.config import PROJECT_ROOT
+        from jarvis.core.desktop_entry import escape_value, exec_value
 
         png = bundled_app_icon_png()
-        icon_line = f"Icon={png}\n" if png is not None and png.is_file() else ""
-        program = sys.executable
-        exec_value = f'"{program}"' if " " in program else program
+        icon_line = (
+            f"Icon={escape_value(str(png))}\n"
+            if png is not None and png.is_file()
+            else ""
+        )
+        # Both nested Desktop-Entry escaping layers, shared with the autostart
+        # writer: an install path containing a ``%`` is otherwise read as a field
+        # code and the desktop discards the whole entry — which takes the dock
+        # icon down with it, since StartupWMClass binding lives in THIS file.
         content = (
             "[Desktop Entry]\n"
             "Type=Application\n"
-            f"Name={APP_DISPLAY_NAME}\n"
+            f"Name={escape_value(APP_DISPLAY_NAME)}\n"
             "Comment=Voice-driven meta-orchestrator\n"
-            f"Exec={exec_value} -m {_LAUNCHER_MODULE}\n"
-            f"Path={PROJECT_ROOT}\n"
+            f"Exec={exec_value(sys.executable, ('-m', _LAUNCHER_MODULE))}\n"
+            f"Path={escape_value(str(PROJECT_ROOT))}\n"
             "Terminal=false\n"
             f"{icon_line}"
-            f"StartupWMClass={LINUX_WM_CLASS}\n"
+            f"StartupWMClass={escape_value(LINUX_WM_CLASS)}\n"
             "Categories=Utility;\n"
         )
         entry = applications_dir / LINUX_DESKTOP_ENTRY_NAME
@@ -1130,7 +1137,7 @@ def ensure_linux_desktop_entry(applications_dir: Path | None = None) -> bool:
         applications_dir.mkdir(parents=True, exist_ok=True)
         # Atomic-ish (same idiom as the autostart entry): never leave a
         # half-written .desktop the desktop environment would choke on.
-        tmp = entry.with_suffix(".desktop.tmp")
+        tmp = entry.with_name(entry.name + ".tmp")
         tmp.write_text(content, encoding="utf-8")
         tmp.replace(entry)
         logger.debug("Linux applications .desktop entry written: {}", entry)

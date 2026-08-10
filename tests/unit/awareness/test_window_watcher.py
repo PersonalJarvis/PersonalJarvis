@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -387,6 +388,216 @@ async def test_posix_poll_loop_stops_after_max_consecutive_failures(monkeypatch)
     assert watcher._poll_task.done()
     assert not watcher._poll_task.cancelled()
     await watcher.stop()    # idempotent cleanup, no crash
+
+
+@pytest.mark.asyncio
+async def test_posix_poll_loop_keeps_going_after_a_success(monkeypatch) -> None:
+    """An empty probe after a working one is "nothing is focused", not a failure.
+
+    ``xdotool getactivewindow`` exits non-zero whenever no client window holds
+    the X11 input focus — the user is on the desktop, a window just closed, a
+    lock screen is up. Those are everyday states, and counting them meant 10 s
+    on the wallpaper permanently killed focus tracking for the whole session
+    while the log blamed a missing xdotool.
+    """
+    monkeypatch.setattr(window_mod, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(window_mod, "display_present", lambda: True)
+    monkeypatch.setattr(window_mod, "is_wayland", lambda: False)
+    monkeypatch.setattr(window_mod, "_POSIX_POLL_INTERVAL_S", 0.0)
+
+    # One usable window, then far more empty probes than the startup gate allows.
+    target = window_mod._POSIX_POLL_MAX_FAILURES * 3
+    reached = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    state = {"calls": 0}
+
+    def _probe() -> WindowInfo | None:
+        # Runs on a worker thread (asyncio.to_thread) — signal back thread-safely.
+        state["calls"] += 1
+        if state["calls"] > target:
+            loop.call_soon_threadsafe(reached.set)
+        return WindowInfo(title="Terminal", handle=1, pid=5) if state["calls"] == 1 else None
+
+    bus, manager, privacy = _make_components()
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_posix_foreground_window", staticmethod(_probe),
+    ):
+        await watcher.start()
+        task = watcher._poll_task
+        assert task is not None
+        await asyncio.wait_for(reached.wait(), timeout=5.0)
+        assert not task.done(), "the loop self-disabled on a healthy empty probe"
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_posix_poll_loop_survives_a_raising_iteration(monkeypatch) -> None:
+    """A single bad iteration must not end focus tracking silently.
+
+    Only ``CancelledError`` was caught, so anything else killed the task with an
+    unretrieved exception and no log line — the feature was simply off.
+    """
+    monkeypatch.setattr(window_mod, "detect_platform", lambda: "darwin")
+    monkeypatch.setattr(window_mod, "_POSIX_POLL_INTERVAL_S", 0.0)
+
+    real_poll_once = WindowFocusWatcher._poll_once
+    state = {"calls": 0}
+
+    async def _flaky_poll_once(self) -> bool:
+        state["calls"] += 1
+        if state["calls"] == 1:
+            raise RuntimeError("simulated iteration failure")
+        return await real_poll_once(self)
+
+    bus, manager, privacy = _make_components()
+    received: list[FrameUpdated] = []
+    published = asyncio.Event()
+
+    async def _collect(ev) -> None:
+        received.append(ev)
+        published.set()
+
+    bus.subscribe(FrameUpdated, _collect)
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_poll_once", _flaky_poll_once,
+    ), patch.object(
+        WindowFocusWatcher, "_posix_foreground_window",
+        staticmethod(lambda: WindowInfo(title="Terminal", handle=1, pid=5)),
+    ):
+        await watcher.start()
+        task = watcher._poll_task
+        assert task is not None
+        # The loop only reaches a publish if it survived the raising iteration.
+        await asyncio.wait_for(published.wait(), timeout=5.0)
+        assert not task.done()
+        await watcher.stop()
+
+    assert [ev.window_title for ev in received] == ["Terminal"]
+
+
+@pytest.mark.asyncio
+async def test_posix_poll_once_retries_a_window_whose_emit_failed() -> None:
+    """A failed publish must not mark the window as already reported.
+
+    Committing the change-detection markers before the emit turned a transient
+    tail failure into a permanent one: the next tick saw an unchanged focus and
+    stayed quiet, so ``state.current_frame`` kept describing the PREVIOUS window
+    until the user happened to switch again.
+    """
+    bus, manager, privacy = _make_components()
+    received: list[FrameUpdated] = []
+    bus.subscribe(FrameUpdated, _async_collect(received))
+
+    attempts = {"n": 0}
+
+    def _meta(win: WindowInfo) -> tuple[int, str]:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError("transient psutil failure")
+        return 123, "gnome-terminal-server"
+
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_posix_foreground_window",
+        staticmethod(lambda: WindowInfo(title="Terminal", handle=42)),
+    ), patch.object(
+        WindowFocusWatcher, "_resolve_posix_focus_meta", staticmethod(_meta),
+    ):
+        assert await watcher._poll_once() is True    # probe healthy, emit failed
+        assert received == []
+        assert await watcher._poll_once() is True    # same window, retried
+
+    assert len(received) == 1
+    assert received[0].window_title == "Terminal"
+    assert manager.state.current_frame is not None
+    assert manager.state.current_frame.active_pid == 123
+
+
+# ---- Linux X11 pid resolution -----------------------------------------------
+
+
+def test_linux_window_pid_returns_zero_without_xdotool(monkeypatch) -> None:
+    monkeypatch.setattr(window_mod.shutil, "which", lambda _name: None)
+    assert window_mod._linux_window_pid(7) == 0
+
+
+def test_linux_window_pid_reads_the_reported_pid(monkeypatch) -> None:
+    monkeypatch.setattr(window_mod.shutil, "which", lambda _name: "/usr/bin/xdotool")
+    monkeypatch.setattr(
+        window_mod.subprocess, "run",
+        lambda *_a, **_kw: SimpleNamespace(returncode=0, stdout="4242\n", stderr=""),
+    )
+    assert window_mod._linux_window_pid(7) == 4242
+
+
+def test_linux_window_pid_uses_the_resolved_executable(monkeypatch) -> None:
+    """Spawn the binary ``which`` found, not a bare name re-resolved via PATH."""
+    seen: list[list[str]] = []
+    monkeypatch.setattr(window_mod.shutil, "which", lambda _name: "/opt/bin/xdotool")
+
+    def _run(argv, **_kw):
+        seen.append(argv)
+        return SimpleNamespace(returncode=0, stdout="9\n", stderr="")
+
+    monkeypatch.setattr(window_mod.subprocess, "run", _run)
+    assert window_mod._linux_window_pid(7) == 9
+    assert seen == [["/opt/bin/xdotool", "getwindowpid", "7"]]
+
+
+def test_linux_window_pid_degrades_on_a_window_without_the_pid_property(
+    monkeypatch,
+) -> None:
+    """xdotool exits non-zero for a client that publishes no ``_NET_WM_PID``.
+
+    Routine, not an error — it must not surface as a resolution failure with a
+    traceback that buries the real ones.
+    """
+    monkeypatch.setattr(window_mod.shutil, "which", lambda _name: "/usr/bin/xdotool")
+    monkeypatch.setattr(
+        window_mod.subprocess, "run",
+        lambda *_a, **_kw: SimpleNamespace(
+            returncode=1, stdout="", stderr="xdotool: window has no pid property",
+        ),
+    )
+    assert window_mod._linux_window_pid(7) == 0
+
+
+def test_linux_window_pid_degrades_on_unusable_output(monkeypatch) -> None:
+    monkeypatch.setattr(window_mod.shutil, "which", lambda _name: "/usr/bin/xdotool")
+    for stdout in ("", "not-a-pid", "-3"):
+        monkeypatch.setattr(
+            window_mod.subprocess, "run",
+            lambda *_a, _out=stdout, **_kw: SimpleNamespace(
+                returncode=0, stdout=_out, stderr="",
+            ),
+        )
+        assert window_mod._linux_window_pid(7) == 0
+
+
+def test_linux_window_pid_degrades_when_the_probe_times_out(monkeypatch) -> None:
+    """A hung X connection must not propagate out of a poll-loop worker thread."""
+    monkeypatch.setattr(window_mod.shutil, "which", lambda _name: "/usr/bin/xdotool")
+
+    def _timeout(*_a, **_kw):
+        raise window_mod.subprocess.TimeoutExpired(cmd="xdotool", timeout=5.0)
+
+    monkeypatch.setattr(window_mod.subprocess, "run", _timeout)
+    assert window_mod._linux_window_pid(7) == 0
+
+
+def test_posix_focus_meta_never_reports_a_negative_pid(monkeypatch) -> None:
+    """A negative pid looks resolved but names no process."""
+    monkeypatch.setattr(window_mod, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(window_mod.shutil, "which", lambda _name: "/usr/bin/xdotool")
+    monkeypatch.setattr(
+        window_mod.subprocess, "run",
+        lambda *_a, **_kw: SimpleNamespace(returncode=0, stdout="-1", stderr=""),
+    )
+    assert WindowFocusWatcher._resolve_posix_focus_meta(
+        WindowInfo(title="x", handle=5),
+    ) == (0, "")
 
 
 @pytest.mark.asyncio

@@ -28,12 +28,14 @@ the Win32 drain loop uses, so both platforms publish identical
 ``FrameUpdated`` / ``AwarenessCaptureBlocked`` events. macOS always has a
 display (no TCC/Accessibility grant is needed just to read the frontmost
 application — ``window_state.foreground_window()`` already degrades to
-``None`` without the optional Screen-Recording grant or without pyobjc, and
-that "no window at all" case feeds the consecutive-failure counter that
-disables the fallback rather than spinning forever; a window that merely
-has no readable TITLE is a healthy probe and never counts against it).
-Headless Linux and Wayland sessions are gated up front (mirrors
-``IdleDetector``): one honest log line, no polling task, no crash.
+``None`` without the optional Screen-Recording grant or without pyobjc).
+An empty probe only disables the fallback while NO probe has ever
+succeeded — that is a backend which cannot work here; afterwards it means
+"nothing is focused right now", which on X11 is an everyday state (see
+``_poll_loop``). A window that merely has no readable TITLE is a healthy
+probe too and never counts against it. Headless Linux and Wayland sessions
+are gated up front (mirrors ``IdleDetector``): one honest log line, no
+polling task, no crash.
 
 Lifecycle order in ``stop()`` (subagent Q4, 6 phases):
   P1: cancel drain task (asyncio side first, so no ``bus.publish``
@@ -93,8 +95,62 @@ _PUMP_READY_TIMEOUT_S: float = 2.0    # start() wait-bis-Hook-gesetzt
 # used there, so we poll at a modest cadence instead. 2 s balances staying
 # off the voice hot path against noticing an app switch reasonably fast.
 _POSIX_POLL_INTERVAL_S: float = 2.0
-_POSIX_POLL_MAX_FAILURES: int = 5     # consecutive empty probes before giving up
+_POSIX_POLL_MAX_FAILURES: int = 5     # empty probes BEFORE the first success
 _POSIX_POLL_STOP_TIMEOUT_S: float = 1.5
+# Last-resort pid lookup for an X11 window (see ``_linux_window_pid``). Kept
+# generous on purpose: a slow answer is still a correct one, while a timeout
+# yields an empty process name, and the privacy rules that key on the process
+# (rather than the title) then have nothing to match against.
+_POSIX_PID_PROBE_TIMEOUT_S: float = 5.0
+
+
+def _linux_window_pid(window_id: int) -> int:
+    """Owning pid of an X11 window id via ``xdotool``, or ``0``. Never raises.
+
+    A LAST RESORT: ``window_state.foreground_window`` already reads the pid off
+    the very window it took the title from, so this only runs for a client that
+    advertises no ``_NET_WM_PID`` at all — which is also the property xdotool
+    reads, so the honest expectation is that it returns 0 as well. It stays as
+    the single documented seam for that lookup instead of being inlined, and it
+    no longer routes the routine "this window has no pid property" case through
+    a broad exception handler that logged it as a resolution failure with a
+    traceback, drowning the real ones.
+
+    Runs on a worker thread (called via ``asyncio.to_thread``), so it must be
+    bounded: every ``subprocess`` failure mode — a missing binary, a dead X
+    connection, a hung server — degrades to ``0``.
+    """
+    executable = shutil.which("xdotool")
+    if executable is None:
+        return 0
+    try:
+        proc = subprocess.run(
+            [executable, "getwindowpid", str(window_id)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_POSIX_PID_PROBE_TIMEOUT_S,
+            check=False,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        logger.debug(
+            "xdotool getwindowpid failed for window %s", window_id, exc_info=True,
+        )
+        return 0
+    if proc.returncode != 0:
+        logger.debug("xdotool reports no pid for X11 window %s", window_id)
+        return 0
+    raw = (proc.stdout or "").strip()
+    try:
+        pid = int(raw)
+    except ValueError:
+        logger.debug(
+            "xdotool returned a non-numeric pid %r for X11 window %s", raw, window_id,
+        )
+        return 0
+    return pid if pid > 0 else 0
 
 
 class WindowFocusWatcher:
@@ -684,29 +740,54 @@ class WindowFocusWatcher:
     async def _poll_loop(self) -> None:
         """Call ``_poll_once`` every ``_POSIX_POLL_INTERVAL_S`` until stopped.
 
-        Stops itself after ``_POSIX_POLL_MAX_FAILURES`` consecutive probes
-        that returned no usable window (missing pyobjc/xdotool, or a
-        session that genuinely cannot be queried) instead of polling a
-        dead backend forever. Waits on ``_poll_stop`` rather than a plain
-        sleep so ``stop()`` wakes the loop immediately instead of waiting
-        out the interval.
+        The failure counter is a STARTUP GATE, not a running health check: it
+        only disables the loop while no probe has EVER returned a usable window,
+        which is the signature of a backend that cannot work here (no pyobjc, no
+        xdotool, a ``DISPLAY`` pointing at an X server that is not actually
+        reachable). Once one window has been read, an empty probe is treated as a
+        healthy "nothing is focused right now" observation and the loop keeps
+        going.
+
+        That distinction is the whole point. ``xdotool getactivewindow`` exits
+        non-zero — and the probe therefore reports nothing — whenever no client
+        window holds the X11 input focus: the user is on the desktop or the
+        wallpaper, a window just closed, a lock/screensaver is up, or a
+        pointer-focus WM briefly parked focus on the root window. All of those
+        are ordinary, transient states. Counting them meant 10 s on the desktop
+        permanently killed focus tracking for the rest of the session and blamed
+        a missing xdotool in the log. This is the same conflation of "the backend
+        is broken" with "there is momentarily nothing to report" that
+        ``_poll_once`` already had to unlearn for title-less X11 windows.
+
+        Waits on ``_poll_stop`` rather than a plain sleep so ``stop()`` wakes the
+        loop immediately instead of waiting out the interval.
         """
         consecutive_failures = 0
+        ever_succeeded = False
         while not self._poll_stop.is_set():
             try:
                 ok = await self._poll_once()
             except asyncio.CancelledError:
                 break
+            except Exception:  # noqa: BLE001
+                # Mirrors the Win32 drain loop: one bad iteration must not end
+                # focus tracking for the session. Without this the task died
+                # with an unretrieved exception and no log line at all — the
+                # feature was simply off, silently.
+                logger.debug("POSIX poll iteration failed", exc_info=True)
+                ok = False
 
             if ok:
+                ever_succeeded = True
                 consecutive_failures = 0
-            else:
+            elif not ever_succeeded:
                 consecutive_failures += 1
                 if consecutive_failures >= _POSIX_POLL_MAX_FAILURES:
                     logger.info(
-                        "window-focus polling produced no usable window info "
-                        "for %d consecutive attempts — stopping (missing "
-                        "pyobjc/xdotool, or the session cannot be probed)",
+                        "window-focus polling never produced usable window info "
+                        "(%d attempts) — stopping: no backend that can read the "
+                        "foreground window here (missing pyobjc/xdotool, or the "
+                        "advertised display cannot be queried)",
                         consecutive_failures,
                     )
                     return
@@ -760,8 +841,6 @@ class WindowFocusWatcher:
         if not changed:
             return True
 
-        self._poll_last_handle = win.handle
-        self._poll_last_title = win.title
         try:
             pid, process_name = await asyncio.to_thread(
                 self._resolve_posix_focus_meta, win,
@@ -775,6 +854,17 @@ class WindowFocusWatcher:
             )
         except Exception:  # noqa: BLE001
             logger.debug("POSIX frame emit failed", exc_info=True)
+            return True
+        # Commit the change-detection markers only AFTER the frame published.
+        # Claiming the window as "already reported" before the emit turned any
+        # transient failure in the tail (a raising privacy rule, a bus handler,
+        # a deep probe) into a permanent one: the next tick saw an unchanged
+        # focus and stayed quiet, so ``state.current_frame`` kept describing the
+        # PREVIOUS window until the user happened to switch again. Retrying one
+        # interval later costs nothing and is the same reasoning behind
+        # ``_reset_frame_state``.
+        self._poll_last_handle = win.handle
+        self._poll_last_title = win.title
         return True
 
     @staticmethod
@@ -799,45 +889,41 @@ class WindowFocusWatcher:
 
         Only when the probe carries no pid does this fall back to a live
         query — macOS: ``NSWorkspace``'s frontmost application (needs neither
-        the Screen-Recording nor the Accessibility grant); Linux: ``xdotool``
-        resolves the owning pid from the X11 window id. ``psutil`` resolves
-        the process name from the pid on both. Never raises — a missing
-        pyobjc/xdotool or a transient lookup error degrades to ``(0, "")``;
-        the frame still publishes and title-based privacy filtering still
-        applies.
+        the Screen-Recording nor the Accessibility grant); Linux:
+        :func:`_linux_window_pid` resolves the owning pid from the X11 window id.
+        ``psutil`` resolves the process name from the pid on both. Never raises —
+        a missing pyobjc/xdotool or a transient lookup error degrades to
+        ``(0, "")``; the frame still publishes and title-based privacy filtering
+        still applies.
+
+        A non-positive result is normalised to ``0`` rather than passed on. A
+        negative pid would travel into ``FrameSnapshot.active_pid`` and every
+        consumer's ``pid > 0`` guard as a value that looks resolved but names no
+        process.
         """
         pid = int(win.pid or 0)
         if pid <= 0:
-            try:
-                plat = detect_platform()
-                if plat == "darwin":
+            plat = detect_platform()
+            if plat == "darwin":
+                try:
                     from AppKit import NSWorkspace  # type: ignore[import-not-found] # noqa: PLC0415
 
                     app = NSWorkspace.sharedWorkspace().frontmostApplication()
                     if app is not None:
                         pid = int(app.processIdentifier())
-                elif plat == "linux" and win.handle and shutil.which("xdotool"):
-                    proc = subprocess.run(
-                        ["xdotool", "getwindowpid", str(int(win.handle))],
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        timeout=5,
-                        creationflags=NO_WINDOW_CREATIONFLAGS,
-                    )
-                    if proc.returncode == 0:
-                        pid = int((proc.stdout or "").strip() or "0")
-            except Exception:  # noqa: BLE001
-                logger.debug("POSIX focus pid resolution failed", exc_info=True)
-                pid = 0
+                except Exception:  # noqa: BLE001 — no pyobjc / transient AppKit error
+                    logger.debug("macOS frontmost pid lookup failed", exc_info=True)
+                    pid = 0
+            elif plat == "linux" and win.handle:
+                pid = _linux_window_pid(int(win.handle))
+        if pid <= 0:
+            return 0, ""
 
         process_name = ""
-        if pid > 0:
-            try:
-                import psutil  # noqa: PLC0415
+        try:
+            import psutil  # noqa: PLC0415
 
-                process_name = psutil.Process(pid).name()
-            except Exception:  # noqa: BLE001
-                process_name = ""
+            process_name = psutil.Process(pid).name()
+        except Exception:  # noqa: BLE001
+            process_name = ""
         return pid, process_name
