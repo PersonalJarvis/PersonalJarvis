@@ -47,6 +47,7 @@ KNOWN: frozenset[str] = frozenset(
         "contacts",
         "feedback",
         "agent-instructions",
+        "wallpaper",
         "dictionary",
         "dictation",
         "voice-shortcuts",
@@ -125,6 +126,11 @@ _ALIASES: dict[str, str] = {
     "telefonie einrichten": "telephony-setup",
     "ausgaben": "outputs",
     "output": "outputs",
+    "wallpapers": "wallpaper",
+    "background": "wallpaper",
+    "hintergrund": "wallpaper",  # i18n-allow: input vocab
+    "hintergrundbild": "wallpaper",  # i18n-allow: input vocab
+    "fondo de pantalla": "wallpaper",  # i18n-allow: input vocab
     "task bar": "taskbar",
     "taskleiste": "taskbar",
     "contact": "contacts",
