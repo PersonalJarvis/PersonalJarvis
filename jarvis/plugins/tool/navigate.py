@@ -53,7 +53,14 @@ KNOWN: frozenset[str] = frozenset(
         "voice-shortcuts",
         "voice-language",
         "voice-api-keys",
+        "visualization",
         "agentic-ide",
+        # The other two ids of the coding surface. They resolve to the same
+        # workspace, and they were missing here while being valid SECTION_IDS —
+        # which left the parity guard below red and made "open the terminal
+        # grid" an unknown section to the brain.
+        "agentic-ide-classic",
+        "chat-workspace",
     }
 )
 
@@ -133,6 +140,19 @@ _ALIASES: dict[str, str] = {
     "fondo de pantalla": "wallpaper",  # i18n-allow: input vocab
     "task bar": "taskbar",
     "taskleiste": "taskbar",
+    # The Visualization board. The English id is a mouthful in the other two
+    # locales, so the spoken forms carry more weight here than for a section
+    # whose name is already a common noun.
+    "visualisation": "visualization",
+    "visuals": "visualization",
+    "charts": "visualization",
+    "diagrams": "visualization",
+    "visualisierung": "visualization",  # i18n-allow: input vocab
+    "visualisierungen": "visualization",  # i18n-allow: input vocab
+    "diagramme": "visualization",  # i18n-allow: input vocab
+    "visualización": "visualization",  # i18n-allow: input vocab
+    "visualizaciones": "visualization",  # i18n-allow: input vocab
+    "gráficos": "visualization",  # i18n-allow: input vocab
     "contact": "contacts",
     "kontakt": "contacts",
     "kontakte": "contacts",

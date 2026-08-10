@@ -80,6 +80,7 @@
     "tasks": "Tareas",
     "sessions": "Transcripción",
     "run_inspector": "Run Inspector",
+    "visualization": "Visualización",
     "clis": "CLIs",
     "cli_test_hub": "CLI Test Hub",
     "clis_hub": "CLIs & CLI Test Hub",
@@ -4102,5 +4103,26 @@
     "polished": "pulido",
     "show_original": "Mostrar lo que se dijo realmente",
     "hide_original": "Ocultar el original"
+  },
+  "visualization": {
+    "title": "Visualización",
+    "subtitle": "Las imágenes, los diagramas y las páginas que produjeron tus ejecuciones",
+    "refresh": "Actualizar",
+    "scan_note": "Se revisaron las {0} ejecuciones más recientes; {1} más antiguas, no.",
+    "empty_title": "Todavía no hay nada que mostrar",
+    "empty_body": "Aquí aparecen los gráficos, diagramas, imágenes y páginas HTML que una ejecución guarda como archivo. En las ejecuciones revisadas no había nada visual.",
+    "error_title": "No se pudo leer el archivo de ejecuciones",
+    "error_body": "La lista de ejecuciones no está disponible ahora mismo. Inténtalo de nuevo en un momento.",
+    "render_failed": "Este archivo no se puede mostrar aquí. Ábrelo en el navegador o en el escritorio.",
+    "sandbox_note": "Solo vista previa: los scripts y el contenido externo están bloqueados. Ábrelo en el navegador para ver la página completa.",
+    "zoom_in": "Acercar",
+    "zoom_out": "Alejar",
+    "zoom_fit": "Ajustar",
+    "open_external": "Abrir",
+    "download": "Guardar una copia",
+    "reveal": "Mostrar en la carpeta",
+    "reveal_failed": "No se pudo mostrar el archivo en la carpeta.",
+    "open_from_agent": "Visuales",
+    "open_from_agent_hint": "Muestra las imágenes, diagramas y páginas de las últimas ejecuciones."
   }
 }

@@ -75,6 +75,10 @@ DETACHABLE_VIEWS: dict[str, str] = {
     "voice-shortcuts": "Voice Shortcuts",
     "voice-language": "Dictation Language",
     "voice-api-keys": "Voice Input Keys",
+    # The Visualization board. Detachable for the reason it exists at all: a
+    # picture is something you keep looking at WHILE you carry on working, and
+    # on a second monitor it stops competing with the section that produced it.
+    "visualization": "Visualization",
 }
 META_FILE_PATH = DATA_DIR / ".jarvis-running"
 #: Timeout for the initial lock acquire, in seconds. 0 = non-blocking,

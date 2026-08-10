@@ -77,6 +77,9 @@ export type SectionId =
   | "voice-shortcuts"
   | "voice-language"
   | "voice-api-keys"
+  // The visual stage: the pictures, diagrams and rendered pages a run produced,
+  // shown at full size instead of as a filename in a list.
+  | "visualization"
   | "agentic-ide"
   // The rebuilt chat surface — projects, their chats, one conversation on
   // screen. Lives alongside "agentic-ide" until its parity checklist is empty.
@@ -121,6 +124,7 @@ export const SECTION_IDS = [
   "voice-shortcuts",
   "voice-language",
   "voice-api-keys",
+  "visualization",
   "agentic-ide",
   "chat-workspace",
   "agentic-ide-classic",
@@ -186,6 +190,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   "voice-shortcuts": "Voice Shortcuts",
   "voice-language": "Dictation Language",
   "voice-api-keys": "Voice Input Keys",
+  visualization: "Visualization",
   "agentic-ide": "Agentic IDE",
   "chat-workspace": "Chat",
   "agentic-ide-classic": "Terminal grid",
@@ -274,6 +279,30 @@ export interface CliConnectCoach {
 }
 
 /**
+ * "Put this on the Visualization stage" — one view asking another to show
+ * something.
+ *
+ * The section owns WHICH visual is on its stage; every other surface can only
+ * ask. That direction matters: a component that reached into the section and
+ * set its selection would break the moment the section is not mounted (it is
+ * unmounted whenever another section is on screen), whereas a request simply
+ * waits in the store until the stage reads it.
+ *
+ * `target` is a `visualId(artifact)` — or the string `"latest"` for "whatever
+ * the newest picture is", which is what a caller who has not looked at the
+ * gallery actually means.
+ *
+ * `seq` exists because the same request twice must still work. Asking for
+ * "latest" again after clicking around the gallery has to pull the stage back;
+ * without a counter the store value would be unchanged and the effect that
+ * honours it would never re-run.
+ */
+export interface VisualStageRequest {
+  target: string;
+  seq: number;
+}
+
+/**
  * Whether Jarvis is currently an Agentic IDE, for any surface that must say so.
  *
  * `active` mirrors the backend predicate `agentic_ide.session.coding_mode_active`
@@ -325,6 +354,12 @@ interface EventStore {
    * mounted instance would steal every pane's output stream.
    */
   detachedViews: SectionId[];
+  /**
+   * The pending "show this" request for the Visualization stage, or null when
+   * nobody has asked for anything (the stage then keeps its own selection).
+   * Written by `requestVisual`, read by the section — see VisualStageRequest.
+   */
+  visualStage: VisualStageRequest | null;
   transcription: string;
   transcriptionFinal: boolean;
   toasts: Toast[];
@@ -395,6 +430,13 @@ interface EventStore {
   clearEvents: () => void;
   setActiveSection: (s: SectionId) => void;
   setDetachedViews: (views: SectionId[]) => void;
+  /**
+   * Route a visual into the Visualization section and go there.
+   *
+   * The one entry point for "show me this" from anywhere in the app. Pass a
+   * `visualId(artifact)`, or omit the argument for the newest visual.
+   */
+  requestVisual: (target?: string) => void;
   setTranscription: (text: string, isFinal: boolean) => void;
   pushToast: (
     kind: Toast["kind"],
@@ -470,6 +512,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
     typeof window === "undefined" ? "" : window.location.search,
   ),
   detachedViews: [],
+  visualStage: null,
   transcription: "",
   transcriptionFinal: true,
   toasts: [],
@@ -507,6 +550,16 @@ export const useEventStore = create<EventStore>((set, get) => ({
   clearEvents: () => set({ events: [] }),
   setActiveSection: (s) => set({ activeSection: s }),
   setDetachedViews: (views) => set({ detachedViews: views }),
+
+  requestVisual: (target = "latest") =>
+    set((state) => ({
+      visualStage: { target, seq: (state.visualStage?.seq ?? 0) + 1 },
+      // A solo window is pinned to the one section it was opened for, so the
+      // navigation half of this is skipped there — switching it would blank the
+      // very view the user split off to keep. The request itself still lands,
+      // which is what a detached Visualization window needs.
+      activeSection: state.solo ? state.activeSection : "visualization",
+    })),
 
   setTranscription: (text, isFinal) =>
     set({ transcription: text, transcriptionFinal: isFinal }),

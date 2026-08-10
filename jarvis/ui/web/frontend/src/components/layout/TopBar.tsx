@@ -104,6 +104,7 @@ const DETACHABLE_SECTIONS = new Set<SectionId>([
   "voice-shortcuts",
   "voice-language",
   "voice-api-keys",
+  "visualization",
 ]);
 
 /**

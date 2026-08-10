@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowUp, Bot, CreditCard, FlaskConical, Laptop, Lock, LogIn, LogOut, Sparkles, Terminal, type LucideIcon } from "lucide-react";
+import { ArrowUp, Bot, CreditCard, FlaskConical, Frame, Laptop, Lock, LogIn, LogOut, Sparkles, Terminal, type LucideIcon } from "lucide-react";
 import { agentBrandNow, useAgentBrand } from "@/lib/agentBrand";
 import { PromptWriterCard } from "@/components/PromptWriterCard";
 import { cn } from "@/lib/utils";
@@ -520,10 +520,22 @@ function BridgeMeta({
  * noise and is not surfaced.
  */
 function BridgeStatusStrip({ status }: { status: SubagentStatus }) {
+  const t = useT();
   const activeRow = status.mapping.find((row) => row.is_active_brain);
   const live = Boolean(activeRow?.key_set);
   const worker = PROVIDER_LABELS[status.brain_primary] ?? status.brain_primary;
   const model = status.model_resolved ?? status.sub_model_override ?? null;
+  /*
+   * The one place in this section that talks to another one.
+   *
+   * This strip describes the worker that RUNS; whatever it drew ends up in the
+   * run archive, and until now the only way to that picture was to remember the
+   * filename and go looking for it in Outputs. `requestVisual` hands the stage a
+   * target and moves the app there in a single state update — see
+   * VisualStageRequest in store/events.ts for why the section is asked rather
+   * than reached into.
+   */
+  const requestVisual = useEventStore((s) => s.requestVisual);
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-border bg-card/60 px-4 py-3 backdrop-blur">
@@ -557,6 +569,16 @@ function BridgeStatusStrip({ status }: { status: SubagentStatus }) {
             {status.time_cap_min} min · max {status.concurrency} parallel
           </BridgeMeta>
         )}
+        <button
+          type="button"
+          onClick={() => requestVisual()}
+          data-testid="agent-show-visuals"
+          title={t("visualization.open_from_agent_hint")}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+        >
+          <Frame className="h-3 w-3" aria-hidden />
+          {t("visualization.open_from_agent")}
+        </button>
       </div>
     </div>
   );

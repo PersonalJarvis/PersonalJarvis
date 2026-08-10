@@ -29,6 +29,7 @@ import { installDictationFocusTracker } from "@/lib/dictationTarget";
 import { SubscriptionRealtimeTransportBroker } from "@/components/voice/SubscriptionRealtimeTransportBroker";
 import { useDesktopWallpaper } from "@/hooks/useDesktopWallpaper";
 import { installWallpaperSync } from "@/store/wallpaper";
+import { cn } from "@/lib/utils";
 
 /** Where the collapsed/expanded choice for the nav sidebar is remembered. */
 const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
@@ -57,6 +58,45 @@ function DesktopWallpaper() {
         style={{ backgroundImage: `url(${wallpaperUrl})` }}
       />
       <div className="jarvis-desktop-wallpaper-veil absolute inset-0" />
+    </div>
+  );
+}
+
+/**
+ * The surface the active section is drawn on.
+ *
+ * Two grounds, because the app has two kinds of screen. Everything the app
+ * writes itself sits on the wallpaper and gets the readability floor that comes
+ * with it (`.jarvis-section-stage` in index.css). The Visualization section
+ * shows pictures somebody ELSE produced — a rendered chart, a diagram, a framed
+ * page — and the same floor damages those: an inherited text halo lands on the
+ * labels inside an SVG, and busy artwork behind a transparent PNG makes it
+ * impossible to tell what the picture actually looks like.
+ *
+ * The choice belongs to the shell rather than to the view. The stage is the
+ * surface a section is laid out ON, and it has to hold in BOTH shapes this
+ * component renders: the full window with nav and top bar, and the chrome-less
+ * detached window where the section is the whole screen.
+ *
+ * Exported for its own test: rendering the whole shell to assert one class
+ * would drag in the WebSocket, the wallpaper sync and the onboarding gate.
+ */
+export function SectionStage({
+  visualization,
+  children,
+}: {
+  visualization: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "min-h-0 flex-1",
+        visualization ? "jarvis-visualization-stage" : "jarvis-section-stage",
+      )}
+      data-testid={visualization ? "jarvis-visualization-stage" : "jarvis-section-stage"}
+    >
+      {children}
     </div>
   );
 }
@@ -208,6 +248,11 @@ export default function App() {
     ? activeSection === "chats"
     : !detachedViews.includes("chats");
 
+  // Which ground the section is drawn on — see `SectionStage`. Read here rather
+  // than inside it so both window shapes below get the same answer from one
+  // place.
+  const visualizationActive = activeSection === "visualization";
+
   /*
    * A detached solo window is one section in its own desktop window: the
    * section IS the window, so the app chrome around it — nav, top bar,
@@ -222,9 +267,9 @@ export default function App() {
         <DesktopWallpaper />
         {brokerMounted && <SubscriptionRealtimeTransportBroker />}
         <main className="relative z-10 flex min-w-0 flex-1 flex-col">
-          <div className="jarvis-section-stage min-h-0 flex-1">
+          <SectionStage visualization={visualizationActive}>
             <MainView />
-          </div>
+          </SectionStage>
         </main>
         <ToastLayer />
         <CommandActivityLayer />
@@ -264,9 +309,9 @@ export default function App() {
         <InputIsolationBanner />
         <TopBar />
         <VoiceWarmingBanner />
-        <div className="jarvis-section-stage min-h-0 flex-1">
+        <SectionStage visualization={visualizationActive}>
           <MainView />
-        </div>
+        </SectionStage>
       </main>
 
       <ToastLayer />

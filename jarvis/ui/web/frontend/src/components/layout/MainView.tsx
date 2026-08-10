@@ -151,6 +151,11 @@ const TelephonySetupView = lazyView(() =>
 const WallpaperView = lazyView(() =>
   import("@/views/WallpaperView").then((m) => ({ default: m.WallpaperView })),
 );
+const VisualizationView = lazyView(() =>
+  import("@/views/VisualizationView").then((m) => ({
+    default: m.VisualizationView,
+  })),
+);
 
 type IdleWindow = Window & {
   requestIdleCallback?: (
@@ -423,6 +428,11 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <AgentInstructionsView />;
     case "wallpaper":
       return <WallpaperView />;
+    // The visual stage for what a run produced. Rendered through the same
+    // switch as every other section — the shell only decides what the stage
+    // AROUND it looks like (see App.tsx).
+    case "visualization":
+      return <VisualizationView />;
     // Deliberately nothing: the coding workspace is rendered by the STICKY
     // branch in `MainView` above, which keeps it mounted across section
     // changes. This switch is not rendered at all while one of those ids is

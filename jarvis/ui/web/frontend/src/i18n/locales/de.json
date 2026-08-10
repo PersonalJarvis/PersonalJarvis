@@ -80,6 +80,7 @@
     "tasks": "Aufgaben",
     "sessions": "Transkription",
     "run_inspector": "Run Inspector",
+    "visualization": "Visualisierung",
     "clis": "CLIs",
     "cli_test_hub": "CLI Test Hub",
     "clis_hub": "CLIs & CLI Test Hub",
@@ -4102,5 +4103,26 @@
     "polished": "aufgeräumt",
     "show_original": "Zeigen, was wirklich gesagt wurde",
     "hide_original": "Original ausblenden"
+  },
+  "visualization": {
+    "title": "Visualisierung",
+    "subtitle": "Die Bilder, Diagramme und Seiten aus deinen Durchläufen",
+    "refresh": "Aktualisieren",
+    "scan_note": "Die neuesten {0} Durchläufe durchsucht, {1} ältere nicht.",
+    "empty_title": "Noch nichts zu sehen",
+    "empty_body": "Diagramme, Grafiken, Bilder und HTML-Seiten, die ein Durchlauf als Datei speichert, erscheinen hier. In den durchsuchten Durchläufen war nichts Visuelles dabei.",
+    "error_title": "Das Archiv der Durchläufe ist nicht lesbar",
+    "error_body": "Die Liste der Durchläufe ist gerade nicht verfügbar. Versuch es gleich noch einmal.",
+    "render_failed": "Diese Datei lässt sich hier nicht anzeigen. Öffne sie stattdessen im Browser oder auf dem Desktop.",
+    "sandbox_note": "Nur Vorschau: Skripte und externe Inhalte sind blockiert. Für die vollständige Seite im Browser öffnen.",
+    "zoom_in": "Vergrößern",
+    "zoom_out": "Verkleinern",
+    "zoom_fit": "Einpassen",
+    "open_external": "Öffnen",
+    "download": "Kopie speichern",
+    "reveal": "Im Ordner zeigen",
+    "reveal_failed": "Die Datei konnte nicht im Ordner gezeigt werden.",
+    "open_from_agent": "Visualisierungen",
+    "open_from_agent_hint": "Zeigt die Bilder, Diagramme und Seiten der letzten Läufe an."
   }
 }

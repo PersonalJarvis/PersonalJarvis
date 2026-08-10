@@ -18,6 +18,7 @@ import {
   MessageSquareWarning,
   ScrollText,
   MessagesSquare,
+  Frame,
   Image as ImageIcon,
   Loader2,
   type LucideIcon,
@@ -94,6 +95,15 @@ const NAV_GROUPS: NavItem[][] = [
     { id: "tasks", labelKey: "nav.tasks", icon: ListTodo },
     { id: "sessions", labelKey: "nav.sessions", icon: Mic },
     { id: "run_inspector", labelKey: "nav.run_inspector", icon: Gauge },
+    // The visual stage. Sits with the content group next to Outputs on
+    // purpose: it reads the same run archive, it just shows the pictures in it
+    // instead of listing the files.
+    {
+      id: "visualization",
+      labelKey: "nav.visualization",
+      icon: Frame,
+      fallbackLabel: "Visualization",
+    },
     { id: "board", labelKey: "nav.board", icon: Sparkles },
     { id: "memory", labelKey: "nav.wiki", icon: Notebook },
     { id: "contacts", labelKey: "nav.contacts", icon: Contact },

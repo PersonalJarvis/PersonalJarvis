@@ -561,6 +561,28 @@
       0 0 12px rgb(var(--shell-rgb) / 0.6);
   }
 
+  /*
+   * The visualization viewport — a section stage's opposite number.
+   *
+   * The readability floor above works by putting a text halo on EVERY
+   * descendant, which is right for a screen made of the app's own text and
+   * wrong for one made of somebody else's picture: the halo lands on the labels
+   * inside a rendered SVG chart and on the type of a framed HTML page, where it
+   * reads as a printing error. So this stage takes the opposite deal — no
+   * inherited shadow, and a quiet opaque ground instead of the wallpaper, so a
+   * diagram with a transparent background is judged against one flat colour
+   * rather than against whichever artwork the user picked.
+   *
+   * Chosen by the shell (App.tsx) rather than by the view, for the same reason
+   * the section stage is: it is the surface the section is drawn ON, and a view
+   * that painted its own would keep it in a detached window but lose it the
+   * moment the shell laid something else out around it.
+   */
+  .jarvis-visualization-stage {
+    background: rgb(var(--shell-rgb) / 0.94);
+    text-shadow: none;
+  }
+
   /* Subtle grid pattern in the background — gives a dashboard feel without
      distracting. Drawn in the accent so it reads as the app's own texture;
      slightly stronger on paper, where a 4 % line simply disappears. */

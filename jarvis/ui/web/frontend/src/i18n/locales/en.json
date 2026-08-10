@@ -80,6 +80,7 @@
     "tasks": "Tasks",
     "sessions": "Transcription",
     "run_inspector": "Run Inspector",
+    "visualization": "Visualization",
     "clis": "CLIs",
     "cli_test_hub": "CLI Test Hub",
     "clis_hub": "CLIs & CLI Test Hub",
@@ -4102,5 +4103,26 @@
     "polished": "tidied up",
     "show_original": "Show what was actually said",
     "hide_original": "Hide the original"
+  },
+  "visualization": {
+    "title": "Visualization",
+    "subtitle": "The pictures, diagrams and pages your runs produced",
+    "refresh": "Refresh",
+    "scan_note": "Newest {0} runs scanned, {1} older ones not.",
+    "empty_title": "Nothing to show yet",
+    "empty_body": "Charts, diagrams, images and HTML pages a run saves as a file appear here. Nothing visual was found in the runs that were scanned.",
+    "error_title": "The run archive could not be read",
+    "error_body": "The list of runs is unavailable right now. Try again in a moment.",
+    "render_failed": "This file could not be displayed. Open it in your browser or on the desktop instead.",
+    "sandbox_note": "Preview only: scripts and external content are blocked. Open it in your browser for the full page.",
+    "zoom_in": "Zoom in",
+    "zoom_out": "Zoom out",
+    "zoom_fit": "Fit",
+    "open_external": "Open",
+    "download": "Save a copy",
+    "reveal": "Show in folder",
+    "reveal_failed": "That file could not be shown in the folder.",
+    "open_from_agent": "Visuals",
+    "open_from_agent_hint": "Show the images, diagrams and pages the latest runs produced."
   }
 }

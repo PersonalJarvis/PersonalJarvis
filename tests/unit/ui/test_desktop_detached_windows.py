@@ -389,6 +389,61 @@ def test_detachable_views_have_distinct_titles_per_label() -> None:
         seen[title] = view
 
 
+def test_visualization_view_detaches_and_reattaches(monkeypatch) -> None:
+    """The visual stage is a first-class detachable view.
+
+    It is the section people put on a second monitor — a diagram is something
+    you keep looking at WHILE working in the main window — so it must survive
+    the whole window lifecycle: its own title, a registry entry, the open/close
+    round trip, and the mirrored events that tell every other window about it.
+    """
+    import sys
+
+    app = _app(monkeypatch)
+    created: list[_FakeWindow] = []
+    monkeypatch.setitem(sys.modules, "webview", _fake_webview(created))
+
+    opened = app.open_detached_window("visualization")
+
+    assert opened == {"ok": True, "already_open": False, "view": "visualization"}
+    assert created[0].title == f"{WINDOW_TITLE} — Visualization"
+    assert "?view=visualization&solo=1" in created[0].url
+    assert app.detached_views_snapshot() == ["visualization"]
+    assert app.published == [("visualization", True)]
+
+    assert app.close_detached_window("visualization") == {
+        "ok": True,
+        "view": "visualization",
+    }
+    assert created[0].destroyed is True
+
+    # The window's own X and the reattach route share one deregistration path.
+    app._on_detached_closed("visualization")
+    assert app.detached_views_snapshot() == []
+    assert app.published[-1] == ("visualization", False)
+    # Main is still alive, so the process must not arm the quit flag.
+    assert app._user_requested_quit is False
+
+
+def test_visualization_window_gets_no_broker_token(monkeypatch) -> None:
+    """Only the voice surface may run a realtime broker.
+
+    Two live brokers publish competing WebRTC offers, so the token is injected
+    into the "chats" window and nowhere else. Pinned per detachable view rather
+    than once, because every view added to the registry passes through the same
+    injection hook.
+    """
+    app = _app(monkeypatch)
+    window = _FakeWindow()
+
+    app._inject_into_secondary(window, "visualization")
+
+    js = "".join(window.evaluated)
+    assert "__JARVIS_EMBEDDED_DESKTOP = true" in js
+    assert "__JARVIS_REALTIME_BROKER_TOKEN" not in js
+    assert "jarvis-token-ready" in js
+
+
 # --- routes ------------------------------------------------------------------
 
 
