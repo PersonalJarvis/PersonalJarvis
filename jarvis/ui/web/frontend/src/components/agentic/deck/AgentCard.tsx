@@ -88,7 +88,7 @@ export function AgentCard({
       data-state={state}
       data-expanded={expanded ? "yes" : "no"}
       className={cn(
-        "group relative flex min-w-0 flex-col gap-3 rounded-xl border bg-card/60 p-4",
+        "group relative flex min-h-[13rem] min-w-0 flex-col gap-4 rounded-xl border bg-card/60 p-5",
         "transition-colors",
         RING[state],
         held && "opacity-70",
@@ -97,7 +97,7 @@ export function AgentCard({
       <div className="flex min-w-0 items-center gap-3">
         <span
           className={cn(
-            "relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full",
+            "relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full",
             "border bg-background/60",
             RING[state],
             // The pulse is the ring's, not the mark's: a breathing logo reads
@@ -107,7 +107,7 @@ export function AgentCard({
         >
           {/* Plain, not boxed: the ring around it is already the frame, and a
               tile inside a ring is two borders for one thing. */}
-          <AgentMark agent={agent} label={agentLabel} variant="plain" size="sm" />
+          <AgentMark agent={agent} label={agentLabel} variant="plain" size="md" />
           {reporting && (
             <span
               data-testid={`deck-card-dot-${name}`}
@@ -117,7 +117,23 @@ export function AgentCard({
           )}
         </span>
         <span className="flex min-w-0 flex-col">
-          <span className="truncate text-sm font-medium text-foreground">{name}</span>
+          {/* The pane call-sign is useful, but it must never hide which coding
+              CLI is actually running here. Keeping both in the heading makes
+              a Claude Code pane stay recognisable as Claude Code even when
+              its default call-sign is only T1. */}
+          <span className="flex min-w-0 items-baseline gap-1.5 text-foreground">
+            <span className="truncate text-base font-semibold">{name}</span>
+            <span aria-hidden className="shrink-0 text-muted-foreground/60">
+              ·
+            </span>
+            <span
+              data-testid={`deck-card-agent-label-${name}`}
+              className="truncate text-sm font-medium text-muted-foreground"
+              title={agentLabel}
+            >
+              {agentLabel}
+            </span>
+          </span>
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
             {state === "working" && (
               <Loader2 className="h-3 w-3 shrink-0 animate-spin motion-reduce:animate-none" />
@@ -138,7 +154,7 @@ export function AgentCard({
       */}
       <p
         data-testid={`deck-card-task-${name}`}
-        className="line-clamp-2 min-h-[2.5rem] text-xs leading-relaxed text-muted-foreground"
+        className="line-clamp-3 min-h-[3.75rem] text-sm leading-relaxed text-muted-foreground"
       >
         {task}
       </p>

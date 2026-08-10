@@ -300,6 +300,34 @@ describe("unfolding a terminal", () => {
 });
 
 describe("the cards", () => {
+  it("shows the real coding CLI on cards that otherwise only say T1", () => {
+    const session = sessionWith(["T1", "T2"]);
+    session.terminals[1] = {
+      ...session.terminals[1],
+      agent: "codex",
+      display_name: "Codex",
+    };
+    renderGrid(session);
+    toDeck();
+
+    expect(screen.getByTestId("deck-card-agent-label-T1").textContent).toBe(
+      "Claude Code",
+    );
+    expect(screen.getByTestId("deck-card-agent-label-T2").textContent).toBe(
+      "Codex",
+    );
+  });
+
+  it("gives the terminal cards about one third more room", () => {
+    renderGrid();
+    toDeck();
+
+    expect(screen.getByTestId("deck-cards").className).toContain("max-w-6xl");
+    expect(screen.getByTestId("deck-card-Mika").className).toContain(
+      "min-h-[13rem]",
+    );
+  });
+
   it("read their state off the pane, not out of the deck's head", async () => {
     vi.mocked(api.fetchTerminalActivity).mockResolvedValue({
       workspace_id: "ide_test",

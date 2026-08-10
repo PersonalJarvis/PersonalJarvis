@@ -149,7 +149,7 @@ export function DeckStage({
         ) : (
           <div
             data-testid="deck-cards"
-            className="grid w-full max-w-4xl grid-cols-1 gap-3 pb-4 sm:grid-cols-2 lg:grid-cols-3"
+            className="grid w-full max-w-6xl grid-cols-1 gap-4 pb-4 sm:grid-cols-2 lg:grid-cols-3"
           >
             {agents.map((entry) => (
               <AgentCard
