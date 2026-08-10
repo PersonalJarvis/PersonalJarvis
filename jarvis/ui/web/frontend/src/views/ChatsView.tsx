@@ -210,8 +210,12 @@ function ConversationList({
   return (
     <aside
       style={{ width }}
-      className="flex h-full shrink-0 flex-col bg-card/30"
+      className="relative isolate flex h-full shrink-0 flex-col"
     >
+      <div
+        aria-hidden
+        className="jarvis-panel-surface pointer-events-none absolute inset-0 -z-10 backdrop-blur-md"
+      />
       <div className="flex items-center justify-between border-b border-border px-3 py-3">
         <span className="font-display text-sm font-semibold tracking-tight">
           {t("chats_view.history")}
@@ -283,8 +287,8 @@ function ConversationRow({
         className={cn(
           "flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors",
           active
-            ? "bg-background shadow-[inset_2px_0_0_hsl(var(--primary))]"
-            : "hover:bg-background/60",
+            ? "bg-primary/[0.08] shadow-[inset_2px_0_0_hsl(var(--primary))]"
+            : "hover:bg-card/20",
         )}
       >
         <Icon
@@ -406,7 +410,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
   if (isSystem) {
     return (
-      <div className="mx-auto max-w-[85%] rounded-lg border border-border bg-secondary/40 px-3 py-2 text-center text-xs italic text-muted-foreground">
+      <div className="jarvis-message-surface mx-auto max-w-[85%] rounded-lg border border-border px-3 py-2 text-center text-xs italic text-muted-foreground">
         {message.content}
       </div>
     );
@@ -415,7 +419,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   if (isPreamble) {
     return (
       <div className="flex justify-start">
-        <div className="max-w-[80%] rounded-2xl rounded-bl-sm border border-dashed border-border bg-secondary/30 px-4 py-2.5 text-xs italic leading-relaxed text-muted-foreground">
+        <div className="jarvis-message-surface max-w-[80%] rounded-2xl rounded-bl-sm border border-dashed border-border px-4 py-2.5 text-xs italic leading-relaxed text-muted-foreground">
           <div className="mb-1 flex items-center gap-1.5">
             <span className="rounded-sm border border-border bg-secondary/70 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
               pre-ack
@@ -437,7 +441,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           "max-w-[80%] px-4 py-3 text-sm leading-relaxed",
           isUser
             ? "rounded-2xl rounded-br-sm bg-primary text-primary-foreground"
-            : "rounded-2xl rounded-bl-sm border border-border bg-card text-foreground",
+            : "jarvis-message-surface rounded-2xl rounded-bl-sm border border-border text-foreground",
         )}
       >
         {!isUser && <AssistantLabel />}

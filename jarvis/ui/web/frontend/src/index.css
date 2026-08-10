@@ -480,6 +480,77 @@
       );
   }
 
+  /*
+   * Transparent workspace chrome.
+   *
+   * The wallpaper is the app's ground now, so navigation and section roots no
+   * longer repaint it with an opaque theme colour. Small content surfaces keep
+   * a restrained local veil for contrast; their colour still comes from the
+   * semantic shell channel and therefore follows light/dark mode automatically.
+   */
+  .jarvis-shell-surface {
+    background: linear-gradient(
+      180deg,
+      rgb(var(--shell-rgb) / 0.16),
+      rgb(var(--shell-rgb) / 0.07)
+    );
+  }
+
+  .jarvis-panel-surface {
+    background: rgb(var(--shell-rgb) / 0.1);
+  }
+
+  .jarvis-message-surface {
+    background: linear-gradient(
+      135deg,
+      rgb(var(--shell-rgb) / 0.28),
+      rgb(var(--shell-rgb) / 0.14)
+    );
+    -webkit-backdrop-filter: blur(12px) saturate(1.08);
+    backdrop-filter: blur(12px) saturate(1.08);
+  }
+
+  .jarvis-input-surface {
+    background: rgb(var(--shell-rgb) / 0.16);
+    -webkit-backdrop-filter: blur(14px) saturate(1.08);
+    backdrop-filter: blur(14px) saturate(1.08);
+  }
+
+  :root:not(.dark) .jarvis-shell-surface {
+    background: linear-gradient(
+      180deg,
+      rgb(var(--shell-rgb) / 0.38),
+      rgb(var(--shell-rgb) / 0.18)
+    );
+  }
+
+  :root:not(.dark) .jarvis-panel-surface {
+    background: rgb(var(--shell-rgb) / 0.24);
+  }
+
+  :root:not(.dark) .jarvis-message-surface {
+    background: linear-gradient(
+      135deg,
+      rgb(var(--shell-rgb) / 0.52),
+      rgb(var(--shell-rgb) / 0.3)
+    );
+  }
+
+  :root:not(.dark) .jarvis-input-surface {
+    background: rgb(var(--shell-rgb) / 0.4);
+  }
+
+  /* Section-level grounds disappear everywhere the wallpaper is active. The
+     selectors intentionally stop at page roots and purpose-built stages: cards,
+     dialogs and data tables retain their own hierarchy and remain readable. */
+  .jarvis-section-stage > [class~="bg-background"],
+  .jarvis-section-stage section[class~="bg-background"],
+  .jarvis-section-stage .agents-board-stage,
+  .jarvis-section-stage .uw-stage,
+  .jarvis-section-stage .wiki-space {
+    background-color: transparent;
+  }
+
   /* Subtle grid pattern in the background — gives a dashboard feel without
      distracting. Drawn in the accent so it reads as the app's own texture;
      slightly stronger on paper, where a 4 % line simply disappears. */

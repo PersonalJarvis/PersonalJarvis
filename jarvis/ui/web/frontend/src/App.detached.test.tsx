@@ -78,6 +78,9 @@ describe("App shell around detached coding views", () => {
     render(<App />);
 
     expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
+    expect(
+      screen.getByTestId("main-view").parentElement?.classList.contains("jarvis-section-stage"),
+    ).toBe(true);
   });
 
   it("keeps the sidebar reachable in the main window", () => {
@@ -93,7 +96,7 @@ describe("App shell around detached coding views", () => {
     expect(screen.getByTestId("sidebar-resizer")).toBeTruthy();
   });
 
-  it("still hides the sidebar for an attached coding workspace", () => {
+  it("hides the sidebar but keeps the shared ground for an attached coding workspace", () => {
     useEventStore.setState({
       activeSection: "agentic-ide",
       navRevealed: false,
@@ -103,7 +106,10 @@ describe("App shell around detached coding views", () => {
     render(<App />);
 
     expect(screen.queryByTestId("sidebar")).toBeNull();
-    expect(screen.queryByTestId("jarvis-desktop-wallpaper")).toBeNull();
+    expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
+    expect(
+      screen.getByTestId("main-view").parentElement?.classList.contains("jarvis-section-stage"),
+    ).toBe(true);
   });
 
   it("keeps a detached solo window chrome-free", () => {
@@ -117,6 +123,9 @@ describe("App shell around detached coding views", () => {
 
     expect(screen.queryByTestId("sidebar")).toBeNull();
     expect(screen.queryByTestId("topbar")).toBeNull();
-    expect(screen.queryByTestId("jarvis-desktop-wallpaper")).toBeNull();
+    expect(screen.getByTestId("jarvis-desktop-wallpaper")).toBeTruthy();
+    expect(
+      screen.getByTestId("main-view").parentElement?.classList.contains("jarvis-section-stage"),
+    ).toBe(true);
   });
 });

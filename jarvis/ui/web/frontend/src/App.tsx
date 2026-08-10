@@ -33,24 +33,20 @@ import jarvisDesktopWallpaper from "@/assets/jarvis-desktop-wallpaper.webp";
 const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
 
 /**
- * The sections that open WITHOUT the app's module rail — and without the
- * decorative backdrop behind them.
+ * The sections that open without the app's module rail.
  *
- * These screens are a workspace, not a page of the app: what is on them is the
- * user's own project and a coding agent working in it. A column of twenty
- * section icons beside that is the app talking about itself, and the grid and
- * glow washing over it are decoration competing with content that changes every
- * second. Both step aside here and stay exactly as they are everywhere else.
+ * These screens are focused workspaces, so navigation steps aside. The shared
+ * wallpaper remains the product ground while terminal panes keep the opaque
+ * surfaces their output needs.
  */
 const CODING_SECTIONS = new Set(["agentic-ide", "chat-workspace", "agentic-ide-classic"]);
 
 /**
- * The shared visual ground for every normal app section.
+ * The shared visual ground for every app section.
  *
  * The image and its theme veil are separate layers: the artwork can stay crisp
  * while light and dark mode independently tune contrast through semantic theme
- * channels in index.css. Coding workspaces deliberately omit the layer because
- * terminal output needs a neutral, distraction-free ground.
+ * channels in index.css. Focused workspaces keep their content surfaces on top.
  */
 function DesktopWallpaper() {
   return (
@@ -240,10 +236,10 @@ export default function App() {
   if (solo) {
     return (
       <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
-        {!codingSurface && <DesktopWallpaper />}
+        <DesktopWallpaper />
         {brokerMounted && <SubscriptionRealtimeTransportBroker />}
         <main className="relative z-10 flex min-w-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1">
+          <div className="jarvis-section-stage min-h-0 flex-1">
             <MainView />
           </div>
         </main>
@@ -257,7 +253,7 @@ export default function App() {
   return (
     <div className="relative isolate flex h-screen w-screen overflow-hidden bg-background text-foreground">
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
-      {!codingSurface && <DesktopWallpaper />}
+      <DesktopWallpaper />
 
       {!railHidden && (
         <>
@@ -289,7 +285,7 @@ export default function App() {
         <InputIsolationBanner />
         <TopBar />
         <VoiceWarmingBanner />
-        <div className="min-h-0 flex-1">
+        <div className="jarvis-section-stage min-h-0 flex-1">
           <MainView />
         </div>
       </main>

@@ -369,7 +369,7 @@ export function Sidebar({
       */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10 bg-card/40 backdrop-blur"
+        className="jarvis-shell-surface pointer-events-none absolute inset-0 -z-10 backdrop-blur-md"
       />
       <div className={cn("border-b border-border", railed ? "px-2 py-3" : "px-4 py-4")}>
         <div

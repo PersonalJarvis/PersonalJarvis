@@ -62,7 +62,7 @@ export function TopBar() {
   }
 
   return (
-    <div className="flex h-10 shrink-0 items-center justify-end gap-2 border-b border-border bg-background/70 px-4 backdrop-blur-sm">
+    <div className="jarvis-shell-surface flex h-10 shrink-0 items-center justify-end gap-2 border-b border-border px-4 backdrop-blur-md">
       {/* Status, not an action — carries its own `mr-auto` so it sits at the
           left end of this right-aligned bar and never crowds the buttons. */}
       <CodingModeBadge />

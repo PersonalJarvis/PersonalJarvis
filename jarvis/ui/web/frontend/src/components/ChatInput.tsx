@@ -205,7 +205,7 @@ export function ChatInput() {
           }
           disabled={!connected}
           rows={2}
-          className="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+          className="jarvis-input-surface flex-1 resize-none rounded-md border border-input px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
         />
         <Button
           type="button"
