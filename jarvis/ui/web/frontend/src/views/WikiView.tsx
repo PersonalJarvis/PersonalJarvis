@@ -426,7 +426,7 @@ export function WikiView(): JSX.Element {
             // the more room it has, and leaving the nav rail, the header and
             // two status strips around it was most of why it never looked
             // like anything. Fixed to the viewport, above everything.
-            isGraphExpanded && "fixed inset-0 z-50 bg-background",
+            isGraphExpanded && "fixed inset-0 z-50",
           )}
           data-testid="wiki-workspace"
           data-graph-expanded={isGraphExpanded ? "true" : "false"}
@@ -438,8 +438,8 @@ export function WikiView(): JSX.Element {
             />
           )}
 
-          <section className="flex flex-1 min-w-0 flex-col bg-background">
-            <div className="flex items-stretch border-b border-border bg-card/40">
+          <section className="flex flex-1 min-w-0 flex-col">
+            <div className="flex items-stretch border-b border-border">
               <TabButton
                 active={centreTab === "graph"}
                 onClick={() => setCentreTab("graph")}
@@ -530,7 +530,7 @@ export function WikiView(): JSX.Element {
               <BacklinksPanel slug={selectedSlug} onSelect={handleSelect} />
             ) : (
               <aside
-                className="flex h-full w-[380px] shrink-0 flex-col border-l border-border bg-card/40 p-4"
+                className="flex h-full w-[380px] shrink-0 flex-col border-l border-border p-4"
                 data-testid="wiki-backlinks-placeholder"
               >
                 <div className="rounded-lg border border-border bg-secondary/30 p-4 text-xs text-muted-foreground">
@@ -649,7 +649,7 @@ function WikiHealthStrip({
   if (isLoading) {
     return (
       <div
-        className="flex items-center gap-2 border-b border-border bg-card/30 px-4 py-2 text-xs text-muted-foreground"
+        className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground"
         data-testid="wiki-health-strip"
       >
         <span
@@ -666,7 +666,7 @@ function WikiHealthStrip({
   if (!health) {
     return (
       <div
-        className="flex items-center gap-2 border-b border-border bg-card/30 px-4 py-2 text-xs text-muted-foreground"
+        className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground"
         data-testid="wiki-health-strip"
       >
         <span
@@ -688,7 +688,7 @@ function WikiHealthStrip({
 
   return (
     <div
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-card/30 px-4 py-2 text-xs text-muted-foreground"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-2 text-xs text-muted-foreground"
       data-testid="wiki-health-strip"
     >
       <span
@@ -801,7 +801,7 @@ function WikiCaptureFunnelStrip({
   return (
     <section
       aria-label={t("wiki_health.capture_aria").replace("{0}", String(windowHours))}
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-card/20 px-4 py-1.5 text-[11px]"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-1.5 text-[11px]"
       data-testid="wiki-capture-funnel"
     >
       <span className="font-medium text-foreground">{windowLabel}</span>

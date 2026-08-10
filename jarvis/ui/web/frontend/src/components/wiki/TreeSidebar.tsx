@@ -87,7 +87,7 @@ export function TreeSidebar({ selectedSlug, onSelect }: TreeSidebarProps) {
 
   return (
     <aside
-      className="flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-card/40 overflow-y-auto"
+      className="flex h-full w-[260px] shrink-0 flex-col overflow-y-auto border-r border-border"
       data-testid="wiki-tree-sidebar"
     >
       <div className="flex items-center justify-between border-b border-border px-3 py-3">

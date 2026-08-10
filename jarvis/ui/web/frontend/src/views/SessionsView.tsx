@@ -64,7 +64,7 @@ export function SessionsView() {
       )}
 
       <div className="grid min-h-0 flex-1 grid-cols-[320px_1fr]">
-        <div className="min-h-0 overflow-hidden border-r border-border bg-card/30 backdrop-blur">
+        <div className="min-h-0 overflow-hidden border-r border-border">
           <SessionList
             sessions={sessionsQuery.data ?? []}
             selectedId={selectedId}

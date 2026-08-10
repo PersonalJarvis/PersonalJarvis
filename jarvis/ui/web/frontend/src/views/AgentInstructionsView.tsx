@@ -96,7 +96,7 @@ export function AgentInstructionsView() {
           spellCheck={false}
           rows={18}
           placeholder={t("agent_instructions.placeholder")}
-          className="mt-1 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-xs leading-relaxed focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+          className="jarvis-input-surface mt-1 w-full resize-y rounded-md border border-input px-3 py-2 font-mono text-xs leading-relaxed focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
         />
         <div className="mt-1.5 flex items-center justify-between">
           <span className="font-mono text-[11px] text-muted-foreground">

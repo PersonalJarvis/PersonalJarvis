@@ -626,7 +626,7 @@ export function PluginsView() {
   }, [scrollTarget, visible]);
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="flex h-full flex-col bg-transparent">
       <ViewHeader
         icon={<Blocks className="h-4 w-4 text-primary" />}
         title="Plugins"

@@ -29,7 +29,7 @@ export function BacklinksPanel({ slug, onSelect }: BacklinksPanelProps) {
 
   return (
     <aside
-      className="flex h-full w-[380px] shrink-0 flex-col border-l border-border bg-card/40 overflow-y-auto p-4"
+      className="flex h-full w-[380px] shrink-0 flex-col overflow-y-auto border-l border-border p-4"
       data-testid="wiki-backlinks-panel"
     >
       <BacklinksCard title="Backlinks">

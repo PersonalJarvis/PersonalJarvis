@@ -50,7 +50,7 @@ export function RunDetail({ sessionId }: { sessionId: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="run-detail">
       {/* ── Run header (sticky) ─────────────────────────────────── */}
-      <div className="shrink-0 border-b border-border bg-card/40 px-5 py-4 backdrop-blur">
+      <div className="shrink-0 border-b border-border px-5 py-4">
         <div className="mx-auto flex w-full max-w-5xl items-start justify-between gap-3">
           <div className="min-w-0 space-y-2">
             <div className="flex items-center gap-2">

@@ -251,7 +251,7 @@ export function SessionDetail({ detail, loading, error }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
-      <div className="shrink-0 border-b border-border bg-card/40 px-5 py-4 backdrop-blur">
+      <div className="shrink-0 border-b border-border px-5 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2.5">
