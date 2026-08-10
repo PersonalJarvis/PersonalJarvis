@@ -191,12 +191,18 @@ export function useVoiceMode() {
       await qc.cancelQueries({ queryKey: ["voice-mode"] });
       const prev = qc.getQueryData<VoiceModeResp>(["voice-mode"]);
       if (prev) qc.setQueryData<VoiceModeResp>(["voice-mode"], { ...prev, mode });
-      // Selecting realtime restarts an open call through the full provider
-      // handshake — arm the connecting poll so the status rows follow it, and
-      // ask the offer broker to publish BEFORE the reconnect lands.
+      // Selecting realtime restarts an OPEN call through the full provider
+      // handshake. When idle, this only changes the engine preference: arming
+      // the provider budget there would fabricate a 20-140 s "connecting"
+      // state for a call that does not exist.
       if (mode === "realtime") {
         requestRealtimeTransportOffer();
-        markRealtimeStartPending();
+        const callIsOpen =
+          prev?.session_active === true ||
+          prev?.transitioning === true ||
+          voiceState !== "idle";
+        if (callIsOpen) markRealtimeStartPending();
+        else setStartPendingUntil(0);
       }
       return { prev };
     },
@@ -210,18 +216,31 @@ export function useVoiceMode() {
   // A realtime provider card changes the provider, never `[voice].mode`.
   // Refresh because this response also carries the selected provider/model
   // shown in the runtime status; the engine mode itself remains user-controlled.
-  // A switch also reconnects an open call, so the connecting poll is armed too.
+  // A switch also reconnects an OPEN call, so the connecting poll is armed only
+  // when runtime state proves there is one. The event is also emitted for idle
+  // provider selection and subscription login/logout; those actions refresh
+  // availability but must never impersonate a voice-session handshake.
   // The same event is dispatched when a subscription login connects or
   // disconnects, which is what makes `realtime_available` flip without waiting
   // out the discovery backoff.
   useEffect(() => {
     function onRealtimeSwitched() {
-      markRealtimeStartPending();
+      const cached = qc.getQueryData<VoiceModeResp>(["voice-mode"]);
+      const callIsOpen =
+        cached?.session_active === true ||
+        cached?.transitioning === true ||
+        voiceState !== "idle";
+      if (callIsOpen) {
+        markRealtimeStartPending();
+        return;
+      }
+      setStartPendingUntil(0);
+      void qc.invalidateQueries({ queryKey: ["voice-mode"] });
     }
     window.addEventListener("jarvis:realtime-switched", onRealtimeSwitched);
     return () =>
       window.removeEventListener("jarvis:realtime-switched", onRealtimeSwitched);
-  }, [markRealtimeStartPending]);
+  }, [markRealtimeStartPending, qc, voiceState]);
 
   useEffect(() => {
     function onTransportIssue(event: Event) {
