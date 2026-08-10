@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useEventStore } from "@/store/events";
 import {
   Blocks,
@@ -121,6 +126,45 @@ interface CatalogResponse {
   plugins: CatalogPlugin[];
   total: number;
   connected: number;
+}
+
+/** Publish the status that a connect/disconnect endpoint has already committed.
+ *
+ * OAuth completion used to only invalidate the catalog query. That leaves the
+ * old card visible while an embedded WebView waits for the follow-up request,
+ * so a successful Gmail login can still look disconnected long enough for the
+ * user to start a second login. Update the canonical query cache immediately,
+ * then let a background refetch reconcile the remaining runtime metadata.
+ */
+function cachePluginStatus(
+  queryClient: QueryClient,
+  pluginId: string,
+  status: PluginStatus,
+): void {
+  queryClient.setQueryData<CatalogResponse>(
+    ["marketplace-plugins"],
+    (catalog) => {
+      if (!catalog) return catalog;
+      let found = false;
+      const plugins = catalog.plugins.map((plugin) => {
+        if (plugin.id !== pluginId) return plugin;
+        found = true;
+        return {
+          ...plugin,
+          status,
+          reauth_reason: null,
+          reauth_at: null,
+          ...(status === "not_connected" ? { live_callable: false } : {}),
+        };
+      });
+      if (!found) return catalog;
+      return {
+        ...catalog,
+        plugins,
+        connected: plugins.filter((plugin) => plugin.status === "connected").length,
+      };
+    },
+  );
 }
 
 interface PatPasteAuthDetail {
@@ -357,6 +401,11 @@ export function PluginsView() {
     refetchInterval: 30_000,
   });
 
+  const publishPluginStatus = (pluginId: string, status: PluginStatus) => {
+    cachePluginStatus(qc, pluginId, status);
+    void qc.refetchQueries({ queryKey: ["marketplace-plugins"] });
+  };
+
   const connectMutation = useMutation({
     mutationFn: async ({
       pluginId,
@@ -387,8 +436,8 @@ export function PluginsView() {
       }
       return res.json();
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["marketplace-plugins"] });
+    onSuccess: (_result, variables) => {
+      publishPluginStatus(variables.pluginId, "connected");
       setConnectingPlugin(null);
     },
   });
@@ -399,8 +448,8 @@ export function PluginsView() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["marketplace-plugins"] });
+    onSuccess: (_result, pluginId) => {
+      publishPluginStatus(pluginId, "not_connected");
       setDisconnectingPlugin(null);
     },
   });
@@ -764,7 +813,6 @@ export function PluginsView() {
           }}
           onSuccess={() => {
             setOauthSession(null);
-            qc.invalidateQueries({ queryKey: ["marketplace-plugins"] });
           }}
         />
       )}
@@ -784,7 +832,6 @@ export function PluginsView() {
           }}
           onSuccess={() => {
             setDeviceSession(null);
-            qc.invalidateQueries({ queryKey: ["marketplace-plugins"] });
           }}
         />
       )}
@@ -1669,6 +1716,29 @@ function CopyableUrl({ url, hint }: { url: string; hint?: string }) {
   );
 }
 
+function usePublishConnectedPlugin(
+  pluginId: string,
+  state: "pending" | "connected" | "error" | undefined,
+  onSuccess: () => void,
+): void {
+  const qc = useQueryClient();
+  const onSuccessRef = useRef(onSuccess);
+
+  useEffect(() => {
+    onSuccessRef.current = onSuccess;
+  }, [onSuccess]);
+
+  useEffect(() => {
+    if (state !== "connected") return;
+    cachePluginStatus(qc, pluginId, "connected");
+    void qc.refetchQueries({ queryKey: ["marketplace-plugins"] });
+    // Keep the success tick visible briefly, while the card behind the dialog
+    // has already changed to Connected.
+    const timer = window.setTimeout(() => onSuccessRef.current(), 800);
+    return () => window.clearTimeout(timer);
+  }, [pluginId, qc, state]);
+}
+
 function OAuthRedirectDialog({
   flowId,
   pluginId,
@@ -1708,14 +1778,7 @@ function OAuthRedirectDialog({
     refetchIntervalInBackground: true,
   });
 
-  // Auto-close on success after a short pause so the user sees the
-  // "Connected" tick.
-  useEffect(() => {
-    if (poll.data?.state === "connected") {
-      const t = window.setTimeout(onSuccess, 800);
-      return () => window.clearTimeout(t);
-    }
-  }, [poll.data?.state, onSuccess]);
+  usePublishConnectedPlugin(pluginId, poll.data?.state, onSuccess);
 
   const state = poll.data?.state ?? "pending";
   const errorMessage =
@@ -1880,12 +1943,7 @@ function DeviceCodeDialog({
     refetchIntervalInBackground: true,
   });
 
-  useEffect(() => {
-    if (poll.data?.state === "connected") {
-      const t = window.setTimeout(onSuccess, 800);
-      return () => window.clearTimeout(t);
-    }
-  }, [poll.data?.state, onSuccess]);
+  usePublishConnectedPlugin(pluginId, poll.data?.state, onSuccess);
 
   const copyCode = async () => {
     if (await robustCopy(userCode)) {

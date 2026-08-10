@@ -349,6 +349,87 @@ describe("PluginsView opens the PKCE pre-connect dialog", () => {
   });
 });
 
+describe("PluginsView publishes OAuth success immediately", () => {
+  it("shows Gmail as connected while the catalog revalidation is still pending", async () => {
+    let catalogReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/marketplace/plugins") {
+        catalogReads += 1;
+        if (catalogReads > 1) {
+          return new Promise<Response>(() => {});
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            version: 1,
+            schema_version: "t",
+            total: 1,
+            connected: 0,
+            plugins: [
+              {
+                id: "gmail",
+                display_name: "Gmail",
+                description: "Mail",
+                category: "Communication",
+                logo_slug: "gmail",
+                auth: { mode: "oauth_pkce_loopback" },
+                status: "not_connected",
+                live_callable: false,
+                oauth_client_configured: true,
+              },
+            ],
+          }),
+        } as Response;
+      }
+      if (url.endsWith("/connect/start")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            flow_id: "gmail-flow",
+            plugin_id: "gmail",
+            kind: "browser_redirect",
+            open_url: "https://accounts.example.test/authorize",
+            expires_at_ms: null,
+          }),
+        } as Response;
+      }
+      if (url === "/api/settings/open-external") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ opened: true }),
+        } as Response;
+      }
+      if (url.endsWith("/connect/poll/gmail-flow")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ state: "connected", plugin_id: "gmail" }),
+        } as Response;
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+
+    renderPluginsView();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Connect plugin" })).toBeDefined(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Connect plugin" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^continue$/i }));
+
+    await screen.findByText("Gmail connected");
+    expect(
+      screen.getByRole("button", { name: "Disconnect plugin" }),
+    ).toBeDefined();
+    expect(catalogReads).toBeGreaterThan(1);
+  });
+});
+
 describe("PluginsView keeps revoked plugins visible", () => {
   it("shows a needs_reauth plugin under Installed with a Reconnect-needed badge", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
