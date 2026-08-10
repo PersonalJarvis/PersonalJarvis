@@ -444,22 +444,19 @@ async def test_closing_a_workspace_stops_only_its_own_agents(
     assert registry.active_id == first.id, "the survivor takes the front"
 
 
-async def test_the_workspace_cap_is_refused_in_plain_language(
+async def test_more_than_the_former_workspace_cap_can_be_opened(
     registry: Registry, tmp_path: Path
 ) -> None:
-    for index in range(session_mod.MAX_WORKSPACES):
+    for index in range(16):
         folder = tmp_path / f"ws{index}"
         folder.mkdir()
         await _open(registry, folder, [{"agent": "claude"}])
 
-    one_too_many = tmp_path / "overflow"
-    one_too_many.mkdir()
-    with pytest.raises(SessionError, match="already open"):
-        await _open(registry, one_too_many, [{"agent": "claude"}])
+    assert len(registry.sessions) == 16
 
 
-def test_workspace_capacity_is_larger_than_the_original_six_tabs() -> None:
-    assert session_mod.MAX_WORKSPACES == 12
+def test_workspace_count_has_no_hard_limit() -> None:
+    assert session_mod.MAX_WORKSPACES is None
 
 
 # --------------------------------------------------------------------- attach

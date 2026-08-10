@@ -467,7 +467,7 @@ class WorkspaceCard(BaseModel):
 class WorkspacesResponse(BaseModel):
     workspaces: list[WorkspaceCard]
     active_id: str | None = None
-    max_workspaces: int
+    max_workspaces: int | None
 
 
 class SpawnGroupRequest(BaseModel):
@@ -1861,8 +1861,8 @@ async def resume_workspace(request: Request) -> dict:
     nothing until their panes are looked at.
 
     ``409`` when there is nothing to resume, ``422`` when nothing could be
-    reopened at all. A workspace that individually could not come back (folder
-    deleted, workspace limit reached) does not fail the request: it is reported
+    reopened at all. A workspace that individually could not come back (for
+    example, its folder was deleted) does not fail the request: it is reported
     in ``skipped`` so the caller can say which ones are missing.
     """
     registry = get_registry()
@@ -2326,7 +2326,7 @@ async def add_terminals(request: Request, req: AddTerminalsRequest) -> dict:
     The batch behind a spoken "open five more Claude Code terminals", and the
     same call the CLI makes. Placement, call-signs and the agent default are the
     single-terminal endpoint's — this only repeats it and reports honestly when
-    the workspace cap cut the request short.
+    the pane cap within that workspace cut the request short.
 
     ``capped`` is true when fewer panes were opened than asked for. A client MUST
     surface that: five requested with three opened is not a plain success.

@@ -18,7 +18,11 @@ function card(index: number): WorkspaceCard {
   };
 }
 
-function renderBar(count: number, maxWorkspaces = 12, embedded = false) {
+function renderBar(
+  count: number,
+  maxWorkspaces: number | null = null,
+  embedded = false,
+) {
   return render(
     <WorkspaceBar
       workspaces={Array.from({ length: count }, (_, index) => card(index + 1))}
@@ -52,6 +56,17 @@ describe("WorkspaceBar density", () => {
     bounds.mockRestore();
   });
 
+  it("does not treat an unmeasurable zero-width mount as a narrow window", () => {
+    const bounds = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockReturnValue({ width: 0 } as DOMRect);
+    renderBar(2);
+
+    expect(screen.getByTestId("workspace-bar").dataset.density).toBe("full");
+    expect(screen.getByText("Workspace 2").className).not.toContain("sr-only");
+    bounds.mockRestore();
+  });
+
   it("compacts additional workspaces to folder icons and ordinal numbers", () => {
     const bounds = vi
       .spyOn(HTMLElement.prototype, "getBoundingClientRect")
@@ -72,11 +87,19 @@ describe("WorkspaceBar density", () => {
     bounds.mockRestore();
   });
 
-  it("renders all twelve workspaces and only then reaches the cap", () => {
-    renderBar(12);
+  it("renders beyond the former cap and keeps adding available", () => {
+    renderBar(15);
 
-    expect(screen.getAllByRole("tab")).toHaveLength(13);
-    expect(screen.getByTestId("workspace-ordinal-w12").textContent).toBe("12");
+    expect(screen.getAllByRole("tab")).toHaveLength(16);
+    expect(screen.getByTestId("workspace-ordinal-w15").textContent).toBe("15");
+    expect((screen.getByTestId("workspace-add") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("still honours a finite cap from an older backend", () => {
+    renderBar(12, 12);
+
     expect((screen.getByTestId("workspace-add") as HTMLButtonElement).disabled).toBe(
       true,
     );

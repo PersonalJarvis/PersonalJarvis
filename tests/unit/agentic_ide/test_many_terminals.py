@@ -1,10 +1,10 @@
 """What holds — and what does not — once a workspace has far more than 12 panes.
 
-The cap was 12 and is now 100 per workspace, with up to 12 workspaces. Twelve
-panes was small enough that several things could get away with being O(n) in
-disguise or quietly bounded; a hundred is not. These tests pin the parts that
-must scale and name the ones that are deliberately bounded, so raising the cap
-again is a measurement rather than a hope.
+The pane cap was 12 and is now 100 per workspace, while workspace count itself
+is unrestricted. Twelve panes was small enough that several things could get
+away with being O(n) in disguise or quietly bounded; a hundred is not. These
+tests pin the parts that must scale and name the ones that are deliberately
+bounded, so raising the pane cap again is a measurement rather than a hope.
 """
 
 from __future__ import annotations
@@ -28,17 +28,16 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> ide.Registry:
 
 
 # ----------------------------------------------------------------- call-signs
-def test_the_call_sign_pool_covers_a_full_house() -> None:
-    """Every pane in every workspace needs its own speakable name.
+def test_the_call_sign_pool_covers_one_full_workspace() -> None:
+    """Every pane in one workspace needs its own speakable name.
 
-    Names are how a pane is addressed by voice, so two panes sharing one would
-    make an instruction ambiguous. The pool has to cover the absolute worst case
-    — every workspace full — not the common one.
+    Names are scoped to the front workspace, so other tabs may reuse them
+    without ambiguity. The pool therefore only has to cover the per-workspace
+    pane ceiling, regardless of how many workspaces are open.
     """
-    worst_case = ide.MAX_TERMINALS * ide.MAX_WORKSPACES
-    pool = default_names(worst_case)
-    assert len(pool) == worst_case
-    assert len(set(pool)) == worst_case, "a repeated call-sign is an ambiguous order"
+    pool = default_names(ide.MAX_TERMINALS)
+    assert len(pool) == ide.MAX_TERMINALS
+    assert len(set(pool)) == ide.MAX_TERMINALS, "a repeated call-sign is ambiguous"
 
 
 async def test_opening_a_hundred_panes_gives_each_a_distinct_name(
@@ -191,7 +190,8 @@ async def test_a_full_house_across_every_workspace_round_trips(
     the whole point of numbering them.
     """
     folders = []
-    for index in range(ide.MAX_WORKSPACES):
+    workspace_count = 16
+    for index in range(workspace_count):
         folder = tmp_path / f"repo{index}"
         folder.mkdir()
         folders.append(folder)
@@ -201,8 +201,8 @@ async def test_a_full_house_across_every_workspace_round_trips(
 
     loaded = resume_store.load()
     assert loaded is not None
-    assert len(loaded.workspaces) == ide.MAX_WORKSPACES
-    assert loaded.terminal_count == 20 * ide.MAX_WORKSPACES
+    assert len(loaded.workspaces) == workspace_count
+    assert loaded.terminal_count == 20 * workspace_count
     for workspace in loaded.workspaces:
         names = [t.name for t in workspace.terminals]
         assert names == default_names(20), "each workspace numbers its own panes"

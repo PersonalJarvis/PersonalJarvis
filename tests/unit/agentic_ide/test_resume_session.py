@@ -658,7 +658,7 @@ async def test_reopening_the_same_folder_replaces_its_own_record(
     assert [len(w.terminals) for w in saved.workspaces] == [1]
 
 
-async def test_the_remembered_list_stays_bounded(
+async def test_the_closed_workspace_history_stays_bounded(
     registry: ide.Registry, tmp_path: Path
 ) -> None:
     """A restore point is a screen, not an archive."""
@@ -670,10 +670,26 @@ async def test_the_remembered_list_stays_bounded(
 
     saved = resume_store.load()
     assert saved is not None
-    assert len(saved.workspaces) == resume_store.MAX_REMEMBERED_WORKSPACES
-    # The newest survive; the oldest fall off.
+    # The last live snapshot is retained alongside the bounded older history.
+    assert len(saved.workspaces) == resume_store.MAX_REMEMBERED_WORKSPACES + 1
+    # The newest survive; the oldest history falls off.
     assert any("repo13" in w.folder for w in saved.workspaces)
     assert not any(w.folder.endswith("repo0") for w in saved.workspaces)
+
+
+async def test_open_workspaces_are_never_trimmed_by_the_history_budget(
+    registry: ide.Registry, tmp_path: Path
+) -> None:
+    """The closed-folder archive cap must not become an open-workspace cap."""
+    count = resume_store.MAX_REMEMBERED_WORKSPACES + 4
+    for index in range(count):
+        folder = tmp_path / f"open{index}"
+        folder.mkdir()
+        await registry.start(str(folder), [{"agent": "claude"}])
+
+    saved = resume_store.load()
+    assert saved is not None
+    assert len(saved.workspaces) == count
 
 
 async def test_only_starting_fresh_discards_the_restore_point(

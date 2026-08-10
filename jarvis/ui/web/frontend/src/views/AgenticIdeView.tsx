@@ -142,7 +142,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // Every open workspace, for the bar above. The one on screen is `session`;
   // these are the others, still running, one click away.
   const [workspaces, setWorkspaces] = useState<WorkspaceCard[]>([]);
-  const [maxWorkspaces, setMaxWorkspaces] = useState(6);
+  const [maxWorkspaces, setMaxWorkspaces] = useState<number | null>(6);
   // Which subscription new terminals open on, per coding CLI. Carried on the
   // workspace state rather than fetched separately, so the toolbar and the
   // panes can never disagree about which plan the next one will spend.
@@ -201,7 +201,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       const state = await fetchIdeState();
       setSession(state.session);
       setWorkspaces(state.workspaces ?? []);
-      setMaxWorkspaces(state.max_workspaces ?? 6);
+      setMaxWorkspaces(
+        state.max_workspaces === undefined ? 6 : state.max_workspaces,
+      );
       setIdeAccounts(state.accounts ?? []);
       setFocus(Boolean(state.session?.focus_mode));
       // The backend is the authority on whether a workspace is on screen. It
@@ -239,7 +241,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const applyState = useCallback((state: IdeState) => {
     setSession(state.session);
     setWorkspaces(state.workspaces ?? []);
-    setMaxWorkspaces(state.max_workspaces ?? 6);
+    setMaxWorkspaces(
+      state.max_workspaces === undefined ? 6 : state.max_workspaces,
+    );
     setFocus(Boolean(state.session?.focus_mode));
     // Absent on a backend that predates the switcher — keeping what we had
     // beats blanking the toolbar over a field that simply was not sent.

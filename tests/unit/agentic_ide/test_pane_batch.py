@@ -3,8 +3,8 @@
 Deliberately layout-agnostic: placement is ``add_terminal``'s job and is pinned
 by its own tests. What matters here is the part a spoken request depends on —
 how many panes appear, which agent they run, and whether the caller is told the
-truth when the workspace cap cuts the request short. A batch that silently
-opened three of five would report success for work that did not happen.
+truth when the pane cap within a workspace cuts the request short. A batch that
+silently opened three of five would report success for work that did not happen.
 """
 from __future__ import annotations
 

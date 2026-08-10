@@ -66,7 +66,8 @@ interface WorkspaceBarProps {
   activeId: string | null;
   /** True while the wizard is open for an ADDITIONAL workspace. */
   addingNew: boolean;
-  maxWorkspaces: number;
+  /** A legacy/backend safety cap, or null when workspace count is unrestricted. */
+  maxWorkspaces: number | null;
   onSelect: (id: string) => void;
   onAdd: () => void;
   onRename: (id: string, name: string) => Promise<boolean>;
@@ -124,7 +125,7 @@ export function WorkspaceBar({
     addingNew ? ADD_TAB_FOCUS_ID : (activeId ?? workspaces[0]?.id ?? ADD_TAB_FOCUS_ID),
   );
   const workspaceIdKey = workspaces.map((workspace) => workspace.id).join("\u0000");
-  const full = workspaces.length >= maxWorkspaces;
+  const full = maxWorkspaces !== null && workspaces.length >= maxWorkspaces;
 
   // A drag that ends anywhere else owes this bar no `dragleave`, and a tab left
   // highlighted over a workspace nobody dropped on is a lie about what will
@@ -210,7 +211,9 @@ export function WorkspaceBar({
     const bar = barRef.current;
     if (!hasTabs || !bar) return;
     const update = (width: number) => {
-      if (width >= 0 && Number.isFinite(width)) setBarWidth(width);
+      // A hidden element and jsdom both report zero. That is not usable layout
+      // information; keep the count-based tier until the observer sees width.
+      if (width > 0 && Number.isFinite(width)) setBarWidth(width);
     };
     update(bar.getBoundingClientRect().width);
     if (typeof ResizeObserver === "undefined") return;
@@ -247,7 +250,7 @@ export function WorkspaceBar({
   const compact = density !== "full";
   const ordinalOnly = density === "ordinal";
 
-  /** Standard roving focus for a tablist with up to thirteen focus targets. */
+  /** Standard roving focus across every available tab and the Add control. */
   const moveTabFocus = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     const tabs = Array.from(
@@ -551,7 +554,7 @@ export function WorkspaceBar({
         disabled={busy || full}
         data-testid="workspace-add"
         title={
-          full
+          full && maxWorkspaces !== null
             ? `${maxWorkspaces} workspaces are already open — close one first.`
             : "Open another folder in its own workspace"
         }

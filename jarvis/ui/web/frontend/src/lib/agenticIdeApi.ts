@@ -353,7 +353,8 @@ export interface IdeState {
   workspaces: WorkspaceCard[];
   /** The one on screen, or null while the wizard is showing. */
   active_id: string | null;
-  max_workspaces: number;
+  /** Null means the backend leaves workspace count to the machine and user. */
+  max_workspaces?: number | null;
   /** The active subscription per coding CLI. Absent on an older backend. */
   accounts?: IdeAccountState[];
 }
@@ -918,7 +919,7 @@ export async function endIdeSession(): Promise<void> {
 export interface WorkspacesResponse {
   workspaces: WorkspaceCard[];
   active_id: string | null;
-  max_workspaces: number;
+  max_workspaces: number | null;
 }
 
 /** Every open workspace, in tab order, with the front one marked. */

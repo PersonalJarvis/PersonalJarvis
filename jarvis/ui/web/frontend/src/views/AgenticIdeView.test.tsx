@@ -1157,4 +1157,17 @@ describe("AgenticIdeView — the workspace bar", () => {
     )) as HTMLButtonElement;
     expect(add.disabled).toBe(true);
   });
+
+  it("keeps adding available when the backend has no workspace cap", async () => {
+    vi.mocked(api.fetchIdeState).mockResolvedValue({
+      ...twoWorkspaces(),
+      max_workspaces: null,
+    });
+    render(<AgenticIdeView />);
+
+    const add = (await screen.findByTestId(
+      "workspace-add",
+    )) as HTMLButtonElement;
+    expect(add.disabled).toBe(false);
+  });
 });

@@ -371,9 +371,9 @@ def save(snapshot: Snapshot) -> None:
                 pass
 
 
-# How many workspaces one restore point may remember. Above the number that can
-# be open at once, so folders you closed earlier survive alongside what is open
-# now — and bounded, so the offer stays a screen rather than an archive.
+# How many CLOSED workspaces one restore point may remember in addition to all
+# currently open ones. The history stays a screen rather than an archive, but
+# this must never trim a live workspace merely because the user opened many.
 MAX_REMEMBERED_WORKSPACES = 20
 
 
@@ -412,7 +412,7 @@ def _merged_with_stored(snapshot: Snapshot) -> Snapshot:
     # Folders remembered from earlier follow, most recently used first, and the
     # trim falls on the oldest of those rather than on anything open now.
     kept.sort(key=lambda w: w.saved_at, reverse=True)
-    merged = [*stamped, *kept][:MAX_REMEMBERED_WORKSPACES]
+    merged = [*stamped, *kept[:MAX_REMEMBERED_WORKSPACES]]
     return Snapshot(
         saved_at=snapshot.saved_at,
         workspaces=merged,

@@ -261,11 +261,11 @@ MOVE_POSITIONS = ("swap", "left", "right", "above", "below")
 # paste delivers the whole block in one write, so length costs nothing here —
 # the real limit is the pane's readability, not the channel.
 MAX_PROMPT_CHARS = 6000
-# How many workspaces may be open at once. Not a technical ceiling — a real one
-# costs a folder's worth of running coding agents, so the cap exists to keep an
-# accidental click from spawning them. The workspace bar compacts crowded tabs
-# into numbered folder icons, which keeps this larger set on one visible row.
-MAX_WORKSPACES = 12
+# There is deliberately no hard limit on open workspaces. Each one carries real
+# processes once its panes attach, so the practical ceiling is the machine's
+# capacity and remains the user's decision. ``None`` keeps the public state
+# field backward-compatible with clients that used to receive an integer cap.
+MAX_WORKSPACES: int | None = None
 # How long to wait for the pane to SHOW the prompt before pressing Enter, and
 # how finely to look. This replaced a fixed 120 ms delay: the wait is not really
 # about debouncing, it is about the pane having taken the text at all. A pane
@@ -1416,8 +1416,8 @@ class Session:
 class RestoreResult:
     """What taking a restore point actually brought back.
 
-    ``skipped`` carries a reason per workspace that could not come back (folder
-    deleted, workspace limit reached). Reported rather than swallowed: a resume
+    ``skipped`` carries a reason per workspace that could not come back (for
+    example, its folder was deleted). Reported rather than swallowed: a resume
     that quietly returns three of five workspaces looks like a bug to the person
     who had five.
     """
@@ -1758,12 +1758,6 @@ class Registry:
             except OSError as exc:
                 raise SessionError(f"Cannot open {root}: {exc}") from exc
 
-            if len(self._sessions) >= MAX_WORKSPACES:
-                raise SessionError(
-                    f"{MAX_WORKSPACES} workspaces are already open — close one "
-                    "before opening another."
-                )
-
             unknown = {
                 str(r.get("agent")) for r in requested if not is_runnable(str(r.get("agent")))
             }
@@ -1945,8 +1939,8 @@ class Registry:
         workspace that is on screen right now.
 
         A workspace that cannot come back does not stop the others: a deleted
-        folder is reported, and the workspace limit stops the rest with a
-        reason. What could not be restored comes back in ``skipped`` so the
+        folder is reported with a reason. What could not be restored comes back
+        in ``skipped`` so the
         caller can say so out loud instead of quietly returning less than it
         promised. A folder that is already open in a workspace opened by hand is
         NOT one of those cases — two workspaces may share a folder deliberately,
@@ -2054,11 +2048,6 @@ class Registry:
                 )
         except OSError as exc:
             raise SessionError(f"Cannot open {root}: {exc}") from exc
-
-        if len(self._sessions) >= MAX_WORKSPACES:
-            raise SessionError(
-                f"{MAX_WORKSPACES} workspaces are already open — close one before reopening this."
-            )
 
         terminals = [
             Terminal(
@@ -3759,7 +3748,7 @@ class Registry:
     ) -> tuple[list[Terminal], bool]:
         """Open up to ``count`` more panes — the batch behind "open five more".
 
-        Returns the panes that were created and whether the workspace cap
+        Returns the panes that were created and whether the pane cap
         truncated the request, because those are two different answers the caller
         has to speak out loud: five requested with three opened is a success the
         user must hear ("room for three"), not a silent partial.

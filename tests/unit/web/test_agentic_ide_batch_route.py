@@ -1,6 +1,6 @@
 """The batch endpoint behind "open five more terminals".
 
-Two things it must never do: report a full success when the workspace cap cut
+Two things it must never do: report a full success when the pane cap cut
 the request short, and leave connected clients staring at a stale grid. The
 second one is why the route publishes an event at all — the workspace view
 fetches its state once when it mounts, so panes it did not create itself are
