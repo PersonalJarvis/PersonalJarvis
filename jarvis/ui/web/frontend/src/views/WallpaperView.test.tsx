@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ThemeProvider } from "@/hooks/useTheme";
 import { WallpaperView } from "@/views/WallpaperView";
 import { useWallpaperStore } from "@/store/wallpaper";
 
@@ -52,11 +53,20 @@ function renderView(catalog: unknown = CATALOG) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  // A real ThemeProvider, not a stub: applying a wallpaper is supposed to move
+  // the theme, and the assertion for that is the class on <html>.
   return render(
     <QueryClientProvider client={client}>
-      <WallpaperView />
+      <ThemeProvider>
+        <WallpaperView />
+      </ThemeProvider>
     </QueryClientProvider>,
   );
+}
+
+/** True while the app is painted dark. */
+function isDark(): boolean {
+  return document.documentElement.classList.contains("dark");
 }
 
 /** Every `<img>` the grid and preview have actually asked the browser for. */
@@ -69,6 +79,7 @@ function requestedSources(): string[] {
 beforeEach(() => {
   window.localStorage.clear();
   useWallpaperStore.setState({ selectedId: null });
+  document.documentElement.classList.add("dark");
 });
 
 afterEach(() => {
@@ -81,11 +92,57 @@ describe("WallpaperView", () => {
     renderView();
 
     await screen.findByAltText("Flooded Observatory");
-    const sources = requestedSources();
+    // The bundled original rides along as a fourth tile, served from the app
+    // bundle rather than from /api/wallpapers.
+    const sources = requestedSources().filter((src) => src.includes("/api/"));
 
     expect(sources).toHaveLength(3);
     expect(sources.every((src) => src.endsWith("/thumb"))).toBe(true);
     expect(sources.some((src) => src.endsWith("/full"))).toBe(false);
+  });
+
+  it("pins the original to the very first tile", async () => {
+    renderView();
+
+    await screen.findByAltText("Flooded Observatory");
+    const tiles = [...document.querySelectorAll('[data-testid="wallpaper-grid"] img')];
+
+    expect(tiles).toHaveLength(4);
+    expect(tiles[0].getAttribute("alt")).toBe("The Original");
+    expect(tiles[0].getAttribute("src")).not.toContain("/api/");
+  });
+
+  it("keeps the original first when sorting by style", async () => {
+    renderView();
+
+    fireEvent.click(await screen.findByRole("button", { name: "By style" }));
+
+    await waitFor(() => {
+      const first = document.querySelector('[data-testid="wallpaper-grid"] img');
+      expect(first?.getAttribute("alt")).toBe("The Original");
+    });
+  });
+
+  it("marks the original as in use while no choice is stored", async () => {
+    renderView();
+
+    fireEvent.click(await screen.findByAltText("The Original"));
+
+    expect(await screen.findByRole("button", { name: /In use/ })).toBeTruthy();
+  });
+
+  it("adopting the original clears the stored choice rather than storing an id", async () => {
+    renderView();
+    act(() => useWallpaperStore.getState().select("03-anime-neon-01"));
+
+    fireEvent.click(await screen.findByAltText("The Original"));
+    fireEvent.click(await screen.findByRole("button", { name: "Use this wallpaper" }));
+
+    await waitFor(() => {
+      expect(useWallpaperStore.getState().selectedId).toBeNull();
+    });
+    expect(window.localStorage.getItem("jarvis.wallpaper.v1")).toBeNull();
+    expect(isDark()).toBe(true);
   });
 
   it("downloads the full-size image only once a wallpaper is previewed", async () => {
@@ -111,6 +168,44 @@ describe("WallpaperView", () => {
     expect(window.localStorage.getItem("jarvis.wallpaper.v1")).toBe(
       "01-cinematic-photoreal-02",
     );
+  });
+
+  it("switches the interface to light with a light wallpaper", async () => {
+    renderView();
+
+    fireEvent.click(await screen.findByAltText("Morning Atrium"));
+    fireEvent.click(await screen.findByRole("button", { name: "Use this wallpaper" }));
+
+    await waitFor(() => expect(isDark()).toBe(false));
+  });
+
+  it("switches back to dark when a dark wallpaper is picked next", async () => {
+    renderView();
+
+    // Go light first, so the second pick is a real transition rather than a
+    // no-op against the app's dark default.
+    fireEvent.click(await screen.findByAltText("Morning Atrium"));
+    fireEvent.click(await screen.findByRole("button", { name: "Use this wallpaper" }));
+    await waitFor(() => expect(isDark()).toBe(false));
+
+    fireEvent.click(screen.getByRole("button", { name: "Close preview" }));
+    fireEvent.click(await screen.findByAltText("Neon Crossing"));
+    fireEvent.click(await screen.findByRole("button", { name: "Use this wallpaper" }));
+
+    await waitFor(() => expect(isDark()).toBe(true));
+  });
+
+  it("returns to dark along with the bundled default", async () => {
+    renderView();
+
+    fireEvent.click(await screen.findByAltText("Morning Atrium"));
+    fireEvent.click(await screen.findByRole("button", { name: "Use this wallpaper" }));
+    await waitFor(() => expect(isDark()).toBe(false));
+
+    fireEvent.click(await screen.findByRole("button", { name: /Default/ }));
+
+    await waitFor(() => expect(isDark()).toBe(true));
+    expect(useWallpaperStore.getState().selectedId).toBeNull();
   });
 
   it("returns to the bundled default", async () => {
@@ -148,9 +243,24 @@ describe("WallpaperView", () => {
     expect(requestedSources()).toEqual(before);
   });
 
-  it("explains itself instead of breaking when the library is absent", async () => {
+  it("still offers the original when the library is absent", async () => {
     renderView({ available: false, count: 0, styles: [], items: [] });
 
-    expect(await screen.findByText("No wallpaper library installed")).toBeTruthy();
+    expect(await screen.findByAltText("The Original")).toBeTruthy();
+    expect(screen.getByText(/No wallpaper library installed/)).toBeTruthy();
+  });
+
+  it("still offers the original when the catalog request fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("backend restarting")));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ThemeProvider>
+          <WallpaperView />
+        </ThemeProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByAltText("The Original")).toBeTruthy();
   });
 });

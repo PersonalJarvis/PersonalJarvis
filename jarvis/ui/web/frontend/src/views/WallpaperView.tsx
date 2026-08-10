@@ -15,14 +15,13 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ViewHeader } from "@/views/ChatsView";
 import {
+  fullUrlFor,
+  thumbUrlFor,
   useWallpaperCatalog,
   type WallpaperEntry,
 } from "@/hooks/useWallpaperCatalog";
-import {
-  useWallpaperStore,
-  wallpaperFullUrl,
-  wallpaperThumbUrl,
-} from "@/store/wallpaper";
+import { useApplyWallpaper } from "@/hooks/useApplyWallpaper";
+import { useWallpaperStore } from "@/store/wallpaper";
 import { cn } from "@/lib/utils";
 
 type ThemeFilter = "all" | "light" | "dark";
@@ -104,9 +103,11 @@ function WallpaperTile({
       )}
     >
       <img
-        src={wallpaperThumbUrl(item.id)}
+        src={thumbUrlFor(item)}
         alt={item.title}
-        loading="lazy"
+        // The pinned original is the first thing on screen and the shell has
+        // already loaded it, so waiting for an intersection buys nothing.
+        loading={item.isDefault ? "eager" : "lazy"}
         decoding="async"
         width={480}
         height={270}
@@ -207,7 +208,7 @@ function WallpaperPreview({
         )}
         <img
           key={item.id}
-          src={wallpaperFullUrl(item.id)}
+          src={fullUrlFor(item)}
           alt={item.title}
           onLoad={() => setLoaded(true)}
           onError={() => setLoaded(true)}
@@ -241,14 +242,14 @@ function WallpaperPreview({
  * The Wallpaper section: browse the generated library, preview one at full
  * size, and adopt it as the app's ground.
  *
- * Nothing here writes to the server. The choice is a local preference and the
- * bundled artwork is always one click away again, so trying a wallpaper is
- * meant to feel as reversible as it actually is.
+ * Adopting one also switches light/dark to match the artwork — see
+ * `useApplyWallpaper`. The bundled default is always one click away again, so
+ * trying a wallpaper is meant to feel as reversible as it actually is.
  */
 export function WallpaperView() {
-  const { data, isLoading, isError } = useWallpaperCatalog();
+  const { data, isLoading } = useWallpaperCatalog();
   const selectedId = useWallpaperStore((state) => state.selectedId);
-  const select = useWallpaperStore((state) => state.select);
+  const apply = useApplyWallpaper();
 
   const [theme, setTheme] = useState<ThemeFilter>("all");
   const [ordering, setOrdering] = useState<Ordering>("mixed");
@@ -265,6 +266,9 @@ export function WallpaperView() {
         (style === null || item.style === style),
     );
     return filtered.sort((left, right) => {
+      // The bundled original outranks every ordering and every shuffle: it is
+      // the first wallpaper this app ever had, and it stays the first tile.
+      if (left.isDefault !== right.isDefault) return left.isDefault ? -1 : 1;
       if (ordering === "style") {
         const byStyle = left.style.localeCompare(right.style);
         if (byStyle !== 0) return byStyle;
@@ -273,6 +277,11 @@ export function WallpaperView() {
       return shuffleRank(left.id) - shuffleRank(right.id);
     });
   }, [items, ordering, style, theme]);
+
+  // "No choice stored" and "the original is chosen" are the same state, so the
+  // pinned tile carries the check mark on a fresh profile.
+  const isApplied = (item: WallpaperEntry) =>
+    item.isDefault ? selectedId === null : item.id === selectedId;
 
   const previewIndex = previewId
     ? visible.findIndex((item) => item.id === previewId)
@@ -295,13 +304,13 @@ export function WallpaperView() {
       icon={<ImageIcon className="h-4 w-4 text-primary" />}
       title="Wallpaper"
       subtitle={
-        data?.available
-          ? `${data.count} wallpapers · ${styles.length} styles · previews load on demand`
+        data
+          ? `${data.count} wallpapers · ${styles.length} styles · picking one sets light or dark to match`
           : "The app's desktop background"
       }
       right={
         selectedId ? (
-          <Button size="sm" variant="outline" onClick={() => select(null)}>
+          <Button size="sm" variant="outline" onClick={() => apply(null)}>
             <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
             Default
           </Button>
@@ -321,30 +330,23 @@ export function WallpaperView() {
     );
   }
 
-  if (isError || !data?.available) {
-    return (
-      <div className="flex h-full flex-col">
-        {header}
-        <div className="flex flex-1 items-center justify-center px-6">
-          <div className="max-w-md text-center">
-            <p className="text-sm font-medium">No wallpaper library installed</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              The generated collection lives in{" "}
-              <code className="rounded bg-secondary/60 px-1 py-0.5">
-                data/jarvis-wallpaper-gallery
-              </code>
-              , which is not part of the repository. The app keeps its built-in
-              wallpaper until that folder is present.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex h-full flex-col">
       {header}
+
+      {!data?.libraryAvailable && (
+        <p className="border-b border-border px-6 py-2.5 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">
+            No wallpaper library installed.
+          </span>{" "}
+          The generated collection lives in{" "}
+          <code className="rounded bg-secondary/60 px-1 py-0.5">
+            data/jarvis-wallpaper-gallery
+          </code>
+          , which is not part of the repository. Until it is there, the original
+          below is the whole choice.
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-6 py-3">
         <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
@@ -403,7 +405,7 @@ export function WallpaperView() {
             <WallpaperTile
               key={item.id}
               item={item}
-              active={item.id === selectedId}
+              active={isApplied(item)}
               onOpen={() => setPreviewId(item.id)}
             />
           ))}
@@ -418,8 +420,8 @@ export function WallpaperView() {
       {previewItem && (
         <WallpaperPreview
           item={previewItem}
-          applied={previewItem.id === selectedId}
-          onApply={() => select(previewItem.id)}
+          applied={isApplied(previewItem)}
+          onApply={() => apply(previewItem)}
           onClose={() => setPreviewId(null)}
           onStep={step}
         />
