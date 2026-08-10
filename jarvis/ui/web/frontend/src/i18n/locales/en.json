@@ -3925,6 +3925,7 @@
     "explorer": {
       "title": "Explorer",
       "toggle": "Show or hide the workspace explorer",
+      "resize": "Drag to resize the explorer — double-click to reset",
       "refresh": "Refresh the file tree",
       "close": "Close the explorer",
       "loading": "Loading…",

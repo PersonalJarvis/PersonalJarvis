@@ -95,16 +95,21 @@ export function useResizablePane({
     (e: React.PointerEvent) => {
       e.preventDefault();
       startPoint.current = axis === "x" ? e.clientX : e.clientY;
-      startSize.current = size;
+      // A measured maximum can shrink under a stored preference. Anchor the
+      // gesture to the size actually on screen so it responds immediately.
+      startSize.current = clampSize(size, min, max);
       setIsResizing(true);
     },
-    [axis, size],
+    [axis, size, min, max],
   );
 
   const reset = useCallback(() => setSize(defaultSize), [defaultSize]);
 
   const nudge = useCallback(
-    (delta: number) => setSize((current) => clampSize(current + delta, min, max)),
+    (delta: number) =>
+      setSize((current) =>
+        clampSize(clampSize(current, min, max) + delta, min, max),
+      ),
     [min, max],
   );
 
@@ -140,7 +145,10 @@ export function useResizablePane({
       point = axis === "x" ? e.clientX : e.clientY;
       if (frame === undefined) frame = requestAnimationFrame(apply);
     };
-    const onUp = () => {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
       // Land the last move before the drag is declared over, so the settled
       // size — the one that gets persisted — is the one under the pointer.
       if (frame !== undefined) {
@@ -151,7 +159,9 @@ export function useResizablePane({
     };
 
     window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+    window.addEventListener("blur", finish);
     // Lock the cursor + suppress text selection window-wide during the drag.
     const prevCursor = document.body.style.cursor;
     const prevSelect = document.body.style.userSelect;
@@ -161,7 +171,9 @@ export function useResizablePane({
     return () => {
       if (frame !== undefined) cancelAnimationFrame(frame);
       window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      window.removeEventListener("blur", finish);
       document.body.style.cursor = prevCursor;
       document.body.style.userSelect = prevSelect;
     };
@@ -178,7 +190,11 @@ export function useResizablePane({
     }
   }, [size, isResizing, storageKey]);
 
-  return { size, isResizing, startResize, reset, nudge, resize };
+  // Keep the stored preference in state while returning only the size that
+  // fits the current measured frame. Merely narrowing a window must not erase
+  // the user's wider layout preference.
+  const visibleSize = clampSize(size, min, max);
+  return { size: visibleSize, isResizing, startResize, reset, nudge, resize };
 }
 
 function loadSize(key: string, fallback: number): number {

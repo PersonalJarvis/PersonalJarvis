@@ -2441,6 +2441,79 @@ describe("the workspace header row", () => {
     expect(screen.queryByTestId("workspace-explorer")).toBeNull();
     expect(screen.getByTestId("pane-Mika")).toBe(pane);
   });
+
+  it("resizes the right-hand explorer from its left seam", async () => {
+    renderGrid();
+    fireEvent.click(screen.getByTestId("workspace-explorer-toggle"));
+    await screen.findByTestId("workspace-explorer");
+
+    const host = screen.getByTestId("workspace-explorer-host");
+    const seam = screen.getByTestId("workspace-explorer-resizer");
+    const pane = screen.getByTestId("pane-Mika");
+    expect(host.style.width).toBe("280px");
+    expect(seam.getAttribute("role")).toBe("separator");
+    expect(seam.getAttribute("aria-orientation")).toBe("vertical");
+    expect(seam.getAttribute("aria-controls")).toBe("workspace-explorer");
+    expect(seam.getAttribute("aria-valuemin")).toBe("220");
+    expect(seam.getAttribute("aria-valuemax")).toBe("640");
+    expect(seam.getAttribute("aria-valuenow")).toBe("280");
+
+    // The explorer sits to the RIGHT of this seam, so Left grows it and Right
+    // shrinks it — the inverse of a left sidebar's grip.
+    fireEvent.keyDown(seam, { key: "ArrowLeft" });
+    expect(host.style.width).toBe("296px");
+    expect(seam.getAttribute("aria-valuenow")).toBe("296");
+    fireEvent.keyDown(seam, { key: "ArrowRight" });
+    expect(host.style.width).toBe("280px");
+
+    // jsdom has no PointerEvent constructor. A MouseEvent dispatched under the
+    // pointer event's name carries the real clientX that the drag hook reads.
+    act(() => {
+      seam.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, clientX: 1_000 }),
+      );
+    });
+    expect(pane.dataset.layoutBusy).toBe("yes");
+    act(() => window.dispatchEvent(new MouseEvent("pointercancel")));
+    expect(pane.dataset.layoutBusy).toBe("no");
+
+    act(() => {
+      seam.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, clientX: 1_000 }),
+      );
+    });
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointermove", { clientX: 900 }));
+      window.dispatchEvent(new MouseEvent("pointerup"));
+    });
+
+    expect(host.style.width).toBe("380px");
+    expect(pane.dataset.layoutBusy).toBe("no");
+    expect(window.localStorage.getItem("jarvis.agenticIde.explorerWidth.v1")).toBe("380");
+
+    fireEvent.doubleClick(seam);
+    expect(host.style.width).toBe("280px");
+  });
+
+  it("keeps usable terminal space when a wide explorer preference meets a narrow frame", async () => {
+    const width = vi
+      .spyOn(HTMLElement.prototype, "clientWidth", "get")
+      .mockReturnValue(760);
+    window.localStorage.setItem("jarvis.agenticIde.explorerWidth.v1", "640");
+    try {
+      renderGrid();
+      fireEvent.click(screen.getByTestId("workspace-explorer-toggle"));
+      await waitFor(() =>
+        expect(screen.getByTestId("workspace-explorer-host").style.width).toBe("440px"),
+      );
+      const seam = screen.getByTestId("workspace-explorer-resizer");
+      expect(seam.getAttribute("aria-valuemax")).toBe("440");
+      expect(seam.getAttribute("aria-valuenow")).toBe("440");
+      expect(window.localStorage.getItem("jarvis.agenticIde.explorerWidth.v1")).toBe("640");
+    } finally {
+      width.mockRestore();
+    }
+  });
 });
 
 /**

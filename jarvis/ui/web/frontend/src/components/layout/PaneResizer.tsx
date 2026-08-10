@@ -30,6 +30,14 @@ export interface PaneResizerProps {
   onDoubleClick: () => void;
   /** Keyboard equivalent of a drag, in px — wire to ``nudge``. */
   onNudge?: (delta: number) => void;
+  /** Current pane size exposed to assistive technology. */
+  valueNow?: number;
+  /** Smallest pane size exposed to assistive technology. */
+  valueMin?: number;
+  /** Largest pane size exposed to assistive technology. */
+  valueMax?: number;
+  /** ID of the pane whose size this separator controls. */
+  controls?: string;
   /** True while a drag is in progress, so the seam can light up. */
   active: boolean;
   /** Hover tooltip. Also used as the accessible name. */
@@ -69,6 +77,10 @@ export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function
     onPointerDown,
     onDoubleClick,
     onNudge,
+    valueNow,
+    valueMin,
+    valueMax,
+    controls,
     active,
     title,
     style,
@@ -99,6 +111,10 @@ export const PaneResizer = forwardRef<HTMLDivElement, PaneResizerProps>(function
       role="separator"
       aria-orientation={orientation}
       aria-label={title}
+      aria-valuenow={valueNow}
+      aria-valuemin={valueMin}
+      aria-valuemax={valueMax}
+      aria-controls={controls}
       title={title}
       tabIndex={0}
       data-testid={testId ?? `pane-resizer-${orientation}`}

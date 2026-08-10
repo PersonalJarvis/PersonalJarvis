@@ -148,7 +148,7 @@ export function WorkspaceExplorer({
     <aside
       id="workspace-explorer"
       data-testid="workspace-explorer"
-      className="flex h-full w-[280px] shrink-0 flex-col border-l border-border/55 backdrop-blur-md"
+      className="flex h-full w-full min-w-0 flex-col backdrop-blur-md"
       style={{ background: "rgb(var(--shell-rgb) / 0.22)" }}
       aria-label={t("agentic_grid.explorer.title")}
     >

@@ -3925,6 +3925,7 @@
     "explorer": {
       "title": "Explorer",
       "toggle": "Workspace-Explorer ein- oder ausblenden",
+      "resize": "Ziehen, um die Explorer-Breite zu ändern – Doppelklick zum Zurücksetzen",
       "refresh": "Dateibaum aktualisieren",
       "close": "Explorer schließen",
       "loading": "Wird geladen…",

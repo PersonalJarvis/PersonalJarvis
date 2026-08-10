@@ -3,7 +3,11 @@ import { describe, expect, it, afterEach } from "vitest";
 
 import { clampSize, useResizablePane } from "./useResizablePane";
 
-afterEach(() => window.localStorage.clear());
+afterEach(() => {
+  window.localStorage.clear();
+  document.body.style.cursor = "";
+  document.body.style.userSelect = "";
+});
 
 /**
  * One drag, start to finish, on whichever axis the pane uses.
@@ -75,6 +79,24 @@ describe("useResizablePane", () => {
     window.localStorage.setItem("test.size", "9999");
     const { result } = renderHook(() => useResizablePane(opts));
     expect(result.current.size).toBe(480);
+  });
+
+  it("keeps a wider preference while a measured maximum is temporarily smaller", () => {
+    window.localStorage.setItem("test.size", "460");
+    const { result, rerender } = renderHook(
+      ({ max }) => useResizablePane({ ...opts, max }),
+      { initialProps: { max: 480 } },
+    );
+    expect(result.current.size).toBe(460);
+
+    rerender({ max: 300 });
+    expect(result.current.size).toBe(300);
+    expect(window.localStorage.getItem("test.size")).toBe("460");
+
+    // Interaction starts from the visible ceiling, not the hidden preference.
+    drag(result.current, { x: 300, y: 0 }, { x: 280, y: 0 });
+    expect(result.current.size).toBe(280);
+    expect(window.localStorage.getItem("test.size")).toBe("280");
   });
 
   it("reset() returns to the default and persists it", () => {
@@ -154,6 +176,40 @@ describe("useResizablePane", () => {
       await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
     });
     expect(result.current.size).toBe(340);
+  });
+
+  it("finishes a drag on pointer cancellation or window blur", () => {
+    document.body.style.cursor = "crosshair";
+    document.body.style.userSelect = "text";
+    const { result } = renderHook(() => useResizablePane(opts));
+
+    act(() => {
+      result.current.startResize({
+        clientX: 260,
+        clientY: 0,
+        preventDefault: () => {},
+      } as unknown as React.PointerEvent);
+    });
+    expect(result.current.isResizing).toBe(true);
+    expect(document.body.style.cursor).toBe("col-resize");
+    expect(document.body.style.userSelect).toBe("none");
+
+    act(() => window.dispatchEvent(new MouseEvent("pointercancel")));
+    expect(result.current.isResizing).toBe(false);
+    expect(document.body.style.cursor).toBe("crosshair");
+    expect(document.body.style.userSelect).toBe("text");
+
+    act(() => {
+      result.current.startResize({
+        clientX: 260,
+        clientY: 0,
+        preventDefault: () => {},
+      } as unknown as React.PointerEvent);
+    });
+    act(() => window.dispatchEvent(new Event("blur")));
+    expect(result.current.isResizing).toBe(false);
+    expect(document.body.style.cursor).toBe("crosshair");
+    expect(document.body.style.userSelect).toBe("text");
   });
 
   it("nudge() moves the seam by whole pixels and stays inside the band", () => {

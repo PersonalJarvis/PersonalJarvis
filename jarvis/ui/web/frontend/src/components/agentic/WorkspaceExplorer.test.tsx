@@ -95,7 +95,7 @@ describe("WorkspaceExplorer", () => {
 
     expect(await screen.findByText(".gitignore")).toBeTruthy();
     const explorer = screen.getByTestId("workspace-explorer");
-    expect(explorer.className).toContain("border-l");
+    expect(explorer.className).toContain("w-full");
     expect(explorer.style.background).toContain("0.22");
     expect(screen.getByText("project")).toBeTruthy();
 

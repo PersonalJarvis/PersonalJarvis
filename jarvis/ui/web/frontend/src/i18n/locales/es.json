@@ -3925,6 +3925,7 @@
     "explorer": {
       "title": "Explorador",
       "toggle": "Mostrar u ocultar el explorador del espacio de trabajo",
+      "resize": "Arrastra para cambiar el ancho del explorador; haz doble clic para restablecerlo",
       "refresh": "Actualizar el árbol de archivos",
       "close": "Cerrar el explorador",
       "loading": "Cargando…",

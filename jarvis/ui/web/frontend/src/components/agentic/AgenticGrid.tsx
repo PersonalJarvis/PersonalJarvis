@@ -28,6 +28,7 @@ import {
   Loader2,
   MessagesSquare,
   Minus,
+  MoveHorizontal,
   Moon,
   Plus,
   Power,
@@ -397,6 +398,14 @@ const COMPOSER_COLLAPSE_AT_PX = 96;
  * terminal to no columns — the workspace would look frozen rather than small.
  */
 const GRID_RESERVED_PX = 200;
+
+/** The file explorer starts compact, but its left seam can resize it. */
+const EXPLORER_WIDTH_KEY = "jarvis.agenticIde.explorerWidth.v1";
+const EXPLORER_DEFAULT_PX = 280;
+const EXPLORER_MIN_PX = 220;
+const EXPLORER_MAX_PX = 640;
+/** Terminal canvas kept visible while the right-hand explorer is open. */
+const EXPLORER_GRID_RESERVED_PX = 320;
 
 /*
  * How tightly the panes are packed.
@@ -1274,13 +1283,17 @@ export function AgenticGrid({
    * everything except what the toolbar and a minimum grid need.
    */
   const frameRef = useRef<HTMLDivElement | null>(null);
+  const [frameWidth, setFrameWidth] = useState(0);
   const [frameHeight, setFrameHeight] = useState(0);
   useEffect(() => {
     const node = frameRef.current;
     if (!node) return;
+    setFrameWidth(node.clientWidth);
     setFrameHeight(node.clientHeight);
     const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? node.clientWidth;
       const height = entries[0]?.contentRect.height ?? node.clientHeight;
+      setFrameWidth(Math.round(width));
       setFrameHeight(Math.round(height));
     });
     observer.observe(node);
@@ -1303,6 +1316,25 @@ export function AgenticGrid({
     // The grip is the bar's TOP edge: dragging up must make the bar taller.
     handle: "start",
   });
+  const explorerMax = Math.max(
+    EXPLORER_MIN_PX,
+    Math.min(
+      EXPLORER_MAX_PX,
+      frameWidth ? frameWidth - EXPLORER_GRID_RESERVED_PX : EXPLORER_MAX_PX,
+    ),
+  );
+  const explorerPane = useResizablePane({
+    storageKey: EXPLORER_WIDTH_KEY,
+    defaultSize: EXPLORER_DEFAULT_PX,
+    min: EXPLORER_MIN_PX,
+    max: explorerMax,
+    axis: "x",
+    // The explorer is on the right, so its grip is its LEFT edge: dragging
+    // left grows the panel and dragging right gives the terminals room back.
+    handle: "start",
+  });
+  // Keep a wider stored preference intact when the window temporarily narrows.
+  const requestedExplorer = Math.min(explorerPane.size, explorerMax);
   // Clamped again on render, because the window can shrink under a height that
   // was legal when it was stored — the remembered value stays untouched, so a
   // maximised window gets the tall prompt bar back.
@@ -1539,7 +1571,8 @@ export function AgenticGrid({
    * The prompt bar counts: dragging it changes the height of every pane above
    * it just as a seam does.
    */
-  const layoutBusy = sizes.dragging !== null || composer.isResizing;
+  const layoutBusy =
+    sizes.dragging !== null || composer.isResizing || explorerPane.isResizing;
 
   const atLimit = session.terminals.length >= maxTerminals;
 
@@ -3195,17 +3228,50 @@ export function AgenticGrid({
       <div
         data-testid="workspace-explorer-host"
         className={cn(
-          "h-full shrink-0 overflow-hidden transition-[width] duration-200 motion-reduce:transition-none",
-          explorerOpen ? "w-[280px]" : "w-0",
+          "relative h-full shrink-0",
+          !explorerPane.isResizing &&
+            "transition-[width] duration-200 motion-reduce:transition-none",
         )}
+        style={{ width: explorerOpen ? requestedExplorer : 0 }}
         aria-hidden={!explorerOpen}
       >
         {explorerOpen && (
-          <WorkspaceExplorer
-            workspaceId={session.id}
-            rootName={project.name}
-            onClose={() => setExplorerOpen(false)}
-          />
+          <>
+            <div className="group absolute inset-y-0 left-0 z-20 flex -translate-x-1/2">
+              <PaneResizer
+                testId="workspace-explorer-resizer"
+                orientation="vertical"
+                active={explorerPane.isResizing}
+                title={t("agentic_grid.explorer.resize")}
+                onPointerDown={explorerPane.startResize}
+                onDoubleClick={explorerPane.reset}
+                // This is a start-edge grip: Left grows the explorer, Right
+                // shrinks it, so the shared seam's delta is inverted here.
+                onNudge={(delta) => explorerPane.nudge(-delta)}
+                valueNow={requestedExplorer}
+                valueMin={EXPLORER_MIN_PX}
+                valueMax={explorerMax}
+                controls="workspace-explorer"
+                className="h-full"
+              />
+              <MoveHorizontal
+                aria-hidden
+                className={cn(
+                  "pointer-events-none absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/35 bg-background/90 p-0.5 text-primary shadow-sm backdrop-blur transition-opacity",
+                  explorerPane.isResizing
+                    ? "opacity-100"
+                    : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                )}
+              />
+            </div>
+            <div className="h-full overflow-hidden">
+              <WorkspaceExplorer
+                workspaceId={session.id}
+                rootName={project.name}
+                onClose={() => setExplorerOpen(false)}
+              />
+            </div>
+          </>
         )}
       </div>
 
