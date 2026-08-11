@@ -8,6 +8,16 @@ const terminalHarness = vi.hoisted(() => ({
   fit: vi.fn(),
   /** What the terminal reports after a fit — a test moves it to grow the pane. */
   size: { cols: 80, rows: 24 },
+  /**
+   * The grid a tile holds at a given font size; `null` answers with `size`.
+   *
+   * Staged by the auto-shrink tests: the pane probes several text sizes while
+   * fitting its font to a narrow tile (see `fitFontToTile`), and a fixed
+   * answer could never tell it that shrinking helped.
+   */
+  sizeForFont: null as
+    | ((fontSize: number) => { cols: number; rows: number })
+    | null,
   /** Every frame the pane hands its socket. Returns whether it went out. */
   send: vi.fn<(payload: unknown) => boolean>(() => true),
   /** Every explicit grid resize — how the pane pins itself below the floors. */
@@ -153,8 +163,16 @@ vi.mock("@xterm/addon-fit", () => ({
     }
     // The pane measures before it applies (see `sendResize`), so the double
     // answers with whatever size the test has staged — the same value fit()
-    // would land on.
+    // would land on. With `sizeForFont` staged the answer depends on the
+    // newest terminal's CURRENT font size, which is what lets a test watch
+    // the auto-shrink walk (see `fitFontToTile`).
     proposeDimensions() {
+      const byFont = terminalHarness.sizeForFont;
+      if (byFont) {
+        const last =
+          terminalHarness.instances[terminalHarness.instances.length - 1];
+        return { ...byFont(Number(last?.options.fontSize ?? 0)) };
+      }
       return { ...terminalHarness.size };
     }
   },
@@ -221,6 +239,7 @@ describe("AgenticTerminal layout", () => {
     terminalHarness.modes.mouseTrackingMode = "none";
     terminalHarness.bufferType = "normal";
     terminalHarness.scrollLines.mockClear();
+    terminalHarness.sizeForFont = null;
     globalThis.ResizeObserver = ResizeObserverHarness;
   });
 
@@ -1162,6 +1181,7 @@ describe("pane refit", () => {
     terminalHarness.resize.mockClear();
     terminalHarness.handlers.current = null;
     terminalHarness.size = { cols: 80, rows: 24 };
+    terminalHarness.sizeForFont = null;
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
   });
 
@@ -1339,6 +1359,64 @@ describe("pane refit", () => {
       t: "r",
       cols: 60,
       rows: 40,
+    });
+  });
+
+  it("shrinks its text until the floor grid fits a narrow tile", () => {
+    // The reported 2026-08-11 pane: a tile too narrow for 60 columns at the
+    // reader's size used to clip the right half of every line behind its edge
+    // — the left ~25 characters of each 60-column line, reading as shredded
+    // word-salad. The pane now walks its own text size down until the floor
+    // grid fits the tile, so the same 60 columns read small instead of cut.
+    const view = render(pane(false));
+    settle();
+    terminalHarness.send.mockClear();
+    terminalHarness.fit.mockClear();
+
+    // This tile holds 40 columns at the reader's 13px and the floor's 60 from
+    // 10px down. The walk must land on 10 — the LARGEST size that fits, not
+    // the smallest it may use.
+    terminalHarness.sizeForFont = (fontSize) =>
+      fontSize <= 10 ? { cols: 62, rows: 20 } : { cols: 40, rows: 20 };
+    view.rerender(pane(true));
+    settle();
+
+    const term =
+      terminalHarness.instances[terminalHarness.instances.length - 1];
+    expect(term?.options.fontSize).toBe(10);
+    // At the shrunken size the grid fits honestly — fit(), not a clamp.
+    expect(terminalHarness.fit).toHaveBeenCalled();
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "r",
+      cols: 62,
+      rows: 20,
+    });
+  });
+
+  it("returns to the reader's text size when the tile widens again", () => {
+    const view = render(pane(false));
+    settle();
+    terminalHarness.sizeForFont = (fontSize) =>
+      fontSize <= 10 ? { cols: 62, rows: 20 } : { cols: 40, rows: 20 };
+    view.rerender(pane(true));
+    settle();
+    const term =
+      terminalHarness.instances[terminalHarness.instances.length - 1];
+    expect(term?.options.fontSize).toBe(10);
+    terminalHarness.send.mockClear();
+
+    // The tile widens (a sibling closed, the pane was maximized) — the shrink
+    // must not outlive its reason, or one crowded afternoon leaves the pane
+    // small forever.
+    terminalHarness.sizeForFont = () => ({ cols: 90, rows: 30 });
+    view.rerender(pane(false));
+    settle();
+
+    expect(term?.options.fontSize).toBe(13);
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "r",
+      cols: 90,
+      rows: 30,
     });
   });
 
