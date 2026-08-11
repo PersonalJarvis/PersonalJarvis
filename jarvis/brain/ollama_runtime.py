@@ -406,11 +406,15 @@ def _install_windows() -> str:
 
 def _install_macos() -> str:
     """Homebrew is the one automatable path; a dmg drag cannot be scripted honestly."""
-    brew = shutil.which("brew") or (
-        "/opt/homebrew/bin/brew"
-        if Path("/opt/homebrew/bin/brew").exists()
-        else ""
-    )
+    brew = shutil.which("brew")
+    if not brew:
+        # Both default prefixes: /opt/homebrew (Apple Silicon) and /usr/local
+        # (Intel). A GUI-launched app can miss either on PATH; probing only
+        # the Silicon prefix told Intel Macs WITH Homebrew "No Homebrew".
+        for candidate in ("/opt/homebrew/bin/brew", "/usr/local/bin/brew"):
+            if Path(candidate).exists():
+                brew = candidate
+                break
     if not brew:
         raise RuntimeError(
             "No Homebrew on this Mac, and the Ollama.dmg needs a manual "

@@ -141,6 +141,24 @@ def test_macos_without_brew_refuses_with_the_dmg_pointer(monkeypatch) -> None:
         ollama_runtime._install_macos()
 
 
+def test_macos_intel_brew_prefix_is_found_without_path(monkeypatch) -> None:
+    """Homebrew lives at /usr/local on Intel Macs; a GUI-launched app whose
+    PATH misses it must still find brew there instead of refusing."""
+    monkeypatch.setattr(ollama_runtime.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        ollama_runtime.Path,
+        "exists",
+        lambda self: self.as_posix() == "/usr/local/bin/brew",
+        raising=False,
+    )
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        ollama_runtime, "_run_command", lambda cmd, timeout: commands.append(cmd)
+    )
+    assert ollama_runtime._install_macos() == "homebrew"
+    assert commands[0][0] == "/usr/local/bin/brew"
+
+
 def test_windows_prefers_winget(monkeypatch) -> None:
     monkeypatch.setattr(
         ollama_runtime.shutil,
