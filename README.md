@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <b>An open-source voice agent that operates your computer instead of just answering questions about it — and it can run entirely on your own hardware.</b>
+  <b>An open-source AI ecosystem in one app: a voice agent that operates your computer, system-wide dictation, a fleet of coding agents, and a shared memory across it all — able to run entirely on your own hardware.</b>
 </p>
 
 ---
