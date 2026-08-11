@@ -451,7 +451,7 @@ describe("Agentic IDE launcher", () => {
       screen.getByRole("heading", { name: /shape the workspace/i }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("spinbutton", { name: /number of terminals/i }),
+      screen.getByRole("textbox", { name: /number of terminals/i }),
     ).toBeTruthy();
 
     fireEvent.click(
@@ -589,7 +589,7 @@ describe("Agentic IDE launcher", () => {
       await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
       await openLayout();
       fireEvent.change(
-        await screen.findByRole("spinbutton", {
+        await screen.findByRole("textbox", {
           name: /number of terminals/i,
         }),
         { target: { value: n } },
@@ -628,7 +628,7 @@ describe("Agentic IDE launcher", () => {
     ).toBe("10");
     expect(
       (
-        screen.getByRole("spinbutton", {
+        screen.getByRole("textbox", {
           name: /number of terminals/i,
         }) as HTMLInputElement
       ).value,
@@ -643,7 +643,7 @@ describe("Agentic IDE launcher", () => {
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
     await openLayout();
 
-    const input = await screen.findByRole("spinbutton", {
+    const input = await screen.findByRole("textbox", {
       name: /number of terminals/i,
     });
     fireEvent.change(input, { target: { value: "" } });
@@ -667,7 +667,7 @@ describe("Agentic IDE launcher", () => {
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
     await openLayout();
     fireEvent.change(
-      await screen.findByRole("spinbutton", { name: /number of terminals/i }),
+      await screen.findByRole("textbox", { name: /number of terminals/i }),
       { target: { value: "10" } },
     );
     fireEvent.click(
@@ -689,7 +689,7 @@ describe("Agentic IDE launcher", () => {
 
     expect(
       (
-        screen.getByRole("spinbutton", {
+        screen.getByRole("textbox", {
           name: /number of terminals/i,
         }) as HTMLInputElement
       ).value,

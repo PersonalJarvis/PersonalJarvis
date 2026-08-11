@@ -39,12 +39,72 @@ import { IconButton } from "./controls";
 import { paneGrid, paneWidthAt, panesAreComfortable, wizardPanes } from "./layout";
 
 /**
- * Counts that get a labelled tick on the track.
+ * Steps a labelled tick is allowed to land on, coarsest last.
  *
- * The ones people reach for, so they are one click rather than a careful drag.
- * Anything above the workspace maximum is dropped at render time.
+ * The legend used to be the fixed list `[1, 2, 4, 6, 8, 12]` spread edge to
+ * edge with `justify-between`, which was correct exactly once: when the
+ * workspace maximum was also 12. The backend's `MAX_TERMINALS` is 100 — a
+ * runaway guard rather than a product ceiling — and against that track the
+ * fixed list put "12" hard against the right-hand end, so the legend claimed
+ * the track stopped at 12 while the thumb still had seven eighths to travel.
+ *
+ * A legend has to be DERIVED from the scale it labels, so `countTicks` picks
+ * the finest of these steps that still fits inside `MAX_TICKS` labels. The
+ * steps are the ones a person reads as round: 25 gives 1 · 25 · 50 · 75 · 100
+ * for the current maximum, and 2 gives back the familiar 1 · 2 · 4 · 6 · 8 ·
+ * 10 · 12 if the maximum is ever lowered to twelve again.
  */
-const TICKS = [1, 2, 4, 6, 8, 12] as const;
+const NICE_TICK_STEPS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000] as const;
+
+/**
+ * How many labels the track may carry.
+ *
+ * Seven, because that is what a 1…12 track needs to keep its every-other-pane
+ * rhythm; more than that and the labels start touching on a narrow window.
+ */
+const MAX_TICKS = 7;
+
+/**
+ * Half the width of the range input's thumb, in px.
+ *
+ * The thumb's CENTRE never reaches the ends of the element — it travels from
+ * half a thumb in to half a thumb short of the far edge. Labels placed at a
+ * naive 0 % and 100 % would therefore sit beside the thumb they name rather
+ * than under it, by the most visible amount at exactly the two values people
+ * check first. The legend row is inset by this much on both sides so its
+ * percentages measure the same distance the thumb actually covers.
+ *
+ * Approximate on purpose: the exact thumb width is the platform's business and
+ * differs by a pixel or two between Chromium, WebKit and the desktop WebView.
+ * Being a pixel out is invisible; being eight px out is not.
+ */
+const RANGE_THUMB_HALF_WIDTH_PX = 7;
+
+/**
+ * The counts that get a labelled tick on a track running 1…`max`.
+ *
+ * Always starts at 1 and always ends at `max`, so the legend can never
+ * disagree with the track's own ends. A step tick that would crowd the final
+ * label is dropped rather than drawn on top of it.
+ */
+export function countTicks(max: number): number[] {
+  if (!Number.isFinite(max) || max <= 1) return [1];
+  const ceiling = Math.trunc(max);
+  for (const step of NICE_TICK_STEPS) {
+    const ticks = [1];
+    for (let value = step; value < ceiling; value += step) {
+      if (value > 1) ticks.push(value);
+    }
+    ticks.push(ceiling);
+    // The last step tick before the end: keep it only if it is at least half a
+    // step clear, otherwise the two labels overlap (max 16, step 5 → 15 and 16).
+    if (ticks.length >= 3 && ceiling - ticks[ticks.length - 2] < step / 2) {
+      ticks.splice(ticks.length - 2, 1);
+    }
+    if (ticks.length <= MAX_TICKS) return ticks;
+  }
+  return [1, ceiling];
+}
 
 /**
  * Shape of the area the panes will actually fill, width ÷ height.
@@ -128,6 +188,25 @@ export function WorkspaceShape({
  * Lives in the panel's title row rather than above the stage, so the number sits
  * on the same line as the word "Terminals" and the stage below it is the only
  * thing that changes when the number does.
+ *
+ * ## Why the middle segment is a `<label>` and the field is `type="text"`
+ *
+ * It has always been typeable and never LOOKED it, which for the maintainer
+ * amounted to the same thing as not being typeable (2026-08-11). Two separate
+ * causes, both fixed here:
+ *
+ * * The caret only appeared if you hit the 48 px the digits occupied. The
+ *   surrounding segment was a plain `div`, so a click on the padding — most of
+ *   the target — landed on nothing at all. It is a `<label>` now: the whole
+ *   segment focuses the field, and it carries a text cursor and a hover tint so
+ *   the pointer says "editable" before the click.
+ * * `type="number"` looks like a display because a browser draws it like one.
+ *   It also behaves differently in Chromium, WebKit and the desktop WebView,
+ *   reports an empty string for anything it privately considers invalid, and
+ *   adds spin buttons that then have to be hidden again. A text field with
+ *   `inputMode="numeric"` keeps the phone keypad, hands us the raw keystrokes,
+ *   and behaves identically everywhere — at the price of stepping with the
+ *   arrow keys ourselves, which is four lines below.
  */
 export function CountStepper({
   count,
@@ -165,52 +244,77 @@ export function CountStepper({
         >
           <Minus className="h-4 w-4" />
         </IconButton>
-        <div className="flex min-w-[6.5rem] items-center justify-center gap-1.5 px-2">
+        <label
+          htmlFor="workspace-terminal-count"
+          className={
+            "group flex min-w-[7rem] cursor-text items-center justify-center gap-1.5 px-3 " +
+            "transition-colors hover:bg-secondary/50"
+          }
+        >
           <input
             id="workspace-terminal-count"
-            type="number"
+            type="text"
             inputMode="numeric"
-            min={1}
-            max={max}
+            autoComplete="off"
+            spellCheck={false}
             value={draft}
             aria-label="Number of terminals"
+            aria-describedby="workspace-terminal-count-max"
             data-testid="terminal-count-value"
             onFocus={(event) => event.currentTarget.select()}
             onChange={(event) => {
-              const raw = event.currentTarget.value;
-              setDraft(raw);
-              if (
-                raw !== "" &&
-                Number.isFinite(event.currentTarget.valueAsNumber)
-              ) {
-                set(event.currentTarget.valueAsNumber);
+              // Anything that is not a digit is dropped rather than rejected,
+              // so a pasted "12 panes" still sets 12 instead of nothing.
+              const digits = event.currentTarget.value.replace(/\D+/g, "");
+              setDraft(digits);
+              if (digits !== "") set(Number(digits));
+            }}
+            // An abandoned half-edit ("", or a paste of pure letters) is not a
+            // count; the field returns to what the workspace actually is.
+            onBlur={() => setDraft(String(count))}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === "Escape") {
+                setDraft(String(count));
+                event.currentTarget.blur();
+                return;
+              }
+              // The stepping `type="number"` would have given us, kept because
+              // holding an arrow key is how a count gets nudged without
+              // reaching for the mouse.
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                set(count + 1);
+              } else if (event.key === "ArrowDown") {
+                event.preventDefault();
+                set(count - 1);
               }
             }}
-            onBlur={() => {
-              if (draft === "") setDraft(String(count));
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-            }}
             /*
-             * The spin buttons the browser adds are hidden: this field already
-             * has accessible minus and plus controls, while the native pair is
-             * tiny and appears only on hover.
+             * The dashed rule under the digits is the "this is a field" cue, so
+             * it belongs to the DIGITS: at `h-full` it landed on the group's own
+             * bottom border and read as a rendering fault rather than an
+             * invitation. A fixed height keeps it a clear 8 px clear of it.
              */
             className={
-              "h-full min-w-0 w-12 border-0 bg-transparent p-0 text-right font-mono " +
-              "text-base font-semibold tabular-nums text-foreground outline-none " +
-              "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none " +
-              "[&::-webkit-outer-spin-button]:appearance-none"
+              "h-7 w-14 min-w-0 border-0 border-b border-dashed border-border " +
+              "bg-transparent p-0 text-right font-mono text-base font-semibold " +
+              "leading-7 tabular-nums text-foreground outline-none transition-colors " +
+              "group-hover:border-muted-foreground/70 " +
+              "focus:border-solid focus:border-primary " +
+              /* Focusing selects the digits, and the browser's default
+                 selection is a saturated blue that belongs to no theme this
+                 app has. Tinted with the accent already carrying "this is the
+                 value you are setting". */
+              "selection:bg-primary/30 selection:text-foreground"
             }
           />
           <span
-            aria-hidden="true"
+            id="workspace-terminal-count-max"
             className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70"
           >
             / {max}
           </span>
-        </div>
+        </label>
         <IconButton
           label="Use one more terminal"
           disabled={count >= max}
@@ -225,11 +329,19 @@ export function CountStepper({
 }
 
 /**
- * The track, with the common counts labelled beneath it.
+ * The track, with round counts labelled beneath it.
  *
  * A native range input, so keyboard, screen reader and touch all work without
  * being reimplemented. The labels under it are buttons, but deliberately styled
  * as a scale legend — see the note at the top of this file.
+ *
+ * Each label is placed at the fraction of the track its value occupies, with a
+ * hairline pointing at the exact spot. The row it lives in is `relative` and the
+ * labels are absolutely positioned, because the previous `justify-between` laid
+ * them out by COUNT rather than by VALUE: six labels always came out evenly
+ * spaced whatever they said, which on a 1…100 track put "2" a fifth of the way
+ * along and "12" at the far end. A legend that is off by that much is worse than
+ * no legend, because it is read as the truth about the scale.
  */
 export function CountTrack({
   count,
@@ -240,9 +352,11 @@ export function CountTrack({
   max: number;
   onChange: (next: number) => void;
 }) {
-  const ticks = TICKS.filter((n) => n <= max);
+  const ticks = useMemo(() => countTicks(max), [max]);
+  const span = Math.max(1, max - 1);
+
   return (
-    <div className="flex flex-col gap-1.5 px-3 pb-3">
+    <div className="flex flex-col gap-2 px-3 pb-3">
       <input
         type="range"
         min={1}
@@ -254,20 +368,38 @@ export function CountTrack({
         onChange={(event) => onChange(Number(event.currentTarget.value))}
         className="h-1 w-full cursor-pointer accent-primary"
       />
-      <div className="flex items-center justify-between">
+      <div
+        className="relative h-7"
+        /* Inset by the same half-thumb the track's own travel is inset by, so a
+           label's percentage measures the distance the thumb really covers. */
+        style={{
+          marginLeft: RANGE_THUMB_HALF_WIDTH_PX,
+          marginRight: RANGE_THUMB_HALF_WIDTH_PX,
+        }}
+      >
         {ticks.map((n) => (
           <button
             key={n}
             type="button"
             aria-pressed={count === n}
+            aria-label={`Use ${n} terminals`}
             onClick={() => onChange(n)}
+            style={{ left: `${((n - 1) / span) * 100}%` }}
             className={cn(
-              "rounded px-1 font-mono text-[11px] tabular-nums transition-colors",
+              "absolute top-0 flex -translate-x-1/2 flex-col items-center gap-1",
+              "px-1 font-mono text-[11px] tabular-nums transition-colors",
               count === n
                 ? "text-primary"
                 : "text-muted-foreground/60 hover:text-foreground",
             )}
           >
+            <span
+              aria-hidden="true"
+              className={cn(
+                "h-1.5 w-px transition-colors",
+                count === n ? "bg-primary" : "bg-border",
+              )}
+            />
             {n}
           </button>
         ))}
