@@ -21,9 +21,9 @@ from pydantic import BaseModel, Field
 from jarvis.core.paths import repo_root
 from jarvis.terminal.pty_manager import PtyManager
 from jarvis.workspace.agents import (
-    AGENT_NAMES,
     build_agent_argv,
     build_install_argv,
+    coding_agent_names,
     detect_agents,
     pty_available,
 )
@@ -67,7 +67,8 @@ async def get_agents() -> AgentsResponse:
     # split is validated against the same list — offering the plain-terminal
     # entry here would put a choice in front of the user that ``/launch`` then
     # rejects. A plain shell is offered where it belongs: the Agentic-IDE grid.
-    infos = [i for i in await detect_agents() if i.name in AGENT_NAMES]
+    coding = set(coding_agent_names())
+    infos = [i for i in await detect_agents() if i.name in coding]
     return AgentsResponse(
         cwd=str(repo_root()),
         terminal_available=pty_available(),
@@ -127,14 +128,18 @@ async def workspace_pty(ws: WebSocket, key: str) -> None:
     rows = _safe_int(qp.get("rows"), 24)
     cwd = str(repo_root())
 
+    # Asked once per connection, and asked LIVE: a CLI the user added while the
+    # app was running is a legitimate answer here, and the import-time snapshot
+    # this used to test against could never contain one.
+    known = set(coding_agent_names())
     if agent:
-        if agent not in AGENT_NAMES:
+        if agent not in known:
             await ws.close(code=4400, reason="unknown agent")
             return
         ensure_trusted(repo_root(), [agent])  # idempotent, skips the trust dialog
         argv = build_agent_argv(agent)
     elif install:
-        if install not in AGENT_NAMES:
+        if install not in known:
             await ws.close(code=4400, reason="unknown agent")
             return
         argv = build_install_argv(install)

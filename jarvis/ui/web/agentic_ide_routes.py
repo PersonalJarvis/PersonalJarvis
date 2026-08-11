@@ -607,6 +607,22 @@ class AgentStatus(BaseModel):
         ),
     )
     description: str = Field(default="", description="One line for a picker.")
+    custom: bool = Field(
+        default=False,
+        description=(
+            "True for a CLI the user added themselves. A surface uses this to "
+            "offer editing or removing it, which makes no sense for a shipped "
+            "entry."
+        ),
+    )
+    logo_url: str = Field(
+        default="",
+        description=(
+            "Where to fetch this entry's mark. Empty for a shipped entry, whose "
+            "logo is a local asset the client already has, and for a custom one "
+            "with no logo, which falls back to a monogram."
+        ),
+    )
 
 
 class AgentsResponse(BaseModel):
@@ -1217,6 +1233,8 @@ async def get_agents() -> AgentsResponse:
             install_command=info.install_command,
             kind=info.kind,
             description=info.description,
+            custom=info.custom,
+            logo_url=info.logo_url,
         )
         for info in infos
     ]

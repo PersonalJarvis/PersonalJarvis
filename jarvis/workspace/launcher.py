@@ -17,7 +17,7 @@ from pathlib import Path
 
 from jarvis.core.paths import repo_root
 
-from .agents import AGENT_NAMES, get_agent, pty_available
+from .agents import coding_agent_names, get_agent, pty_available
 from .trust import TrustResult, ensure_trusted
 
 log = logging.getLogger(__name__)
@@ -57,7 +57,10 @@ def validate_split(layout: int, split: dict[str, int]) -> None:
     """Raise ``ValueError`` if the request is malformed."""
     if layout not in LAYOUT_CHOICES:
         raise ValueError(f"layout must be one of {LAYOUT_CHOICES}, got {layout}")
-    unknown = set(split) - set(AGENT_NAMES)
+    # The LIVE registry, not the import-time snapshot: the user can add a CLI of
+    # their own while the app runs, and a plan naming it must not be rejected as
+    # an unknown agent by the very layer that just offered it.
+    unknown = set(split) - set(coding_agent_names())
     if unknown:
         raise ValueError(f"unknown agents: {sorted(unknown)}")
     if any(count < 0 for count in split.values()):
@@ -73,7 +76,7 @@ def build_slots(split: dict[str, int]) -> list[Slot]:
     """Expand the per-agent counts into one slot each (grouped, stable order)."""
     slots: list[Slot] = []
     idx = 0
-    for name in AGENT_NAMES:
+    for name in coding_agent_names():
         count = split.get(name, 0)
         agent = get_agent(name)
         if agent is None or count <= 0:

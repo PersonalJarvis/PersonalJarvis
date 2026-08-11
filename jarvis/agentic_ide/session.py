@@ -754,6 +754,15 @@ def agent_argv(agent: str) -> tuple[str, ...] | None:
     exe = shutil.which(binary)
     if exe is None:
         return None
+    if spec.shell_launch:
+        # A user-added entry whose command is shell SOURCE — a pipeline, a
+        # variable assignment, two commands chained. There is no argv to exec,
+        # so it runs through a shell that EXITS with it (never `-NoExit`/`/k`:
+        # a surviving prompt would look like a live agent to every readiness
+        # check). The PATH lookup above still had to succeed, so an entry whose
+        # first word is not installed is reported missing rather than opening a
+        # pane that says "command not found".
+        return workspace_agents.shell_run_argv(spec.launch_command or "")
     if sys.platform == "win32":
         lowered = exe.lower()
         if lowered.endswith((".cmd", ".bat")):

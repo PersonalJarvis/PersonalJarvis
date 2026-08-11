@@ -396,6 +396,7 @@ class WebServer:
         from .wiki_routes import router as wiki_router
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
+        from .workspace_clis_routes import router as workspace_clis_router
         from .workspace_routes import router as workspace_router
         # Conductor is an external package in the same monorepo. Import
         # defensively — anyone who checks out the repo without conductor would
@@ -471,6 +472,7 @@ class WebServer:
         # Provides agent detection, workspace launch planning, and PTY WebSocket
         # for in-app Claude Code / Codex terminals (xterm panes, not OS windows).
         app.include_router(workspace_router)
+        app.include_router(workspace_clis_router)
         # Agentic IDE (/api/agentic-ide/*) — a chosen folder plus named terminals
         # running Claude Code / Codex, addressable by voice ("what is Mika
         # doing?") and promptable from Jarvis. Reuses the same PTY stack as the

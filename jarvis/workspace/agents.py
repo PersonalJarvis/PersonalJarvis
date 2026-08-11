@@ -258,6 +258,20 @@ class WorkspaceAgent:
     #: The per-project instructions file this CLI reads (CLAUDE.md, AGENTS.md).
     instruction_filename: str = ""
 
+    # --- Where the entry came from ------------------------------------------
+    #: True for an entry the USER added (:mod:`jarvis.workspace.custom_clis`)
+    #: rather than one this app ships. Read by the surfaces that may offer to
+    #: edit or remove it, and by detection, which cannot run a stranger's
+    #: ``--version`` on the event loop the wake microphone is delivered on.
+    custom: bool = False
+    #: Where the UI fetches this entry's mark. Empty for a built-in, whose logo
+    #: is a local asset the frontend already ships.
+    logo_url: str = ""
+    #: Start this through a shell instead of as the pane's own process. Needed
+    #: by a command that is shell SOURCE rather than an argv — a pipeline, a
+    #: variable expansion, two commands chained — which cannot be exec'd.
+    shell_launch: bool = False
+
     # --- How a person refers to it ------------------------------------------
     #: Spellings a transcript may carry for this product. Matching DATA, not
     #: prose: speech recognition writes a product name by ear, and one unmatched
@@ -673,6 +687,156 @@ _AGENTS: dict[str, WorkspaceAgent] = {
 }
 
 
+#: The entries the USER added, rebuilt from their store whenever it changes.
+#:
+#: Kept apart from ``_AGENTS`` rather than merged into it, because the two are
+#: owned by different people: ``_AGENTS`` holds what this app ships plus
+#: whatever a plugin registered in code, and re-reading a FILE must never be
+#: able to drop one of those on the floor.
+_CUSTOM_AGENTS: dict[str, WorkspaceAgent] = {}
+#: Store revision the dict above was built from; ``-1`` means "never built".
+_custom_revision: int = -1
+
+
+def builtin_names() -> tuple[str, ...]:
+    """Every registry key this app ships or a plugin registered in code.
+
+    Read by the custom-CLI store, which has to know which names are already
+    spoken for before it hands one to a new entry.
+    """
+    return tuple(_AGENTS)
+
+
+def _custom_aliases(display_name: str, entry_id: str) -> tuple[str, ...]:
+    """Spellings a transcript may carry for a user-added entry.
+
+    Deliberately conservative, because these spellings are matched against
+    everything the user says. The full name counts (a whole phrase matching by
+    accident is unlikely), and a SINGLE-word name counts only from four letters
+    up — an entry someone called "Test" or "Go" would otherwise turn every
+    sentence containing that ordinary word into a request to open a terminal.
+    Anything richer is the built-ins' business: they list their misspellings by
+    hand because someone checked how speech recognition writes them.
+    """
+    out: list[str] = []
+    name = " ".join(str(display_name or "").lower().split())
+    words = name.split()
+    if len(words) > 1:
+        out.append(name)
+    elif words and len(words[0]) >= 4 and words[0].isalpha():
+        out.append(words[0])
+    slug = str(entry_id or "").lower()
+    if len(slug) >= 4 and slug.isalpha() and slug not in out:
+        out.append(slug)
+    return tuple(out)
+
+
+def _custom_agent(entry: Any) -> WorkspaceAgent:
+    """Turn one stored :class:`~jarvis.workspace.custom_clis.CustomCli` into an
+    entry the rest of this module cannot tell apart from a built-in.
+
+    Deliberately ``spec=None``. A spec is a DETECTION plan — "run this with
+    ``--version`` and parse the answer" — and we have no promise a stranger's
+    CLI answers that flag rather than opening its TUI and holding the event
+    loop the wake microphone runs on. Detection for these entries is a PATH
+    lookup instead (see :func:`_sweep_agents`), which costs no subprocess and
+    reports no version rather than a guessed one.
+    """
+    from jarvis.workspace import custom_clis
+
+    through_shell = custom_clis.needs_shell(entry.command)
+    return WorkspaceAgent(
+        name=entry.id,
+        display_name=entry.display_name,
+        kind="cli",
+        spoken_aliases=_custom_aliases(entry.display_name, entry.id),
+        spec=None,
+        launch_command=entry.command,
+        # Nothing is known about this CLI's trust file, so there is nothing to
+        # pre-seed. Its own dialog, if it has one, is answered by the user in
+        # the pane — which is exactly what happens today outside this app.
+        needs_trust=False,
+        description=entry.description,
+        binary=entry.binary,
+        # Empty for a shell launch: the whole line goes to the shell verbatim,
+        # so a second, half-parsed copy of it here would only be something a
+        # future caller could pick up and get wrong.
+        launch_args=()
+        if through_shell
+        else custom_clis.split_command(entry.command)[1:],
+        file_reference=entry.file_reference,
+        custom=True,
+        logo_url=custom_clis.logo_url(entry),
+        shell_launch=through_shell,
+    )
+
+
+def _sync_custom_agents() -> None:
+    """Rebuild the user's entries when their store has changed.
+
+    Called from every read below rather than once at import, because the store
+    is edited while the app runs: a CLI added in the wizard has to be openable
+    from the pane menu in the same session, without a restart.
+    """
+    global _custom_revision
+    from jarvis.workspace import custom_clis
+
+    revision = custom_clis.revision()
+    if revision == _custom_revision:
+        return
+    try:
+        entries = custom_clis.list_custom_clis()
+    except Exception as exc:  # noqa: BLE001 - a broken store must not hide the built-ins
+        log.warning("workspace agents: custom entries unavailable: %s", exc)
+        entries = []
+    _custom_revision = revision
+    _CUSTOM_AGENTS.clear()
+    for entry in entries:
+        if entry.id in _AGENTS:
+            # A name a built-in already answers to. The store refuses to create
+            # one, so this is a hand-edited file; the shipped entry wins,
+            # because a pane running the wrong tool is the worse failure.
+            log.warning(
+                "workspace agents: custom entry %r shadows a built-in; ignoring it",
+                entry.id,
+            )
+            continue
+        _CUSTOM_AGENTS[entry.id] = _custom_agent(entry)
+    _forget_command_catalog()
+
+
+def refresh_custom_agents() -> None:
+    """Re-read the user's entries now, and forget the last detection sweep.
+
+    For the routes that just changed the store: the next question about "what
+    can this machine run" has to see the new entry, and the sweep's answer for
+    it (installed or not) has not been asked yet.
+    """
+    global _custom_revision
+    _custom_revision = -1
+    _sync_custom_agents()
+    invalidate_agent_detection()
+
+
+def _registry() -> dict[str, WorkspaceAgent]:
+    """Every entry, built-ins first, in the order the UI should list them.
+
+    The plain terminal stays LAST even though it is registered among the
+    built-ins: it is the "no agent at all" choice, and a menu that buries it
+    between coding CLIs reads as though it were one of them.
+    """
+    _sync_custom_agents()
+    merged: dict[str, WorkspaceAgent] = {}
+    shell = _AGENTS.get(PLAIN_TERMINAL)
+    for name, agent in _AGENTS.items():
+        if name != PLAIN_TERMINAL:
+            merged[name] = agent
+    merged.update(_CUSTOM_AGENTS)
+    if shell is not None:
+        merged[PLAIN_TERMINAL] = shell
+    return merged
+
+
 def register_agent(agent: WorkspaceAgent, *, replace: bool = False) -> WorkspaceAgent:
     """Add ``agent`` to the registry and return it.
 
@@ -709,16 +873,16 @@ def _forget_command_catalog() -> None:
 
 def list_agents() -> list[WorkspaceAgent]:
     """Every registered entry, in registration order."""
-    return list(_AGENTS.values())
+    return list(_registry().values())
 
 
 def get_agent(name: str) -> WorkspaceAgent | None:
-    return _AGENTS.get(name)
+    return _registry().get(name)
 
 
 def agent_names() -> tuple[str, ...]:
     """Every registered name, plain terminal included."""
-    return tuple(_AGENTS)
+    return tuple(_registry())
 
 
 def coding_agent_names() -> tuple[str, ...]:
@@ -727,20 +891,26 @@ def coding_agent_names() -> tuple[str, ...]:
     The "Make It Yours" launcher plans a grid of agents that extend Jarvis, so
     it asks this rather than :func:`agent_names`.
     """
-    return tuple(name for name, agent in _AGENTS.items() if agent.is_coding_agent)
+    return tuple(
+        name for name, agent in _registry().items() if agent.is_coding_agent
+    )
 
 
 def needs_trust(name: str) -> bool:
     """Does opening this entry require pre-seeding folder trust?"""
-    agent = _AGENTS.get(name)
+    agent = get_agent(name)
     return bool(agent and agent.needs_trust)
 
 
-# Kept as a module constant for the many call sites that read it directly. It is
-# a snapshot of the CODING agents at import time, which is what every existing
-# reader means by "the agents" — a plain terminal is not one, and a dynamically
-# registered CLI is reachable through ``coding_agent_names()``.
-AGENT_NAMES: tuple[str, ...] = coding_agent_names()
+# Kept for the call sites that import this name directly. It is a snapshot of
+# the SHIPPED coding agents at import time and cannot see an entry registered
+# afterwards — neither one a plugin added nor one the user typed into the
+# wizard. Anything deciding whether a name is runnable must call
+# ``coding_agent_names()``, which asks the live registry; a membership test
+# against this tuple rejects the user's own CLI with "unknown agent".
+AGENT_NAMES: tuple[str, ...] = tuple(
+    name for name, agent in _AGENTS.items() if agent.is_coding_agent
+)
 
 
 def install_command(name: str) -> str | None:
@@ -756,7 +926,7 @@ def install_command(name: str) -> str | None:
     method for THIS platform is shown as not installed without being offered a
     command that cannot work.
     """
-    agent = _AGENTS.get(name)
+    agent = get_agent(name)
     if agent is None or agent.spec is None:
         return None
     methods = agent.spec.install
@@ -776,7 +946,7 @@ def install_command(name: str) -> str | None:
 
 def coding_agents() -> list[WorkspaceAgent]:
     """Every registered entry that runs a coding agent, in registration order."""
-    return [a for a in _AGENTS.values() if a.is_coding_agent]
+    return [a for a in _registry().values() if a.is_coding_agent]
 
 
 def generation_of(name: str) -> str | None:
@@ -785,7 +955,7 @@ def generation_of(name: str) -> str | None:
     ``None`` for every entry whose vendor ships exactly one thing under one
     binary name — which is all of them but Kimi.
     """
-    agent = _AGENTS.get(name)
+    agent = get_agent(name)
     if agent is None or agent.generation_probe is None:
         return None
     try:
@@ -803,7 +973,7 @@ def spoken_aliases() -> dict[str, str]:
     only the caller knows whether the product's second word followed.
     """
     out: dict[str, str] = {}
-    for agent in _AGENTS.values():
+    for agent in _registry().values():
         for spelling in (*agent.spoken_aliases, *agent.spoken_aliases_needing_suffix):
             out.setdefault(spelling, agent.name)
     return out
@@ -819,7 +989,7 @@ def aliases_needing_suffix() -> dict[str, tuple[str, str]]:
     """
     return {
         spelling: (agent.name, agent.alias_suffix)
-        for agent in _AGENTS.values()
+        for agent in _registry().values()
         for spelling in agent.spoken_aliases_needing_suffix
     }
 
@@ -840,7 +1010,7 @@ def reserved_call_signs() -> frozenset[str]:
     name, and the spellings people actually say.
     """
     names: set[str] = set()
-    for agent in _AGENTS.values():
+    for agent in _registry().values():
         if not agent.is_coding_agent:
             continue
         names.add(agent.name.lower())
@@ -865,6 +1035,11 @@ class AgentInfo:
     launch_command: str
     kind: str = "cli"
     description: str = ""
+    #: True for an entry the user added, so a surface can offer to edit it.
+    custom: bool = False
+    #: Where to fetch this entry's mark; empty means the UI's own asset or the
+    #: monogram it falls back to.
+    logo_url: str = ""
 
 
 #: How long a completed detection sweep answers for.
@@ -953,13 +1128,72 @@ async def detect_agents(
     return list(infos)
 
 
+def _on_path(binary: str) -> bool:
+    """Is ``binary`` resolvable the way a pane would resolve it?
+
+    The whole detection story for a user-added entry. No subprocess: see
+    :func:`_custom_agent` for why a stranger's ``--version`` is not something
+    this sweep may run. ``ensure_cli_paths`` first, because a GUI-launched
+    process starts with a minimal PATH and would otherwise report a correctly
+    installed CLI as missing on macOS and Linux.
+    """
+    import shutil
+
+    if not binary:
+        return False
+    try:
+        from jarvis.core.path_augment import ensure_cli_paths
+
+        ensure_cli_paths()
+    except Exception:  # noqa: BLE001, S110 - PATH augmentation is best-effort
+        pass
+    return shutil.which(binary) is not None
+
+
 async def _sweep_agents(prober: CliStatusProber) -> list[AgentInfo]:
-    """One real detection pass — a subprocess per registered CLI."""
-    specs = [a.spec for a in _AGENTS.values() if a.spec is not None]
+    """One real detection pass — a subprocess per SHIPPED CLI.
+
+    Three kinds of answer, and what an entry gets is decided by what it
+    declares rather than by its name:
+
+    * a detection spec — the shared prober runs it and reports a version;
+    * a user-added CLI (no spec, still a coding agent) — its first word is
+      looked up on PATH, off the event loop because that touches the disk;
+    * the plain terminal — "does this host have a shell", which is not a
+      question a ``--version`` probe can ask.
+    """
+    registry = _registry()
+    specs = [a.spec for a in registry.values() if a.spec is not None]
     statuses = await prober.probe_all(specs) if specs else {}
     shell = default_shell()
+    unspecced = [a for a in registry.values() if a.spec is None and a.is_coding_agent]
+    found: dict[str, bool] = {}
+    if unspecced:
+        found = await asyncio.to_thread(
+            lambda: {a.name: _on_path(a.executable) for a in unspecced}
+        )
+
     out: list[AgentInfo] = []
-    for agent in _AGENTS.values():
+    for agent in registry.values():
+        if agent.spec is None and agent.is_coding_agent:
+            out.append(
+                AgentInfo(
+                    name=agent.name,
+                    display_name=agent.display_name,
+                    installed=found.get(agent.name, False),
+                    # Deliberately none. Asking would be the subprocess this
+                    # path exists to avoid, and a made-up number beside
+                    # someone's own command is worse than a blank one.
+                    version=None,
+                    install_command=None,
+                    launch_command=agent.launch_command or "",
+                    kind=agent.kind,
+                    description=agent.description,
+                    custom=agent.custom,
+                    logo_url=agent.logo_url,
+                )
+            )
+            continue
         if agent.spec is None:
             out.append(
                 AgentInfo(
@@ -1005,6 +1239,33 @@ def _build_pty_argv(command: str) -> tuple[str, ...] | None:
     return (path, "-c", f"{command}; exec {path}")
 
 
+def shell_run_argv(command: str) -> tuple[str, ...] | None:
+    """Shell argv that runs ``command`` and EXITS with it.
+
+    The counterpart to :func:`_build_pty_argv`, which keeps the shell open
+    afterwards. Both exist because the two callers want opposite things: the
+    workspace launcher opens a terminal the user goes on typing in, while an
+    Agentic-IDE pane IS its agent — when the agent exits the pane is finished,
+    and a shell surviving it would leave a prompt that looks like a running
+    agent to every readiness check in the app.
+
+    Used for a user-added CLI whose command is shell source rather than an argv
+    (a pipeline, ``VAR=x cmd``, two commands chained), which cannot be exec'd
+    directly. ``None`` on a host with no shell, which reads the same as a
+    missing binary.
+    """
+    shell = default_shell()
+    if shell is None:
+        return None
+    path = shell.argv[0]
+    if shell.id in ("pwsh", "powershell"):
+        return (path, "-NoLogo", "-NoProfile", "-Command", command)
+    if shell.id == "cmd":
+        # /c, never /k — see the docstring: the shell has to die with the agent.
+        return (path, "/c", command)
+    return (path, "-c", command)
+
+
 def plain_terminal_argv() -> tuple[str, ...] | None:
     """Full PTY argv for a plain shell session — no agent wrapped around it.
 
@@ -1023,7 +1284,7 @@ def build_agent_argv(name: str) -> tuple[str, ...] | None:
     A CLI is launched inside a shell (trust pre-seeded); the plain terminal IS
     the shell.
     """
-    agent = _AGENTS.get(name)
+    agent = get_agent(name)
     if agent is None:
         return None
     if agent.launch_command is None:
@@ -1069,6 +1330,7 @@ __all__ = [
     "aliases_needing_suffix",
     "build_agent_argv",
     "build_install_argv",
+    "builtin_names",
     "coding_agent_names",
     "coding_agents",
     "detect_agents",
@@ -1083,7 +1345,9 @@ __all__ = [
     "needs_trust",
     "plain_terminal_argv",
     "pty_available",
+    "refresh_custom_agents",
     "register_agent",
     "reserved_call_signs",
+    "shell_run_argv",
     "spoken_aliases",
 ]

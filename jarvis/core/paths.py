@@ -59,6 +59,23 @@ def user_clis_dir() -> Path:
     return user_data_dir() / "clis"
 
 
+def workspace_clis_dir() -> Path:
+    """Where the user's own terminal CLIs and their logos are kept.
+
+    Deliberately NOT :func:`user_clis_dir`, which holds specs for the shared CLI
+    catalog — those become brain-callable tools. An entry here is only ever
+    something a workspace terminal RUNS (see ``jarvis.workspace.custom_clis``),
+    and keeping the two directories apart is what keeps a command the user typed
+    into a terminal picker from quietly becoming a tool an LLM may call.
+    """
+    return user_data_dir() / "workspace-clis"
+
+
+def workspace_clis_path() -> Path:
+    """JSON file listing the user's own terminal CLIs."""
+    return workspace_clis_dir() / "custom.json"
+
+
 def cli_usage_db_path() -> Path:
     """SQLite database containing CLI invocation metadata (CLI integration)."""
     return user_data_dir() / "cli_usage.db"
@@ -217,6 +234,8 @@ __all__ = [
     "user_memory_dir",
     "user_logs_dir",
     "user_clis_dir",
+    "workspace_clis_dir",
+    "workspace_clis_path",
     "cli_usage_db_path",
     "cli_custom_catalog_path",
     "skill_link_health_db_path",
