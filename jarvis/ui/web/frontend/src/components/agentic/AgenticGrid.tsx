@@ -70,6 +70,12 @@ import {
   type PaneWeights,
 } from "./paneLayout";
 import { loadStoredArrangement, saveStoredArrangement, usePaneWeights } from "./usePaneWeights";
+import {
+  describeLayoutViolations,
+  findLayoutViolations,
+  hasLayoutViolations,
+  type MeasuredPane,
+} from "./paneLayoutGuard";
 import { ContinueInterrupted } from "./ContinueInterrupted";
 import { DeckStage, type DeckAgent } from "./deck/DeckStage";
 import type { CardState } from "./deck/AgentCard";
@@ -1888,6 +1894,141 @@ export function AgenticGrid({
     },
     [registerCell],
   );
+
+  /*
+   * The layout watchdog: the screen has to MATCH the layout, and when it does
+   * not, the grid repairs itself instead of standing there looking broken.
+   *
+   * `paneLayout` cannot produce overlapping boxes, but the boxes reach the
+   * screen through several hands — React's style props, the imperative drag
+   * painter above, the 300 ms move glide, the maximize style swap — and any of
+   * them interrupted at the wrong moment leaves a pane standing on its
+   * neighbour while every status the app shows stays green, because the data
+   * is right and only the pixels are wrong (maintainer report 2026-08-11: a
+   * terminal half-covered by the pane beside it, workspace claiming all well).
+   *
+   * So, a beat after every layout change and every few seconds after that, the
+   * visible cells are measured and judged by `findLayoutViolations`: no two
+   * panes may intersect AT ALL, none may reach past the canvas into its
+   * overflow clip, and no terminal's rendered screen may be bigger than its
+   * pane. A fault is answered by rewriting every cell and seam from the layout
+   * React already believes in — the truth is right here, it just has to be put
+   * back on screen — and a stale terminal fit by the same resize pass a real
+   * window resize triggers. The console says what was found, once per
+   * incident, so a repair that did not hold leaves evidence instead of a loop.
+   *
+   * Held back whenever the pixels are ALLOWED to disagree for a moment: while
+   * a seam or the prompt bar is dragged (painted imperatively), while a pane
+   * is held for rearranging, under a maximize or a single-pane view (the
+   * others measure 0x0 and there is nothing to overlap), and while nobody is
+   * looking. The first check waits out the move glide, and a layout change
+   * restarts the wait — mid-glide panes genuinely do cross each other.
+   */
+  const guardActive =
+    onScreen &&
+    documentVisible &&
+    !chatView &&
+    !deckView &&
+    maximized === null &&
+    arrange.held === null &&
+    !layoutBusy;
+  useEffect(() => {
+    if (!guardActive) return;
+    let cancelled = false;
+    // One warning per incident, one escalation per failed repair — the guard
+    // runs forever, and a console filling with the same line every three
+    // seconds would bury the evidence it exists to leave.
+    let announced = false;
+    let escalated = false;
+
+    const measure = () => {
+      const surface = canvasRef.current?.getBoundingClientRect();
+      if (!surface || surface.width <= 0 || surface.height <= 0) return null;
+      const panes: MeasuredPane[] = [];
+      for (const term of session.terminals) {
+        const node = paneNodes.current.get(term.name);
+        if (!node) continue;
+        const rect = node.getBoundingClientRect();
+        const content = node.querySelector(".xterm-screen")?.getBoundingClientRect();
+        panes.push({
+          name: term.name,
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+          content: content
+            ? {
+                left: content.left,
+                top: content.top,
+                width: content.width,
+                height: content.height,
+              }
+            : undefined,
+        });
+      }
+      return {
+        panes,
+        canvas: {
+          left: surface.left,
+          top: surface.top,
+          width: surface.width,
+          height: surface.height,
+        },
+      };
+    };
+
+    const check = () => {
+      if (cancelled) return;
+      const measured = measure();
+      if (!measured) return;
+      const violations = findLayoutViolations(measured.panes, measured.canvas);
+      if (!hasLayoutViolations(violations)) {
+        announced = false;
+        escalated = false;
+        return;
+      }
+      if (!announced) {
+        announced = true;
+        console.warn(
+          "Agentic IDE: the workspace drifted from its layout — repairing:",
+          describeLayoutViolations(violations),
+        );
+      } else if (!escalated) {
+        escalated = true;
+        console.error(
+          "Agentic IDE: the workspace layout fault survived a repair:",
+          describeLayoutViolations(violations),
+        );
+      }
+      // Positions come back from the layout React already holds — the same
+      // numbers its style props carry, written directly because a stale
+      // inline style is invisible to React's diff (an unchanged prop is an
+      // unwritten prop).
+      session.terminals.forEach((term, index) => {
+        const node = paneNodes.current.get(term.name);
+        const box = layout.boxes[index];
+        if (node && box) writePosition(node, paneBoxStyle(box));
+      });
+      for (const seam of layout.seams) {
+        const node = seamNodes.current.get(seam.id);
+        if (node) writePosition(node, seamStyle(seam));
+      }
+      // A terminal bigger than its pane is a missed refit; every pane listens
+      // to window resizes with a debounced, no-op-when-unchanged fit, so this
+      // is the ordinary path to a fresh measurement, not a special one.
+      if (violations.clipped.length > 0) window.dispatchEvent(new Event("resize"));
+    };
+
+    // Past the 300 ms glide, then a slow patrol — measuring a dozen rects is
+    // cheap, but forcing layout more often than this buys nothing.
+    const first = window.setTimeout(check, 450);
+    const patrol = window.setInterval(check, 3000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(first);
+      window.clearInterval(patrol);
+    };
+  }, [guardActive, layout, session.terminals]);
 
   /*
    * A pane that appears has to be SEEN appearing.
