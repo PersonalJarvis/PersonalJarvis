@@ -702,14 +702,15 @@ describe("Agentic IDE launcher", () => {
     ).toBe(true);
   });
 
-  it("previews 12 terminals as 12 columns, all of them on one screen", async () => {
-    // One line, and one screenful. A wrap would have paid for the new panes
-    // with the height of the ones already open (2026-08-03); a scroll would
-    // have put half of them off the side (2026-08-04). Twelve columns share
-    // the window instead.
+  it("previews 12 terminals as six columns of two, all of them on one screen", async () => {
+    // One screenful, opened two deep: a single line spent the whole window on
+    // one row, and past five panes each one fell under the width a 60-column
+    // agent grid needs, clipping at the tile edge (reported 2026-08-11 —
+    // WIZARD_COLUMN_HEIGHT in layout.ts holds the full rationale). The preview
+    // mirrors the exact panes the backend opens: columns of two.
     const stage = await stageAt(2328, "12");
-    expect(columnsOf(stage)).toBe("repeat(12, minmax(0, 1fr))");
-    expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    expect(columnsOf(stage)).toBe("repeat(6, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
     expect(widthOf(stage)).toBe("");
   });
 
@@ -717,26 +718,28 @@ describe("Agentic IDE launcher", () => {
     // Neither the arrangement nor how much of it you see depends on the window
     // any more — only how wide each pane ends up, which the readout says.
     const stage = await stageAt(1314, "12");
-    expect(columnsOf(stage)).toBe("repeat(12, minmax(0, 1fr))");
-    expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    expect(columnsOf(stage)).toBe("repeat(6, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
     expect(widthOf(stage)).toBe("");
   });
 
-  it("keeps a small workspace on one line at any usable width", async () => {
+  it("keeps a small workspace in wizard columns at any usable width", async () => {
+    // Three panes are a full column of two plus one beside it — the second
+    // column's single pane spans the height, so the grid stays two rows.
     const stage = await stageAt(1314, "3");
-    expect(columnsOf(stage)).toBe("repeat(3, minmax(0, 1fr))");
-    expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    expect(columnsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
     // Nothing to scroll past, so the stage is an ordinary full-width grid.
     expect(widthOf(stage)).toBe("");
   });
 
-  it("previews four terminals side by side in a 2K workspace", async () => {
-    // An aspect-ratio rule used to fold these into 2 x 2. It re-dealt the
-    // running workspace on the fourth split (reported 2026-07-31), so rows are
-    // the user's choice now — the preview says the same.
+  it("previews four terminals as two columns of two in a 2K workspace", async () => {
+    // The wizard's opening shape is columns of two (layout.ts,
+    // WIZARD_COLUMN_HEIGHT): four terminals start as a 2 x 2. Only the OPENING
+    // shape — the user's own splits and drags rearrange it freely afterwards.
     const stage = await stageAt(2048, "4", 1164);
-    expect(columnsOf(stage)).toBe("repeat(4, minmax(0, 1fr))");
-    expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    expect(columnsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
     expect(widthOf(stage)).toBe("");
   });
 
@@ -747,8 +750,8 @@ describe("Agentic IDE launcher", () => {
     // frame, and every pane is drawn inside it however many there are.
     const stage = await stageAt(800, "12");
     expect(stage.children.length).toBe(12);
-    expect(columnsOf(stage)).toBe("repeat(12, minmax(0, 1fr))");
-    expect(rowsOf(stage)).toBe("repeat(1, minmax(0, 1fr))");
+    expect(columnsOf(stage)).toBe("repeat(6, minmax(0, 1fr))");
+    expect(rowsOf(stage)).toBe("repeat(2, minmax(0, 1fr))");
     expect(widthOf(stage)).toBe("");
   });
 
@@ -759,7 +762,9 @@ describe("Agentic IDE launcher", () => {
     await stageAt(1050, "8");
 
     const readout = screen.getByTestId("workspace-stage-readout");
-    expect(readout.textContent).toContain("8 across");
+    // Eight terminals open as four columns of two (layout.ts,
+    // WIZARD_COLUMN_HEIGHT), so the width is shared four ways, not eight.
+    expect(readout.textContent).toContain("4 across");
     expect(readout.textContent).toContain("All on one screen");
     // Never a promise of somewhere else to look: every pane is on this screen.
     expect(readout.textContent).not.toMatch(/scroll/i);
@@ -767,7 +772,7 @@ describe("Agentic IDE launcher", () => {
     // 8 panes share it minus the grid's own padding. Computed rather than
     // written out, because tightening that padding moves the number without
     // changing anything the test is about.
-    const each = Math.round((1056 - GRID_HORIZONTAL_PADDING_PX) / 8);
+    const each = Math.round((1056 - GRID_HORIZONTAL_PADDING_PX) / 4);
     expect(readout.textContent).toContain(`${each} px each`);
     expect(readout.textContent).toMatch(/narrow for an agent/i);
   });
@@ -776,7 +781,7 @@ describe("Agentic IDE launcher", () => {
     await stageAt(3200, "8");
 
     const readout = screen.getByTestId("workspace-stage-readout");
-    expect(readout.textContent).toContain("8 across");
+    expect(readout.textContent).toContain("4 across");
     expect(readout.textContent).toContain("All on one screen");
     expect(readout.textContent).not.toMatch(/narrow for an agent/i);
     expect(readout.textContent).not.toMatch(/scroll/i);
