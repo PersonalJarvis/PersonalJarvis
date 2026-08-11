@@ -694,6 +694,35 @@ function GraphCanvas({
           className="absolute inset-0"
           aria-hidden
         >
+          {/* Arrowheads. Since the track wraps, an edge can run back to the
+              left — only a pointed end keeps the flow readable. markerUnits
+              defaults to strokeWidth, so a highlighted edge's arrow grows
+              with its stroke for free. refX=8 puts the tip exactly on the
+              path end — the target card's port, drawn on the layer above. */}
+          <defs>
+            <marker
+              id="viz-arrow"
+              viewBox="0 0 8 8"
+              refX="8"
+              refY="4"
+              markerWidth="5.5"
+              markerHeight="5.5"
+              orient="auto"
+            >
+              <path d="M 0 0 L 8 4 L 0 8 Z" className="fill-primary/70" />
+            </marker>
+            <marker
+              id="viz-arrow-failed"
+              viewBox="0 0 8 8"
+              refX="8"
+              refY="4"
+              markerWidth="5.5"
+              markerHeight="5.5"
+              orient="auto"
+            >
+              <path d="M 0 0 L 8 4 L 0 8 Z" className="fill-destructive/80" />
+            </marker>
+          </defs>
           {graph.edges.map((edge) => {
             const from = byId.get(edge.from);
             const to = byId.get(edge.to);
@@ -706,9 +735,11 @@ function GraphCanvas({
             return (
               <path
                 key={edge.id}
+                data-testid="graph-edge"
                 d={edgePath(from, to)}
                 fill="none"
                 strokeWidth={active ? 2.5 : 1.5}
+                markerEnd={`url(#${edge.failed ? "viz-arrow-failed" : "viz-arrow"})`}
                 className={
                   edge.failed
                     ? active

@@ -349,6 +349,44 @@ describe("VisualizationView", () => {
     expect(canvas.scrollLeft).toBe(40);
   });
 
+  it("points every edge with an arrowhead, alarm-coloured after a failure", async () => {
+    installFetchMock(
+      [{ slug: "run-new", utterance: "Deploy it", status: "error" }],
+      { "run-new": [] },
+      {
+        "run-new": {
+          plan: { plan_id: "run-new", vision: "Deploy it", status: "failed" },
+          steps: [
+            {
+              step_id: "t1:0",
+              name: "npm run deploy",
+              tool_name: "Bash",
+              status: "failed",
+              error: "exit 1",
+            },
+          ],
+        },
+      },
+    );
+
+    renderView();
+
+    await screen.findByTestId("graph-node-step");
+    const edges = screen.getAllByTestId("graph-edge");
+    expect(edges.length).toBeGreaterThan(0);
+    // Since the track wraps, an edge can run back to the left — only a
+    // pointed end keeps the flow readable, on every single edge.
+    for (const edge of edges) {
+      expect(edge.getAttribute("marker-end")).toMatch(/url\(#viz-arrow/);
+    }
+    // The edge into the failed step wears the alarm arrow, not the brand one.
+    expect(
+      edges.some(
+        (e) => e.getAttribute("marker-end") === "url(#viz-arrow-failed)",
+      ),
+    ).toBe(true);
+  });
+
   it("keeps a press on a node a click, never a pan", async () => {
     installFetchMock(
       [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
