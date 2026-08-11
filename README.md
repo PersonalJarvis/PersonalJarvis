@@ -19,16 +19,18 @@
 </p>
 
 <p align="center">
-  <sub>It drives coding agents, connects your services over MCP, dictates into any app, makes real phone calls, and remembers everything. It can run fully on your own hardware.</sub>
+  <sub>In a voice conversation, a tool model does the work: it runs shell commands, takes mouse and keyboard, connects to anything that speaks MCP, and hands heavier tasks to subagents. Add dictation into any app, real phone calls, and a memory that spans it all. Everything can run on your own hardware.</sub>
 </p>
 
 ---
 
-A typical voice assistant talks back. Personal Jarvis does the thing. A small, fast router
-brain listens, decides how much the request actually needs, and handles the short stuff
-itself. Anything heavier goes to a coding-agent worker (Claude Code, Codex CLI, Gemini CLI,
-or an in-process worker on whatever API key you already have), which runs in isolation,
-gets checked by a critic, and reports back in the language you spoke.
+A typical voice assistant talks back. Personal Jarvis does the thing. At the center of
+every voice conversation sits a tool model: it decides how much a request actually needs,
+runs shell commands, takes the mouse and keyboard, and reaches any service that speaks
+MCP. The short stuff it handles itself. Anything heavier goes to a coding-agent worker
+(Claude Code, Codex CLI, Gemini CLI, or an in-process worker on whatever API key you
+already have), which runs in isolation, gets checked by a critic, and reports back in the
+language you spoke.
 
 Every tier has a keyless local option, so the whole assistant can run on your own hardware
 with no cloud account anywhere in the chain — details under **Runs on your own hardware**
