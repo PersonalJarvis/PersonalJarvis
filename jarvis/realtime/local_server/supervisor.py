@@ -49,6 +49,12 @@ log = logging.getLogger(__name__)
 #: historical revive rate limit.
 SPAWN_MIN_INTERVAL_S = 60.0
 
+#: Ceiling for the failure-widened spawn spacing below. A generation that never
+#: reaches a ready pool still loads gigabytes of weights onto the accelerator
+#: before it dies, so an endlessly failing install must not keep paying that
+#: cost every minute forever.
+SPAWN_MAX_INTERVAL_S = 900.0
+
 # Installed checkpoints are already local after the mandatory smoke boot, but
 # imports, CUDA graph capture, STT warm-up and the local brain can still take
 # more than two minutes on a contended 16 GB host.  This five-minute ceiling is
@@ -56,6 +62,9 @@ SPAWN_MIN_INTERVAL_S = 60.0
 # provider-owned connection budget.  It is deliberately bounded so a genuine
 # native hang is still reclaimed.
 RUNTIME_READY_TIMEOUT_S = 300.0
+#: Floor for the measured readiness budget: never judge a boot by a median so
+#: small that one contended run looks like a hang.
+RUNTIME_READY_MIN_TIMEOUT_S = 120.0
 RUNTIME_READY_POLL_S = 0.5
 OWNED_STARTUP_TIMEOUT_S = RUNTIME_READY_TIMEOUT_S
 
@@ -71,10 +80,22 @@ RUNTIME_MONITOR_UNREADY_GRACE_S = 30.0
 
 _MAX_POOL_RESPONSE_BYTES = 64 * 1024
 
+#: Rotate the shared server log once it passes this size. Large enough that a
+#: whole boot transcript plus a long session's noise stays in one file for the
+#: crash tail, small enough that an always-on host cannot silently fill a disk.
+MAX_SERVER_LOG_BYTES = 8 * 1024 * 1024
+
 #: How long the Ollama brain model stays resident after a warm ping. Slides on
 #: every warm call (the desktop warm worker re-arms after each voice session),
 #: so only a genuinely idle multi-hour gap pays a reload.
 BRAIN_KEEP_ALIVE = "2h"
+
+#: How often the runtime monitor re-arms that residency. The keep-alive above
+#: is a DEADLINE, not a subscription: an overnight gap with no voice session
+#: expires it, and the first sentence of the morning then pays a cold model
+#: load on top of an otherwise warm server. Re-pinging well inside the window
+#: costs one empty HTTP request from a thread that is already polling.
+BRAIN_REWARM_INTERVAL_S = 45 * 60.0
 
 # Ollama's OpenAI-compatible endpoints cannot accept a per-request context
 # size.  Current long-context models can therefore reserve their full native
@@ -278,10 +299,69 @@ def _pool_has_no_usable_capacity(pool: dict[str, int]) -> bool:
     )
 
 
+def _recorded_boot_stats() -> Any:
+    """The persisted boot statistics, or ``None`` when they cannot be read."""
+    try:
+        from jarvis.realtime.local_server import boot_progress  # lazy (AP-26)
+
+        return boot_progress.load_stats(_boot_stats())
+    except Exception:  # noqa: BLE001 - statistics never gate a lifecycle decision
+        log.debug("supervisor: boot statistics unavailable", exc_info=True)
+        return None
+
+
+def ready_timeout_s() -> float:
+    """How long a fresh generation may take to report a ready model pool.
+
+    The fixed five-minute ceiling was sized for the slowest imaginable host,
+    which means every machine pays five minutes to notice a boot that hung —
+    including one whose own measured boots take a minute. The recorded median
+    is the honest local expectation, and three times it absorbs a contended
+    run without turning a genuine native hang into a five-minute wait. Without
+    history the full ceiling stands: a first boot on unknown hardware is
+    exactly when patience is warranted.
+    """
+    stats = _recorded_boot_stats()
+    if stats is None:
+        return RUNTIME_READY_TIMEOUT_S
+    try:
+        from jarvis.realtime.local_server import boot_progress  # lazy (AP-26)
+
+        expected = boot_progress.expected_boot_s(stats)
+    except Exception:  # noqa: BLE001 - a bad statistic keeps the safe ceiling
+        log.debug("supervisor: expected boot time unavailable", exc_info=True)
+        return RUNTIME_READY_TIMEOUT_S
+    if expected is None or expected <= 0:
+        return RUNTIME_READY_TIMEOUT_S
+    return max(
+        RUNTIME_READY_MIN_TIMEOUT_S,
+        min(RUNTIME_READY_TIMEOUT_S, 3.0 * expected),
+    )
+
+
+def _spawn_min_interval_s() -> float:
+    """Minimum spawn spacing, widened by consecutive never-ready boots.
+
+    ``failed_streak`` counts only generations that never reached a ready pool
+    inside their whole budget, and :func:`boot_progress.record_ready` clears it
+    the moment one succeeds. So a server that crashes after a healthy hour
+    keeps the plain one-minute window and recovers promptly, while an install
+    that can no longer boot at all stops re-loading gigabytes of weights onto
+    the accelerator every minute forever.
+    """
+    stats = _recorded_boot_stats()
+    if stats is None:
+        return SPAWN_MIN_INTERVAL_S
+    streak = int(stats["failed_streak"])
+    if streak <= 0:
+        return SPAWN_MIN_INTERVAL_S
+    return min(SPAWN_MAX_INTERVAL_S, SPAWN_MIN_INTERVAL_S * 2.0 ** min(streak, 4))
+
+
 def wait_until_ready(
     base_url: str,
     *,
-    timeout: float = RUNTIME_READY_TIMEOUT_S,
+    timeout: float | None = None,
     poll_interval: float = RUNTIME_READY_POLL_S,
     launch_command: str = "",
     cleanup_on_timeout: bool = False,
@@ -292,8 +372,11 @@ def wait_until_ready(
     A timed-out managed child is torn down when requested so it cannot remain
     as an owned-but-never-ready zombie. Cancellation is different from a
     timeout: callers stopping the server set ``cancel_event`` and no second
-    lifecycle operation is started from this waiter.
+    lifecycle operation is started from this waiter. ``timeout`` defaults to
+    the measured budget from :func:`ready_timeout_s`.
     """
+    if timeout is None:
+        timeout = ready_timeout_s()
     cleanup_root = managed_install_root(launch_command) if cleanup_on_timeout else None
     expected_generation = _owned_generation() if cleanup_root is not None else None
     deadline = time.monotonic() + max(0.0, timeout)
@@ -362,15 +445,33 @@ def _json_float(value: object) -> float | None:
 
 
 def _process_create_time(pid: int) -> float | None:
-    """The process's kernel start stamp, or ``None`` when unverifiable."""
+    """The process's kernel start stamp, or ``None`` when unverifiable.
+
+    A POSIX child that has exited but was never reaped keeps its process-table
+    entry: ``/proc/<pid>/stat`` still answers, so ``create_time()`` and
+    ``os.kill(pid, 0)`` both keep reporting the CRASHED server as a healthy
+    one. :func:`_spawn` deliberately drops its ``Popen`` handle (the server
+    outlives this app by design), so nothing reaps that entry until some other
+    subprocess in this interpreter happens to trigger ``subprocess._cleanup``.
+    Until then the monitor would never see the alive→gone transition and would
+    never recover the crash. A zombie is a dead process; say so here, once, on
+    the one path every ownership question already goes through.
+    """
     try:
         import psutil  # type: ignore[import-untyped]  # lazy, optional
     except ImportError:
         return None
     try:
-        return float(psutil.Process(pid).create_time())
+        process = psutil.Process(pid)
+        created = float(process.create_time())
     except Exception:  # noqa: BLE001 — gone/denied both mean "not verifiable"
         return None
+    try:
+        if process.status() == psutil.STATUS_ZOMBIE:
+            return None
+    except Exception:  # noqa: BLE001 — an unreadable status must not revoke ownership
+        log.debug("supervisor: process status probe failed for pid %s", pid, exc_info=True)
+    return created
 
 
 def _owned_process() -> tuple[int | None, bool]:
@@ -754,9 +855,9 @@ def _recorded_spawn_age() -> float | None:
     return age if age >= 0.0 else None
 
 
-def _recorded_spawn_is_recent() -> bool:
+def _recorded_spawn_is_recent(interval_s: float = SPAWN_MIN_INTERVAL_S) -> bool:
     age = _recorded_spawn_age()
-    return age is not None and age < SPAWN_MIN_INTERVAL_S
+    return age is not None and age < interval_s
 
 
 def _command_references_root(command: str, root: Path) -> bool:
@@ -962,6 +1063,7 @@ def ensure_running(
     base_url: str,
     reason: str,
     replace_unavailable_generation: tuple[int, float, str] | None = None,
+    honor_failure_backoff: bool = True,
 ) -> str:
     """Start the server if — and only if — starting can help.
 
@@ -972,6 +1074,11 @@ def ensure_running(
     the exact generation it observed with no usable capacity; replacement then
     happens only after the pool and ownership are verified again under the
     lifecycle lease.
+
+    ``honor_failure_backoff`` widens the spawn spacing after repeated
+    never-ready boots (see :func:`_spawn_min_interval_s`). Autonomous callers
+    keep it; a human pressing Start has just supplied new information the
+    statistics cannot have, and sets it to ``False``.
     """
     command = (launch_command or "").strip()
     if not command:
@@ -1100,7 +1207,8 @@ def ensure_running(
 
         global _last_spawn_at
         now = time.monotonic()
-        if now - _last_spawn_at < SPAWN_MIN_INTERVAL_S or _recorded_spawn_is_recent():
+        interval = _spawn_min_interval_s() if honor_failure_backoff else SPAWN_MIN_INTERVAL_S
+        if now - _last_spawn_at < interval or _recorded_spawn_is_recent(interval):
             return "refused:rate-limited"
 
         # A crash between Popen and the old non-atomic pidfile write left an
@@ -1245,9 +1353,32 @@ def _server_creationflags(*, platform_name: str | None = None) -> int:
     return _WINDOWS_NO_WINDOW | _WINDOWS_DETACHED_PROCESS | _WINDOWS_BREAKAWAY_FROM_JOB
 
 
+def _rotate_server_log_if_large() -> None:
+    """Keep the shared append-only server log from growing without bound.
+
+    Every readiness poll writes one uvicorn access line, so a server that is
+    doing its job perfectly still appends around a megabyte a day forever —
+    and the crash forensics only ever read the tail. Rotating at the spawn
+    boundary is the one moment no process holds the file open on Windows, and
+    it additionally guarantees a fresh generation's stage parse cannot meet a
+    predecessor's lines. One generation of history is kept.
+    """
+    path = _server_log()
+    try:
+        if path.stat().st_size <= MAX_SERVER_LOG_BYTES:
+            return
+        os.replace(path, path.with_name(f"{path.name}.1"))
+    except OSError:
+        # A held handle or a racing writer simply means no rotation this time.
+        log.debug("supervisor: server-log rotation skipped", exc_info=True)
+        return
+    log.info("local-realtime supervisor: rotated the managed server log")
+
+
 def _spawn(command: str, *, reason: str) -> int | None:
     """Detached, window-less, log-sinked spawn. ``None`` when it failed."""
 
+    _rotate_server_log_if_large()
     try:
         _server_log().parent.mkdir(parents=True, exist_ok=True)
         sink = open(_server_log(), "ab")  # noqa: SIM115 — handed to the child
@@ -1392,7 +1523,6 @@ def _revive_from_monitor(
         return outcome
     ready = wait_until_ready(
         base_url,
-        timeout=RUNTIME_READY_TIMEOUT_S,
         launch_command=launch_command,
         cleanup_on_timeout=True,
         cancel_event=cancel_event,
@@ -1415,6 +1545,7 @@ def _runtime_monitor(
 ) -> None:
     """Detect an idle process exit promptly and a wedged pool conservatively."""
     next_pool_probe = time.monotonic() + RUNTIME_MONITOR_POOL_INTERVAL_S
+    next_brain_warm = time.monotonic() + BRAIN_REWARM_INTERVAL_S
     unready_since: float | None = None
     unhealthy_kind = ""
     last_outcome = ""
@@ -1452,6 +1583,8 @@ def _runtime_monitor(
                         unready_since = None
                         unhealthy_kind = ""
                         next_pool_probe = time.monotonic() + RUNTIME_MONITOR_POOL_INTERVAL_S
+                        # The revive warmed the brain itself.
+                        next_brain_warm = time.monotonic() + BRAIN_REWARM_INTERVAL_S
                     elif outcome != last_outcome:
                         log.warning(
                             "local-realtime monitor: crash recovery deferred (%s)",
@@ -1476,6 +1609,12 @@ def _runtime_monitor(
                     unready_since = None
                     unhealthy_kind = ""
                     last_outcome = ""
+                    if now >= next_brain_warm:
+                        # Re-arm the brain's residency deadline on a proven
+                        # healthy server, so an overnight gap cannot make the
+                        # first sentence of the morning pay a cold model load.
+                        next_brain_warm = now + BRAIN_REWARM_INTERVAL_S
+                        warm_brain(launch_command=launch_command)
                     continue
                 if unready_since is None or unhealthy_kind != kind:
                     unready_since = now
@@ -1517,6 +1656,8 @@ def _runtime_monitor(
                     unready_since = None
                     unhealthy_kind = ""
                     next_pool_probe = time.monotonic() + RUNTIME_MONITOR_POOL_INTERVAL_S
+                    # The revive warmed the brain itself.
+                    next_brain_warm = time.monotonic() + BRAIN_REWARM_INTERVAL_S
                 elif outcome != last_outcome:
                     log.warning(
                         "local-realtime monitor: unready recovery deferred (%s)",

@@ -2579,7 +2579,6 @@ async def _finish_managed_server_warm(
         ready = await asyncio.to_thread(
             lambda: supervisor.wait_until_ready(
                 base_url,
-                timeout=supervisor.RUNTIME_READY_TIMEOUT_S,
                 launch_command=command,
                 cleanup_on_timeout=True,
                 cancel_event=cancel_event,
@@ -2688,7 +2687,13 @@ async def managed_server_start(request: Request) -> dict[str, Any]:
         )
     outcome = await asyncio.to_thread(
         lambda: supervisor.ensure_running(
-            launch_command=command, base_url=base_url, reason="rest-start"
+            launch_command=command,
+            base_url=base_url,
+            reason="rest-start",
+            # A human pressing Start has just supplied information the failure
+            # statistics cannot have (a freed GPU, a fixed driver), so the
+            # crash-loop backoff must not make them wait out its widened window.
+            honor_failure_backoff=False,
         )
     )
     if outcome.startswith("refused:"):

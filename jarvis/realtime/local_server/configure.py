@@ -75,7 +75,6 @@ async def apply_and_test_stack(
         ready = await asyncio.to_thread(
             lambda: supervisor.wait_until_ready(
                 base_url,
-                timeout=supervisor.RUNTIME_READY_TIMEOUT_S,
                 launch_command=new_command,
                 cleanup_on_timeout=True,
             )
@@ -157,7 +156,6 @@ async def _rollback_stack(
         ready = await asyncio.to_thread(
             lambda: supervisor.wait_until_ready(
                 base_url,
-                timeout=supervisor.RUNTIME_READY_TIMEOUT_S,
                 launch_command=previous_command,
                 cleanup_on_timeout=True,
             )

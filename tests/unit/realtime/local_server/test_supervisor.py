@@ -1858,3 +1858,234 @@ def test_readiness_timeout_cleanup_counts_toward_the_crash_loop_streak(
     assert outcome == "completed"
     stats = boot_progress.load_stats(tmp_path / "local_realtime_server.boot.json")
     assert stats["failed_streak"] == 1
+
+
+# ── Measured budgets: the statistics decide, not two fixed constants ──────
+
+
+def _write_boot_stats(
+    root: Path, *, durations: list[float] | None = None, failed_streak: int = 0
+) -> None:
+    """Persist a boot-statistics file the supervisor will actually read."""
+    (root / "local_realtime_server.boot.json").write_text(
+        json.dumps(
+            {
+                "durations_s": durations or [],
+                "failed_streak": failed_streak,
+                "ready_token": "ready-token",
+                "timeout_token": "timeout-token",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_a_zombie_child_is_never_mistaken_for_a_live_server(monkeypatch) -> None:
+    """A crashed POSIX child that nobody reaped still answers create_time().
+
+    The server is spawned detached and its ``Popen`` handle is dropped on
+    purpose (it must outlive the app), so on POSIX a crash leaves a zombie
+    entry that ``/proc`` keeps serving until some unrelated subprocess in this
+    interpreter happens to reap it. Reading that as "alive" is what would stop
+    the monitor from ever seeing the alive→gone transition, so the crash would
+    never be recovered. Windows has no zombie state, which makes this the exact
+    path the maintainer's machine cannot exercise.
+    """
+    import psutil
+
+    class _Zombie:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+        def create_time(self) -> float:
+            return 1000.0
+
+        def status(self) -> str:
+            return psutil.STATUS_ZOMBIE
+
+    monkeypatch.setattr(psutil, "Process", _Zombie)
+    assert supervisor._process_create_time(4711) is None
+
+
+def test_a_running_process_keeps_its_verified_ownership(monkeypatch) -> None:
+    """The zombie guard must not cost a healthy server its identity."""
+    import psutil
+
+    class _Running:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+        def create_time(self) -> float:
+            return 1000.0
+
+        def status(self) -> str:
+            return psutil.STATUS_RUNNING
+
+    monkeypatch.setattr(psutil, "Process", _Running)
+    assert supervisor._process_create_time(4711) == 1000.0
+
+
+def test_an_unreadable_process_status_never_revokes_ownership(monkeypatch) -> None:
+    """A denied status probe is not evidence of death (macOS/hardened hosts)."""
+    import psutil
+
+    class _Opaque:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+        def create_time(self) -> float:
+            return 1000.0
+
+        def status(self) -> str:
+            raise psutil.AccessDenied(self.pid)
+
+    monkeypatch.setattr(psutil, "Process", _Opaque)
+    assert supervisor._process_create_time(4711) == 1000.0
+
+
+def test_the_readiness_budget_follows_this_machines_measured_boots(monkeypatch, tmp_path) -> None:
+    """Three times the median, floored and capped — not one global constant.
+
+    A fixed five-minute ceiling makes every host pay five minutes to notice a
+    hung boot, including one whose own boots take a minute.
+    """
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+
+    # No history at all: the safe ceiling stands (first boot, unknown machine).
+    assert supervisor.ready_timeout_s() == supervisor.RUNTIME_READY_TIMEOUT_S
+
+    _write_boot_stats(tmp_path, durations=[60.0, 70.0, 80.0])
+    assert supervisor.ready_timeout_s() == 210.0
+
+    # A very fast machine still gets the floor, not a hair-trigger deadline.
+    _write_boot_stats(tmp_path, durations=[10.0])
+    assert supervisor.ready_timeout_s() == supervisor.RUNTIME_READY_MIN_TIMEOUT_S
+
+    # A very slow one never exceeds the bounded ceiling.
+    _write_boot_stats(tmp_path, durations=[600.0])
+    assert supervisor.ready_timeout_s() == supervisor.RUNTIME_READY_TIMEOUT_S
+
+
+def test_repeated_never_ready_boots_widen_the_spawn_spacing(monkeypatch, tmp_path) -> None:
+    """An install that can no longer boot stops reloading weights every minute.
+
+    ``failed_streak`` counts only generations that never reached a ready pool,
+    and a single successful boot clears it — so a server that crashes after a
+    healthy hour keeps the plain one-minute window.
+    """
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+
+    _write_boot_stats(tmp_path, failed_streak=0)
+    assert supervisor._spawn_min_interval_s() == supervisor.SPAWN_MIN_INTERVAL_S
+
+    _write_boot_stats(tmp_path, failed_streak=1)
+    assert supervisor._spawn_min_interval_s() == 120.0
+
+    _write_boot_stats(tmp_path, failed_streak=3)
+    assert supervisor._spawn_min_interval_s() == 480.0
+
+    _write_boot_stats(tmp_path, failed_streak=99)
+    assert supervisor._spawn_min_interval_s() == supervisor.SPAWN_MAX_INTERVAL_S
+
+
+def test_an_explicit_start_is_not_held_by_the_crash_loop_backoff(monkeypatch, tmp_path) -> None:
+    """A human pressing Start knows something the failure statistics cannot.
+
+    They may have freed the GPU or fixed a driver moments ago, so the widened
+    autonomous window must not also become their wait.
+    """
+    spawned = _spawn_ready(monkeypatch, tmp_path)
+    _write_boot_stats(tmp_path, failed_streak=4)
+    # Older than the plain window, younger than the widened one.
+    monkeypatch.setattr(supervisor, "_recorded_spawn_age", lambda: 90.0)
+
+    autonomous = supervisor.ensure_running(
+        launch_command="serve --model_name m",
+        base_url="http://127.0.0.1:8765",
+        reason="watchdog-exit",
+    )
+    explicit = supervisor.ensure_running(
+        launch_command="serve --model_name m",
+        base_url="http://127.0.0.1:8765",
+        reason="rest-start",
+        honor_failure_backoff=False,
+    )
+
+    assert autonomous == "refused:rate-limited"
+    assert explicit == "spawned"
+    assert len(spawned) == 1
+
+
+def test_an_oversized_server_log_is_rotated_at_the_spawn_boundary(monkeypatch, tmp_path) -> None:
+    """The append-only log grows forever otherwise — one poll line at a time."""
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    log_path = supervisor._server_log()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_bytes(b"x" * (supervisor.MAX_SERVER_LOG_BYTES + 1))
+
+    supervisor._rotate_server_log_if_large()
+
+    assert not log_path.exists()
+    assert log_path.with_name(f"{log_path.name}.1").exists()
+
+
+def test_a_small_server_log_is_left_alone(monkeypatch, tmp_path) -> None:
+    """Rotation may never cost the crash tail of a normal-sized log."""
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    log_path = supervisor._server_log()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_bytes(b"the traceback that matters")
+
+    supervisor._rotate_server_log_if_large()
+
+    assert log_path.read_bytes() == b"the traceback that matters"
+    assert not log_path.with_name(f"{log_path.name}.1").exists()
+
+
+def test_the_monitor_rearms_brain_residency_on_a_healthy_server(monkeypatch, tmp_path) -> None:
+    """``keep_alive`` is a deadline, not a subscription.
+
+    An overnight gap with no voice session expires the Ollama residency, and
+    the first sentence of the morning then pays a cold model load on an
+    otherwise warm server. The monitor is already polling; re-pinging well
+    inside the window costs one empty HTTP request.
+    """
+    root = tmp_path / "local_realtime"
+    command = f'"{root / "server.exe"}" --mode realtime'
+    healthy = {
+        "size": 1,
+        "in_use": 0,
+        "available": 1,
+        "active": 0,
+        "draining": 0,
+        "stuck": 0,
+    }
+    monkeypatch.setattr(supervisor, "RUNTIME_MONITOR_POLL_S", 0.0)
+    monkeypatch.setattr(supervisor, "RUNTIME_MONITOR_POOL_INTERVAL_S", 0.0)
+    monkeypatch.setattr(supervisor, "BRAIN_REWARM_INTERVAL_S", 0.0)
+    monkeypatch.setattr(supervisor, "managed_install_root", lambda value: root)
+    monkeypatch.setattr(supervisor, "_owned_process", lambda: (4711, True))
+    monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: healthy)
+    monkeypatch.setattr(
+        supervisor,
+        "_revive_from_monitor",
+        lambda **kwargs: pytest.fail("a healthy server must never be revived"),
+    )
+    stop_event = threading.Event()
+    warmed: list[str] = []
+
+    def warm(**kwargs: Any) -> bool:
+        warmed.append(str(kwargs["launch_command"]))
+        stop_event.set()
+        return True
+
+    monkeypatch.setattr(supervisor, "warm_brain", warm)
+
+    supervisor._runtime_monitor(
+        command,
+        "http://127.0.0.1:8765",
+        stop_event,
+        (command, "http://127.0.0.1:8765/v1/pool"),
+    )
+
+    assert warmed == [command]

@@ -170,8 +170,14 @@ async def test_cold_managed_server_starts_but_does_not_hold_the_call(
 
 
 async def test_slow_managed_spawn_continues_after_the_call_fails_fast(
-    monkeypatch,
+    monkeypatch, tmp_path
 ) -> None:
+    # Isolate the data dir: the refusal path asks the supervisor for live boot
+    # progress, which reads the REAL pidfile and server log of the developer's
+    # machine. On a host that happens to run a managed server, parsing that
+    # multi-megabyte log both changes the refusal text and costs enough time to
+    # invert this test's timing assertion.
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     import asyncio
     import time
 
@@ -283,9 +289,16 @@ async def test_a_serving_pool_is_never_judged_by_the_cold_start_clock(
 
 
 async def test_a_refusal_explains_itself_in_words_a_user_can_act_on(
-    monkeypatch,
+    monkeypatch, tmp_path
 ) -> None:
-    """Each refusal names a DIFFERENT next step, so it may not be one text."""
+    """Each refusal names a DIFFERENT next step, so it may not be one text.
+
+    The data dir is isolated because the starting refusal is deliberately
+    upgraded with live boot progress: without this, a developer machine with a
+    real managed server under way answers with its actual stage instead of the
+    static sentence pinned here.
+    """
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     from jarvis.plugins.realtime import openai_realtime as module
     from jarvis.realtime.local_server import supervisor
 
@@ -950,6 +963,10 @@ async def test_warm_transport_prewarms_via_the_supervisor(
     resident BEFORE the first call, which is what makes connects instant."""
     from jarvis.realtime.local_server import install, supervisor
 
+    # Isolated data dir: the readiness budget is derived from THIS install's
+    # recorded boot durations, so without isolation the assertion below would
+    # measure whatever the developer's machine last booted in.
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     calls: list[str] = []
     readiness_timeouts: list[float] = []
     monkeypatch.setattr(
@@ -962,7 +979,13 @@ async def test_warm_transport_prewarms_via_the_supervisor(
     def wait_until_ready(*args: Any, **kwargs: Any) -> bool:
         del args
         calls.append("ready")
-        readiness_timeouts.append(float(kwargs["timeout"]))
+        # The prewarm passes no explicit budget — the supervisor's measured
+        # default IS the background budget. What matters here is that the warm
+        # worker never inherits the short interactive one.
+        timeout = kwargs.get("timeout")
+        readiness_timeouts.append(
+            float(timeout) if timeout is not None else supervisor.ready_timeout_s()
+        )
         return True
 
     monkeypatch.setattr(supervisor, "wait_until_ready", wait_until_ready)
