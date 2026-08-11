@@ -195,3 +195,65 @@ def test_re_adoption_needs_a_saved_level_not_just_a_quiet_player():
     d = _ducker(run)
     assert d.mute_others(own_pid=1, never=frozenset()) == []
     assert d._saved == {}
+
+
+def test_unrestored_master_is_re_adopted_by_the_next_session():
+    """The stranded-restore shape exists for the MASTER output too.
+
+    A master duck whose restore never landed leaves the WHOLE Mac output at
+    the duck volume with our saved level still in ``_saved``; the next duck
+    reads that already-ducked volume, ``prev > duck`` stays false, and without
+    re-adoption no session ever restores it — the Mac stays quiet for good.
+    """
+    run = FakeRunner({_MUSIC: "-", _SPOTIFY: "-", "master": "80"})
+    d = _ducker(run, master_fallback=True)
+    assert d.mute_others(own_pid=1, never=frozenset()) == [_MASTER_TOKEN]
+
+    # Session 1 ends, but the master restore osascript times out.
+    def _raise(_script: str):
+        raise subprocess.TimeoutExpired(cmd="osascript", timeout=3.0)
+
+    original = d._run
+    d._run = _raise
+    d.restore([_MASTER_TOKEN])
+    d._run = original
+    assert d._saved == {_MASTER_TOKEN: 80}
+
+    # Session 2: the master still reads the duck volume (0). It must come
+    # back as a token so THIS session's restore can finally land.
+    run._results["master"] = "0"
+    assert d.mute_others(own_pid=1, never=frozenset()) == [_MASTER_TOKEN]
+    run._results["master"] = "80"
+    d.restore([_MASTER_TOKEN])
+    assert any("set volume output volume 80" in s for s in run.scripts)
+    assert d._saved == {}
+
+
+def test_master_re_adoption_needs_a_saved_level_not_just_a_quiet_master():
+    """An output volume the USER turned down must never be claimed as ours."""
+    run = FakeRunner({_MUSIC: "-", _SPOTIFY: "-", "master": "0"})
+    d = _ducker(run, master_fallback=True)
+    assert d.mute_others(own_pid=1, never=frozenset()) == []
+    assert d._saved == {}
+
+
+def test_master_fallback_withheld_while_a_never_muted_player_is_running():
+    """never_mute must beat the master fallback.
+
+    The master output carries the protected player's audio too: with Spotify
+    on the never list and running, ducking the master would silence exactly
+    the app the user told us to leave alone.
+    """
+    run = FakeRunner({_MUSIC: "-", _SPOTIFY: "40", "master": "80"})
+    d = _ducker(run, master_fallback=True)
+    assert d.mute_others(own_pid=1, never=frozenset({"Spotify"})) == []
+    assert not any("output volume" in s for s in run.scripts)
+    assert d._saved == {}
+
+
+def test_master_fallback_available_when_the_never_muted_player_is_not_running():
+    """A merely-LISTED player must not disable the fallback for good."""
+    run = FakeRunner({_MUSIC: "-", _SPOTIFY: "-", "master": "80"})
+    d = _ducker(run, master_fallback=True)
+    assert d.mute_others(own_pid=1, never=frozenset({"Spotify"})) == [_MASTER_TOKEN]
+    assert d._saved == {_MASTER_TOKEN: 80}

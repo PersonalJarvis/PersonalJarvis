@@ -83,6 +83,17 @@ def _prewarm_script(bundle_id: str) -> str:
     )
 
 
+def _is_running_script(bundle_id: str) -> str:
+    """Pure running-state query — never launches or scripts the app itself."""
+    return (
+        f'if application id "{bundle_id}" is running then\n'
+        f'    return "+"\n'
+        f"else\n"
+        f'    return "{_NOT_RUNNING}"\n'
+        f"end if"
+    )
+
+
 def _master_duck_script(target: int) -> str:
     return (
         "set prev to output volume of (get volume settings)\n"
@@ -137,8 +148,10 @@ class MacOSScriptDucker:
         # in that case lowered Jarvis's own TTS — the exact side effect the
         # opt-in fallback exists to keep rare — for no gain at all.
         player_running = False
+        skipped: list[tuple[str, str]] = []
         for token, (name, bundle_id) in _PLAYERS.items():
             if name.lower() in skip:
+                skipped.append((name, bundle_id))
                 continue
             try:
                 proc = self._run(_duck_script(bundle_id, self._duck))
@@ -167,11 +180,32 @@ class MacOSScriptDucker:
             except Exception:  # noqa: BLE001 — timeout/TCC denial: skip player
                 log.debug("ducking skip (%s)", name, exc_info=True)
         if not ducked and not player_running and self._master_fallback:
+            # never_mute must beat the fallback: the master output carries a
+            # protected player's audio too, so ducking it would silence exactly
+            # the app the user told us to leave alone. A merely-listed player
+            # that is NOT running keeps the fallback available for unknown
+            # audio sources (browsers etc.).
+            if self._any_running(skipped):
+                log.debug("ducking: master fallback withheld (never-mute player running)")
+                return ducked
             try:
                 proc = self._run(_master_duck_script(self._duck))
                 prev = self._parse_volume(proc, "master")
-                if prev is not None and prev > self._duck:
+                if prev is None:
+                    pass
+                elif prev > self._duck:
                     self._saved[_MASTER_TOKEN] = prev
+                    ducked.append(_MASTER_TOKEN)
+                elif _MASTER_TOKEN in self._saved:
+                    # Same stranded-restore shape as the player re-adoption
+                    # above, but for the WHOLE output volume: a master restore
+                    # that never landed leaves the Mac quiet for good unless
+                    # this session's restore takes the token over.
+                    log.info(
+                        "ducking: re-adopting the master output (still at the "
+                        "duck volume with an unrestored level of %d)",
+                        self._saved[_MASTER_TOKEN],
+                    )
                     ducked.append(_MASTER_TOKEN)
             except Exception:  # noqa: BLE001
                 log.debug("ducking skip (master)", exc_info=True)
@@ -204,6 +238,19 @@ class MacOSScriptDucker:
                 log.debug("ducking prewarm skip (%s)", name, exc_info=True)
 
     # ---- internals ---------------------------------------------------------
+    def _any_running(self, players: list[tuple[str, str]]) -> bool:
+        """True when any of the given players is currently running."""
+        for name, bundle_id in players:
+            try:
+                proc = self._run(_is_running_script(bundle_id))
+            except Exception:  # noqa: BLE001 — probe failure = assume not running
+                log.debug("ducking is-running probe skip (%s)", name, exc_info=True)
+                continue
+            out = (getattr(proc, "stdout", "") or "").strip()
+            if getattr(proc, "returncode", 1) == 0 and out and out != _NOT_RUNNING:
+                return True
+        return False
+
     @staticmethod
     def _normalized_never(never: frozenset[str]) -> set[str]:
         """Map never-mute entries to player names: case-insensitive, and the
