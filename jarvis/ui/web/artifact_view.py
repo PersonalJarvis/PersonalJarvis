@@ -9,6 +9,7 @@ malicious/hallucinated artifact can never execute JS in the app origin.
 Degrades gracefully: if the optional `markdown` library is unavailable, the raw
 text is shown escaped inside <pre> so the base install never hard-fails.
 """
+
 from __future__ import annotations
 
 import html
@@ -22,27 +23,47 @@ _MARKDOWN_EXT = (".md", ".markdown")
 # XSS from artifact content rendered in the app origin.
 VIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:;"
 
+# Brand theme (matte black + signal yellow), kept in lockstep with the desktop
+# app's dark tokens (frontend/src/index.css) and video/src/intro/theme.ts. The
+# app is dark-first and this page opens from inside it, so it commits to the
+# brand look instead of following the OS light/dark preference.
 _PAGE_CSS = (
-    "body{max-width:48rem;margin:2rem auto;padding:0 1rem;"
-    "font:16px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;background:#fff}"
-    "pre{background:#f4f4f4;padding:1rem;overflow:auto;border-radius:6px}"
-    "code{background:#f4f4f4;padding:.1em .3em;border-radius:3px}"
-    "pre code{background:none;padding:0}"
-    "table{border-collapse:collapse}th,td{border:1px solid #ddd;padding:.4rem .6rem}"
-    "blockquote{border-left:3px solid #ddd;margin:0;padding-left:1rem;color:#555}"
-    "img{max-width:100%}"
-    "@media(prefers-color-scheme:dark){body{background:#1a1a1a;color:#e8e8e8}"
-    "pre,code{background:#2a2a2a}th,td{border-color:#444}}"
+    "*{box-sizing:border-box}"
+    "body{max-width:52rem;margin:0 auto;padding:2.5rem 1.5rem 4rem;"
+    "font:15px/1.65 -apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;"
+    "color:#FAFAFA;background:#0A0A0A}"
+    "h1,h2,h3,h4{line-height:1.3;margin:1.6em 0 .6em;font-weight:600}"
+    "h1:first-child,h2:first-child{margin-top:0}"
+    "h1{font-size:1.5rem;padding-bottom:.4em;border-bottom:1px solid rgba(255,255,255,0.10)}"
+    "h2{font-size:1.2rem}h3{font-size:1.05rem}"
+    "a{color:#FFD60A}a:hover{color:#E6BE00}"
+    "p,ul,ol{margin:.7em 0}li{margin:.25em 0}"
+    "pre{background:#141414;border:1px solid rgba(255,255,255,0.10);"
+    "padding:1rem;overflow:auto;border-radius:10px}"
+    "code{background:#181818;border:1px solid rgba(255,255,255,0.10);"
+    "padding:.1em .35em;border-radius:5px;font-size:.92em}"
+    "pre code{background:none;border:none;padding:0}"
+    "table{border-collapse:collapse;margin:1em 0;display:block;overflow-x:auto}"
+    "th,td{border:1px solid rgba(255,255,255,0.14);padding:.45rem .7rem}"
+    "th{background:#141414;text-align:left}"
+    "blockquote{border-left:3px solid #FFD60A;margin:1em 0;"
+    "padding:.1em 0 .1em 1rem;color:#9A9A9A}"
+    "img{max-width:100%;border-radius:8px}"
+    "hr{border:none;border-top:1px solid rgba(255,255,255,0.10);margin:2em 0}"
+    ".artifact-name{font-size:11px;letter-spacing:.14em;text-transform:uppercase;"
+    "color:#9A9A9A;margin:0 0 1.6rem;display:flex;align-items:center;gap:.6em}"
+    ".artifact-name::before{content:'';width:9px;height:9px;border-radius:50%;"
+    "background:#FFD60A;box-shadow:0 0 10px rgba(255,214,10,0.35)}"
 )
 
 
 def _shell(title: str, body_html: str) -> str:
     return (
-        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         f'<meta http-equiv="Content-Security-Policy" content="{VIEW_CSP}">'
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>{html.escape(title)}</title><style>{_PAGE_CSS}</style></head>"
-        f"<body>{body_html}</body></html>"
+        f"<body><p class='artifact-name'>{html.escape(title)}</p>{body_html}</body></html>"
     )
 
 
