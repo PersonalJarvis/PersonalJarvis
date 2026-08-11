@@ -292,7 +292,7 @@ to that workspace for as long as you want, then switches back cleanly.
 
 <p align="center">
   <a href="https://youtu.be/wFBdmdOn6EU">
-    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/agentic-ide-demo.gif" alt="Three coding agents side by side in the Agentic IDE, one receiving a prompt while its thinking counter runs" width="860" />
+    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/agentic-ide-demo.gif" alt="Two coding agents side by side in the Agentic IDE, one receiving a prompt with its full mission brief while its thinking counter runs" width="860" />
   </a>
 </p>
 
