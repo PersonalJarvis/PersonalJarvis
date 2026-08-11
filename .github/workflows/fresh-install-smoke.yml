@@ -171,9 +171,9 @@ jobs:
           import sys, time, json, http.client
           port = int(sys.argv[1])
 
-          def req(method, path):
+          def req(method, path, headers=None):
               c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
-              c.request(method, path)
+              c.request(method, path, headers=headers or {})
               r = c.getresponse()
               return r.status, r.read()
 
@@ -191,7 +191,15 @@ jobs:
           assert state is not None, "onboarding state did not answer within 15 s of boot"
           assert state["completed"] is False, f"fresh install must be incomplete: {state}"
 
-          status, _ = req("POST", "/api/onboarding/complete")
+          # Completing onboarding may schedule a desktop restart, so the route
+          # demands the same-origin Origin header a real browser click sends
+          # (lifecycle_guard.require_interactive_desktop_action) — a headless
+          # POST without one is refused with 403 by design.
+          status, _ = req(
+              "POST",
+              "/api/onboarding/complete",
+              headers={"Origin": f"http://127.0.0.1:{port}"},
+          )
           assert status == 200, f"complete failed: {status}"
           status, body = req("GET", "/api/onboarding/state")
           assert json.loads(body)["completed"] is True, "completed did not persist"
