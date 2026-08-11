@@ -226,7 +226,7 @@ async def test_the_per_turn_wiki_block_keeps_its_char_cap() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. The widened gate still costs nothing where it always cost nothing
+# 3. Smalltalk and world knowledge probe strictly and inject nothing
 # ---------------------------------------------------------------------------
 
 
@@ -241,12 +241,21 @@ async def test_the_per_turn_wiki_block_keeps_its_char_cap() -> None:
         "What is the fastest animal on earth?",
     ],
 )
-async def test_smalltalk_and_world_knowledge_never_retrieve(utterance: str) -> None:
+async def test_smalltalk_and_world_knowledge_never_inject(utterance: str) -> None:
+    # Retrieval-first (wiki_relevance module header): these turns now RUN the
+    # single-digit-millisecond local probe instead of refusing to look, and the
+    # defense against a wrong injection moved to the STRICT coverage bar. The
+    # invariant this section pins is unchanged where it matters: an unrelated
+    # vault page never reaches the prompt on a smalltalk or world-knowledge
+    # turn — the tallest-tower case stays uninjected because nothing retrieved
+    # covers the question, not because nobody looked.
     search = SpyVaultSearch([FakeHit(title="Weekend", snippet="hiking", score=0.9)])
     injector = WikiContextInjector(search=search, latency_budget_ms=500)
 
     result = await injector.maybe_inject(user_text=utterance, system_prompt=BASE_PROMPT)
 
-    assert should_consult_memory(utterance).consult is False
-    assert search.queries == [], "no retrieval, no latency, no tokens"
-    assert result == BASE_PROMPT
+    verdict = should_consult_memory(utterance)
+    assert verdict.consult is True
+    assert verdict.strict is True, "smalltalk gets the strict coverage bar"
+    assert search.queries, "retrieval-first: the local probe does run"
+    assert result == BASE_PROMPT, "an uncovering hit never reaches the prompt"

@@ -125,6 +125,9 @@ def test_status_pairs_progress_with_failclosed_probe(
         "pid": None,
         "owned": False,
         "stale": False,
+        # Boot forensics (crash-loop verdicts, 2026-08-10): a fresh status
+        # reports no boot in flight and a clean failure streak.
+        "boot": {"failed_streak": 0, "starting": False},
     }
 
 
