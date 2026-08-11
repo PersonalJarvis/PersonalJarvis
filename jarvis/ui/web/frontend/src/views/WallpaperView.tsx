@@ -3,6 +3,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Heart,
   Image as ImageIcon,
   Loader2,
   Moon,
@@ -74,60 +75,136 @@ function SegmentButton({
   );
 }
 
+/** The label the heart carries in both places it appears. */
+function favoriteLabel(item: WallpaperEntry, favorite: boolean): string {
+  return favorite
+    ? `Remove ${item.title} from favorites`
+    : `Add ${item.title} to favorites`;
+}
+
+/**
+ * The heart, shared by the tile and the preview.
+ *
+ * A favourited wallpaper keeps its filled heart at all times; an unfavourited
+ * one shows a hollow outline only while the tile is hovered or the button has
+ * keyboard focus, so five hundred idle tiles are not five hundred pieces of
+ * chrome competing with the artwork.
+ */
+function FavoriteButton({
+  item,
+  favorite,
+  onToggle,
+  // "overlay" sits on the artwork itself and needs its own contrast; "surface"
+  // sits on app chrome and borrows the theme's tokens.
+  tone = "overlay",
+  className,
+}: {
+  item: WallpaperEntry;
+  favorite: boolean;
+  onToggle: () => void;
+  tone?: "overlay" | "surface";
+  className?: string;
+}) {
+  const idle =
+    tone === "overlay"
+      ? "border-white/25 bg-black/35 text-white/85 backdrop-blur-sm hover:bg-black/55 hover:text-white"
+      : "border-border text-muted-foreground hover:bg-secondary/60 hover:text-foreground";
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={favorite}
+      aria-label={favoriteLabel(item, favorite)}
+      title={favoriteLabel(item, favorite)}
+      className={cn(
+        "flex h-7 w-7 items-center justify-center rounded-full border transition-all",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+        favorite
+          ? "border-transparent bg-rose-500/90 text-white shadow"
+          : idle,
+        className,
+      )}
+    >
+      <Heart className={cn("h-3.5 w-3.5", favorite && "fill-current")} />
+    </button>
+  );
+}
+
 /**
  * One grid tile.
  *
  * The image is the 480 px thumbnail and it is lazy: five hundred tiles must
  * cost only what is actually scrolled past. The full-size file is not touched
  * here at all — that download belongs to the preview.
+ *
+ * The frame is a plain element rather than the button it used to be: the heart
+ * is a second, independent action on the same tile, and a button inside a
+ * button is invalid markup that browsers resolve however they like.
  */
 function WallpaperTile({
   item,
   active,
+  favorite,
   onOpen,
+  onToggleFavorite,
 }: {
   item: WallpaperEntry;
   active: boolean;
+  favorite: boolean;
   onOpen: () => void;
+  onToggleFavorite: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      title={`${item.title} — ${item.styleLabel}`}
+    <div
       className={cn(
-        "group relative overflow-hidden rounded-lg border text-left transition-all",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+        "group relative overflow-hidden rounded-lg border transition-all",
         active
           ? "border-primary ring-2 ring-primary/60"
           : "border-border hover:border-primary/50",
       )}
     >
-      <img
-        src={thumbUrlFor(item)}
-        alt={item.title}
-        // The pinned original is the first thing on screen and the shell has
-        // already loaded it, so waiting for an intersection buys nothing.
-        loading={item.isDefault ? "eager" : "lazy"}
-        decoding="async"
-        width={480}
-        height={270}
-        className="aspect-video w-full bg-secondary/40 object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+      <button
+        type="button"
+        onClick={onOpen}
+        title={`${item.title} — ${item.styleLabel}`}
+        className="block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+      >
+        <img
+          src={thumbUrlFor(item)}
+          alt={item.title}
+          // The pinned original is the first thing on screen and the shell has
+          // already loaded it, so waiting for an intersection buys nothing.
+          loading={item.isDefault ? "eager" : "lazy"}
+          decoding="async"
+          width={480}
+          height={270}
+          className="aspect-video w-full bg-secondary/40 object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+        />
+        <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-2.5 pb-1.5 pt-6">
+          <span className="block truncate text-[11px] font-medium text-white">
+            {item.title}
+          </span>
+          <span className="block truncate text-[10px] text-white/65">
+            {item.styleLabel}
+          </span>
+        </span>
+      </button>
+      <FavoriteButton
+        item={item}
+        favorite={favorite}
+        onToggle={onToggleFavorite}
+        className={cn(
+          "absolute left-2 top-2",
+          !favorite &&
+            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+        )}
       />
-      <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-2.5 pb-1.5 pt-6">
-        <span className="block truncate text-[11px] font-medium text-white">
-          {item.title}
-        </span>
-        <span className="block truncate text-[10px] text-white/65">
-          {item.styleLabel}
-        </span>
-      </span>
       {active && (
-        <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground shadow">
+        <span className="pointer-events-none absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground shadow">
           <Check className="h-3.5 w-3.5" />
         </span>
       )}
-    </button>
+    </div>
   );
 }
 
@@ -143,13 +220,17 @@ function WallpaperTile({
 function WallpaperPreview({
   item,
   applied,
+  favorite,
   onApply,
+  onToggleFavorite,
   onClose,
   onStep,
 }: {
   item: WallpaperEntry;
   applied: boolean;
+  favorite: boolean;
   onApply: () => void;
+  onToggleFavorite: () => void;
   onClose: () => void;
   onStep: (delta: number) => void;
 }) {
@@ -184,6 +265,12 @@ function WallpaperPreview({
             {item.styleLabel} · {item.theme === "dark" ? "Dark" : "Light"}
           </p>
         </div>
+        <FavoriteButton
+          item={item}
+          favorite={favorite}
+          onToggle={onToggleFavorite}
+          tone="surface"
+        />
         <Button
           size="sm"
           variant={applied ? "secondary" : "default"}
@@ -254,22 +341,37 @@ export function WallpaperView() {
   // so the check mark always lands on what is actually on screen).
   const activeTheme = useThemeValue();
   const selectedId = useWallpaperStore((state) => state.selections[activeTheme]);
+  const favorites = useWallpaperStore((state) => state.favorites);
+  const toggleFavorite = useWallpaperStore((state) => state.toggleFavorite);
   const apply = useApplyWallpaper();
 
   const [theme, setTheme] = useState<ThemeFilter>("all");
   const [ordering, setOrdering] = useState<Ordering>("mixed");
   const [style, setStyle] = useState<string | null>(null);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
 
   const items = data?.items ?? [];
   const styles = data?.styles ?? [];
 
+  const favoriteIds = useMemo(() => new Set(favorites), [favorites]);
+  // Counted against the catalog, not against the stored list: an id left over
+  // from a library that is no longer installed must not inflate the badge.
+  const favoriteCount = useMemo(
+    () => items.filter((item) => favoriteIds.has(item.id)).length,
+    [favoriteIds, items],
+  );
+
   const visible = useMemo(() => {
     const filtered = items.filter(
       (item) =>
         (theme === "all" || item.theme === theme) &&
-        (style === null || item.style === style),
+        (style === null || item.style === style) &&
+        (!favoritesOnly || favoriteIds.has(item.id)),
     );
+    // Favourites deliberately do NOT float to the top of the mixed grid: a
+    // tile that jumps away the instant its heart is clicked loses the place
+    // the reader was looking at. The Favorites filter is where they gather.
     return filtered.sort((left, right) => {
       // The bundled original outranks every ordering and every shuffle: it is
       // the first wallpaper this app ever had, and it stays the first tile.
@@ -281,7 +383,7 @@ export function WallpaperView() {
       }
       return shuffleRank(left.id) - shuffleRank(right.id);
     });
-  }, [items, ordering, style, theme]);
+  }, [favoriteIds, favoritesOnly, items, ordering, style, theme]);
 
   // "No choice stored" and "the original is chosen" are the same state, so the
   // pinned tile carries the check mark on a fresh profile.
@@ -291,13 +393,25 @@ export function WallpaperView() {
   const previewIndex = previewId
     ? visible.findIndex((item) => item.id === previewId)
     : -1;
-  const previewItem = previewIndex >= 0 ? visible[previewIndex] : null;
+  // Resolved against the whole catalog when the filter no longer contains it:
+  // un-hearting a wallpaper while its preview is open under the Favorites
+  // filter must not yank the picture out from under the reader.
+  const previewItem =
+    previewIndex >= 0
+      ? visible[previewIndex]
+      : (items.find((item) => item.id === previewId) ?? null);
 
   // Stepping wraps around, so the arrow keys never dead-end at either edge of
   // whatever the current filter happens to be showing.
   const step = useCallback(
     (delta: number) => {
-      if (previewIndex < 0 || visible.length === 0) return;
+      if (visible.length === 0) return;
+      // A preview that has dropped out of the filter steps back into it rather
+      // than dead-ending: the next arrow press resumes at the nearest edge.
+      if (previewIndex < 0) {
+        setPreviewId(visible[delta < 0 ? visible.length - 1 : 0].id);
+        return;
+      }
       const next = (previewIndex + delta + visible.length) % visible.length;
       setPreviewId(visible[next].id);
     },
@@ -381,6 +495,23 @@ export function WallpaperView() {
           </SegmentButton>
         </div>
 
+        <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
+          <SegmentButton
+            active={favoritesOnly}
+            onClick={() => setFavoritesOnly((on) => !on)}
+          >
+            <Heart
+              className={cn("h-3 w-3", favoritesOnly && "fill-current")}
+            />
+            Favorites
+            {favoriteCount > 0 && (
+              <span className="text-[10px] tabular-nums opacity-70">
+                {favoriteCount}
+              </span>
+            )}
+          </SegmentButton>
+        </div>
+
         <span className="ml-auto text-xs text-muted-foreground">
           {visible.length} shown
         </span>
@@ -411,13 +542,17 @@ export function WallpaperView() {
               key={item.id}
               item={item}
               active={isApplied(item)}
+              favorite={favoriteIds.has(item.id)}
               onOpen={() => setPreviewId(item.id)}
+              onToggleFavorite={() => toggleFavorite(item.id)}
             />
           ))}
         </div>
         {visible.length === 0 && (
           <p className="px-6 pb-6 text-xs text-muted-foreground">
-            No wallpaper matches this filter.
+            {favoritesOnly && favoriteCount === 0
+              ? "No favorites yet — click the heart on a wallpaper to keep it here."
+              : "No wallpaper matches this filter."}
           </p>
         )}
       </ScrollArea>
@@ -426,7 +561,9 @@ export function WallpaperView() {
         <WallpaperPreview
           item={previewItem}
           applied={isApplied(previewItem)}
+          favorite={favoriteIds.has(previewItem.id)}
           onApply={() => apply(previewItem)}
+          onToggleFavorite={() => toggleFavorite(previewItem.id)}
           onClose={() => setPreviewId(null)}
           onStep={step}
         />

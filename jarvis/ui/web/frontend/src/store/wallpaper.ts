@@ -31,6 +31,17 @@ const THEME_KEYS: Record<Theme, string> = {
  *  no pick of its own yet, so an existing profile keeps its picture. */
 const LEGACY_KEY = "jarvis.wallpaper.v1";
 
+/**
+ * The shortlist of wallpapers worth coming back to.
+ *
+ * Deliberately NOT split per theme the way the selection is: a favourite is a
+ * property of the picture, not of the mode the app happens to be in. Splitting
+ * it would force someone who loves a daylight scene to re-star it after every
+ * toggle, and the theme filter in the grid already answers "which of my
+ * favourites fit dark mode".
+ */
+const FAVORITES_KEY = "jarvis.wallpaper.favorites.v1";
+
 /** Where a chosen wallpaper's full-size file is served from. */
 export function wallpaperFullUrl(id: string): string {
   return `/api/wallpapers/${encodeURIComponent(id)}/full`;
@@ -59,17 +70,45 @@ function readSelections(): Record<Theme, string | null> {
   return { light: readStoredId("light"), dark: readStoredId("dark") };
 }
 
+/**
+ * The stored favourites, defensively.
+ *
+ * Anything that is not a list of non-empty strings is treated as "no
+ * favourites": the value is hand-editable browser storage, and a malformed
+ * entry must cost the grid a shortlist, never a mount.
+ */
+function readFavorites(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(FAVORITES_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const clean = parsed.filter(
+      (entry): entry is string => typeof entry === "string" && entry.trim() !== "",
+    );
+    return [...new Set(clean)];
+  } catch {
+    return [];
+  }
+}
+
 interface WallpaperStore {
   /** Each theme's chosen wallpaper id, or null for the bundled default. */
   selections: Record<Theme, string | null>;
+  /** Favourited wallpaper ids, oldest first. Shared by both themes. */
+  favorites: string[];
   /** Persist a choice for one theme. Pass null to go back to the default. */
   select: (id: string | null, theme: Theme) => void;
+  /** Star or un-star one wallpaper. */
+  toggleFavorite: (id: string) => void;
   /** Adopt choices made in another window. Does not write back. */
   adopt: () => void;
 }
 
-export const useWallpaperStore = create<WallpaperStore>((set) => ({
+export const useWallpaperStore = create<WallpaperStore>((set, get) => ({
   selections: readSelections(),
+  favorites: readFavorites(),
   select: (id, theme) => {
     try {
       if (id) window.localStorage.setItem(THEME_KEYS[theme], id);
@@ -83,7 +122,23 @@ export const useWallpaperStore = create<WallpaperStore>((set) => ({
     }
     set({ selections: readSelections() });
   },
-  adopt: () => set({ selections: readSelections() }),
+  toggleFavorite: (id) => {
+    if (!id) return;
+    // Computed from the store rather than re-read from storage, so a rapid
+    // double-click resolves against what this window last wrote.
+    const current = get().favorites;
+    const next = current.includes(id)
+      ? current.filter((entry) => entry !== id)
+      : [...current, id];
+    try {
+      if (next.length) window.localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
+      else window.localStorage.removeItem(FAVORITES_KEY);
+    } catch {
+      /* the star still shows in this window, it just will not survive */
+    }
+    set({ favorites: next });
+  },
+  adopt: () => set({ selections: readSelections(), favorites: readFavorites() }),
 }));
 
 /**
@@ -95,7 +150,12 @@ export const useWallpaperStore = create<WallpaperStore>((set) => ({
  */
 export function installWallpaperSync(): () => void {
   if (typeof window === "undefined") return () => {};
-  const watched = new Set<string>([LEGACY_KEY, THEME_KEYS.light, THEME_KEYS.dark]);
+  const watched = new Set<string>([
+    LEGACY_KEY,
+    THEME_KEYS.light,
+    THEME_KEYS.dark,
+    FAVORITES_KEY,
+  ]);
   const onStorage = (event: StorageEvent) => {
     if (event.key !== null && !watched.has(event.key)) return;
     useWallpaperStore.getState().adopt();

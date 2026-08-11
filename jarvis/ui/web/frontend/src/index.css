@@ -1027,25 +1027,53 @@
   }
 
   /* Radix portals and hand-built pickers render under <body>, outside the
-     section stage above. Keep those floating surfaces on the same clear glass
-     system so Light mode never reintroduces an opaque white sheet. */
+     section stage above — so they inherit neither its glass ground nor its
+     readability floor, and they hang over arbitrary content: another card, a
+     wallpaper, or a terminal pane full of text.
+
+     A floating layer is NOT chrome. The untinted-wallpaper decision applies
+     to surfaces the artwork is the background OF (nav column, top bar); a
+     menu, dialog or tooltip is a transient overlay whose whole purpose is to
+     be read, and it covers what is under it on purpose. Light mode used to
+     drop its ground entirely and rely on a blur alone — but a blur is not a
+     contrast ground, so the agent picker over a terminal pane came out as a
+     milky smear with its 11px descriptions dissolving into the text behind
+     them (maintainer report 2026-08-11).
+
+     These surfaces therefore carry their own near-opaque paper ground, a
+     border firm enough to read as an edge, and no inherited halo (ink sits on
+     paper here, so an outline would be pure noise). */
   :root:not(.dark)
     :where([class~="bg-popover"], [class~="bg-popover/95"]),
   :root:not(.dark)
-    :where([role="dialog"], [role="menu"], [role="tooltip"]):where(
+    :where(
+      [role="dialog"],
+      [role="menu"],
+      [role="listbox"],
+      [role="tooltip"]
+    ):where(
       [class~="bg-card"],
       [class~="bg-card/95"],
       [class~="bg-background"],
       [class~="bg-background/95"]
     ) {
-    background-color: transparent;
-    -webkit-backdrop-filter: blur(16px) saturate(0.92);
-    backdrop-filter: blur(16px) saturate(0.92);
+    /* Firmer than the stage's hairline: this edge separates the overlay from
+       whatever it happens to hang over, not two cards on one ground. */
+    --border: 40 12% 52%;
+    background-color: hsl(var(--popover) / 0.97);
+    -webkit-backdrop-filter: blur(16px) saturate(1.02);
+    backdrop-filter: blur(16px) saturate(1.02);
     box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.42),
-      0 18px 44px rgb(var(--scrim-rgb) / 0.14);
+      inset 0 1px 0 rgb(255 255 255 / 0.6),
+      0 18px 44px rgb(var(--scrim-rgb) / 0.2);
+    text-shadow: none;
   }
 
+  /* Nested grounds INSIDE a dialog are flattened — the dialog above already
+     supplies one, and stacking a second translucent fill on it only muddies
+     it. The `:not()` chain protects the floating layer's own ground: a menu or
+     a tooltip opened from within a dialog is a surface in front of it, not a
+     panel inside it, and this selector outranks the rule above. */
   :root:not(.dark)
     [role="dialog"]
     :where(
@@ -1070,6 +1098,8 @@
       [class~="bg-muted/30"],
       [class~="bg-muted/40"],
       [class~="bg-muted/50"]
+    ):where(
+      :not([role="menu"], [role="listbox"], [role="tooltip"], [role="dialog"])
     ) {
     background-color: transparent;
   }

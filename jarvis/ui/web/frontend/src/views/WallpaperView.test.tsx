@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -78,7 +79,10 @@ function requestedSources(): string[] {
 
 beforeEach(() => {
   window.localStorage.clear();
-  useWallpaperStore.setState({ selections: { light: null, dark: null } });
+  useWallpaperStore.setState({
+    selections: { light: null, dark: null },
+    favorites: [],
+  });
   document.documentElement.classList.add("dark");
 });
 
@@ -241,6 +245,130 @@ describe("WallpaperView", () => {
     await screen.findByAltText("Flooded Observatory");
 
     expect(requestedSources()).toEqual(before);
+  });
+
+  it("stars a wallpaper from its tile and remembers it", async () => {
+    renderView();
+
+    await screen.findByAltText("Neon Crossing");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add Neon Crossing to favorites" }),
+    );
+
+    await waitFor(() => {
+      expect(useWallpaperStore.getState().favorites).toEqual(["03-anime-neon-01"]);
+    });
+    expect(
+      JSON.parse(window.localStorage.getItem("jarvis.wallpaper.favorites.v1") ?? "[]"),
+    ).toEqual(["03-anime-neon-01"]);
+  });
+
+  it("un-stars a wallpaper and clears the storage slot when none are left", async () => {
+    renderView();
+
+    await screen.findByAltText("Neon Crossing");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add Neon Crossing to favorites" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Remove Neon Crossing from favorites",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(useWallpaperStore.getState().favorites).toEqual([]);
+    });
+    expect(window.localStorage.getItem("jarvis.wallpaper.favorites.v1")).toBeNull();
+  });
+
+  it("shows only the starred wallpapers under the Favorites filter", async () => {
+    renderView();
+
+    await screen.findByAltText("Morning Atrium");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add Morning Atrium to favorites" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Favorites/ }));
+
+    await waitFor(() => {
+      const tiles = [...document.querySelectorAll('[data-testid="wallpaper-grid"] img')];
+      expect(tiles.map((tile) => tile.getAttribute("alt"))).toEqual([
+        "Morning Atrium",
+      ]);
+    });
+  });
+
+  it("stars the bundled original like any other wallpaper", async () => {
+    renderView();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Add The Original to favorites" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Favorites/ }));
+
+    await waitFor(() => {
+      const tiles = [...document.querySelectorAll('[data-testid="wallpaper-grid"] img')];
+      expect(tiles.map((tile) => tile.getAttribute("alt"))).toEqual(["The Original"]);
+    });
+  });
+
+  it("explains the empty Favorites filter instead of showing a bare no-match line", async () => {
+    renderView();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Favorites/ }));
+
+    expect(await screen.findByText(/No favorites yet/)).toBeTruthy();
+  });
+
+  it("ignores stored favorites the catalog no longer knows", async () => {
+    // A library that was uninstalled leaves ids behind; they must not be
+    // counted, and the filter must read as empty rather than as "1 starred".
+    act(() => useWallpaperStore.setState({ favorites: ["99-vanished-01"] }));
+    renderView();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Favorites/ }));
+
+    expect(await screen.findByText(/No favorites yet/)).toBeTruthy();
+  });
+
+  it("keeps the preview open when its wallpaper is un-starred under the filter", async () => {
+    renderView();
+
+    await screen.findByAltText("Neon Crossing");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add Neon Crossing to favorites" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Favorites/ }));
+    fireEvent.click(await screen.findByAltText("Neon Crossing"));
+    const preview = await screen.findByTestId("wallpaper-preview");
+
+    fireEvent.click(
+      within(preview).getByRole("button", {
+        name: "Remove Neon Crossing from favorites",
+      }),
+    );
+
+    expect(screen.getByTestId("wallpaper-preview")).toBeTruthy();
+  });
+
+  it("stars a wallpaper from the preview", async () => {
+    renderView();
+
+    fireEvent.click(await screen.findByAltText("Flooded Observatory"));
+    await screen.findByTestId("wallpaper-preview");
+    const preview = screen.getByTestId("wallpaper-preview");
+    fireEvent.click(
+      within(preview).getByRole("button", {
+        name: "Add Flooded Observatory to favorites",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(useWallpaperStore.getState().favorites).toEqual([
+        "01-cinematic-photoreal-01",
+      ]);
+    });
   });
 
   it("still offers the original when the library is absent", async () => {

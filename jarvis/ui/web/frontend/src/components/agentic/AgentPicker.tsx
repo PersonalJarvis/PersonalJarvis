@@ -59,8 +59,16 @@ export function offersAgentChoice(agents?: SplitAgentChoice[]): boolean {
   return (agents ?? []).filter((a) => a.installed).length > 1;
 }
 
-/** The menu's own footprint, used to decide whether it still fits below. */
-const MENU_WIDTH_PX = 240;
+/**
+ * The menu's own footprint, used to decide whether it still fits below.
+ *
+ * Wide enough that the one-line description under each name survives instead of
+ * being truncated mid-word: at 240px "Moonshot AI's terminal coding agent" was
+ * cut to "…terminal coding ag…", which is a label that costs a line and answers
+ * nothing. Keep in step with the `w-*` class on the menu below, which is what
+ * governs while the menu still hangs inside its caller.
+ */
+const MENU_WIDTH_PX = 272;
 const MENU_GAP_PX = 4;
 /** Never hang closer than this to a window edge. */
 const VIEWPORT_MARGIN_PX = 8;
@@ -190,7 +198,7 @@ export function AgentPickerMenu({
           // the backend registered, and that is six entries on a machine with
           // the usual set installed — more than fits under a button near the
           // top of a laptop screen.
-          "z-50 max-h-[70vh] w-60 overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl scrollbar-jarvis",
+          "z-50 max-h-[70vh] w-[17rem] overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl scrollbar-jarvis",
           "animate-in fade-in-0 zoom-in-95 duration-150",
           // The caller's anchoring classes describe a box INSIDE its own
           // element ("right-2 top-full"), which is the very thing a detached
@@ -202,7 +210,12 @@ export function AgentPickerMenu({
           if (e.key === "Escape") onDismiss();
         }}
       >
-        <p className="px-2 py-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
+        {/* The question, at label weight rather than as quiet muted ink: it is
+            11px in all-caps, which is the hardest text in the menu to read, and
+            it is the one line that says what the click will do. The rule under
+            it separates the question from the answers, so the first entry does
+            not read as part of the heading. */}
+        <p className="mb-1 border-b border-border/60 px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-foreground/70">
           {title}
         </p>
         {agents.map((agent) => (
@@ -217,7 +230,14 @@ export function AgentPickerMenu({
               e.stopPropagation();
               onPick(agent.name);
             }}
-            className="flex w-full items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            /* An entry that is not installed is OFF, not unreadable. It used to
+               drop to 40 % opacity, which on paper put its name and its own
+               "not installed" reason below the contrast floor — the absence
+               stopped explaining itself, which is the whole reason the entry is
+               listed. State now reads from the ink COLOUR (muted rather than
+               foreground) with only a slight dim on top, so it is plainly
+               unavailable and still says why. */
+            className="flex w-full items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:text-muted-foreground disabled:opacity-80 disabled:hover:bg-transparent"
           >
             {/* The mark, at list weight rather than as a framed tile: this is a
                 menu of choices, and forty boxes down a column read as a grid
@@ -244,7 +264,7 @@ export function AgentPickerMenu({
               )}
             </span>
             {!agent.installed && (
-              <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+              <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                 {agent.kind === "shell" ? "no shell here" : "not installed"}
               </span>
             )}
