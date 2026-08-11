@@ -1,39 +1,48 @@
 {
   "schema_version": 1,
   "asset": "assets/demo/personal-jarvis-demo.gif",
-  "source": "assets/demo/personal-jarvis-demo.mp4",
-  "source_sha256": "63bc99bc2b0d3d9b58f4f21ba50ac0cd3205cb39a0bd3cd2e61033b5a6e4c991",
-  "source_duration_seconds": 153.016667,
-  "prompt": "Hey Ruben, can you please open my Windows settings and change my mode from dark mode to white mode, my display mode.",
+  "source": "2026-08-11 11-24-44.mp4",
+  "source_note": "Raw OBS capture, kept out of the repo: it shows an unredacted account email.",
+  "source_sha256": "b5ed01ec583b166d7853d6e9eef30b984b66738d2071b00944afd0e61a2072a4",
+  "source_duration_seconds": 44.066667,
+  "prompt": "Hey George, can you please open my Windows settings and change my mode from dark mode to white mode?",
   "timeline": [
     {
       "kind": "prompt_card",
-      "source_frame_seconds": 11.0,
-      "duration_seconds": 4.2
+      "source_frame_seconds": 21.0,
+      "duration_seconds": 4.5
     },
     {
       "kind": "action",
-      "source_start_seconds": 11.05,
-      "source_end_seconds": 37.0,
-      "speed_multiplier": 2.8
+      "source_start_seconds": 21.0,
+      "source_end_seconds": 33.5,
+      "speed_multiplier": 1.0
     },
     {
       "kind": "result_hold",
-      "source_frame_seconds": 37.0,
+      "source_frame_seconds": 33.5,
       "duration_seconds": 1.8,
       "fade_out_seconds": 0.6
+    }
+  ],
+  "redactions": [
+    {
+      "reason": "Windows account name and email of a third party in the Settings sidebar",
+      "method": "boxblur",
+      "region": { "x": 18, "y": 18, "width": 104, "height": 36 },
+      "from_seconds": 5.9
     }
   ],
   "export": {
     "width": 1100,
     "height": 618,
     "frames_per_second": 14,
-    "frame_count": 216,
-    "duration_seconds": 15.43,
+    "frame_count": 263,
+    "duration_seconds": 18.78,
     "palette_colors": 160,
     "dither": "bayer:4",
     "loop": true,
-    "size_bytes": 1119452,
-    "sha256": "31237f967744b764cc3ba70604d0263c6466dc2a9f5ac849675105ff88bccddd"
+    "size_bytes": 2237201,
+    "sha256": "493b40fdec332c497eeb947cfd81e54fac68a924427add01d7e66f7ea2a90e96"
   }
 }
