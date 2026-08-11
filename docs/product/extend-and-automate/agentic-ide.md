@@ -66,6 +66,33 @@ Use the workspace bar to add, switch, rename, or close workspaces. Switching
 tabs or app sections leaves panes running. Closing a workspace stops its panes;
 files they wrote remain.
 
+### Add a Coding CLI of Your Own
+
+The pane step lists the coding CLIs Jarvis ships with. If yours is not among
+them, choose **Add a CLI** at the bottom of that list and give it:
+
+- a **name** — what you will see in the pickers and say out loud;
+- the **command** — exactly what you would type in a terminal to start it;
+- an optional **description** and **logo**.
+
+It then appears everywhere the built-in ones do: the pane step, the "open a
+terminal" menu, the pane split menu, and the voice catalogue. Editing or
+removing it later is on its own row in the same list.
+
+Two things to know about a CLI you added:
+
+- Jarvis checks only that the command's program is installed, and reports no
+  version number for it. It never runs your command to ask, because that would
+  start an unknown program every time the app checks what this machine can run.
+- Trust pre-seeding, several subscriptions, and reopening earlier conversations
+  are not available for it. Each of those needs knowledge of one specific
+  vendor's own files. Everything else — prompts, drops, recaps, call-signs —
+  works as it does for a built-in CLI.
+
+If your command is more than one program (a pipeline, a `VAR=value` prefix, or
+two commands chained), the pane runs it through this computer's shell and
+closes when the whole line is done. The dialog says so while you type.
+
 ## Arrange and Address Panes
 
 - Split a pane right or down, optionally with another installed coding CLI.
