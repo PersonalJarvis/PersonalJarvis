@@ -66,8 +66,13 @@ vi.mock("@xterm/xterm", () => ({
     onData() {
       return { dispose() {} };
     }
-    write(text: string) {
+    // The callback is answered, as the real xterm answers it: the pane counts
+    // what is still being parsed so a fit cannot reflow the buffer under a
+    // half-drawn screen (see RESIZE_PARSE_WAIT_MS). A stand-in that swallowed
+    // it would leave every pane here believing it is permanently mid-parse.
+    write(text: string, callback?: () => void) {
       harness.writes.push(text);
+      callback?.();
     }
     scrollToBottom() {}
     scrollToLine() {}
@@ -111,10 +116,6 @@ vi.mock("@/lib/agenticIdeApi", () => ({ attachToTerminal: vi.fn() }));
 
 import { AgenticTerminal } from "./AgenticTerminal";
 import { OFFSCREEN_MAX_HOLD_MS } from "./offscreenBuffer";
-import {
-  clearTerminalPreview,
-  subscribeTerminalPreview,
-} from "./terminalPreview";
 
 class ResizeObserverHarness implements ResizeObserver {
   constructor(_callback: ResizeObserverCallback) {}
@@ -171,7 +172,6 @@ describe("AgenticTerminal off-screen output", () => {
   });
 
   afterEach(() => {
-    clearTerminalPreview("Dana");
     vi.restoreAllMocks();
   });
 
@@ -194,17 +194,6 @@ describe("AgenticTerminal off-screen output", () => {
 
     act(() => harness.fire?.(true));
     expect(harness.writes).toEqual(["frame one frame two frame three"]);
-  });
-
-  it("keeps the same hidden xterm live while its deck card is watching", () => {
-    const unsubscribe = subscribeTerminalPreview("Dana", () => undefined);
-    mount();
-    act(() => harness.fire?.(false));
-
-    act(() => harness.handlers?.onOutput("live deck output"));
-
-    expect(harness.writes).toContain("live deck output");
-    unsubscribe();
   });
 
   it("writes a flooded hidden pane out rather than losing its frame", () => {

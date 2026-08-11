@@ -208,6 +208,27 @@ export const REBUILD_QUIET_MS = 140;
 export const REBUILD_SETTLE_MAX_MS = 450;
 
 /**
+ * The longest a geometry change waits for the pane's parser to reach a gap.
+ *
+ * Resizing xterm REFLOWS its buffer, and a reflow that lands between two slices
+ * of a write moves the rows the half-parsed escape stream is addressing. An
+ * agent's TUI is drawn by relative moves — "up twelve rows, erase from here" —
+ * so the erase then lands on rows that hold something else: the frame's rule
+ * drawn twice, an answer printed under the copy it was replacing, or, when the
+ * miscount runs the other way, a pane wiped down to its status line. That is
+ * the whole class of "moving a terminal breaks it" (reported 2026-08-11), and
+ * the gate below is the answer: fit at a moment when nothing is mid-parse.
+ *
+ * The wait is bounded because a pane streaming without pause has no gap to
+ * offer, and a terminal that never follows its tile is worse than one frame
+ * parsed across a reflow — the agent would go on formatting for a size no
+ * window is showing. Comfortably longer than one of xterm's ~12 ms parse
+ * slices and than any single chunk a socket delivers, short enough that even a
+ * pane talking flat out matches its tile within a quarter of a second.
+ */
+export const RESIZE_PARSE_WAIT_MS = 250;
+
+/**
  * How long a call-sign may be — the same cap the backend enforces
  * (`MAX_TERMINAL_NAME`), so the field stops where the save would have failed
  * rather than letting somebody type a name that comes back rejected.
@@ -864,6 +885,38 @@ export function AgenticTerminal({
       holdTimer = undefined;
     };
 
+    /*
+     * How many writes this pane has handed xterm that have not finished
+     * parsing.
+     *
+     * The one thing a resize has to know. xterm parses a write in time slices,
+     * so "the socket delivered it" and "the screen has it" are different
+     * moments, and reflowing the buffer in between moves the rows the rest of
+     * that stream is addressing (see RESIZE_PARSE_WAIT_MS). Counted rather
+     * than asked, because xterm exposes no such question — every byte this
+     * pane draws goes through `writeToTerminal` below, which is what makes the
+     * count complete.
+     */
+    let parsing = 0;
+    /**
+     * Run the geometry change this pane is holding back, if it is holding one.
+     *
+     * Assigned once the resize path below exists; the writes above are defined
+     * first because everything else in this scope draws through them.
+     */
+    let resumeResize: (() => void) | null = null;
+
+    /** Hand bytes to xterm, keeping the count of what is still being parsed. */
+    const writeToTerminal = (text: string, afterWrite?: () => void) => {
+      parsing += 1;
+      term.write(text, () => {
+        parsing = Math.max(0, parsing - 1);
+        afterWrite?.();
+        // The parser is between chunks — the one safe moment to reflow.
+        if (parsing === 0) resumeResize?.();
+      });
+    };
+
     /**
      * Write what is held, whether or not this pane believes it is watched.
      *
@@ -874,7 +927,7 @@ export function AgenticTerminal({
       cancelHoldTimer();
       const held = offscreen.drain();
       if (held) {
-        term.write(held, afterFlush);
+        writeToTerminal(held, afterFlush);
         return;
       }
       afterFlush?.();
@@ -1032,7 +1085,7 @@ export function AgenticTerminal({
       setPainted(true);
       if (!paneVisible) recheckParked();
       if (paneVisible) {
-        term.write(text, afterWrite);
+        writeToTerminal(text, afterWrite);
         return;
       }
       offscreen.push(text);
@@ -1180,12 +1233,25 @@ export function AgenticTerminal({
         typeof document.hasFocus !== "function" ||
         document.hasFocus());
 
-    const sendResize = (claimOwner = false) => {
+    /** Is this pane's tile something that can honestly be measured right now? */
+    const measurable = () =>
+      container.clientWidth >= 8 && container.clientHeight >= 8;
+
+    /**
+     * Fit this pane to its tile and tell the agent behind it — right now.
+     *
+     * Only ever reached through `sendResize` below, which is what decides
+     * WHEN "right now" is safe. Everything here reflows xterm's buffer, and a
+     * reflow may not land in the middle of a parse (see RESIZE_PARSE_WAIT_MS).
+     */
+    const applyResize = (claimOwner: boolean) => {
       // A hidden pane measures 0x0 (maximizing another one hides this one), and
       // fitting to that would resize the PTY to zero columns — which permanently
       // wrecks the agent's full-screen drawing. Skip while not measurable; the
-      // ResizeObserver fires again when the pane comes back.
-      if (container.clientWidth < 8 || container.clientHeight < 8) return;
+      // ResizeObserver fires again when the pane comes back. Re-checked here as
+      // well as at the gate: a deferred fit runs a moment later, and the tile it
+      // was asked for may be gone by then.
+      if (disposed || !measurable()) return;
       // The pane draws at the READER'S text size, never one it picked itself.
       // An auto-shrink that walked this size down until the floor grid fit the
       // tile shipped and was rejected within hours (2026-08-11): it silently
@@ -1235,15 +1301,6 @@ export function AgenticTerminal({
       } catch {
         return;
       }
-      // Resizing a pane is the other half of the un-park story. Maximizing one,
-      // dragging a seam, changing the font — all of them are a user opening up
-      // a pane to READ it, and the pane it opens must not be a parked one still
-      // holding its agent's screen. BEFORE the early return below, deliberately:
-      // whether a size still needs announcing says nothing about whether the
-      // pane is being looked at, and a pane that came back at exactly the size
-      // it left would otherwise stay dark. The measurement inside only un-parks
-      // a pane that really is on screen.
-      revealIfOnScreen();
       // Already delivered and unchanged: the fit above was the whole job.
       // Re-announcing a size makes the agent on the other end redraw its
       // entire screen, and a pane refits several times per settling layout.
@@ -1257,6 +1314,78 @@ export function AgenticTerminal({
       }
       if (socket?.send({ t: claimOwner ? "claim" : "r", ...size }))
         sentSize = size;
+    };
+
+    /** A fit this pane is holding back until its parser reaches a gap. */
+    let deferredResize: { claimOwner: boolean } | null = null;
+    /** The promise that a held-back fit happens even without a gap. */
+    let deferredResizeTimer: number | undefined;
+
+    const clearDeferredResize = () => {
+      deferredResize = null;
+      if (deferredResizeTimer === undefined) return;
+      window.clearTimeout(deferredResizeTimer);
+      deferredResizeTimer = undefined;
+    };
+
+    /**
+     * Hold this fit until the parser is between chunks — or until the wait runs
+     * out, whichever comes first (see RESIZE_PARSE_WAIT_MS).
+     */
+    const deferResize = (claimOwner: boolean) => {
+      // Ownership is the stronger of the two requests: a claim carries a size
+      // as well, so merging keeps it rather than letting an ordinary refit
+      // arriving a millisecond later quietly drop the claim.
+      deferredResize = {
+        claimOwner: (deferredResize?.claimOwner ?? false) || claimOwner,
+      };
+      if (deferredResizeTimer !== undefined) return;
+      deferredResizeTimer = window.setTimeout(() => {
+        deferredResizeTimer = undefined;
+        const pending = deferredResize;
+        deferredResize = null;
+        if (disposed || !pending) return;
+        applyResize(pending.claimOwner);
+      }, RESIZE_PARSE_WAIT_MS);
+    };
+
+    resumeResize = () => {
+      const pending = deferredResize;
+      if (!pending || disposed) return;
+      clearDeferredResize();
+      applyResize(pending.claimOwner);
+    };
+
+    /**
+     * Fit this pane to its tile — at a moment when doing so cannot shred it.
+     *
+     * The gate, and the reason this is not simply `applyResize`. Reflowing
+     * xterm's buffer while a write is still being parsed moves the rows the
+     * rest of that stream is addressing, and an agent's TUI addresses rows by
+     * relative moves — so the frame it was drawing is finished into the wrong
+     * ones. See RESIZE_PARSE_WAIT_MS for what that looks like on screen and for
+     * why the wait is bounded rather than indefinite.
+     */
+    const sendResize = (claimOwner = false) => {
+      if (!measurable()) return;
+      // Resizing a pane is the other half of the un-park story. Maximizing one,
+      // dragging a seam, changing the font — all of them are a user opening up
+      // a pane to READ it, and the pane it opens must not be a parked one still
+      // holding its agent's screen.
+      //
+      // BEFORE the gate rather than after the fit, and that ordering is the
+      // second half of this bug. Parked output was drawn for the size the pane
+      // is LEAVING; written once the grid had already moved it painted an old
+      // screen into a new geometry — the doubled rules and half-erased answers
+      // the gate below exists to stop, arriving through the one path that used
+      // to walk straight past it. Un-parked here, those bytes go in first and
+      // the fit waits for them like any other write.
+      revealIfOnScreen();
+      if (parsing > 0) {
+        deferResize(claimOwner);
+        return;
+      }
+      applyResize(claimOwner);
     };
     resizeRef.current = sendResize;
     const claimResize = () => {
@@ -1523,6 +1652,10 @@ export function AgenticTerminal({
       // Before the terminal is disposed below: a deadline flush one tick later
       // would write into it after it is gone.
       cancelHoldTimer();
+      // Same for a fit still waiting for a parse gap — it would reflow a
+      // disposed terminal inside a detached element.
+      clearDeferredResize();
+      resumeResize = null;
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
       // A queued reflow outlives the pane by up to a frame, and would then fit
       // a disposed terminal inside a detached element.

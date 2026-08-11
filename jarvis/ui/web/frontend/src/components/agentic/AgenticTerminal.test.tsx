@@ -184,7 +184,11 @@ vi.mock("./paneFileDrag", () => ({
 vi.mock("@/lib/editActions", () => ({ attachTerminalBridge: () => undefined }));
 vi.mock("@/lib/agenticIdeApi", () => ({ attachToTerminal: vi.fn() }));
 
-import { AgenticTerminal, REBUILD_QUIET_MS } from "./AgenticTerminal";
+import {
+  AgenticTerminal,
+  REBUILD_QUIET_MS,
+  RESIZE_PARSE_WAIT_MS,
+} from "./AgenticTerminal";
 import { PANE_CHROME } from "./terminalThemes";
 
 /**
@@ -1410,6 +1414,177 @@ describe("pane refit", () => {
       t: "r",
       cols: 80,
       rows: 24,
+    });
+  });
+});
+
+/*
+ * A pane may not change shape underneath a half-parsed screen.
+ *
+ * Resizing xterm REFLOWS its buffer, and an agent's TUI is drawn by relative
+ * cursor moves — "up twelve rows, erase from here". A reflow landing between
+ * two of xterm's parse slices moves the rows the rest of that stream is
+ * addressing, so the erase lands on rows holding something else: the frame's
+ * rule drawn twice, an answer printed under the copy it was replacing, or a
+ * pane wiped down to its status line. Reported 2026-08-11 as terminals that
+ * come out broken when they are moved around the workspace — which is exactly
+ * when a pane's geometry changes while its agents are talking.
+ */
+describe("pane refit while the agent is drawing", () => {
+  const giveTheHostASize = () => {
+    for (const [property, value] of [
+      ["clientWidth", 600],
+      ["clientHeight", 400],
+    ] as const) {
+      Object.defineProperty(HTMLElement.prototype, property, {
+        configurable: true,
+        value,
+      });
+    }
+  };
+
+  const pane = () => (
+    <AgenticTerminal
+      name="Dana"
+      displayName="Claude Code"
+      appearance="dark"
+      fontSize={13}
+    />
+  );
+
+  /** Run the pane's debounced fit request without reaching the parse deadline. */
+  const askForARefit = () => {
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+      vi.advanceTimersByTime(RESIZE_PARSE_WAIT_MS - 100);
+    });
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    globalThis.ResizeObserver = ResizeObserverHarness;
+    giveTheHostASize();
+    terminalHarness.fit.mockClear();
+    terminalHarness.resize.mockClear();
+    terminalHarness.send.mockClear();
+    terminalHarness.send.mockImplementation(() => true);
+    terminalHarness.handlers.current = null;
+    terminalHarness.size = { cols: 80, rows: 24 };
+    terminalHarness.deferWrite = false;
+    terminalHarness.writeCallbacks = [];
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    terminalHarness.deferWrite = false;
+    terminalHarness.writeCallbacks = [];
+    Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+    Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+  });
+
+  /** Hand the pane output xterm has not finished parsing. */
+  const startDrawing = () => {
+    terminalHarness.deferWrite = true;
+    act(() => {
+      terminalHarness.handlers.current?.onOutput?.(
+        "[12A[Jredrawing the frame" as never,
+      );
+    });
+  };
+
+  /** Let xterm finish parsing what it was handed. */
+  const finishDrawing = () => {
+    act(() => {
+      for (const done of terminalHarness.writeCallbacks.splice(0)) done();
+    });
+  };
+
+  it("holds the fit back while xterm is still parsing", () => {
+    render(pane());
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    startDrawing();
+    terminalHarness.fit.mockClear();
+    terminalHarness.send.mockClear();
+
+    terminalHarness.size = { cols: 40, rows: 12 };
+    askForARefit();
+
+    // Nothing has moved: the half-parsed screen keeps the grid it was drawn
+    // into until it is finished with it.
+    expect(terminalHarness.fit).not.toHaveBeenCalled();
+    expect(terminalHarness.resize).not.toHaveBeenCalled();
+    expect(terminalHarness.send).not.toHaveBeenCalled();
+  });
+
+  it("takes the new size the moment the parser reaches a gap", () => {
+    render(pane());
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    startDrawing();
+    terminalHarness.fit.mockClear();
+    terminalHarness.send.mockClear();
+
+    terminalHarness.size = { cols: 40, rows: 12 };
+    askForARefit();
+    finishDrawing();
+
+    expect(terminalHarness.fit).toHaveBeenCalled();
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "r",
+      cols: 40,
+      rows: 12,
+    });
+  });
+
+  it("fits anyway when the pane never stops talking", () => {
+    // The wait is bounded on purpose: an agent midway through streaming an
+    // answer offers no gap at all, and a terminal that never follows its tile
+    // is worse than one frame parsed across a reflow — the agent would go on
+    // formatting for a size no window is showing.
+    render(pane());
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    startDrawing();
+    terminalHarness.fit.mockClear();
+    terminalHarness.send.mockClear();
+
+    terminalHarness.size = { cols: 40, rows: 12 };
+    askForARefit();
+    act(() => {
+      vi.advanceTimersByTime(RESIZE_PARSE_WAIT_MS + 50);
+    });
+
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "r",
+      cols: 40,
+      rows: 12,
+    });
+  });
+
+  it("still fits a quiet pane in the same pass", () => {
+    // The gate must cost nothing when there is nothing to wait for: a pane
+    // whose agent is idle refits immediately, as it always did.
+    render(pane());
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    terminalHarness.fit.mockClear();
+    terminalHarness.send.mockClear();
+
+    terminalHarness.size = { cols: 40, rows: 12 };
+    askForARefit();
+
+    expect(terminalHarness.fit).toHaveBeenCalled();
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "r",
+      cols: 40,
+      rows: 12,
     });
   });
 });
