@@ -195,3 +195,40 @@ def test_macos_uses_unix_branch(monkeypatch):
     )
     ids = [s.id for s in discover_shells()]
     assert ids == ["zsh"]
+
+
+def test_darwin_argv_is_a_login_shell(monkeypatch):
+    """On macOS every terminal starts LOGIN shells — user PATH lives in
+    ``~/.zprofile`` (Homebrew's install instructions put it there), so a
+    non-login pane has no brew and no coding CLIs on its PATH.
+    """
+    monkeypatch.setattr(shells_mod, "detect_platform", lambda: "darwin")
+    _patch_filesystem(
+        monkeypatch,
+        on_disk={"/bin/zsh"},
+        etc_shells=["/bin/zsh"],
+        shell_env="/bin/zsh",
+    )
+    shells = discover_shells()
+    assert shells[0].argv == ("/bin/zsh", "-i", "-l")
+
+
+def test_same_basename_in_two_places_gets_unique_ids(monkeypatch):
+    """System bash + Homebrew bash must not collide on id ``bash``.
+
+    The UI dropdown keys on the id and ``get_shell()`` returns the first
+    match, so a shared id made the second install unselectable.
+    """
+    monkeypatch.setattr(shells_mod, "detect_platform", lambda: "darwin")
+    _patch_filesystem(
+        monkeypatch,
+        on_disk={"/bin/bash", "/opt/homebrew/bin/bash"},
+        etc_shells=["/bin/bash", "/opt/homebrew/bin/bash"],
+        shell_env=None,
+    )
+    shells = discover_shells()
+    assert [s.id for s in shells] == ["bash", "bash-2"]
+    assert shells[1].label == "bash (/opt/homebrew/bin/bash)"
+    found = get_shell("bash-2")
+    assert found is not None
+    assert found.argv[0] == "/opt/homebrew/bin/bash"

@@ -83,12 +83,20 @@ def _unix_shells() -> list[ShellInfo]:
 
     Shells are deduplicated by their resolved (``os.path.realpath``) path so a
     symlinked ``/bin/sh -> bash`` or a ``$SHELL`` that is also in ``/etc/shells``
-    is listed once. ``argv`` is ``(path, "-i")`` (interactive) — never an
-    unconditional ``-l`` (a login shell on every spawn re-sources profiles and
-    is slow).
+    is listed once. ``argv`` is ``(path, "-i")`` (interactive) on Linux — never
+    an unconditional ``-l`` (a login shell on every spawn re-sources profiles
+    and is slow, and Linux PATH edits live in ``~/.bashrc``, which an
+    interactive shell reads anyway). macOS is the exception and gets ``-l``:
+    every Mac terminal (Terminal.app, iTerm2, VS Code) starts LOGIN shells by
+    convention, so user PATH lives in ``~/.zprofile``/``~/.bash_profile`` —
+    Homebrew's install instructions put it exactly there, and a non-login zsh
+    has no brew and none of the coding CLIs on its PATH. (tcsh ignores ``-l``
+    beside other flags rather than erroring.)
     """
     results: list[ShellInfo] = []
     seen: set[str] = set()
+    used_ids: set[str] = set()
+    interactive_args = ("-i", "-l") if detect_platform() == "darwin" else ("-i",)
 
     def _add(path: str) -> None:
         if not path or not os.path.isfile(path):
@@ -97,8 +105,19 @@ def _unix_shells() -> list[ShellInfo]:
         if resolved in seen:
             return
         seen.add(resolved)
-        label = os.path.basename(path)
-        results.append(ShellInfo(id=label, label=label, argv=(path, "-i")))
+        base = os.path.basename(path)
+        shell_id = base
+        label = base
+        suffix = 2
+        while shell_id in used_ids:
+            # Two installs sharing a basename (system bash + Homebrew bash)
+            # must not share an id: the UI dropdown keys on it, and
+            # ``get_shell()`` could only ever return the first.
+            shell_id = f"{base}-{suffix}"
+            label = f"{base} ({path})"
+            suffix += 1
+        used_ids.add(shell_id)
+        results.append(ShellInfo(id=shell_id, label=label, argv=(path, *interactive_args)))
 
     # 1. $SHELL (the user's configured login shell).
     _add(os.environ.get("SHELL", ""))
