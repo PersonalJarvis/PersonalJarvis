@@ -1261,8 +1261,9 @@ describe("pane refit", () => {
     // interface out in, stops drawing altogether; the status badge reads that
     // silence as a finished job, because movement is all it can read.
     //
-    // So the size is refused and the PTY keeps the last one a viewer really
-    // had. The narrow tile shows a clipped frame; the agent stays alive.
+    // So the measurement is CLAMPED to the floors, per dimension, and the
+    // clamped size is what the agent hears: never the raw 17 columns, always
+    // a frame it can still draw. The tile clips what it cannot show.
     const view = render(pane(false));
     settle();
     terminalHarness.send.mockClear();
@@ -1274,9 +1275,13 @@ describe("pane refit", () => {
     expect(terminalHarness.send).not.toHaveBeenCalledWith(
       expect.objectContaining({ cols: 17 }),
     );
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "r",
+      cols: 60,
+      rows: 15,
+    });
 
-    // A tile the agent can work in is still announced, or this floor would
-    // have swapped a broken pane for a frozen one.
+    // A tile the agent can work in is still announced honestly.
     terminalHarness.size = { cols: 90, rows: 30 };
     view.rerender(pane(false));
     settle();
@@ -1288,16 +1293,16 @@ describe("pane refit", () => {
     });
   });
 
-  it("keeps the local grid at the agent's geometry while below the floors", () => {
-    // Refusing the size is only half of the contract (test above). The other
-    // half is the LOCAL grid: fit()ing xterm to a 17-column tile while the
-    // agent keeps laying its lines out for 80 re-wraps every one of them at
-    // the narrower measure, and the TUI's cursor moves then land on rows that
-    // no longer hold what they held when it drew them. A five-pane grid came
-    // back as panes full of shredded one-word fragments (reported
-    // 2026-08-10). So below the floors nothing is fit at all — the grid is
-    // pinned back to the geometry the agent was last told, and the tile's
-    // overflow-hidden container clips the rest.
+  it("keeps the local grid on the clamped size rather than the raw fit", () => {
+    // Clamping what the agent HEARS is only half of the contract (test
+    // above). The other half is the LOCAL grid: fit()ing xterm to the
+    // 17-column tile while the agent lays its lines out for 60 re-wraps
+    // every one of them at the narrower measure, and the TUI's cursor moves
+    // then land on rows that no longer hold what they held when it drew them
+    // — a five-pane grid came back as panes full of shredded one-word
+    // fragments (reported 2026-08-10). So below a floor nothing is fit at
+    // all: the grid takes the same clamped size the agent was told, and the
+    // tile's overflow-hidden container clips the rest.
     const view = render(pane(false));
     settle();
     terminalHarness.fit.mockClear();
@@ -1308,7 +1313,33 @@ describe("pane refit", () => {
     settle();
 
     expect(terminalHarness.fit).not.toHaveBeenCalled();
-    expect(terminalHarness.resize).toHaveBeenCalledWith(80, 24);
+    expect(terminalHarness.resize).toHaveBeenCalledWith(60, 15);
+  });
+
+  it("keeps a narrow tile's honest height so the prompt stays visible", () => {
+    // The floors fail one dimension at a time. A tile in a five-pane row
+    // measures 33 columns and a perfectly honest 40 rows — and refusing the
+    // WHOLE size left the PTY at a stale 64-row geometry, with the coding
+    // CLI anchoring its input box to row 64 of a pane showing 37 (measured
+    // live 2026-08-10: every pane in the workspace came up with no visible
+    // prompt). Clamped per dimension, only the width is lifted to the floor;
+    // the height the tile really has is what the agent hears, and its
+    // bottom-anchored prompt box lands in the bottom visible row.
+    const view = render(pane(false));
+    settle();
+    terminalHarness.send.mockClear();
+    terminalHarness.resize.mockClear();
+
+    terminalHarness.size = { cols: 33, rows: 40 };
+    view.rerender(pane(true));
+    settle();
+
+    expect(terminalHarness.resize).toHaveBeenCalledWith(60, 40);
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "r",
+      cols: 60,
+      rows: 40,
+    });
   });
 
   it("tells a fresh socket the pane's size whatever the last one heard", () => {
@@ -1582,9 +1613,12 @@ describe("terminal text size across a rebuild", () => {
     );
 
     expect(newest().options.allowTransparency).toBe(true);
+    // Alpha 0 keeps the canvas clear; the RGB is the ground the
+    // minimum-contrast floor measures truecolor foregrounds against.
     expect(
       (newest().options.theme as Record<string, unknown>).background,
-    ).toBe("rgba(0, 0, 0, 0)");
+    ).toBe("rgba(18, 20, 26, 0)");
+    expect(newest().options.minimumContrastRatio).toBe(4.5);
     expect(screen.getByTestId("agentic-pane-Dana").style.background).toBe(
       "rgba(10, 10, 10, 0.58)",
     );

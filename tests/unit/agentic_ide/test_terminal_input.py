@@ -150,8 +150,16 @@ def test_the_answered_colours_match_the_theme_the_pane_is_drawn_with(
     )
     assert block is not None, f"no {appearance} theme found in terminalThemes.ts"
     declared = dict(re.findall(r"(\w+): \"(#[0-9a-fA-F]{6})\"", block.group(1)))
+    # The theme's background stays transparent on screen but carries the pane
+    # shell's RGB at alpha 0, so xterm's minimum-contrast floor measures
+    # against the real ground. That RGB is the one the CLI must be told.
+    ground = re.search(
+        r"background: \"rgba\((\d+), (\d+), (\d+), 0\)\"", block.group(1)
+    )
+    assert ground is not None, f"no ground RGB in the {appearance} theme"
+    background = "#" + "".join(f"{int(c):02x}" for c in ground.groups())
 
     assert THEME_COLOURS[appearance] == (
         declared["foreground"].lower(),
-        declared["background"].lower(),
+        background,
     )

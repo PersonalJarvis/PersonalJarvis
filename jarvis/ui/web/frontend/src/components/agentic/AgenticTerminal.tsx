@@ -70,6 +70,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
+  MINIMUM_CONTRAST_RATIO,
   PANE_CHROME,
   themeFor,
   type TerminalAppearance,
@@ -245,18 +246,31 @@ const MAX_TERMINAL_NAME = 40;
  *
  * 60x15 is where both installed coding CLIs still render a usable frame, with
  * room under the 80x24 the handshake already falls back to when nothing has
- * been measured yet. Below it a size is REFUSED rather than clamped: the PTY
- * keeps its last honest geometry and the viewer shows as much of it as fits,
- * which costs a clipped line in a narrow tile and keeps the agent alive. A
- * clamp would instead hand the agent a size no window is actually showing.
+ * been measured yet. A measurement under a floor is CLAMPED to it — per
+ * dimension, and the clamped size is what BOTH the local grid and the agent
+ * are given, so the two can never disagree about the pane's geometry again.
  *
- * "Shows as much of it as fits" is a promise about the LOCAL grid as well.
- * Refusing the size while still fit()ing xterm to the narrow tile left the
- * two halves disagreeing — the agent laying lines out for 80+ columns, the
- * viewer re-wrapping them at 25 — and every pane under the floors came back
- * as shredded one-word fragments (reported 2026-08-10). So below the floors
- * the grid is PINNED to the geometry the agent draws for (see `agentSize`),
- * and the tile's overflow-hidden container does the clipping.
+ * Per dimension, because the two floors fail differently and only one of
+ * them is usually failing. A tile in a five-pane row measures 33 columns and
+ * a perfectly honest 37 rows. Refusing the whole size (what this floor did
+ * first) left the PTY at whatever it had — measured live on 2026-08-10 at
+ * 69x64, from a mount-time fit taken at the default font — and a coding
+ * CLI anchors its input box to the BOTTOM of its screen: row 64 of a pane
+ * showing 37 rows, which is how every pane in the workspace came up with no
+ * visible prompt at all. Clamped to 60x37 instead, the height is exactly
+ * what the tile shows (the input box sits in its bottom visible row) and
+ * only the width is clipped, which a narrow tile cannot avoid: the agent
+ * cannot lay its interface out under 60 columns — squeezing a PTY below
+ * that is what printed an answer one character per line and left six agents
+ * silently stuck (2026-08-09, thirteen panes).
+ *
+ * The local grid takes the SAME clamped size, never the raw fit. Fitting
+ * xterm to the 33-column measurement while the agent lays lines out for 60+
+ * re-wraps every one of them at the narrower measure, and the TUI's cursor
+ * moves then land on rows that no longer hold what they held when it drew
+ * them — every squeezed pane came back as shredded one-word fragments (also
+ * 2026-08-10). The tile's overflow-hidden container clips what the clamped
+ * grid cannot show.
  *
  * Both the resize path and the connect-time handshake below refuse anything
  * under these floors; the backend enforces the same ones
@@ -651,6 +665,11 @@ export function AgenticTerminal({
       // paints an opaque canvas over it, hiding both that glass and the desktop
       // artwork even when the surrounding React container is translucent.
       allowTransparency: true,
+      // A CLI configured for the other ground paints truecolor a palette can
+      // never remap — dark-theme white text into a light pane. This floor
+      // nudges any unreadable foreground toward legibility; the theme's
+      // transparent background carries the ground RGB it measures against.
+      minimumContrastRatio: MINIMUM_CONTRAST_RATIO,
       // Shared with the measurement in ./../../lib/terminalFont: a pane that
       // measured a different stack from the one it draws with is the bug that
       // module exists to prevent.
@@ -786,19 +805,20 @@ export function AgenticTerminal({
       input: (data) => term.input(data),
     });
     try {
-      // The same floors the resize path holds (see MIN_REAL_COLS). A pane
-      // mounted straight into a narrow tile must keep the 80x24 the terminal
-      // was built with — the geometry the connect handshake announces — rather
-      // than fit itself below what its agent is about to draw for.
+      // The same clamp the resize path applies (see MIN_REAL_COLS), taken
+      // BEFORE the handshake below reads the terminal's geometry — so the
+      // grid this pane draws on and the size its agent is spawned at are the
+      // same thing from the very first byte.
       const proposed = fit.proposeDimensions();
       if (
         proposed &&
         Number.isFinite(proposed.cols) &&
-        Number.isFinite(proposed.rows) &&
-        proposed.cols >= MIN_REAL_COLS &&
-        proposed.rows >= MIN_REAL_ROWS
+        Number.isFinite(proposed.rows)
       ) {
-        fit.fit();
+        const cols = Math.max(proposed.cols, MIN_REAL_COLS);
+        const rows = Math.max(proposed.rows, MIN_REAL_ROWS);
+        if (cols === proposed.cols && rows === proposed.rows) fit.fit();
+        else term.resize(cols, rows);
       }
     } catch {
       /* not measured yet — the ResizeObserver below will fit */
@@ -1196,25 +1216,6 @@ export function AgenticTerminal({
      */
     let sentSize: { cols: number; rows: number } | null = null;
 
-    /*
-     * The geometry the agent is DRAWING for, as best this pane knows: the
-     * connect-time handshake until a resize is delivered, then that resize.
-     *
-     * Needed because refusing to announce a size (below) is only half of the
-     * floors' contract. The PTY keeps its working geometry — so the local
-     * grid has to keep it too. Fitting the viewer below what the agent lays
-     * its lines out for re-wraps every one of them at the narrower measure,
-     * and the TUI's cursor moves then land on rows that no longer hold what
-     * they held when it drew them: a five-pane grid came back as panes full
-     * of shredded one-word fragments (reported 2026-08-10). Pinned to this
-     * geometry instead, a narrow tile shows the top-left of an honest frame
-     * and clips the rest — which is what the floors' comment promised.
-     */
-    let agentSize = {
-      cols: term.cols >= MIN_REAL_COLS ? term.cols : 80,
-      rows: term.rows >= MIN_REAL_ROWS ? term.rows : 24,
-    };
-
     const viewerMayOwn = () =>
       activeRef.current &&
       !documentHidden() &&
@@ -1228,8 +1229,8 @@ export function AgenticTerminal({
       // wrecks the agent's full-screen drawing. Skip while not measurable; the
       // ResizeObserver fires again when the pane comes back.
       if (container.clientWidth < 8 || container.clientHeight < 8) return;
-      // Measured WITHOUT being applied yet: a size the floors refuse must not
-      // shrink the local grid either (see agentSize above).
+      // Measured WITHOUT being applied yet: what the tile can show is a
+      // PROPOSAL, and the floors above have the last word on it.
       let proposed: { cols: number; rows: number } | undefined;
       try {
         proposed = fit.proposeDimensions();
@@ -1243,27 +1244,23 @@ export function AgenticTerminal({
       ) {
         return;
       }
-      if (proposed.cols < MIN_REAL_COLS || proposed.rows < MIN_REAL_ROWS) {
-        // Too narrow to hand to the agent — keep drawing at the geometry the
-        // agent still formats for; the tile clips what it cannot show.
-        if (term.cols !== agentSize.cols || term.rows !== agentSize.rows) {
-          try {
-            term.resize(agentSize.cols, agentSize.rows);
-          } catch {
-            /* mid-teardown — nothing left to pin */
-          }
-        }
-        // Still the un-park moment: a pane squeezed under the floors is being
-        // looked at all the same.
-        revealIfOnScreen();
-        return;
-      }
+      // The one size everyone gets — the grid here, the agent below. Clamped
+      // per dimension (see the floors' comment): a narrow tile still hands
+      // the agent its honest HEIGHT, which is what keeps the CLI's
+      // bottom-anchored input box inside the visible rows.
+      const size = {
+        cols: Math.max(proposed.cols, MIN_REAL_COLS),
+        rows: Math.max(proposed.rows, MIN_REAL_ROWS),
+      };
       try {
-        fit.fit();
+        if (size.cols === proposed.cols && size.rows === proposed.rows) {
+          fit.fit();
+        } else if (term.cols !== size.cols || term.rows !== size.rows) {
+          term.resize(size.cols, size.rows);
+        }
       } catch {
         return;
       }
-      if (term.cols < MIN_REAL_COLS || term.rows < MIN_REAL_ROWS) return;
       // Resizing a pane is the other half of the un-park story. Maximizing one,
       // dragging a seam, changing the font — all of them are a user opening up
       // a pane to READ it, and the pane it opens must not be a parked one still
@@ -1273,7 +1270,6 @@ export function AgenticTerminal({
       // it left would otherwise stay dark. The measurement inside only un-parks
       // a pane that really is on screen.
       revealIfOnScreen();
-      const size = { cols: term.cols, rows: term.rows };
       // Already delivered and unchanged: the fit above was the whole job.
       // Re-announcing a size makes the agent on the other end redraw its
       // entire screen, and a pane refits several times per settling layout.
@@ -1285,10 +1281,8 @@ export function AgenticTerminal({
       ) {
         return;
       }
-      if (socket?.send({ t: claimOwner ? "claim" : "r", ...size })) {
+      if (socket?.send({ t: claimOwner ? "claim" : "r", ...size }))
         sentSize = size;
-        agentSize = size;
-      }
     };
     resizeRef.current = sendResize;
     const claimResize = () => {
@@ -1300,18 +1294,16 @@ export function AgenticTerminal({
       {
         name,
         workspaceId,
-        // The connect-time size is a best effort, and this is the one place a
-        // sliver could still slip through: the mount-time fit may have run
-        // against a grid cell mid-layout and left `term.cols` at 1 — a value
-        // `sendResize` refuses to SEND but which used to travel here as the
-        // handshake geometry, spawning (or resizing) the PTY one column wide.
-        // A size under the plausibility floor is treated as "not measured yet";
-        // the real one follows from `onOpen`'s fit as soon as the cell
-        // settles. `agentSize` captured exactly that at its declaration, and
-        // using it HERE is what keeps the pinned local grid and the spawned
-        // PTY agreeing about the pane's geometry.
-        cols: agentSize.cols,
-        rows: agentSize.rows,
+        // The connect-time size is a best effort. The mount-time fit above
+        // already clamped the grid to the floors, so the terminal's own
+        // geometry is normally safe to hand over as-is — the guards here are
+        // for the one case that fit could not run at all (a grid cell still
+        // mid-layout measures as nothing), where the terminal still holds
+        // whatever it was constructed with. A size under a floor is treated
+        // as "not measured yet"; the real one follows from `onOpen`'s fit as
+        // soon as the cell settles.
+        cols: term.cols >= MIN_REAL_COLS ? term.cols : 80,
+        rows: term.rows >= MIN_REAL_ROWS ? term.rows : 24,
         appearance: appearanceRef.current,
         claimOwner: viewerMayOwn(),
       },

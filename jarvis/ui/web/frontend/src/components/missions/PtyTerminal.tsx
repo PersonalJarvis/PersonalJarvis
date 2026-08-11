@@ -21,7 +21,11 @@ import "@xterm/xterm/css/xterm.css";
 import { AlertCircle, Terminal as TerminalIcon } from "lucide-react";
 import { useT } from "@/i18n";
 import { useThemeValue } from "@/hooks/useTheme";
-import { PANE_CHROME, themeFor } from "../agentic/terminalThemes";
+import {
+  MINIMUM_CONTRAST_RATIO,
+  PANE_CHROME,
+  themeFor,
+} from "../agentic/terminalThemes";
 import { buildMissionSocketUrl, fetchMissionToken } from "@/lib/missionAuth";
 import { TERMINAL_FONT_STACK, syncTerminalFont } from "@/lib/terminalFont";
 import {
@@ -95,6 +99,9 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
         // ground. A worker's diffs and dimmed hints are drawn with the "bright"
         // row, which is unreadable on paper unless it was built for paper.
         theme: themeFor(appearanceRef.current),
+        // Truecolor output bypasses that palette entirely; the floor catches
+        // it (see terminalThemes.ts).
+        minimumContrastRatio: MINIMUM_CONTRAST_RATIO,
       });
       const fit = new FitAddon();
       term.loadAddon(fit);

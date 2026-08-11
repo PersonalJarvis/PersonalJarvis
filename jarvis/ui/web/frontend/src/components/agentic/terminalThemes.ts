@@ -14,13 +14,34 @@ import type { ITheme } from "@xterm/xterm";
  * The xterm canvas itself stays transparent. The stable reading ground comes
  * from the translucent pane shell below it, so the desktop artwork remains
  * visible without stacking two dark fills into an effectively opaque panel.
+ *
+ * ## Why a palette alone cannot make every pane readable
+ *
+ * The 16 slots below only catch CLIs that speak classic ANSI. A modern coding
+ * agent draws most of its UI in 24-bit truecolor — exact RGB values chosen for
+ * the theme IT is configured for — and those bytes bypass this palette
+ * entirely. A CLI set to its dark theme paints near-white text into a light
+ * pane, and no slot remap can intercept that. `MINIMUM_CONTRAST_RATIO` is the
+ * floor under that hole: xterm nudges ANY foreground (truecolor included)
+ * toward black or white until it reaches the ratio against the background.
+ * For that computation to run against the pane's REAL ground, each theme's
+ * transparent `background` carries the shell's RGB at alpha 0 — invisible on
+ * screen, but the number the contrast maths reads.
  */
 
-const TRANSPARENT_TERMINAL_BACKGROUND = "rgba(0, 0, 0, 0)";
+/**
+ * WCAG AA for body text, and the same default VS Code ships for its
+ * integrated terminal. High enough that dark-theme truecolor becomes readable
+ * on a light pane, low enough that a CLI's deliberate dim/bright hierarchy
+ * survives.
+ */
+export const MINIMUM_CONTRAST_RATIO = 4.5;
 
 /** Warm-paper contrast palette for light mode. */
 export const LIGHT_TERMINAL_THEME: ITheme = {
-  background: TRANSPARENT_TERMINAL_BACKGROUND,
+  // Alpha 0 = still transparent; the RGB is the light shell's paper tone so
+  // the minimum-contrast maths measures against the ground actually shown.
+  background: "rgba(252, 251, 248, 0)",
   foreground: "#2b2b33",
   cursor: "#a86b00",
   cursorAccent: "#fcfbf8",
@@ -52,7 +73,9 @@ export const LIGHT_TERMINAL_THEME: ITheme = {
  * pane shell below it supplies the dark reading ground.
  */
 export const DARK_TERMINAL_THEME: ITheme = {
-  background: TRANSPARENT_TERMINAL_BACKGROUND,
+  // #12141a at alpha 0 — the deep-slate ground the backend also reports to the
+  // CLI (jarvis/agentic_ide/terminal_input.py); see the light theme's note.
+  background: "rgba(18, 20, 26, 0)",
   foreground: "#e8e8ec",
   cursor: "#ffd60a",
   cursorAccent: "#12141a",

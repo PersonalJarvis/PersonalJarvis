@@ -14,7 +14,11 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { Terminal as TerminalIcon, AlertCircle } from "lucide-react";
 import { installNewlineBridge } from "../agentic/terminalNewline";
-import { PANE_CHROME, themeFor } from "../agentic/terminalThemes";
+import {
+  MINIMUM_CONTRAST_RATIO,
+  PANE_CHROME,
+  themeFor,
+} from "../agentic/terminalThemes";
 import { useThemeValue } from "@/hooks/useTheme";
 import { TERMINAL_FONT_STACK, syncTerminalFont } from "@/lib/terminalFont";
 import {
@@ -76,6 +80,9 @@ export function WorkspaceTerminal({
       // Agentic IDE panes use — a coding agent's ANSI output is only readable
       // if the "bright" row was re-derived for the ground it lands on.
       theme: themeFor(appearanceRef.current),
+      // Truecolor output bypasses that palette entirely; the floor catches it
+      // (see terminalThemes.ts).
+      minimumContrastRatio: MINIMUM_CONTRAST_RATIO,
     });
     termRef.current = term;
     const fit = new FitAddon();
