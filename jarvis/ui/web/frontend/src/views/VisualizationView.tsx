@@ -133,6 +133,18 @@ function nodeIcon(node: RunGraphNode): LucideIcon {
   return toolIcon(node.step?.tool_name);
 }
 
+/** The rail row's timestamp — what tells two same-ask runs apart. */
+function formatRunDate(entry: OutputSummary): string {
+  const ts = entry.completed_at ?? entry.started_at;
+  if (!ts) return "";
+  return new Date(ts * 1000).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 /** Human file size, rounded the way a caption wants it. */
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -315,10 +327,15 @@ export function VisualizationView() {
                         {entry.utterance?.trim() || entry.slug}
                       </span>
                       <span className="block truncate">
-                        {t("visualization.run_meta").replace(
-                          "{0}",
-                          String(entry.artifact_count ?? 0),
-                        )}
+                        {[
+                          formatRunDate(entry),
+                          t("visualization.run_meta").replace(
+                            "{0}",
+                            String(entry.artifact_count ?? 0),
+                          ),
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
                       </span>
                     </span>
                   </button>

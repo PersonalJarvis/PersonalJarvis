@@ -33,6 +33,7 @@ from jarvis.missions.kontrollierer.deliverable_paths import (
     is_nondeliverable_scratch,
 )
 from jarvis.missions.state_machine import MissionState, is_terminal
+from jarvis.missions.stream_evidence import clean_request_body
 from jarvis.platform import detect_platform
 from jarvis.ui.web.artifact_view import VIEW_CSP, render_artifact_html
 from jarvis.ui.web.mission_graph import build_mission_graph, render_mission_graph_html
@@ -592,7 +593,14 @@ async def list_outputs(request: Request) -> OutputsResponse:
             if child_id:
                 summary["active_child_id"] = child_id
                 summary["active_child_slug"] = f"mission_{child_id[:13]}"
-            summary["utterance"] = summary["utterance"] or mission_row.get("prompt")
+            # The stored prompt leads with the standing quality directive the
+            # dispatcher prepends ("Deliver a complete, polished, …"); every
+            # card and graph node would show that boilerplate instead of the
+            # user's actual ask. `clean_request_body` exists precisely for
+            # UI previews — see its docstring in stream_evidence.py.
+            summary["utterance"] = summary["utterance"] or clean_request_body(
+                str(mission_row.get("prompt") or "")
+            ) or None
             summary["summary"] = mission_row.get("terminal_summary")
             summary["terminal_reason"] = mission_row.get("terminal_reason")
             summary["terminal_event"] = mission_row.get("terminal_event")
