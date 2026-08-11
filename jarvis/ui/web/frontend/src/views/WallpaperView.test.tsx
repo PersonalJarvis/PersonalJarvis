@@ -621,7 +621,10 @@ describe("WallpaperView", () => {
     renderView({ available: false, count: 0, styles: [], items: [] });
 
     expect(await screen.findByAltText("The Original")).toBeTruthy();
-    expect(screen.getByText(/No wallpaper library installed/)).toBeTruthy();
+    expect(
+      screen.getByText(/500 more wallpapers are one download away/),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Download library/ })).toBeTruthy();
   });
 
   it("still offers the original when the catalog request fails", async () => {

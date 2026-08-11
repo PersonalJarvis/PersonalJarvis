@@ -33,9 +33,13 @@ import json
 import os
 import re
 import secrets
+import shutil
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -93,6 +97,28 @@ _LIGHT_THEME_LUMA = 128
 
 #: Immutable content: the files are generated once and never edited in place.
 _CACHE_HEADERS = {"Cache-Control": "public, max-age=31536000, immutable"}
+
+#: Where the packaged library is downloaded from when the owner asks for it.
+#: A dedicated asset release with a stable tag, deliberately separate from the
+#: product releases so the URL never moves when a new version ships. The ENV
+#: override exists for mirrors and for tests.
+LIBRARY_ARCHIVE_URL = os.environ.get(
+    "JARVIS_WALLPAPER_LIBRARY_URL",
+    "https://github.com/PersonalJarvis/PersonalJarvis/releases/download/"
+    "wallpaper-library-v1/jarvis-wallpaper-gallery.zip",
+)
+
+#: What the download banner promises before the Content-Length is known.
+#: Kept as data, not prose, so the frontend formats it for the reader.
+LIBRARY_ARCHIVE_APPROX_BYTES = 199 * 1024 * 1024
+
+#: One streamed read of the archive download. Large enough that progress
+#: bookkeeping is noise, small enough that a poll sees movement.
+_DOWNLOAD_CHUNK = 1024 * 256
+
+#: Ceiling for the accepted archive. The real one is ~190 MB; a server that
+#: claims (or streams) several times that is answering with something else.
+MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -203,6 +229,15 @@ class WallpaperLibrary:
             if self._items is None:
                 self._items = self._load()
             return self._items
+
+    def reset(self) -> None:
+        """Forget the cached catalog so the next request re-reads the disk.
+
+        The one caller is the installer: the library appearing on disk is the
+        only event after which "loaded once, kept forever" stops being true.
+        """
+        with self._lock:
+            self._items = None
 
     def get(self, item_id: str) -> Wallpaper | None:
         if not _ID_PATTERN.match(item_id):
@@ -552,10 +587,207 @@ def _derive_thumbnail(source_path: Path, target: Path, label: str) -> Path:
         return source_path
 
 
+class LibraryInstallError(Exception):
+    """An install failure, with a sentence meant for the owner."""
+
+
+class WallpaperLibraryInstaller:
+    """Downloads the packaged library and unpacks it into the data directory.
+
+    The archive lives on a GitHub asset release rather than in the repository
+    (see the module docstring for why), so a fresh checkout gets the five
+    hundred wallpapers as a one-click download instead of a 190 MB clone tax.
+
+    One install at a time, tracked as plain state under a lock: the work runs
+    on a daemon thread and the frontend polls the status endpoint, which is
+    all a single-owner desktop app needs — a job queue here would be ceremony.
+    """
+
+    def __init__(
+        self,
+        library: WallpaperLibrary,
+        url: str | None = None,
+    ) -> None:
+        self._library = library
+        self._url = url or LIBRARY_ARCHIVE_URL
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._state = "idle"  # idle | downloading | unpacking | done | error
+        self._received = 0
+        self._total: int | None = None
+        self._error: str | None = None
+
+    def status(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "installed": self._installed(),
+                "state": self._state,
+                "receivedBytes": self._received,
+                "totalBytes": self._total or LIBRARY_ARCHIVE_APPROX_BYTES,
+                "error": self._error,
+            }
+
+    def _installed(self) -> bool:
+        root = self._library.root
+        return (root / "manifests").is_dir() and (root / "images").is_dir()
+
+    def start(self) -> dict[str, Any]:
+        """Begin the install unless one is already running or already done."""
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                pass  # already running; the status below says so
+            elif self._installed():
+                self._state = "done"
+            else:
+                self._state = "downloading"
+                self._received = 0
+                self._error = None
+                self._thread = threading.Thread(
+                    target=self._run, name="wallpaper-library-install", daemon=True
+                )
+                self._thread.start()
+        return self.status()
+
+    def _set(self, **fields: Any) -> None:
+        with self._lock:
+            for key, value in fields.items():
+                setattr(self, f"_{key}", value)
+
+    def _run(self) -> None:
+        try:
+            archive = self._download()
+            try:
+                self._set(state="unpacking")
+                self._unpack(archive)
+            finally:
+                try:
+                    archive.unlink()
+                except OSError:
+                    pass
+            self._library.reset()
+            self._set(state="done")
+            logger.info("Wallpaper library installed under {}", self._library.root)
+        except LibraryInstallError as exc:
+            self._set(state="error", error=str(exc))
+            logger.warning("Wallpaper library install failed: {}", exc)
+        except Exception as exc:  # noqa: BLE001 — the thread must never die silently
+            self._set(state="error", error=f"Unexpected error: {exc}")
+            logger.exception("Wallpaper library install crashed")
+
+    def _download(self) -> Path:
+        """Stream the archive to a temporary file beside its final home.
+
+        Beside it on purpose: the unpack step renames files into place, and a
+        temp file on another volume would turn that into a copy.
+        """
+        workdir = self._library.root.parent
+        workdir.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=".wallpaper-library.", suffix=".zip", dir=str(workdir)
+        )
+        tmp_path = Path(tmp_name)
+        # S310: the URL is the module's fixed https constant (or the owner's
+        # own ENV override / a test's file fixture), never request input.
+        request = urllib.request.Request(  # noqa: S310
+            self._url, headers={"User-Agent": "PersonalJarvis-wallpaper-installer"}
+        )
+        try:
+            with os.fdopen(fd, "wb") as sink:
+                # S310: the URL is the module's fixed https constant (or the
+                # owner's own ENV override / a test's file fixture), never
+                # request input.
+                with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
+                    length = response.headers.get("Content-Length")
+                    if length and length.isdigit():
+                        self._set(total=int(length))
+                    received = 0
+                    while True:
+                        chunk = response.read(_DOWNLOAD_CHUNK)
+                        if not chunk:
+                            break
+                        received += len(chunk)
+                        if received > MAX_ARCHIVE_BYTES:
+                            raise LibraryInstallError(
+                                "The download is far larger than the library archive."
+                            )
+                        sink.write(chunk)
+                        self._set(received=received)
+            return tmp_path
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+            reason = getattr(exc, "reason", None) or exc
+            raise LibraryInstallError(
+                f"Could not download the wallpaper library: {reason}"
+            ) from exc
+
+    def _unpack(self, archive: Path) -> None:
+        """Extract into a staging directory, then move into the library root.
+
+        Staged so a crash mid-extract cannot leave a half library that would
+        answer ``available: true`` with a fraction of the catalog. Every member
+        path is validated before a byte is written — the archive is downloaded
+        content, and this is the boundary where it could otherwise name a path
+        outside the library.
+        """
+        staging = Path(
+            tempfile.mkdtemp(
+                prefix=".wallpaper-library.unpack.", dir=str(self._library.root.parent)
+            )
+        )
+        try:
+            try:
+                with zipfile.ZipFile(archive) as bundle:
+                    for member in bundle.infolist():
+                        name = member.filename
+                        parts = Path(name).parts
+                        if (
+                            not parts
+                            or parts[0] not in {"images", "manifests"}
+                            or ".." in parts
+                            or name.startswith(("/", "\\"))
+                            or ":" in name
+                        ):
+                            raise LibraryInstallError(
+                                "The archive contains files it should not — refusing it."
+                            )
+                        if member.is_dir():
+                            continue
+                        target = staging.joinpath(*parts)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        with bundle.open(member) as source, target.open("wb") as sink:
+                            shutil.copyfileobj(source, sink)
+            except zipfile.BadZipFile as exc:
+                raise LibraryInstallError(
+                    "The downloaded file is not a readable archive."
+                ) from exc
+            if not (staging / "manifests").is_dir() or not (staging / "images").is_dir():
+                raise LibraryInstallError(
+                    "The archive is missing the library's manifests or images."
+                )
+
+            root = self._library.root
+            if not root.exists():
+                os.replace(staging, root)
+                return
+            # The root already exists (thumbnails, an aborted earlier attempt):
+            # move the two content directories into it individually.
+            for sub in ("manifests", "images"):
+                target = root / sub
+                if target.exists():
+                    shutil.rmtree(target, ignore_errors=True)
+                os.replace(staging / sub, target)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+
+
 def register_wallpaper_routes(
     app: FastAPI,
     library: WallpaperLibrary | None = None,
     uploads: WallpaperUploads | None = None,
+    installer: WallpaperLibraryInstaller | None = None,
 ) -> None:
     """Mount the wallpaper endpoints under ``/api``.
 
@@ -565,10 +797,22 @@ def register_wallpaper_routes(
     """
     lib = library or WallpaperLibrary()
     own = uploads or WallpaperUploads()
+    setup = installer or WallpaperLibraryInstaller(lib)
 
     @app.get("/api/wallpapers")
     async def list_wallpapers() -> dict[str, Any]:
         return lib.catalog()
+
+    # The library installer: how a fresh machine gets the five hundred
+    # wallpapers this repository deliberately does not carry.
+
+    @app.get("/api/wallpapers/library")
+    async def library_status() -> dict[str, Any]:
+        return setup.status()
+
+    @app.post("/api/wallpapers/library/install")
+    async def library_install() -> dict[str, Any]:
+        return setup.start()
 
     # The upload routes are declared before the ``{item_id}`` ones purely for
     # reading order — they never collide, because every upload path carries the

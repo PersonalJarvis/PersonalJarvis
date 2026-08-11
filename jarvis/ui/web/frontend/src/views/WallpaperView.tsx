@@ -3,6 +3,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Download,
   Heart,
   Image as ImageIcon,
   Loader2,
@@ -30,6 +31,10 @@ import {
   UPLOAD_WALLPAPER_STYLE,
 } from "@/hooks/useWallpaperUploads";
 import { useApplyWallpaper } from "@/hooks/useApplyWallpaper";
+import {
+  installRunning,
+  useWallpaperLibraryInstall,
+} from "@/hooks/useWallpaperLibrary";
 import { useThemeValue, type Theme } from "@/hooks/useTheme";
 import { useWallpaperStore } from "@/store/wallpaper";
 import { cn } from "@/lib/utils";
@@ -87,6 +92,88 @@ function SegmentButton({
     >
       {children}
     </button>
+  );
+}
+
+/** Whole megabytes for the download banner — nobody needs decimals here. */
+function formatMb(bytes: number): string {
+  return `${Math.max(1, Math.round(bytes / (1024 * 1024)))} MB`;
+}
+
+/**
+ * The banner a machine without the generated library gets: what is missing,
+ * how big it is, and the one button that fixes it. While the server downloads
+ * and unpacks, the button gives way to a progress bar; when the install lands,
+ * the catalog refetch replaces this banner with five hundred tiles.
+ */
+function LibraryDownloadBanner() {
+  const { status, start } = useWallpaperLibraryInstall();
+  const state = status.data ?? undefined;
+  const running = installRunning(state);
+  const failed = state?.state === "error";
+  const percent =
+    running && state && state.totalBytes > 0
+      ? Math.min(99, Math.round((state.receivedBytes / state.totalBytes) * 100))
+      : 0;
+
+  return (
+    <div className="border-b border-border px-6 py-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs">
+            <span className="font-medium text-foreground">
+              500 more wallpapers are one download away.
+            </span>{" "}
+            <span className="text-muted-foreground">
+              The generated collection is content, not code — it is fetched once
+              from the project&apos;s releases instead of weighing down every
+              checkout.
+            </span>
+          </p>
+          {failed && (
+            <p role="alert" className="mt-1 text-xs text-destructive">
+              {state?.error ?? "The download failed."}
+            </p>
+          )}
+        </div>
+        {running ? (
+          <div className="flex w-56 items-center gap-2">
+            <div
+              role="progressbar"
+              aria-valuenow={percent}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label="Wallpaper library download"
+              className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary"
+            >
+              <div
+                className="h-full rounded-full bg-primary transition-[width] duration-300"
+                style={{ width: `${percent}%` }}
+              />
+            </div>
+            <span className="whitespace-nowrap text-[11px] tabular-nums text-muted-foreground">
+              {state?.state === "unpacking"
+                ? "Unpacking…"
+                : `${formatMb(state?.receivedBytes ?? 0)} / ${formatMb(state?.totalBytes ?? 0)}`}
+            </span>
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => start.mutate()}
+            disabled={start.isPending}
+          >
+            {start.isPending ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            {failed ? "Try again" : "Download library (~190 MB)"}
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -620,19 +707,7 @@ export function WallpaperView() {
         </p>
       )}
 
-      {!data?.libraryAvailable && (
-        <p className="border-b border-border px-6 py-2.5 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">
-            No wallpaper library installed.
-          </span>{" "}
-          The generated collection lives in{" "}
-          <code className="rounded bg-secondary/60 px-1 py-0.5">
-            data/jarvis-wallpaper-gallery
-          </code>
-          , which is not part of the repository. Until it is there, the original
-          below is the whole choice.
-        </p>
-      )}
+      {!data?.libraryAvailable && <LibraryDownloadBanner />}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-6 py-3">
         <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">

@@ -35,6 +35,7 @@ from jarvis.ui.web.wallpapers import (
     THUMB_WIDTH,
     UPLOAD_MAX_WIDTH,
     WallpaperLibrary,
+    WallpaperLibraryInstaller,
     WallpaperUploads,
     register_wallpaper_routes,
 )
@@ -420,3 +421,127 @@ def test_manifest_paths_pointing_outside_the_library_are_dropped(
     )
 
     assert WallpaperLibrary(root).items() == {}
+
+
+# ---------------------------------------------------------------------------
+# The library installer: how a fresh machine gets the five hundred wallpapers
+# the repository deliberately does not carry.
+# ---------------------------------------------------------------------------
+
+
+def _library_archive(tmp_path: Path, name: str = "library.zip") -> Path:
+    """A miniature packaged library, shaped like the released one."""
+    import zipfile
+
+    image = tmp_path / "src-image.webp"
+    _write_wallpaper(image, (30, 40, 50))
+    manifest = [
+        {
+            "id": "01-cinematic-photoreal-01",
+            "title": "Flooded Observatory",
+            "style": "Cinematic Photorealistic",
+            "theme": "dark",
+            "file": "images/01-cinematic-photoreal/01.webp",
+        }
+    ]
+    archive = tmp_path / name
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("manifests/01-cinematic-photoreal.json", json.dumps(manifest))
+        bundle.write(image, "images/01-cinematic-photoreal/01.webp")
+    return archive
+
+
+def _wait_for_install(client: TestClient, timeout: float = 10.0) -> dict:
+    """Poll the status endpoint until the daemon thread settles."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = client.get("/api/wallpapers/library").json()
+        if status["state"] in {"done", "error"}:
+            return status
+        time.sleep(0.02)
+    pytest.fail(f"install never settled: {status}")
+
+
+def _install_client(tmp_path: Path, archive_name: str = "library.zip") -> TestClient:
+    """An app whose installer pulls from a local archive instead of GitHub."""
+    library = WallpaperLibrary(tmp_path / "data" / "jarvis-wallpaper-gallery")
+    installer = WallpaperLibraryInstaller(
+        library, url=(tmp_path / archive_name).as_uri()
+    )
+    app = FastAPI()
+    register_wallpaper_routes(
+        app, library, WallpaperUploads(tmp_path / "uploads"), installer
+    )
+    return TestClient(app)
+
+
+def test_installing_the_library_fills_the_catalog(tmp_path: Path) -> None:
+    _library_archive(tmp_path)
+    client = _install_client(tmp_path)
+    assert client.get("/api/wallpapers").json()["available"] is False
+
+    started = client.post("/api/wallpapers/library/install").json()
+    assert started["state"] in {"downloading", "unpacking", "done"}
+    assert _wait_for_install(client)["state"] == "done"
+
+    payload = client.get("/api/wallpapers").json()
+    assert payload["available"] is True
+    assert payload["items"][0]["id"] == "01-cinematic-photoreal-01"
+    # The downloaded archive and the staging directory are cleaned up.
+    leftovers = list((tmp_path / "data").glob(".wallpaper-library*"))
+    assert leftovers == []
+
+
+def test_an_already_installed_library_is_not_downloaded_again(
+    tmp_path: Path, library: WallpaperLibrary
+) -> None:
+    installer = WallpaperLibraryInstaller(library, url="https://127.0.0.1:1/nope.zip")
+    app = FastAPI()
+    register_wallpaper_routes(app, library, WallpaperUploads(tmp_path / "u"), installer)
+    client = TestClient(app)
+
+    assert client.get("/api/wallpapers/library").json()["installed"] is True
+    # Starting anyway is a no-op answered with "done", not a download attempt.
+    assert client.post("/api/wallpapers/library/install").json()["state"] == "done"
+
+
+def test_an_unreachable_archive_is_an_error_state_not_a_crash(tmp_path: Path) -> None:
+    client = _install_client(tmp_path, archive_name="missing.zip")
+
+    client.post("/api/wallpapers/library/install")
+    status = _wait_for_install(client)
+
+    assert status["state"] == "error"
+    assert status["error"]
+    assert client.get("/api/wallpapers").json()["available"] is False
+
+
+def test_an_archive_reaching_outside_the_library_is_refused(tmp_path: Path) -> None:
+    """Zip-slip: a member path must not be able to escape the staging area."""
+    import zipfile
+
+    archive = tmp_path / "library.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("manifests/01-style.json", "[]")
+        bundle.writestr("images/../../evil.txt", "gotcha")
+    client = _install_client(tmp_path)
+
+    client.post("/api/wallpapers/library/install")
+    status = _wait_for_install(client)
+
+    assert status["state"] == "error"
+    assert not (tmp_path / "evil.txt").exists()
+    assert not (tmp_path / "data" / "jarvis-wallpaper-gallery").exists()
+
+
+def test_an_archive_that_is_not_a_zip_is_refused(tmp_path: Path) -> None:
+    (tmp_path / "library.zip").write_bytes(b"this is an html error page")
+    client = _install_client(tmp_path)
+
+    client.post("/api/wallpapers/library/install")
+    status = _wait_for_install(client)
+
+    assert status["state"] == "error"
+    assert "archive" in status["error"]
