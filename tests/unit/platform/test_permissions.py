@@ -286,6 +286,33 @@ def test_request_screen_capture_calls_native_api_and_requires_restart() -> None:
     assert _permission(result.snapshot, PermissionId.SCREEN_RECORDING)["restart_required"] is True
 
 
+def test_request_reporting_false_points_at_system_settings() -> None:
+    """A suppressed prompt must not promise a restart-only path (BUG-083 class).
+
+    macOS prompts each app identity exactly once; a previously denied Screen
+    Recording makes CGRequestScreenCaptureAccess return False WITHOUT any
+    dialog. The user needs the System Settings pointer, not a restart loop.
+    """
+    modules, screen, _ = _native_modules()
+    modules["Quartz"].CGRequestScreenCaptureAccess = lambda: False
+
+    result = _port(modules).request(PermissionId.SCREEN_RECORDING)
+
+    assert result.ok is True
+    assert screen["granted"] is False
+    assert "System Settings" in result.message
+    assert "If no system dialog appeared" in result.message
+
+
+def test_request_reporting_true_keeps_the_plain_restart_message() -> None:
+    modules, _, _ = _native_modules()
+
+    result = _port(modules).request(PermissionId.SCREEN_RECORDING)
+
+    assert result.ok is True
+    assert "If no system dialog appeared" not in result.message
+
+
 def test_restart_requirement_persists_until_the_process_restarts() -> None:
     modules, _, _ = _native_modules()
     port = _port(modules)

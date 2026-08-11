@@ -605,24 +605,32 @@ class SystemPermissionPort:
             return "Bring Personal Jarvis to the foreground and try again."
         return None
 
-    def _native_request(self, permission_id: PermissionId) -> None:
+    def _native_request(self, permission_id: PermissionId) -> bool | None:
+        """Fire the native prompt API; return its boolean where one exists.
+
+        The CG*/AX requesters report ``True`` when access is (already) granted
+        and ``False`` otherwise. ``False`` covers BOTH "the dialog is up right
+        now" and "macOS silently suppressed the dialog because an earlier
+        decision is on record" — the caller words its answer so it stays true
+        in either case. ``None`` = the API reports nothing (microphone,
+        Keychain replay).
+        """
         if permission_id is PermissionId.CREDENTIAL_STORE:
             # Replaying the failed Keychain read is the only supported way to
             # make macOS show the prompt again; the outcome (allowed or denied
             # once more) lands honestly in the after-snapshot.
             self._credential_store_recover()
-            return
+            return None
         if permission_id is PermissionId.MICROPHONE:
             av = self._load("AVFoundation")
             av.AVCaptureDevice.requestAccessForMediaType_completionHandler_(
                 av.AVMediaTypeAudio, lambda _granted: None
             )
-            return
+            return None
         if permission_id is PermissionId.ACCESSIBILITY:
             app_services = self._load("ApplicationServices")
             prompt_key = app_services.kAXTrustedCheckOptionPrompt
-            app_services.AXIsProcessTrustedWithOptions({prompt_key: True})
-            return
+            return bool(app_services.AXIsProcessTrustedWithOptions({prompt_key: True}))
         quartz = self._load("Quartz")
         name = {
             PermissionId.SCREEN_RECORDING: "CGRequestScreenCaptureAccess",
@@ -631,13 +639,11 @@ class SystemPermissionPort:
         }[permission_id]
         requester = getattr(quartz, name, None)
         if callable(requester):
-            requester()
-            return
+            return bool(requester())
         if permission_id is PermissionId.EVENT_POSTING:
             app_services = self._load("ApplicationServices")
             prompt_key = app_services.kAXTrustedCheckOptionPrompt
-            app_services.AXIsProcessTrustedWithOptions({prompt_key: True})
-            return
+            return bool(app_services.AXIsProcessTrustedWithOptions({prompt_key: True}))
         raise RuntimeError(f"Native permission request is unavailable: {name}")
 
     def request(self, permission_id: PermissionId, *, dry_run: bool = False) -> PermissionOperation:
@@ -684,7 +690,7 @@ class SystemPermissionPort:
                 before,
             )
         try:
-            self._native_request(permission_id)
+            prompted = self._native_request(permission_id)
         except Exception as exc:  # noqa: BLE001 - native request boundary
             return PermissionOperation(
                 False,
@@ -700,6 +706,23 @@ class SystemPermissionPort:
         if restart:
             self._restart_required.add(permission_id)
         after = self.snapshot()
+        message = (
+            "Permission requested. Restart Personal Jarvis after granting access."
+            if restart
+            else "Permission requested; the status will update after your choice."
+        )
+        if prompted is False:
+            # macOS prompts each app identity exactly once. A requester that
+            # reports False may have the dialog up right now — or may have
+            # been silently suppressed because a denial is already on record
+            # (the Screen Recording preflight cannot tell those apart).
+            # Promising only a restart in that second case is the dead-button
+            # class of BUG-083: the user restarts forever and is never asked.
+            message += (
+                " If no system dialog appeared, macOS has already recorded an "
+                "earlier decision — enable Personal Jarvis in System Settings "
+                "> Privacy & Security for this permission."
+            )
         return PermissionOperation(
             True,
             permission_id.value,
@@ -707,11 +730,7 @@ class SystemPermissionPort:
             True,
             False,
             restart,
-            (
-                "Permission requested. Restart Personal Jarvis after granting access."
-                if restart
-                else "Permission requested; the status will update after your choice."
-            ),
+            message,
             after,
         )
 
