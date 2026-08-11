@@ -16,6 +16,18 @@ export interface AgentStatus {
   kind?: string;
   /** One line a picker can show under the name. */
   description?: string;
+  /**
+   * True for a CLI the user added themselves (`workspaceClisApi`). Surfaces use
+   * it to offer editing or removing the entry, which makes no sense for one
+   * this app ships.
+   */
+  custom?: boolean;
+  /**
+   * Where to fetch this entry's mark. Empty for a shipped entry — whose logo is
+   * an asset this bundle already carries — and for a custom one with no logo,
+   * which falls back to a monogram.
+   */
+  logo_url?: string;
 }
 
 export interface AgentsResponse {

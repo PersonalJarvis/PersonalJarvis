@@ -58,6 +58,8 @@ export interface WorkspaceLauncherProps {
   agents: AgentStatus[];
   /** The registered subscriptions of one CLI, for the per-pane picker. */
   accountsFor: (platform: string) => AgentAccount[];
+  /** Re-read the entries above — the user just changed a CLI of their own. */
+  onAgentsChanged?: () => void;
 
   /** False when this machine has no PTY backend, so no pane could run. */
   terminalAvailable: boolean;
@@ -131,6 +133,7 @@ export function WorkspaceLauncher({
   onPlanned,
   agents,
   accountsFor,
+  onAgentsChanged,
   terminalAvailable,
   nothingInstalled,
   onOpenClis,
@@ -323,6 +326,7 @@ export function WorkspaceLauncher({
                   agents={agents}
                   accountsFor={accountsFor}
                   onPlanned={onPlanned}
+                  onAgentsChanged={onAgentsChanged}
                 />
               )}
 

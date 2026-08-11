@@ -177,6 +177,25 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // answered the offer either way.
   const [offer, setOffer] = useState<ResumeOffer | null>(null);
 
+  /**
+   * Re-read the agent sweep alone, without disturbing the workspace state.
+   *
+   * The user just added, edited or removed a CLI of their own, and that is the
+   * ONE thing this read answers differently than a second ago. Going through
+   * `refresh()` would also re-read the session and the workspace list — several
+   * hundred milliseconds of work whose answer has not changed, and one of them
+   * closes the wizard when it finds a workspace open.
+   */
+  const reloadAgents = useCallback(
+    () =>
+      fetchIdeAgents().then(setMeta, () => {
+        /* Same bargain as the sweep in `refresh`: the entry is already stored
+           and registered, so a failed re-read costs an out-of-date list, not
+           the change itself. */
+      }),
+    [],
+  );
+
   const refresh = useCallback(async () => {
     /*
      * Both reads start together, but the workspace is applied WITHOUT waiting
@@ -399,6 +418,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
         displayName: a.display_name,
         installed: a.installed,
         kind: a.kind ?? "cli",
+        logoUrl: a.logo_url || undefined,
         // For a plain terminal the useful second line is WHICH shell opens; a
         // CLI's name already says what it is, so it gets no line of its own.
         description:
@@ -903,6 +923,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           onPlanned={setPlanned}
           agents={agents}
           accountsFor={accountsFor}
+          onAgentsChanged={() => void reloadAgents()}
           /* Before the sweep lands `meta` is null, and this screen is not
              reached in that state at all (see the `loading` branch above). The
              optimistic default is still the right one: a machine is assumed

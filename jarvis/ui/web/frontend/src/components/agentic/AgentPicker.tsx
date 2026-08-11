@@ -24,6 +24,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
+import { AgentMark } from "./AgentMark";
 
 /** A coding CLI an "open a terminal" action may start. */
 export interface SplitAgentChoice {
@@ -40,6 +41,11 @@ export interface SplitAgentChoice {
   kind?: string;
   /** One line under the name — the shell that would open, for instance. */
   description?: string;
+  /**
+   * The mark for an entry this bundle has no asset for — a CLI the user added.
+   * Absent for everything else, where `AgentMark`'s own table answers.
+   */
+  logoUrl?: string;
 }
 
 /**
@@ -213,7 +219,20 @@ export function AgentPickerMenu({
             }}
             className="flex w-full items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
           >
-            <span className="min-w-0">
+            {/* The mark, at list weight rather than as a framed tile: this is a
+                menu of choices, and forty boxes down a column read as a grid
+                instead of a list. It earns its place because the entries are no
+                longer a fixed set of names a user can learn — one of them may
+                be a CLI they added and named themselves. */}
+            <AgentMark
+              agent={agent.name}
+              label={agent.displayName}
+              variant="plain"
+              size="sm"
+              logoUrl={agent.logoUrl}
+              className="mt-0.5"
+            />
+            <span className="min-w-0 flex-1">
               <span className="block truncate">{agent.displayName}</span>
               {/* What this choice actually opens — "no agent, just a prompt"
                   is the difference a user needs before clicking, and it is the

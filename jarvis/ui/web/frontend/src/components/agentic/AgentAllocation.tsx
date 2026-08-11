@@ -2,13 +2,20 @@
  * Allocate terminal slots by agent instead of editing every pane separately.
  * The backend still receives its existing one-entry-per-terminal plan.
  */
-import { Check, Minus, Plus } from "lucide-react";
+import { useState } from "react";
+import { Check, Minus, Pencil, Plus, Trash2 } from "lucide-react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { AgentAccount } from "@/lib/agentAccountsApi";
 import type { AgentStatus } from "@/lib/agenticIdeApi";
+import {
+  deleteCustomCli,
+  fetchCustomClis,
+  type CustomCli,
+} from "@/lib/workspaceClisApi";
 import { AgentMark } from "./AgentMark";
-import { Button, SectionLabel } from "./controls";
+import { Button, IconButton, SectionLabel } from "./controls";
+import { CustomCliDialog } from "./CustomCliDialog";
 import { BrandedSelect } from "@/components/ui/select";
 
 export interface PlannedTerminal {
@@ -27,6 +34,16 @@ export interface AgentAllocationProps {
   onPlanned: (
     update: (previous: PlannedTerminal[]) => PlannedTerminal[],
   ) => void;
+  /**
+   * Re-read the agent list, because the user just added, edited or removed a
+   * CLI of their own.
+   *
+   * Passed in rather than done here: this component RENDERS the list it is
+   * given, and the owner of that list is the one that can replace it. Without
+   * it the new CLI would be stored, registered and offered everywhere — except
+   * in the very screen the user added it from, until the next full refresh.
+   */
+  onAgentsChanged?: () => void;
 }
 
 /** Count assigned panes without treating the unassigned sentinel as an agent. */
@@ -123,8 +140,63 @@ export function AgentAllocation({
   agents,
   accountsFor,
   onPlanned,
+  onAgentsChanged,
 }: AgentAllocationProps) {
   const t = useT();
+  /*
+   * The dialog needs the FULL stored record — the command, the logo, how a
+   * dropped file is written — and `/agents` carries only what a picker shows.
+   * Fetched on demand, when the user reaches for edit or add, rather than kept
+   * in step with the list: on the common path (nobody touches their own CLIs)
+   * that is a request this screen never makes.
+   */
+  const [editing, setEditing] = useState<CustomCli | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+
+  const openDialog = async (agent?: AgentStatus) => {
+    setError("");
+    if (!agent) {
+      setEditing(null);
+      setDialogOpen(true);
+      return;
+    }
+    setBusy(agent.name);
+    try {
+      const stored = await fetchCustomClis();
+      const found = stored.clis.find((cli) => cli.id === agent.name) ?? null;
+      if (!found) throw new Error(t("custom_cli.gone"));
+      setEditing(found);
+      setDialogOpen(true);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const removeCli = async (agent: AgentStatus) => {
+    setError("");
+    setBusy(agent.name);
+    try {
+      await deleteCustomCli(agent.name);
+      // Free the slots it held. A pane planned for a CLI that no longer exists
+      // would be rejected by /launch, so the count goes back to unassigned
+      // rather than leaving the user to notice at the end of the wizard.
+      onPlanned((previous) =>
+        previous.map((pane) =>
+          pane.agent === agent.name ? { name: pane.name, agent: "" } : pane,
+        ),
+      );
+      onAgentsChanged?.();
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy("");
+    }
+  };
+
   const counts = allocationCounts(planned);
   const assigned = Object.values(counts).reduce((sum, value) => sum + value, 0);
   const total = planned.length;
@@ -251,7 +323,7 @@ export function AgentAllocation({
             <div
               key={agent.name}
               className={cn(
-                "grid gap-3 border-b border-border/50 px-1 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
+                "group grid gap-3 border-b border-border/50 px-1 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
                 count > 0 && "bg-primary/[0.035]",
               )}
             >
@@ -273,6 +345,7 @@ export function AgentAllocation({
                   <AgentMark
                     agent={agent.name}
                     label={agent.display_name}
+                    logoUrl={agent.logo_url || undefined}
                     className={cn(
                       "transition-colors",
                       count > 0
@@ -297,6 +370,40 @@ export function AgentAllocation({
                           t("workspace_launcher.agents.installed")
                         : t("workspace_launcher.agents.not_installed")}
                     </span>
+                    {/* Editing lives on the row it belongs to, and only on the
+                        rows it CAN belong to — a shipped CLI has nothing here
+                        to change. Quiet until the row is hovered or a key
+                        reaches them, so six built-in rows do not grow two
+                        buttons each for a feature most of them cannot use. */}
+                    {agent.custom && (
+                      <span className="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                        <IconButton
+                          size="sm"
+                          label={t("custom_cli.edit_named").replace(
+                            "{0}",
+                            agent.display_name,
+                          )}
+                          disabled={busy === agent.name}
+                          data-testid={`custom-cli-edit-${agent.name}`}
+                          onClick={() => void openDialog(agent)}
+                        >
+                          <Pencil className="h-3 w-3" aria-hidden="true" />
+                        </IconButton>
+                        <IconButton
+                          size="sm"
+                          label={t("custom_cli.remove_named").replace(
+                            "{0}",
+                            agent.display_name,
+                          )}
+                          disabled={busy === agent.name}
+                          data-testid={`custom-cli-remove-${agent.name}`}
+                          onClick={() => void removeCli(agent)}
+                          className="hover:text-destructive"
+                        >
+                          <Trash2 className="h-3 w-3" aria-hidden="true" />
+                        </IconButton>
+                      </span>
+                    )}
                   </div>
                   {agent.description && (
                     <p className="truncate text-[11px] text-muted-foreground">
@@ -411,9 +518,46 @@ export function AgentAllocation({
         })}
       </div>
 
+      {/* Adding your own sits at the END of the list rather than in a settings
+          page, because this is where the question comes up: the user is
+          looking at six CLIs and the one they wanted is not among them. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-1 py-3">
+        <div className="min-w-0">
+          <p className="text-sm text-foreground">{t("custom_cli.add_title")}</p>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            {t("custom_cli.add_hint")}
+          </p>
+        </div>
+        <Button
+          variant="quiet"
+          data-testid="custom-cli-add"
+          onClick={() => void openDialog()}
+        >
+          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+          {t("custom_cli.add_button")}
+        </Button>
+      </div>
+
+      {error && (
+        <p
+          role="alert"
+          data-testid="custom-cli-list-error"
+          className="mt-3 border-l-2 border-destructive/70 py-1 pl-3 text-sm text-destructive"
+        >
+          {error}
+        </p>
+      )}
+
       <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
         {t("workspace_launcher.agents.auto_names")}
       </p>
+
+      <CustomCliDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        editing={editing}
+        onSaved={() => onAgentsChanged?.()}
+      />
     </div>
   );
 }

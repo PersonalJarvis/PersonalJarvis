@@ -17,6 +17,16 @@ interface AgentMarkProps {
   className?: string;
   size?: "sm" | "md" | "lg";
   /**
+   * An image to draw instead of the built-in table's — the mark a user uploaded
+   * for a CLI of their own.
+   *
+   * Passed in rather than looked up, because this component cannot know it: the
+   * table below is a fixed list of brands that ship with the app, and an entry
+   * added at runtime has no place in it. An entry with no logo (and every
+   * shipped one) leaves this undefined and the table decides as before.
+   */
+  logoUrl?: string;
+  /**
    * How much of a mark this is.
    *
    * `boxed` is the identity badge: a framed tile, for the places that are ABOUT
@@ -42,9 +52,19 @@ export function AgentMark({
   className,
   size = "md",
   variant = "boxed",
+  logoUrl,
 }: AgentMarkProps) {
-  const [failed, setFailed] = useState(false);
-  const logo = AGENT_LOGOS[agent];
+  /*
+   * WHICH logo failed, not merely "one did".
+   *
+   * A boolean would stick: a user who replaces a broken upload with a working
+   * one keeps seeing the monogram, because the component is the same instance
+   * and its flag never clears. Storing the URL that failed makes the next one a
+   * fresh attempt without an effect to keep in step.
+   */
+  const [failedLogo, setFailedLogo] = useState<string | null>(null);
+  const logo = logoUrl || AGENT_LOGOS[agent];
+  const failed = failedLogo != null && failedLogo === logo;
   const monogram = label.trim().slice(0, 2).toUpperCase() || "?";
   const plain = variant === "plain";
   const sizeClass = plain
@@ -91,7 +111,7 @@ export function AgentMark({
                   ? "h-6 w-6"
                   : "h-5 w-5",
           )}
-          onError={() => setFailed(true)}
+          onError={() => setFailedLogo(logo)}
         />
       ) : (
         <span className="font-mono">{monogram}</span>
