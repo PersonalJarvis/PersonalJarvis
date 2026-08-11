@@ -355,6 +355,14 @@ doesn't land, it tells you instead of silently losing what you said. One key is 
 second is a toggle, both can be armed together, and a third re-pastes the last thing you
 dictated into whatever field just ate it.
 
+<p align="center">
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v1.3.1/readme-demo-dictation.gif" alt="Dictation demo: a spoken sentence arrives as clean text in the chat input" width="860" />
+</p>
+
+<p align="center">
+  <sub>Speak, release the key, and the cleaned-up sentence lands in whatever field has focus.</sub>
+</p>
+
 Recognition runs on whatever speech provider you have configured, local model included, in
 which case your voice never leaves the machine. Cleanup happens in two passes: a plain
 pattern match strips filler sounds per language with no model involved at all, and an
@@ -371,6 +379,16 @@ empty because a provider was briefly down.
 An optional speech-to-speech mode (OpenAI Realtime, Gemini Live) for sub-second
 conversational latency, with automatic fallback to the classic wake, STT, brain, TTS
 pipeline when it is unavailable.
+
+### Wallpaper gallery
+
+501 wallpapers across 21 art styles &mdash; oil painting, pixel art, synthwave, woodblock
+and more &mdash; each tagged light or dark so the app can match the wallpaper to your
+theme. Filter the grid, preview fullscreen, mark favorites, or add your own image.
+
+<p align="center">
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v1.3.1/readme-demo-wallpapers.gif" alt="Scrolling the wallpaper gallery and opening a fullscreen preview" width="860" />
+</p>
 
 ## Drive it from the terminal
 
