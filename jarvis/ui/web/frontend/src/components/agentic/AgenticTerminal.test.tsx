@@ -1141,7 +1141,11 @@ describe("pane refit", () => {
     });
   };
 
-  const pane = (maximized: boolean, active = true) => (
+  const pane = (
+    maximized: boolean,
+    extra: Partial<React.ComponentProps<typeof AgenticTerminal>> = {},
+    active = true,
+  ) => (
     <AgenticTerminal
       name="Dana"
       displayName="Claude Code"
@@ -1149,6 +1153,7 @@ describe("pane refit", () => {
       fontSize={13}
       maximized={maximized}
       active={active}
+      {...extra}
     />
   );
 
@@ -1212,11 +1217,11 @@ describe("pane refit", () => {
   });
 
   it("reclaims the shared PTY geometry when the pane becomes active", () => {
-    const view = render(pane(false, false));
+    const view = render(pane(false, {}, false));
     settle();
     terminalHarness.send.mockClear();
 
-    view.rerender(pane(false, true));
+    view.rerender(pane(false, {}, true));
     settle();
 
     expect(terminalHarness.send).toHaveBeenCalledWith({
@@ -1253,102 +1258,89 @@ describe("pane refit", () => {
     });
   });
 
-  it("never hands the agent a tile too narrow to draw in", () => {
-    // The failure behind "working panes are shown as done" (maintainer,
-    // 2026-08-09, thirteen panes open). A crowded grid measures ~17 columns
-    // per cell — a CORRECT measurement, which is why the old 8x2 floor waved
-    // it through. The agent, squeezed into a strip it cannot lay its
-    // interface out in, stops drawing altogether; the status badge reads that
-    // silence as a finished job, because movement is all it can read.
-    //
-    // So the measurement is CLAMPED to the floors, per dimension, and the
-    // clamped size is what the agent hears: never the raw 17 columns, always
-    // a frame it can still draw. The tile clips what it cannot show.
+  /*
+   * A terminal is exactly as wide as the tile it is shown in.
+   *
+   * The maintainer's rule for this screen (2026-08-11), and the reason the
+   * tests it replaced are gone rather than adjusted. Those pinned the opposite:
+   * a pane rendered a fixed 60-column grid whatever its tile could show and cut
+   * the rest off at the edge, so six terminals each showed about two thirds of
+   * themselves — which is what "the sessions overlap, the right one slides over
+   * the left" was describing. It was working exactly as written.
+   *
+   * The width a coding CLI wants did not stop mattering; it stopped being
+   * enforced HERE. The launcher warns from twenty terminals up and opens as
+   * many as the user confirms, and a pane too narrow to be useful is now a pane
+   * they can see is too narrow.
+   */
+  it("fits the tile it is shown in, however narrow that is", () => {
+    const view = render(pane(false));
+    settle();
+    terminalHarness.fit.mockClear();
+    terminalHarness.send.mockClear();
+
+    // The crowded-grid measurement that used to be overruled (~17 columns per
+    // cell, thirteen panes). It is a CORRECT measurement of a real tile, so it
+    // is what both xterm and the agent are given.
+    terminalHarness.size = { cols: 17, rows: 6 };
+    view.rerender(pane(true));
+    settle();
+
+    expect(terminalHarness.fit).toHaveBeenCalled();
+    expect(terminalHarness.send).toHaveBeenCalledWith({
+      t: "r",
+      cols: 17,
+      rows: 6,
+    });
+  });
+
+  it("gives xterm and the agent the same number, always", () => {
+    // The one thing that must never drift. An agent laying its lines out for a
+    // width its xterm does not have re-wraps every one of them, and the TUI's
+    // cursor moves then land on rows that hold something else — a five-pane
+    // grid came back as panes full of shredded one-word fragments (2026-08-10).
+    for (const size of [
+      { cols: 17, rows: 6 },
+      { cols: 33, rows: 40 },
+      { cols: 90, rows: 30 },
+    ]) {
+      const view = render(pane(false));
+      settle();
+      terminalHarness.send.mockClear();
+
+      terminalHarness.size = size;
+      view.rerender(pane(true));
+      settle();
+
+      // fit() sizes xterm to the tile, so the agent hearing the tile's own
+      // measurement IS the two agreeing.
+      expect(terminalHarness.send).toHaveBeenCalledWith({ t: "r", ...size });
+      view.unmount();
+    }
+  });
+
+  it("refuses only a measurement that cannot be real", () => {
+    // All the floor is for now: a tile mid-layout measures nothing, and a PTY
+    // resized to zero columns permanently wrecks the agent's drawing.
     const view = render(pane(false));
     settle();
     terminalHarness.send.mockClear();
 
-    terminalHarness.size = { cols: 17, rows: 6 };
+    terminalHarness.size = { cols: 0, rows: 0 };
     view.rerender(pane(true));
     settle();
 
     expect(terminalHarness.send).not.toHaveBeenCalledWith(
-      expect.objectContaining({ cols: 17 }),
+      expect.objectContaining({ cols: 0 }),
     );
-    expect(terminalHarness.send).toHaveBeenCalledWith({
-      t: "r",
-      cols: 60,
-      rows: 15,
-    });
-
-    // A tile the agent can work in is still announced honestly.
-    terminalHarness.size = { cols: 90, rows: 30 };
-    view.rerender(pane(false));
-    settle();
-
-    expect(terminalHarness.send).toHaveBeenCalledWith({
-      t: "r",
-      cols: 90,
-      rows: 30,
-    });
   });
 
-  it("keeps the local grid on the clamped size rather than the raw fit", () => {
-    // Clamping what the agent HEARS is only half of the contract (test
-    // above). The other half is the LOCAL grid: fit()ing xterm to the
-    // 17-column tile while the agent lays its lines out for 60 re-wraps
-    // every one of them at the narrower measure, and the TUI's cursor moves
-    // then land on rows that no longer hold what they held when it drew them
-    // — a five-pane grid came back as panes full of shredded one-word
-    // fragments (reported 2026-08-10). So below a floor nothing is fit at
-    // all: the grid takes the same clamped size the agent was told, and the
-    // tile's overflow-hidden container clips the rest.
-    const view = render(pane(false));
-    settle();
-    terminalHarness.fit.mockClear();
-    terminalHarness.resize.mockClear();
-
-    terminalHarness.size = { cols: 17, rows: 6 };
-    view.rerender(pane(true));
-    settle();
-
-    expect(terminalHarness.fit).not.toHaveBeenCalled();
-    expect(terminalHarness.resize).toHaveBeenCalledWith(60, 15);
-  });
-
-  it("keeps a narrow tile's honest height so the prompt stays visible", () => {
-    // The floors fail one dimension at a time. A tile in a five-pane row
-    // measures 33 columns and a perfectly honest 40 rows — and refusing the
-    // WHOLE size left the PTY at a stale 64-row geometry, with the coding
-    // CLI anchoring its input box to row 64 of a pane showing 37 (measured
-    // live 2026-08-10: every pane in the workspace came up with no visible
-    // prompt). Clamped per dimension, only the width is lifted to the floor;
-    // the height the tile really has is what the agent hears, and its
-    // bottom-anchored prompt box lands in the bottom visible row.
-    const view = render(pane(false));
-    settle();
-    terminalHarness.send.mockClear();
-    terminalHarness.resize.mockClear();
-
-    terminalHarness.size = { cols: 33, rows: 40 };
-    view.rerender(pane(true));
-    settle();
-
-    expect(terminalHarness.resize).toHaveBeenCalledWith(60, 40);
-    expect(terminalHarness.send).toHaveBeenCalledWith({
-      t: "r",
-      cols: 60,
-      rows: 40,
-    });
-  });
-
-  it("keeps the reader's text size on a tile too narrow for the floor", () => {
+  it("keeps the reader's text size on a narrow tile", () => {
     // The auto-shrink that walked a narrow pane's text down until 60 columns
     // fit was rejected the day it shipped (2026-08-11): it silently overrode
-    // the toolbar's size on every narrow pane, which read as the size
-    // controls being dead. The contract now: the pane draws at the READER'S
-    // size, the grid is clamped to the floor, and what does not fit is
-    // clipped at the pane's own edge.
+    // the toolbar's size on every narrow pane, which read as the size controls
+    // being dead. The pane draws at the READER'S size and takes the columns
+    // that leaves it.
     const view = render(pane(false));
     settle();
     terminalHarness.send.mockClear();
@@ -1360,87 +1352,28 @@ describe("pane refit", () => {
     const term =
       terminalHarness.instances[terminalHarness.instances.length - 1];
     expect(term?.options.fontSize).toBe(13);
-    expect(terminalHarness.resize).toHaveBeenCalledWith(60, 20);
     expect(terminalHarness.send).toHaveBeenCalledWith({
       t: "r",
-      cols: 60,
+      cols: 40,
       rows: 20,
     });
   });
 
-  it("marks the clipped edge with a veil, and only when clipping", () => {
-    // The bare cut is what read as "one terminal shoved behind another"
-    // (maintainer, 2026-08-11) — the veil is the difference between a narrow
-    // window on a wide screen and a layout that looks broken.
-    const view = render(pane(false));
-    settle();
-    expect(screen.queryByTestId("agentic-terminal-clip-veil-Dana")).toBeNull();
-
-    terminalHarness.size = { cols: 40, rows: 20 };
-    view.rerender(pane(true));
-    settle();
-    // No jest-dom in this repo — getByTestId itself throws when absent.
-    expect(screen.getByTestId("agentic-terminal-clip-veil-Dana")).toBeTruthy();
-
-    // The tile widens again — the veil must not outlive the clipping.
-    terminalHarness.size = { cols: 90, rows: 30 };
-    view.rerender(pane(false));
-    settle();
-    expect(screen.queryByTestId("agentic-terminal-clip-veil-Dana")).toBeNull();
-  });
-
-  it("turns a clamped tile into a horizontal window instead of a hard clip", () => {
-    // "The terminals are wider than the pane" is true by design (the floor
-    // grid), so the pane must be an honest WINDOW on that width: scrollable
-    // sideways, never painting past its own edge onto a neighbour.
+  it("never offers a sideways scroll, at any width", () => {
+    // A pane that can scroll sideways is a pane drawing past its own edge.
+    // The horizontal window this used to open — scrollbar, two scroll shadows
+    // — was an honest presentation of a thing that should not exist.
     const view = render(pane(false));
     settle();
     const host = screen.getByTestId("agentic-terminal-host-Dana");
     expect(host.className).toContain("overflow-hidden");
+    expect(host.className).not.toContain("overflow-x-auto");
 
-    terminalHarness.size = { cols: 40, rows: 20 };
+    terminalHarness.size = { cols: 12, rows: 5 };
     view.rerender(pane(true));
-    settle();
-    expect(host.className).toContain("overflow-x-auto");
-    expect(host.className).not.toContain("overflow-hidden");
-
-    terminalHarness.size = { cols: 90, rows: 30 };
-    view.rerender(pane(false));
     settle();
     expect(host.className).toContain("overflow-hidden");
-  });
-
-  it("moves the veils with the window as it slides", () => {
-    const view = render(pane(false));
-    settle();
-    terminalHarness.size = { cols: 40, rows: 20 };
-    view.rerender(pane(true));
-    settle();
-    const host = screen.getByTestId("agentic-terminal-host-Dana");
-    // jsdom lays nothing out; stage a 700px-wide surface in a 600px host
-    // (the prototype stub above), so max scroll is 100.
-    Object.defineProperty(host, "scrollWidth", { configurable: true, value: 700 });
-    Object.defineProperty(host, "scrollLeft", {
-      configurable: true,
-      writable: true,
-      value: 50,
-    });
-
-    // Mid-window: more columns on BOTH sides, so both veils show.
-    act(() => {
-      fireEvent.scroll(host);
-    });
-    expect(screen.getByTestId("agentic-terminal-clip-veil-start-Dana")).toBeTruthy();
-    expect(screen.getByTestId("agentic-terminal-clip-veil-Dana")).toBeTruthy();
-
-    // Slid to the far right: nothing hides there any more — the right veil
-    // must yield, or it would promise columns that do not exist.
-    host.scrollLeft = 100;
-    act(() => {
-      fireEvent.scroll(host);
-    });
-    expect(screen.getByTestId("agentic-terminal-clip-veil-start-Dana")).toBeTruthy();
-    expect(screen.queryByTestId("agentic-terminal-clip-veil-Dana")).toBeNull();
+    expect(host.className).not.toContain("overflow-x-auto");
   });
 
   it("restores the reader's text size over one a stale build left behind", () => {

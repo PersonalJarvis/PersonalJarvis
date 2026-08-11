@@ -263,22 +263,6 @@ const MAX_TERMINAL_NAME = 40;
 const MIN_REAL_COLS = 10;
 const MIN_REAL_ROWS = 4;
 
-/**
- * The width at which a coding CLI has room to lay its interface out.
- *
- * What the old floor got RIGHT, kept as what it always honestly was: an
- * opinion about comfort, not a limit. Below roughly this, an agent's boxes,
- * diffs and file trees start wrapping in places that make them harder to read
- * — measured against both installed CLIs, and the number the pane was forcibly
- * held at until 2026-08-11.
- *
- * Nothing is resized by it and nothing is refused. A pane narrower than this
- * simply says so, and the grid opens it up while the pointer rests on it
- * (`onClipWidth` → `focusColumnWeights`). The pane still shows all of itself
- * the whole time; this only decides which panes are worth widening.
- */
-const COMFORTABLE_COLS = 60;
-
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
 
 /**
@@ -441,16 +425,6 @@ interface AgenticTerminalProps {
    */
   layoutBusy?: boolean;
   /**
-   * How wide this pane would have to be to show its whole terminal grid.
-   *
-   * Reported rather than acted on, because the pane cannot widen itself — its
-   * tile is the grid's to size. `0` means nothing is hidden. Anything larger is
-   * the width at which the reader's text size and the agent's floor grid (see
-   * MIN_REAL_COLS) both fit, which is what the grid opens the pane to while the
-   * pointer is over it.
-   */
-  onClipWidth?: (name: string, neededPx: number) => void;
-  /**
    * Bump to reconnect this pane.
    *
    * An exited agent leaves a dead pane with no way back: the connect effect runs
@@ -487,7 +461,6 @@ export function AgenticTerminal({
   onClose,
   splitDisabled = false,
   onAttachError,
-  onClipWidth,
   onRestart,
   restartToken = 0,
   onArrangeStart,
@@ -602,7 +575,6 @@ export function AgenticTerminal({
   // Latest callbacks/appearance without re-running the connect effect.
   const onStatusRef = useRef(onStatus);
   const onAttachErrorRef = useRef(onAttachError);
-  const onClipWidthRef = useRef(onClipWidth);
   /*
    * The text size this pane draws at, as of NOW.
    *
@@ -633,7 +605,6 @@ export function AgenticTerminal({
   const layoutBusyRef = useRef(layoutBusy);
   onStatusRef.current = onStatus;
   onAttachErrorRef.current = onAttachError;
-  onClipWidthRef.current = onClipWidth;
   fontSizeRef.current = fontSize;
   appearanceRef.current = appearance;
   activeRef.current = active;
@@ -816,24 +787,6 @@ export function AgenticTerminal({
       attachCustomKeyEventHandler: keys.add,
       input: (data) => term.input(data),
     });
-    /**
-     * Say how much room this pane would need to be comfortable to read.
-     *
-     * Not a report of anything HIDDEN — nothing is hidden any more, the pane
-     * shows its whole terminal. It is how the grid knows which pane is worth
-     * opening up when the pointer rests on it (see `focusColumnWeights`): the
-     * caller has just measured the tile in columns, so the width one column
-     * takes is known exactly, with no second measurement and no assumption
-     * about the font. `0` once the pane has room enough.
-     */
-    const reportNarrow = (cols: number) => {
-      const perColumn = container.clientWidth / Math.max(1, cols);
-      onClipWidthRef.current?.(
-        name,
-        cols < COMFORTABLE_COLS ? Math.ceil(perColumn * COMFORTABLE_COLS) : 0,
-      );
-    };
-
     try {
       // Taken BEFORE the handshake below reads the terminal's geometry — so
       // the grid this pane draws on and the size its agent is spawned at are
@@ -856,7 +809,6 @@ export function AgenticTerminal({
             Math.max(proposed.rows, MIN_REAL_ROWS),
           );
         }
-        reportNarrow(proposed.cols);
       }
     } catch {
       /* not measured yet — the ResizeObserver below will fit */
@@ -1274,7 +1226,6 @@ export function AgenticTerminal({
         cols: Math.max(proposed.cols, MIN_REAL_COLS),
         rows: Math.max(proposed.rows, MIN_REAL_ROWS),
       };
-      reportNarrow(proposed.cols);
       try {
         if (size.cols === proposed.cols && size.rows === proposed.rows) {
           fit.fit();
