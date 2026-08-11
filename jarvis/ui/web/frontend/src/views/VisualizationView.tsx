@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Download,
   ExternalLink,
@@ -252,21 +259,70 @@ export function VisualizationView() {
   }, [graph, selectedNodeId]);
 
   const [zoom, setZoom] = useState<number>(1);
-  /* Once the user has zoomed by hand, the automatic fit keeps its hands off
-   * until another run is selected — an explicit choice must never be fought. */
+  /* Once the user has zoomed or panned by hand, the automatic fit keeps its
+   * hands off until another run is selected — an explicit choice must never
+   * be fought. */
   const userZoomed = useRef(false);
   const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
 
-  const stepZoom = useCallback((direction: 1 | -1) => {
-    userZoomed.current = true;
-    setZoom((current) => {
-      if (direction > 0) {
-        return ZOOM_STEPS.find((s) => s > current + 0.001) ?? MAX_ZOOM;
+  /*
+   * Anchored zoom: every zoom keeps ONE canvas point where it is on screen —
+   * the cursor for the wheel, the viewport centre for the buttons. Without an
+   * anchor the scale pivots on the canvas origin and the node being looked at
+   * slides out of view. The anchor is recorded in content coordinates and the
+   * scroll correction lands right after the rescaled canvas hits the DOM,
+   * before paint — no one-frame jump.
+   */
+  const zoomRef = useRef(1);
+  const zoomAnchor = useRef<{
+    px: number;
+    py: number;
+    cx: number;
+    cy: number;
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    zoomRef.current = zoom;
+    const pending = zoomAnchor.current;
+    if (pending === null || canvasEl === null) return;
+    zoomAnchor.current = null;
+    canvasEl.scrollLeft = pending.px * zoom - pending.cx;
+    canvasEl.scrollTop = pending.py * zoom - pending.cy;
+  }, [zoom, canvasEl]);
+
+  /** Zoom to `next`, keeping the given viewport point (default: centre) put. */
+  const zoomTo = useCallback(
+    (next: number, at?: { cx: number; cy: number }) => {
+      const clamped = clampZoom(next);
+      const current = zoomRef.current;
+      if (canvasEl !== null && clamped !== current) {
+        const cx = at?.cx ?? canvasEl.clientWidth / 2;
+        const cy = at?.cy ?? canvasEl.clientHeight / 2;
+        zoomAnchor.current = {
+          px: (canvasEl.scrollLeft + cx) / current,
+          py: (canvasEl.scrollTop + cy) / current,
+          cx,
+          cy,
+        };
       }
-      const smaller = [...ZOOM_STEPS].reverse().find((s) => s < current - 0.001);
-      return smaller ?? Math.min(current, MIN_ZOOM);
-    });
-  }, []);
+      setZoom(clamped);
+    },
+    [canvasEl],
+  );
+
+  const stepZoom = useCallback(
+    (direction: 1 | -1) => {
+      userZoomed.current = true;
+      const current = zoomRef.current;
+      const next =
+        direction > 0
+          ? (ZOOM_STEPS.find((s) => s > current + 0.001) ?? MAX_ZOOM)
+          : ([...ZOOM_STEPS].reverse().find((s) => s < current - 0.001) ??
+            Math.min(current, MIN_ZOOM));
+      zoomTo(next);
+    },
+    [zoomTo],
+  );
 
   /* Scale the whole story into the visible canvas — never above 100%, so a
    * two-node run stays a pair of cards instead of a pair of billboards. The
@@ -280,6 +336,11 @@ export function VisualizationView() {
       (clientHeight - 16) / graph.height,
       1,
     );
+    // Fit means "show the whole story": the viewport returns to the origin,
+    // by plain assignment (no pending anchor — fit IS the anchor decision).
+    zoomAnchor.current = null;
+    canvasEl.scrollLeft = 0;
+    canvasEl.scrollTop = 0;
     setZoom(clampZoom(scale));
   }, [canvasEl, graph]);
 
@@ -302,10 +363,76 @@ export function VisualizationView() {
       if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
       userZoomed.current = true;
-      setZoom((current) => clampZoom(current * Math.exp(-event.deltaY * 0.002)));
+      const rect = canvasEl.getBoundingClientRect();
+      zoomTo(zoomRef.current * Math.exp(-event.deltaY * 0.002), {
+        cx: event.clientX - rect.left,
+        cy: event.clientY - rect.top,
+      });
     };
     canvasEl.addEventListener("wheel", onWheel, { passive: false });
     return () => canvasEl.removeEventListener("wheel", onWheel);
+  }, [canvasEl, zoomTo]);
+
+  /*
+   * Drag-to-pan. The scroll container follows a held primary/middle button on
+   * canvas background; a press on a node stays a click. Pointer capture keeps
+   * a fast drag alive outside the canvas (guarded: jsdom has no capture API).
+   */
+  const [panning, setPanning] = useState(false);
+  const panState = useRef<{
+    pointerId: number;
+    originX: number;
+    originY: number;
+    scrollLeft: number;
+    scrollTop: number;
+  } | null>(null);
+
+  const onPanStart = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (canvasEl === null) return;
+      if (event.button !== 0 && event.button !== 1) return;
+      if ((event.target as Element).closest("button") !== null) return;
+      // Middle button would otherwise start the browser's own autoscroll.
+      if (event.button === 1) event.preventDefault();
+      panState.current = {
+        pointerId: event.pointerId,
+        originX: event.clientX,
+        originY: event.clientY,
+        scrollLeft: canvasEl.scrollLeft,
+        scrollTop: canvasEl.scrollTop,
+      };
+      setPanning(true);
+      // Capture keeps a fast drag alive outside the canvas. Guarded twice:
+      // jsdom neither constructs PointerEvents (pointerId undefined) nor
+      // accepts capture for a pointer it never saw.
+      if (typeof event.pointerId === "number")
+        canvasEl.setPointerCapture?.(event.pointerId);
+    },
+    [canvasEl],
+  );
+
+  const onPanMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const pan = panState.current;
+      if (pan === null || canvasEl === null) return;
+      const dx = event.clientX - pan.originX;
+      const dy = event.clientY - pan.originY;
+      // A real drag (not a sloppy click) is a viewport choice like a manual
+      // zoom: the auto-fit stops following a live run's growth.
+      if (Math.abs(dx) + Math.abs(dy) > 4) userZoomed.current = true;
+      canvasEl.scrollLeft = pan.scrollLeft - dx;
+      canvasEl.scrollTop = pan.scrollTop - dy;
+    },
+    [canvasEl],
+  );
+
+  const onPanEnd = useCallback(() => {
+    const pan = panState.current;
+    if (pan === null) return;
+    panState.current = null;
+    setPanning(false);
+    if (typeof pan.pointerId === "number")
+      canvasEl?.releasePointerCapture?.(pan.pointerId);
   }, [canvasEl]);
 
   const refetch = useCallback(() => {
@@ -433,8 +560,15 @@ export function VisualizationView() {
             <>
               <div
                 ref={setCanvasEl}
-                className="min-h-0 flex-1 overflow-auto"
+                className={cn(
+                  "min-h-0 flex-1 overflow-auto",
+                  panning ? "cursor-grabbing" : "cursor-grab",
+                )}
                 data-testid="visualization-canvas"
+                onPointerDown={onPanStart}
+                onPointerMove={onPanMove}
+                onPointerUp={onPanEnd}
+                onPointerCancel={onPanEnd}
               >
                 <GraphCanvas
                   graph={graph}
@@ -470,7 +604,7 @@ export function VisualizationView() {
                     type="button"
                     onClick={() => {
                       userZoomed.current = true;
-                      setZoom(1);
+                      zoomTo(1);
                     }}
                     title={t("visualization.zoom_reset")}
                     aria-label={t("visualization.zoom_reset")}

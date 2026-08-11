@@ -1655,6 +1655,57 @@ describe("pane refit while the agent is drawing", () => {
     expect(screen.queryByTestId("pane-width-maximize-Dana")).toBeNull();
   });
 
+  it("can be waved away, and stays away while the pane stays narrow", () => {
+    // A crowded workspace shows this on every pane at once, and the trade may
+    // well be one the user made on purpose. A warning they cannot switch off
+    // would be the next thing reported.
+    terminalHarness.size = { cols: 22, rows: 30 };
+    render(pane());
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+
+    act(() => {
+      screen.getByTestId("pane-width-dismiss-Dana").click();
+    });
+    expect(screen.queryByTestId("pane-width-notice-Dana")).toBeNull();
+
+    // Narrower still, and still acknowledged.
+    terminalHarness.size = { cols: 14, rows: 30 };
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+      vi.advanceTimersByTime(600);
+    });
+    expect(screen.queryByTestId("pane-width-notice-Dana")).toBeNull();
+  });
+
+  it("speaks up again when a widened pane is crowded a second time", () => {
+    terminalHarness.size = { cols: 22, rows: 30 };
+    render(pane());
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    act(() => {
+      screen.getByTestId("pane-width-dismiss-Dana").click();
+    });
+
+    // Given room…
+    terminalHarness.size = { cols: 120, rows: 30 };
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+      vi.advanceTimersByTime(600);
+    });
+    // …and crowded again. A screen that has started shredding a second time is
+    // worth a second sentence.
+    terminalHarness.size = { cols: 22, rows: 30 };
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(screen.getByTestId("pane-width-notice-Dana")).toBeTruthy();
+  });
+
   it("stays quiet on a pane with room to work", () => {
     terminalHarness.size = { cols: 80, rows: 24 };
     render(pane());

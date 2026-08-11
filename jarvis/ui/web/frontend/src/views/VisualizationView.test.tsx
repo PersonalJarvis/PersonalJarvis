@@ -298,6 +298,82 @@ describe("VisualizationView", () => {
     await screen.findByTestId("visualization-empty");
     expect(screen.queryByTestId("visualization-canvas")).toBeNull();
   });
+
+  it("zooms with ctrl+wheel and leaves plain scrolling alone", async () => {
+    installFetchMock(
+      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
+      { "run-new": [] },
+      { "run-new": CHART_PLAN },
+    );
+
+    renderView();
+
+    const canvas = await screen.findByTestId("visualization-canvas");
+    // A bare wheel is scrolling, not zooming — it must stay untouched.
+    fireEvent.wheel(canvas, { deltaY: -100 });
+    expect(screen.getByText("100%")).toBeTruthy();
+    // Ctrl+wheel (also how browsers deliver a trackpad pinch) zooms in.
+    fireEvent.wheel(canvas, { deltaY: -100, ctrlKey: true });
+    expect(screen.getByText("122%")).toBeTruthy();
+  });
+
+  it("pans the canvas with a pointer drag on the background", async () => {
+    installFetchMock(
+      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
+      { "run-new": [] },
+      { "run-new": CHART_PLAN },
+    );
+
+    renderView();
+
+    const canvas = await screen.findByTestId("visualization-canvas");
+    // jsdom has no PointerEvent constructor — a MouseEvent under the pointer
+    // event's name carries the coordinates the pan handlers read.
+    fireEvent(
+      canvas,
+      new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 90 }),
+    );
+    fireEvent(
+      canvas,
+      new MouseEvent("pointermove", { bubbles: true, clientX: 60, clientY: 70 }),
+    );
+    expect(canvas.scrollLeft).toBe(40);
+    expect(canvas.scrollTop).toBe(20);
+
+    // Releasing ends the pan: further movement no longer scrolls.
+    fireEvent(canvas, new MouseEvent("pointerup", { bubbles: true }));
+    fireEvent(
+      canvas,
+      new MouseEvent("pointermove", { bubbles: true, clientX: 0, clientY: 0 }),
+    );
+    expect(canvas.scrollLeft).toBe(40);
+  });
+
+  it("keeps a press on a node a click, never a pan", async () => {
+    installFetchMock(
+      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
+      { "run-new": [] },
+      { "run-new": CHART_PLAN },
+    );
+
+    renderView();
+
+    const canvas = await screen.findByTestId("visualization-canvas");
+    const node = await screen.findByTestId("graph-node-start");
+    fireEvent(
+      node,
+      new MouseEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 90 }),
+    );
+    fireEvent(
+      canvas,
+      new MouseEvent("pointermove", { bubbles: true, clientX: 60, clientY: 70 }),
+    );
+    // The press began on a card, so the canvas never grabbed it…
+    expect(canvas.scrollLeft).toBe(0);
+    // …and the click still opens the inspector.
+    fireEvent.click(node);
+    await screen.findByTestId("visualization-inspector");
+  });
 });
 
 describe("SectionStage", () => {

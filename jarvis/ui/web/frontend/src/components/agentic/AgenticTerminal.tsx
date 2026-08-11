@@ -589,6 +589,18 @@ export function AgenticTerminal({
    * tile re-renders nothing.
    */
   const [paneCols, setPaneCols] = useState<number | null>(null);
+  /*
+   * Has the reader waved the width notice away for this pane?
+   *
+   * A notice that cannot be dismissed becomes furniture, and this one would be
+   * on every pane of a crowded workspace at once — a row of identical warnings
+   * about a trade the user may well have made on purpose. One click retires it.
+   *
+   * Reset below once the pane has room again, so a workspace that is widened
+   * and later crowded a second time is told a second time rather than staying
+   * quiet about a screen that has started shredding again.
+   */
+  const [widthNoticeDismissed, setWidthNoticeDismissed] = useState(false);
   // A parked chat pane may have a large asynchronous xterm write to parse when
   // it takes the stage again. Keep its terminal surface out of the paint until
   // that write and the final viewport restoration have both landed; otherwise xterm
@@ -1875,6 +1887,14 @@ export function AgenticTerminal({
     term.clearTextureAtlas?.();
   }, [appearance, terminalEpoch]);
 
+  // A pane that has been given room again forgets that its narrowness was
+  // acknowledged — see `widthNoticeDismissed`.
+  useEffect(() => {
+    if (paneCols !== null && paneCols >= WORKABLE_COLS) {
+      setWidthNoticeDismissed(false);
+    }
+  }, [paneCols]);
+
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
@@ -2121,16 +2141,19 @@ export function AgenticTerminal({
         cannot be reached has a more specific answer and only one row to say it
         in. See PaneWidthNotice.
       */}
-      {visibleStatus !== "exited" && visibleStatus !== "error" && (
-        <PaneWidthNotice
-          name={name}
-          displayName={displayName}
-          cols={paneCols}
-          light={appearance === "light"}
-          maximized={maximized}
-          onToggleMaximize={onToggleMaximize}
-        />
-      )}
+      {visibleStatus !== "exited" &&
+        visibleStatus !== "error" &&
+        !widthNoticeDismissed && (
+          <PaneWidthNotice
+            name={name}
+            displayName={displayName}
+            cols={paneCols}
+            light={appearance === "light"}
+            maximized={maximized}
+            onToggleMaximize={onToggleMaximize}
+            onDismiss={() => setWidthNoticeDismissed(true)}
+          />
+        )}
       {/*
         Keep the visual inset OUTSIDE xterm's measured host. FitAddon reads the
         host's border-box but does not subtract padding on that host, so putting
@@ -2935,6 +2958,7 @@ function PaneWidthNotice({
   light,
   maximized,
   onToggleMaximize,
+  onDismiss,
 }: {
   name: string;
   displayName: string;
@@ -2942,6 +2966,7 @@ function PaneWidthNotice({
   light: boolean;
   maximized: boolean;
   onToggleMaximize?: () => void;
+  onDismiss: () => void;
 }) {
   // Nothing measured yet, or a tile that gives its agent room to work.
   if (cols === null || cols >= WORKABLE_COLS) return null;
@@ -2993,6 +3018,29 @@ function PaneWidthNotice({
           Widen
         </button>
       )}
+      {/*
+        Retire it. A crowded workspace shows this on every pane at once, and
+        the trade may well be one the user made on purpose — a warning they
+        cannot switch off would be the next thing reported.
+      */}
+      <button
+        type="button"
+        aria-label={`Stop telling me that ${name} is narrow`}
+        title="I know — leave it"
+        data-testid={`pane-width-dismiss-${name}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onDismiss();
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+        className={cn(
+          "flex h-4 w-4 shrink-0 items-center justify-center rounded",
+          "transition-colors duration-150 hover:bg-foreground/10",
+          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/70",
+        )}
+      >
+        <X className="h-3 w-3" aria-hidden="true" />
+      </button>
     </div>
   );
 }
