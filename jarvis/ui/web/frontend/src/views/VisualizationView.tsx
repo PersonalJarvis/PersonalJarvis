@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Download,
   ExternalLink,
@@ -87,7 +87,18 @@ import {
  * the thing people put on a second monitor while the mission is still going.
  */
 
-const ZOOM_STEPS = [0.5, 0.65, 0.8, 1, 1.25, 1.5] as const;
+/*
+ * Zoom: the buttons snap to these steps, the wheel (Ctrl/⌘ + scroll, and the
+ * trackpad pinch that browsers report the same way) moves continuously, and
+ * "fit" produces whatever ratio the graph needs — so the step logic finds the
+ * NEAREST step in the pressed direction rather than requiring an exact match.
+ */
+const ZOOM_STEPS = [0.25, 0.35, 0.5, 0.65, 0.8, 1, 1.25, 1.5] as const;
+const MIN_ZOOM = ZOOM_STEPS[0];
+const MAX_ZOOM = ZOOM_STEPS[ZOOM_STEPS.length - 1];
+
+const clampZoom = (value: number): number =>
+  Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
 
 /** Same status colour language as the Outputs cards — one vocabulary. */
 const RUN_DOT: Record<OutputStatus, string> = {
@@ -150,6 +161,15 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Human duration for a step — sub-second precision only where it matters. */
+function formatDuration(seconds: number): string {
+  if (seconds < 10) return `${seconds.toFixed(1)} s`;
+  if (seconds < 60) return `${Math.round(seconds)} s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  return `${minutes} min ${rest} s`;
 }
 
 export function VisualizationView() {
@@ -232,14 +252,61 @@ export function VisualizationView() {
   }, [graph, selectedNodeId]);
 
   const [zoom, setZoom] = useState<number>(1);
+  /* Once the user has zoomed by hand, the automatic fit keeps its hands off
+   * until another run is selected — an explicit choice must never be fought. */
+  const userZoomed = useRef(false);
+  const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
+
   const stepZoom = useCallback((direction: 1 | -1) => {
+    userZoomed.current = true;
     setZoom((current) => {
-      const index = ZOOM_STEPS.findIndex((s) => Math.abs(s - current) < 0.001);
-      const base = index >= 0 ? index : ZOOM_STEPS.indexOf(1);
-      const next = Math.min(ZOOM_STEPS.length - 1, Math.max(0, base + direction));
-      return ZOOM_STEPS[next];
+      if (direction > 0) {
+        return ZOOM_STEPS.find((s) => s > current + 0.001) ?? MAX_ZOOM;
+      }
+      const smaller = [...ZOOM_STEPS].reverse().find((s) => s < current - 0.001);
+      return smaller ?? Math.min(current, MIN_ZOOM);
     });
   }, []);
+
+  /* Scale the whole story into the visible canvas — never above 100%, so a
+   * two-node run stays a pair of cards instead of a pair of billboards. The
+   * guard skips hidden/unmeasured hosts (detached warm-up, jsdom). */
+  const fitZoom = useCallback(() => {
+    if (canvasEl === null || graph === null) return;
+    const { clientWidth, clientHeight } = canvasEl;
+    if (clientWidth < 80 || clientHeight < 80) return;
+    const scale = Math.min(
+      (clientWidth - 16) / graph.width,
+      (clientHeight - 16) / graph.height,
+      1,
+    );
+    setZoom(clampZoom(scale));
+  }, [canvasEl, graph]);
+
+  useEffect(() => {
+    userZoomed.current = false;
+  }, [run?.slug]);
+
+  /* Auto-fit whenever the graph's extents change — the first paint, the plan
+   * arriving a beat after the run list, and a live run growing new steps. */
+  useEffect(() => {
+    if (!userZoomed.current) fitZoom();
+  }, [fitZoom, graph?.width, graph?.height]);
+
+  /* Ctrl/⌘ + wheel zooms (that's also how browsers deliver a trackpad pinch).
+   * Attached natively because React registers wheel listeners passively, and
+   * a passive listener cannot preventDefault the browser's own page zoom. */
+  useEffect(() => {
+    if (canvasEl === null) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      userZoomed.current = true;
+      setZoom((current) => clampZoom(current * Math.exp(-event.deltaY * 0.002)));
+    };
+    canvasEl.addEventListener("wheel", onWheel, { passive: false });
+    return () => canvasEl.removeEventListener("wheel", onWheel);
+  }, [canvasEl]);
 
   const refetch = useCallback(() => {
     void outputs.refetch();
@@ -365,6 +432,7 @@ export function VisualizationView() {
           ) : (
             <>
               <div
+                ref={setCanvasEl}
                 className="min-h-0 flex-1 overflow-auto"
                 data-testid="visualization-canvas"
               >
@@ -398,9 +466,18 @@ export function VisualizationView() {
                   >
                     <ZoomOut className="h-3.5 w-3.5" aria-hidden />
                   </Button>
-                  <span className="w-12 text-center text-[11px] tabular-nums text-muted-foreground">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      userZoomed.current = true;
+                      setZoom(1);
+                    }}
+                    title={t("visualization.zoom_reset")}
+                    aria-label={t("visualization.zoom_reset")}
+                    className="w-12 text-center text-[11px] tabular-nums text-muted-foreground transition-colors hover:text-foreground"
+                  >
                     {`${Math.round(zoom * 100)}%`}
-                  </span>
+                  </button>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -413,9 +490,15 @@ export function VisualizationView() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setZoom(1)}
-                    title={t("visualization.zoom_reset")}
-                    aria-label={t("visualization.zoom_reset")}
+                    onClick={() => {
+                      // An explicit fit re-arms the auto-fit: a live run that
+                      // grows new steps keeps fitting until zoomed by hand.
+                      userZoomed.current = false;
+                      fitZoom();
+                    }}
+                    title={t("visualization.zoom_fit")}
+                    aria-label={t("visualization.zoom_fit")}
+                    data-testid="visualization-zoom-fit"
                   >
                     <Maximize2 className="h-3.5 w-3.5" aria-hidden />
                   </Button>
@@ -481,14 +564,25 @@ function GraphCanvas({
             const from = byId.get(edge.from);
             const to = byId.get(edge.to);
             if (!from || !to) return null;
+            /* The selected node's own edges brighten, so "what fed this and
+             * what came of it" is answered by the picture, not by tracing. */
+            const active =
+              selectedId !== null &&
+              (edge.from === selectedId || edge.to === selectedId);
             return (
               <path
                 key={edge.id}
                 d={edgePath(from, to)}
                 fill="none"
-                strokeWidth={1.5}
+                strokeWidth={active ? 2.5 : 1.5}
                 className={
-                  edge.failed ? "stroke-destructive/70" : "stroke-primary/50"
+                  edge.failed
+                    ? active
+                      ? "stroke-destructive"
+                      : "stroke-destructive/70"
+                    : active
+                      ? "stroke-primary"
+                      : "stroke-primary/50"
                 }
               />
             );
@@ -515,9 +609,15 @@ function GraphCanvas({
               style={{ left: node.x, top: node.y, width: NODE_W, height: NODE_H }}
               className={cn(
                 "absolute flex items-center gap-2.5 rounded-xl border bg-card px-3 text-left shadow-sm transition-colors",
+                /* A failed or running step announces itself from the card
+                 * frame — a 6px dot alone is not a glanceable alarm. */
                 selected
                   ? "border-primary ring-1 ring-primary/40"
-                  : "border-border hover:border-primary/50",
+                  : node.status === "failed"
+                    ? "border-destructive/70 hover:border-destructive"
+                    : node.status === "running"
+                      ? "border-primary/60 hover:border-primary"
+                      : "border-border hover:border-primary/50",
               )}
             >
               {/* Ports — the connectors that make cards read as graph nodes. */}
@@ -646,6 +746,18 @@ function NodeInspector({
               <InspectorField label={t("visualization.field_status")}>
                 {t(`visualization.status_${node.status}`)}
               </InspectorField>
+              {typeof node.step.duration_s === "number" &&
+                node.step.duration_s > 0 && (
+                  <InspectorField label={t("visualization.field_duration")}>
+                    {formatDuration(node.step.duration_s)}
+                  </InspectorField>
+                )}
+              {/* One attempt is the norm — only a retry is worth a line. */}
+              {(node.step.attempts ?? 1) > 1 && (
+                <InspectorField label={t("visualization.field_attempts")}>
+                  {String(node.step.attempts)}
+                </InspectorField>
+              )}
             </>
           )}
 

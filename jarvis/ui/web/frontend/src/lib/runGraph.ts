@@ -3,9 +3,10 @@
  *
  * A run is drawn the way a workflow editor would draw it: what was asked
  * (start node), what the worker actually did (one node per tool call, in
- * order, on the main track), what it said at the end (result node), and what
- * it left behind (one node per deliverable, on a second track, connected to
- * the step that wrote it). The data comes from two reads the app already
+ * order, on the main track, wrapping like text after MAIN_TRACK_COLUMNS),
+ * what it said at the end (result node), and what it left behind (one node
+ * per deliverable, on a second track below, placed under the step that wrote
+ * it and connected to it). The data comes from two reads the app already
  * makes — `/api/outputs/{slug}/plan` and `/api/outputs/{slug}/artifacts` —
  * so a run archived long before this feature existed still gets its graph.
  *
@@ -67,7 +68,30 @@ export const NODE_W = 216;
 export const NODE_H = 76;
 const GAP_X = 56;
 const ROW_GAP = 72;
+/* The deliverables track sits a little further off than wrapped main rows,
+ * so "second track" stays visually distinct from "next line of the story". */
+const TRACK_GAP = 104;
 const PADDING = 24;
+
+/**
+ * Main-track nodes per row before the track wraps to the next line.
+ *
+ * A run is read like text: left to right, then down. Without the wrap a
+ * thirty-step run is an eight-thousand-pixel horizontal strip that no zoom
+ * level makes readable; with it, the same run is a handful of rows that fit
+ * one screen. Five columns keeps a row inside a typical canvas at 100%.
+ */
+export const MAIN_TRACK_COLUMNS = 5;
+
+/** Top-left corner of the main-track slot `index` (start = slot 0). */
+function slotPosition(index: number): { x: number; y: number } {
+  const column = index % MAIN_TRACK_COLUMNS;
+  const row = Math.floor(index / MAIN_TRACK_COLUMNS);
+  return {
+    x: PADDING + column * (NODE_W + GAP_X),
+    y: PADDING + row * (NODE_H + ROW_GAP),
+  };
+}
 
 /** Last path segment, tolerant of both separators. */
 function basename(path: string): string {
@@ -123,9 +147,10 @@ export function buildRunGraph(input: RunGraphInput): RunGraph {
 
   const lastUnconfirmed = [...steps].reverse().find((s) => s.status === "skipped");
 
-  /* Main track: start → steps → result. */
-  let x = PADDING;
-  const mainY = PADDING;
+  /* Main track: start → steps → result, wrapping after MAIN_TRACK_COLUMNS
+   * so a long run reads like text — left to right, then down — instead of
+   * becoming a horizontal strip no screen can hold. */
+  let slot = 0;
 
   nodes.push({
     id: "start",
@@ -138,11 +163,10 @@ export function buildRunGraph(input: RunGraphInput): RunGraph {
         : input.runStatus === "error"
           ? "failed"
           : "none",
-    x,
-    y: mainY,
+    ...slotPosition(slot),
   });
   let previousId = "start";
-  x += NODE_W + GAP_X;
+  slot += 1;
 
   for (const step of steps) {
     const id = `step:${step.step_id}`;
@@ -154,8 +178,7 @@ export function buildRunGraph(input: RunGraphInput): RunGraph {
       subtitle: step.tool_name && step.name !== step.tool_name ? step.name : "",
       status,
       step,
-      x,
-      y: mainY,
+      ...slotPosition(slot),
     });
     edges.push({
       id: `${previousId}->${id}`,
@@ -164,7 +187,7 @@ export function buildRunGraph(input: RunGraphInput): RunGraph {
       failed: status === "failed",
     });
     previousId = id;
-    x += NODE_W + GAP_X;
+    slot += 1;
   }
 
   /* The result node closes the track whenever there is anything to close it
@@ -179,9 +202,15 @@ export function buildRunGraph(input: RunGraphInput): RunGraph {
       kind: "result",
       title: "result",
       subtitle: finalAnswer ?? "",
-      status: input.runStatus === "error" ? "failed" : "done",
-      x,
-      y: mainY,
+      // A cancelled run that never answered must not wear the success dot —
+      // "no confirmed result" is the honest reading of that ending.
+      status:
+        input.runStatus === "error"
+          ? "failed"
+          : input.runStatus === "cancelled" && !finalAnswer
+            ? "skipped"
+            : "done",
+      ...slotPosition(slot),
     });
     edges.push({
       id: `${previousId}->result`,
@@ -189,17 +218,28 @@ export function buildRunGraph(input: RunGraphInput): RunGraph {
       to: "result",
       failed: input.runStatus === "error",
     });
+    slot += 1;
   }
   const hasResult = nodes[nodes.length - 1].id === "result";
 
   /* Deliverables track: one node per archived file, connected to the step
-   * that wrote it (result/start node when no step claims it). */
-  const artifactY = mainY + NODE_H + ROW_GAP;
-  let artifactX = PADDING;
-  for (const file of input.files) {
-    const id = `artifact:${file.path}`;
+   * that wrote it (result/start node when no step claims it). Each artifact
+   * sits UNDER its source node where the row allows — provenance readable
+   * from position alone, not only by tracing an edge across the canvas. */
+  const mainRows = Math.max(1, Math.ceil(slot / MAIN_TRACK_COLUMNS));
+  const artifactY =
+    PADDING + (mainRows - 1) * (NODE_H + ROW_GAP) + NODE_H + TRACK_GAP;
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const placed = input.files.map((file) => {
     const source = findSourceStep(steps, file.path);
     const from = source ? `step:${source.step_id}` : hasResult ? "result" : "start";
+    return { file, from, desiredX: byId.get(from)?.x ?? PADDING };
+  });
+  placed.sort((a, b) => a.desiredX - b.desiredX);
+  let artifactX = PADDING;
+  for (const { file, from, desiredX } of placed) {
+    const id = `artifact:${file.path}`;
+    const x = Math.max(desiredX, artifactX);
     nodes.push({
       id,
       kind: "artifact",
@@ -207,11 +247,11 @@ export function buildRunGraph(input: RunGraphInput): RunGraph {
       subtitle: file.path,
       status: "none",
       artifact: file,
-      x: artifactX,
+      x,
       y: artifactY,
     });
     edges.push({ id: `${from}->${id}`, from, to: id, failed: false });
-    artifactX += NODE_W + GAP_X;
+    artifactX = x + NODE_W + GAP_X;
   }
 
   const width =

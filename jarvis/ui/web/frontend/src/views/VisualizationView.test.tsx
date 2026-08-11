@@ -10,7 +10,9 @@
  * - clicking a node opens the inspector; an image deliverable previews via
  *   `<img>`, a page via an inert sandboxed frame,
  * - the server-rendered mission map stays one click away ("open as page"),
- * - only files the WebView can draw are offered a preview (`classifyVisual`).
+ * - only files the WebView can draw are offered a preview (`classifyVisual`),
+ * - a failed step alarms from its card frame, not from a 6px dot alone,
+ * - the inspector surfaces the archived timing (`duration_s`) of a step.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -109,6 +111,7 @@ const CHART_PLAN: PlanResponse = {
       tool_name: "Bash",
       status: "done",
       output: "wrote diagram.svg",
+      duration_s: 3.2,
     },
     {
       step_id: "t1:1",
@@ -229,6 +232,49 @@ describe("VisualizationView", () => {
     const inspector = await screen.findByTestId("visualization-inspector");
     expect(inspector.textContent).toContain("python plot.py");
     expect(inspector.textContent).toContain("wrote diagram.svg");
+    // The archived timing is shown, not discarded.
+    expect(inspector.textContent).toContain("3.2 s");
+  });
+
+  it("frames a failed step in the alarm colour, not just a dot", async () => {
+    installFetchMock(
+      [{ slug: "run-bad", utterance: "Deploy the site", status: "error" }],
+      { "run-bad": [] },
+      {
+        "run-bad": {
+          plan: { plan_id: "run-bad", vision: "Deploy", status: "failed" },
+          steps: [
+            {
+              step_id: "t1:0",
+              name: "npm run deploy",
+              tool_name: "Bash",
+              status: "failed",
+              error: "exit 1",
+            },
+          ],
+        },
+      },
+    );
+
+    renderView();
+
+    const node = await screen.findByTestId("graph-node-step");
+    expect(node.className).toContain("border-destructive");
+  });
+
+  it("offers a fit-to-view zoom next to the step buttons", async () => {
+    installFetchMock(
+      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
+      { "run-new": [] },
+      { "run-new": CHART_PLAN },
+    );
+
+    renderView();
+
+    // jsdom has no layout (clientWidth 0) — the fit guard must keep the
+    // click a harmless no-op rather than zooming to nonsense.
+    fireEvent.click(await screen.findByTestId("visualization-zoom-fit"));
+    expect(screen.getByText("100%")).toBeTruthy();
   });
 
   it("keeps the server-rendered mission map one click away", async () => {

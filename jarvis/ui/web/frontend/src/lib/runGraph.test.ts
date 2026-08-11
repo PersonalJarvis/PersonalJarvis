@@ -4,16 +4,25 @@
  * Contracts worth pinning:
  * - the main track is start → steps in order → result, each linked to its
  *   predecessor, so the flow reads left to right like a workflow editor,
- * - an artifact hangs off the step that wrote it (matched by filename),
- *   and off the result/start node when no step claims it — an archived run
- *   with no surviving stream still gets a complete, honest graph,
+ * - a long main track wraps after MAIN_TRACK_COLUMNS and reads like text —
+ *   left to right, then down — instead of stretching into one endless row,
+ * - an artifact hangs off the step that wrote it (matched by filename) and
+ *   sits UNDER that step where the row allows; it falls to the result/start
+ *   node when no step claims it — an archived run with no surviving stream
+ *   still gets a complete, honest graph,
  * - a live run's newest unconfirmed call renders as "running", while the
  *   same shape in a finished run stays "skipped" (anti-hearsay).
  */
 import { describe, expect, it } from "vitest";
 
 import type { ArtifactSummary, PlanStep } from "@/hooks/useOutputs";
-import { buildRunGraph, edgePath, NODE_H, NODE_W } from "@/lib/runGraph";
+import {
+  buildRunGraph,
+  edgePath,
+  MAIN_TRACK_COLUMNS,
+  NODE_H,
+  NODE_W,
+} from "@/lib/runGraph";
 
 function step(over: Partial<PlanStep> & { step_id: string }): PlanStep {
   return {
@@ -60,6 +69,34 @@ describe("buildRunGraph", () => {
     expect(r.x).toBeGreaterThan(b.x);
   });
 
+  it("wraps a long main track after MAIN_TRACK_COLUMNS, reading like text", () => {
+    const steps = Array.from({ length: 12 }, (_, i) =>
+      step({ step_id: `s${i}` }),
+    );
+    const graph = buildRunGraph({
+      slug: "long",
+      runStatus: "success",
+      plan: {
+        plan: { plan_id: "long", vision: "", status: "complete" },
+        steps,
+        final_answer: "done",
+      },
+      files: [],
+    });
+
+    // 14 main nodes in columns of MAIN_TRACK_COLUMNS → three rows.
+    const rows = new Set(graph.nodes.map((n) => n.y));
+    expect(rows.size).toBe(Math.ceil(14 / MAIN_TRACK_COLUMNS));
+    // The first node after a wrap returns to the left edge, one row down.
+    const first = graph.nodes[0];
+    const lastOfRow = graph.nodes[MAIN_TRACK_COLUMNS - 1];
+    const firstOfNextRow = graph.nodes[MAIN_TRACK_COLUMNS];
+    expect(firstOfNextRow.x).toBe(first.x);
+    expect(firstOfNextRow.y).toBeGreaterThan(lastOfRow.y);
+    // The canvas stays bounded to the column count, not the step count.
+    expect(graph.width).toBeLessThan(MAIN_TRACK_COLUMNS * (NODE_W + 100) + 100);
+  });
+
   it("hangs an artifact off the step that wrote it, matched by filename", () => {
     const graph = buildRunGraph({
       slug: "run-1",
@@ -79,9 +116,39 @@ describe("buildRunGraph", () => {
       e.to.startsWith("artifact:"),
     );
     expect(edge?.from).toBe("step:a");
-    // Second track: the artifact sits below the main track.
+    // Second track: the artifact sits below the main track, and directly
+    // UNDER its source step — provenance readable from position alone.
     const artifact = graph.nodes.find((n) => n.kind === "artifact");
+    const source = graph.nodes.find((n) => n.id === "step:a");
     expect(artifact!.y).toBeGreaterThan(graph.nodes[0].y);
+    expect(artifact!.x).toBe(source!.x);
+  });
+
+  it("shifts colliding artifacts apart instead of stacking them", () => {
+    const graph = buildRunGraph({
+      slug: "run-1",
+      runStatus: "success",
+      plan: {
+        plan: { plan_id: "run-1", vision: "", status: "complete" },
+        steps: [
+          step({
+            step_id: "a",
+            tool_name: "Write",
+            writes: ["out/a.png", "out/b.png"],
+          }),
+        ],
+        final_answer: "done",
+      },
+      files: [
+        file("tasks/t1/artifacts/files/out/a.png"),
+        file("tasks/t1/artifacts/files/out/b.png"),
+      ],
+    });
+
+    const artifacts = graph.nodes.filter((n) => n.kind === "artifact");
+    expect(artifacts).toHaveLength(2);
+    const [left, right] = [...artifacts].sort((a, b) => a.x - b.x);
+    expect(right.x - left.x).toBeGreaterThanOrEqual(NODE_W);
   });
 
   it("gives an unclaimed artifact to the result node, or start without one", () => {
@@ -124,6 +191,32 @@ describe("buildRunGraph", () => {
 
     const done = buildRunGraph({ slug: "r", runStatus: "error", plan, files: [] });
     expect(done.nodes.find((n) => n.id === "step:b")?.status).toBe("skipped");
+  });
+
+  it("denies a cancelled run without an answer the success dot", () => {
+    const plan = {
+      plan: { plan_id: "r", vision: "", status: "cancelled" },
+      steps: [step({ step_id: "a" })],
+    };
+    const cancelled = buildRunGraph({
+      slug: "r",
+      runStatus: "cancelled",
+      plan,
+      files: [],
+    });
+    expect(cancelled.nodes.find((n) => n.id === "result")?.status).toBe(
+      "skipped",
+    );
+
+    // With a recorded final answer the worker DID finish its say — that
+    // stays "done" even though the mission ended as cancelled.
+    const answered = buildRunGraph({
+      slug: "r",
+      runStatus: "cancelled",
+      plan: { ...plan, final_answer: "partial result" },
+      files: [],
+    });
+    expect(answered.nodes.find((n) => n.id === "result")?.status).toBe("done");
   });
 
   it("marks the edge into a failed step so the track can alarm", () => {

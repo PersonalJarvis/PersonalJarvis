@@ -189,6 +189,7 @@ export function useRerunMission() {
 }
 
 export function usePlanForOutput(slug: string | null) {
+  const qc = useQueryClient();
   return useQuery<PlanResponse>({
     queryKey: ["output-plan", slug],
     queryFn: async () => {
@@ -198,6 +199,15 @@ export function usePlanForOutput(slug: string | null) {
     },
     enabled: !!slug,
     staleTime: 3_000,
+    // A finished run's plan is history and never refetches on its own. A
+    // RUNNING run's plan is a live step timeline, so it follows the mission
+    // the same way the artifact listing already does — the run's status is
+    // read from the outputs list every consumer already keeps in this cache.
+    refetchInterval: () => {
+      const runs = qc.getQueryData<OutputSummary[]>(["outputs"]);
+      const status = runs?.find((r) => r.slug === slug)?.status;
+      return status === "running" ? 3_000 : false;
+    },
   });
 }
 
