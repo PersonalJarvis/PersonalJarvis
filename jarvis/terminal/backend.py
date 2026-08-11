@@ -18,7 +18,9 @@ read-loop in ``pty_manager.py`` keeps working verbatim once it talks to a
   ``RuntimeError("pywinpty not installed ...")`` degrade.
 * ``ptyprocess.PtyProcess`` deals in ``bytes`` (``.read`` returns bytes,
   ``.write`` takes bytes), so ``UnixPtyBackend`` decodes ``utf-8`` with
-  ``errors="replace"`` on read and encodes on write.
+  ``errors="replace"`` on read and encodes on write. The decode is
+  INCREMENTAL: a read can end in the middle of a multi-byte sequence, and
+  a per-chunk ``bytes.decode`` would turn both halves into U+FFFD.
 
 Import-cleanliness contract (HN-7): neither ``winpty`` nor ``ptyprocess`` is
 imported at module scope. Both imports are lazy, inside ``spawn`` (the same
@@ -29,6 +31,7 @@ installed.
 
 from __future__ import annotations
 
+import codecs
 from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
@@ -167,10 +170,16 @@ class WinptyBackend:
 class _UnixPtyHandle:
     """``PtyHandle`` over a ``ptyprocess.PtyProcess``, normalizing str<->bytes."""
 
-    __slots__ = ("_proc",)
+    __slots__ = ("_proc", "_decoder")
 
     def __init__(self, proc: object) -> None:
         self._proc = proc
+        # One incremental decoder per handle: a fixed-size read can split a
+        # multi-byte UTF-8 sequence at the chunk boundary (every box-drawing
+        # glyph a TUI repaints is 3 bytes), and decoding each chunk in
+        # isolation turns both halves into U+FFFD. The incremental decoder
+        # holds the partial tail until the next read completes it.
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
     @property
     def pid(self) -> int:
@@ -209,7 +218,7 @@ class _UnixPtyHandle:
         # ptyprocess.PtyProcess.read returns bytes; decode at the seam.
         data = self._proc.read(size)  # type: ignore[attr-defined]
         if isinstance(data, bytes):
-            return data.decode("utf-8", errors="replace")
+            return self._decoder.decode(data)
         return str(data)
 
     def isalive(self) -> bool:

@@ -163,6 +163,28 @@ def test_unix_backend_decodes_bytes_to_str_on_read():
     assert out == "héllo"
 
 
+def test_unix_backend_reassembles_multibyte_utf8_split_across_reads():
+    """A fixed-size read can cut a multi-byte UTF-8 sequence at the boundary.
+
+    ptyprocess hands back raw byte chunks with no regard for character
+    boundaries; decoding each chunk in isolation turned both halves of a split
+    glyph into U+FFFD (every box-drawing glyph a TUI repaints is 3 bytes, every
+    umlaut 2). The handle must hold the partial tail until the next read.
+    """
+    from jarvis.terminal.backend import _UnixPtyHandle
+
+    fake_proc = FakeBytesPtyProcess()
+    text = "bé─e"  # 2-byte e-acute and 3-byte box-drawing glyph
+    payload = text.encode()
+    fake_proc.queue_output(payload[:2])  # ends inside the 2-byte sequence
+    fake_proc.queue_output(payload[2:4])  # completes it, ends inside the 3-byte one
+    fake_proc.queue_output(payload[4:])  # completes the 3-byte sequence
+    h = _UnixPtyHandle(fake_proc)
+    out = h.read(4096) + h.read(4096) + h.read(4096)
+    assert out == text
+    assert "�" not in out
+
+
 def test_unix_backend_encodes_str_to_bytes_on_write():
     """handle.write takes str -> ptyprocess.write must receive bytes."""
     from jarvis.terminal.backend import _UnixPtyHandle
