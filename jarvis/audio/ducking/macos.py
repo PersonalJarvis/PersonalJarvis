@@ -219,10 +219,22 @@ class MacOSScriptDucker:
                 continue
             try:
                 if token == _MASTER_TOKEN:
-                    self._run(f"set volume output volume {prev}")
+                    proc = self._run(f"set volume output volume {prev}")
                 else:
                     _name, bundle_id = _PLAYERS[token]
-                    self._run(_restore_script(bundle_id, prev))
+                    proc = self._run(_restore_script(bundle_id, prev))
+                if getattr(proc, "returncode", 1) != 0:
+                    # rc != 0 (e.g. a dismissed Automation prompt, -1743) is a
+                    # restore that never landed. The saved level is the very
+                    # thing the next session's re-adoption needs — popping it
+                    # here stranded the duck for good.
+                    log.debug(
+                        "ducking restore did not land (token=%s, rc=%s): %s",
+                        token,
+                        getattr(proc, "returncode", None),
+                        (getattr(proc, "stderr", "") or "").strip(),
+                    )
+                    continue
                 self._saved.pop(token, None)
             except Exception:  # noqa: BLE001
                 log.debug("ducking restore skip (token=%s)", token, exc_info=True)

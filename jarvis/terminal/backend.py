@@ -205,6 +205,15 @@ class _UnixPtyHandle:
             except Exception:  # noqa: BLE001 - already-reaped/ECHILD reads as unknown
                 return None
             status = getattr(self._proc, "exitstatus", None)
+            if status is None:
+                # A child killed by a signal never gets an ``exitstatus`` from
+                # ptyprocess — the reap records the signal in ``signalstatus``
+                # instead. Follow the ``subprocess`` convention (negated signal
+                # number) so a SIGKILLed agent reads as ``-9`` rather than the
+                # unknown-exit ``-1`` nothing above can name.
+                sig = getattr(self._proc, "signalstatus", None)
+                if sig is not None:
+                    return -int(sig)
         return None if status is None else int(status)
 
     def write(self, data: str) -> None:

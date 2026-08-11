@@ -257,3 +257,38 @@ def test_master_fallback_available_when_the_never_muted_player_is_not_running():
     d = _ducker(run, master_fallback=True)
     assert d.mute_others(own_pid=1, never=frozenset({"Spotify"})) == [_MASTER_TOKEN]
     assert d._saved == {_MASTER_TOKEN: 80}
+
+
+def test_denied_restore_keeps_the_saved_level_for_re_adoption():
+    """rc != 0 (a dismissed Automation prompt, -1743) is a restore that never
+    landed — popping the saved level there stranded the duck for good, because
+    re-adoption keys on exactly that saved level."""
+    run = FakeRunner({_MUSIC: "65", _SPOTIFY: "-"})
+    d = _ducker(run)
+    assert d.mute_others(own_pid=1, never=frozenset()) == [1]
+
+    run._results[_MUSIC] = subprocess.CompletedProcess(
+        ["osascript"], 1, stdout="", stderr="Not authorized to send Apple events (-1743)"
+    )
+    d.restore([1])
+    assert d._saved == {1: 65}
+
+    # The user granted the prompt: the next session re-adopts and restores.
+    run._results[_MUSIC] = "0"
+    assert d.mute_others(own_pid=1, never=frozenset()) == [1]
+    d.restore([1])
+    assert any("set sound volume to 65" in s for s in run.scripts)
+    assert d._saved == {}
+
+
+def test_denied_master_restore_keeps_the_saved_level():
+    """The same rc != 0 shape must keep the MASTER level re-adoptable."""
+    run = FakeRunner({_MUSIC: "-", _SPOTIFY: "-", "master": "80"})
+    d = _ducker(run, master_fallback=True)
+    assert d.mute_others(own_pid=1, never=frozenset()) == [_MASTER_TOKEN]
+
+    run._results["master"] = subprocess.CompletedProcess(
+        ["osascript"], 1, stdout="", stderr="execution error (-1743)"
+    )
+    d.restore([_MASTER_TOKEN])
+    assert d._saved == {_MASTER_TOKEN: 80}

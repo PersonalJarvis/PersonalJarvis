@@ -254,6 +254,26 @@ def test_unix_handle_exitstatus_is_none_while_child_lives():
     assert _UnixPtyHandle(_LiveProc()).exitstatus is None
 
 
+def test_unix_handle_reports_a_signal_death_as_negative_signal_number():
+    """ptyprocess never fills ``exitstatus`` for a signal-killed child.
+
+    The reap records the signal in ``signalstatus`` instead, so without this
+    mapping a SIGKILLed agent read as the unknown-exit ``-1``. Follow the
+    ``subprocess`` convention: killed by signal N reports as ``-N``.
+    """
+    from jarvis.terminal.backend import _UnixPtyHandle
+
+    class _SignalKilledProc:
+        pid = 10
+        exitstatus = None
+        signalstatus = 9  # SIGKILL
+
+        def isalive(self) -> bool:
+            return False
+
+    assert _UnixPtyHandle(_SignalKilledProc()).exitstatus == -9
+
+
 def test_unix_handle_exitstatus_survives_an_already_reaped_child():
     """ECHILD inside isalive() (ptyprocess raises) must read as unknown, not throw."""
     from jarvis.terminal.backend import _UnixPtyHandle
