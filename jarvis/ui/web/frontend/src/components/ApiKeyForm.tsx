@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, Eye, EyeOff, ExternalLink, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Eye, EyeOff, ExternalLink, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { deleteSecret, postSecret } from "@/hooks/useProviders";
 import { keyMatchesSecret } from "@/lib/keyFormat";
@@ -84,7 +84,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
     setPending(true);
     try {
       await postSecret(secretKey, trimmed);
-      pushToast("success", `${secretKey} ${t("common.saved").toLowerCase()}`);
+      pushToast("success", t("apikeys_view.key_saved_toast").replace("{0}", secretKey));
       setValue("");
       setEditing(false);
       onChanged?.();
@@ -109,7 +109,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
     setPending(true);
     try {
       await deleteSecret(secretKey);
-      pushToast("info", `${secretKey} removed`);
+      pushToast("info", t("apikeys_view.key_removed_toast").replace("{0}", secretKey));
       setEditing(true);
       onChanged?.();
       announceSecretChange(secretKey, "delete");
@@ -123,6 +123,17 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
   // The "get your key" link to the provider's official dashboard. Shown in
   // BOTH states \u2014 while entering a key AND once it's saved \u2014 so the official
   // source is always one click away (rotating a key, checking quota, etc.).
+  // The link text names the destination host: for a non-technical user the
+  // domain IS the answer to "where do I get this key, and is that site
+  // legitimate?" \u2014 a bare "here" answers neither.
+  let dashboardHost = "";
+  if (dashboardUrl) {
+    try {
+      dashboardHost = new URL(dashboardUrl).hostname.replace(/^www\./, "");
+    } catch {
+      // A malformed catalog URL falls back to the generic label below.
+    }
+  }
   const dashboardLink = dashboardUrl ? (
     <a
       href={dashboardUrl}
@@ -130,7 +141,10 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
       rel="noreferrer"
       className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-primary"
     >
-      <ExternalLink className="h-3 w-3" /> Get your key here
+      <ExternalLink className="h-3 w-3" />{" "}
+      {dashboardHost
+        ? t("apikeys_view.get_key_at").replace("{0}", dashboardHost)
+        : t("apikeys_view.get_key_here")}
     </a>
   ) : null;
 
@@ -160,14 +174,28 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
   ) : null;
 
   if (configured && !editing) {
+    // The saved state says so in words, not only in dots: a masked row alone
+    // reads as "there is SOMETHING here", while "Key saved" + a green check
+    // answers the actual question ("am I done with this field?") at a glance.
     return (
       <div className="space-y-2">
         <div className="flex items-center gap-2">
-          <code className="flex-1 truncate rounded-md border border-border bg-muted/30 px-3 py-1.5 font-mono text-xs text-muted-foreground">
-            {"\u2022".repeat(20)}
-          </code>
-          <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
-            Replace
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-1.5">
+            <CheckCircle2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+            <span className="shrink-0 text-xs font-medium text-foreground">
+              {t("apikeys_view.key_saved_label")}
+            </span>
+            <code className="truncate font-mono text-xs text-muted-foreground">
+              {"\u2022".repeat(12)}
+            </code>
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setEditing(true)}
+            title={t("apikeys_view.replace_tooltip")}
+          >
+            {t("apikeys_view.replace")}
           </Button>
           <Button
             size="sm"
@@ -175,6 +203,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
             onClick={handleDelete}
             disabled={pending}
             aria-label={`Delete ${secretKey}`}
+            title={t("apikeys_view.delete_key_tooltip")}
             className="text-destructive hover:text-destructive"
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -216,7 +245,10 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
             aria-label={`Enter ${secretKey}`}
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder={`Enter ${secretKey}…`}
+            // Human words, not the internal slot name: `Enter openai_api_key…`
+            // is developer vocabulary. The slot id stays in the aria-label so
+            // assistive tech (and tests) still identify the exact field.
+            placeholder={t("apikeys_view.paste_key_placeholder")}
             className={cn(
               "w-full rounded-md border border-input bg-background px-3 py-1.5 pr-9 font-mono text-xs",
               "focus:outline-none focus:ring-1 focus:ring-primary",
@@ -229,26 +261,45 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
             type="button"
             onClick={() => setReveal((r) => !r)}
             className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            aria-label={reveal ? "Hide" : "Reveal"}
+            aria-label={t(reveal ? "apikeys_view.hide_key" : "apikeys_view.reveal_key")}
+            title={t(reveal ? "apikeys_view.hide_key" : "apikeys_view.reveal_key")}
           >
             {reveal ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
           </button>
         </div>
         <Button size="sm" onClick={handleSave} disabled={pending || !value.trim()}>
-          {pending ? "…" : "Save"}
+          {pending ? "…" : t("common.save")}
         </Button>
         {(configured || coveredByShared) && (
           <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-            Cancel
+            {t("common.cancel")}
           </Button>
         )}
       </div>
       {fmt && !fmt.match && fmt.detected && (
-        <p className="flex items-start gap-1 text-[11px] text-amber-500">
-          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-          <span>
-            This looks like a {fmt.detected.label} — this field expects a different key.
-          </span>
+        <div className="space-y-1">
+          <p className="flex items-start gap-1 text-[11px] text-amber-500">
+            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+            <span>
+              {t("apikeys_view.format_mismatch").replace("{0}", fmt.detected.label)}
+            </span>
+          </p>
+          {/* The note explains WHAT the pasted thing actually is (e.g. "a
+              Vertex service-account file, not an AI Studio key") — most useful
+              exactly here, in the mismatch case, not only on a match. */}
+          {fmt.detected.note && (
+            <p className="text-[11px] text-muted-foreground">{fmt.detected.note}</p>
+          )}
+        </div>
+      )}
+      {/* Positive reassurance, only when the pasted value confidently matches
+          the format this slot expects. A non-technical user pasting a long
+          random string has no way to tell "right kind of key" from "garbage" —
+          this answers it before they hit Save. Format only, never validity. */}
+      {fmt && fmt.match && fmt.expected && fmt.detected?.kind === fmt.expected && (
+        <p className="flex items-start gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+          <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" />
+          <span>{t("apikeys_view.format_match_hint")}</span>
         </p>
       )}
       {fmt && fmt.match && fmt.detected?.note && (

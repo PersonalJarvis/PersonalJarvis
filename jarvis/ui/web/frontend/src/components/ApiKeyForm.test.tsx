@@ -66,7 +66,7 @@ describe("ApiKeyForm live key-format hint", () => {
     render(
       <ApiKeyForm secretKey="openai_api_key" dashboardUrl={null} configured={false} />,
     );
-    const input = screen.getByPlaceholderText(/openai_api_key/i);
+    const input = screen.getByLabelText(/enter openai_api_key/i);
     fireEvent.change(input, { target: { value: "sk-ant-api03-wrong" } });
     expect(screen.getByText(/anthropic/i)).toBeTruthy();
   });
@@ -75,20 +75,58 @@ describe("ApiKeyForm live key-format hint", () => {
     render(
       <ApiKeyForm secretKey="gemini_api_key" dashboardUrl={null} configured={false} />,
     );
-    const input = screen.getByPlaceholderText(/gemini_api_key/i);
+    const input = screen.getByLabelText(/enter gemini_api_key/i);
     fireEvent.change(input, {
       target: { value: '{"type":"service_account","project_id":"x"}' },
     });
-    expect(screen.getByText(/vertex/i)).toBeTruthy();
+    expect(screen.getByText(/expects a different key/i)).toBeTruthy();
+    // The explanatory note renders alongside the warning — it names what the
+    // pasted thing actually IS, which is the useful part of the mismatch.
+    expect(screen.getByText(/service-account file/i)).toBeTruthy();
   });
 
-  it("does not warn for a correctly-formatted key", () => {
+  it("reassures with a format-match hint for a correctly-formatted key", () => {
     render(
       <ApiKeyForm secretKey="openai_api_key" dashboardUrl={null} configured={false} />,
     );
-    const input = screen.getByPlaceholderText(/openai_api_key/i);
+    const input = screen.getByLabelText(/enter openai_api_key/i);
     fireEvent.change(input, { target: { value: "sk-proj-correct123" } });
     expect(screen.queryByText(/expects a different key/i)).toBeNull();
+    expect(screen.getByText(/looks right/i)).toBeTruthy();
+  });
+
+  it("stays silent for an unrecognized key format", () => {
+    render(
+      <ApiKeyForm secretKey="openai_api_key" dashboardUrl={null} configured={false} />,
+    );
+    const input = screen.getByLabelText(/enter openai_api_key/i);
+    fireEvent.change(input, { target: { value: "some-opaque-token-123" } });
+    expect(screen.queryByText(/expects a different key/i)).toBeNull();
+    expect(screen.queryByText(/looks right/i)).toBeNull();
+  });
+});
+
+describe("ApiKeyForm configured state", () => {
+  it("says 'Key saved' in words instead of only masked dots", () => {
+    render(
+      <ApiKeyForm secretKey="openai_api_key" dashboardUrl={null} configured={true} />,
+    );
+    expect(screen.getByText(/key saved/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /replace/i })).toBeTruthy();
+  });
+});
+
+describe("ApiKeyForm dashboard link names its destination", () => {
+  it("shows the dashboard hostname in the link text", () => {
+    render(
+      <ApiKeyForm
+        secretKey="anthropic_api_key"
+        dashboardUrl="https://console.anthropic.com/settings/keys"
+        configured={false}
+      />,
+    );
+    const link = screen.getByRole("link") as HTMLAnchorElement;
+    expect(link.textContent).toContain("console.anthropic.com");
   });
 });
 
