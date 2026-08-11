@@ -2,16 +2,28 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Download,
   ExternalLink,
+  FileCode,
   FileImage,
+  FileText,
+  Flag,
   FolderOpen,
   Frame,
+  Globe,
   Loader2,
   Maximize2,
+  MessageSquare,
+  Plug,
   RefreshCw,
+  Search,
   ShieldAlert,
+  SquarePen,
+  Terminal,
   Workflow,
+  Wrench,
+  X,
   ZoomIn,
   ZoomOut,
+  type LucideIcon,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -24,35 +36,102 @@ import { openExternalUrl } from "@/lib/openExternal";
 import {
   artifactDownloadUrl,
   revealArtifact,
+  useArtifactsForOutput,
   useOutputsCapabilities,
+  useOutputsList,
+  usePlanForOutput,
+  type ArtifactSummary,
+  type OutputStatus,
+  type OutputSummary,
 } from "@/hooks/useOutputs";
 import {
-  DEFAULT_RUN_SCAN_LIMIT,
+  classifyVisual,
+  missionMapUrl,
+  MISSION_MAP_PATH,
   useVisualArtifacts,
-  visualId,
-  type VisualArtifact,
+  visualUrl,
+  type VisualKind,
 } from "@/hooks/useVisualArtifacts";
+import {
+  buildRunGraph,
+  edgePath,
+  NODE_H,
+  NODE_W,
+  type RunGraph,
+  type RunGraphNode,
+} from "@/lib/runGraph";
 
 /**
- * The Visualization section — everything a run DREW, at full size.
+ * The Visualization section — a run drawn as a workflow, not listed as files.
  *
- * The app could already tell you that a chart exists: Outputs lists it as a
- * filename in a directory, one row among the logs and the JSON. What it could
- * not do is show it to you. A picture reduced to its filename is the one
- * artifact class that loses all of its meaning in a list, so this section reads
- * the same run archive and puts the images, vector drawings and rendered pages
- * on a stage instead.
+ * Every archived run is presented the way a workflow editor would draw it:
+ * the request as the start node, one node per tool call the worker actually
+ * made (with its real success/failure, reconstructed from the archived
+ * transcript by `/api/outputs/{slug}/plan`), the final answer, and the
+ * deliverables on a second track connected to the steps that wrote them.
+ * One glance answers "what did this run do" — the question a flat
+ * newest-first file gallery could never answer.
  *
- * It owns no data of its own — see `useVisualArtifacts`. That is deliberate: a
- * second store of "the visuals" would need its own writer, its own cleanup and
- * its own answer for the runs that existed before the feature. Reading the
- * archive means every run ever made is already in here.
+ * It still owns no data: runs come from `/api/outputs`, steps from the plan
+ * endpoint, deliverables from the artifact listing. A run archived before
+ * this feature existed — or whose stream never survived — degrades to
+ * start → deliverables, so the archive needs no migration.
  *
- * Detachable (`DETACHABLE_VIEWS` in jarvis/ui/desktop_app.py): a diagram is the
- * thing people put on a second monitor while they work in the first window.
+ * The server-rendered mission map (`/api/outputs/{slug}/graph`, see
+ * `mission_graph.py`) is this graph's no-JS sibling: same story, baked into
+ * a static page under the strict no-script CSP. It stays one click away
+ * ("open as page") because a page can be shared, printed and opened in a
+ * real browser tab — things a canvas inside the app cannot do.
+ *
+ * Detachable (`DETACHABLE_VIEWS` in jarvis/ui/desktop_app.py): a run graph is
+ * the thing people put on a second monitor while the mission is still going.
  */
 
-const ZOOM_STEPS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4] as const;
+const ZOOM_STEPS = [0.5, 0.65, 0.8, 1, 1.25, 1.5] as const;
+
+/** Same status colour language as the Outputs cards — one vocabulary. */
+const RUN_DOT: Record<OutputStatus, string> = {
+  success: "bg-emerald-400",
+  error: "bg-destructive",
+  running: "bg-primary animate-pulse",
+  cancelled: "bg-amber-400",
+  unknown: "bg-muted-foreground/50",
+};
+
+const NODE_DOT: Record<string, string> = {
+  done: "bg-emerald-400",
+  failed: "bg-destructive",
+  running: "bg-primary animate-pulse",
+  skipped: "bg-muted-foreground/40",
+};
+
+/** The glyph a step node wears — recognisable tools get their own. */
+function toolIcon(toolName: string | null | undefined): LucideIcon {
+  const name = (toolName ?? "").toLowerCase();
+  if (name.startsWith("mcp__") || name.includes("/")) return Plug;
+  if (["bash", "runcommand", "shell", "exec", "execute", "run_command", "run_shell_command"].includes(name))
+    return Terminal;
+  if (["write", "edit", "multiedit", "notebookedit", "file_write", "write_file", "create_file"].includes(name))
+    return SquarePen;
+  if (["read", "glob"].includes(name)) return FileText;
+  if (name === "grep" || name === "search") return Search;
+  if (name.includes("web") || name.includes("fetch")) return Globe;
+  return Wrench;
+}
+
+function artifactIcon(path: string): LucideIcon {
+  const kind = classifyVisual(path);
+  if (kind === "image" || kind === "vector") return FileImage;
+  if (kind === "page" || kind === "document") return FileCode;
+  return FileText;
+}
+
+function nodeIcon(node: RunGraphNode): LucideIcon {
+  if (node.kind === "start") return MessageSquare;
+  if (node.kind === "result") return Flag;
+  if (node.kind === "artifact") return artifactIcon(node.artifact?.path ?? "");
+  return toolIcon(node.step?.tool_name);
+}
 
 /** Human file size, rounded the way a caption wants it. */
 function formatSize(bytes: number): string {
@@ -61,93 +140,102 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** The run label a tile is filed under — the utterance, else the raw slug. */
-function runLabel(artifact: VisualArtifact): string {
-  return artifact.utterance?.trim() || artifact.slug;
-}
-
 export function VisualizationView() {
   const t = useT();
-  const pushToast = useEventStore((s) => s.pushToast);
-  const capabilities = useOutputsCapabilities();
-  const { visuals, scannedRuns, skippedRuns, isLoading, isError, refetch } =
-    useVisualArtifacts();
+  const outputs = useOutputsList();
+  const runs = useMemo(() => outputs.data ?? [], [outputs.data]);
+
+  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   /*
-   * The selection is held as an ID, not as the object: the list is refetched,
-   * and a stored object would pin a stale copy of an artifact whose file has
-   * since been rewritten by a re-run.
+   * The newest run is the default subject — the graph the user most likely
+   * came for. It is a fallback, not state: a refetch that reorders the list
+   * must never fight an explicit click.
    */
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const run: OutputSummary | null = useMemo(() => {
+    if (runs.length === 0) return null;
+    return runs.find((r) => r.slug === selectedSlug) ?? runs[0];
+  }, [runs, selectedSlug]);
+
+  const plan = usePlanForOutput(run?.slug ?? null);
+  const artifacts = useArtifactsForOutput(run?.slug ?? null);
 
   /*
-   * Another surface asked for something to be put on the stage.
+   * Another surface asked for something to be staged.
    *
    * The request arrives through the store rather than as a prop, because the
-   * asker is never this section's parent — it is the agent strip in a different
-   * view, and that view is unmounted by the time this one renders. Each request
-   * carries a counter, so the store value is a NEW object even when the target
-   * is unchanged; that is what lets "show me the latest" work a second time
-   * after the user has clicked around the gallery. See VisualStageRequest.
+   * asker is never this section's parent — it is the agent strip in a
+   * different view, unmounted by the time this one renders. A target names a
+   * `visualId` (slug::path) or "latest"; both resolve to a run plus, for a
+   * real file, its artifact node. The mission-map pseudo-artifact resolves to
+   * the run alone — this canvas IS the map. See VisualStageRequest.
    */
   const visualStage = useEventStore((s) => s.visualStage);
+  const { visuals } = useVisualArtifacts();
   useEffect(() => {
     if (visualStage === null) return;
-    // "latest" clears the pin instead of naming an id: the gallery is
-    // newest-first and refetches, so an id resolved now would go stale as soon
-    // as a newer picture lands, while "nothing selected" always falls through
-    // to the newest one below.
-    setSelectedId(visualStage.target === "latest" ? null : visualStage.target);
-  }, [visualStage]);
+    if (visualStage.target === "latest") {
+      const newest = visuals[0];
+      if (newest) {
+        setSelectedSlug(newest.slug);
+        setSelectedNodeId(
+          newest.path === MISSION_MAP_PATH ? null : `artifact:${newest.path}`,
+        );
+      }
+      return;
+    }
+    const separator = visualStage.target.indexOf("::");
+    if (separator > 0) {
+      const path = visualStage.target.slice(separator + 2);
+      setSelectedSlug(visualStage.target.slice(0, separator));
+      setSelectedNodeId(path === MISSION_MAP_PATH ? null : `artifact:${path}`);
+    }
+  }, [visualStage, visuals]);
 
-  const selected = useMemo(() => {
-    if (visuals.length === 0) return null;
-    return visuals.find((v) => visualId(v) === selectedId) ?? visuals[0];
-  }, [visuals, selectedId]);
+  const graph: RunGraph | null = useMemo(() => {
+    if (run === null) return null;
+    return buildRunGraph({
+      slug: run.slug,
+      utterance: run.utterance,
+      runStatus: run.status,
+      plan: plan.data,
+      files: artifacts.data?.files ?? [],
+    });
+  }, [run, plan.data, artifacts.data]);
 
-  // "fit" is a mode, not a factor: it means "as large as the stage allows",
-  // which no number can express while the window is resizable.
-  const [zoom, setZoom] = useState<number | "fit">("fit");
-  const [failed, setFailed] = useState(false);
-  const selectedKey = selected ? visualId(selected) : null;
-  // A new picture starts fitted and un-failed — carrying a 4× zoom from a
-  // thumbnail-sized icon onto a full-page diagram shows a corner of it.
+  /* A node pinned from another run's graph must not linger as a selection
+   * that matches nothing — clear it once the new graph is known. */
   useEffect(() => {
-    setZoom("fit");
-    setFailed(false);
-  }, [selectedKey]);
+    setSelectedNodeId((current) =>
+      current === null || graph?.nodes.some((n) => n.id === current)
+        ? current
+        : null,
+    );
+  }, [graph]);
 
+  const selectedNode = useMemo(() => {
+    if (graph === null) return null;
+    return graph.nodes.find((n) => n.id === selectedNodeId) ?? null;
+  }, [graph, selectedNodeId]);
+
+  const [zoom, setZoom] = useState<number>(1);
   const stepZoom = useCallback((direction: 1 | -1) => {
     setZoom((current) => {
-      const from = current === "fit" ? 1 : current;
-      const index = ZOOM_STEPS.indexOf(from as (typeof ZOOM_STEPS)[number]);
-      // A zoom that came from "fit" may sit between two steps; nearest-step
-      // search keeps the buttons predictable in that case.
-      const base =
-        index >= 0
-          ? index
-          : ZOOM_STEPS.reduce(
-              (best, step, i) =>
-                Math.abs(step - from) < Math.abs(ZOOM_STEPS[best] - from) ? i : best,
-              0,
-            );
+      const index = ZOOM_STEPS.findIndex((s) => Math.abs(s - current) < 0.001);
+      const base = index >= 0 ? index : ZOOM_STEPS.indexOf(1);
       const next = Math.min(ZOOM_STEPS.length - 1, Math.max(0, base + direction));
       return ZOOM_STEPS[next];
     });
   }, []);
 
-  const onReveal = useCallback(
-    async (artifact: VisualArtifact) => {
-      try {
-        await revealArtifact(artifact.slug, artifact.path);
-      } catch {
-        pushToast("error", t("visualization.reveal_failed"));
-      }
-    },
-    [pushToast, t],
-  );
+  const refetch = useCallback(() => {
+    void outputs.refetch();
+    void plan.refetch();
+    void artifacts.refetch();
+  }, [outputs, plan, artifacts]);
 
-  const zoomable = selected?.kind === "image" || selected?.kind === "vector";
+  const loading = outputs.isLoading || plan.isLoading || artifacts.isLoading;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -156,254 +244,540 @@ export function VisualizationView() {
         title={t("visualization.title")}
         subtitle={t("visualization.subtitle")}
         right={
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => refetch()}
-            disabled={isLoading}
-            data-testid="visualization-refresh"
-          >
-            {isLoading ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
-            ) : (
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+          <div className="flex items-center gap-1.5">
+            {run !== null && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  void openExternalUrl(
+                    `${window.location.origin}${missionMapUrl(run.slug)}`,
+                  )
+                }
+                title={t("visualization.open_map_page_hint")}
+                data-testid="visualization-open-map"
+              >
+                <Workflow className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                {t("visualization.open_map_page")}
+              </Button>
             )}
-            {t("visualization.refresh")}
-          </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={refetch}
+              disabled={loading}
+              data-testid="visualization-refresh"
+            >
+              {loading ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              )}
+              {t("visualization.refresh")}
+            </Button>
+          </div>
         }
       />
 
       <div className="flex min-h-0 flex-1">
-        {/* Gallery rail — every visual found, newest first. */}
+        {/* Run rail — every archived run, newest first. */}
         <aside className="flex w-64 shrink-0 flex-col border-r border-border">
+          <p className="border-b border-border px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            {t("visualization.runs")}
+          </p>
           <ScrollArea className="min-h-0 flex-1">
-            <ul className="space-y-1 p-2" data-testid="visualization-gallery">
-              {visuals.map((artifact) => {
-                const id = visualId(artifact);
-                const isMap = artifact.kind === "map";
-                return (
-                  <li key={id}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(id)}
-                      aria-current={id === selectedKey}
+            <ul className="space-y-1 p-2" data-testid="visualization-runs">
+              {runs.map((entry) => (
+                <li key={entry.slug}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedSlug(entry.slug);
+                      setSelectedNodeId(null);
+                    }}
+                    aria-current={entry.slug === run?.slug}
+                    className={cn(
+                      "flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-xs transition-colors",
+                      entry.slug === run?.slug
+                        ? "bg-primary/15 text-foreground"
+                        : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                    )}
+                  >
+                    <span
                       className={cn(
-                        "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs transition-colors",
-                        id === selectedKey
-                          ? "bg-primary/15 text-foreground"
-                          : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                        "mt-1 h-1.5 w-1.5 shrink-0 rounded-full",
+                        RUN_DOT[entry.status ?? "unknown"],
                       )}
-                    >
-                      {isMap ? (
-                        <Workflow className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
-                      ) : (
-                        <FileImage className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                      )}
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium text-foreground">
-                          {isMap ? t("visualization.mission_map") : artifact.name}
-                        </span>
-                        <span className="block truncate">{runLabel(artifact)}</span>
+                      aria-hidden
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium text-foreground">
+                        {entry.utterance?.trim() || entry.slug}
                       </span>
-                    </button>
-                  </li>
-                );
-              })}
+                      <span className="block truncate">
+                        {t("visualization.run_meta").replace(
+                          "{0}",
+                          String(entry.artifact_count ?? 0),
+                        )}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
             </ul>
           </ScrollArea>
-          {/* The scan window, stated rather than hidden: an older picture that
-              is not in the list must read as "not looked at", never as gone. */}
-          <p className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
-            {t("visualization.scan_note")
-              .replace("{0}", String(scannedRuns || DEFAULT_RUN_SCAN_LIMIT))
-              .replace("{1}", String(skippedRuns))}
-          </p>
         </aside>
 
+        {/* Canvas — the selected run as connected nodes along tracks. */}
         <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {selected === null ? (
-            <EmptyStage
-              loading={isLoading}
-              error={isError}
-              title={t(isError ? "visualization.error_title" : "visualization.empty_title")}
-              body={t(isError ? "visualization.error_body" : "visualization.empty_body")}
+          {graph === null ? (
+            <EmptyCanvas
+              loading={outputs.isLoading}
+              error={outputs.isError}
+              title={t(
+                outputs.isError
+                  ? "visualization.error_title"
+                  : "visualization.empty_title",
+              )}
+              body={t(
+                outputs.isError
+                  ? "visualization.error_body"
+                  : "visualization.empty_body",
+              )}
             />
           ) : (
             <>
               <div
-                className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4"
-                data-testid="visualization-stage"
+                className="min-h-0 flex-1 overflow-auto"
+                data-testid="visualization-canvas"
               >
-                {failed ? (
-                  <p className="text-sm text-muted-foreground">
-                    {t("visualization.render_failed")}
-                  </p>
-                ) : (
-                  <VisualFrame
-                    artifact={selected}
-                    zoom={zoom}
-                    onError={() => setFailed(true)}
-                  />
-                )}
+                <GraphCanvas
+                  graph={graph}
+                  zoom={zoom}
+                  selectedId={selectedNodeId}
+                  onSelect={setSelectedNodeId}
+                />
               </div>
 
-              {/* Caption + actions. One row, because the stage is the point and
-                  every pixel spent on chrome is a pixel off the picture. */}
               <footer className="flex shrink-0 items-center gap-3 border-t border-border px-4 py-2">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-medium">
-                    {selected.kind === "map"
-                      ? t("visualization.mission_map")
-                      : selected.path}
-                  </p>
-                  <p className="truncate text-[11px] text-muted-foreground">
-                    {selected.kind === "map"
-                      ? runLabel(selected)
-                      : `${runLabel(selected)} · ${formatSize(selected.size)}`}
-                  </p>
-                </div>
-
-                {zoomable && (
-                  <div className="flex shrink-0 items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => stepZoom(-1)}
-                      title={t("visualization.zoom_out")}
-                      aria-label={t("visualization.zoom_out")}
-                    >
-                      <ZoomOut className="h-3.5 w-3.5" aria-hidden />
-                    </Button>
-                    <span className="w-12 text-center text-[11px] tabular-nums text-muted-foreground">
-                      {zoom === "fit" ? t("visualization.zoom_fit") : `${Math.round(zoom * 100)}%`}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => stepZoom(1)}
-                      title={t("visualization.zoom_in")}
-                      aria-label={t("visualization.zoom_in")}
-                    >
-                      <ZoomIn className="h-3.5 w-3.5" aria-hidden />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setZoom("fit")}
-                      title={t("visualization.zoom_fit")}
-                      aria-label={t("visualization.zoom_fit")}
-                    >
-                      <Maximize2 className="h-3.5 w-3.5" aria-hidden />
-                    </Button>
-                  </div>
-                )}
-
+                {/* The honesty line: what this graph could and could not read. */}
+                <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+                  {plan.data && plan.data.plan === null
+                    ? t("visualization.no_steps")
+                    : graph.droppedSteps > 0
+                      ? t("visualization.steps_dropped").replace(
+                          "{0}",
+                          String(graph.droppedSteps),
+                        )
+                      : t("visualization.legend")}
+                </p>
                 <div className="flex shrink-0 items-center gap-1">
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() =>
-                      void openExternalUrl(`${window.location.origin}${selected.url}`)
-                    }
-                    title={t("visualization.open_external")}
+                    onClick={() => stepZoom(-1)}
+                    title={t("visualization.zoom_out")}
+                    aria-label={t("visualization.zoom_out")}
                   >
-                    <ExternalLink className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                    {t("visualization.open_external")}
+                    <ZoomOut className="h-3.5 w-3.5" aria-hidden />
                   </Button>
-                  {/* The mission map is a server-rendered page, not an archived
-                      file — there is nothing to download or reveal. */}
-                  {selected.kind !== "map" && (
-                    <Button variant="ghost" size="sm" asChild>
-                      <a
-                        href={artifactDownloadUrl(selected.slug, selected.path)}
-                        download
-                        title={t("visualization.download")}
-                      >
-                        <Download className="h-3.5 w-3.5" aria-hidden />
-                      </a>
-                    </Button>
-                  )}
-                  {/* Desktop only: a headless host has no file manager to open,
-                      so the button is absent rather than dead. */}
-                  {selected.kind !== "map" && capabilities.data?.native_file_actions && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void onReveal(selected)}
-                      title={t("visualization.reveal")}
-                    >
-                      <FolderOpen className="h-3.5 w-3.5" aria-hidden />
-                    </Button>
-                  )}
+                  <span className="w-12 text-center text-[11px] tabular-nums text-muted-foreground">
+                    {`${Math.round(zoom * 100)}%`}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => stepZoom(1)}
+                    title={t("visualization.zoom_in")}
+                    aria-label={t("visualization.zoom_in")}
+                  >
+                    <ZoomIn className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setZoom(1)}
+                    title={t("visualization.zoom_reset")}
+                    aria-label={t("visualization.zoom_reset")}
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
                 </div>
               </footer>
             </>
           )}
         </section>
+
+        {/* Inspector — what one node did, or what one deliverable looks like. */}
+        {selectedNode !== null && run !== null && (
+          <NodeInspector
+            node={selectedNode}
+            slug={run.slug}
+            onClose={() => setSelectedNodeId(null)}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-/**
- * The picture itself.
- *
- * Raster and vector go through `<img>`, which cannot execute anything even when
- * the SVG carries a script. Pages and PDFs need a document frame, and those are
- * the two cases where the file's own content is being interpreted — the backend
- * already serves both under the no-script CSP (`VIEW_CSP`, outputs_routes.py),
- * and the frame is sandboxed on top so the preview stays inert even if that
- * header is ever loosened.
- */
-function VisualFrame({
-  artifact,
+/* ------------------------------------------------------------------------- */
+
+function GraphCanvas({
+  graph,
   zoom,
-  onError,
+  selectedId,
+  onSelect,
 }: {
-  artifact: VisualArtifact;
-  zoom: number | "fit";
-  onError: () => void;
+  graph: RunGraph;
+  zoom: number;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
 }) {
   const t = useT();
-  // Natural width is measured rather than assumed, so a numeric zoom is a real
-  // multiple of the file's own pixels and the stage gets scroll extents that
-  // match what is drawn. `transform: scale()` would give neither. Height
-  // follows from the aspect ratio and is left to the browser.
-  const [naturalWidth, setNaturalWidth] = useState<number | null>(null);
+  const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
 
-  if (artifact.kind === "image" || artifact.kind === "vector") {
-    const scaled =
-      zoom !== "fit" && naturalWidth !== null
-        ? { width: `${naturalWidth * zoom}px`, maxWidth: "none", maxHeight: "none" }
-        : undefined;
+  return (
+    <div
+      style={{ width: graph.width * zoom, height: graph.height * zoom }}
+      className="relative min-h-full min-w-full"
+    >
+      <div
+        style={{
+          width: graph.width,
+          height: graph.height,
+          transform: `scale(${zoom})`,
+          transformOrigin: "top left",
+        }}
+        className="relative"
+      >
+        {/* Edge layer under the nodes. Colours come from the theme tokens, so
+            the tracks are signal-yellow on matte black in the dark theme and
+            legible gold on paper in the light one — never a hardcoded hex. */}
+        <svg
+          width={graph.width}
+          height={graph.height}
+          className="absolute inset-0"
+          aria-hidden
+        >
+          {graph.edges.map((edge) => {
+            const from = byId.get(edge.from);
+            const to = byId.get(edge.to);
+            if (!from || !to) return null;
+            return (
+              <path
+                key={edge.id}
+                d={edgePath(from, to)}
+                fill="none"
+                strokeWidth={1.5}
+                className={
+                  edge.failed ? "stroke-destructive/70" : "stroke-primary/50"
+                }
+              />
+            );
+          })}
+        </svg>
+
+        {graph.nodes.map((node) => {
+          const Icon = nodeIcon(node);
+          const selected = node.id === selectedId;
+          const title =
+            node.kind === "start"
+              ? t("visualization.node_start")
+              : node.kind === "result"
+                ? t("visualization.node_result")
+                : node.title;
+          const subtitle = node.kind === "start" ? node.title : node.subtitle;
+          return (
+            <button
+              key={node.id}
+              type="button"
+              onClick={() => onSelect(node.id)}
+              aria-current={selected}
+              data-testid={`graph-node-${node.kind}`}
+              style={{ left: node.x, top: node.y, width: NODE_W, height: NODE_H }}
+              className={cn(
+                "absolute flex items-center gap-2.5 rounded-xl border bg-card px-3 text-left shadow-sm transition-colors",
+                selected
+                  ? "border-primary ring-1 ring-primary/40"
+                  : "border-border hover:border-primary/50",
+              )}
+            >
+              {/* Ports — the connectors that make cards read as graph nodes. */}
+              <span
+                className="absolute -left-[3px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-primary/60"
+                aria-hidden
+              />
+              <span
+                className="absolute -right-[3px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-primary/60"
+                aria-hidden
+              />
+              <span
+                className={cn(
+                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+                  node.kind === "artifact"
+                    ? "bg-secondary text-foreground"
+                    : "bg-primary/15 text-primary",
+                )}
+              >
+                <Icon className="h-4 w-4" aria-hidden />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-medium text-foreground">
+                  {title}
+                </span>
+                {subtitle && (
+                  <span className="block truncate text-[11px] text-muted-foreground">
+                    {subtitle}
+                  </span>
+                )}
+              </span>
+              {node.status !== "none" && (
+                <span
+                  className={cn(
+                    "h-1.5 w-1.5 shrink-0 rounded-full",
+                    NODE_DOT[node.status],
+                  )}
+                  title={t(`visualization.status_${node.status}`)}
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------------- */
+
+function NodeInspector({
+  node,
+  slug,
+  onClose,
+}: {
+  node: RunGraphNode;
+  slug: string;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const pushToast = useEventStore((s) => s.pushToast);
+  const capabilities = useOutputsCapabilities();
+
+  const artifact = node.kind === "artifact" ? (node.artifact ?? null) : null;
+  const visualKind = artifact ? classifyVisual(artifact.path) : null;
+
+  const onReveal = useCallback(async () => {
+    if (!artifact) return;
+    try {
+      await revealArtifact(slug, artifact.path);
+    } catch {
+      pushToast("error", t("visualization.reveal_failed"));
+    }
+  }, [artifact, slug, pushToast, t]);
+
+  return (
+    <aside
+      className="flex w-96 shrink-0 flex-col border-l border-border"
+      data-testid="visualization-inspector"
+    >
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+        <p className="min-w-0 flex-1 truncate text-xs font-medium">
+          {node.kind === "start"
+            ? t("visualization.node_start")
+            : node.kind === "result"
+              ? t("visualization.node_result")
+              : node.title}
+        </p>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onClose}
+          title={t("visualization.close")}
+          aria-label={t("visualization.close")}
+        >
+          <X className="h-3.5 w-3.5" aria-hidden />
+        </Button>
+      </div>
+
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="space-y-3 p-3">
+          {node.kind === "step" && node.step && (
+            <>
+              <InspectorField label={t("visualization.field_tool")}>
+                {node.step.tool_name ?? "—"}
+              </InspectorField>
+              <InspectorField label={t("visualization.field_detail")}>
+                <code className="block whitespace-pre-wrap break-words text-[11px]">
+                  {node.step.name}
+                </code>
+              </InspectorField>
+              {node.step.output && (
+                <InspectorField label={t("visualization.field_output")}>
+                  <code className="block whitespace-pre-wrap break-words text-[11px] text-muted-foreground">
+                    {node.step.output}
+                  </code>
+                </InspectorField>
+              )}
+              {node.step.error && (
+                <InspectorField label={t("visualization.field_error")}>
+                  <code className="block whitespace-pre-wrap break-words text-[11px] text-destructive">
+                    {node.step.error}
+                  </code>
+                </InspectorField>
+              )}
+              <InspectorField label={t("visualization.field_status")}>
+                {t(`visualization.status_${node.status}`)}
+              </InspectorField>
+            </>
+          )}
+
+          {(node.kind === "start" || node.kind === "result") && (
+            <InspectorField
+              label={
+                node.kind === "start"
+                  ? t("visualization.field_request")
+                  : t("visualization.field_answer")
+              }
+            >
+              <p className="whitespace-pre-wrap break-words text-xs">
+                {(node.kind === "start" ? node.title : node.subtitle) || "—"}
+              </p>
+            </InspectorField>
+          )}
+
+          {artifact && (
+            <>
+              {visualKind !== null && (
+                <ArtifactPreview slug={slug} artifact={artifact} kind={visualKind} />
+              )}
+              <InspectorField label={t("visualization.field_file")}>
+                <code className="block break-words text-[11px]">
+                  {artifact.path}
+                </code>
+              </InspectorField>
+              <InspectorField label={t("visualization.field_size")}>
+                {formatSize(artifact.size)}
+              </InspectorField>
+              <div className="flex flex-wrap items-center gap-1 pt-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    void openExternalUrl(
+                      `${window.location.origin}${visualUrl(slug, artifact.path)}`,
+                    )
+                  }
+                  title={t("visualization.open_external")}
+                >
+                  <ExternalLink className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                  {t("visualization.open_external")}
+                </Button>
+                <Button variant="ghost" size="sm" asChild>
+                  <a
+                    href={artifactDownloadUrl(slug, artifact.path)}
+                    download
+                    title={t("visualization.download")}
+                  >
+                    <Download className="h-3.5 w-3.5" aria-hidden />
+                  </a>
+                </Button>
+                {/* Desktop only: a headless host has no file manager to open,
+                    so the button is absent rather than dead. */}
+                {capabilities.data?.native_file_actions && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void onReveal()}
+                    title={t("visualization.reveal")}
+                  >
+                    <FolderOpen className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </ScrollArea>
+    </aside>
+  );
+}
+
+function InspectorField({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <div className="text-xs">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * The deliverable preview inside the inspector.
+ *
+ * Raster and vector go through `<img>`, which cannot execute anything even
+ * when the SVG carries a script. Pages and PDFs need a document frame, and
+ * those are the two cases where the file's own content is being interpreted —
+ * the backend already serves both under the no-script CSP (`VIEW_CSP`,
+ * outputs_routes.py), and the frame is sandboxed on top so the preview stays
+ * inert even if that header is ever loosened.
+ */
+function ArtifactPreview({
+  slug,
+  artifact,
+  kind,
+}: {
+  slug: string;
+  artifact: ArtifactSummary;
+  kind: VisualKind;
+}) {
+  const t = useT();
+  const [failed, setFailed] = useState(false);
+  const url = visualUrl(slug, artifact.path);
+
+  // A new file must not inherit the previous file's failure verdict.
+  useEffect(() => setFailed(false), [url]);
+
+  if (failed) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        {t("visualization.render_failed")}
+      </p>
+    );
+  }
+
+  if (kind === "image" || kind === "vector") {
     return (
       <img
-        src={artifact.url}
-        alt={artifact.name}
+        src={url}
+        alt={artifact.path}
         data-testid="visualization-image"
-        onLoad={(event) => setNaturalWidth(event.currentTarget.naturalWidth)}
-        onError={onError}
-        style={scaled}
-        className={cn(
-          "rounded-md bg-background/40 shadow-sm",
-          zoom === "fit" && "max-h-full max-w-full object-contain",
-        )}
+        onError={() => setFailed(true)}
+        className="max-h-72 w-full rounded-md border border-border bg-background/40 object-contain"
       />
     );
   }
 
   return (
-    <div className="flex h-full w-full min-w-0 flex-col gap-2">
+    <div className="space-y-1.5">
       <iframe
-        src={artifact.url}
-        title={artifact.name}
+        src={url}
+        title={artifact.path}
         data-testid="visualization-frame"
-        onError={onError}
+        onError={() => setFailed(true)}
         // Empty sandbox = opaque origin, no scripts, no forms, no navigation.
         // A PDF still renders: the browser's own viewer is not the framed
         // document's script context.
         sandbox=""
-        className="min-h-0 flex-1 rounded-md border border-border bg-white"
+        className="h-72 w-full rounded-md border border-border bg-white"
       />
       <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
         <ShieldAlert className="h-3 w-3 shrink-0" aria-hidden />
@@ -413,7 +787,9 @@ function VisualFrame({
   );
 }
 
-function EmptyStage({
+/* ------------------------------------------------------------------------- */
+
+function EmptyCanvas({
   loading,
   error,
   title,
@@ -430,7 +806,10 @@ function EmptyStage({
       data-testid="visualization-empty"
     >
       {loading && !error ? (
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden />
+        <Loader2
+          className="h-5 w-5 animate-spin text-muted-foreground"
+          aria-hidden
+        />
       ) : (
         <Frame className="h-6 w-6 text-muted-foreground" aria-hidden />
       )}

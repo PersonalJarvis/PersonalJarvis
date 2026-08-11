@@ -1,13 +1,16 @@
 /**
- * The Visualization section — what it selects, what it shows, what it admits.
+ * The Visualization section — the run graph it draws, what it admits, and
+ * what a node click reveals.
  *
- * Three contracts are worth pinning:
- * - only files that can actually be DRAWN are offered (a run's logs and JSON
- *   are not visuals, and listing them would make the gallery a file browser),
- * - the shell, not the view, decides the ground the section sits on — the
- *   readability halo that helps the app's own text damages a rendered picture,
- * - the bounded scan is stated on screen, so an older run that was not looked
- *   at never reads as a run that produced nothing.
+ * Contracts worth pinning:
+ * - a run renders as connected nodes (request → steps → result, deliverables
+ *   on their own track), never as a flat file list,
+ * - a pre-feature archive with no step records still gets a graph (request +
+ *   deliverables) and SAYS that the steps are missing,
+ * - clicking a node opens the inspector; an image deliverable previews via
+ *   `<img>`, a page via an inert sandboxed frame,
+ * - the server-rendered mission map stays one click away ("open as page"),
+ * - only files the WebView can draw are offered a preview (`classifyVisual`).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -16,7 +19,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SectionStage } from "@/App";
 import { VisualizationView } from "@/views/VisualizationView";
 import { classifyVisual, visualUrl } from "@/hooks/useVisualArtifacts";
-import type { ArtifactSummary, OutputSummary } from "@/hooks/useOutputs";
+import type {
+  ArtifactSummary,
+  OutputSummary,
+  PlanResponse,
+} from "@/hooks/useOutputs";
 
 // ViewHeader lives in ChatsView, which subscribes to a WS client on mount —
 // null keeps that a deterministic no-op in jsdom (same pattern as OutputsView).
@@ -33,6 +40,7 @@ afterEach(() => {
 function installFetchMock(
   runs: OutputSummary[],
   artifactsBySlug: Record<string, ArtifactSummary[]>,
+  plansBySlug: Record<string, PlanResponse> = {},
 ) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -41,6 +49,15 @@ function installFetchMock(
         ok: true,
         status: 200,
         json: async () => ({ native_file_actions: false, platform: "linux" }),
+      };
+    }
+    const plan = /\/api\/outputs\/([^/]+)\/plan/.exec(url);
+    if (plan) {
+      const slug = decodeURIComponent(plan[1]);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => plansBySlug[slug] ?? { plan: null, steps: [] },
       };
     }
     const artifacts = /\/api\/outputs\/([^/]+)\/artifacts/.exec(url);
@@ -83,6 +100,27 @@ function file(path: string, over: Partial<ArtifactSummary> = {}): ArtifactSummar
   };
 }
 
+const CHART_PLAN: PlanResponse = {
+  plan: { plan_id: "run-new", vision: "Draw the architecture", status: "complete" },
+  steps: [
+    {
+      step_id: "t1:0",
+      name: "python plot.py",
+      tool_name: "Bash",
+      status: "done",
+      output: "wrote diagram.svg",
+    },
+    {
+      step_id: "t1:1",
+      name: "out/diagram.svg",
+      tool_name: "Write",
+      status: "done",
+      writes: ["out/diagram.svg"],
+    },
+  ],
+  final_answer: "Architecture drawn.",
+};
+
 describe("classifyVisual", () => {
   it("accepts what the WebView can draw", () => {
     expect(classifyVisual("chart.png")).toBe("image");
@@ -93,8 +131,8 @@ describe("classifyVisual", () => {
   });
 
   it("rejects everything else, however data-shaped", () => {
-    // These are real deliverables — they simply belong in Outputs, not on a
-    // stage that promises a picture.
+    // These are real deliverables — they get a node and file actions, just no
+    // rendered preview the WebView could only coin-flip on.
     for (const name of ["run.log", "data.csv", "notes.md", "result.json", "app.py"]) {
       expect(classifyVisual(name)).toBeNull();
     }
@@ -107,66 +145,68 @@ describe("classifyVisual", () => {
 });
 
 describe("VisualizationView", () => {
-  it("lists the visual artifacts plus one mission map per run, map staged first", async () => {
+  it("draws the newest run as request → steps → result plus deliverables", async () => {
     installFetchMock(
-      [
-        { slug: "run-new", utterance: "draw the architecture" },
-        { slug: "run-old", utterance: "summarise the logs" },
-      ],
-      {
-        "run-new": [
-          file("artifacts/diagram.svg", { mtime: 2_000 }),
-          file("artifacts/build.log", { mtime: 2_500, is_text: true }),
-        ],
-        "run-old": [file("artifacts/old-chart.png", { mtime: 1_000 })],
-      },
+      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
+      { "run-new": [file("tasks/t1/artifacts/files/out/diagram.svg")] },
+      { "run-new": CHART_PLAN },
     );
 
     renderView();
 
-    const gallery = await screen.findByTestId("visualization-gallery");
-    // Two visuals + one mission map per scanned run.
-    await waitFor(() => expect(gallery.querySelectorAll("li")).toHaveLength(4));
-    // The .log is a deliverable, but not a picture.
-    expect(screen.queryByText("build.log")).toBeNull();
+    await screen.findByTestId("graph-node-start");
+    await waitFor(() =>
+      expect(screen.getAllByTestId("graph-node-step")).toHaveLength(2),
+    );
+    expect(screen.getByTestId("graph-node-result")).toBeTruthy();
+    expect(screen.getAllByTestId("graph-node-artifact")).toHaveLength(1);
+    // The graph replaced the gallery: no flat file list anywhere.
+    expect(screen.queryByTestId("visualization-gallery")).toBeNull();
+  });
 
-    // The newest run's mission map leads and is staged without a click — the
-    // overview of what ran comes before its individual pictures.
-    const frame = await screen.findByTestId("visualization-frame");
-    expect(frame.getAttribute("src")).toContain("/api/outputs/run-new/graph");
+  it("still graphs a pre-feature archive and admits the steps are gone", async () => {
+    installFetchMock(
+      [{ slug: "run-old", utterance: "Summarise the logs", status: "unknown" }],
+      { "run-old": [file("tasks/t1/artifacts/files/old-chart.png")] },
+      // No plan entry -> the endpoint's stub contract {plan: null, steps: []}.
+    );
 
-    // Its pictures are one click away.
-    fireEvent.click(screen.getByText("diagram.svg"));
+    renderView();
+
+    await screen.findByTestId("graph-node-start");
+    await waitFor(() =>
+      expect(screen.getAllByTestId("graph-node-artifact")).toHaveLength(1),
+    );
+    expect(screen.queryAllByTestId("graph-node-step")).toHaveLength(0);
+    // The honesty line: missing step records are stated, not glossed over.
+    await screen.findByText(/No step records survived/);
+  });
+
+  it("opens the inspector with an image preview when a deliverable is clicked", async () => {
+    installFetchMock(
+      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
+      { "run-new": [file("tasks/t1/artifacts/files/out/diagram.svg")] },
+      { "run-new": CHART_PLAN },
+    );
+
+    renderView();
+
+    fireEvent.click(await screen.findByTestId("graph-node-artifact"));
+
+    await screen.findByTestId("visualization-inspector");
     const image = await screen.findByTestId("visualization-image");
     expect(image.getAttribute("src")).toContain("diagram.svg");
   });
 
-  it("switches the stage to the artifact that was clicked", async () => {
-    installFetchMock([{ slug: "run-1", utterance: "make two charts" }], {
-      "run-1": [
-        file("a/first.png", { mtime: 2_000 }),
-        file("a/second.png", { mtime: 1_000 }),
-      ],
-    });
-
-    renderView();
-
-    const second = await screen.findByText("second.png");
-    fireEvent.click(second);
-
-    await waitFor(() =>
-      expect(
-        screen.getByTestId("visualization-image").getAttribute("src"),
-      ).toContain("second.png"),
+  it("frames a page deliverable inertly rather than drawing it as an image", async () => {
+    installFetchMock(
+      [{ slug: "run-1", utterance: "Build a report", status: "success" }],
+      { "run-1": [file("tasks/t1/artifacts/files/report.html")] },
     );
-  });
-
-  it("frames a page rather than drawing it as an image", async () => {
-    installFetchMock([{ slug: "run-1", utterance: "build a report" }], {
-      "run-1": [file("report.html")],
-    });
 
     renderView();
+
+    fireEvent.click(await screen.findByTestId("graph-node-artifact"));
 
     const frame = await screen.findByTestId("visualization-frame");
     // Inert preview: an empty sandbox is an opaque origin with no scripts, on
@@ -175,20 +215,33 @@ describe("VisualizationView", () => {
     expect(screen.queryByTestId("visualization-image")).toBeNull();
   });
 
-  it("still offers the mission map when a run produced nothing visual", async () => {
-    // A text-only run is exactly when "what happened" needs drawing the most:
-    // the map is the run's one visual, and file actions (download/reveal) are
-    // absent because a server-rendered page is not an archived file.
-    installFetchMock([{ slug: "run-1", utterance: "tidy the notes" }], {
-      "run-1": [file("notes.md", { is_text: true })],
-    });
+  it("shows a step's real call and output in the inspector", async () => {
+    installFetchMock(
+      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
+      { "run-new": [] },
+      { "run-new": CHART_PLAN },
+    );
 
     renderView();
 
-    const frame = await screen.findByTestId("visualization-frame");
-    expect(frame.getAttribute("src")).toContain("/api/outputs/run-1/graph");
-    expect(screen.queryByText("notes.md")).toBeNull();
-    expect(screen.queryByTitle("Save a copy")).toBeNull();
+    fireEvent.click((await screen.findAllByTestId("graph-node-step"))[0]);
+
+    const inspector = await screen.findByTestId("visualization-inspector");
+    expect(inspector.textContent).toContain("python plot.py");
+    expect(inspector.textContent).toContain("wrote diagram.svg");
+  });
+
+  it("keeps the server-rendered mission map one click away", async () => {
+    installFetchMock(
+      [{ slug: "run-new", utterance: "Draw the architecture", status: "success" }],
+      { "run-new": [] },
+      { "run-new": CHART_PLAN },
+    );
+
+    renderView();
+
+    // The no-JS sibling of this canvas — shareable, printable, CSP-inert.
+    await screen.findByTestId("visualization-open-map");
   });
 
   it("says so when there are no runs at all", async () => {
@@ -197,7 +250,7 @@ describe("VisualizationView", () => {
     renderView();
 
     await screen.findByTestId("visualization-empty");
-    expect(screen.queryByTestId("visualization-stage")).toBeNull();
+    expect(screen.queryByTestId("visualization-canvas")).toBeNull();
   });
 });
 
