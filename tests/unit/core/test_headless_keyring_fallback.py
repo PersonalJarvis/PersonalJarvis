@@ -6,6 +6,7 @@ VPS downloader can paste a key in the UI and have it persist.
 """
 from __future__ import annotations
 
+import os
 import sys
 import threading
 from pathlib import Path
@@ -56,13 +57,24 @@ def test_file_cred_store_concurrent_writes_no_lost_update(tmp_path):
 def test_file_cred_store_save_failure_raises_clear_error(monkeypatch, tmp_path):
     store = cfg._FileCredStore(path=tmp_path / "creds.json")
 
-    def _boom(self: Path, *args: object, **kwargs: object) -> None:
+    def _boom(*args: object, **kwargs: object) -> None:
         raise OSError("disk full (simulated)")
 
-    monkeypatch.setattr(Path, "write_text", _boom)
+    monkeypatch.setattr(cfg.os, "replace", _boom)
 
     with pytest.raises(RuntimeError, match="failed to write credential store"):
         store.set("svc", "k", "v")
+    assert not list(tmp_path.glob("*.tmp.*"))  # the broken tmp never lingers
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_file_cred_store_is_born_owner_only(tmp_path):
+    """The plaintext store must never be readable by other local accounts —
+    not even between creation and a later chmod (multi-user Mac scenario)."""
+    store = cfg._FileCredStore(path=tmp_path / "creds.json")
+    store.set("svc", "k", "v")
+    mode = (tmp_path / "creds.json").stat().st_mode & 0o777
+    assert mode == 0o600
 
 
 def test_resolve_writable_data_dir_honors_env_override(monkeypatch, tmp_path):
