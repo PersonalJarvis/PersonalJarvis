@@ -1477,7 +1477,7 @@ class MCPServerConfig(BaseModel):
     transport: str = "stdio"             # "stdio" | "http"
     http_host: str = "127.0.0.1"
     http_port: int = 47822
-    auth_token_env: str = "JARVIS_MCP_TOKEN"
+    auth_token_env: str = "JARVIS_MCP_TOKEN"  # noqa: S105 — env var NAME, not a secret
     max_call_depth: int = 3              # loop guard
 
 
@@ -1545,7 +1545,7 @@ class UIConfig(BaseModel):
     # ENV variable carrying the process-scoped UI bootstrap token. The native
     # WebView exposes it once; AuthGate exchanges it for an unrelated HttpOnly
     # session cookie and immediately clears the JavaScript value.
-    auth_token_env: str = "JARVIS_UI_TOKEN"
+    auth_token_env: str = "JARVIS_UI_TOKEN"  # noqa: S105 — env var NAME, not a secret
     # Optional browser lock: when True, opening the UI in a browser on THIS
     # machine (loopback) asks for the Control Key. Off by default — the local
     # user walks straight in. Non-loopback access (LAN, VPS, reverse proxy)
@@ -2413,7 +2413,10 @@ class WikiContextConfig(BaseModel):
     # timed out. The factory warms the connection at boot; the wider budget
     # covers a lost warm-up race and stays inaudible next to the brain call.
     latency_budget_ms: int = 150
-    min_keyword_length: int = 4
+    # 3 (was 4): short given names ("Joy", "Uwe") and initialisms ("BMW")
+    # are exactly the tokens a memory question hangs on; the old floor made
+    # them structurally unsearchable (2026-08-11 recall audit).
+    min_keyword_length: int = 3
 
     # Relevance gate (jarvis/brain/wiki_relevance.py). Retrieval always
     # returns a ranked list, so without a gate every unrelated question gets
@@ -3434,17 +3437,6 @@ class AgenticIdeConfig(BaseModel):
         ),
     )
 
-    deck_reports: bool = Field(
-        default=True,
-        description=(
-            "In the Command Deck, say a finished agent out loud instead of only "
-            "counting it in the bell — one report at a time, and only while a "
-            "conversation is open. Off leaves the deck's report lane on screen "
-            "and silent. Has no effect in the terminal grid or chat view, "
-            "which never speak."
-        ),
-    )
-
     @field_validator("prompt_writer", mode="before")
     @classmethod
     def _usable_writer(cls, value: object) -> str:
@@ -4128,11 +4120,16 @@ class _FileCredStore:
         # file before either reaches its atomic os.replace.
         tmp = f.with_name(f"{f.name}.tmp.{os.getpid()}")
         try:
-            tmp.write_text(json.dumps(data), encoding="utf-8")
-            try:
-                os.chmod(tmp, 0o600)
-            except Exception:  # noqa: BLE001 — chmod is a no-op on Windows
-                pass
+            # Born 0600, never chmodded down after the fact: write_text +
+            # chmod created the file 0644 for a moment, and on a multi-user
+            # Mac (this store is the documented fallback after a declined
+            # Keychain prompt) that window exposed every stored key to any
+            # other local account. A stale same-pid tmp from a crashed run
+            # is removed first so O_EXCL cannot trip over it.
+            tmp.unlink(missing_ok=True)
+            descriptor = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(json.dumps(data))
             os.replace(tmp, f)
         except OSError as exc:
             tmp.unlink(missing_ok=True)

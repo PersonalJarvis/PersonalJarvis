@@ -53,6 +53,7 @@ from jarvis.memory.wiki.prompt import (
     resolve_user_entity_slug,
 )
 from jarvis.memory.wiki.protocols import PageUpdate
+from jarvis.memory.wiki.search_aliases import ensure_page_aliases
 from jarvis.memory.wiki.telemetry import telemetry
 from jarvis.memory.wiki.wikilink import extract_wikilinks
 
@@ -734,6 +735,14 @@ class Consolidator:
                         write_plan[cid] = (None, None)
                     continue
                 new_body = self._with_source_marker(new_body, by_id[cid])
+                # Write-time language bridge: a page the judge just composed
+                # gets its multilingual ``search_aliases`` NOW, so it is born
+                # findable in the user's spoken language instead of waiting
+                # for a manual backfill run. Never raises; without a
+                # credential-ready provider the body passes through unchanged.
+                new_body = await ensure_page_aliases(
+                    new_body, cfg=self._root_cfg, registry=self._registry
+                )
                 update = PageUpdate(
                     target_path=Path(target),
                     operation="create" if decision == "add" else "update",

@@ -129,33 +129,37 @@ _KEYWORD_LEG = "keyword"
 def _extract_keywords(
     text: str,
     *,
-    min_length: int = 4,
-    max_keywords: int = 3,
+    min_length: int = 3,
+    max_keywords: int = 4,
 ) -> list[str]:
-    """Extract 1-3 meaningful keywords from a user utterance.
+    """Extract up to ``max_keywords`` meaningful keywords from an utterance.
 
     Strategy:
     1. Tokenize on whitespace + punctuation.
-    2. Drop tokens shorter than ``min_length``.
+    2. Drop tokens shorter than ``min_length``. Three is the floor the
+       2026-08-11 recall audit set: short given names ("Joy", "Uwe") and
+       initialisms ("BMW") are exactly the tokens a memory question hangs
+       on, and the old floor of four made them structurally unsearchable.
     3. Drop tokens that are in the stopword list (case-insensitive).
-    4. Prefer tokens that are capitalized mid-sentence (likely proper nouns),
-       but include lowercase tokens too if there are not enough proper nouns.
-    5. Return up to ``max_keywords`` tokens, proper nouns first.
+    4. Prefer tokens that are capitalized mid-sentence (proper nouns in
+       English; nouns in general in German — both are the searchable
+       content words), but include lowercase tokens too if there are not
+       enough capitalized ones. All-lowercase STT output simply keeps
+       source order.
+    5. Return up to ``max_keywords`` tokens, capitalized ones first.
     """
     raw_tokens = _TOKEN_RE.sub(" ", text).split()
 
     # Filter by length and stopwords. The stopword register is PRE-FOLDED
-    # ("fuer", "ueber"), so the token must be folded the same way before the  # i18n-allow: folded stopword forms
-    # lookup — comparing ``tok.lower()`` let every real umlaut
-    # spelling through as a junk keyword.  # i18n-allow: folded stopword forms
+    # ("fuer", "ueber"), so the token must be folded the  # i18n-allow: folded stopword forms
+    # same way before the lookup — comparing ``tok.lower()`` let every real
+    # umlaut spelling through as a junk keyword.  # i18n-allow: folded stopword forms
     candidates: list[str] = []
     for tok in raw_tokens:
         if len(tok) < min_length:
             continue
         if fold_text(tok) in STOPWORDS:
             continue
-        # Skip leading token of the sentence (likely a greeting/verb, not a noun)
-        # unless the whole utterance is very short (fewer than 4 tokens total)
         candidates.append(tok)
 
     if not candidates:
@@ -239,6 +243,12 @@ class WikiContextInjector:
     def _miss(self, t0: float, reason: str) -> None:
         """Record one skipped injection: telemetry + the single INFO line."""
         telemetry.inc("wiki_context_misses")
+        # Per-reason counter so "which gate eats the injections" is a
+        # /api/wiki/telemetry read instead of a log grep (2026-08-11 audit:
+        # the aggregate counter could not distinguish no_hits from a strict
+        # gate discard). Reasons are the stable slugs of MemoryVerdict plus
+        # this module's own literals — bounded vocabulary, safe as names.
+        telemetry.inc(f"wiki_context_miss_{reason}")
         log.info(
             "WikiContextInjector injected=False hits=0 latency_ms=%d reason=%s",
             int((time.monotonic() - t0) * 1000),

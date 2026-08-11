@@ -47,6 +47,7 @@ __all__ = [
     "MAX_ALIASES",
     "backfill_vault",
     "build_alias_prompt",
+    "ensure_page_aliases",
     "generate_aliases",
     "merge_aliases",
     "parse_alias_response",
@@ -328,6 +329,66 @@ async def generate_aliases(
         ",".join(langs),
     )
     return aliases
+
+
+# ---------------------------------------------------------------------------
+# Write-time bridge
+# ---------------------------------------------------------------------------
+
+
+async def ensure_page_aliases(
+    page_text: str,
+    *,
+    cfg: Any,
+    registry: Any,
+    timeout_s: float = 15.0,
+) -> str:
+    """Return *page_text* with a populated ``search_aliases`` frontmatter field.
+
+    The write-time half of the language bridge: the consolidator routes every
+    proposed add/update body through here, so a page is born findable in the
+    user's own language instead of waiting for someone to run the backfill
+    route by hand (which the 2026-08-11 recall audit found nobody does).
+
+    Pages that already carry aliases pass through untouched — regeneration is
+    the backfill's ``overwrite`` decision, never an implicit side effect of an
+    unrelated fact landing on the page. Every failure mode returns the
+    ORIGINAL text: a page without aliases is merely as findable as it is
+    today, while raising here would block the write itself.
+    """
+    try:
+        from jarvis.memory.frontmatter import (  # noqa: PLC0415
+            parse_frontmatter,
+            write_frontmatter,
+        )
+
+        meta, body = parse_frontmatter(page_text)
+        if not meta:
+            # No parseable frontmatter — the schema validator downstream owns
+            # that verdict; injecting a field here would forge a frontmatter
+            # block the judge never proposed.
+            return page_text
+        if meta.get(ALIAS_FIELD):
+            return page_text
+
+        title_match = re.search(r"^\s{0,3}#\s+(.+)", body, re.MULTILINE)
+        title = (
+            title_match.group(1).strip()
+            if title_match
+            else str(meta.get("slug", "") or "")
+        )
+        generated = await generate_aliases(
+            title=title, body=body, cfg=cfg, registry=registry, timeout_s=timeout_s
+        )
+        if not generated:
+            return page_text
+        meta[ALIAS_FIELD] = merge_aliases(meta.get(ALIAS_FIELD), generated)
+        return write_frontmatter(meta, body)
+    except Exception:  # noqa: BLE001 — the bridge must never block a write
+        log.warning(
+            "search_aliases: write-time alias injection failed", exc_info=True
+        )
+        return page_text
 
 
 # ---------------------------------------------------------------------------
