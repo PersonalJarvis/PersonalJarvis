@@ -201,6 +201,14 @@ class AntigravityBrain:
     context_window: int = 1_048_576
     supports_tools: bool = True  # ignored on the CLI path (mirrors CodexBrain)
     supports_vision: bool = False
+    # Neither agy nor the Gemini CLI takes a real system prompt in headless
+    # mode: structured mode PREPENDS the caller's contract to the user prompt
+    # (render_structured_prompt), where the agent may read it as text to react
+    # to rather than orders to follow. Live 2026-08-11: every Agentic IDE pane
+    # title became a chat acknowledgement ("Understood! I see …") the moment
+    # this provider wrote the recaps. The subscription resolver uses this flag
+    # to prefer a sibling with a dedicated system channel when one is signed in.
+    native_system_prompt: bool = False
 
     def __init__(
         self,

@@ -450,6 +450,23 @@ def _subscription_connected(provider: str) -> bool:
         return False
 
 
+def _native_system_channel(provider: str) -> bool:
+    """Whether ``provider`` forwards a caller's system contract on a real channel.
+
+    Asked of the provider CLASS, like :func:`_subscription_connected`, so a new
+    subscription brain answers for itself (AP-21). ``True`` means the CLI takes
+    the contract as its system prompt; ``False`` (or no flag at all) means the
+    contract can only be PREPENDED to the user prompt, where an agentic CLI may
+    read it as text to react to rather than orders to follow. Never raises — an
+    unloadable class simply does not get the preference.
+    """
+    try:
+        brain_cls = _get_registry().get_class(provider)
+    except Exception:  # noqa: BLE001 - an unloadable plugin earns no preference
+        return False
+    return bool(getattr(brain_cls, "native_system_prompt", False))
+
+
 def _subscription_candidates(config: JarvisConfig) -> list[str]:
     """Registered brain providers billed against a subscription, in card order.
 
@@ -504,6 +521,16 @@ def resolve_subscription_brain(
     except Exception:  # noqa: BLE001 - a spec problem must not kill the caller
         log.info("resolve_subscription_brain: candidates unavailable", exc_info=True)
         return None
+
+    # Contract fidelity outranks card order: a CLI with a dedicated system
+    # channel obeys the caller's contract, while one that can only prepend it
+    # answers as an agent reading orders inside its input. Live 2026-08-11:
+    # antigravity, first by card order, wrote every Agentic IDE pane title as a
+    # chat acknowledgement ("Understood! I see …") while the signed-in Claude
+    # CLI — which takes a real ``--system-prompt`` — was never asked. The sort
+    # is stable, so card order still decides among equals, and a preferred
+    # provider that is not signed in falls through exactly as before.
+    candidates.sort(key=lambda provider: not _native_system_channel(provider))
 
     for provider in candidates:
         if not _subscription_connected(provider):

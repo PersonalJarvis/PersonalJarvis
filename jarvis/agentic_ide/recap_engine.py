@@ -163,6 +163,17 @@ MIN_DETAIL_WORDS = 5
 MODEL_OUTPUT_TOKENS = 400
 MODEL_RETRY_OUTPUT_TOKENS = 800
 
+#: How long the first line of an UNLABELLED answer may be and still be read as
+#: the headline. A model that dropped its labels still wrote a label-length
+#: line; a chatty CLI answers in a paragraph, and its first "line" is the whole
+#: paragraph. Live 2026-08-11: with every API key dead, the recaps rode a
+#: subscription CLI whose system contract is only prepended text, it answered
+#: conversationally, and the forgiving unlabelled path shipped "Understood! I
+#: see …" as the settled title of every pane. Checked against the RAW line,
+#: before :func:`recap.condense` hides the evidence. Labelled answers are
+#: exempt: "HEADLINE:" states the intent, and the condense cap does the rest.
+UNLABELLED_HEADLINE_CHARS = 72
+
 #: What the user may type into a recap of their own. The same two lengths, with
 #: room to spare — a hand-written recap is checked here rather than silently
 #: shortened, so nobody writes three sentences and gets one and a half back.
@@ -802,6 +813,12 @@ def _valid_model_headline(headline: str) -> bool:
         return False
     if '"' in headline or "`" in headline or _SHELL_FRAGMENT_RE.search(headline):
         return False
+    # A navigation label neither exclaims nor trails off into a colon: those
+    # are the shapes of a chat answer ("Hello! It looks like …", "Here you
+    # go:"), and they are structural, so they hold in every interface language
+    # where a phrase list would not.
+    if "!" in headline or headline.endswith(("?", ":")):
+        return False
     if headline.lstrip().startswith(("...", "./", "../", "/", "\\")):
         return False
     return all(
@@ -815,13 +832,17 @@ def parse_answer(text: str, *, writer: str = "") -> SmartRecap | None:
 
     Deliberately forgiving. Models drop the labels, swap their order, wrap the
     whole thing in a code fence, or answer in one paragraph — and a recap is not
-    worth failing over any of that. The one thing that is NOT accepted is an
-    answer with no headline in it, because a blank header would look like a
-    broken pane rather than a missing sentence.
+    worth failing over any of that. Two things are NOT accepted: an answer with
+    no headline in it, because a blank header would look like a broken pane
+    rather than a missing sentence — and a chat-shaped answer, because a CLI
+    agent that reacted to the contract instead of following it opens with an
+    acknowledgement, and "Understood! I see …" as a settled pane title is the
+    live failure this guard exists for.
     """
     headline = ""
     detail_parts: list[str] = []
     seen_detail = False
+    labelled = False
     for raw in str(text or "").splitlines():
         line = raw.strip().strip("`").strip()
         if not line:
@@ -829,6 +850,7 @@ def parse_answer(text: str, *, writer: str = "") -> SmartRecap | None:
         lowered = line.lower()
         if lowered.startswith("headline:"):
             headline = line.split(":", 1)[1].strip()
+            labelled = True
             seen_detail = False
             continue
         if lowered.startswith("detail:"):
@@ -843,7 +865,14 @@ def parse_answer(text: str, *, writer: str = "") -> SmartRecap | None:
             headline = line
             seen_detail = True
 
-    headline = recap.condense(headline.strip().strip('"').rstrip(".").strip(), HEADLINE_CHARS)
+    headline = headline.strip().strip('"').rstrip(".").strip()
+    # An unlabelled first line is only trusted as a headline while it is
+    # label-sized. A chatty answer is one paragraph, and condensing it into the
+    # budget would dress a chat opener up as a title (see
+    # :data:`UNLABELLED_HEADLINE_CHARS` for the live incident).
+    if not labelled and len(headline) > UNLABELLED_HEADLINE_CHARS:
+        return None
+    headline = recap.condense(headline, HEADLINE_CHARS)
     detail = recap.condense(" ".join(detail_parts).strip().strip('"'), DETAIL_CHARS)
     if not _valid_model_headline(headline):
         return None
@@ -1085,6 +1114,7 @@ __all__ = [
     "MIN_NEW_LINES",
     "MIN_REFRESH_S",
     "STABLE_AFTER_LINES",
+    "UNLABELLED_HEADLINE_CHARS",
     "NO_PROVIDER_NOTE",
     "WHY_DISABLED",
     "WHY_NOT_STARTED",

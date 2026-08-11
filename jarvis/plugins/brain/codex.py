@@ -316,6 +316,12 @@ class CodexBrain:
     # plan blind. The class default is the safe blind value; __init__ flips it to
     # True only when an API key (→ the vision-capable API path) is configured.
     supports_vision: bool = False
+    # The subscription CLI path has no dedicated system channel: structured
+    # mode prepends the caller's contract to the flattened prompt
+    # (render_structured_prompt). The subscription resolver prefers a sibling
+    # that forwards the contract on a real system channel when one is signed
+    # in — see the antigravity note for the live failure this prevents.
+    native_system_prompt: bool = False
 
     def __init__(
         self,

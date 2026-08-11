@@ -373,6 +373,42 @@ def test_cli_debris_is_rejected_as_a_model_headline(answer: str) -> None:
     assert recap_engine.parse_answer(answer) is None
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        # Live 2026-08-11: with every API key dead, the recaps rode a
+        # subscription CLI whose contract is only prepended text — it answered
+        # conversationally, and these opened the settled title of every pane.
+        "Understood! I see a Claude Code session working through German i18n keys.",
+        "Hello! It looks like you have a coding agent running in this terminal.",
+        "It looks like Claude Code is reviewing the pane title heuristics in this "
+        "repository and has not finished that work yet.",
+        "Here are the German translations this session has produced so far, with "
+        "the files they came from.",
+        "Here you go:",
+        "HEADLINE: Understood! Reviewing the transcript now\n"
+        "DETAIL: The pane is being read and a proper summary follows.",
+    ],
+)
+def test_a_chat_shaped_answer_is_rejected_rather_than_shipped_as_a_title(
+    answer: str,
+) -> None:
+    """A CLI agent that REACTS to the contract must not name the pane."""
+    assert recap_engine.parse_answer(answer) is None
+
+
+def test_a_short_unlabelled_label_is_still_accepted() -> None:
+    """The chat-shape guard must not take the forgiving path down with it."""
+    answer = recap_engine.parse_answer(
+        "Login tests — 3 failures on one fixture\n"
+        "The goal was to stabilize the login suite. Three tests still fail on a "
+        "missing fixture."
+    )
+
+    assert answer is not None
+    assert answer.headline == "Login tests — 3 failures on one fixture"
+
+
 # ------------------------------------------------------------ the summary itself
 
 

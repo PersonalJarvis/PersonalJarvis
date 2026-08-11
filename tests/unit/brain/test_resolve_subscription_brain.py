@@ -22,14 +22,21 @@ class _FakeRegistry:
         available: list[str],
         accepts_structured: tuple[str, ...] = (),
         fail: tuple[str, ...] = (),
+        native_system: tuple[str, ...] = (),
     ) -> None:
         self._available = list(available)
         self._accepts = set(accepts_structured)
         self._fail = set(fail)
+        self._native = set(native_system)
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     def available(self) -> list[str]:
         return list(self._available)
+
+    def get_class(self, name: str) -> type:
+        return type(
+            "FakeBrain", (), {"native_system_prompt": name in self._native}
+        )
 
     def instantiate(self, name: str, **kwargs: Any) -> Any:
         self.calls.append((name, dict(kwargs)))
@@ -68,6 +75,42 @@ def test_a_provider_that_cannot_take_structured_prompts_is_skipped(monkeypatch) 
     monkeypatch.setattr(resolver, "_subscription_connected", lambda name: True)
 
     assert resolver.resolve_subscription_brain(_cfg()) == "brain:claude-cli"
+
+
+def test_a_native_system_channel_outranks_card_order(monkeypatch) -> None:
+    """Contract fidelity beats card position.
+
+    Live 2026-08-11: antigravity, first by card order, wrote every Agentic IDE
+    pane title as a chat acknowledgement ("Understood! I see …") because its
+    contract is only prepended text — while the signed-in Claude CLI, which
+    takes a real system prompt, was never asked.
+    """
+    registry = _FakeRegistry(
+        available=["antigravity", "claude-cli"],
+        accepts_structured=("antigravity", "claude-cli"),
+        native_system=("claude-cli",),
+    )
+    monkeypatch.setattr(resolver, "_get_registry", lambda: registry)
+    monkeypatch.setattr(resolver, "_subscription_connected", lambda name: True)
+
+    assert resolver.resolve_subscription_brain(_cfg()) == "brain:claude-cli"
+
+
+def test_a_preferred_provider_that_is_not_signed_in_still_falls_through(
+    monkeypatch,
+) -> None:
+    """The preference reorders candidates; the connection probe still gates."""
+    registry = _FakeRegistry(
+        available=["antigravity", "claude-cli"],
+        accepts_structured=("antigravity", "claude-cli"),
+        native_system=("claude-cli",),
+    )
+    monkeypatch.setattr(resolver, "_get_registry", lambda: registry)
+    monkeypatch.setattr(
+        resolver, "_subscription_connected", lambda name: name == "antigravity"
+    )
+
+    assert resolver.resolve_subscription_brain(_cfg()) == "brain:antigravity"
 
 
 def test_disconnected_subscriptions_are_not_offered(monkeypatch) -> None:

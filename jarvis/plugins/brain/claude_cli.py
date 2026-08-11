@@ -126,6 +126,14 @@ class ClaudeCliBrain:
     # Computer-Use screenshot to a brain that cannot serve it (AP-21).
     supports_tools: bool = False
     supports_vision: bool = False
+    # Structured mode hands the caller's contract to ``--system-prompt`` — a
+    # channel the model treats as its instructions, not as user text to react
+    # to. The subscription resolver prefers providers that can say True here:
+    # a sibling that can only PREPEND the contract to the prompt is an
+    # autonomous agent reading orders inside its input, and its observed
+    # failure is an acknowledgement ("Understood! I see …") shipped as the
+    # answer.
+    native_system_prompt: bool = True
 
     def __init__(
         self,
