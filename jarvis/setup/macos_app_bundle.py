@@ -310,7 +310,11 @@ def _try_build_icns(resources_dir: Path) -> str | None:
             iconset = Path(raw_tmp) / "jarvis.iconset"
             iconset.mkdir()
             image = Image.open(source).convert("RGBA")
-            for size in (16, 32, 64, 128, 256, 512):
+            # Apple's iconset grammar allows exactly 16/32/128/256/512 (+@2x);
+            # a 64x64 member is outside it and iconutil rejects the whole
+            # iconset over one bad name, so the app shipped without any icon.
+            # The 64 px slot is already covered by icon_32x32@2x.png.
+            for size in (16, 32, 128, 256, 512):
                 image.resize((size, size)).save(iconset / f"icon_{size}x{size}.png")
                 image.resize((size * 2, size * 2)).save(iconset / f"icon_{size}x{size}@2x.png")
             output = resources_dir / "jarvis.icns"

@@ -513,6 +513,40 @@ def test_launcher_identity_probe_uses_main_bundle(tmp_path: Path, monkeypatch) -
     }
 
 
+def test_icns_iconset_members_use_only_apple_valid_names(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """iconutil accepts exactly icon_{16,32,128,256,512}x*[@2x].png — one
+    out-of-grammar member (icon_64x64.png) makes it reject the whole iconset,
+    so the app silently shipped without an icon."""
+    pytest.importorskip("PIL")
+    import jarvis.setup.macos_app_bundle as mab
+
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    captured: list[str] = []
+
+    def _fake_iconutil(command, **_kwargs):
+        iconset = Path(command[3])
+        captured.extend(sorted(entry.name for entry in iconset.glob("*")))
+        output = Path(command[command.index("-o") + 1])
+        output.write_bytes(b"icns")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(mab.subprocess, "run", _fake_iconutil)
+    resources = tmp_path / "Resources"
+    resources.mkdir()
+
+    assert mab._try_build_icns(resources) == "jarvis"
+
+    valid = {
+        f"icon_{size}x{size}{scale}.png"
+        for size in (16, 32, 128, 256, 512)
+        for scale in ("", "@2x")
+    }
+    assert captured, "no iconset members were generated"
+    assert set(captured) <= valid
+
+
 def test_tcc_reset_needed_only_on_a_real_signature_change() -> None:
     from jarvis.setup.macos_app_bundle import _tcc_reset_needed
 
