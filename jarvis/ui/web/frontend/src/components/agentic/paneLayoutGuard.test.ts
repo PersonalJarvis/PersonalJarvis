@@ -97,6 +97,32 @@ describe("findLayoutViolations", () => {
       canvas,
     );
     expect(report.clipped).toEqual([]);
+    expect(report.underfit).toEqual([]);
+  });
+
+  it("flags a terminal running as a thin strip down a wide pane", () => {
+    // The other direction of the same missed refit: the terminal was once
+    // fitted to a narrow moment, the tile got its room back, and no
+    // ResizeObserver will ever fire again because the tile is not changing.
+    // The agent keeps wrapping at a handful of columns forever (maintainer
+    // report 2026-08-11).
+    const report = findLayoutViolations(
+      [at("T6", 0, 0, 500, 600, { left: 8, top: 40, width: 180, height: 540 })],
+      canvas,
+    );
+    expect(report.underfit).toEqual(["T6"]);
+    expect(hasLayoutViolations(report)).toBe(true);
+    expect(describeLayoutViolations(report)).toContain("far narrower");
+  });
+
+  it("does not call a short pane underfit for its header and notice rows", () => {
+    // Height deficits are legitimate — the header, notice rows and delivery
+    // receipts all sit between the content and the pane's bottom edge.
+    const report = findLayoutViolations(
+      [at("T1", 0, 0, 500, 600, { left: 8, top: 40, width: 484, height: 420 })],
+      canvas,
+    );
+    expect(hasLayoutViolations(report)).toBe(false);
   });
 
   it("names what it found, for the console", () => {

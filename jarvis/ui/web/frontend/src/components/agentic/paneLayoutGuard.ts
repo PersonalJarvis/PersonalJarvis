@@ -11,7 +11,7 @@
  * (maintainer report 2026-08-11: a terminal half-covered by its neighbour
  * while the workspace claimed all was well).
  *
- * So the grid measures what is actually on screen and asks three questions no
+ * So the grid measures what is actually on screen and asks four questions no
  * healthy workspace ever answers yes to:
  *
  * * do two visible panes overlap? Neighbours are a `GRID_GAP_PX` apart by
@@ -21,6 +21,13 @@
  * * is a terminal's rendered content bigger than its pane? That is a missed
  *   refit: the PTY still thinks the pane is wide, and everything past the edge
  *   is cut off.
+ * * is it much SMALLER than its pane? The mirror image of the same missed
+ *   refit: a terminal once fitted to a moment of narrowness that never heard
+ *   about the room it got back. The agent wraps every line at a handful of
+ *   columns and its output runs down the wide tile as a thin strip
+ *   (maintainer report 2026-08-11, second screenshot of the day) — and
+ *   nothing else ever repairs it, because the tile's size is not changing
+ *   any more and so no ResizeObserver will fire again.
  *
  * Pure functions over plain rectangles, so the answer is testable without a
  * browser laying anything out. The grid owns the measuring and the repair.
@@ -62,6 +69,8 @@ export interface LayoutViolations {
   escaped: string[];
   /** Panes whose terminal content is wider or taller than the pane itself. */
   clipped: string[];
+  /** Panes whose terminal content is far narrower than the pane showing it. */
+  underfit: string[];
 }
 
 /**
@@ -84,6 +93,20 @@ const TOLERANCE_PX = 1;
  */
 const CONTENT_TOLERANCE_PX = 3;
 
+/**
+ * How much narrower than its pane a terminal may honestly be.
+ *
+ * A correct fit leaves the remainder under ONE character cell unused (at the
+ * largest text size a cell is ~14 px wide), plus xterm's own scrollbar. Forty
+ * pixels is beyond any of that at every font size the toolbar offers, and far
+ * under the symptom this catches: a terminal stuck at the width of a tile it
+ * stopped occupying whole seams ago, several character cells short of its
+ * pane. Width only — the pane's header, notice rows and delivery receipts all
+ * legitimately stand between the content and the pane's bottom edge, so a
+ * height deficit proves nothing, and the repair refits both axes anyway.
+ */
+const UNDERFIT_TOLERANCE_PX = 40;
+
 function intersects(a: MeasuredPane, b: MeasuredPane): boolean {
   return (
     a.left + TOLERANCE_PX < b.left + b.width &&
@@ -101,6 +124,7 @@ export function findLayoutViolations(
   const overlaps: Array<[string, string]> = [];
   const escaped: string[] = [];
   const clipped: string[] = [];
+  const underfit: string[] = [];
 
   for (let i = 0; i < panes.length; i += 1) {
     const pane = panes[i];
@@ -124,18 +148,19 @@ export function findLayoutViolations(
     }
 
     const content = pane.content;
-    if (
-      content &&
-      content.width > 0 &&
-      content.height > 0 &&
-      (content.left + content.width > pane.left + pane.width + CONTENT_TOLERANCE_PX ||
-        content.top + content.height > pane.top + pane.height + CONTENT_TOLERANCE_PX)
-    ) {
-      clipped.push(pane.name);
+    if (content && content.width > 0 && content.height > 0) {
+      if (
+        content.left + content.width > pane.left + pane.width + CONTENT_TOLERANCE_PX ||
+        content.top + content.height > pane.top + pane.height + CONTENT_TOLERANCE_PX
+      ) {
+        clipped.push(pane.name);
+      } else if (content.width < pane.width - UNDERFIT_TOLERANCE_PX) {
+        underfit.push(pane.name);
+      }
     }
   }
 
-  return { overlaps, escaped, clipped };
+  return { overlaps, escaped, clipped, underfit };
 }
 
 /** Is there anything to repair at all? */
@@ -143,7 +168,8 @@ export function hasLayoutViolations(violations: LayoutViolations): boolean {
   return (
     violations.overlaps.length > 0 ||
     violations.escaped.length > 0 ||
-    violations.clipped.length > 0
+    violations.clipped.length > 0 ||
+    violations.underfit.length > 0
   );
 }
 
@@ -160,6 +186,11 @@ export function describeLayoutViolations(violations: LayoutViolations): string {
   }
   if (violations.clipped.length > 0) {
     parts.push(`terminals bigger than their pane: ${violations.clipped.join(", ")}`);
+  }
+  if (violations.underfit.length > 0) {
+    parts.push(
+      `terminals far narrower than their pane: ${violations.underfit.join(", ")}`,
+    );
   }
   return parts.join("; ");
 }
