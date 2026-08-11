@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <b>An open-source AI ecosystem in one app: a voice agent that operates your computer, system-wide dictation, a fleet of coding agents, plugins that connect Gmail, Calendar, Drive and more, real outbound phone calls, and a shared memory across it all — able to run entirely on your own hardware.</b>
+  <b>An open-source AI ecosystem in one app: a voice agent that operates your computer, system-wide dictation, a fleet of coding agents, a store of skills and plugins that connects almost anything over the MCP standard, real outbound phone calls, and a shared memory across it all. It can run entirely on your own hardware.</b>
 </p>
 
 ---
@@ -382,9 +382,9 @@ pipeline when it is unavailable.
 
 ### Wallpaper gallery
 
-501 wallpapers across 21 art styles &mdash; oil painting, pixel art, synthwave, woodblock
-and more &mdash; each tagged light or dark so the app can match the wallpaper to your
-theme. Filter the grid, preview fullscreen, mark favorites, or add your own image.
+501 wallpapers across 21 art styles, from oil painting and pixel art to synthwave and
+woodblock, each tagged light or dark so the app can match the wallpaper to your theme.
+Filter the grid, preview fullscreen, mark favorites, or add your own image.
 
 <p align="center">
   <img src="https://github.com/PersonalJarvis/PersonalJarvis/releases/download/v1.3.1/readme-demo-wallpapers.gif" alt="Scrolling the wallpaper gallery and opening a fullscreen preview" width="860" />
