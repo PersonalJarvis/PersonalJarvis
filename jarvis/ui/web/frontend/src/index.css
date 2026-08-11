@@ -883,6 +883,10 @@
     :where(div, section, article, li, label, button):where(
       [class~="bg-primary/5"],
       [class~="bg-primary/10"],
+      [class~="bg-primary/15"],
+      [class~="bg-primary/20"],
+      [class~="bg-primary/25"],
+      [class~="bg-primary/30"],
       [class~="bg-primary/[0.04]"],
       [class~="bg-primary/[0.05]"],
       [class~="bg-primary/[0.06]"],
@@ -920,6 +924,30 @@
   .jarvis-section-stage
     :where([class~="bg-primary/10"]) {
     --surface-tint-color: hsl(var(--primary) / 0.1);
+  }
+
+  /* The active-state washes (segment pills, "Coding mode" badge, selected
+     rows). Without the card glass underneath, a 15-25% gold wash over
+     artwork is no ground at all — the reported "active filter is
+     invisible" symptom. */
+  .jarvis-section-stage
+    :where([class~="bg-primary/15"]) {
+    --surface-tint-color: hsl(var(--primary) / 0.15);
+  }
+
+  .jarvis-section-stage
+    :where([class~="bg-primary/20"]) {
+    --surface-tint-color: hsl(var(--primary) / 0.2);
+  }
+
+  .jarvis-section-stage
+    :where([class~="bg-primary/25"]) {
+    --surface-tint-color: hsl(var(--primary) / 0.25);
+  }
+
+  .jarvis-section-stage
+    :where([class~="bg-primary/30"]) {
+    --surface-tint-color: hsl(var(--primary) / 0.3);
   }
 
   .jarvis-section-stage
@@ -978,6 +1006,10 @@
       [class~="from-sheen/[0.055]"][class~="to-sheen/[0.015]"],
       [class~="bg-primary/5"],
       [class~="bg-primary/10"],
+      [class~="bg-primary/15"],
+      [class~="bg-primary/20"],
+      [class~="bg-primary/25"],
+      [class~="bg-primary/30"],
       [class~="bg-primary/[0.04]"],
       [class~="bg-primary/[0.05]"],
       [class~="bg-primary/[0.06]"],
@@ -1017,6 +1049,64 @@
       [class~="text-muted-foreground/80"]
     ) {
     color: hsl(var(--muted-foreground) / 0.9);
+  }
+
+  /* Same defect, different token: views also quiet rows with alpha variants
+     of the FULL ink (text-foreground/70..85 — e.g. the IDE chat rail's
+     session titles on /75) and of the accent (text-primary/60..85). Over
+     artwork the missing alpha is exactly the missing legibility, so inside
+     the light floors they converge on near-full ink; hierarchy keeps
+     reading through size and weight. */
+  :root:not(.dark)
+    :where(
+      .jarvis-section-stage,
+      .jarvis-nav-surface,
+      .jarvis-shell-surface
+    )
+    :where(
+      [class~="text-foreground/60"],
+      [class~="text-foreground/70"],
+      [class~="text-foreground/75"],
+      [class~="text-foreground/80"],
+      [class~="text-foreground/85"]
+    ) {
+    color: hsl(var(--foreground) / 0.95);
+  }
+
+  :root:not(.dark)
+    :where(
+      .jarvis-section-stage,
+      .jarvis-nav-surface,
+      .jarvis-shell-surface
+    )
+    :where(
+      [class~="text-primary/60"],
+      [class~="text-primary/70"],
+      [class~="text-primary/80"],
+      [class~="text-primary/85"]
+    ) {
+    color: hsl(var(--primary));
+  }
+
+  /* The gold active pills that live in the CHROME (e.g. the "Coding mode"
+     badge in the top bar) sit outside the section stage, so the stage's
+     card-glass-under-tint rule cannot reach them. Same treatment, scoped to
+     light: the pill gets a real ivory chip under its gold wash instead of
+     15-25% gold over raw artwork. */
+  :root:not(.dark)
+    :where(.jarvis-nav-surface, .jarvis-shell-surface)
+    :where(button, a, span, div):where(
+      [class~="bg-primary/10"],
+      [class~="bg-primary/15"],
+      [class~="bg-primary/20"],
+      [class~="bg-primary/25"],
+      [class~="bg-primary/30"]
+    ) {
+    background-color: rgb(var(--shell-rgb) / 0.85);
+    background-image: linear-gradient(
+      hsl(var(--primary) / 0.16),
+      hsl(var(--primary) / 0.16)
+    );
   }
 
   :root:not(.dark) .jarvis-section-stage .card-outline,
