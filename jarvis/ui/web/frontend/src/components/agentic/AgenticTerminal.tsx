@@ -229,6 +229,25 @@ export const REBUILD_SETTLE_MAX_MS = 450;
 export const RESIZE_PARSE_WAIT_MS = 250;
 
 /**
+ * How often a pane may refit while its boundary is still being dragged.
+ *
+ * The middle ground between two rejected extremes. Refitting on every observer
+ * tick (up to 120/s) was the original slideshow: every fit reflows xterm's
+ * buffer and makes the agent repaint its whole screen, on the thread that owes
+ * the drag its next frame. Refitting never — holding everything for one pass
+ * at release — kept the drag fast but froze the text mid-gesture, and the
+ * release then re-wrapped it in one visible, hard snap (maintainer,
+ * 2026-08-11: the text does not move smoothly with the drag).
+ *
+ * At this pace the text follows the seam in a few honest steps — an agent
+ * repaint costs tens of milliseconds, so about five per second is work it can
+ * absorb without stuttering — while the pointer keeps every frame in between.
+ * The exact final size still lands through the `layoutBusy` release effect,
+ * so letting go looks the same as before, just from much closer by.
+ */
+export const DRAG_REFIT_MS = 200;
+
+/**
  * How long a call-sign may be — the same cap the backend enforces
  * (`MAX_TERMINAL_NAME`), so the field stops where the save would have failed
  * rather than letting somebody type a name that comes back rejected.
@@ -436,13 +455,15 @@ interface AgenticTerminalProps {
   /**
    * True while the workspace's geometry is actively being dragged.
    *
-   * The pane then stops refitting itself: a fit reflows xterm's buffer AND
-   * tells the agent its new size, and an agent answers that by redrawing its
-   * whole screen. Sixty of those a second, across every pane a seam touches, is
-   * what turned dragging a boundary into a slideshow — and every one of them is
-   * discarded by the next pixel of movement. The size is taken in a single pass
-   * the moment this goes false, which is also what stops the terminal's
-   * contents from trailing the frame around them for longer than they must.
+   * The pane then refits itself on a leash instead of freely: a fit reflows
+   * xterm's buffer AND tells the agent its new size, and an agent answers that
+   * by redrawing its whole screen. Sixty of those a second, across every pane
+   * a seam touches, is what turned dragging a boundary into a slideshow — so
+   * mid-drag the pane takes at most one fit per DRAG_REFIT_MS, enough for the
+   * text to follow the seam in steps instead of freezing until release. The
+   * exact final size is still taken in a single pass the moment this goes
+   * false, which is what stops the terminal's contents from trailing the frame
+   * around them for longer than they must.
    */
   layoutBusy?: boolean;
   /**
@@ -1547,17 +1568,30 @@ export function AgenticTerminal({
     // sends a PTY resize the agent redraws for. Unthrottled that is the visible
     // flicker while resizing.
     let resizeTimer: number | undefined;
+    /** The pending mid-drag refit — a throttle, so it must NOT be reset per tick. */
+    let dragRefitTimer: number | undefined;
     // The queued form of `sendResize`, kept as ONE stable function so the queue
     // can recognise this pane's pending reflow — both to skip a duplicate and
     // to drop it when the pane goes away. See ./paneReflowQueue for why panes
     // must not reflow in the same frame as each other.
     const reflow = () => sendResize();
     const scheduleResize = () => {
-      // Nothing at all while a seam or the prompt bar is being dragged: the
-      // pane is mid-gesture, every size it could measure is about to be
-      // replaced, and the fit would cost the frame the drag needs. The pane is
-      // refitted from the `layoutBusy` effect the moment the drag ends.
-      if (layoutBusyRef.current) return;
+      // While a seam or the prompt bar is being dragged the pane still
+      // follows, but on a leash: at most one refit per DRAG_REFIT_MS, so the
+      // text flows toward the seam in steps instead of freezing until release.
+      // A throttle rather than the debounce below on purpose — the observer
+      // fires continuously for as long as the seam moves, and a debounce would
+      // wait for a pause that a moving pointer never offers.
+      if (layoutBusyRef.current) {
+        if (dragRefitTimer !== undefined) return;
+        dragRefitTimer = window.setTimeout(() => {
+          dragRefitTimer = undefined;
+          // A drag that ended while this window was pending has already taken
+          // its exact final size through the `layoutBusy` release effect.
+          if (layoutBusyRef.current) queuePaneReflow(reflow);
+        }, DRAG_REFIT_MS);
+        return;
+      }
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(() => {
         resizeTimer = undefined;
@@ -1657,6 +1691,7 @@ export function AgenticTerminal({
       clearDeferredResize();
       resumeResize = null;
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
+      if (dragRefitTimer !== undefined) window.clearTimeout(dragRefitTimer);
       // A queued reflow outlives the pane by up to a frame, and would then fit
       // a disposed terminal inside a detached element.
       cancelPaneReflow(reflow);

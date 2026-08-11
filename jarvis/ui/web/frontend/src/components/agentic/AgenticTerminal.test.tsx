@@ -186,6 +186,7 @@ vi.mock("@/lib/agenticIdeApi", () => ({ attachToTerminal: vi.fn() }));
 
 import {
   AgenticTerminal,
+  DRAG_REFIT_MS,
   REBUILD_QUIET_MS,
   RESIZE_PARSE_WAIT_MS,
 } from "./AgenticTerminal";
@@ -1179,6 +1180,38 @@ describe("pane refit", () => {
     vi.restoreAllMocks();
     Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
     Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
+  });
+
+  it("follows a drag in throttled steps instead of freezing until release", () => {
+    // The reported jank (2026-08-11): while a seam moved, the text froze and
+    // the release re-wrapped it in one hard snap. Mid-drag the pane now takes
+    // at most one fit per DRAG_REFIT_MS — the burst of observer ticks below
+    // collapses to a single refit, taken while the drag is still going.
+    const view = render(pane(false, { layoutBusy: true }));
+    settle();
+    terminalHarness.fit.mockClear();
+
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+      vi.advanceTimersByTime(50);
+      window.dispatchEvent(new Event("resize"));
+      vi.advanceTimersByTime(50);
+      window.dispatchEvent(new Event("resize"));
+    });
+    // The throttle window is still open — nothing has refitted yet.
+    expect(terminalHarness.fit).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(DRAG_REFIT_MS + 40);
+    });
+    // One fit for the whole burst, not one per tick.
+    expect(terminalHarness.fit).toHaveBeenCalledTimes(1);
+
+    // Letting go still lands the exact final size in its own immediate pass.
+    terminalHarness.fit.mockClear();
+    view.rerender(pane(false, { layoutBusy: false }));
+    settle();
+    expect(terminalHarness.fit).toHaveBeenCalled();
   });
 
   it("re-measures itself when the pane is maximized", () => {
