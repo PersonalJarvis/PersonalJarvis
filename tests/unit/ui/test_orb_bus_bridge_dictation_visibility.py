@@ -375,19 +375,49 @@ async def test_a_refusal_never_claims_the_microphone_is_recording() -> None:
 
 
 async def test_a_refusal_clears_a_stale_dictation_lane() -> None:
-    """Nothing is recording after a refusal, so no timer may outlive it."""
+    """Nothing is recording after a refusal, so no timer may outlive it.
+
+    The reason matters: this holds for every refusal that means the session
+    never opened. ``already_running`` is the one that does NOT — it is raised
+    while a dictation is happily recording — and it is pinned separately by
+    ``test_already_running_leaves_the_running_lane_alone`` below.
+    """
     surface = _Surface(persistent=False)
     bridge = _bridge(surface, persistent=False)
     await bridge._on_dictation_started(DictationStarted(target="insert"))
     assert bridge._dictation_failsafe_task is not None
 
     await bridge._on_dictation_refused(
-        DictationRefused(reason="already_running", detail="Already recording.")
+        DictationRefused(reason="no_stt", detail="No provider is configured.")
     )
 
     assert bridge._dictation_active is False
     assert bridge._dictation_transcribing is False
     assert bridge._dictation_failsafe_task is None
+    await _quiesce(bridge)
+
+
+async def test_already_running_leaves_the_running_lane_alone() -> None:
+    """"A dictation is already recording" is a report of SUCCESS.
+
+    Clearing the lane on it dropped the failsafe and ``_dictation_active``, so
+    the running turn's ``DictationCompleted`` was swallowed by its own guard and
+    the refusal look stayed up over a dictation that pasted perfectly — the
+    Windows report of 2026-08-09, where the polling hotkey backend re-reports a
+    held chord and one edge lands next to the release.
+    """
+    surface = _Surface(persistent=False)
+    bridge = _bridge(surface, persistent=False)
+    await bridge._on_dictation_started(DictationStarted(target="insert"))
+    failsafe = bridge._dictation_failsafe_task
+
+    await bridge._on_dictation_refused(
+        DictationRefused(reason="already_running", detail="Already recording.")
+    )
+
+    assert bridge._dictation_active is True
+    assert bridge._dictation_failsafe_task is failsafe
+    assert surface.mode == "dictate"
     await _quiesce(bridge)
 
 
@@ -397,7 +427,7 @@ async def test_a_real_dictation_started_inside_the_dwell_keeps_the_surface() -> 
     surface = _Surface(persistent=False)
     bridge = _bridge(surface, persistent=False)
     await bridge._on_dictation_refused(
-        DictationRefused(reason="already_running", detail="Already recording.")
+        DictationRefused(reason="no_stt", detail="No provider is configured.")
     )
     await bridge._on_dictation_started(DictationStarted(target="insert"))
     surface.frames.clear()

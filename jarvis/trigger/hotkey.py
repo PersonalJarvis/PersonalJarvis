@@ -56,6 +56,7 @@ from typing import Any
 # the test-isolation hooks remain reachable at this module path. None of these
 # import ``global_hotkeys`` at module scope — that import is lazy inside the
 # backend's ``register`` (HN-7).
+from jarvis.platform.self_input import synthetic_input_recent
 from jarvis.trigger.backends import HotkeyBackend, make_hotkey_backend
 from jarvis.trigger.backends import global_hotkeys as _gh_backend
 from jarvis.trigger.backends.global_hotkeys import (
@@ -81,6 +82,34 @@ def __getattr__(name: str):
         return getattr(_gh_backend, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
+# Shortcut events that Jarvis's OWN synthetic keystrokes must not fire.
+#
+# A listener cannot tell a posted keystroke from a pressed one, so every combo
+# is armed against our own actuation. On macOS that is not a corner case: the
+# platform paste chord is ``cmd+v`` and the offered hold-to-dictate key is a
+# bare ``cmd``, so every dictation ended by pasting its own transcript and
+# tripping its own shortcut (live log 2026-08-09; the lane was still finishing,
+# refused the phantom press as ``already_running``, and the Jarvis Bar wore the
+# failure mark over a dictation that had pasted perfectly). During a
+# Computer-Use mission the same press is worse than cosmetic: nothing is
+# running to refuse it, so it STARTS a recording and takes the microphone.
+#
+# A DENY list, deliberately, not an allow list: everything unnamed keeps
+# firing. These are exactly the edges that START something and cost nothing to
+# miss for a quarter second. Every STOP gesture — ``kill`` (the kill switch),
+# ``cu_cancel``, ``hangup`` — and every ``*_release`` edge is absent on
+# purpose, because a suppressed release strands the latch it was meant to
+# clear, and a suppressed kill switch is indefensible at any window length.
+SELF_INPUT_SUPPRESSED_EVENTS: frozenset[str] = frozenset(
+    {
+        "ptt_press",
+        "dictate_press",
+        "dictate",          # legacy [dictation].mode = "toggle"
+        "dictate_toggle",
+        "paste_last",
+    }
+)
 
 # Tokens that are modifiers, not "real" keys. A hotkey made of ONLY modifiers
 # is not a usable trigger; a usable combo needs at least one real key.
@@ -488,6 +517,12 @@ class HotkeyTrigger:
 
     def _make_handler(self, event_name: str):
         def _on_press() -> None:
+            if event_name in SELF_INPUT_SUPPRESSED_EVENTS and synthetic_input_recent():
+                log.debug(
+                    "Hotkey %r ignored: Jarvis is synthesizing input right now.",
+                    event_name,
+                )
+                return
             if self._loop and not self._loop.is_closed():
                 self._loop.call_soon_threadsafe(self._push_nowait, event_name)
         return _on_press
@@ -658,6 +693,7 @@ class HotkeyTrigger:
 
 __all__ = [
     "MOUSE_BUTTON_TOKENS",
+    "SELF_INPUT_SUPPRESSED_EVENTS",
     "HotkeyTrigger",
     "HotkeyVerdict",
     "combos_collide",

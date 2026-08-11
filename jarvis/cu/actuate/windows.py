@@ -509,9 +509,14 @@ class WindowsActuator(Actuator):
 
     def key_combo(self, keys: list[str]) -> None:
         expanded = expand_combo_keys([str(k) for k in keys])
-        # A Jarvis-typed Esc must not trip the Escape-to-cancel listener
-        # (jarvis.cu.indicator) — stamp BEFORE the OS sees the keystroke.
+        # Two self-input stamps, two questions. A Jarvis-typed Esc must not
+        # trip the Escape-to-cancel listener (jarvis.cu.indicator), and a
+        # Jarvis-typed chord must not fire Jarvis's OWN global shortcuts
+        # (jarvis.platform.self_input) — ``ctrl`` as the dictation key sits
+        # right next to the ``ctrl+v`` paste. Both stamp BEFORE the OS sees the
+        # keystroke.
         from jarvis.cu.indicator.self_input import stamp_if_escape  # noqa: PLC0415
+        from jarvis.platform.self_input import synthetic_input  # noqa: PLC0415
 
         stamp_if_escape(expanded)
         vk_codes: list[int] = []
@@ -532,11 +537,13 @@ class WindowsActuator(Actuator):
         # emitted order is unchanged: modifiers first, released last.
         downs = [self._key_input(vk, 0, flags(vk, keyup=False)) for vk in vk_codes]
         ups = [self._key_input(vk, 0, flags(vk, keyup=True)) for vk in vk_codes]
-        with input_space():
+        with input_space(), synthetic_input():
             self._send_press_release(downs, ups)
 
     def type_text(self, text: str, *, delay_s: float = 0.02) -> None:
-        with input_space():
+        from jarvis.platform.self_input import synthetic_input  # noqa: PLC0415
+
+        with input_space(), synthetic_input():
             pending_cr = False
             for char in text:
                 # A CRLF pair is ONE line break, not two Enter presses.
