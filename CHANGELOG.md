@@ -11,6 +11,67 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [1.3.1] — 2026-08-11
+
+This release teaches Jarvis to draw. Ask for a picture in plain conversation
+("draw me a flowchart of this") and it renders one on the spot, files it in
+the Outputs gallery, and opens the new view that shows it. Runs themselves
+now appear as node graphs whose edges trace where the run actually went.
+The rest is a broad polish pass: self-repairing terminal panes, wallpapers
+you bring yourself, a memory that finds short names again, and a stack of
+macOS fixes.
+
+### Added
+
+- On-demand pictures. Ask for a drawing and Jarvis renders the thing under
+  discussion as a flow, hierarchy, comparison, timeline, or bar chart. The
+  model supplies only labels; the app draws the markup itself, so nothing
+  model-written is ever served as HTML. The tool is offered only on turns
+  that actually ask for a picture.
+- A Visualization section. Every run is drawn as an n8n-style node graph,
+  a live run's timeline follows the mission while it works, and a run's
+  gallery page leads with its mission map.
+- Wallpapers, properly: bring your own picture, mark favourites, and give
+  dark and light mode each their own wallpaper. The mode toggle swaps them.
+- Your own coding CLIs in the Agentic IDE: register and edit extra terminal
+  CLIs right from the terminal step, with documentation on how.
+
+### Changed
+
+- The API-keys view answers "am I done here?" at a glance: a saved key says
+  "Key saved" next to a green check, and the get-your-key link names the
+  site it points to.
+- A fleet spawn that repeats an instruction already running on open panes is
+  refused, and the refusal names who is already on it.
+- The Command Deck no longer announces finished agents out loud. The bell
+  and the on-screen report lane stay.
+- Outputs show the user's real request instead of the internal quality
+  directive, and light mode got a readability pass with minimum-contrast
+  floors in agent terminals and over bright wallpapers.
+
+### Fixed
+
+- Agentic IDE panes behave: overlapping panes detect and repair themselves,
+  a pane too narrow for its agent says so, a clamped pane scrolls instead of
+  clipping, and nothing changes shape under the pointer or during a
+  half-drawn screen.
+- The wiki memory finds short names again. "Joy", "Uwe", or "BMW" fell
+  below the old keyword floor and were unsearchable; new pages also get
+  their multilingual search aliases the moment they are written.
+- macOS: terminal panes spawn as login shells, the first Terminal launch
+  survives the Automation consent dialog, audio ducking honors never_mute
+  and recovers from failed restores, and split UTF-8 characters in terminal
+  output no longer garble.
+- The managed local realtime server recovers from failures it previously
+  could not see, reports honest boot progress, and delivers crash forensics
+  with a crash-loop verdict instead of a silent retry.
+- A wake call stands alone: speech leading into the wake word is hard-gated
+  away from the command that follows (BUG-127).
+- Three Win32 defects in the window-focus watcher, and Linux autostart
+  entries are now spec-escaped.
+
+---
+
 ## [1.3.0] — 2026-08-10
 
 This release makes fully-local voice a plug-and-go experience: the app now
