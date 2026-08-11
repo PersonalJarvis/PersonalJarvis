@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <b>An open-source AI ecosystem in one app: a voice agent that operates your computer, system-wide dictation, a fleet of coding agents, and a shared memory across it all — able to run entirely on your own hardware.</b>
+  <b>An open-source AI ecosystem in one app: a voice agent that operates your computer, system-wide dictation, a fleet of coding agents, plugins that connect Gmail, Calendar, Drive and more, real outbound phone calls, and a shared memory across it all — able to run entirely on your own hardware.</b>
 </p>
 
 ---
