@@ -14,12 +14,11 @@
   <img alt="Platforms: Linux, macOS, Windows" src="https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-242424?style=for-the-badge&labelColor=242424&color=242424" />
 </p>
 
-<p align="center">
-  <b>Your personal AI ecosystem, controlled entirely by voice.</b>
-</p>
+<h2 align="center">Your personal AI ecosystem, controlled entirely by voice.</h2>
 
 <p align="center">
-  <sub>It drives coding agents, runs shell commands, operates your computer, connects anything that speaks MCP, dictates into any app, and remembers everything. Open source, and it can run fully on your own hardware.</sub>
+  It drives coding agents, runs shell commands, operates your computer, connects anything that speaks MCP, dictates into any app, and remembers everything.<br>
+  Open source, and it can run fully on your own hardware.
 </p>
 
 ---
