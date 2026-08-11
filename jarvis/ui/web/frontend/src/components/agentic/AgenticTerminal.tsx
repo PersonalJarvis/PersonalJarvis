@@ -2149,8 +2149,6 @@ export function AgenticTerminal({
             displayName={displayName}
             cols={paneCols}
             light={appearance === "light"}
-            maximized={maximized}
-            onToggleMaximize={onToggleMaximize}
             onDismiss={() => setWidthNoticeDismissed(true)}
           />
         )}
@@ -2941,12 +2939,12 @@ function PaneStatusNotice({
  * terminal wrong — which is what it was reported as (2026-08-11), twice, by
  * someone reading a workspace that was doing precisely what it was told.
  *
- * So the pane answers the question the screen raises. It states its own width
- * against the number the agent needs, and offers the one gesture that fixes it
- * without changing anything the user chose: fill the workspace with this pane.
- * The other two ways out — a smaller text size, fewer panes across — belong to
- * controls the toolbar already carries, and a notice that listed every option
- * would be a paragraph in a row that is eleven pixels tall.
+ * So the pane answers the question the screen raises: it states its own width
+ * against the number the agent needs, and nothing more. Every way out —
+ * maximizing the pane, a smaller text size, fewer panes across — belongs to
+ * controls the header and toolbar already carry. The notice once offered a
+ * "Widen" button of its own; the maintainer removed it (2026-08-11), so this
+ * row informs and never acts.
  *
  * Deliberately NOT an error tone. Nothing has failed, and nothing needs
  * restarting; the workspace is simply asking more of the window than it has.
@@ -2956,16 +2954,12 @@ function PaneWidthNotice({
   displayName,
   cols,
   light,
-  maximized,
-  onToggleMaximize,
   onDismiss,
 }: {
   name: string;
   displayName: string;
   cols: number | null;
   light: boolean;
-  maximized: boolean;
-  onToggleMaximize?: () => void;
   onDismiss: () => void;
 }) {
   // Nothing measured yet, or a tile that gives its agent room to work.
@@ -2990,34 +2984,6 @@ function PaneWidthNotice({
       <span className="min-w-0 flex-1 truncate" title={message}>
         {message}
       </span>
-      {/*
-        Offered only when it would change something. A pane already filling the
-        workspace and still short of the width its agent wants is a small
-        window, not a layout the user can press their way out of — and a button
-        that does nothing is worse than no button.
-      */}
-      {onToggleMaximize && !maximized && (
-        <button
-          type="button"
-          aria-label={`Fill the workspace with ${name}`}
-          title={`Give ${name} the whole workspace`}
-          data-testid={`pane-width-maximize-${name}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleMaximize();
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-          className={cn(
-            "flex shrink-0 items-center gap-1 rounded bg-primary/20 px-2 py-0.5",
-            "text-[11px] font-medium text-primary",
-            "transition-colors duration-150 hover:bg-primary/30",
-            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/70",
-          )}
-        >
-          <Maximize2 className="h-3 w-3" aria-hidden="true" />
-          Widen
-        </button>
-      )}
       {/*
         Retire it. A crowded workspace shows this on every pane at once, and
         the trade may well be one the user made on purpose — a warning they

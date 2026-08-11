@@ -1628,30 +1628,9 @@ describe("pane refit while the agent is drawing", () => {
     const notice = screen.getByTestId("pane-width-notice-Dana");
     expect(notice.dataset.cols).toBe("22");
     expect(notice.textContent).toContain("22 columns");
-    // The one gesture that fixes it without overriding anything the user chose.
-    expect(screen.getByTestId("pane-width-maximize-Dana")).toBeTruthy();
-  });
-
-  it("offers no way out that a press would not take", () => {
-    // A pane already filling the workspace and still short of the width its
-    // agent wants is a small window, not a layout anyone can press their way
-    // out of — and a button that does nothing is worse than no button.
-    terminalHarness.size = { cols: 22, rows: 30 };
-    render(
-      <AgenticTerminal
-        name="Dana"
-        displayName="Claude Code"
-        appearance="dark"
-        fontSize={13}
-        maximized
-        onToggleMaximize={() => undefined}
-      />,
-    );
-    act(() => {
-      vi.advanceTimersByTime(600);
-    });
-
-    expect(screen.getByTestId("pane-width-notice-Dana")).toBeTruthy();
+    // The notice informs, it never acts: the "Widen" button it once carried
+    // was removed by the maintainer (2026-08-11). Ways out live in the header
+    // and toolbar the pane already has.
     expect(screen.queryByTestId("pane-width-maximize-Dana")).toBeNull();
   });
 
