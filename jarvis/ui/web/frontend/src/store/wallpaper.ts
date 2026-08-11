@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import type { Theme } from "@/hooks/useTheme";
+import { cachedTheme, type Theme } from "@/hooks/useTheme";
 
 /**
  * Which desktop wallpaper the app is wearing — one choice PER THEME.
@@ -27,9 +27,39 @@ const THEME_KEYS: Record<Theme, string> = {
   dark: "jarvis.wallpaper.dark.v1",
 };
 
-/** The pre-per-theme slot. Kept readable as the fallback for a mode that has
- *  no pick of its own yet, so an existing profile keeps its picture. */
+/** The single pre-per-theme slot. Migrated on load, never read live. */
 const LEGACY_KEY = "jarvis.wallpaper.v1";
+
+/**
+ * One-time move of the pre-per-theme pick into a per-theme slot.
+ *
+ * The old slot used to be read as a live fallback for BOTH modes, and that is
+ * how a night scene ended up behind light chrome: whichever mode had no pick
+ * of its own inherited the other mode's picture, forever. A wallpaper belongs
+ * to exactly one mode, so the fallback is gone and the stored pick is filed
+ * once, under the mode it was authored for.
+ *
+ * The single-slot world switched the interface into every adopted picture's
+ * mode and persisted that switch, so the cached theme at the moment this first
+ * runs is the best witness for which mode the old pick belongs to. Worst case
+ * it is filed under the wrong one and the next pick overwrites it — a one-time
+ * cost, where the live fallback was a standing one.
+ */
+function migrateLegacySelection(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const legacy = window.localStorage.getItem(LEGACY_KEY);
+    if (legacy && legacy.trim()) {
+      const slot = THEME_KEYS[cachedTheme()];
+      if (!window.localStorage.getItem(slot)) {
+        window.localStorage.setItem(slot, legacy);
+      }
+    }
+    window.localStorage.removeItem(LEGACY_KEY);
+  } catch {
+    /* storage blocked — then there is no stored pick to migrate either */
+  }
+}
 
 /**
  * The shortlist of wallpapers worth coming back to.
@@ -76,9 +106,7 @@ export function wallpaperThumbUrl(id: string): string {
 function readStoredId(theme: Theme): string | null {
   try {
     const own = window.localStorage.getItem(THEME_KEYS[theme]);
-    if (own && own.trim()) return own;
-    const legacy = window.localStorage.getItem(LEGACY_KEY);
-    return legacy && legacy.trim() ? legacy : null;
+    return own && own.trim() ? own : null;
   } catch {
     // Private mode, or storage disabled by policy — the default is a fine
     // answer, and a wallpaper is not worth failing a mount over.
@@ -88,6 +116,7 @@ function readStoredId(theme: Theme): string | null {
 
 function readSelections(): Record<Theme, string | null> {
   if (typeof window === "undefined") return { light: null, dark: null };
+  migrateLegacySelection();
   return { light: readStoredId("light"), dark: readStoredId("dark") };
 }
 
@@ -140,10 +169,6 @@ export const useWallpaperStore = create<WallpaperStore>((set, get) => ({
     try {
       if (id) window.localStorage.setItem(THEME_KEYS[theme], id);
       else window.localStorage.removeItem(THEME_KEYS[theme]);
-      // The legacy slot must not outvote an explicit "back to default": it is
-      // only a fallback for modes that never chose, so an empty per-theme pick
-      // needs the legacy value gone or it would resurrect the old picture.
-      if (!id) window.localStorage.removeItem(LEGACY_KEY);
     } catch {
       /* the choice still applies to this window, it just will not survive */
     }

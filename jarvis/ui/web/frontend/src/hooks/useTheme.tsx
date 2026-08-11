@@ -52,6 +52,18 @@ export function resolveTheme(preference: ThemePreference): Theme {
 }
 
 /**
+ * The theme the app is about to paint, answered synchronously from the cache.
+ *
+ * For code that needs the answer at module-init time, before the provider (or
+ * even React) exists — e.g. the wallpaper store filing a stored pick under the
+ * mode it belongs to. Reads the same cache the boot script uses, so the three
+ * readers of `jarvis.theme` cannot disagree about what the first frame wears.
+ */
+export function cachedTheme(): Theme {
+  return resolveTheme(readCachedPreference());
+}
+
+/**
  * The cached preference, read synchronously.
  *
  * The authoritative value lives in `[ui] theme` on the backend, but it arrives
