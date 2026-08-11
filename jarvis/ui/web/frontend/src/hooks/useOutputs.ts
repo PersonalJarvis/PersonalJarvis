@@ -18,13 +18,15 @@ export interface PlanStep {
   step_id: string;
   name: string;
   status: PlanStepStatus;
-  output?: string;
+  output?: string | null;
   error?: string | null;
   duration_s?: number;
   attempts?: number;
   tool_name?: string | null;
   depends_on?: string[];
   parallel_ok?: boolean;
+  /** File paths this step wrote (write-tool calls with a confirmed target). */
+  writes?: string[];
 }
 
 export interface PlanSummary {
@@ -37,6 +39,12 @@ export interface PlanSummary {
 export interface PlanResponse {
   plan: PlanSummary | null;
   steps: PlanStep[];
+  /** The worker's terminal reply, when the archived stream recorded one. */
+  final_answer?: string | null;
+  /** True when the stream was larger than the backend's bounded read. */
+  truncated?: boolean;
+  /** Steps beyond the backend's cap — stated so the timeline reads honest. */
+  dropped_steps?: number;
 }
 
 /** Must stay in parity with `OUTPUT_STATUSES` in `outputs_routes.py`. */
