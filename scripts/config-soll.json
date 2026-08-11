@@ -56,8 +56,8 @@
     "deep_model": "claude-opus-4-8"
   },
   "brain.worker": {
-    "provider": "claude-api",
-    "model": "gemini-3.1-pro-preview",
+    "provider": "antigravity",
+    "model": "gemini-3.5-flash",
     "fallback_provider": "gemini",
     "fallback_model": "gemini-3.1-pro-preview",
     "fallback_provider_2": "gemini",
@@ -113,7 +113,7 @@
     "provider": "grok"
   },
   "brain.computer_use": {
-    "provider": "grok"
+    "provider": "gemini"
   },
   "brain.providers.grok-realtime": {
     "voice": "lux"
