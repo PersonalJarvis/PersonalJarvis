@@ -13,6 +13,8 @@ on:
       - ".githooks/pre-push"
       - "install/**"
       - "jarvis/admin/**"
+      - "jarvis/audio/**"
+      - "jarvis/autostart/**"
       - "jarvis/cu/**"
       - "jarvis/platform/**"
       - "jarvis/setup/**"
