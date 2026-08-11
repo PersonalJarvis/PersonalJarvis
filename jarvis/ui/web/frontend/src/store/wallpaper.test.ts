@@ -44,3 +44,67 @@ describe("legacy single-slot migration", () => {
     expect(window.localStorage.getItem("jarvis.wallpaper.v1")).toBeNull();
   });
 });
+
+/**
+ * The catalog-backed correction pass.
+ *
+ * The boot migration can only guess a mode from the theme cache; `reconcile`
+ * is handed the real answer per picture and moves anything the guess misfiled.
+ */
+describe("reconcile", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    useWallpaperStore.setState({ selections: { light: null, dark: null } });
+  });
+
+  const themes: Record<string, "light" | "dark"> = {
+    "05-noir-03": "dark",
+    "07-terrace-01": "light",
+  };
+  const themeOf = (id: string) => themes[id] ?? null;
+
+  it("moves a dark picture out of the light slot and into its own", () => {
+    window.localStorage.setItem("jarvis.wallpaper.light.v1", "05-noir-03");
+
+    useWallpaperStore.getState().reconcile(themeOf);
+
+    const { selections } = useWallpaperStore.getState();
+    expect(selections.light).toBeNull();
+    expect(selections.dark).toBe("05-noir-03");
+  });
+
+  it("drops a misfiled pick when its own mode has already chosen", () => {
+    window.localStorage.setItem("jarvis.wallpaper.light.v1", "05-noir-03");
+    window.localStorage.setItem("jarvis.wallpaper.dark.v1", "already-dark");
+
+    useWallpaperStore.getState().reconcile(themeOf);
+
+    const { selections } = useWallpaperStore.getState();
+    // A mode showing its default is right; one wearing the other mode's
+    // picture is the bug — so the misfiled pick goes, not the chosen one.
+    expect(selections.light).toBeNull();
+    expect(selections.dark).toBe("already-dark");
+  });
+
+  it("leaves ids the catalog cannot answer for exactly where they are", () => {
+    window.localStorage.setItem("jarvis.wallpaper.light.v1", "u0123456789abcdef");
+
+    useWallpaperStore.getState().reconcile(themeOf);
+
+    // An upload still loading must not be thrown away for being unknown.
+    expect(useWallpaperStore.getState().selections.light).toBe(
+      "u0123456789abcdef",
+    );
+  });
+
+  it("keeps a correctly filed pick untouched", () => {
+    window.localStorage.setItem("jarvis.wallpaper.light.v1", "07-terrace-01");
+    window.localStorage.setItem("jarvis.wallpaper.dark.v1", "05-noir-03");
+
+    useWallpaperStore.getState().reconcile(themeOf);
+
+    const { selections } = useWallpaperStore.getState();
+    expect(selections.light).toBe("07-terrace-01");
+    expect(selections.dark).toBe("05-noir-03");
+  });
+});

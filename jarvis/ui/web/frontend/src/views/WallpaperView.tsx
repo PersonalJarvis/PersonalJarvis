@@ -398,6 +398,7 @@ export function WallpaperView() {
   const favorites = useWallpaperStore((state) => state.favorites);
   const toggleFavorite = useWallpaperStore((state) => state.toggleFavorite);
   const forget = useWallpaperStore((state) => state.forget);
+  const reconcile = useWallpaperStore((state) => state.reconcile);
   const apply = useApplyWallpaper();
 
   const [theme, setTheme] = useState<ThemeFilter>("all");
@@ -420,6 +421,16 @@ export function WallpaperView() {
     const [bundled, ...rest] = catalog;
     return bundled ? [bundled, ...ownEntries, ...rest] : [...ownEntries, ...catalog];
   }, [data?.items, ownEntries]);
+
+  // This view is the one place that knows which mode every picture was
+  // authored for, so it is where a misfiled pick — the boot migration's wrong
+  // guess about the pre-per-theme slot, or any older cross-mode leak — is put
+  // back under its own mode (see `reconcile`). Idempotent, so re-running as
+  // uploads trickle in costs nothing.
+  useEffect(() => {
+    if (!data) return;
+    reconcile((id) => items.find((item) => item.id === id)?.theme ?? null);
+  }, [data, items, reconcile]);
 
   const styles = useMemo(() => {
     const known = data?.styles ?? [];

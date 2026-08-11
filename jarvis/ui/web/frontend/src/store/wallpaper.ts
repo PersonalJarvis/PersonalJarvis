@@ -160,6 +160,18 @@ interface WallpaperStore {
   toggleFavorite: (id: string) => void;
   /** Adopt choices made in another window. Does not write back. */
   adopt: () => void;
+  /**
+   * Re-file every stored pick under the mode its picture was authored for.
+   *
+   * The load-time migration above can only GUESS at the legacy pick's mode
+   * (from the theme cache), and a wrong guess would park a night scene in the
+   * light slot — the very leak all of this exists to end. This is the
+   * correction pass, run by whoever holds the catalog and can therefore
+   * answer for real: `themeOf` returns the mode a picture was authored for,
+   * or null for an id it does not know (an upload still loading, a library
+   * not installed) — unknown ids are left exactly where they are.
+   */
+  reconcile: (themeOf: (id: string) => Theme | null) => void;
 }
 
 export const useWallpaperStore = create<WallpaperStore>((set, get) => ({
@@ -213,6 +225,27 @@ export const useWallpaperStore = create<WallpaperStore>((set, get) => ({
     set({ favorites: next });
   },
   adopt: () => set({ selections: readSelections(), favorites: readFavorites() }),
+  reconcile: (themeOf) => {
+    try {
+      for (const slot of ["light", "dark"] as Theme[]) {
+        const id = window.localStorage.getItem(THEME_KEYS[slot]);
+        if (!id || !id.trim()) continue;
+        const authored = themeOf(id);
+        if (authored === null || authored === slot) continue;
+        // Misfiled: hand the pick to its own mode when that mode has not
+        // chosen for itself, and clear the wrong slot either way — a mode
+        // showing its default is right; one wearing the other mode's picture
+        // is the bug.
+        if (!window.localStorage.getItem(THEME_KEYS[authored])) {
+          window.localStorage.setItem(THEME_KEYS[authored], id);
+        }
+        window.localStorage.removeItem(THEME_KEYS[slot]);
+      }
+    } catch {
+      /* storage blocked — nothing stored means nothing misfiled */
+    }
+    set({ selections: readSelections() });
+  },
 }));
 
 /**
