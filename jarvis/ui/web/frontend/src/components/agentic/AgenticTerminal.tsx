@@ -270,9 +270,18 @@ const MAX_TERMINAL_NAME = 40;
  * moves then land on rows that no longer hold what they held when it drew
  * them — every squeezed pane came back as shredded one-word fragments (also
  * 2026-08-10). The tile's overflow-hidden container clips what the clamped
- * grid cannot show — though clipping is now the LAST resort: the pane first
- * shrinks its own text until the floor grid fits the tile (see
- * MIN_AUTO_FONT_PX below), so a narrow tile reads small rather than cut off.
+ * grid cannot show, and the pane marks that clipped edge with a veil so a cut
+ * line reads as "narrow window on a wide screen" rather than as one terminal
+ * shoved behind another (which is how the maintainer read it, 2026-08-11).
+ *
+ * Clipping is the DELIBERATE answer, and the one alternative has been tried
+ * and rejected the same day it shipped: auto-shrinking the pane's text until
+ * the floor grid fits the tile (2026-08-11). It silently overrode the
+ * toolbar's text size on every narrow pane — nine columns rendered ~5px
+ * glyphs with the control standing at 20, which read as the size controls
+ * being dead — and the maintainer's mandate is explicit: the chosen text size
+ * is shown everywhere, and what does not fit is clipped at the pane's OWN
+ * edge. Do not reintroduce the shrink.
  *
  * Both the resize path and the connect-time handshake below refuse anything
  * under these floors; the backend enforces the same ones
@@ -281,27 +290,6 @@ const MAX_TERMINAL_NAME = 40;
  */
 const MIN_REAL_COLS = 60;
 const MIN_REAL_ROWS = 15;
-
-/**
- * The smallest text the auto-shrink below may pick for a pane.
- *
- * A tile too narrow to hold the 60-column floor at the reader's text size has
- * exactly three honest options: squeeze the PTY under the floor (what printed
- * an answer one character per line — see the floors above), clip the right
- * half of every line behind the tile's edge (what the floors' first fix did —
- * a pane showing the left ~25 characters of each 60-column line reads as
- * shredded word-salad, reported 2026-08-11), or draw the SAME 60 columns in
- * smaller text. The pane now takes the third: `fitFontToTile` walks this
- * pane's own text size down from the reader's choice until the floor grid
- * fits the tile, and back up the moment the tile widens again. The toolbar's
- * size is never touched — it stays the reader's choice, and every pane wide
- * enough simply draws at it.
- *
- * 8px is where the walk stops. Beneath that the text is no more readable than
- * the clipping it replaces, so a tile still too narrow at 8px falls back to
- * clipping — now over far fewer hidden columns.
- */
-export const MIN_AUTO_FONT_PX = 8;
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
 
@@ -535,6 +523,15 @@ export function AgenticTerminal({
    * way back to it at all. The notice below is that way back.
    */
   const [statusDetail, setStatusDetail] = useState<string>("");
+  /*
+   * Is the floor grid wider than this tile can show — columns clipped behind
+   * the pane's right edge? True only for a pane narrower than 60 columns at
+   * the reader's text size (see MIN_REAL_COLS). Drives the veil over that
+   * edge, which is what keeps a clipped line reading as "narrow window on a
+   * wide screen" instead of as one terminal shoved behind another — the
+   * maintainer's actual reading of the bare cut (2026-08-11).
+   */
+  const [edgeClipped, setEdgeClipped] = useState(false);
   /*
    * Has this pane's agent drawn anything yet?
    *
@@ -849,6 +846,7 @@ export function AgenticTerminal({
         container.dataset.paneClamped = String(
           cols !== proposed.cols || rows !== proposed.rows,
         );
+        setEdgeClipped(cols !== proposed.cols);
       }
     } catch {
       /* not measured yet — the ResizeObserver below will fit */
@@ -1253,112 +1251,42 @@ export function AgenticTerminal({
         typeof document.hasFocus !== "function" ||
         document.hasFocus());
 
-    /**
-     * What the tile could hold at `size` — applied first when the terminal is
-     * not already drawing at it, because FitAddon measures the LIVE cell.
-     */
-    const measureAt = (size: number): { cols: number; rows: number } | null => {
-      if (term.options.fontSize !== size) {
-        term.options.fontSize = size;
-        // A new size is a new glyph advance, and so a new floored fraction for
-        // the canvas renderer to give back — same order as the fontSize effect.
-        alignTerminalCells(term);
-      }
-      let proposed: { cols: number; rows: number } | undefined;
-      try {
-        proposed = fit.proposeDimensions();
-      } catch {
-        return null;
-      }
-      if (
-        !proposed ||
-        !Number.isFinite(proposed.cols) ||
-        !Number.isFinite(proposed.rows)
-      ) {
-        return null;
-      }
-      return proposed;
-    };
-
-    /** Can a coding CLI still lay its interface out in this grid? */
-    const holdsFloor = (
-      grid: { cols: number; rows: number } | null,
-    ): grid is { cols: number; rows: number } =>
-      grid !== null && grid.cols >= MIN_REAL_COLS && grid.rows >= MIN_REAL_ROWS;
-
-    /**
-     * Fit the pane's TEXT to the tile, before the grid is fit to the text.
-     *
-     * The reader's size is measured first, every time — growing back when the
-     * tile widens is as much of the contract as shrinking when it narrows, and
-     * starting from the current (possibly shrunken) size would leave a pane
-     * small forever. Only when the reader's size cannot hold the floor does
-     * the walk begin: the LARGEST smaller size whose grid still holds 60x15,
-     * found by bisection (column count only grows as text shrinks, so the
-     * answer is a boundary — a handful of integer sizes, four measures at
-     * most). See MIN_AUTO_FONT_PX for why the walk exists and where it stops.
-     *
-     * Returns the grid measured at the size it settled on, or null when the
-     * tile cannot be measured at all.
-     */
-    const fitFontToTile = (): { cols: number; rows: number } | null => {
-      const desired = Math.max(fontSizeRef.current, MIN_AUTO_FONT_PX);
-      const started = term.options.fontSize ?? desired;
-      let chosen = desired;
-      let proposed = measureAt(desired);
-      if (
-        proposed !== null &&
-        !holdsFloor(proposed) &&
-        desired > MIN_AUTO_FONT_PX
-      ) {
-        let lo = MIN_AUTO_FONT_PX;
-        let hi = desired - 1;
-        let best: {
-          size: number;
-          grid: { cols: number; rows: number };
-        } | null = null;
-        while (lo <= hi) {
-          const mid = Math.floor((lo + hi) / 2);
-          const grid = measureAt(mid);
-          if (holdsFloor(grid)) {
-            best = { size: mid, grid };
-            lo = mid + 1;
-          } else {
-            hi = mid - 1;
-          }
-        }
-        if (best) {
-          chosen = best.size;
-          proposed = best.grid;
-        } else {
-          // Not even the smallest text holds the floor. Clip — but at the
-          // smallest text, which hides the fewest columns behind the edge.
-          chosen = MIN_AUTO_FONT_PX;
-          proposed = measureAt(MIN_AUTO_FONT_PX);
-        }
-      }
-      // The bisection leaves the terminal at whatever it measured LAST.
-      if (term.options.fontSize !== chosen) {
-        term.options.fontSize = chosen;
-        alignTerminalCells(term);
-      }
-      // The canvas renderer caches glyphs per size; cleared once, at the end,
-      // never per probe — the probes happen between paints.
-      if (chosen !== started) term.clearTextureAtlas?.();
-      return proposed;
-    };
-
     const sendResize = (claimOwner = false) => {
       // A hidden pane measures 0x0 (maximizing another one hides this one), and
       // fitting to that would resize the PTY to zero columns — which permanently
       // wrecks the agent's full-screen drawing. Skip while not measurable; the
       // ResizeObserver fires again when the pane comes back.
       if (container.clientWidth < 8 || container.clientHeight < 8) return;
+      // The pane draws at the READER'S text size, never one it picked itself.
+      // An auto-shrink that walked this size down until the floor grid fit the
+      // tile shipped and was rejected within hours (2026-08-11): it silently
+      // overrode the toolbar's size on every narrow pane, which read as the
+      // size controls being dead (see the floors' comment above). A stale size
+      // can still linger on the terminal — a rebuild, a pane that shrank under
+      // the old build — so the choice is restated before measuring.
+      const desired = fontSizeRef.current;
+      if (term.options.fontSize !== desired) {
+        term.options.fontSize = desired;
+        // A new size is a new glyph advance, and so a new floored fraction for
+        // the canvas renderer to give back — same order as the fontSize effect.
+        alignTerminalCells(term);
+        term.clearTextureAtlas?.();
+      }
       // Measured WITHOUT being applied yet: what the tile can show is a
-      // PROPOSAL, and the floors above have the last word on it. The pane's
-      // text size may have moved on the way — see fitFontToTile.
-      const proposed = fitFontToTile();
-      if (proposed === null) return;
+      // PROPOSAL, and the floors above have the last word on it.
+      let proposed: { cols: number; rows: number } | undefined;
+      try {
+        proposed = fit.proposeDimensions();
+      } catch {
+        return;
+      }
+      if (
+        !proposed ||
+        !Number.isFinite(proposed.cols) ||
+        !Number.isFinite(proposed.rows)
+      ) {
+        return;
+      }
       // The one size everyone gets — the grid here, the agent below. Clamped
       // per dimension (see the floors' comment): a narrow tile still hands
       // the agent its honest HEIGHT, which is what keeps the CLI's
@@ -1372,6 +1300,7 @@ export function AgenticTerminal({
       container.dataset.paneClamped = String(
         size.cols > proposed.cols || size.rows > proposed.rows,
       );
+      setEdgeClipped(size.cols > proposed.cols);
       try {
         if (size.cols === proposed.cols && size.rows === proposed.rows) {
           fit.fit();
@@ -2081,6 +2010,24 @@ export function AgenticTerminal({
           data-layout-busy={layoutBusy ? "true" : "false"}
           className="agentic-terminal-host h-full min-h-0 w-full overflow-hidden"
         />
+        {/*
+          The clipped edge, made visible. A tile narrower than the 60-column
+          floor shows the LEFT of every line and hides the rest behind this
+          edge (see MIN_REAL_COLS) — a hard cut there looks like the neighbour
+          pane standing on this one. The veil says "continues past here" the
+          way every reader already understands it, and costs no terminal room:
+          it hangs over the last few characters that were half-cut anyway.
+        */}
+        {edgeClipped && (
+          <div
+            aria-hidden
+            data-testid={`agentic-terminal-clip-veil-${name}`}
+            className={cn(
+              "pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l to-transparent",
+              appearance === "dark" ? "from-black/60" : "from-white/75",
+            )}
+          />
+        )}
         <PaneConversationDialog
           terminal={name}
           open={historyOpen}
