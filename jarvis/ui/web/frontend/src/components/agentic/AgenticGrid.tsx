@@ -1949,7 +1949,16 @@ export function AgenticGrid({
         const node = paneNodes.current.get(term.name);
         if (!node) continue;
         const rect = node.getBoundingClientRect();
-        const content = node.querySelector(".xterm-screen")?.getBoundingClientRect();
+        // A clamped terminal is DELIBERATELY bigger than its tile — a pane
+        // narrower than 60 columns still renders 60 so the CLI inside can lay
+        // its interface out, and the overflow clip shows what fits (see
+        // MIN_REAL_COLS in ./AgenticTerminal, which writes this stamp). That
+        // designed clipping must not read as a missed refit.
+        const clamped =
+          node.querySelector('[data-pane-clamped="true"]') !== null;
+        const content = clamped
+          ? undefined
+          : node.querySelector(".xterm-screen")?.getBoundingClientRect();
         panes.push({
           name: term.name,
           left: rect.left,

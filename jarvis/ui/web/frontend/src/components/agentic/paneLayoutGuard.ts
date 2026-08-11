@@ -37,7 +37,11 @@ export interface MeasuredPane {
    * The terminal's rendered screen (xterm's `.xterm-screen`), when the pane
    * holds one. Sized `cols x cellWidth` by the fit — so it may be a little
    * SMALLER than the pane (the remainder under one character cell) but must
-   * never be bigger. Absent for a pane still connecting.
+   * never be bigger. Absent for a pane still connecting, and absent by the
+   * caller's choice for a pane whose terminal is CLAMPED to the minimum
+   * usable size — that one is deliberately bigger than its tile, and the
+   * clipping is the design, not a fault (see MIN_REAL_COLS in
+   * `./AgenticTerminal`).
    */
   content?: { left: number; top: number; width: number; height: number };
 }

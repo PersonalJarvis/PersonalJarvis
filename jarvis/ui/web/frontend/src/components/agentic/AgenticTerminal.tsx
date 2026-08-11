@@ -819,6 +819,13 @@ export function AgenticTerminal({
         const rows = Math.max(proposed.rows, MIN_REAL_ROWS);
         if (cols === proposed.cols && rows === proposed.rows) fit.fit();
         else term.resize(cols, rows);
+        // Clamped means the terminal is DELIBERATELY bigger than its tile and
+        // the overflow clip is doing its job — the grid's layout watchdog
+        // reads this so it never mistakes that designed clipping for a missed
+        // refit (see `paneLayoutGuard`).
+        container.dataset.paneClamped = String(
+          cols !== proposed.cols || rows !== proposed.rows,
+        );
       }
     } catch {
       /* not measured yet — the ResizeObserver below will fit */
@@ -1252,6 +1259,11 @@ export function AgenticTerminal({
         cols: Math.max(proposed.cols, MIN_REAL_COLS),
         rows: Math.max(proposed.rows, MIN_REAL_ROWS),
       };
+      // Same stamp as the mount-time fit above, for the same reader: the
+      // layout watchdog must not "repair" a clamp that is working as designed.
+      container.dataset.paneClamped = String(
+        size.cols > proposed.cols || size.rows > proposed.rows,
+      );
       try {
         if (size.cols === proposed.cols && size.rows === proposed.rows) {
           fit.fit();
