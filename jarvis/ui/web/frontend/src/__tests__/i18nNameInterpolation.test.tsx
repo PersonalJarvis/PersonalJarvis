@@ -31,11 +31,11 @@ function RestartHintProbe() {
   return <span data-testid="hint">{t("topbar.restart_hint")}</span>;
 }
 
-function CommandDeckProbe() {
+function WorkspaceCopyProbe() {
   const t = useT();
   return (
-    <span data-testid="command-deck-copy">
-      {t("workspace_launcher.wizard.views.deck.description")}
+    <span data-testid="workspace-copy">
+      {t("agentic_grid.history.description")}
     </span>
   );
 }
@@ -75,13 +75,13 @@ describe("useT name substitution", () => {
   });
 
   it.each(["en", "de", "es"] as const)(
-    "brands the %s Command Deck wizard with a nonstandard assistant name",
+    "brands the %s workspace copy with a nonstandard assistant name",
     (language) => {
       useI18nStore.getState().setUi(language, { push: false });
       useEventStore.setState({ assistantName: "Athena" });
-      render(<CommandDeckProbe />);
+      render(<WorkspaceCopyProbe />);
 
-      const text = screen.getByTestId("command-deck-copy").textContent ?? "";
+      const text = screen.getByTestId("workspace-copy").textContent ?? "";
       expect(text).toContain("Athena");
       expect(text).not.toContain("{name}");
       expect(text).not.toContain("Jarvis");

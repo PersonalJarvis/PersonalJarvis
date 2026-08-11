@@ -2655,85 +2655,6 @@ def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
     return names is None and detect_visible(text) is not None
 
 
-# --------------------------------------------------------------------------- #
-# Work with nobody's name on it                                               #
-# --------------------------------------------------------------------------- #
-# Everything above answers "which pane is this turn about". The Command Deck
-# asks a different question: the user there is a team lead who has stopped
-# naming a pane per order, and "somebody get the wake-path tests green" has to
-# land on an agent rather than on the floor.
-#
-# This is deliberately NOT wired into ``detect``: outside the deck an
-# unaddressed sentence must keep meaning what it has always meant, or every
-# open workspace would start swallowing ordinary conversation. The deck's fast
-# path asks for it by name, and only after ``detect_all`` has come back empty.
-#
-# The bar is set high on purpose, because the failure is expensive in one
-# direction only. A false negative costs one clearer sentence. A false positive
-# types "what time is it" into a coding agent as a task, and the user finds out
-# minutes later.
-
-#: Turns that ASK rather than instruct. A question about the workspace is
-#: answered by the normal path with the focus-context block; handing it to an
-#: agent as a job is the single worst thing this detector could do.
-_ASKS_RE = re.compile(
-    r"^\s*(?:"
-    r"what|which|who|when|where|why|how|is|are|do|does|did|can|could|would|"
-    r"should|will|has|have|"
-    r"was|welche\w*|wer|wann|wo|warum|wieso|wie|"  # i18n-allow: input vocab
-    r"ist|sind|kann|k[oö]nn\w*|"  # i18n-allow: input vocab
-    r"h[aä]st|hat|haben|soll\w*|w[uü]rde\w*|"  # i18n-allow: input vocab
-    r"qu[eé]|cu[aá]l\w*|qui[eé]n|cu[aá]ndo|d[oó]nde|"  # i18n-allow: input vocab
-    r"por\s+qu[eé]|c[oó]mo|es|son|puede\w*|deber[ií]a\w*"  # i18n-allow: input vocab
-    r")\b",
-    re.IGNORECASE,
-)
-
-
-def unaddressed_work(user_text: str, *, names: list[str] | None = None) -> str | None:
-    """The job in a turn that names no pane, or ``None`` if it is not one.
-
-    Answers only for the Command Deck (see the note above). The caller is
-    expected to have established three things already, because each is somebody
-    else's rule and a second copy here would drift from it:
-
-    1. no pane is addressed (``detect_all`` came back empty);
-    2. the turn does not name a spawn vehicle
-       (``spawn_vehicle_outranks_workspace``);
-    3. the workspace is actually being read as a deck.
-
-    What is left to decide is whether this sentence is WORK. Four ways it is
-    not, in the order they are cheapest to rule out.
-    """
-    text = (user_text or "").strip()
-    if not text:
-        return None
-    # A question is answered, never delegated. Checked before anything else
-    # because "how do I fix the wake path" contains a perfectly good
-    # instruction verb and is not an instruction at all.
-    if _ASKS_RE.match(text) or text.rstrip().endswith("?"):
-        return None
-    # Talk about the world rather than the workspace — the same guard the
-    # collective address uses, so the two cannot disagree about what "everyone"
-    # means in a sentence about people.
-    if _is_outside_world_talk(text):
-        return None
-    # Asking what the agents are DOING is a status question even without a
-    # question mark ("status on the tests"), and the deck answers those from
-    # the panes rather than by starting more work.
-    if _VISIBLE_REPORT_RE.match(text):
-        return None
-    if not _looks_like_instruction(text):
-        return None
-    # A pane WAS named, just not in an addressing shape ("Mika die Tests"). The
-    # caller's detector stood down for a reason, and quietly re-routing the
-    # order to whichever agent happens to be free would send it to the wrong
-    # one — with the right one's name still in the sentence.
-    if names and _mentions(text, list(names)):
-        return None
-    return text
-
-
 __all__ = [
     "KIND_PROMPT",
     "KIND_REPORT",
@@ -2753,6 +2674,5 @@ __all__ = [
     "spawn_includes_task",
     "spawn_instruction",
     "spawn_vehicle_outranks_workspace",
-    "unaddressed_work",
     "wants_split",
 ]

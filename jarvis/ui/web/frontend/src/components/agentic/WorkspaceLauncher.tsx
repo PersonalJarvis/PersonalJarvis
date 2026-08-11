@@ -9,9 +9,10 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
-  AudioLines,
+  Check,
   LayoutGrid,
   Loader2,
   MessagesSquare,
@@ -23,6 +24,7 @@ import { ResumeCard } from "./ResumeCard";
 import { AgentAllocation, type PlannedTerminal } from "./AgentAllocation";
 import { Button, Notice, SectionLabel } from "./controls";
 import { CountStepper, CountTrack, WorkspaceShape } from "./WorkspaceShape";
+import { CROWDED_TERMINAL_COUNT } from "./layout";
 import type { WorkspaceView } from "./AgenticGrid";
 import type { AgentAccount } from "@/lib/agentAccountsApi";
 import type {
@@ -146,14 +148,32 @@ export function WorkspaceLauncher({
 }: WorkspaceLauncherProps) {
   const t = useT();
   const [step, setStep] = useState<LauncherStep>(0);
+  /*
+   * Has the user said yes to a crowded workspace?
+   *
+   * The count itself is never refused — see CROWDED_TERMINAL_COUNT. This is
+   * only the acknowledgement that the warning was read, and it is dropped
+   * again the moment the count returns below the threshold, so a user who
+   * stepped up to 24, agreed, and then came back down to 6 is not carrying a
+   * silent yes into a workspace that no longer needs one.
+   */
+  const [crowdAccepted, setCrowdAccepted] = useState(false);
+  const crowded = count >= CROWDED_TERMINAL_COUNT;
+  useEffect(() => {
+    if (!crowded && crowdAccepted) setCrowdAccepted(false);
+  }, [crowded, crowdAccepted]);
+  const countSettled = count > 0 && (!crowded || crowdAccepted);
+
   const planReady =
     planned.length > 0 &&
     planned.every((pane) => pane.name.trim() && pane.agent);
-  const ready = Boolean(folder) && planReady;
+  // The acknowledgement gates the START, not just the step — the launcher can
+  // also be fired with the keyboard shortcut from anywhere in the wizard.
+  const ready = Boolean(folder) && planReady && countSettled;
 
   const canLeaveCurrent =
     (step === 0 && Boolean(folder)) ||
-    (step === 1 && count > 0) ||
+    (step === 1 && countSettled) ||
     (step === 2 && planReady) ||
     // The view step always carries a preselected answer, and review is last.
     step >= 3;
@@ -317,6 +337,13 @@ export function WorkspaceLauncher({
                     max={maxTerminals}
                     onChange={onCount}
                   />
+                  {crowded && (
+                    <CrowdedWarning
+                      count={count}
+                      accepted={crowdAccepted}
+                      onAccept={() => setCrowdAccepted(true)}
+                    />
+                  )}
                 </div>
               )}
 
@@ -392,6 +419,75 @@ export function WorkspaceLauncher({
             </section>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The yes a crowded workspace has to be given before it opens.
+ *
+ * It does NOT refuse the count, and that is the point. How many agents are
+ * worth watching at once is the user's call — thirty terminals on a video wall
+ * is a reasonable thing to want, and this app has no way of knowing how big the
+ * display in front of it is. So the one thing it can honestly do is make sure
+ * the decision was made deliberately: the warning names the consequence, and
+ * the button is the user overruling it.
+ *
+ * Shown from {@link CROWDED_TERMINAL_COUNT} up, and it BLOCKS — the wizard's
+ * next step stays out of reach until this is answered. A warning that can be
+ * walked past without being read is decoration, and the count it is warning
+ * about is the one thing in this wizard that cannot be undone from inside the
+ * workspace without closing panes one at a time.
+ */
+function CrowdedWarning({
+  count,
+  accepted,
+  onAccept,
+}: {
+  count: number;
+  accepted: boolean;
+  onAccept: () => void;
+}) {
+  const t = useT();
+  return (
+    <div
+      data-testid="workspace-crowded-warning"
+      role="group"
+      className={cn(
+        "mt-3 flex items-start gap-3 rounded-control border px-3 py-2.5 transition-colors",
+        accepted
+          ? "border-border/70 bg-muted/30"
+          : "border-destructive/50 bg-destructive/[0.07]",
+      )}
+    >
+      {accepted ? (
+        <Check className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+      ) : (
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+      )}
+      <div className="min-w-0 flex-1">
+        <p
+          className={cn(
+            "text-xs leading-relaxed",
+            accepted ? "text-muted-foreground" : "text-foreground",
+          )}
+        >
+          {(accepted
+            ? t("workspace_launcher.crowded.accepted")
+            : t("workspace_launcher.crowded.warning")
+          ).replace("{0}", String(count))}
+        </p>
+        {!accepted && (
+          <Button
+            variant="subtle"
+            onClick={onAccept}
+            className="mt-2"
+            data-testid="workspace-crowded-accept"
+          >
+            {t("workspace_launcher.crowded.accept")}
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -484,15 +580,10 @@ function StepNavigation({
 /**
  * The last decision before review: how the workspace is read.
  *
- * Three ways of looking at the SAME panes (see WorkspaceView in AgenticGrid) —
+ * Two ways of looking at the SAME panes (see WorkspaceView in AgenticGrid) —
  * the grid shows every terminal at once, chat puts one agent on a stage like a
- * conversation, and the deck hands the floor to Jarvis. A choice of
- * presentation, not of substance, which is why the step needs no gate: every
- * answer is valid and one is preselected.
- *
- * The deck's card says what it DOES differently rather than what it looks
- * like, because it is the one option that changes the assistant's behaviour:
- * pick it and Jarvis starts speaking finished work back to you.
+ * conversation. A choice of presentation, not of substance, which is why the
+ * step needs no gate: every answer is valid and one is preselected.
  */
 function ViewChoice({
   view,
@@ -508,7 +599,7 @@ function ViewChoice({
       <div
         role="radiogroup"
         aria-label={t("workspace_launcher.wizard.reading_mode_label")}
-        className="mt-4 grid gap-4 sm:grid-cols-3"
+        className="mt-4 grid gap-4 sm:grid-cols-2"
       >
         <ViewOption
           selected={view === "grid"}
@@ -527,15 +618,6 @@ function ViewChoice({
           title={t("workspace_launcher.wizard.views.chat.title")}
           description={t("workspace_launcher.wizard.views.chat.description")}
           preview={<ChatPreview />}
-        />
-        <ViewOption
-          selected={view === "deck"}
-          onSelect={() => onView("deck")}
-          testId="view-choice-deck"
-          icon={<AudioLines className="h-4 w-4 shrink-0" />}
-          title={t("workspace_launcher.wizard.views.deck.title")}
-          description={t("workspace_launcher.wizard.views.deck.description")}
-          preview={<DeckPreview />}
         />
       </div>
       <p className="mt-5 max-w-2xl text-xs leading-relaxed text-muted-foreground">
@@ -645,43 +727,6 @@ function ChatPreview() {
         data-view-preview-pane
         className={cn("block h-[4.875rem] flex-1 border", VIEW_PREVIEW_PANE)}
       />
-    </span>
-  );
-}
-
-/*
- * The deck miniature is the odd one out on purpose.
- *
- * The other two draw their layout, because their layout IS the difference. The
- * deck's difference is that the conversation is at the centre and the
- * terminals have receded to cards around it — so it draws a ring with the
- * agents arranged about it, which is the one glance that distinguishes it from
- * "chat view with bigger panes".
- */
-function DeckPreview() {
-  return (
-    <span aria-hidden className="flex h-[4.875rem] items-center justify-center gap-2">
-      <span className="flex flex-col gap-1.5">
-        {[0, 1].map((i) => (
-          <span
-            key={i}
-            data-view-preview-pane
-            className={cn("block h-6 w-8 border", VIEW_PREVIEW_PANE)}
-          />
-        ))}
-      </span>
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/60 bg-primary/10">
-        <span className="block h-4 w-4 rounded-full border border-primary/70 bg-primary/25" />
-      </span>
-      <span className="flex flex-col gap-1.5">
-        {[0, 1].map((i) => (
-          <span
-            key={i}
-            data-view-preview-pane
-            className={cn("block h-6 w-8 border", VIEW_PREVIEW_PANE)}
-          />
-        ))}
-      </span>
     </span>
   );
 }

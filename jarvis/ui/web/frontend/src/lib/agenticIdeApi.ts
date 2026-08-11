@@ -139,15 +139,6 @@ export interface TerminalState {
    * refuses everything sent to it.
    */
   accepts_prompts?: boolean;
-  /**
-   * Has the user taken this pane over in the Command Deck?
-   *
-   * While true the deck neither assigns work to it nor reports it — the honest
-   * limit on "Jarvis runs the floor", for a pane holding a question only the
-   * user can settle. Absent on a backend that predates the deck, which reads
-   * as "not held" rather than as an error.
-   */
-  deck_hold?: boolean;
   index: number;
   /** Grid column, left to right. Each column is its own stack of panes. */
   column: number;
@@ -1295,88 +1286,6 @@ export async function setFocusMode(enabled: boolean): Promise<boolean> {
 }
 
 /**
- * One agent's news, waiting in the Command Deck's report lane.
- *
- * `headline` is the same clause the header bell shows, on purpose: the spoken
- * line, the card and the notification panel must not be able to disagree about
- * what happened. `kind` is a claim about the TERMINAL — "completed" means the
- * pane went quiet, never that the work is any good.
- */
-export interface DeckReport {
-  id: string;
-  workspace_id: string;
-  pane_key: string;
-  pane: string;
-  agent: string;
-  kind: "completed" | "needs_input" | "exited" | "failed";
-  headline: string;
-  detail: string;
-  at: number;
-  state: "pending" | "on_air" | "reported" | "dropped";
-  spoken: boolean;
-}
-
-export interface DeckQueue {
-  /** True once a line went unanswered — the deck has stopped offering. */
-  sleeping: boolean;
-  in_conversation: boolean;
-  on_air: DeckReport | null;
-  pending: DeckReport[];
-  reports: DeckReport[];
-}
-
-const EMPTY_QUEUE: DeckQueue = {
-  sleeping: false,
-  in_conversation: false,
-  on_air: null,
-  pending: [],
-  reports: [],
-};
-
-export async function fetchDeckQueue(): Promise<DeckQueue> {
-  const res = await fetch("/api/agentic-ide/deck/queue", { cache: "no-store" });
-  if (!res.ok) throw new Error(await detail(res));
-  return { ...EMPTY_QUEUE, ...((await res.json()) as Partial<DeckQueue>) };
-}
-
-/**
- * Answer one report: hear it now, put the lane to sleep, or drop it.
- *
- * The same route the spoken answer takes — "tell me about Nova" and pressing
- * Nova's card are one instruction, and a second path for the second one is a
- * second thing to keep in step.
- */
-export async function ackDeckReport(
-  id: string,
-  action: "next" | "later" | "drop",
-): Promise<DeckQueue> {
-  const res = await fetch("/api/agentic-ide/deck/ack", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, action }),
-  });
-  if (!res.ok) throw new Error(await detail(res));
-  return { ...EMPTY_QUEUE, ...((await res.json()) as Partial<DeckQueue>) };
-}
-
-/**
- * "I'll take this one" — and handing it back.
- *
- * While held, the deck stops assigning work to the pane and stops reporting
- * it, and the pane's own editor is unlocked. Everything else about it is
- * unchanged: it keeps running, keeps its recap, keeps its place.
- */
-export async function setDeckHold(name: string, held: boolean): Promise<boolean> {
-  const res = await fetch(`/api/agentic-ide/deck/hold/${encodeURIComponent(name)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ held }),
-  });
-  if (!res.ok) throw new Error(await detail(res));
-  return Boolean((await res.json()).deck_hold);
-}
-
-/**
  * Tell the backend which view is on screen, which pane it stages, and which
  * one owns the next prompt.
  *
@@ -1385,13 +1294,12 @@ export async function setDeckHold(name: string, held: boolean): Promise<boolean>
  * chip remains an explicit target for the prompt bar, voice orb, and file drops.
  *
  * The view travels as a NAME rather than the `chat_view` boolean it replaced:
- * there are three of them now, and the backend reads this to decide more than
- * deixis — the Command Deck is the one surface allowed to speak a finished pane
- * out loud, so a wrong answer here is a wrong answer about whether Jarvis talks.
+ * a name keeps reading correctly when a third mode is added, where a boolean
+ * would have to be re-interpreted everywhere it is read.
  */
 export async function syncAgenticIdeSurface(payload: {
   workspaceId: string;
-  view: "grid" | "chat" | "deck";
+  view: "grid" | "chat";
   onScreen: boolean;
   terminal: string | null;
   promptTarget: string | null;

@@ -16,6 +16,7 @@ takes the quality tier 10-21 s, and a voice turn is abandoned after 20 s. Eight
 panes composed one after another cannot be delivered inside any turn at all, so
 the peak-concurrency guard below pins the behaviour the feature depends on.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -97,9 +98,7 @@ class Recorder:
         self.sent[name] = text
         # Mirrors Registry.send_prompt, which returns the Terminal carrying the
         # submitted flag.
-        return SimpleNamespace(
-            name=name, submitted=name not in self.not_submitted_for
-        )
+        return SimpleNamespace(name=name, submitted=name not in self.not_submitted_for)
 
 
 def _session(*names: str) -> FakeSession:
@@ -578,3 +577,93 @@ async def test_only_a_live_pane_with_a_pty_is_written_to(status: str) -> None:
     )
     assert rec.sent == {}
     assert result.undelivered[0].terminal == "Iris"
+
+
+# ------------------------------------------------------- the duplicate memory
+# Live failure 2026-08-11 16:38: the same spoken order was fanned out twice,
+# 37 s apart, because the second caller (the router brain) could not see that
+# the first fleet was already composing. The memory below is what the /fanout
+# route consults before opening a second fleet for the same order.
+
+ORDER = "fix all bugs on macOS and check the git history on GitHub for anomalies"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_duplicate_memory() -> None:
+    fanout._RECENT_FANOUTS.clear()
+    yield
+    fanout._RECENT_FANOUTS.clear()
+
+
+def _workspace(workspace_id: str, *names: str) -> FakeSession:
+    session = _session(*names)
+    session.id = workspace_id  # FakeSession carries no id by default
+    return session
+
+
+async def test_a_delivery_is_visible_to_the_guard_while_still_composing() -> None:
+    """The record is written at delivery START — the live duplicate arrived
+    mid-composition, when a completion-time record would not have existed."""
+    session = _workspace("ide_1", "T5", "T6")
+    rec = Recorder(delay=0.05)
+    task = asyncio.ensure_future(
+        fanout.deliver(
+            session=session,
+            terminals=["T5", "T6"],
+            utterance=ORDER,
+            compose=rec.compose,
+            send=rec.send,
+        )
+    )
+    await asyncio.sleep(0.01)  # composing, nowhere near done
+    try:
+        duplicate = fanout.find_duplicate_fanout(session, ORDER)
+        assert duplicate is not None
+        assert duplicate.terminals == ("T5", "T6")
+    finally:
+        await task
+
+
+async def test_the_match_survives_a_rephrased_word() -> None:
+    session = _workspace("ide_1", "T5")
+    fanout.record_fanout(session, ORDER.replace("GitHub", "GitHuib"), ["T5"])
+    assert fanout.find_duplicate_fanout(session, ORDER) is not None
+
+
+async def test_a_different_task_is_no_duplicate() -> None:
+    session = _workspace("ide_1", "T5")
+    fanout.record_fanout(session, ORDER, ["T5"])
+    other = "write end-to-end tests for the wake-word pipeline and fix the flaky ones"
+    assert fanout.find_duplicate_fanout(session, other) is None
+
+
+async def test_the_memory_is_bound_to_its_workspace() -> None:
+    """Names are grid positions: another workspace's T5 is a different pane."""
+    first = _workspace("ide_1", "T5")
+    second = _workspace("ide_2", "T5")
+    fanout.record_fanout(first, ORDER, ["T5"])
+    assert fanout.find_duplicate_fanout(second, ORDER) is None
+
+
+async def test_an_old_order_no_longer_shadows_a_new_one() -> None:
+    session = _workspace("ide_1", "T5")
+    fanout.record_fanout(session, ORDER, ["T5"], now=1000.0)
+    late = 1000.0 + fanout.DUPLICATE_WINDOW_S + 1.0
+    assert fanout.find_duplicate_fanout(session, ORDER, now=late) is None
+
+
+async def test_closed_panes_make_the_rerun_legitimate() -> None:
+    session = _workspace("ide_1", "T5", "T6")
+    fanout.record_fanout(session, ORDER, ["T5", "T6"])
+    session.terminals = [t for t in session.terminals if t.name == "T6"]
+    duplicate = fanout.find_duplicate_fanout(session, ORDER)
+    assert duplicate is not None and duplicate.terminals == ("T6",)
+    session.terminals = []
+    assert fanout.find_duplicate_fanout(session, ORDER) is None
+
+
+async def test_a_sessionless_delivery_records_nothing() -> None:
+    """FakeSession has no id here — exactly like a caller outside a workspace."""
+    session = _session("T5")
+    fanout.record_fanout(session, ORDER, ["T5"])
+    assert not fanout._RECENT_FANOUTS

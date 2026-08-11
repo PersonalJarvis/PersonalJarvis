@@ -26,10 +26,15 @@ path (AP-9). No LLM call is made here directly — the composer owns that, and
 degrades to its deterministic prompt when no provider is reachable, so a
 downloader with no API key still gets every agent briefed (§3).
 """
+
 from __future__ import annotations
 
 import asyncio
+import difflib
 import logging
+import re
+import time
+from collections import deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -42,6 +47,106 @@ log = logging.getLogger(__name__)
 #: every pane to the deterministic prompt at once. Five keeps a realistic fleet
 #: (3-8 panes) in a single wave while staying polite.
 DEFAULT_CONCURRENCY = 5
+
+#: How long one fleet order shadows a repeat of itself. The live 2026-08-11
+#: 16:38 double-spawn arrived 37 s after the original order; ten minutes covers
+#: the window in which the first fleet is still visibly working on it while
+#: staying short enough that a genuine "run it again" later the same day works
+#: without ceremony.
+DUPLICATE_WINDOW_S = 600.0
+
+#: Orders shorter than this never count as duplicates. Fleet-wide steering
+#: strokes ("continue", "run the tests again") repeat legitimately within
+#: minutes; a real task brief is always longer than this.
+DUPLICATE_MIN_CHARS = 40
+
+#: How similar two instructions must be to count as the same order. The router
+#: brain re-dictating an order rarely reproduces it byte-for-byte (the live
+#: duplicate differed by one corrected typo), so equality is the wrong test —
+#: and 0.9 is far above what two genuinely different tasks reach.
+DUPLICATE_SIMILARITY = 0.9
+
+
+@dataclass(frozen=True, slots=True)
+class RecentFanOut:
+    """One fleet order a workspace has already accepted, for duplicate checks."""
+
+    workspace_id: str
+    instruction: str
+    terminals: tuple[str, ...]
+    at: float
+    """``time.monotonic()`` when the delivery STARTED — not when it finished.
+
+    Composition runs 10-30 s per pane, and the live duplicate arrived while the
+    first fleet was still composing; a record written only on completion would
+    have missed exactly the case this exists for."""
+
+
+_RECENT_FANOUTS: deque[RecentFanOut] = deque(maxlen=8)
+
+
+def _normalized(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "").strip().casefold())
+
+
+def record_fanout(
+    session: Any, instruction: str, terminals: Sequence[str], *, now: float | None = None
+) -> None:
+    """Remember that this workspace just accepted a fleet order.
+
+    Called at the START of a delivery so a duplicate arriving mid-composition
+    is already visible to :func:`find_duplicate_fanout`.
+    """
+    workspace_id = str(getattr(session, "id", "") or "")
+    text = _normalized(instruction)
+    if not workspace_id or len(text) < DUPLICATE_MIN_CHARS:
+        return
+    _RECENT_FANOUTS.append(
+        RecentFanOut(
+            workspace_id=workspace_id,
+            instruction=instruction,
+            terminals=tuple(terminals),
+            at=time.monotonic() if now is None else now,
+        )
+    )
+
+
+def find_duplicate_fanout(
+    session: Any, instruction: str, *, now: float | None = None
+) -> RecentFanOut | None:
+    """The recent fleet order this one repeats, or ``None``.
+
+    A match needs the same workspace, a fresh-enough record, an essentially
+    identical instruction, and at least one of the originally addressed panes
+    still open — panes that are gone make a re-run legitimate, not a duplicate.
+    The returned record's ``terminals`` are narrowed to the panes still alive,
+    so the caller can name who is already working on it.
+    """
+    workspace_id = str(getattr(session, "id", "") or "")
+    text = _normalized(instruction)
+    if not workspace_id or len(text) < DUPLICATE_MIN_CHARS:
+        return None
+    moment = time.monotonic() if now is None else now
+    for record in reversed(_RECENT_FANOUTS):
+        if record.workspace_id != workspace_id:
+            continue
+        if moment - record.at > DUPLICATE_WINDOW_S:
+            continue
+        earlier = _normalized(record.instruction)
+        if len(earlier) < DUPLICATE_MIN_CHARS:
+            continue
+        if difflib.SequenceMatcher(None, earlier, text).ratio() < DUPLICATE_SIMILARITY:
+            continue
+        alive = tuple(name for name in record.terminals if session.find(name) is not None)
+        if not alive:
+            continue
+        return RecentFanOut(
+            workspace_id=record.workspace_id,
+            instruction=record.instruction,
+            terminals=alive,
+            at=record.at,
+        )
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,18 +244,12 @@ async def _reserve_prompt_attachments(term: Any) -> tuple[tuple[Any, ...], tuple
             for batch in term.pending_prompt_attachment_batches
             if batch.batch_id not in term.pending_prompt_attachment_reservations
         )
-        term.pending_prompt_attachment_reservations.update(
-            batch.batch_id for batch in batches
-        )
-    attachments = tuple(
-        attachment for batch in batches for attachment in batch.attachments
-    )
+        term.pending_prompt_attachment_reservations.update(batch.batch_id for batch in batches)
+    attachments = tuple(attachment for batch in batches for attachment in batch.attachments)
     return batches, attachments
 
 
-async def _finish_prompt_attachments(
-    term: Any, batches: Sequence[Any], *, consume: bool
-) -> None:
+async def _finish_prompt_attachments(term: Any, batches: Sequence[Any], *, consume: bool) -> None:
     """Commit or release reservations without touching later drops."""
     if not batches:
         return
@@ -171,9 +270,7 @@ async def _finish_prompt_attachments_shielded(
     """Settle a reservation even when its delivery task is being cancelled."""
     if not batches:
         return
-    cleanup = asyncio.create_task(
-        _finish_prompt_attachments(term, batches, consume=consume)
-    )
+    cleanup = asyncio.create_task(_finish_prompt_attachments(term, batches, consume=consume))
     try:
         await asyncio.shield(cleanup)
     except asyncio.CancelledError:
@@ -239,8 +336,7 @@ def note_detached_delivery(work: asyncio.Future[Any], *, describe: str) -> None:
         _DETACHED_DELIVERIES.discard(task)
         if task.cancelled():
             log.warning(
-                "Agentic IDE (detached): %s was cancelled before it finished — "
-                "nothing was typed",
+                "Agentic IDE (detached): %s was cancelled before it finished — nothing was typed",
                 describe,
             )
             return
@@ -318,6 +414,11 @@ async def deliver(
     if not wanted:
         return FanOutResult()
 
+    # Registered before composing, not after: the whole delivery runs 10-30 s
+    # per pane, and the one duplicate that actually happened (2026-08-11 16:38)
+    # arrived inside that window.
+    record_fanout(session, instruction or utterance, wanted)
+
     compose_fn = compose or _default_compose
     send_fn = send or _default_send
     gate = asyncio.Semaphore(max(1, int(limit)))
@@ -384,9 +485,7 @@ async def deliver(
             # Reserve after acquiring the concurrency slot so cancellation
             # while waiting cannot leave an invisible batch stuck as reserved.
             if include_pending_attachments:
-                pending_batches, pending_attachments = (
-                    await _reserve_prompt_attachments(term)
-                )
+                pending_batches, pending_attachments = await _reserve_prompt_attachments(term)
             try:
                 from .session import AGENT_DISPLAY
 
@@ -400,16 +499,13 @@ async def deliver(
                     attachments=pending_attachments,
                 )
             except asyncio.CancelledError:
-                await _finish_prompt_attachments_shielded(
-                    term, pending_batches, consume=False
-                )
+                await _finish_prompt_attachments_shielded(term, pending_batches, consume=False)
                 raise
             except Exception as exc:  # noqa: BLE001 - one pane must not sink the fleet
-                await _finish_prompt_attachments_shielded(
-                    term, pending_batches, consume=False
-                )
+                await _finish_prompt_attachments_shielded(term, pending_batches, consume=False)
                 log.warning(
-                    "Agentic IDE fan-out: composing for %s failed", term.name,
+                    "Agentic IDE fan-out: composing for %s failed",
+                    term.name,
                     exc_info=True,
                 )
                 return Delivery(
@@ -421,9 +517,7 @@ async def deliver(
 
         text = getattr(composed, "text", "") or ""
         if not text.strip():
-            await _finish_prompt_attachments_shielded(
-                term, pending_batches, consume=False
-            )
+            await _finish_prompt_attachments_shielded(term, pending_batches, consume=False)
             # An empty prompt would submit a bare Enter into the agent, which
             # reads as "the user pressed return" and can re-run its last task.
             return Delivery(
@@ -436,14 +530,10 @@ async def deliver(
         try:
             sent = await send_fn(term.name, text)
         except asyncio.CancelledError:
-            await _finish_prompt_attachments_shielded(
-                term, pending_batches, consume=False
-            )
+            await _finish_prompt_attachments_shielded(term, pending_batches, consume=False)
             raise
         except Exception as exc:  # noqa: BLE001 - report, never propagate
-            await _finish_prompt_attachments_shielded(
-                term, pending_batches, consume=False
-            )
+            await _finish_prompt_attachments_shielded(term, pending_batches, consume=False)
             log.info("Agentic IDE fan-out: could not send to %s: %s", term.name, exc)
             return Delivery(
                 terminal=term.name,
@@ -452,9 +542,7 @@ async def deliver(
                 reason=f"it did not accept the prompt ({exc})",
             )
 
-        await _finish_prompt_attachments_shielded(
-            term, pending_batches, consume=True
-        )
+        await _finish_prompt_attachments_shielded(term, pending_batches, consume=True)
 
         # The sender reports whether the agent actually STARTED. A sender that
         # says nothing leaves it None (unknown) rather than claiming success —
@@ -488,9 +576,7 @@ async def deliver(
         # ends the CONVERSATION — the spoken verdict is dropped — but the
         # briefs still land; the receipt (`last_prompt_at`) stays the proof.
         _DETACHED_DELIVERIES.add(work)
-        work.add_done_callback(
-            lambda task, names=tuple(wanted): _finish_detached(task, names)
-        )
+        work.add_done_callback(lambda task, names=tuple(wanted): _finish_detached(task, names))
         log.warning(
             "Agentic IDE fan-out: caller cancelled mid-delivery — finishing "
             "the briefs for %s detached",
@@ -522,4 +608,15 @@ async def deliver(
     return out
 
 
-__all__ = ["DEFAULT_CONCURRENCY", "Delivery", "FanOutResult", "deliver"]
+__all__ = [
+    "DEFAULT_CONCURRENCY",
+    "DUPLICATE_MIN_CHARS",
+    "DUPLICATE_SIMILARITY",
+    "DUPLICATE_WINDOW_S",
+    "Delivery",
+    "FanOutResult",
+    "RecentFanOut",
+    "deliver",
+    "find_duplicate_fanout",
+    "record_fanout",
+]

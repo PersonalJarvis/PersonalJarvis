@@ -99,7 +99,6 @@ from .terminal_input import (
 from .transcript import ReplayBuffer, Transcript
 from .workspace_view import (
     VIEW_CHAT,
-    VIEW_DECK,
     VIEW_GRID,
     coerce_view,
 )
@@ -213,41 +212,55 @@ def _unavailable(agent: str) -> str:
 # Nobody reaches 100 deliberately; anyone who mistypes their way past it gets a
 # sentence instead of a frozen desktop.
 MAX_TERMINALS = 100
+# How deep a wizard-opened column is filled before the next one is started.
+#
+# The workspace is exactly one screenful, so its columns share the window's
+# width: one row of columns — what this used to be — spends the whole window on
+# a single line, and the sixth terminal then left every pane about 410 px wide
+# on the maintainer's own display. A pane narrower than its agent's minimum
+# grid (see MIN_VIEWER_COLS) is clipped at the tile edge, which is how six panes
+# each came to show two thirds of themselves and read as overlapping one
+# another (reported 2026-08-11).
+#
+# Two deep halves the column count and so doubles every pane's width, which is
+# the axis the clipping is on. Only the OPENING shape: the user's own splits,
+# drags and closes rearrange the workspace freely afterwards, and no count is
+# refused or quietly reshaped — thirty columns is theirs to build.
+#
+# Mirrored by `WIZARD_COLUMN_HEIGHT` in the frontend's layout module, which
+# draws the preview. The two must agree or the workspace that opens is not the
+# one the wizard showed.
+WIZARD_COLUMN_HEIGHT = 2
 # How long a pane's call-sign may be. Half the workspace tab's 80, and for a
 # different reason: a workspace name is read, a call-sign is SAID — it is how a
 # user addresses one agent among several out loud, and it also has to fit in a
 # pane header that may be a quarter of a screen wide. Long enough for "Frontend
 # rewrite", short enough that it stays a name rather than a description.
 MAX_TERMINAL_NAME = 40
-# The narrowest geometry the shared PTY may be asked to work in.
+# The narrowest geometry the shared PTY may be asked to work in — a CRASH
+# GUARD, not an opinion about what a coding CLI deserves.
 #
-# A floor on what a coding CLI can still lay its interface out in — NOT a
-# plausibility check on the viewer's measurement, which is the question these
-# floors used to answer at 8x2 and the reason they never fired. A grid of a
-# dozen panes measures 17 columns per cell entirely correctly, clears a floor
-# of 8, and squeezes the agent into a strip it cannot draw in.
+# The rule it serves is the viewer's (see MIN_REAL_COLS in
+# ``AgenticTerminal.tsx``): a terminal is exactly as wide as the tile showing
+# it, and every character in that tile is visible. The agent is therefore told
+# what the tile MEASURES, and this only refuses a measurement that cannot be
+# real — a tile mid-layout reports 0, a hidden one reports nothing, and a PTY
+# resized to zero columns permanently wrecks the agent's drawing.
 #
-# Measured on the maintainer's own workspace (2026-08-09, thirteen panes): one
-# pane had printed its whole answer ONE CHARACTER PER LINE, and six more had
-# simply stopped drawing — a Claude Code holding "Discombobulating…" on screen,
-# its process visibly burning CPU, with not one byte reaching the app for five
-# minutes. Their last outputs shared a millisecond, which is a single layout
-# change squeezing every pane at once rather than agents falling quiet.
+# It used to be 60x15, and it used to mean something else: the width below
+# which both installed CLIs stop rendering a usable frame. Enforcing that here
+# did keep the agents alive — measured on 2026-08-09, thirteen panes, where a
+# squeezed workspace left one pane printing ONE CHARACTER PER LINE and six
+# others silently stuck — but it paid for it by drawing every narrow pane wider
+# than the window showing it, which the maintainer read as terminals shoved
+# behind one another (2026-08-11). The comfort question moved to where it can
+# be answered honestly: the launcher warns from twenty terminals up and opens
+# as many as the user confirms.
 #
-# That silence is also what made the status badge lie. The badge reads whether
-# a pane's screen MOVES (:mod:`.activity`), so an agent squeezed out of drawing
-# reads as one that finished — the "working panes shown as done" reported over
-# and over. The detector was honest; this floor is what gives it something
-# honest to read.
-#
-# 60x15 is where both installed coding CLIs still render a usable frame, under
-# the 80x24 a viewer already falls back to before it has measured anything.
-# Sizes below are REFUSED rather than clamped: the PTY keeps its last honest
-# geometry and the narrow viewer shows as much of it as fits, which costs a
-# clipped line and keeps the agent alive. Clamping would instead hand the agent
-# a geometry no window is showing.
-MIN_VIEWER_COLS = 60
-MIN_VIEWER_ROWS = 15
+# Below the floor a size is REFUSED rather than clamped — the PTY keeps its
+# last real geometry rather than being handed one no window is showing.
+MIN_VIEWER_COLS = 10
+MIN_VIEWER_ROWS = 4
 # Where a pane may land when it is dragged onto another one, in the same two
 # axes the grid is built from (columns of stacked panes). "swap" is listed first
 # because it is the one a user reaches for most: two panes are the wrong way
@@ -1115,21 +1128,6 @@ class Terminal:
     # every cold start behind the slowest one.
     attach_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
 
-    # "I'll take this one" — the Command Deck's per-pane hold.
-    #
-    # The deck's whole promise is that Jarvis runs the floor, and the honest
-    # limit on that promise is a pane the user has decided to drive themselves:
-    # a permission prompt to answer, a password, a question only they can settle.
-    # While this is on, the deck neither assigns work to the pane nor reports it
-    # — both would be talking over somebody who is already there.
-    #
-    # Ephemeral and per pane rather than a workspace mode: the interesting case
-    # is one agent out of eight, and the other seven should carry on. It is not
-    # persisted for the same reason `surface_view` is not — a restart lands the
-    # user back in the ordinary state rather than in a hold they set an hour ago
-    # and have long forgotten.
-    deck_hold: bool = False
-
     def to_dict(self) -> dict[str, Any]:
         # Read the replayed screen ONCE. `lines()` walks the whole scrollback,
         # and both the line count below and the recap want it — asking twice per
@@ -1155,9 +1153,6 @@ class Terminal:
             # the voice path both have to know, or they would offer a target
             # that refuses every instruction sent to it.
             "accepts_prompts": accepts_prompts(self.agent),
-            # Has the user taken this pane over in the Command Deck? Reported
-            # so the card can show it and the deck can leave the pane alone.
-            "deck_hold": self.deck_hold,
             "index": self.index,
             "column": self.column,
             "slot": self.slot,
@@ -1274,10 +1269,10 @@ class Session:
     # reported by the mounted frontend and deliberately excluded from resume
     # snapshots: after a restart the UI reports what it actually shows again.
     #
-    # Which of the three reading modes is on screen — see
-    # ``agentic_ide.workspace_view``. It replaced a ``chat_view`` boolean once a
-    # third mode existed, and it is read for more than deixis now: the Command
-    # Deck is the one surface allowed to speak a finished pane out loud.
+    # Which reading mode is on screen — see ``agentic_ide.workspace_view``. It
+    # travels as a name rather than the ``chat_view`` boolean it replaced, so a
+    # further mode reads correctly here without re-deriving what "not chat" was
+    # supposed to mean.
     surface_view: str = VIEW_GRID
     surface_terminal: str = ""
     # The written prompt bar and the voice orb share one explicit pane target.
@@ -1329,12 +1324,11 @@ class Session:
     def contextual_terminal(self) -> Terminal | None:
         """The one pane the visible surface puts in front of the user.
 
-        Two of the three views can answer this. Chat view stages exactly one
-        pane; the Command Deck stages one whenever a card has been unfolded to
-        read its terminal. The grid never answers — a dozen panes are visible
-        there, and picking one of them would be a guess dressed as a fact.
+        Chat view stages exactly one pane and can answer. The grid never
+        does — a dozen panes are visible there, and picking one of them would
+        be a guess dressed as a fact.
         """
-        if self.surface_view not in (VIEW_CHAT, VIEW_DECK):
+        if self.surface_view != VIEW_CHAT:
             return None
         if not self.surface_terminal:
             return None
@@ -1342,7 +1336,7 @@ class Session:
 
     def stages_one_pane(self) -> bool:
         """Does the visible view show a single pane, rather than the wall?"""
-        return self.surface_view in (VIEW_CHAT, VIEW_DECK)
+        return self.surface_view == VIEW_CHAT
 
     def prompt_target_terminal(self) -> Terminal | None:
         """The pane selected by the visible prompt bar and voice orb."""
@@ -1802,9 +1796,12 @@ class Registry:
                         agent=agent,
                         display_name=agent_display(agent),
                         index=index,
-                        # A wizard-opened workspace is one row of columns; the
-                        # user's own "split down" is what creates a stack.
-                        column=index,
+                        # Columns of WIZARD_COLUMN_HEIGHT, filled top to bottom
+                        # before the next one opens — the same arithmetic the
+                        # preview draws with (frontend `layout.ts`), so the
+                        # workspace that appears is the one that was shown.
+                        column=index // WIZARD_COLUMN_HEIGHT,
+                        slot=index % WIZARD_COLUMN_HEIGHT,
                         account=resolve_account(agent, _requested_account(entry)),
                     )
                 )
@@ -2378,30 +2375,6 @@ class Registry:
         logger.info("Agentic IDE focus mode {}", "on" if enabled else "off")
         return session.focus_mode
 
-    def set_deck_hold(self, name: str, held: bool, *, workspace_id: str | None = None) -> bool:
-        """"I'll take this one" — stop the Command Deck using this pane.
-
-        While held, the deck neither assigns work to the pane nor reports it,
-        and the pane's own editor is unlocked in the UI. Everything else about
-        the pane is unchanged: it keeps running, keeps its recap, keeps its
-        place, and the bell still counts it like every other pane.
-
-        Raises for a pane that is not there rather than answering False — the
-        two outcomes are "it is now held" and "it is now not", and a silent
-        no-op for a mistyped call-sign looks exactly like the first.
-        """
-        located = self._locate(name, workspace_id)
-        if located is None:
-            raise SessionError(f"No terminal called '{name}'.")
-        _session, term = located
-        term.deck_hold = bool(held)
-        logger.info(
-            "Agentic IDE: {} {} by the user in the Command Deck",
-            term.name,
-            "taken over" if term.deck_hold else "handed back",
-        )
-        return term.deck_hold
-
     def set_surface_context(
         self,
         *,
@@ -2418,9 +2391,9 @@ class Registry:
         selections clear the default rather than leaving a believable old one.
 
         An off-screen section reports the grid regardless of what it was last
-        showing. That is not cosmetic: the deck speaks finished panes out loud,
-        and a section the user navigated away from must not keep talking from
-        behind whatever they are looking at now.
+        showing. That is not cosmetic: a section the user navigated away from
+        must not keep answering "this terminal" with a pane that is behind
+        whatever they are looking at now.
         """
         session = self.session
         if session is None or session.id != workspace_id:
@@ -3883,6 +3856,61 @@ class Registry:
                 anchor.name,
             )
             return moved
+
+    async def refold(self, depth: int) -> Session:
+        """Re-deal every pane into columns ``depth`` deep, in reading order.
+
+        The workspace is exactly one screenful and never scrolls, so a pane can
+        only be given room that is taken from somewhere else. When the panes are
+        too NARROW — the width a coding agent needs for its interface is a hard
+        floor, ``MIN_REAL_COLS`` in the frontend's terminal — the only room left
+        to spend is height, and folding the row is how it is spent: half as many
+        columns are twice as wide. Six panes in a row at the maintainer's text
+        size were ~410 px each where ~660 was needed, so every terminal drew a
+        third of itself past its own tile edge (reported 2026-08-11, and read as
+        the panes overlapping one another).
+
+        Deliberately a whole-workspace operation rather than a run of
+        ``move_terminal`` calls. Six moves are six persists and six pushes to
+        every viewer, and each intermediate shape is a real arrangement the
+        panes would refit to — the grid would visibly thrash through five wrong
+        layouts on the way to the right one, and an interruption anywhere in
+        that run leaves the workspace in one of them for good.
+
+        Reading order is the order ``_renumber`` already keeps the list in (left
+        to right, top to bottom), so folding preserves what the user sees as the
+        sequence of their panes. Re-folding to the depth a workspace already has
+        changes nothing and is not an error: it is what the grid asks for on
+        every measurement once the shape is right, and answering it with the
+        unchanged session is what lets the caller stop.
+
+        No agent is started or stopped, no PTY is resized here and no pane is
+        remounted — only the two numbers that say where a pane is drawn. That is
+        what makes re-folding safe to do on the app's own initiative at all.
+        """
+        async with self._lock:
+            session = self.session
+            if session is None:
+                raise SessionError("No Agentic-IDE session is running.")
+            if depth < 1:
+                raise SessionError("Column depth must be at least 1.")
+            # A depth past the pane count is the same shape as one column, and
+            # accepting it rather than refusing keeps the caller from having to
+            # clamp: the grid asks with a number it derived from a measurement.
+            depth = min(depth, max(1, len(session.terminals)))
+
+            for index, term in enumerate(session.terminals):
+                term.column = index // depth
+                term.slot = index % depth
+
+            self._renumber(session)
+            await self._persist()
+            logger.info(
+                "Agentic IDE: re-folded {} panes into columns of {}",
+                len(session.terminals),
+                depth,
+            )
+            return session
 
     async def rename_terminal(self, wanted: str, name: str) -> tuple[Session, Terminal]:
         """Give one pane a new call-sign, without touching what runs in it.

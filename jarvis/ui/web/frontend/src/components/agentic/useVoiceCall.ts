@@ -21,8 +21,8 @@ export function isVoiceActive(state: VoiceState): boolean {
  * The one start/stop path shared by every Agentic IDE voice surface.
  *
  * Keeping the request and its user-visible failure handling here prevents the
- * command deck and floating bubble from becoming two controls that look alike
- * but behave differently.
+ * toolbar button and the floating bubble from becoming two controls that look
+ * alike but behave differently.
  */
 export function useVoiceCall() {
   const t = useT();

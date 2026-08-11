@@ -1,16 +1,10 @@
 """Which way the user is reading the open workspace right now.
 
-The Agentic IDE renders one set of panes three different ways, and the backend
-has to know which one is on screen — not for looks, but because two behaviours
-depend on it:
-
-* **Deictic reference.** "This terminal" is only answerable when exactly one
-  pane fills the screen. Chat view puts one there; the grid puts a dozen, and
-  guessing among them is less honest than asking for a call-sign.
-* **Speaking unasked.** The Command Deck is the one surface where Jarvis
-  reports finished work out loud (see :mod:`.standup`). In the other two the
-  same events reach the header bell and stay silent, which is what they have
-  always done.
+The Agentic IDE renders one set of panes two different ways, and the backend
+has to know which one is on screen — not for looks, but because deictic
+reference depends on it: "this terminal" is only answerable when exactly one
+pane fills the screen. Chat view puts one there; the grid puts a dozen, and
+guessing among them is less honest than asking for a call-sign.
 
 This module is layer 0 of the five-layer enum pattern
 (``docs/anti-drift-three-layer.md``). The value crosses from this package into
@@ -31,17 +25,15 @@ from __future__ import annotations
 VIEW_GRID = "grid"
 #: One pane on a calm stage, the rest on a rail, read like a conversation.
 VIEW_CHAT = "chat"
-#: The Command Deck: the orb is the subject, Jarvis briefs and reports back.
-VIEW_DECK = "deck"
 
 #: Every value the contract allows, in the order the toolbar offers them.
-WORKSPACE_VIEWS: tuple[str, ...] = (VIEW_GRID, VIEW_CHAT, VIEW_DECK)
+WORKSPACE_VIEWS: tuple[str, ...] = (VIEW_GRID, VIEW_CHAT)
 
 #: What an unreadable or absent value falls back to.
 #:
 #: The grid, deliberately: it is the view that promises the least. A surface
-#: report that arrives garbled must not be able to switch a workspace INTO the
-#: deck, because the deck is the one that starts talking on its own.
+#: report that arrives garbled must not be able to switch a workspace into a
+#: mode that answers "this terminal" with a pane the user is not looking at.
 VIEW_DEFAULT = VIEW_GRID
 
 
@@ -62,7 +54,6 @@ def view_from_legacy_chat_flag(chat_view: object) -> str:
     The desktop shell is an embedded WebView holding a bundle that reloads
     itself, so for a few seconds after an update a window can still be posting
     the old ``chat_view: true|false`` body. Those two values map cleanly onto
-    two of the three views, and an old client can never mean the third — it
-    does not know the deck exists.
+    the two views.
     """
     return VIEW_CHAT if bool(chat_view) else VIEW_GRID

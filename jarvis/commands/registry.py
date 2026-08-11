@@ -1003,7 +1003,10 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "to be DIVIDED between the agents. "
                 "CHECK THE REPLY: 'delivered' names the agents that really got "
                 "the task and 'undelivered' those that did not — report both, "
-                "and use the call-signs the reply gives you."
+                "and use the call-signs the reply gives you. A spawn repeating "
+                "an instruction that recently went to panes still open is "
+                "refused as a duplicate; the refusal names who is already on "
+                "it — tell the user that fleet is working, do not retry."
             ),
             method="POST",
             path="/api/agentic-ide/fanout",
@@ -1056,6 +1059,18 @@ def _build_registry() -> tuple[AppCommand, ...]:
                             "Divide the instruction into one distinct assignment "
                             "per agent instead of giving all of them the same "
                             "brief."
+                        ),
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Leave this out. A spawn whose instruction recently "
+                            "went to panes that are still open is refused as a "
+                            "duplicate, and the refusal names the panes already "
+                            "working on it — report those instead of retrying. "
+                            "Set true ONLY when the user explicitly asked to run "
+                            "the same task again on a fresh fleet."
                         ),
                     },
                 },

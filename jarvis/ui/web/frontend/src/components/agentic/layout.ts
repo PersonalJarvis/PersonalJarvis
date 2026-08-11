@@ -35,10 +35,15 @@
  * only ever a change of numbers on each pane. Nothing is re-parented, so
  * nothing remounts.
  *
- * ## One line of columns, however many there are — and ALWAYS one screenful
+ * ## However many columns there are — and ALWAYS one screenful
  *
  * The workspace never wraps. Opening a column always puts it beside the last
- * one, and a workspace of twenty columns is twenty columns across.
+ * one, and a workspace of twenty columns is twenty columns across. Nothing here
+ * refuses a count or rearranges one behind the user's back: thirty columns on a
+ * laptop is a thing they may build, and on a wall display it is a reasonable
+ * thing to want. The only shape this module decides is the one a workspace
+ * OPENS in (see `wizardPanes`), and every later split, drag and close is the
+ * user's.
  *
  * It also never scrolls. The whole workspace is exactly the area it is given:
  * open a pane and every pane gets a little smaller, on whichever axis the split
@@ -78,6 +83,27 @@
  * grows a scrollbar.
  */
 export const COMFORTABLE_PANE_WIDTH_PX = 380;
+
+/**
+ * The count from which opening a workspace has to be confirmed out loud.
+ *
+ * NOT a limit, and deliberately not derived from the window either. The
+ * maintainer's rule for this screen (2026-08-11) is that the number of
+ * terminals is the user's call — thirty side by side is a thing somebody may
+ * want, and on a wall display it is even readable. What the app does not know
+ * is how big that display is, so it may not decide FOR them.
+ *
+ * What it can do is make sure the decision was made. Twenty is where a
+ * workspace stops being roomy on any ordinary screen, so from here the wizard
+ * says so and waits for a yes. Below it nothing is asked, because a question
+ * asked every time is a question nobody reads.
+ *
+ * Distinct from `COMFORTABLE_PANE_WIDTH_PX` on purpose: that one is measured
+ * against the window and phrased as advice, this one is a fixed count and
+ * blocks until it is acknowledged. A user on a laptop meets the advice long
+ * before this, and a user on a video wall meets only this.
+ */
+export const CROWDED_TERMINAL_COUNT = 20;
 
 /**
  * Horizontal padding of the rendered grid — 4 px on each side.
@@ -127,41 +153,159 @@ export interface Positioned {
 }
 
 /**
+ * How deep a wizard-opened column is filled before the next one is started.
+ *
+ * Two, because the workspace is always one screenful (see the header) and the
+ * column is the only axis that can absorb a pane without taking width from
+ * every other one. One row of columns — what this used to be — spends the whole
+ * window on a single line, so the sixth terminal left every pane about 410 px
+ * wide at the maintainer's own text size: well under the ~650 px a 60-column
+ * agent grid needs there, and therefore six panes each showing two thirds of
+ * themselves with the rest clipped at the tile edge (reported 2026-08-11, and
+ * read as the panes overlapping one another).
+ *
+ * Two deep halves the column count and so doubles the width every pane gets,
+ * which is the axis the clipping is on. Deliberately not "as square as
+ * possible": past four terminals a squarer grid starts paying in HEIGHT
+ * instead, and a coding CLI anchors its input box to its bottom row — a pane
+ * wide enough to read but too short to hold the agent's interface is the worse
+ * half of the same trade.
+ *
+ * Only the OPENING shape. Nothing holds a workspace at two deep afterwards: the
+ * user's own splits, drags and closes rearrange it freely, and a wall of thirty
+ * columns is theirs to build if they want one.
+ */
+export const WIZARD_COLUMN_HEIGHT = 2;
+
+/**
  * The panes a wizard-opened workspace of ``count`` terminals starts with.
  *
- * One row of columns — `column = index`, `slot = 0` — which is literally what
- * the backend writes when it opens a session from the wizard
- * (`agentic_ide/session.py`: "A wizard-opened workspace is one row of columns").
+ * Columns of {@link WIZARD_COLUMN_HEIGHT}, each filled top to bottom before the
+ * next is opened — which is literally what the backend writes when it opens a
+ * session from the wizard (`agentic_ide/session.py`, the same arithmetic). Two
+ * terminals stand one above the other; three are a full column plus one beside
+ * it; six are three columns of two.
  *
  * It exists so the preview cannot describe a workspace the backend would never
  * build. An earlier preview took a shortcut and derived its dots from the raw
- * terminal COUNT, which happens to agree here only because every terminal gets
- * its own column at the start. Feed `paneGrid` the same panes the grid will
- * receive and the preview stops being a second opinion.
+ * terminal COUNT, which happened to agree only while every terminal got a
+ * column of its own. Feed `paneGrid` the same panes the grid will receive and
+ * the preview stops being a second opinion.
  */
 export function wizardPanes(count: number): Positioned[] {
   return Array.from({ length: Math.max(0, Math.trunc(count)) }, (_, index) => ({
-    column: index,
-    slot: 0,
+    column: Math.floor(index / WIZARD_COLUMN_HEIGHT),
+    slot: index % WIZARD_COLUMN_HEIGHT,
   }));
 }
 
 /**
- * Is ``count`` panes comfortable on a window this wide, or merely possible?
+ * Is a workspace ``columns`` across comfortable on a window this wide, or
+ * merely possible?
  *
- * Every count fits — the workspace is always one screenful — so the only thing
- * left to say is how much room each pane gets, and this is where that turns
- * into a yes or no. Deliberately about the PANE rather than the count: the same
- * eight terminals are roomy on a 4K display and cramped on a laptop.
+ * Every arrangement fits — the workspace is always one screenful — so the only
+ * thing left to say is how much room each pane gets, and this is where that
+ * turns into a yes or no. Deliberately about the PANE rather than the terminal
+ * count: the same eight terminals are roomy on a 4K display and cramped on a
+ * laptop, and eight opened as four columns of two are twice the width of eight
+ * in a row (see {@link WIZARD_COLUMN_HEIGHT}). Callers pass the COLUMN count
+ * for that reason — the number of panes across, not the number of panes.
  */
 export function panesAreComfortable(
-  count: number,
+  columns: number,
   containerWidthPx: number,
 ): boolean {
-  const width = paneWidthAt(count, containerWidthPx);
+  const width = paneWidthAt(columns, containerWidthPx);
   // An unmeasured container says nothing yet — and "we have not measured" must
   // not render as a warning, or the wizard opens shouting at every user once.
   return width === 0 || width >= COMFORTABLE_PANE_WIDTH_PX;
+}
+
+/** What `columnDepthFor` needs to know about the workspace on screen. */
+export interface RefoldMeasurements {
+  /** How many panes the workspace holds. */
+  paneCount: number;
+  /** The canvas all of them share, in px. */
+  canvasWidthPx: number;
+  canvasHeightPx: number;
+  /**
+   * The width ONE pane needs to show the whole terminal it is drawing.
+   *
+   * Measured by the panes themselves and reported upwards, never estimated
+   * here. Only a pane knows the reader's
+   * chosen text size, and the figure that matters is `MIN_REAL_COLS` cells at
+   * exactly that size plus its own frame — arithmetic this module would have to
+   * duplicate, and would then get subtly wrong on the day a padding changes.
+   *
+   * Zero means nothing is clipped, which is the answer "one row is fine".
+   */
+  neededPaneWidthPx: number;
+  /**
+   * Below this a pane is too SHORT to be worth the width it just bought.
+   *
+   * A coding CLI anchors its input box to its bottom row, so a pane that has
+   * been folded until it can no longer hold the agent's interface has traded
+   * one unreadable pane for another (the same trade `MIN_REAL_ROWS` refuses in
+   * `./AgenticTerminal`). This is what stops the fold before that point.
+   */
+  minPaneHeightPx: number;
+}
+
+/**
+ * How deep the workspace's columns have to be for every pane to show itself.
+ *
+ * The workspace is always exactly one screenful — it never scrolls and never
+ * grows (see the header) — so the only room a pane can be given is room taken
+ * from somewhere else. Width is the axis that is failing: at the maintainer's
+ * text size six panes in a row are ~410 px each where a 60-column agent grid
+ * needs ~660, so a third of every terminal is drawn past its own tile edge and
+ * clipped (reported 2026-08-11, and read as the panes overlapping each other).
+ *
+ * Height is the axis that can pay for it. Folding the row in two halves the
+ * column count, and half as many columns are twice as wide — the panes get the
+ * width they were short of, and the text size the user chose is untouched. That
+ * ordering is the whole decision: shrinking the font instead was tried and
+ * withdrawn the same day it shipped (2026-08-11), because it silently overrode
+ * the toolbar's own size control.
+ *
+ * So: the smallest depth at which every pane clears `neededPaneWidthPx`, and
+ * never deeper than the height can carry. Depth 1 — one row, the shape the
+ * workspace has always opened in — whenever that already fits, because a fold
+ * nobody needs is a rearrangement behind the user's back.
+ *
+ * Returns a DEPTH (panes stacked per column), not a column count: that is what
+ * both `wizardPanes` and the backend's re-fold are expressed in.
+ */
+export function columnDepthFor(measurements: RefoldMeasurements): number {
+  const panes = Math.max(0, Math.trunc(measurements.paneCount));
+  const needed = measurements.neededPaneWidthPx;
+  if (panes <= 1) return 1;
+  // Nothing measured, or nothing clipped — either way there is no evidence the
+  // workspace is too narrow, and this must never fold on a guess.
+  if (!Number.isFinite(needed) || needed <= 0) return 1;
+  if (!Number.isFinite(measurements.canvasWidthPx) || measurements.canvasWidthPx <= 0) {
+    return 1;
+  }
+
+  const content = Math.max(0, measurements.canvasWidthPx - GRID_HORIZONTAL_PADDING_PX);
+  // How many columns still leave each one wide enough. At least one: a window
+  // too narrow for a single pane cannot be fixed by folding, and zero columns
+  // would divide by zero on the way to an infinite depth.
+  const affordable = Math.max(1, Math.floor(content / needed));
+  if (affordable >= panes) return 1;
+
+  const wanted = Math.ceil(panes / affordable);
+
+  // The ceiling the other axis imposes. An unmeasured height must not cap
+  // anything — during the first frames the canvas reports 0, and a cap of 1
+  // there would decide "one row" for a workspace nobody has measured yet.
+  const height = measurements.canvasHeightPx;
+  const floorPx = measurements.minPaneHeightPx;
+  if (!Number.isFinite(height) || height <= 0 || !Number.isFinite(floorPx) || floorPx <= 0) {
+    return wanted;
+  }
+  const bearable = Math.max(1, Math.floor(height / floorPx));
+  return Math.min(wanted, bearable);
 }
 
 /** Where one pane sits in the CSS grid. All values are 1-based, as CSS wants. */

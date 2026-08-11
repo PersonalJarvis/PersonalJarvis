@@ -38,6 +38,16 @@ def _isolated_recents(
 
 
 @pytest.fixture(autouse=True)
+def _fresh_duplicate_memory() -> None:
+    """The duplicate guard's memory is module-level; tests must not share it."""
+    from jarvis.agentic_ide import fanout
+
+    fanout._RECENT_FANOUTS.clear()
+    yield
+    fanout._RECENT_FANOUTS.clear()
+
+
+@pytest.fixture(autouse=True)
 def _offline_planner(monkeypatch: pytest.MonkeyPatch) -> None:
     """No provider: the deterministic split carries every test here.
 
@@ -382,6 +392,121 @@ async def test_fanout_opens_and_briefs_a_pane_in_one_call(
     assert body["ok"] is True
     assert [d["terminal"] for d in body["delivered"]] == opened
     assert body["undelivered"] == []
+
+
+# ---------------------------------------------------------- duplicate spawns
+# Live failure 2026-08-11 16:38: a spoken "open two terminals and have them fix
+# the macOS bugs" was executed once, and 37 s later the router brain — whose
+# context did not yet show the first fleet's success — issued the same order
+# again with spawn. Four agents ended up racing on one task in one shared
+# working tree. The route now refuses the repeat while the first fleet's panes
+# are still open, BEFORE any pane is created.
+
+
+async def test_a_repeated_spawn_for_the_same_order_is_refused(
+    mounting_client: TestClient, registry: Registry, tmp_path: Path
+) -> None:
+    await _live_workspace(registry, tmp_path, 1)
+    first = mounting_client.post(
+        "/api/agentic-ide/fanout",
+        json={
+            "instruction": "fix all bugs on macOS and check the git history on GitHub",
+            "spawn": [{"count": 2}],
+        },
+    )
+    assert first.status_code == 200
+    briefed = [d["terminal"] for d in first.json()["delivered"]]
+    assert registry.session is not None
+    panes_before = len(registry.session.terminals)
+
+    # The router re-dictating an order is not byte-identical — the live
+    # duplicate had corrected a transcription typo. Near-identical must match.
+    second = mounting_client.post(
+        "/api/agentic-ide/fanout",
+        json={
+            "instruction": "fix all bugs on macOS and check the Git history on GitHub",
+            "spawn": [{"count": 2}],
+        },
+    )
+
+    assert second.status_code == 409
+    detail = second.json()["detail"]
+    assert all(name in detail for name in briefed), "the working panes are named"
+    assert "force" in detail, "the deliberate-repeat escape hatch is named"
+    assert len(registry.session.terminals) == panes_before, "no pane was opened"
+
+
+async def test_force_spawns_the_same_order_again(
+    mounting_client: TestClient, registry: Registry, tmp_path: Path
+) -> None:
+    """An explicit "run it again" stays possible — it just has to be explicit."""
+    await _live_workspace(registry, tmp_path, 1)
+    instruction = "fix all bugs on macOS and check the git history on GitHub"
+    mounting_client.post(
+        "/api/agentic-ide/fanout", json={"instruction": instruction, "spawn": [{"count": 2}]}
+    )
+
+    repeat = mounting_client.post(
+        "/api/agentic-ide/fanout",
+        json={"instruction": instruction, "spawn": [{"count": 2}], "force": True},
+    )
+
+    assert repeat.status_code == 200
+    assert len(repeat.json()["opened"]) == 2
+
+
+async def test_rebriefing_existing_panes_is_never_a_duplicate(
+    mounting_client: TestClient, registry: Registry, tmp_path: Path
+) -> None:
+    """Only a SPAWN repeat is refused.
+
+    Re-briefing panes the user can see is cheap and often deliberate ("tell
+    them again"); the guard exists for the invisible second fleet, not for it.
+    """
+    names = await _live_workspace(registry, tmp_path, 2)
+    instruction = "fix all bugs on macOS and check the git history on GitHub"
+    first = mounting_client.post(
+        "/api/agentic-ide/fanout", json={"instruction": instruction, "terminals": names}
+    )
+    assert first.status_code == 200
+
+    again = mounting_client.post(
+        "/api/agentic-ide/fanout", json={"instruction": instruction, "terminals": names}
+    )
+
+    assert again.status_code == 200
+
+
+async def test_a_repeat_after_the_first_fleet_closed_is_legitimate(
+    mounting_client: TestClient, registry: Registry, tmp_path: Path
+) -> None:
+    """Gone panes make a re-run a fresh order, not a duplicate."""
+    await _live_workspace(registry, tmp_path, 1)
+    instruction = "fix all bugs on macOS and check the git history on GitHub"
+    first = mounting_client.post(
+        "/api/agentic-ide/fanout", json={"instruction": instruction, "spawn": [{"count": 2}]}
+    )
+    briefed = [d["terminal"] for d in first.json()["delivered"]]
+    await registry.close_terminals(briefed)
+
+    second = mounting_client.post(
+        "/api/agentic-ide/fanout", json={"instruction": instruction, "spawn": [{"count": 2}]}
+    )
+
+    assert second.status_code == 200
+
+
+async def test_short_steering_strokes_are_never_duplicates(
+    mounting_client: TestClient, registry: Registry, tmp_path: Path
+) -> None:
+    """Fleet-wide "continue" twice in a row is normal steering, not a repeat."""
+    await _live_workspace(registry, tmp_path, 1)
+    for _ in range(2):
+        response = mounting_client.post(
+            "/api/agentic-ide/fanout",
+            json={"instruction": "continue", "spawn": [{"count": 1}]},
+        )
+        assert response.status_code == 200
 
 
 async def test_opening_panes_brings_the_workspace_forward(

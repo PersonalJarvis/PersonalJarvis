@@ -51,7 +51,7 @@ def _client_returning(payload: str):
         def __init__(self, *args: object, **kwargs: object) -> None:
             pass
 
-        async def __aenter__(self) -> "_Client":
+        async def __aenter__(self) -> _Client:
             return self
 
         async def __aexit__(self, *args: object) -> bool:

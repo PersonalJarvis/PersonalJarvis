@@ -34,6 +34,23 @@ async def _open(registry: Registry, folder: Path, count: int = 2):
     )
 
 
+async def _open_in_a_row(registry: Registry, folder: Path, count: int):
+    """A workspace of ``count`` panes side by side — one column each.
+
+    The wizard opens COLUMNS OF TWO now (``WIZARD_COLUMN_HEIGHT``), so a row is
+    built here the way a user builds one: open a pane, then split it rightwards.
+
+    Stated rather than inherited on purpose. The tests that use this are about
+    what a split button does to an arrangement, so the arrangement they start
+    from is part of the test — taking it from whatever shape the wizard happens
+    to open in is how they came to fail when that shape changed.
+    """
+    session = await _open(registry, folder, 1)
+    for _ in range(max(0, count - 1)):
+        await registry.add_terminal(direction="right")
+    return session
+
+
 def _layout(registry: Registry) -> list[tuple[str, int, int]]:
     """(name, column, slot) in render order — the shape the grid draws.
 
@@ -52,19 +69,34 @@ async def _noop_exit(_code: int) -> None:
 
 
 # --------------------------------------------------------------- initial rows
-async def test_a_fresh_workspace_puts_every_pane_in_its_own_column(
+async def test_a_fresh_workspace_fills_columns_two_deep(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """The wizard's panes stand side by side: one column each, top slot."""
+    """The wizard's panes stack two to a column before a new one is opened.
+
+    A row of columns shares the window's width between every pane, so six
+    terminals left each about 410 px on the maintainer's display — under the
+    width their agent needs, so each pane was clipped at its tile edge and the
+    six read as overlapping (2026-08-11). Two deep halves the columns and so
+    doubles each pane's width. The odd third pane opens a column of its own.
+    """
     await _open(registry, tmp_path, 3)
-    assert _layout(registry) == [("T1", 0, 0), ("T2", 1, 0), ("T3", 2, 0)]
+    assert _layout(registry) == [("T1", 0, 0), ("T2", 0, 1), ("T3", 1, 0)]
+
+
+async def test_a_single_terminal_still_opens_alone(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """Nothing is stacked that has nothing to stack with."""
+    await _open(registry, tmp_path, 1)
+    assert _layout(registry) == [("T1", 0, 0)]
 
 
 # ---------------------------------------------------------------- split right
 async def test_split_right_opens_a_column_next_to_the_anchor(
     registry: Registry, tmp_path: Path
 ) -> None:
-    await _open(registry, tmp_path, 2)
+    await _open_in_a_row(registry, tmp_path, 2)
     term = await registry.add_terminal(anchor="T1", direction="right")
     # Immediately right of its anchor — not appended at the end — and everything
     # further right shifts over rather than being overwritten.
@@ -94,7 +126,7 @@ async def test_split_down_stacks_inside_the_anchor_column(
 ) -> None:
     """The point of the column model: splitting one pane must not squash the
     others. T2 keeps its own full-height column."""
-    await _open(registry, tmp_path, 2)
+    await _open_in_a_row(registry, tmp_path, 2)
     term = await registry.add_terminal(anchor="T1", direction="down")
     assert (term.column, term.slot) == (0, 1)
     assert _layout(registry) == [("T1", 0, 0), (term.name, 0, 1), ("T2", 1, 0)]
@@ -214,7 +246,7 @@ async def test_closing_a_whole_column_repacks_the_columns(
     registry: Registry, tmp_path: Path
 ) -> None:
     """An emptied column would render as a blank stripe."""
-    await _open(registry, tmp_path, 3)
+    await _open_in_a_row(registry, tmp_path, 3)
     await registry.close_terminal("T2")
     assert _layout(registry) == [("T1", 0, 0), ("T3", 1, 0)]
 

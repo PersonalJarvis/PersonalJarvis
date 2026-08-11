@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   COMFORTABLE_PANE_WIDTH_PX,
   GRID_HORIZONTAL_PADDING_PX,
+  columnDepthFor,
   paneGrid,
   paneWidthAt,
   panesAreComfortable,
@@ -67,16 +68,88 @@ describe("panesAreComfortable", () => {
   });
 });
 
+describe("columnDepthFor", () => {
+  /*
+   * The workspace from the report, at the numbers it was actually measured at:
+   * a 2560 px window, six panes, and a terminal that needs ~660 px to show its
+   * 60-column grid at the maintainer's text size. Six in a row gave each ~410,
+   * so every pane drew a third of itself past its own edge.
+   */
+  const REPORTED = {
+    paneCount: 6,
+    canvasWidthPx: 2560,
+    canvasHeightPx: 900,
+    neededPaneWidthPx: 660,
+    minPaneHeightPx: 380,
+  };
+
+  it("folds the reported workspace into two rows, and no deeper", () => {
+    // 2560 px carries three 660 px columns, so six panes need two per column —
+    // 3x2, each pane ~850 px, every terminal fully visible at the SAME text size.
+    expect(columnDepthFor(REPORTED)).toBe(2);
+  });
+
+  it("leaves a workspace alone when one row already fits", () => {
+    // The same six panes on a display wide enough for six full columns. Folding
+    // here would be a rearrangement behind the user's back for no gain at all.
+    expect(columnDepthFor({ ...REPORTED, canvasWidthPx: 6 * 660 + 100 })).toBe(1);
+  });
+
+  it("does not fold on a guess when no pane reported being clipped", () => {
+    // `neededPaneWidthPx` is 0 exactly when every terminal already shows itself.
+    // That is evidence of health, not a missing measurement.
+    expect(columnDepthFor({ ...REPORTED, neededPaneWidthPx: 0 })).toBe(1);
+  });
+
+  it("stays put while the canvas is still unmeasured", () => {
+    // A first paint reports 0. Folding on it would reshape every workspace once
+    // on open, before anything had been measured at all.
+    expect(columnDepthFor({ ...REPORTED, canvasWidthPx: 0 })).toBe(1);
+    expect(columnDepthFor({ ...REPORTED, canvasWidthPx: Number.NaN })).toBe(1);
+  });
+
+  it("stops folding once the panes would be too short to hold an agent", () => {
+    // Twelve panes on a laptop want six deep on width alone. A 900 px canvas
+    // carries two panes of 380 px, so the fold stops at two: a pane wide enough
+    // to read but too short to show the agent's input box is the worse half of
+    // the same trade (see MIN_REAL_ROWS in ./AgenticTerminal).
+    expect(
+      columnDepthFor({ ...REPORTED, paneCount: 12, canvasWidthPx: 1440 }),
+    ).toBe(2);
+  });
+
+  it("lets height cap nothing while height is unknown", () => {
+    // Width has been measured and height has not — capping at 1 there would
+    // silently refuse the fold the width evidence already justifies.
+    expect(
+      columnDepthFor({ ...REPORTED, paneCount: 12, canvasWidthPx: 1440, canvasHeightPx: 0 }),
+    ).toBe(Math.ceil(12 / Math.max(1, Math.floor((1440 - GRID_HORIZONTAL_PADDING_PX) / 660))));
+  });
+
+  it("has nothing to fold below two panes", () => {
+    expect(columnDepthFor({ ...REPORTED, paneCount: 1 })).toBe(1);
+    expect(columnDepthFor({ ...REPORTED, paneCount: 0 })).toBe(1);
+  });
+
+  it("keeps a single pane per column when even one will not fit", () => {
+    // A window narrower than one usable terminal cannot be repaired by folding.
+    // It must still answer with a real depth rather than dividing by zero.
+    const depth = columnDepthFor({ ...REPORTED, canvasWidthPx: 300 });
+    expect(depth).toBe(2);
+    expect(Number.isFinite(depth)).toBe(true);
+  });
+});
+
 describe("wizardPanes", () => {
-  it("is the one row of columns the backend opens a workspace with", () => {
-    // Mirrors agentic_ide/session.py, which sets column=index and slot=0 for a
-    // wizard-opened workspace. The preview feeds these to the same `paneGrid`
-    // the running workspace uses, so it cannot describe a layout the backend
-    // would never build.
+  it("is the columns of two the backend opens a workspace with", () => {
+    // Mirrors agentic_ide/session.py, which fills a column to
+    // WIZARD_COLUMN_HEIGHT before opening the next one. The preview feeds these
+    // to the same `paneGrid` the running workspace uses, so it cannot describe
+    // a layout the backend would never build.
     expect(wizardPanes(3)).toEqual([
       { column: 0, slot: 0 },
+      { column: 0, slot: 1 },
       { column: 1, slot: 0 },
-      { column: 2, slot: 0 },
     ]);
   });
 
@@ -85,12 +158,33 @@ describe("wizardPanes", () => {
     expect(wizardPanes(-4)).toEqual([]);
   });
 
-  it("lays out exactly like the workspace it stands for, at any window size", () => {
-    // 8 terminals are 8 columns — on a 4K display and on a laptop alike. The
-    // window decides how many are ON SCREEN, never how they are arranged.
+  it("halves the columns a count is spread over, which is what pane width is", () => {
+    // The 2026-08-11 report: six terminals in one row left every pane about
+    // 410 px on the maintainer's display, well under the width its agent needs,
+    // so each pane was clipped at its tile edge and the six read as overlapping.
+    // Opened two deep the same six are three columns — double the width each.
+    const grid = paneGrid(wizardPanes(6));
+    expect(grid.columns).toBe(3);
+    expect(grid.rows).toBe(2);
+  });
+
+  it("stands the odd one out at full height beside a filled column", () => {
+    // Three terminals: a column of two, and a third that reaches the same
+    // bottom edge rather than leaving a hole under itself.
+    const grid = paneGrid(wizardPanes(3));
+    expect(grid.placements).toEqual([
+      { column: 1, row: 1, rowSpan: 1 },
+      { column: 1, row: 2, rowSpan: 1 },
+      { column: 2, row: 1, rowSpan: 2 },
+    ]);
+  });
+
+  it("arranges the same way at any window size", () => {
+    // 8 terminals are 4 columns of 2 — on a 4K display and on a laptop alike.
+    // The window decides how much room each pane gets, never the arrangement.
     const grid = paneGrid(wizardPanes(8));
-    expect(grid.columns).toBe(8);
-    expect(grid.rows).toBe(1);
+    expect(grid.columns).toBe(4);
+    expect(grid.rows).toBe(2);
   });
 });
 
@@ -156,11 +250,16 @@ describe("paneGrid", () => {
   });
 
   it("never moves an existing column when one more is opened", () => {
-    // The user-facing contract, pinned directly: for any count, adding a column
+    // The user-facing contract, pinned directly: for any count, splitting RIGHT
     // changes no existing placement. It used to hold only below the wrap.
+    // Deliberately built from split panes rather than `wizardPanes` — the
+    // wizard opens columns of two now, so it is no longer a stand-in for
+    // "one more column", which is what this contract is about.
+    const columns = (n: number) =>
+      Array.from({ length: n }, (_, i) => pane(i, 0));
     for (let count = 1; count < 40; count += 1) {
-      const before = paneGrid(wizardPanes(count)).placements;
-      const after = paneGrid(wizardPanes(count + 1)).placements;
+      const before = paneGrid(columns(count)).placements;
+      const after = paneGrid(columns(count + 1)).placements;
       expect(after.slice(0, count)).toEqual(before);
     }
   });

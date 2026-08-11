@@ -60,13 +60,27 @@ describe("the workspace never grows past its window", () => {
 });
 
 describe("splitting never re-deals the workspace", () => {
+  /**
+   * Panes as SPLITTING RIGHT leaves them — one column each.
+   *
+   * Written out here rather than taken from `wizardPanes`, which is no longer
+   * the same shape: a wizard workspace opens as columns of two now (see the
+   * suite below). The distinction is the whole point of these two suites. A
+   * count the user chose in advance, and watched the preview draw, may open in
+   * any shape it says it will. A pane added to a workspace already on screen
+   * may not move the panes already being read — which is what the reports below
+   * were about, and what this suite still pins.
+   */
+  const splits = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({ column: index, slot: 0 }));
+
   it("keeps splits side by side however many there are", () => {
     // Reported 2026-07-31 as a re-wrap at the fourth split, and again
     // 2026-08-03 at the sixth. Both had one cause: the layout decided how many
     // panes may share a line. It does not any more — the split buttons ARE the
     // user's arrangement, and the window is simply divided between them.
     for (const count of [4, 6, 7, 12, 30]) {
-      const grid = paneGrid(wizardPanes(count));
+      const grid = paneGrid(splits(count));
       expect(grid.columns).toBe(count);
       expect(grid.placements.every((p) => p.row === 1)).toBe(true);
     }
@@ -75,8 +89,49 @@ describe("splitting never re-deals the workspace", () => {
   it("puts the seventh terminal beside the sixth on a five-column window", () => {
     // The exact case reported on 2026-08-03, with the maintainer's screenshot:
     // five panes across, and the sixth landing on a row of its own below.
-    const grid = paneGrid(wizardPanes(7));
+    const grid = paneGrid(splits(7));
     expect(grid.placements[5]).toEqual({ column: 6, row: 1, rowSpan: 1 });
     expect(grid.placements[6]).toEqual({ column: 7, row: 1, rowSpan: 1 });
+  });
+});
+
+/**
+ * A workspace OPENS two panes deep — the answer to the 2026-08-11 report.
+ *
+ * Six terminals in a single row left each pane about 410 px on the maintainer's
+ * display. A pane narrower than the 60-column grid its agent draws in is clipped
+ * at the tile edge, so all six showed roughly two thirds of themselves and read
+ * as terminals shoved behind one another.
+ *
+ * The count itself is untouched: nothing here refuses a number or reshapes one
+ * after the fact. Thirty terminals still open as thirty — as fifteen columns of
+ * two, which is simply twice the width of thirty in a row.
+ */
+describe("a wizard workspace opens two panes deep", () => {
+  it("halves the columns the same count is spread over", () => {
+    for (const count of [4, 6, 12, 30]) {
+      const grid = paneGrid(wizardPanes(count));
+      expect(grid.columns).toBe(count / 2);
+    }
+  });
+
+  it("doubles the width every pane gets, which is what was being clipped", () => {
+    // The maintainer's own case: six terminals, and the width each one has to
+    // draw its agent's interface in.
+    const window = 2560;
+    const inARow = paneWidthAt(6, window);
+    const twoDeep = paneWidthAt(paneGrid(wizardPanes(6)).columns, window);
+    expect(twoDeep).toBeCloseTo(inARow * 2, 6);
+  });
+
+  it("carries the same shape into the comfort advice", () => {
+    // The readout quotes the COLUMN count, so the warning follows the panes'
+    // real width rather than the terminal count. Six on a laptop were cramped
+    // in a row and are not in three columns of two.
+    const laptop = 1440;
+    expect(panesAreComfortable(6, laptop)).toBe(false);
+    expect(panesAreComfortable(paneGrid(wizardPanes(6)).columns, laptop)).toBe(
+      true,
+    );
   });
 });

@@ -106,24 +106,6 @@ vi.mock("@/lib/agenticIdeApi", () => ({
     default: 13,
   })),
   syncAgenticIdeSurface: vi.fn(async () => undefined),
-  // The Command Deck's report lane. Polled only while the deck is the view on
-  // screen, so the grid and chat suites never reach it — it answers "nothing
-  // waiting" by default and the deck tests give it real rows.
-  fetchDeckQueue: vi.fn(async () => ({
-    sleeping: false,
-    in_conversation: false,
-    on_air: null,
-    pending: [],
-    reports: [],
-  })),
-  ackDeckReport: vi.fn(async () => ({
-    sleeping: false,
-    in_conversation: false,
-    on_air: null,
-    pending: [],
-    reports: [],
-  })),
-  setDeckHold: vi.fn(async (_name: string, held: boolean) => held),
 }));
 
 // The grid follows the app theme for its terminal colours; these tests render
@@ -2848,8 +2830,6 @@ describe("chat view", () => {
 
     toChat();
     expect(screen.getByTestId("pane-Nova")).toBe(before);
-    fireEvent.click(screen.getByTestId("agentic-view-mode-deck"));
-    expect(screen.getByTestId("pane-Nova")).toBe(before);
     toGrid();
 
     expect(screen.getByTestId("pane-Nova")).toBe(before);
@@ -2983,32 +2963,32 @@ describe("chat view", () => {
   });
 
   /*
-   * The view travels to the backend by NAME, and the backend acts on more than
-   * deixis with it: the Command Deck is the only surface allowed to speak a
-   * finished pane out loud. A wrong name here is a wrong answer about whether
-   * Jarvis talks, which is why this is pinned separately from the pane above.
+   * The view travels to the backend by NAME rather than as a boolean, so that
+   * a third mode added later reads correctly everywhere without re-deriving
+   * what "not chat" was supposed to mean. Pinned separately from the pane
+   * above because it is a separate claim.
    */
-  it("tells the backend which of the three modes is on screen", async () => {
+  it("tells the backend which mode is on screen", async () => {
     renderGrid(FOUR);
 
-    fireEvent.click(screen.getByTestId("agentic-view-mode-deck"));
+    toChat();
 
     await waitFor(() =>
       expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith(
-        expect.objectContaining({ view: "deck", onScreen: true }),
+        expect.objectContaining({ view: "chat", onScreen: true }),
       ),
     );
   });
 
   it("reports the grid while the section is off screen, whatever it shows", async () => {
-    // The deck speaks; a deck nobody is looking at must not. This grid stays
-    // mounted behind another section, so "on screen" is the only thing that
-    // can stop it — see the matching backend test.
+    // A workspace nobody is looking at must not answer "this terminal". This
+    // grid stays mounted behind another section, so "on screen" is the only
+    // thing that can stop it — see the matching backend test.
     const { rerender } = renderGrid(FOUR);
-    fireEvent.click(screen.getByTestId("agentic-view-mode-deck"));
+    toChat();
     await waitFor(() =>
       expect(api.syncAgenticIdeSurface).toHaveBeenLastCalledWith(
-        expect.objectContaining({ view: "deck" }),
+        expect.objectContaining({ view: "chat" }),
       ),
     );
 

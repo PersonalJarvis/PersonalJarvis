@@ -129,10 +129,10 @@ async def test_stale_workspace_cannot_replace_the_active_surface(
 
 # --------------------------------------------------------------- named views
 #
-# The boolean above became a three-value enum when the Command Deck arrived.
-# Both spellings are served: `view` is the contract, `chat_view` is what a
-# desktop WebView still holding the pre-deck bundle posts for the seconds
-# before it reloads itself.
+# The boolean above became a named enum once the view had to survive a third
+# mode being added. Both spellings are served: `view` is the contract,
+# `chat_view` is what a desktop WebView still holding an older bundle posts
+# for the seconds before it reloads itself.
 
 
 def test_the_pydantic_literal_still_matches_the_source_of_truth() -> None:
@@ -150,17 +150,17 @@ def test_the_pydantic_literal_still_matches_the_source_of_truth() -> None:
     assert set(get_args(agentic_ide_routes.WorkspaceViewName)) == set(WORKSPACE_VIEWS)
 
 
-async def test_the_deck_stages_one_pane_like_chat_does(
+async def test_a_named_chat_view_stages_one_pane(
     client: TestClient, registry: Registry, tmp_path: Path
 ) -> None:
-    """An unfolded deck card is a visible single pane, so "this one" resolves."""
+    """Chat view puts exactly one pane on screen, so "this one" resolves."""
     session = await registry.start(str(tmp_path), [{"agent": "claude"}, {"agent": "codex"}])
 
     response = client.put(
         "/api/agentic-ide/surface-context",
         json={
             "workspace_id": session.id,
-            "view": "deck",
+            "view": "chat",
             "on_screen": True,
             "terminal": "T2",
             "prompt_target": "T2",
@@ -168,7 +168,7 @@ async def test_the_deck_stages_one_pane_like_chat_does(
     )
 
     assert response.status_code == 200
-    assert session.surface_view == "deck"
+    assert session.surface_view == "chat"
     assert session.contextual_terminal() is session.find("T2")
 
 
@@ -178,7 +178,7 @@ async def test_a_named_grid_view_clears_the_staged_pane(
     session = await registry.start(str(tmp_path), [{"agent": "claude"}])
     body = {
         "workspace_id": session.id,
-        "view": "deck",
+        "view": "chat",
         "on_screen": True,
         "terminal": "T1",
     }
@@ -193,22 +193,22 @@ async def test_a_named_grid_view_clears_the_staged_pane(
 async def test_a_hidden_section_reports_the_grid_however_it_was_left(
     client: TestClient, registry: Registry, tmp_path: Path
 ) -> None:
-    """The deck speaks; a deck nobody is looking at must not.
+    """A workspace nobody is looking at must not answer "this terminal".
 
     Navigating to another section leaves this grid mounted behind it, so
-    without this the workspace would still be filed as "deck on screen" and
-    would go on reporting finished panes out loud from behind whatever the
-    user actually switched to.
+    without this the workspace would still be filed as "chat on screen" and
+    would go on resolving "this one" to a pane hidden behind whatever the user
+    actually switched to.
     """
     session = await registry.start(str(tmp_path), [{"agent": "claude"}])
     body = {
         "workspace_id": session.id,
-        "view": "deck",
+        "view": "chat",
         "on_screen": True,
         "terminal": "T1",
     }
     client.put("/api/agentic-ide/surface-context", json=body)
-    assert session.surface_view == "deck"
+    assert session.surface_view == "chat"
 
     client.put("/api/agentic-ide/surface-context", json={**body, "on_screen": False})
 
@@ -216,7 +216,7 @@ async def test_a_hidden_section_reports_the_grid_however_it_was_left(
     assert session.contextual_terminal() is None
 
 
-async def test_a_pre_deck_bundle_is_still_understood(
+async def test_an_older_bundle_is_still_understood(
     client: TestClient, registry: Registry, tmp_path: Path
 ) -> None:
     """`chat_view` with no `view` is an old window, not a malformed request."""

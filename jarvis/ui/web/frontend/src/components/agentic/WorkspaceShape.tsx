@@ -32,11 +32,17 @@
  * create, at the measured width the grid will occupy — so the preview cannot
  * describe a workspace that will not appear.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { IconButton } from "./controls";
-import { paneGrid, paneWidthAt, panesAreComfortable, wizardPanes } from "./layout";
+import {
+  paneGrid,
+  paneWidthAt,
+  panesAreComfortable,
+  wizardPanes,
+  type PanePlacement,
+} from "./layout";
 
 /**
  * Steps a labelled tick is allowed to land on, coarsest last.
@@ -173,6 +179,7 @@ export function WorkspaceShape({
       <WorkspaceStage
         columns={grid.columns}
         rows={grid.rows}
+        placements={grid.placements}
         count={count}
         names={names}
       />
@@ -415,6 +422,12 @@ export function CountTrack({
  * — over the panes the backend will actually create (`wizardPanes`). The two
  * cannot drift apart without the running grid changing too.
  *
+ * Placed by those coordinates, not by document order. The two agreed only while
+ * every terminal got a column of its own: a wizard workspace now opens as
+ * columns of two (see `WIZARD_COLUMN_HEIGHT`), and left to CSS's own row-first
+ * flow the preview would show T1 and T2 side by side where the workspace puts
+ * one under the other.
+ *
  * The stage is the whole workspace AND the whole window, because those are the
  * same thing now: every column is drawn inside the frame, however many there
  * are, and more terminals make each one narrower. It used to draw the grid
@@ -425,11 +438,13 @@ export function CountTrack({
 function WorkspaceStage({
   columns,
   rows,
+  placements,
   count,
   names,
 }: {
   columns: number;
   rows: number;
+  placements: PanePlacement[];
   count: number;
   names: string[];
 }) {
@@ -494,17 +509,31 @@ function WorkspaceStage({
           gridTemplateRows: `repeat(${safeRows}, minmax(0, 1fr))`,
         }}
       >
-        {Array.from({ length: count }).map((_, index) => (
-          <StagePane
-            key={index}
-            name={names[index] ?? `T${index + 1}`}
-            detail={detail}
-            /* The workspace opens with the first pane selected — the prompt bar
-               types into it. Showing that here means the stage is not just the
-               right shape, it is the right state. */
-            focused={index === 0}
-          />
-        ))}
+        {Array.from({ length: count }).map((_, index) => {
+          const at = placements[index];
+          return (
+            <StagePane
+              key={index}
+              name={names[index] ?? `T${index + 1}`}
+              detail={detail}
+              /* The workspace opens with the first pane selected — the prompt
+                 bar types into it. Showing that here means the stage is not
+                 just the right shape, it is the right state. */
+              focused={index === 0}
+              /* A short column's panes are TALLER, exactly as in the running
+                 grid: `rowSpan` is how three terminals draw one full column
+                 beside a single pane that reaches the same bottom edge. */
+              style={
+                at
+                  ? {
+                      gridColumn: at.column,
+                      gridRow: `${at.row} / span ${at.rowSpan}`,
+                    }
+                  : undefined
+              }
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -517,13 +546,17 @@ function StagePane({
   name,
   detail,
   focused,
+  style,
 }: {
   name: string;
   detail: PaneDetail;
   focused: boolean;
+  /** Where this pane sits in the stage grid — see `WorkspaceStage`. */
+  style?: CSSProperties;
 }) {
   return (
     <div
+      style={style}
       /*
        * Dark, like the terminals it stands for — not a tile of brand colour.
        * Colour marks ONE thing here: which pane the prompt bar will type into.

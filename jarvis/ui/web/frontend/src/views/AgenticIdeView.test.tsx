@@ -39,7 +39,6 @@ const launcherEnglish = vi.hoisted<Record<string, string>>(() => ({
   "workspace_launcher.wizard.open_clis": "Open CLIs",
   "workspace_launcher.wizard.views.grid.title": "Terminal grid",
   "workspace_launcher.wizard.views.chat.title": "Chat view",
-  "workspace_launcher.wizard.views.deck.title": "Command Deck",
 }));
 vi.mock("@/i18n", () => ({
   useT: () => (key: string) => launcherEnglish[key] ?? key,
@@ -528,7 +527,7 @@ describe("Agentic IDE launcher", () => {
     fireEvent.click(screen.getAllByText("workspace_launcher.agents.all")[0]);
     fireEvent.click(screen.getByRole("button", { name: /choose the view/i }));
 
-    for (const view of ["grid", "chat", "deck"] as const) {
+    for (const view of ["grid", "chat"] as const) {
       const panes = screen
         .getByTestId(`view-choice-${view}`)
         .querySelectorAll("[data-view-preview-pane]");

@@ -57,6 +57,7 @@ import asyncio
 import logging
 import mimetypes
 import re
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Literal, get_args
@@ -86,7 +87,6 @@ from jarvis.agentic_ide import (
     recap_engine,
     recents,
     resume_store,
-    standup,
 )
 from jarvis.agentic_ide.activity import has_work_behind_it
 from jarvis.agentic_ide.agent_sessions import has_conversation
@@ -296,6 +296,20 @@ class MoveTerminalRequest(BaseModel):
     )
 
 
+class RefoldRequest(BaseModel):
+    """How deep the workspace's columns should be from now on."""
+
+    depth: int = Field(
+        ge=1,
+        le=MAX_TERMINALS,
+        description=(
+            "Panes stacked per column. 1 is the single row a workspace opens "
+            "in; 2 folds it into two rows, which is what a row too narrow for "
+            "the agents' own interface needs."
+        ),
+    )
+
+
 class CloseTerminalsRequest(BaseModel):
     """The terminal panes one destructive batch action should stop."""
 
@@ -317,7 +331,7 @@ class ModeRequest(BaseModel):
 #: again here and the assertion below makes that duplication safe: any drift
 #: from layer 0 fails at import, which means pytest collection fails, rather
 #: than producing an HTTP 422 for one specific body weeks later.
-WorkspaceViewName = Literal["grid", "chat", "deck"]
+WorkspaceViewName = Literal["grid", "chat"]
 if set(get_args(WorkspaceViewName)) != set(WORKSPACE_VIEWS):  # pragma: no cover - guard
     raise RuntimeError(
         "WorkspaceViewName drifted from WORKSPACE_VIEWS — update both "
@@ -331,13 +345,13 @@ class SurfaceContextRequest(BaseModel):
     workspace_id: str = Field(description="Workspace currently rendered by this view.")
     view: WorkspaceViewName | None = Field(
         default=None,
-        description="Which reading mode is on screen: grid, chat, or deck.",
+        description="Which reading mode is on screen: grid or chat.",
     )
     chat_view: bool | None = Field(
         default=None,
         description=(
             "Deprecated — superseded by `view`. Still read so a desktop WebView "
-            "still holding the pre-deck bundle keeps reporting its surface "
+            "still holding an older bundle keeps reporting its surface "
             "correctly for the seconds before it reloads itself."
         ),
     )
@@ -352,38 +366,6 @@ class SurfaceContextRequest(BaseModel):
             "Pane selected by the prompt bar and voice orb; null when no pane "
             "can accept an instruction."
         ),
-    )
-
-
-#: Layer 3 for the report actions, guarded the same way as the view enum above.
-DeckAction = Literal["next", "later", "drop"]
-if set(get_args(DeckAction)) != set(get_args(standup.Action)):  # pragma: no cover - guard
-    raise RuntimeError(
-        "DeckAction drifted from standup.Action — update both "
-        "(jarvis/agentic_ide/standup.py is the source of truth)."
-    )
-
-
-class DeckHoldRequest(BaseModel):
-    """Whether the user is driving this pane themselves for now."""
-
-    held: bool = Field(
-        description=(
-            "True takes the pane over: the Command Deck stops assigning work to "
-            "it and stops reporting it. False hands it back."
-        )
-    )
-
-
-class DeckAckRequest(BaseModel):
-    """What the user said about one Command Deck report."""
-
-    id: str = Field(description="The report being answered.")
-    action: DeckAction = Field(
-        description=(
-            "`next` reports this one now, `later` puts the queue to sleep "
-            "without losing anything, `drop` takes this report away."
-        )
     )
 
 
@@ -522,6 +504,15 @@ class FanOutRequest(BaseModel):
         default=False,
         description=(
             "Plan the division of labour and return it WITHOUT typing anything into any agent."
+        ),
+    )
+    force: bool = Field(
+        default=False,
+        description=(
+            "Spawn a second fleet even though the same instruction recently "
+            "went to panes that are still open. Set it ONLY when the user "
+            "explicitly asked to run the same task again — a repeated order "
+            "without it is refused with the call-signs already working on it."
         ),
     )
 
@@ -2082,49 +2073,6 @@ async def clear_notification(notification_id: str) -> NotificationsChangedRespon
     return NotificationsChangedResponse(changed=dropped, unread=center.unread)
 
 
-@router.get("/deck/queue", summary="What the Command Deck still has to report")
-async def get_deck_queue() -> dict:
-    """The report lane: what is waiting, and what is being reported right now.
-
-    Only the Command Deck renders this — the same events reach the bell in the
-    other two views and are never spoken there. `sleeping` is true once a line
-    has gone unanswered: the deck says so rather than looking broken, because
-    "nothing new" and "it has stopped talking to you" are very different and
-    were indistinguishable from the outside in the first version.
-    """
-    return standup.queue().state()
-
-
-@router.post("/deck/hold/{name}", summary="Take a pane over from the Command Deck")
-async def set_deck_hold(name: str, req: DeckHoldRequest) -> dict:
-    """ "I'll take this one" — and handing it back.
-
-    The honest limit on the deck's promise. A pane can hold a question only the
-    user can settle, and while they are dealing with it the deck must stop
-    assigning work to it and stop reporting it. Per pane rather than a mode:
-    the interesting case is one agent out of eight, and the other seven carry
-    on being run by Jarvis.
-    """
-    try:
-        held = get_registry().set_deck_hold(name, req.held)
-    except SessionError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"terminal": name, "deck_hold": held}
-
-
-@router.post("/deck/ack", summary="Answer a Command Deck report")
-async def ack_deck_report(req: DeckAckRequest) -> dict:
-    """ "Tell me that one" / "later" / "drop it", from voice or from the lane.
-
-    Not a 404 for an unknown id: a report goes away when its pane does, and a
-    click that lands a moment after that got the outcome it wanted. `found`
-    says which happened, so a caller that cares can tell.
-    """
-    queue = standup.queue()
-    report = queue.acknowledge(req.id, req.action)
-    return {"found": report is not None, **queue.state()}
-
-
 @router.post(
     "/terminals/close-batch",
     summary="Close several terminals",
@@ -2214,9 +2162,9 @@ async def set_surface_context(req: SurfaceContextRequest) -> dict:
     because several terminals are visible there and guessing one would be less
     honest than asking for a call-sign.
 
-    Two ways in, one meaning: `view` is the contract, `chat_view` is what the
-    pre-deck bundle sends. A body carrying neither reports the grid, which is
-    the view that promises the least — see `workspace_view.VIEW_DEFAULT`.
+    Two ways in, one meaning: `view` is the contract, `chat_view` is what an
+    older bundle sends. A body carrying neither reports the grid, which is the
+    view that promises the least — see `workspace_view.VIEW_DEFAULT`.
     """
     view = req.view if req.view is not None else view_from_legacy_chat_flag(req.chat_view)
     accepted = get_registry().set_surface_context(
@@ -2376,6 +2324,37 @@ async def add_terminals(request: Request, req: AddTerminalsRequest) -> dict:
         "capped": capped,
         "terminals": [t.to_dict() for t in created],
         "state": registry.state(),
+    }
+
+
+@router.post("/terminals/refold", summary="Re-fold the workspace into columns of a given depth")
+async def refold_workspace(req: RefoldRequest) -> dict:
+    """Re-deal every pane into columns ``depth`` deep, keeping their order.
+
+    The workspace is always exactly one screenful, so a pane can only be given
+    room taken from somewhere else. When a row holds so many panes that each is
+    narrower than the terminal it draws, the agents' output is clipped at the
+    tile edge — and the only room left to spend is height. Folding the row in
+    two halves the column count and so doubles every pane's width, at the text
+    size the user chose rather than a smaller one.
+
+    Nothing is started, stopped, resized or remounted: only the two numbers
+    saying where each pane is drawn change, exactly as for a move. Re-folding to
+    the depth the workspace already has succeeds and changes nothing.
+    """
+    try:
+        session = await get_registry().refold(req.depth)
+    except SessionError as exc:
+        message = str(exc)
+        # A depth this grid cannot express is the caller's arithmetic; a
+        # workspace that is not open is a conflict nothing here can fix.
+        status = 409 if "No Agentic-IDE session" in message else 422
+        raise HTTPException(status_code=status, detail=message) from exc
+    return {
+        "ok": True,
+        "depth": req.depth,
+        "terminals": [t.to_dict() for t in session.terminals],
+        "state": get_registry().state(),
     }
 
 
@@ -3194,6 +3173,30 @@ async def fanout(request: Request, req: FanOutRequest) -> dict:
     registry = get_registry()
     if registry.session is None:
         raise HTTPException(status_code=409, detail="No Agentic-IDE session is running.")
+
+    # A spawn for an instruction that JUST went to panes still open is a
+    # duplicate, not a new order — the router brain re-issued a live 2026-08-11
+    # order 37 s later because the first fleet's success was not yet visible in
+    # its context, and four agents ended up racing on the same task in one
+    # shared working tree. Checked before any pane opens so a refusal leaves
+    # nothing behind. Re-briefing EXISTING panes stays allowed: those repeats
+    # are visible to the user and cheap to make deliberately.
+    if req.spawn and not req.dry_run and not req.force:
+        from jarvis.agentic_ide import fanout as fanout_guard
+
+        duplicate = fanout_guard.find_duplicate_fanout(registry.session, req.instruction)
+        if duplicate is not None:
+            age_s = int(max(0.0, time.monotonic() - duplicate.at))
+            names = ", ".join(duplicate.terminals)
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"This instruction already went to {names} {age_s}s ago and "
+                    "those panes are still open. Report that fleet instead of "
+                    "spawning a second one; pass force=true only when the user "
+                    "explicitly asked to run the same task again."
+                ),
+            )
 
     # Bound once, up here: the announcements at the end of this route apply to
     # every fan-out, and the fleet path that briefs EXISTING panes never enters

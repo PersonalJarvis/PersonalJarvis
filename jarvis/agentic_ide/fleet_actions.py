@@ -134,53 +134,10 @@ def terminals_closed_event(
     )
 
 
-def free_agents(session: Any, *, now: float | None = None) -> list[Any]:
-    """Panes that could take a job right now, in the order they should get one.
-
-    "Somebody get the wake-path tests green" has to land somewhere, and the
-    Command Deck is where the user stops naming a pane for every order. This is
-    what turns that into a specific terminal.
-
-    Four things disqualify a pane, and each one is a promise that would
-    otherwise be broken:
-
-    * **It is not an agent.** A plain shell would run the sentence as a command.
-    * **It is working.** Typing a second job into a busy agent does not queue
-      it — the CLI takes it as an interruption of the first.
-    * **The user took it over** (``deck_hold``). That is the whole point of the
-      hold: Jarvis stops using this one.
-    * **It is not alive.** A pane whose agent exited cannot be briefed, and
-      telling the user it was is the lie this surface cannot afford.
-
-    Ordered oldest-idle first so a fleet is used evenly rather than the same
-    pane taking every order while the rest sit there — with the pane's own
-    position as the tiebreak, so an answer is stable when nothing has run yet.
-    """
-    from .activity import observed
-    from .session import accepts_prompts
-
-    moment = time.time() if now is None else now
-    free: list[tuple[float, int, Any]] = []
-    for term in getattr(session, "terminals", []):
-        if not accepts_prompts(str(getattr(term, "agent", "") or "")):
-            continue
-        if bool(getattr(term, "deck_hold", False)):
-            continue
-        if str(getattr(term, "status", "")) != "live":
-            continue
-        reading = observed(term, now=moment)
-        if reading.activity != "waiting":
-            continue
-        free.append((float(reading.since or 0.0), int(getattr(term, "index", 0)), term))
-    free.sort(key=lambda item: (item[0], item[1]))
-    return [term for _since, _index, term in free]
-
-
 __all__ = [
     "READY_POLL_S",
     "READY_TIMEOUT_S",
     "close_agent_terminals",
-    "free_agents",
     "ready_for_prompt",
     "terminals_closed_event",
     "wait_for_prompt_ready",

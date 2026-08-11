@@ -94,7 +94,6 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from loguru import logger
 
-from . import standup
 from .activity import (
     RESIZE_SHADOW_S,
     STILL_S,
@@ -867,17 +866,9 @@ async def _run(registry: Registry) -> None:
                 # Resume evidence is independent of the optional bell. Even
                 # with notifications disabled, restored panes must not be
                 # offered a blind Continue merely because history exists.
-                filed = _WATCHER.poll(registry, emit=await _enabled_off_loop())
+                _WATCHER.poll(registry, emit=await _enabled_off_loop())
                 if _WATCHER.take_resume_dirty():
                     await registry.persist_resume_activity()
-                # The Command Deck speaks what the bell only counts. It hangs
-                # off this sweep rather than polling for itself: the panes are
-                # already being looked at every two seconds, and a second loop
-                # asking the same question would be pure cost on the event loop
-                # that also carries the wake microphone (AP-9). It is a no-op
-                # unless a workspace is actually being read as a deck, and it
-                # never raises — see `standup.pump`.
-                await standup.pump(registry, filed)
             except Exception as exc:  # noqa: BLE001 - one bad pane must not end the sweep
                 logger.warning("Agentic IDE: pane notification sweep failed: {}", exc)
     except asyncio.CancelledError:  # pragma: no cover - shutdown

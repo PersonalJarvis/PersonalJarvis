@@ -33,6 +33,21 @@ async def _workspace(tmp_path, panes: int = 3) -> Registry:
     return registry
 
 
+async def _row(tmp_path, panes: int = 3) -> Registry:
+    """``panes`` side by side — one column each, every slot 0.
+
+    A workspace no longer OPENS in this shape: the wizard fills columns two
+    deep (``WIZARD_COLUMN_HEIGHT``). So a row is built the way a user builds
+    one, by splitting rightwards, and the split tests below say out loud which
+    arrangement they are splitting rather than inheriting whichever one the
+    wizard happens to produce.
+    """
+    registry = await _workspace(tmp_path, 1)
+    for _ in range(max(0, panes - 1)):
+        await registry.add_terminal(direction="right")
+    return registry
+
+
 def grid(registry: Registry) -> list[tuple[str, int, int]]:
     """The workspace as (name, column, slot), in the order the UI renders it."""
     session = registry.session
@@ -40,13 +55,27 @@ def grid(registry: Registry) -> list[tuple[str, int, int]]:
     return [(t.name, t.column, t.slot) for t in session.terminals]
 
 
-async def test_wizard_opens_one_row_of_columns(tmp_path) -> None:
+async def test_wizard_opens_columns_of_two(tmp_path) -> None:
+    """Four terminals are two columns of two, not four columns of one.
+
+    The workspace is one screenful, so a row of columns divides the window
+    between every pane: six terminals left each about 410 px on the
+    maintainer's display, under the width their agent needs to draw in, so
+    every pane was clipped at its tile edge and the six read as overlapping
+    one another (2026-08-11). Filling columns two deep halves the column count
+    and so doubles each pane's width.
+    """
     registry = await _workspace(tmp_path, 4)
-    assert [(c, s) for _, c, s in grid(registry)] == [(0, 0), (1, 0), (2, 0), (3, 0)]
+    assert [(c, s) for _, c, s in grid(registry)] == [(0, 0), (0, 1), (1, 0), (1, 1)]
+
+
+async def test_wizard_stands_an_odd_pane_in_a_column_of_its_own(tmp_path) -> None:
+    registry = await _workspace(tmp_path, 3)
+    assert [(c, s) for _, c, s in grid(registry)] == [(0, 0), (0, 1), (1, 0)]
 
 
 async def test_split_down_stacks_inside_the_anchors_own_column(tmp_path) -> None:
-    registry = await _workspace(tmp_path, 3)
+    registry = await _row(tmp_path, 3)
     names = [name for name, _, _ in grid(registry)]
     await registry.add_terminal(anchor=names[1], direction="down")
 
@@ -58,7 +87,7 @@ async def test_split_down_stacks_inside_the_anchors_own_column(tmp_path) -> None
 
 
 async def test_split_right_opens_a_column_beside_the_anchor(tmp_path) -> None:
-    registry = await _workspace(tmp_path, 3)
+    registry = await _row(tmp_path, 3)
     names = [name for name, _, _ in grid(registry)]
     added = await registry.add_terminal(anchor=names[0], direction="right")
 
@@ -71,7 +100,7 @@ async def test_split_right_opens_a_column_beside_the_anchor(tmp_path) -> None:
 
 
 async def test_a_stacked_column_survives_a_split_right_elsewhere(tmp_path) -> None:
-    registry = await _workspace(tmp_path, 2)
+    registry = await _row(tmp_path, 2)
     names = [name for name, _, _ in grid(registry)]
     await registry.add_terminal(anchor=names[0], direction="down")
     await registry.add_terminal(anchor=names[1], direction="right")
@@ -81,7 +110,7 @@ async def test_a_stacked_column_survives_a_split_right_elsewhere(tmp_path) -> No
 
 
 async def test_closing_the_top_of_a_stack_packs_the_slots(tmp_path) -> None:
-    registry = await _workspace(tmp_path, 2)
+    registry = await _row(tmp_path, 2)
     names = [name for name, _, _ in grid(registry)]
     await registry.add_terminal(anchor=names[0], direction="down")
     await registry.close_terminal(names[0])
@@ -92,7 +121,7 @@ async def test_closing_the_top_of_a_stack_packs_the_slots(tmp_path) -> None:
 
 
 async def test_closing_a_whole_column_packs_the_columns(tmp_path) -> None:
-    registry = await _workspace(tmp_path, 3)
+    registry = await _row(tmp_path, 3)
     names = [name for name, _, _ in grid(registry)]
     await registry.close_terminal(names[1])
 
@@ -101,7 +130,7 @@ async def test_closing_a_whole_column_packs_the_columns(tmp_path) -> None:
 
 async def test_terminals_stay_in_reading_order(tmp_path) -> None:
     """Left to right, top to bottom — the order the prompt-bar chips use."""
-    registry = await _workspace(tmp_path, 2)
+    registry = await _row(tmp_path, 2)
     first, second = [name for name, _, _ in grid(registry)]
     await registry.add_terminal(anchor=second, direction="down")
     await registry.add_terminal(anchor=first, direction="down")
