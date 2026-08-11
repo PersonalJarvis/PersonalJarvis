@@ -78,7 +78,7 @@ function requestedSources(): string[] {
 
 beforeEach(() => {
   window.localStorage.clear();
-  useWallpaperStore.setState({ selectedId: null });
+  useWallpaperStore.setState({ selections: { light: null, dark: null } });
   document.documentElement.classList.add("dark");
 });
 
@@ -133,13 +133,13 @@ describe("WallpaperView", () => {
 
   it("adopting the original clears the stored choice rather than storing an id", async () => {
     renderView();
-    act(() => useWallpaperStore.getState().select("03-anime-neon-01"));
+    act(() => useWallpaperStore.getState().select("03-anime-neon-01", "dark"));
 
     fireEvent.click(await screen.findByAltText("The Original"));
     fireEvent.click(await screen.findByRole("button", { name: "Use this wallpaper" }));
 
     await waitFor(() => {
-      expect(useWallpaperStore.getState().selectedId).toBeNull();
+      expect(useWallpaperStore.getState().selections.dark).toBeNull();
     });
     expect(window.localStorage.getItem("jarvis.wallpaper.v1")).toBeNull();
     expect(isDark()).toBe(true);
@@ -161,11 +161,11 @@ describe("WallpaperView", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Use this wallpaper" }));
 
     await waitFor(() => {
-      expect(useWallpaperStore.getState().selectedId).toBe(
+      expect(useWallpaperStore.getState().selections.light).toBe(
         "01-cinematic-photoreal-02",
       );
     });
-    expect(window.localStorage.getItem("jarvis.wallpaper.v1")).toBe(
+    expect(window.localStorage.getItem("jarvis.wallpaper.light.v1")).toBe(
       "01-cinematic-photoreal-02",
     );
   });
@@ -205,16 +205,16 @@ describe("WallpaperView", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Default/ }));
 
     await waitFor(() => expect(isDark()).toBe(true));
-    expect(useWallpaperStore.getState().selectedId).toBeNull();
+    expect(useWallpaperStore.getState().selections.dark).toBeNull();
   });
 
   it("returns to the bundled default", async () => {
     renderView();
-    act(() => useWallpaperStore.getState().select("03-anime-neon-01"));
+    act(() => useWallpaperStore.getState().select("03-anime-neon-01", "dark"));
 
     fireEvent.click(await screen.findByRole("button", { name: /Default/ }));
 
-    expect(useWallpaperStore.getState().selectedId).toBeNull();
+    expect(useWallpaperStore.getState().selections.dark).toBeNull();
     expect(window.localStorage.getItem("jarvis.wallpaper.v1")).toBeNull();
   });
 

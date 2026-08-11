@@ -36,8 +36,13 @@ export function useApplyWallpaper(): (item: WallpaperEntry | null) => void {
       // The bundled original has a grid tile of its own, but adopting it is
       // the same act as clearing the choice: one stored state for one picture,
       // so the tile and the "Default" button can never disagree.
-      select(item && !item.isDefault ? item.id : null);
-      setPreference(item?.theme ?? DEFAULT_WALLPAPER_THEME);
+      //
+      // The pick is filed under the theme the picture was AUTHORED for — the
+      // same theme the app is about to switch into. Each mode keeps its own
+      // picture, so a later manual theme toggle brings the right one back.
+      const theme = item?.theme ?? DEFAULT_WALLPAPER_THEME;
+      select(item && !item.isDefault ? item.id : null, theme);
+      setPreference(theme);
     },
     [select, setPreference],
   );

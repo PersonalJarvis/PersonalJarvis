@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import jarvisDesktopWallpaper from "@/assets/jarvis-desktop-wallpaper.webp";
+import { useThemeValue } from "@/hooks/useTheme";
 import { useWallpaperStore, wallpaperFullUrl } from "@/store/wallpaper";
 
 /** The artwork that ships inside the bundle — the default and the fallback. */
@@ -21,7 +22,9 @@ export const DEFAULT_WALLPAPER_URL = jarvisDesktopWallpaper;
  * not there.
  */
 export function useDesktopWallpaper(): string {
-  const selectedId = useWallpaperStore((state) => state.selectedId);
+  // The pick is per theme: toggling the mode swaps in that mode's picture.
+  const theme = useThemeValue();
+  const selectedId = useWallpaperStore((state) => state.selections[theme]);
   const [url, setUrl] = useState(DEFAULT_WALLPAPER_URL);
 
   useEffect(() => {

@@ -21,6 +21,7 @@ import {
   type WallpaperEntry,
 } from "@/hooks/useWallpaperCatalog";
 import { useApplyWallpaper } from "@/hooks/useApplyWallpaper";
+import { useThemeValue } from "@/hooks/useTheme";
 import { useWallpaperStore } from "@/store/wallpaper";
 import { cn } from "@/lib/utils";
 
@@ -248,7 +249,11 @@ function WallpaperPreview({
  */
 export function WallpaperView() {
   const { data, isLoading } = useWallpaperCatalog();
-  const selectedId = useWallpaperStore((state) => state.selectedId);
+  // Each theme keeps its own pick; the grid marks the one worn by the mode
+  // the app is in right now (adopting a tile switches mode WITH the picture,
+  // so the check mark always lands on what is actually on screen).
+  const activeTheme = useThemeValue();
+  const selectedId = useWallpaperStore((state) => state.selections[activeTheme]);
   const apply = useApplyWallpaper();
 
   const [theme, setTheme] = useState<ThemeFilter>("all");
