@@ -51,9 +51,11 @@ export function VoiceWarmingBanner() {
       aria-live="polite"
       className={cn(
         "flex items-center gap-3 border-b px-4 py-2.5 text-sm transition-colors",
+        // The pale -200 tints are dark-mode ink; on light they land near-white
+        // on a bright wallpaper and disappear (the banner spans raw artwork).
         warming
-          ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
-          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+          ? "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
       )}
     >
       {warming ? (

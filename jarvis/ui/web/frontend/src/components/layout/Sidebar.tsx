@@ -365,7 +365,7 @@ export function Sidebar({
       style={{ width: railed ? SIDEBAR_RAIL_WIDTH : width }}
       data-testid="sidebar"
       data-railed={railed ? "true" : "false"}
-      className="relative isolate flex h-full shrink-0 flex-col"
+      className="jarvis-nav-surface relative isolate flex h-full shrink-0 flex-col"
     >
       <div className={cn("border-b border-border", railed ? "px-2 py-3" : "px-4 py-4")}>
         <div

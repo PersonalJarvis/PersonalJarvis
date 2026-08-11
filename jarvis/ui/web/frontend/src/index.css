@@ -481,7 +481,13 @@
   /* Light keeps the artwork untinted (no darkening filter), but it retains
      the contrast veil: the veil is built from --shell-rgb, so on paper it
      settles the edges of the frame — where chrome text lives — with a faint
-     ivory wash instead of dimming the artwork's centre. */
+     ivory wash instead of dimming the artwork's centre.
+
+     A full-frame ivory frosting veil was tried here (2026-08-11) and rejected
+     by the maintainer: the wallpaper must stay genuinely visible in light
+     mode. Readability over arbitrary artwork is therefore carried by the ink
+     itself — the halo/outline rules further down — never by washing the
+     picture out. */
   :root:not(.dark) .jarvis-desktop-wallpaper {
     filter: none;
     opacity: 1;
@@ -502,6 +508,12 @@
       rgb(var(--shell-rgb) / 0.07)
     );
   }
+
+  /* NOTE (2026-08-11): a full glass ground for the nav column, top bar and
+     the Agentic IDE chrome was tried and rejected — the maintainer wants the
+     wallpaper to shine through the chrome untinted. `.jarvis-nav-surface`
+     stays on the Sidebar as the scoping hook for the ink/outline rules in
+     the readability-floor section; it paints nothing itself. */
 
   .jarvis-panel-surface {
     background: rgb(var(--shell-rgb) / var(--surface-panel-alpha));
@@ -556,17 +568,74 @@
       0 0 12px rgb(var(--scrim-rgb) / 0.35);
   }
 
-  :root:not(.dark) .jarvis-section-stage {
-    --muted-foreground: 240 9% 20%;
-    --border: 40 14% 52%;
-    /* Three layers instead of two: the tight 6px ring is what keeps small
-       labels legible when the artwork behind the glass is both bright AND
-       busy — the wide 14px wash alone blurs into such wallpapers. On calm
-       paper all three are ivory-on-ivory and invisible. */
+  /* The same floor covers the shell chrome (nav column, top bar): those live
+     OUTSIDE the section stage, and they were the loudest reported symptom —
+     nav icons and toolbar labels dissolving into the artwork.
+
+     The chrome carries NO surface of its own (maintainer decision: the
+     wallpaper stays untinted and fully visible), so the ink must survive
+     alone. Two changes relative to the plain stage floor: near-foreground
+     ink, and a tight outline-grade halo — the desktop-OS icon-label trick,
+     where a 1–2px light ring makes dark ink read on ANY artwork. On calm
+     ivory glass the ring is ivory-on-ivory and invisible. */
+  :root:not(.dark) .jarvis-section-stage,
+  :root:not(.dark) .jarvis-nav-surface,
+  :root:not(.dark) .jarvis-shell-surface {
+    --muted-foreground: 240 9% 18%;
+    --border: 40 12% 46%;
+    /* Subtitle-grade outline, not a soft glow: eight hard offsets close a
+       full-opacity ivory ring around every glyph — the only treatment that
+       keeps dark ink legible when the artwork behind it is busy or dark.
+       The blurred layers separate the ring from detail. On the app's own
+       ivory glass the ring is ivory-on-ivory and invisible. */
     text-shadow:
-      0 1px 2px rgb(var(--shell-rgb) / 0.95),
-      0 0 6px rgb(var(--shell-rgb) / 0.8),
-      0 0 14px rgb(var(--shell-rgb) / 0.55);
+      1px 0 0 rgb(var(--shell-rgb)),
+      -1px 0 0 rgb(var(--shell-rgb)),
+      0 1px 0 rgb(var(--shell-rgb)),
+      0 -1px 0 rgb(var(--shell-rgb)),
+      1px 1px 0 rgb(var(--shell-rgb) / 0.85),
+      -1px 1px 0 rgb(var(--shell-rgb) / 0.85),
+      1px -1px 0 rgb(var(--shell-rgb) / 0.85),
+      -1px -1px 0 rgb(var(--shell-rgb) / 0.85),
+      0 0 4px rgb(var(--shell-rgb) / 0.95),
+      0 1px 8px rgb(var(--shell-rgb) / 0.85),
+      0 0 18px rgb(var(--shell-rgb) / 0.6);
+  }
+
+  /* text-shadow never reaches SVG strokes, so the halo above cannot protect
+     the icons themselves. Stacked tight drop-shadows are the SVG equivalent
+     of an outline — invisible on calm glass, a rescue ring on busy artwork.
+     Scoped to the chrome (nav, top bar, IDE toolbar + chat rail), where
+     icons ARE the interface; content views draw icons on their own cards. */
+  :root:not(.dark) .jarvis-nav-surface svg,
+  :root:not(.dark) .jarvis-shell-surface svg,
+  :root:not(.dark) [data-testid="agentic-toolbar"] svg,
+  :root:not(.dark) [data-testid="agentic-chat-rail"] svg {
+    filter: drop-shadow(1px 0 0 rgb(var(--shell-rgb)))
+      drop-shadow(-1px 0 0 rgb(var(--shell-rgb)))
+      drop-shadow(0 1px 0 rgb(var(--shell-rgb)))
+      drop-shadow(0 -1px 0 rgb(var(--shell-rgb)))
+      drop-shadow(0 0 4px rgb(var(--shell-rgb) / 0.85));
+  }
+
+  /* The IDE toolbar and chat rail live INSIDE the stage but hold shell-grade
+     small controls; give their text the same outline-grade ink as the chrome
+     above (the stage floor alone was tuned for text on glass cards). */
+  :root:not(.dark) [data-testid="agentic-toolbar"],
+  :root:not(.dark) [data-testid="agentic-chat-rail"] {
+    --muted-foreground: 240 9% 18%;
+    text-shadow:
+      1px 0 0 rgb(var(--shell-rgb)),
+      -1px 0 0 rgb(var(--shell-rgb)),
+      0 1px 0 rgb(var(--shell-rgb)),
+      0 -1px 0 rgb(var(--shell-rgb)),
+      1px 1px 0 rgb(var(--shell-rgb) / 0.85),
+      -1px 1px 0 rgb(var(--shell-rgb) / 0.85),
+      1px -1px 0 rgb(var(--shell-rgb) / 0.85),
+      -1px -1px 0 rgb(var(--shell-rgb) / 0.85),
+      0 0 4px rgb(var(--shell-rgb) / 0.95),
+      0 1px 8px rgb(var(--shell-rgb) / 0.85),
+      0 0 18px rgb(var(--shell-rgb) / 0.6);
   }
 
   /*
