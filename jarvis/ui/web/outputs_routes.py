@@ -35,6 +35,7 @@ from jarvis.missions.kontrollierer.deliverable_paths import (
 from jarvis.missions.state_machine import MissionState, is_terminal
 from jarvis.platform import detect_platform
 from jarvis.ui.web.artifact_view import VIEW_CSP, render_artifact_html
+from jarvis.ui.web.mission_graph import build_mission_graph, render_mission_graph_html
 from jarvis.ui.web.run_plan import build_run_plan
 
 logger = logging.getLogger(__name__)
@@ -683,6 +684,94 @@ async def get_output_plan(slug: str, request: Request) -> dict[str, Any]:
     session_dir = _resolve_output_dir(request, slug)
     utterance = _parse_slug(session_dir.name)["utterance"]
     return await asyncio.to_thread(build_run_plan, session_dir, utterance=utterance)
+
+
+def _collect_graph_files(session_dir: Path) -> list[dict[str, Any]]:
+    """The deliverable paths + sizes the mission map draws — no previews.
+
+    Same allowlist and listing cap as ``list_output_artifacts``; kept separate
+    because the graph never needs file contents, and reading 200 previews for
+    a page that shows none of them would be pure disk tax.
+    """
+    files: list[dict[str, Any]] = []
+    try:
+        for child in session_dir.rglob("*"):
+            if not child.is_file():
+                continue
+            rel_parts = child.relative_to(session_dir).parts
+            if not _is_deliverable_relpath(rel_parts):
+                continue
+            try:
+                stat = child.stat()
+            except OSError:
+                continue
+            files.append({"path": "/".join(rel_parts), "size": stat.st_size})
+            if len(files) >= _ARTIFACT_MAX_LISTING:
+                break
+    except OSError as exc:
+        logger.warning("outputs: graph walk failed for %s: %s", session_dir, exc)
+    return files
+
+
+@router.get("/{slug}/graph")
+async def get_output_graph(slug: str, request: Request) -> HTMLResponse:
+    """Render the mission archive as an n8n-style node-graph HTML page.
+
+    One self-contained, brand-themed document (mission → steps → deliverables,
+    connected by tracks) built from three archive reads: the deliverable walk,
+    the reconstructed step timeline (:func:`build_run_plan`, for per-step
+    tool-call counts), and — when the dir name carries a mission-id prefix —
+    the missions DB for status/summary/duration. All filesystem work runs off
+    the event loop; DB enrichment is best-effort exactly like the list view.
+
+    Served under the same no-script CSP as ``/view``: the page carries zero
+    JavaScript (layout is computed server-side), so worker-authored strings
+    baked into it can never execute in the app origin.
+    """
+    session_dir = _resolve_output_dir(request, slug)
+    parsed = _parse_slug(session_dir.name)
+
+    prefix = _mission_id_prefix_for_dir(session_dir.name)
+    lookup = await _mission_status_lookup(request, [prefix] if prefix else [])
+    row = lookup.get(prefix) if prefix else None
+
+    status = "unknown"
+    summary: str | None = None
+    duration_s: float | None = None
+    utterance = parsed["utterance"]
+    if row is not None:
+        status = _STATE_TO_STATUS.get(str(row["state"]), "unknown")
+        utterance = utterance or row.get("prompt")
+        summary = row.get("terminal_summary")
+        # Same wall-clock rule as the list view: a running mission ticks from
+        # created_ms to now; a settled one froze at updated_ms.
+        running = status == "running"
+        if row["created_ms"]:
+            end_ms = time.time() * 1000.0 if running else row["updated_ms"]
+            if end_ms:
+                duration_s = max(0.0, (end_ms - row["created_ms"]) / 1000.0)
+
+    files = await asyncio.to_thread(_collect_graph_files, session_dir)
+    task_ids = await asyncio.to_thread(_task_ids_in, session_dir)
+    plan = await asyncio.to_thread(build_run_plan, session_dir, utterance=utterance)
+
+    data = build_mission_graph(
+        session_dir.name,
+        utterance=utterance,
+        status=status,
+        summary=summary,
+        duration_s=duration_s,
+        task_ids=task_ids,
+        files=files,
+        plan_steps=plan.get("steps", []),
+    )
+    return HTMLResponse(
+        render_mission_graph_html(data),
+        headers={
+            "Content-Security-Policy": VIEW_CSP,
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 # Soft size limits for the artifact preview endpoint — full bytes are

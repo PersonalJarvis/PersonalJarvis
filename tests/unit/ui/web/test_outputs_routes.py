@@ -1483,3 +1483,42 @@ def test_put_preferred_opener_rejects_unknown(app):
     client = TestClient(app)
     r = client.put("/api/outputs/preferred-opener", json={"opener": "../../evil"})
     assert r.status_code == 400
+
+
+# --- Mission graph page (`/{slug}/graph`) ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_graph_page_renders_branded_node_graph(app, db_conn):
+    """The graph route serves a no-script, brand-themed page of the archive."""
+    mission_id = "019ed2df-d0fa-7cba-a111-222233334444"
+    root = Path(app.state.outputs_root)
+    d = _make_mission_dir(root, mission_id)
+    _seed(d / "tasks" / "019ed2df-d0fb" / "artifacts" / "files" / "guide.html", "<html>")
+    # Scaffolding must never appear on the map (same allowlist as the listing).
+    _seed(d / "claude_config" / "settings.json", "{}")
+    await _insert_mission(db_conn, mission_id=mission_id, state="APPROVED", prompt="build a guide")
+
+    with TestClient(app) as client:
+        r = client.get(f"/api/outputs/{d.name}/graph")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    # Same no-script CSP as the /view route — the page carries zero JS.
+    assert "default-src 'none'" in r.headers["content-security-policy"]
+    assert "<script" not in r.text.lower()
+    assert "#0A0A0A" in r.text and "#FFD60A" in r.text  # brand theme
+    assert "guide.html" in r.text
+    assert "settings.json" not in r.text
+    assert "build a guide" in r.text  # DB prompt fills the missing utterance
+    assert "Success" in r.text  # APPROVED → success pill
+
+
+def test_graph_page_unknown_slug_is_404(app):
+    with TestClient(app) as client:
+        assert client.get("/api/outputs/mission_nope123456/graph").status_code == 404
+
+
+def test_graph_page_traversal_slug_is_rejected(app):
+    with TestClient(app) as client:
+        r = client.get("/api/outputs/..%2F..%2Fetc/graph")
+    assert r.status_code in (400, 404)
