@@ -72,7 +72,7 @@ advice, not a limit — a graphics card can run a model the note calls tight.
 Generic image support is treated as unknown. Use capable Ollama or a hosted
 provider for images; tools still depend on the loaded model.
 
-#### Recommended llama.cpp preset
+### Recommended llama.cpp preset
 
 For a machine with about 12 GB or more of usable GPU memory, the current
 balanced preset is Google's instruction-tuned Gemma 4 12B QAT Q4_0. It is
