@@ -171,6 +171,31 @@ describe("openPaneSocket", () => {
     socket.close();
   });
 
+  it("keeps the server's reason when the agent refused to start", async () => {
+    const cb = handlers();
+    const socket = openPaneSocket({ name: "Tara", cols: 80, rows: 24 }, cb);
+    const first = MockWebSocket.last;
+    first!.fire("open");
+
+    // The pane IS in the workspace; its agent would not start. That answer
+    // carries the only sentence naming the fix, and it used to be discarded:
+    // sent under 4404, the pane replaced it with "no longer part of the open
+    // workspace" and sent the view off to re-read a grid that was never wrong.
+    const reason =
+      "GLM Coding Plan is not configured yet — add its API key on the API Keys page.";
+    const reread = vi.fn();
+    window.addEventListener("jarvis:agentic-ide-changed", reread);
+    first!.deliver({ t: "error", message: reason });
+    first!.dropped(4500);
+    await vi.advanceTimersByTimeAsync(60_000);
+    window.removeEventListener("jarvis:agentic-ide-changed", reread);
+
+    expect(MockWebSocket.opened).toHaveLength(1);
+    expect(cb.onTrouble).toHaveBeenLastCalledWith(reason, false);
+    expect(reread).not.toHaveBeenCalled();
+    socket.close();
+  });
+
   it("re-joins a running agent after the connection drops", async () => {
     const cb = handlers();
     const socket = openPaneSocket({ name: "Mika", cols: 80, rows: 24 }, cb);

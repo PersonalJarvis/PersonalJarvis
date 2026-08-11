@@ -2886,17 +2886,32 @@ class Registry:
         # per MCP server. The account gate is async so waiters do not occupy the
         # shared executor while one thread owns the filesystem setup lock.
         redirected_home = _redirected_home(term)
-        if redirected_home is None:
-            env = await asyncio.to_thread(self._prepare_spawn, term, session.folder)
-        else:
-            account_key = os.path.normcase(str(redirected_home))
-            account_gate = self._account_prepare_locks.setdefault(
-                account_key, asyncio.Lock()
-            )
-            async with account_gate:
-                env = await asyncio.to_thread(
-                    self._prepare_spawn, term, session.folder
+        # Recorded ON THE PANE, not only raised. A refusal here is the SAME kind
+        # of "this cannot start" as a missing binary or a spawn that threw, and
+        # both of those mark the pane before they raise. Left unmarked, the pane
+        # stayed `pending` — and `pending` has a headline of its own that reads
+        # "waiting for terminal connection", which is a promise: it says the
+        # terminal is about to connect. Nothing was ever going to connect. The
+        # one refusal that reaches this path (an unconfigured launch profile —
+        # see `agent_spawn_overlay`) therefore showed the user a pane that
+        # claimed to be starting forever, with the actual reason living only in
+        # a socket frame the pane painted over a moment later.
+        try:
+            if redirected_home is None:
+                env = await asyncio.to_thread(self._prepare_spawn, term, session.folder)
+            else:
+                account_key = os.path.normcase(str(redirected_home))
+                account_gate = self._account_prepare_locks.setdefault(
+                    account_key, asyncio.Lock()
                 )
+                async with account_gate:
+                    env = await asyncio.to_thread(
+                        self._prepare_spawn, term, session.folder
+                    )
+        except SessionError as exc:
+            term.status = "error"
+            term.error = str(exc)
+            raise
 
         # The provider/account gate is acquired BEFORE the machine-wide gate.
         # A Codex pane waiting on shared state must never occupy a CPU slot that

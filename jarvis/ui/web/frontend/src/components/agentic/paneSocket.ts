@@ -73,6 +73,18 @@ const CLOSE_NOT_READY = 4503;
  * {@link WORKSPACE_CHANGED_EVENT} asks the view to do.
  */
 const CLOSE_STALE_WORKSPACE = 4409;
+/**
+ * Server close code: the pane is here, but its agent refused to start.
+ *
+ * The fourth verdict, and the one 4404 used to be borrowed for. The distinction
+ * matters because the two ask for opposite things: "not here" means the grid on
+ * screen is stale and must be re-read, while this one means the grid is right
+ * and the AGENT has a problem the user can fix — almost always a launch profile
+ * with no key configured. Sharing a code meant the pane discarded the server's
+ * explanation, replaced it with "no longer part of the open workspace", and sent
+ * the view off to re-read a grid that was never wrong.
+ */
+const CLOSE_ATTACH_FAILED = 4500;
 
 /**
  * The window event the Agentic-IDE view re-fetches its whole state on.
@@ -257,6 +269,17 @@ export function openPaneSocket(
   let waits = 0;
   let ticketRetries = 0;
   let pendingTicket: string | null = null;
+  /**
+   * The last reason the SERVER gave, kept for the close that follows it.
+   *
+   * An `error` frame is never the end of the story — the server sends it and
+   * closes in the same breath — so the close handler is where a pane decides
+   * what it believes, and until it could read this it had only the close code
+   * to go on. That is how a pane whose agent refused to start ("… is not
+   * configured yet — add its API key …") ended up telling the user it was no
+   * longer part of the workspace: a true sentence about the wrong problem.
+   */
+  let serverReason = "";
 
   const schedule = (delay: number) => {
     if (timer !== null || stopped) return;
@@ -337,6 +360,14 @@ export function openPaneSocket(
       stopped = true;
       handlers.onTrouble("This workspace was closed — reloading…", true);
       askForFreshState("stale-workspace");
+      return;
+    }
+    if (code === CLOSE_ATTACH_FAILED) {
+      // The pane is where it belongs and the grid is current — the agent would
+      // not start. Retrying cannot fix a missing key, so this ends the pane,
+      // and it ends it with the server's OWN sentence: that sentence names the
+      // problem and the page to fix it on, which no message written here could.
+      giveUp(serverReason || "This terminal could not be started.");
       return;
     }
     if (code === CLOSE_NO_SUCH_PANE) {
@@ -468,7 +499,10 @@ export function openPaneSocket(
         handlers.onExit(msg.code ?? 0);
       } else if (msg.t === "error") {
         // The server refused the attach and is about to close; the close code
-        // decides whether that is worth another attempt.
+        // decides whether that is worth another attempt. Kept as well as shown,
+        // because the close handler runs a moment later and would otherwise
+        // have nothing to say beyond what the bare code implies.
+        serverReason = msg.message ?? "";
         handlers.onTrouble(msg.message ?? "The terminal could not be started.", true);
       }
     });

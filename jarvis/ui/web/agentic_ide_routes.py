@@ -3699,7 +3699,16 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
             exc,
         )
         await ws.send_json({"t": "error", "message": str(exc)})
-        await ws.close(code=4404, reason="attach failed")
+        # 4500, not 4404. The pane EXISTS — its agent refused to start. 4404 is
+        # the client's code for "this pane is not in the open workspace", and it
+        # acts on that: it replaces whatever reason was just sent with its own
+        # "no longer part of the open workspace" line and asks the view to
+        # re-read the grid. So the honest diagnosis one frame earlier ("… is not
+        # configured yet — add its API key …") was painted over by a sentence
+        # that was not true, and the user was told to go looking for a missing
+        # pane instead of a missing key. A refusal has its own code now, and the
+        # client keeps the reason that came with it.
+        await ws.close(code=4500, reason="attach failed")
         return
 
     await ws.send_json(

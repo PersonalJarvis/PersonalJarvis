@@ -416,6 +416,51 @@ def test_an_unconfigured_glm_pane_refuses_on_the_real_spawn_path(
         registry._prepare_spawn(_stub_pane("glm"), str(tmp_path))
 
 
+async def test_a_refused_glm_pane_says_so_instead_of_claiming_to_be_starting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Refusing has to be VISIBLE on the pane, not only raised at the caller.
+
+    The refusal above is correct and was still invisible. A pane whose spawn is
+    refused never reaches the two places that mark a pane broken — a missing
+    binary and a spawn that threw — so it stayed ``pending``, and ``pending``
+    has a headline that reads "Not started — waiting for terminal connection".
+    That sentence is a promise about a connection nothing was ever going to
+    make: the user was left watching a pane that claimed to be starting, with
+    the one line naming the actual fix (the API key) living in a socket frame
+    that the pane painted over a second later.
+    """
+    from jarvis.agentic_ide import recap as ide_recap
+    from jarvis.agentic_ide import session as ide_session
+
+    # The borrowed binary need not be installed for this: what is under test is
+    # what happens AFTER argv resolves, and hard-coding an install would make the
+    # test pass or fail on the machine rather than on the code.
+    monkeypatch.setattr(ide_session, "agent_argv", lambda _agent: ("noop",))
+    monkeypatch.setattr("jarvis.core.config.get_secret", lambda *_a, **_k: None)
+
+    registry = ide_session.Registry()
+    session = await registry.start(str(tmp_path), [{"agent": "glm"}])
+    term = session.terminals[0]
+
+    async def sink(_text: str) -> None:
+        return None
+
+    async def gone(_code: int) -> None:
+        return None
+
+    with pytest.raises(ide_session.SessionError):
+        await registry.attach(term.key, 80, 24, sink, gone, workspace_id=session.id)
+
+    assert term.status == "error", "a pane that cannot start must not look pending"
+    assert "API key" in term.error, term.error
+    # And the recap the header renders quotes it rather than promising a
+    # connection.
+    headline = ide_recap.summarize(term).headline
+    assert "waiting for terminal connection" not in headline
+    assert "Not running" in headline
+
+
 def test_the_glm_environment_factory_reports_not_configured_without_a_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

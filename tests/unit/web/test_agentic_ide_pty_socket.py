@@ -125,6 +125,14 @@ async def test_failed_attach_is_recorded_with_pane_and_reason(
     This is the terminal failure, not the "try again" one above: a spawn that
     will not come back. It is the case where nobody is hovering over the red
     badge, because it tends to hit every pane at once.
+
+    The code is 4500 and deliberately NOT 4404. 4404 means "this pane is not in
+    the open workspace", and the client acts on exactly that: it overwrites the
+    reason sent one frame earlier with its own "no longer part of the open
+    workspace" line and asks the view to re-read the grid. A pane whose agent
+    refused to start over a missing API key was then told to go looking for a
+    missing pane — the one sentence naming the actual fix having been painted
+    over by a sentence about a different problem entirely.
     """
     monkeypatch.setattr(routes, "credentials_valid", lambda scope: True)
 
@@ -137,7 +145,7 @@ async def test_failed_attach_is_recorded_with_pane_and_reason(
     with caplog.at_level(logging.WARNING, logger=routes.__name__):
         await routes.agentic_pty(ws, "Mika")
 
-    assert ws.closed == (4404, "attach failed")
+    assert ws.closed == (4500, "attach failed")
     assert ws.sent and ws.sent[0]["t"] == "error"
     logged = " ".join(record.getMessage() for record in caplog.records)
     assert "Mika" in logged

@@ -820,6 +820,13 @@ export function AgenticTerminal({
     // a pane that keeps knocking every half minute would otherwise stamp a red
     // line into the terminal twice a minute forever.
     let troubleShown: "retrying" | "unreachable" | null = null;
+    // And at most one line per WORDING, which is a separate limit. A refused
+    // attach reaches this twice — once as the reason the server sent, then
+    // again as the verdict on the close that immediately follows it — and the
+    // two are now the same sentence, because the second one no longer invents
+    // its own. Printing it again in red under itself in yellow reads like two
+    // problems.
+    let troubleText = "";
 
     /*
      * Is anyone actually looking at this pane?
@@ -1354,6 +1361,7 @@ export function AgenticTerminal({
         },
         onReady: ({ resumed, reattached, lastPrompt }) => {
           troubleShown = null;
+          troubleText = "";
           // What this pane was told BEFORE this socket existed. A reload, a
           // reconnect or a second window opened afterwards would otherwise
           // show no receipt at all for a prompt that really was delivered —
@@ -1408,8 +1416,13 @@ export function AgenticTerminal({
           // merely restarting.
           report(retrying ? "connecting" : "error", message);
           const kind = retrying ? "retrying" : "unreachable";
-          if (troubleShown === kind) return;
+          const repeats = troubleShown === kind || message === troubleText;
           troubleShown = kind;
+          // The status was reported either way — only the terminal write is
+          // skipped. The notice row keeps the sentence on screen (see
+          // `PaneNotice`), so nothing is lost by not repeating it.
+          if (repeats) return;
+          troubleText = message;
           writeToPane(
             `\r\n\x1b[${retrying ? "33" : "31"}m[${message}]\x1b[0m\r\n`,
           );
