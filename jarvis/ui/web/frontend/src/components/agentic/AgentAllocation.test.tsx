@@ -150,15 +150,14 @@ describe("AgentAllocation", () => {
   it("uses local product marks and keeps the selected agent logo visible", () => {
     render(<Harness />);
 
+    // `data-logo` rather than the <img>: a single-colour mark is drawn as a
+    // CSS mask so it can follow the theme, and jsdom does not model masks.
     const claudeMark = screen.getByTestId("agent-mark-claude");
-    expect(claudeMark.querySelector("img")?.getAttribute("src")).toBe(
+    expect(claudeMark.getAttribute("data-logo")).toBe(
       "/provider-logos/claude.svg",
     );
     expect(
-      screen
-        .getByTestId("agent-mark-codex")
-        .querySelector("img")
-        ?.getAttribute("src"),
+      screen.getByTestId("agent-mark-codex").getAttribute("data-logo"),
     ).toBe("/provider-logos/openai.svg");
     expect(
       screen
@@ -180,7 +179,9 @@ describe("AgentAllocation", () => {
     ).toBe("/agent-logos/zai.svg");
 
     fireEvent.click(screen.getAllByRole("button", { name: "All" })[0]);
-    expect(claudeMark.querySelector("img")).toBeTruthy();
+    expect(claudeMark.getAttribute("data-logo")).toBe(
+      "/provider-logos/claude.svg",
+    );
   });
 
   it("presents a wide keyboard-friendly count field without native spinners", () => {

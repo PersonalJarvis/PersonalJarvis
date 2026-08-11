@@ -199,12 +199,14 @@ describe("ResumeCard", () => {
         onDismiss={vi.fn()}
       />,
     );
+    // `data-logo` rather than the <img>: both of these are single-colour marks
+    // and are drawn as a CSS mask so they follow the theme's ink.
     const codexMark = screen.getAllByTestId("agent-mark-codex")[0];
-    expect(codexMark.querySelector("img")?.getAttribute("src")).toBe(
+    expect(codexMark.getAttribute("data-logo")).toBe(
       "/provider-logos/openai.svg",
     );
     const claudeMark = screen.getAllByTestId("agent-mark-claude")[0];
-    expect(claudeMark.querySelector("img")?.getAttribute("src")).toBe(
+    expect(claudeMark.getAttribute("data-logo")).toBe(
       "/provider-logos/claude.svg",
     );
   });

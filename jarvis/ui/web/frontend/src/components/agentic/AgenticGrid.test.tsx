@@ -2821,9 +2821,9 @@ describe("chat view", () => {
     // the ANCHOR's previous sibling.
     const mark = title.parentElement?.previousElementSibling;
     expect(mark?.getAttribute("data-testid")).toBe("agent-mark-codex");
-    expect(mark?.querySelector("img")?.getAttribute("src")).toBe(
-      "/provider-logos/openai.svg",
-    );
+    // `data-logo` rather than the <img>: a single-colour mark is drawn as a
+    // CSS mask so it follows the theme's ink, and jsdom does not model masks.
+    expect(mark?.getAttribute("data-logo")).toBe("/provider-logos/openai.svg");
   });
 
   it("uses the last prompt as the title while a recap is not available", () => {
