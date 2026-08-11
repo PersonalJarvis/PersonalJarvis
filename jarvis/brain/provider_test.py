@@ -210,6 +210,70 @@ def classify_provider_error(message: str | None) -> str:
     return ERROR
 
 
+# ── Turning a provider's own 4xx body into a sentence ────────────────────────
+# A provider writes its error body for a log, not for the person holding the
+# key. Google answers a spent free-tier DAY with ~500 characters of nested JSON
+# whose single actionable fact — *this model, N requests, per day* — sits in the
+# middle of it. Printed verbatim on a card the whole thing reads as a broken key
+# or a broken integration, and that is exactly what it cost live (2026-08-11):
+# the Tool Model tab went red over a daily cap while the SAME key kept serving
+# the realtime session from a different quota, so the obvious conclusion drawn
+# was "the key is wrong" — and no amount of re-testing could disprove it,
+# because every retry reproduced the same wall of JSON.
+#
+# Pure and regex-only for the same reason as the classifier above: it must read
+# a Gemini ``ClientError`` without importing any provider SDK. A shape it does
+# not recognise returns "" — the caller then keeps the raw text, so an unknown
+# error is never replaced by a confident guess about what it means.
+
+# Google's prose summary line: "limit: 20, model: gemini-3.6-flash".
+_GOOGLE_QUOTA_PROSE_RE = re.compile(r"limit:\s*(\d+)\s*,\s*model:\s*([A-Za-z0-9._-]+)")
+# The machine twins, for a body whose prose line was truncated in transport.
+_GOOGLE_QUOTA_VALUE_RE = re.compile(r'"quotaValue"\s*:\s*"?(\d+)"?')
+_GOOGLE_QUOTA_MODEL_RE = re.compile(r'"model"\s*:\s*"([A-Za-z0-9._-]+)"')
+
+# The free-tier DAILY caps — the one quota shape that comes back on a clock
+# rather than on a payment, which is why it earns its own wording. Either
+# marker alone is conclusive; Google sends both.
+_GOOGLE_FREE_TIER_DAY_MARKERS = (
+    "generaterequestsperdayperprojectpermodel-freetier",
+    "generate_content_free_tier_requests",
+)
+
+
+def explain_provider_error(message: str | None) -> str:
+    """A short actionable sentence for *message*, or ``""`` to keep it raw.
+
+    Only recognised shapes are rewritten. The caller is expected to fall back to
+    the original text (``explain_provider_error(x) or x``) so that an unfamiliar
+    error still reaches the user in full rather than being flattened into a
+    friendly sentence that does not fit it.
+    """
+    if not message:
+        return ""
+    if not any(m in message.lower() for m in _GOOGLE_FREE_TIER_DAY_MARKERS):
+        return ""
+
+    prose = _GOOGLE_QUOTA_PROSE_RE.search(message)
+    if prose is not None:
+        limit, model = prose.group(1), prose.group(2)
+    else:
+        limit_match = _GOOGLE_QUOTA_VALUE_RE.search(message)
+        model_match = _GOOGLE_QUOTA_MODEL_RE.search(message)
+        limit = limit_match.group(1) if limit_match else ""
+        model = model_match.group(1) if model_match else ""
+
+    allowance = f"{limit} requests per day" if limit else "a limited number of requests per day"
+    subject = model or "this model"
+    return (
+        f"Free tier day limit reached — Google allows {allowance} for {subject}, "
+        "and today's are spent. The key itself is valid: this cap is counted per "
+        "model per day, and a realtime session draws on a different quota "
+        "entirely. It resets at midnight Pacific time. To lift it now, add "
+        "billing to this key's Google project or point this tier at another model."
+    )
+
+
 # ── The live per-tier connectivity test ──────────────────────────────────────
 
 

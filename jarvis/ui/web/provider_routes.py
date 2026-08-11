@@ -1203,6 +1203,19 @@ async def _run_tier_test(spec: ProviderSpec, cfg: Any, *, model: str | None = No
     )
 
 
+def _human_detail(result: Any) -> str:
+    """The card text for a provider-test *result*.
+
+    One seam for every surface that shows a failure to the user (the per-card
+    Test button, the section-health banner, the model-picker probe), so a shape
+    that has been put into words is worded the same everywhere. An unrecognised
+    error keeps its raw text — losing it would trade a confusing message for an
+    unactionable one.
+    """
+    raw = getattr(result, "detail", "") or ""
+    return _provider_test.explain_provider_error(raw) or raw
+
+
 @router.post("/providers/{provider_id}/test")
 async def test_provider_connection(provider_id: str, request: Request) -> ProviderTestResponse:
     """Run a REAL minimal call against ``provider_id`` and report the honest
@@ -1242,7 +1255,7 @@ async def test_provider_connection(provider_id: str, request: Request) -> Provid
     return ProviderTestResponse(
         provider=result.provider,
         status=result.status,
-        detail=result.detail,
+        detail=_human_detail(result),
         latency_ms=round(result.latency_ms, 1),
         integration_ok=result.status in _provider_test.INTEGRATION_OK_STATUSES,
     )
@@ -1412,7 +1425,7 @@ async def _tier_section_health(
     return SectionHealth(
         status=status,
         reason=result.status,
-        detail=f"{spec.label}: {result.detail or result.status}",
+        detail=f"{spec.label}: {_human_detail(result) or result.status}",
         subject_id=spec.id,
     )
 
@@ -2210,7 +2223,7 @@ async def _apply_brain_model(
         result = await _probe_brain_model(provider_id, probe_model)
         probe_payload = BrainModelProbe(
             status=result.status,
-            detail=result.detail,
+            detail=_human_detail(result),
             latency_ms=round(result.latency_ms, 1),
             integration_ok=result.status in _provider_test.INTEGRATION_OK_STATUSES,
         )
