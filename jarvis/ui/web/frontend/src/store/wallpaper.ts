@@ -42,14 +42,35 @@ const LEGACY_KEY = "jarvis.wallpaper.v1";
  */
 const FAVORITES_KEY = "jarvis.wallpaper.favorites.v1";
 
+/**
+ * An id minted by the upload store (`u` + 16 hex), as opposed to one written by
+ * the library's manifest builder (`03-anime-neon-07`).
+ *
+ * The two stores are served from different paths, and the id is what tells them
+ * apart — deliberately, so that everything holding only an id (the shell that
+ * paints the background, a per-theme selection restored from storage) resolves
+ * to the right picture without carrying a flag alongside it.
+ */
+const UPLOAD_ID_PATTERN = /^u[0-9a-f]{16}$/;
+
+export function isUploadId(id: string): boolean {
+  return UPLOAD_ID_PATTERN.test(id);
+}
+
 /** Where a chosen wallpaper's full-size file is served from. */
 export function wallpaperFullUrl(id: string): string {
-  return `/api/wallpapers/${encodeURIComponent(id)}/full`;
+  const safe = encodeURIComponent(id);
+  return isUploadId(id)
+    ? `/api/wallpapers/uploads/${safe}/full`
+    : `/api/wallpapers/${safe}/full`;
 }
 
 /** Where a chosen wallpaper's grid thumbnail is served from. */
 export function wallpaperThumbUrl(id: string): string {
-  return `/api/wallpapers/${encodeURIComponent(id)}/thumb`;
+  const safe = encodeURIComponent(id);
+  return isUploadId(id)
+    ? `/api/wallpapers/uploads/${safe}/thumb`
+    : `/api/wallpapers/${safe}/thumb`;
 }
 
 function readStoredId(theme: Theme): string | null {
@@ -100,6 +121,12 @@ interface WallpaperStore {
   favorites: string[];
   /** Persist a choice for one theme. Pass null to go back to the default. */
   select: (id: string | null, theme: Theme) => void;
+  /**
+   * Drop one wallpaper everywhere it is remembered — every theme slot and the
+   * favourites. For a picture that no longer exists: an id kept for a deleted
+   * upload would resolve to a 404 and silently fall back forever.
+   */
+  forget: (id: string) => void;
   /** Star or un-star one wallpaper. */
   toggleFavorite: (id: string) => void;
   /** Adopt choices made in another window. Does not write back. */
@@ -121,6 +148,28 @@ export const useWallpaperStore = create<WallpaperStore>((set, get) => ({
       /* the choice still applies to this window, it just will not survive */
     }
     set({ selections: readSelections() });
+  },
+  forget: (id) => {
+    if (!id) return;
+    try {
+      for (const theme of ["light", "dark"] as Theme[]) {
+        if (window.localStorage.getItem(THEME_KEYS[theme]) === id) {
+          window.localStorage.removeItem(THEME_KEYS[theme]);
+        }
+      }
+      if (window.localStorage.getItem(LEGACY_KEY) === id) {
+        window.localStorage.removeItem(LEGACY_KEY);
+      }
+      const favorites = readFavorites().filter((entry) => entry !== id);
+      if (favorites.length) {
+        window.localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites));
+      } else {
+        window.localStorage.removeItem(FAVORITES_KEY);
+      }
+    } catch {
+      /* nothing to clean up if storage is unavailable */
+    }
+    set({ selections: readSelections(), favorites: readFavorites() });
   },
   toggleFavorite: (id) => {
     if (!id) return;

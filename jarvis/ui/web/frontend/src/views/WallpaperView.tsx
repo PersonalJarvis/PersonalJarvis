@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronLeft,
@@ -9,6 +9,8 @@ import {
   Moon,
   RotateCcw,
   Sun,
+  Trash2,
+  Upload,
   X,
 } from "lucide-react";
 
@@ -21,8 +23,14 @@ import {
   useWallpaperCatalog,
   type WallpaperEntry,
 } from "@/hooks/useWallpaperCatalog";
+import {
+  uploadAsEntry,
+  useUploadMutations,
+  useWallpaperUploads,
+  UPLOAD_WALLPAPER_STYLE,
+} from "@/hooks/useWallpaperUploads";
 import { useApplyWallpaper } from "@/hooks/useApplyWallpaper";
-import { useThemeValue } from "@/hooks/useTheme";
+import { useThemeValue, type Theme } from "@/hooks/useTheme";
 import { useWallpaperStore } from "@/store/wallpaper";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +54,13 @@ function shuffleRank(id: string): number {
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
   return hash;
+}
+
+/** Where a wallpaper came from, as the grid orders it: bundled, own, library. */
+function originRank(item: WallpaperEntry): number {
+  if (item.isDefault) return 0;
+  if (item.isUpload) return 1;
+  return 2;
 }
 
 /** The segmented filter/ordering controls share one look. */
@@ -221,16 +236,22 @@ function WallpaperPreview({
   item,
   applied,
   favorite,
+  busy,
   onApply,
   onToggleFavorite,
+  onSetTheme,
+  onRemove,
   onClose,
   onStep,
 }: {
   item: WallpaperEntry;
   applied: boolean;
   favorite: boolean;
+  busy: boolean;
   onApply: () => void;
   onToggleFavorite: () => void;
+  onSetTheme: (theme: Theme) => void;
+  onRemove: () => void;
   onClose: () => void;
   onStep: (delta: number) => void;
 }) {
@@ -265,6 +286,37 @@ function WallpaperPreview({
             {item.styleLabel} · {item.theme === "dark" ? "Dark" : "Light"}
           </p>
         </div>
+        {/* Only an upload can be re-themed: the library's own light/dark comes
+            from the prompt each picture was painted to, and the bundled
+            original is a night scene by definition. */}
+        {item.isUpload && (
+          <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
+            <SegmentButton
+              active={item.theme === "light"}
+              onClick={() => onSetTheme("light")}
+            >
+              <Sun className="h-3 w-3" /> Light
+            </SegmentButton>
+            <SegmentButton
+              active={item.theme === "dark"}
+              onClick={() => onSetTheme("dark")}
+            >
+              <Moon className="h-3 w-3" /> Dark
+            </SegmentButton>
+          </div>
+        )}
+        {item.isUpload && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onRemove}
+            disabled={busy}
+            aria-label={`Remove ${item.title}`}
+            className="text-muted-foreground hover:text-destructive"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        )}
         <FavoriteButton
           item={item}
           favorite={favorite}
@@ -336,6 +388,8 @@ function WallpaperPreview({
  */
 export function WallpaperView() {
   const { data, isLoading } = useWallpaperCatalog();
+  const { data: uploads } = useWallpaperUploads();
+  const { add, setTheme: retheme, remove } = useUploadMutations();
   // Each theme keeps its own pick; the grid marks the one worn by the mode
   // the app is in right now (adopting a tile switches mode WITH the picture,
   // so the check mark always lands on what is actually on screen).
@@ -343,6 +397,7 @@ export function WallpaperView() {
   const selectedId = useWallpaperStore((state) => state.selections[activeTheme]);
   const favorites = useWallpaperStore((state) => state.favorites);
   const toggleFavorite = useWallpaperStore((state) => state.toggleFavorite);
+  const forget = useWallpaperStore((state) => state.forget);
   const apply = useApplyWallpaper();
 
   const [theme, setTheme] = useState<ThemeFilter>("all");
@@ -350,9 +405,33 @@ export function WallpaperView() {
   const [style, setStyle] = useState<string | null>(null);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement | null>(null);
 
-  const items = data?.items ?? [];
-  const styles = data?.styles ?? [];
+  const ownEntries = useMemo(
+    () => (uploads ?? []).map(uploadAsEntry),
+    [uploads],
+  );
+
+  // The owner's own pictures sit between the bundled original and the generated
+  // library — brought here on purpose, so they are found without scrolling.
+  const items = useMemo(() => {
+    const catalog = data?.items ?? [];
+    if (!ownEntries.length) return catalog;
+    const [bundled, ...rest] = catalog;
+    return bundled ? [bundled, ...ownEntries, ...rest] : [...ownEntries, ...catalog];
+  }, [data?.items, ownEntries]);
+
+  const styles = useMemo(() => {
+    const known = data?.styles ?? [];
+    if (!ownEntries.length) return known;
+    const chip = {
+      slug: UPLOAD_WALLPAPER_STYLE,
+      label: "Yours",
+      count: ownEntries.length,
+    };
+    const [bundled, ...rest] = known;
+    return bundled ? [bundled, chip, ...rest] : [chip, ...known];
+  }, [data?.styles, ownEntries.length]);
 
   const favoriteIds = useMemo(() => new Set(favorites), [favorites]);
   // Counted against the catalog, not against the stored list: an id left over
@@ -375,7 +454,9 @@ export function WallpaperView() {
     return filtered.sort((left, right) => {
       // The bundled original outranks every ordering and every shuffle: it is
       // the first wallpaper this app ever had, and it stays the first tile.
-      if (left.isDefault !== right.isDefault) return left.isDefault ? -1 : 1;
+      // The owner's own pictures come next, ahead of the generated five hundred.
+      const byOrigin = originRank(left) - originRank(right);
+      if (byOrigin !== 0) return byOrigin;
       if (ordering === "style") {
         const byStyle = left.style.localeCompare(right.style);
         if (byStyle !== 0) return byStyle;
@@ -418,6 +499,49 @@ export function WallpaperView() {
     [previewIndex, visible],
   );
 
+  // Adding one opens its preview rather than applying it: the picture arrives
+  // re-encoded and auto-themed, and seeing it full size before adopting it is
+  // the difference between a choice and a surprise.
+  const onFilePicked = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Clear the input first, so picking the same file twice in a row still
+    // fires a change event.
+    event.target.value = "";
+    if (!file) return;
+    add.mutate(file, { onSuccess: (upload) => setPreviewId(upload.id) });
+  };
+
+  const onRemoveUpload = (item: WallpaperEntry) => {
+    remove.mutate(item.id, {
+      onSuccess: () => {
+        // Everything that remembered it goes too, or the shell would keep
+        // asking for a picture that is no longer on disk.
+        forget(item.id);
+        setPreviewId(null);
+      },
+    });
+  };
+
+  const onRethemeUpload = (item: WallpaperEntry, next: Theme) => {
+    if (item.theme === next) return;
+    retheme.mutate(
+      { id: item.id, theme: next },
+      {
+        onSuccess: (updated) => {
+          // A wallpaper in use is filed under the mode it belongs to. Moving it
+          // to the other mode has to move that filing with it, or the picture
+          // would come back under a theme it is no longer authored for.
+          if (isApplied(item)) {
+            forget(item.id);
+            apply(uploadAsEntry(updated));
+          }
+        },
+      },
+    );
+  };
+
+  const uploadError = add.error?.message ?? remove.error?.message ?? retheme.error?.message;
+
   const header = (
     <ViewHeader
       icon={<ImageIcon className="h-4 w-4 text-primary" />}
@@ -428,12 +552,35 @@ export function WallpaperView() {
           : "The app's desktop background"
       }
       right={
-        selectedId ? (
-          <Button size="sm" variant="outline" onClick={() => apply(null)}>
-            <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-            Default
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
+            onChange={onFilePicked}
+            className="hidden"
+            data-testid="wallpaper-file-input"
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => fileInput.current?.click()}
+            disabled={add.isPending}
+          >
+            {add.isPending ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Upload className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            Add your own
           </Button>
-        ) : undefined
+          {selectedId && (
+            <Button size="sm" variant="outline" onClick={() => apply(null)}>
+              <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+              Default
+            </Button>
+          )}
+        </div>
       }
     />
   );
@@ -452,6 +599,15 @@ export function WallpaperView() {
   return (
     <div className="flex h-full flex-col">
       {header}
+
+      {uploadError && (
+        <p
+          role="alert"
+          className="border-b border-border bg-destructive/10 px-6 py-2.5 text-xs text-destructive"
+        >
+          {uploadError}
+        </p>
+      )}
 
       {!data?.libraryAvailable && (
         <p className="border-b border-border px-6 py-2.5 text-xs text-muted-foreground">
@@ -562,8 +718,11 @@ export function WallpaperView() {
           item={previewItem}
           applied={isApplied(previewItem)}
           favorite={favoriteIds.has(previewItem.id)}
+          busy={remove.isPending || retheme.isPending}
           onApply={() => apply(previewItem)}
           onToggleFavorite={() => toggleFavorite(previewItem.id)}
+          onSetTheme={(next) => onRethemeUpload(previewItem, next)}
+          onRemove={() => onRemoveUpload(previewItem)}
           onClose={() => setPreviewId(null)}
           onStep={step}
         />

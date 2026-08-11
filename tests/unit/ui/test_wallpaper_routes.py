@@ -11,6 +11,9 @@ Contract (see jarvis/ui/web/wallpapers.py):
 - GET /api/wallpapers/{id}/full       -> the original 1920x1080 artwork.
 - Unknown or malformed ids            -> 404, including ids that try to walk out
                                          of the library directory.
+- POST /api/wallpapers/uploads        -> store one of the owner's own pictures,
+                                         re-encoded, with a guessed light/dark.
+- GET/PATCH/DELETE .../uploads[/{id}] -> list them, correct the guess, remove one.
 
 The library itself is content living under a git-ignored ``data/`` directory,
 so these tests build a miniature one in a tmp_path rather than depending on the
@@ -19,6 +22,7 @@ five hundred generated files being present.
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 
@@ -27,8 +31,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jarvis.ui.web.wallpapers import (
+    MAX_UPLOAD_BYTES,
     THUMB_WIDTH,
+    UPLOAD_MAX_WIDTH,
     WallpaperLibrary,
+    WallpaperUploads,
     register_wallpaper_routes,
 )
 
@@ -85,10 +92,37 @@ def library(tmp_path: Path) -> WallpaperLibrary:
 
 
 @pytest.fixture()
-def client(library: WallpaperLibrary) -> TestClient:
+def uploads(tmp_path: Path) -> WallpaperUploads:
+    """An empty upload store, well away from the maintainer's real one."""
+    return WallpaperUploads(tmp_path / "jarvis-wallpaper-uploads")
+
+
+@pytest.fixture()
+def client(library: WallpaperLibrary, uploads: WallpaperUploads) -> TestClient:
     app = FastAPI()
-    register_wallpaper_routes(app, library)
+    register_wallpaper_routes(app, library, uploads)
     return TestClient(app)
+
+
+def _image_bytes(
+    color: tuple[int, int, int],
+    size: tuple[int, int] = (1920, 1080),
+    fmt: str = "PNG",
+) -> bytes:
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", size, color).save(buffer, fmt)
+    return buffer.getvalue()
+
+
+def _upload(client: TestClient, data: bytes, name: str = "my holiday_photo.png") -> dict:
+    response = client.post(
+        "/api/wallpapers/uploads",
+        files={"file": (name, data, "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 def test_catalog_lists_every_entry(client: TestClient) -> None:
@@ -142,8 +176,6 @@ def test_thumbnail_is_far_smaller_than_the_original(
     assert original is not None
     assert len(response.content) < original.path.stat().st_size
 
-    import io
-
     with Image.open(io.BytesIO(response.content)) as thumb:
         assert thumb.width == THUMB_WIDTH
 
@@ -177,6 +209,187 @@ def test_full_serves_the_original_artwork(client: TestClient, library: Wallpaper
 )
 def test_unknown_ids_are_refused(client: TestClient, item_id: str) -> None:
     assert client.get(f"/api/wallpapers/{item_id}/full").status_code == 404
+
+
+# ----------------------------------------------------------------------
+# Uploads — the owner's own pictures.
+# ----------------------------------------------------------------------
+
+
+def test_upload_is_listed_and_served(client: TestClient) -> None:
+    item = _upload(client, _image_bytes((10, 12, 20)))
+
+    listed = client.get("/api/wallpapers/uploads").json()["items"]
+    assert [entry["id"] for entry in listed] == [item["id"]]
+
+    full = client.get(f"/api/wallpapers/uploads/{item['id']}/full")
+    assert full.status_code == 200
+    assert full.headers["content-type"] == "image/webp"
+
+
+def test_upload_keeps_the_library_catalog_untouched(client: TestClient) -> None:
+    """Two stores, two endpoints: an upload is not a library entry."""
+    _upload(client, _image_bytes((10, 12, 20)))
+
+    catalog = client.get("/api/wallpapers").json()
+
+    assert catalog["count"] == 2
+    assert all(not item["id"].startswith("u") for item in catalog["items"])
+
+
+def test_upload_title_comes_from_the_file_name(client: TestClient) -> None:
+    item = _upload(client, _image_bytes((10, 12, 20)), name="sunset_over-the_bay.jpg")
+
+    assert item["title"] == "sunset over the bay"
+
+
+def test_upload_without_a_usable_name_still_gets_a_title(client: TestClient) -> None:
+    item = _upload(client, _image_bytes((10, 12, 20)), name="___.png")
+
+    assert item["title"] == "Your wallpaper"
+
+
+def test_dark_and_light_pictures_are_told_apart(client: TestClient) -> None:
+    """The guess is what decides which mode the app switches into."""
+    night = _upload(client, _image_bytes((8, 10, 24)))
+    noon = _upload(client, _image_bytes((238, 236, 228)))
+
+    assert night["theme"] == "dark"
+    assert noon["theme"] == "light"
+
+
+def test_the_guess_can_be_corrected(client: TestClient) -> None:
+    item = _upload(client, _image_bytes((8, 10, 24)))
+
+    response = client.patch(f"/api/wallpapers/uploads/{item['id']}", json={"theme": "light"})
+
+    assert response.status_code == 200
+    assert response.json()["theme"] == "light"
+    listed = client.get("/api/wallpapers/uploads").json()["items"]
+    assert listed[0]["theme"] == "light"
+
+
+def test_a_nonsense_theme_is_refused(client: TestClient) -> None:
+    item = _upload(client, _image_bytes((8, 10, 24)))
+
+    response = client.patch(f"/api/wallpapers/uploads/{item['id']}", json={"theme": "sepia"})
+
+    assert response.status_code == 400
+
+
+def test_oversized_pictures_are_scaled_down_on_the_way_in(client: TestClient) -> None:
+    """A wallpaper never needs more pixels than the largest desktop."""
+    from PIL import Image
+
+    item = _upload(client, _image_bytes((30, 40, 50), size=(6000, 3000)))
+
+    full = client.get(f"/api/wallpapers/uploads/{item['id']}/full")
+    with Image.open(io.BytesIO(full.content)) as stored:
+        assert stored.width == UPLOAD_MAX_WIDTH
+
+
+def test_upload_thumbnail_is_derived_and_cached(
+    client: TestClient, uploads: WallpaperUploads
+) -> None:
+    from PIL import Image
+
+    item = _upload(client, _image_bytes((30, 40, 50)))
+
+    response = client.get(f"/api/wallpapers/uploads/{item['id']}/thumb")
+
+    assert response.status_code == 200
+    with Image.open(io.BytesIO(response.content)) as thumb:
+        assert thumb.width == THUMB_WIDTH
+    assert (uploads.root / ".thumbs" / f"{item['id']}.webp").is_file()
+
+
+def test_a_file_that_is_not_an_image_is_refused(client: TestClient) -> None:
+    """A forged content type must not put arbitrary bytes on disk."""
+    response = client.post(
+        "/api/wallpapers/uploads",
+        files={"file": ("payload.png", b"MZ\x90\x00 not a picture", "image/png")},
+    )
+
+    assert response.status_code == 400
+    assert client.get("/api/wallpapers/uploads").json()["items"] == []
+
+
+def test_an_empty_file_is_refused(client: TestClient) -> None:
+    response = client.post(
+        "/api/wallpapers/uploads", files={"file": ("empty.png", b"", "image/png")}
+    )
+
+    assert response.status_code == 400
+
+
+def test_an_oversized_file_is_refused_rather_than_absorbed(client: TestClient) -> None:
+    response = client.post(
+        "/api/wallpapers/uploads",
+        files={"file": ("huge.png", b"\x00" * (MAX_UPLOAD_BYTES + 1), "image/png")},
+    )
+
+    assert response.status_code == 413
+
+
+def test_deleting_an_upload_removes_every_trace(
+    client: TestClient, uploads: WallpaperUploads
+) -> None:
+    item = _upload(client, _image_bytes((30, 40, 50)))
+    client.get(f"/api/wallpapers/uploads/{item['id']}/thumb")
+
+    assert client.delete(f"/api/wallpapers/uploads/{item['id']}").status_code == 200
+
+    assert client.get("/api/wallpapers/uploads").json()["items"] == []
+    assert client.get(f"/api/wallpapers/uploads/{item['id']}/full").status_code == 404
+    assert list(uploads.root.glob(f"{item['id']}*")) == []
+    assert not (uploads.root / ".thumbs" / f"{item['id']}.webp").exists()
+
+
+def test_deleting_something_that_is_not_there_is_a_404(client: TestClient) -> None:
+    assert client.delete("/api/wallpapers/uploads/u0123456789abcdef").status_code == 404
+
+
+@pytest.mark.parametrize(
+    "upload_id",
+    ["../../../etc/passwd", "01-cinematic-photoreal-01", "u00", "uZZZZZZZZZZZZZZZZ"],
+)
+def test_malformed_upload_ids_are_refused(client: TestClient, upload_id: str) -> None:
+    assert client.get(f"/api/wallpapers/uploads/{upload_id}/full").status_code == 404
+    assert client.delete(f"/api/wallpapers/uploads/{upload_id}").status_code == 404
+
+
+def test_uploads_are_listed_newest_first(client: TestClient) -> None:
+    """The picture just added is the one being looked for."""
+    first = _upload(client, _image_bytes((10, 10, 10)), name="one.png")
+    second = _upload(client, _image_bytes((20, 20, 20)), name="two.png")
+
+    listed = client.get("/api/wallpapers/uploads").json()["items"]
+
+    assert [entry["id"] for entry in listed] == [second["id"], first["id"]]
+
+
+def test_an_upload_survives_a_lost_sidecar(client: TestClient, uploads: WallpaperUploads) -> None:
+    """The picture is the irreplaceable half; a missing title must not hide it."""
+    item = _upload(client, _image_bytes((10, 10, 10)))
+    (uploads.root / f"{item['id']}.json").unlink()
+
+    listed = client.get("/api/wallpapers/uploads").json()["items"]
+
+    assert [entry["id"] for entry in listed] == [item["id"]]
+    assert listed[0]["title"] == "Your wallpaper"
+
+
+def test_a_missing_upload_directory_is_an_empty_list_not_an_error(
+    tmp_path: Path,
+) -> None:
+    app = FastAPI()
+    register_wallpaper_routes(
+        app,
+        WallpaperLibrary(tmp_path / "nothing-here"),
+        WallpaperUploads(tmp_path / "no-uploads-either"),
+    )
+
+    assert TestClient(app).get("/api/wallpapers/uploads").json() == {"items": []}
 
 
 def test_manifest_paths_pointing_outside_the_library_are_dropped(

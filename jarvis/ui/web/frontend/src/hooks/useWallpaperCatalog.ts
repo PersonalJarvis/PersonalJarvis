@@ -18,6 +18,11 @@ export interface WallpaperEntry {
    * come from the bundle, not from `/api/wallpapers`.
    */
   isDefault?: boolean;
+  /**
+   * True for a picture the owner uploaded. Those are the only wallpapers that
+   * can be removed or re-themed, so the preview needs to know which it has.
+   */
+  isUpload?: boolean;
 }
 
 export interface WallpaperStyle {

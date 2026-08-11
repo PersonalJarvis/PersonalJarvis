@@ -46,11 +46,80 @@ const CATALOG = {
   ],
 };
 
-function renderView(catalog: unknown = CATALOG) {
+interface Upload {
+  id: string;
+  title: string;
+  theme: "light" | "dark";
+  createdAt: number;
+}
+
+/**
+ * A stand-in for the two wallpaper endpoints, holding the uploads in memory.
+ *
+ * A fake rather than a per-call mock: the section adds, re-themes and removes
+ * pictures and then re-reads the list, and only something that actually keeps
+ * state can tell whether those round trips agree with each other.
+ */
+function stubServer(catalog: unknown = CATALOG, uploads: Upload[] = []) {
+  const state = { uploads: [...uploads], rejectUpload: null as string | null };
+  const json = (body: unknown, ok = true, status = 200) => ({
+    ok,
+    status,
+    json: async () => body,
+  });
+
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue({ ok: true, json: async () => catalog }),
+    vi.fn(async (input: unknown, init?: { method?: string; body?: unknown }) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+
+      if (url === "/api/wallpapers/uploads") {
+        if (method === "POST") {
+          if (state.rejectUpload) {
+            return json({ detail: state.rejectUpload }, false, 400);
+          }
+          const added: Upload = {
+            id: `u${String(state.uploads.length).padStart(16, "0")}`,
+            title: "Harbour At Dawn",
+            theme: "light",
+            createdAt: 1_700_000_000 + state.uploads.length,
+          };
+          state.uploads = [added, ...state.uploads];
+          return json(added);
+        }
+        return json({ items: state.uploads });
+      }
+
+      const own = url.match(/^\/api\/wallpapers\/uploads\/([^/]+)$/);
+      if (own) {
+        const id = own[1];
+        if (method === "DELETE") {
+          state.uploads = state.uploads.filter((item) => item.id !== id);
+          return json({ removed: id });
+        }
+        const theme = JSON.parse(String(init?.body ?? "{}")).theme as Upload["theme"];
+        state.uploads = state.uploads.map((item) =>
+          item.id === id ? { ...item, theme } : item,
+        );
+        const updated = state.uploads.find((item) => item.id === id);
+        return updated ? json(updated) : json({ detail: "Not Found" }, false, 404);
+      }
+
+      if (url === "/api/wallpapers") return json(catalog);
+      // Everything else the shell asks for while mounted (the appearance
+      // endpoint, say) is none of this section's business.
+      return json({});
+    }),
   );
+  return state;
+}
+
+/** The fake behind the current render, for tests that need to poke at it. */
+let server: ReturnType<typeof stubServer>;
+
+function renderView(catalog: unknown = CATALOG, uploads: Upload[] = []) {
+  server = stubServer(catalog, uploads);
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -369,6 +438,183 @@ describe("WallpaperView", () => {
         "01-cinematic-photoreal-01",
       ]);
     });
+  });
+
+  // ------------------------------------------------------------------
+  // The owner's own pictures.
+  // ------------------------------------------------------------------
+
+  const OWN: Upload = {
+    id: "u000000000000000a",
+    title: "Kitchen Window",
+    theme: "light",
+    createdAt: 1_700_000_000,
+  };
+
+  /** Hand a file to the hidden picker the way the OS dialog would. */
+  function pickFile(name = "harbour at dawn.png") {
+    const input = screen.getByTestId("wallpaper-file-input") as HTMLInputElement;
+    const file = new File([new Uint8Array([1, 2, 3])], name, { type: "image/png" });
+    fireEvent.change(input, { target: { files: [file] } });
+  }
+
+  it("lists an uploaded picture right after the original", async () => {
+    renderView(CATALOG, [OWN]);
+
+    await screen.findByAltText("Kitchen Window");
+    const tiles = [...document.querySelectorAll('[data-testid="wallpaper-grid"] img')];
+
+    expect(tiles.slice(0, 2).map((tile) => tile.getAttribute("alt"))).toEqual([
+      "The Original",
+      "Kitchen Window",
+    ]);
+  });
+
+  it("serves an upload's thumbnail from the uploads endpoint", async () => {
+    renderView(CATALOG, [OWN]);
+
+    const tile = await screen.findByAltText("Kitchen Window");
+
+    expect(tile.getAttribute("src")).toBe("/api/wallpapers/uploads/u000000000000000a/thumb");
+  });
+
+  it("gathers uploads under a style chip of their own", async () => {
+    renderView(CATALOG, [OWN]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Yours" }));
+
+    await waitFor(() => {
+      const tiles = [...document.querySelectorAll('[data-testid="wallpaper-grid"] img')];
+      expect(tiles.map((tile) => tile.getAttribute("alt"))).toEqual(["Kitchen Window"]);
+    });
+  });
+
+  it("offers no Yours chip while nothing has been uploaded", async () => {
+    renderView();
+
+    await screen.findByAltText("Flooded Observatory");
+
+    expect(screen.queryByRole("button", { name: "Yours" })).toBeNull();
+  });
+
+  it("adds a picked file and opens its preview", async () => {
+    renderView();
+    await screen.findByAltText("Flooded Observatory");
+
+    pickFile();
+
+    const preview = await screen.findByTestId("wallpaper-preview");
+    expect(within(preview).getByText("Harbour At Dawn")).toBeTruthy();
+    expect(server.uploads).toHaveLength(1);
+  });
+
+  it("does not apply an upload behind the owner's back", async () => {
+    renderView();
+    await screen.findByAltText("Flooded Observatory");
+
+    pickFile();
+    await screen.findByTestId("wallpaper-preview");
+
+    expect(useWallpaperStore.getState().selections).toEqual({
+      light: null,
+      dark: null,
+    });
+  });
+
+  it("shows the server's reason when an upload is refused", async () => {
+    renderView();
+    await screen.findByAltText("Flooded Observatory");
+    server.rejectUpload = "That file is not an image the app can read.";
+
+    pickFile("notes.txt");
+
+    expect(
+      await screen.findByText("That file is not an image the app can read."),
+    ).toBeTruthy();
+  });
+
+  it("removes an upload and forgets it everywhere", async () => {
+    renderView(CATALOG, [OWN]);
+    act(() => {
+      useWallpaperStore.getState().select(OWN.id, "light");
+      useWallpaperStore.getState().toggleFavorite(OWN.id);
+    });
+
+    fireEvent.click(await screen.findByAltText("Kitchen Window"));
+    const preview = await screen.findByTestId("wallpaper-preview");
+    fireEvent.click(within(preview).getByRole("button", { name: "Remove Kitchen Window" }));
+
+    await waitFor(() => {
+      expect(useWallpaperStore.getState().selections.light).toBeNull();
+    });
+    expect(useWallpaperStore.getState().favorites).toEqual([]);
+    expect(server.uploads).toEqual([]);
+    await waitFor(() => {
+      expect(screen.queryByAltText("Kitchen Window")).toBeNull();
+    });
+  });
+
+  it("corrects the light/dark guess on an upload", async () => {
+    renderView(CATALOG, [OWN]);
+
+    fireEvent.click(await screen.findByAltText("Kitchen Window"));
+    const preview = await screen.findByTestId("wallpaper-preview");
+    fireEvent.click(within(preview).getByRole("button", { name: /Dark/ }));
+
+    await waitFor(() => {
+      expect(server.uploads[0].theme).toBe("dark");
+    });
+  });
+
+  it("moves an applied upload into the mode it was re-themed to", async () => {
+    renderView(CATALOG, [OWN]);
+
+    fireEvent.click(await screen.findByAltText("Kitchen Window"));
+    const preview = await screen.findByTestId("wallpaper-preview");
+    fireEvent.click(within(preview).getByRole("button", { name: "Use this wallpaper" }));
+    await waitFor(() => {
+      expect(useWallpaperStore.getState().selections.light).toBe(OWN.id);
+    });
+
+    fireEvent.click(within(preview).getByRole("button", { name: /Dark/ }));
+
+    await waitFor(() => {
+      expect(useWallpaperStore.getState().selections.dark).toBe(OWN.id);
+    });
+    // The old slot must not keep a copy, or toggling back would restore a
+    // picture that is no longer authored for that mode.
+    expect(useWallpaperStore.getState().selections.light).toBeNull();
+  });
+
+  it("offers no remove or re-theme controls on a library wallpaper", async () => {
+    renderView();
+
+    fireEvent.click(await screen.findByAltText("Neon Crossing"));
+    const preview = await screen.findByTestId("wallpaper-preview");
+
+    expect(within(preview).queryByRole("button", { name: /^Remove Neon/ })).toBeNull();
+    expect(within(preview).queryByRole("button", { name: /^Dark$/ })).toBeNull();
+  });
+
+  it("keeps working when the uploads endpoint is unavailable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) =>
+        String(input) === "/api/wallpapers"
+          ? { ok: true, status: 200, json: async () => CATALOG }
+          : { ok: false, status: 500, json: async () => ({}) },
+      ),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ThemeProvider>
+          <WallpaperView />
+        </ThemeProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByAltText("Flooded Observatory")).toBeTruthy();
   });
 
   it("still offers the original when the library is absent", async () => {
