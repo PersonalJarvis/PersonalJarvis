@@ -193,6 +193,30 @@ def _config(*, user_entity_slug: str = "") -> JarvisConfig:
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_alias_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the write-time search-alias bridge for every test in this module.
+
+    ``ensure_page_aliases`` (jarvis/memory/wiki/search_aliases.py) makes an
+    extra LLM call per add/update decision, through the SAME registry these
+    tests script. Whether that call fires — and how many times — depends on
+    whatever REAL provider credentials happen to be resolvable on the machine
+    running the suite (``credential_ready_wiki_providers`` probes actual
+    keyring/env/file credentials), which is orthogonal to what these tests
+    pin and made ``registry.tried``/call-count assertions flaky across
+    machines. A no-op stub keeps the scripted provider sequences deterministic
+    regardless of local credential state; the alias bridge itself is covered
+    by its own test module.
+    """
+
+    async def _passthrough(page_text: str, **_kwargs: Any) -> str:
+        return page_text
+
+    monkeypatch.setattr(
+        "jarvis.memory.wiki.consolidator.ensure_page_aliases", _passthrough
+    )
+
+
 @pytest_asyncio.fixture
 async def stack(tmp_path: Path):
     vault_root = tmp_path / "vault"
