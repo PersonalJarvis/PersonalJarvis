@@ -92,19 +92,34 @@ def _launch_macos(
             "macOS Terminal could not be opened because osascript is unavailable."
         )
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(  # noqa: S603 - fixed argv, shell=False
             [osascript, "-e", _macos_script(argv, cwd, env)],
-            capture_output=True,
-            text=True,
-            timeout=8.0,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
             creationflags=NO_WINDOW_CREATIONFLAGS,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except OSError as exc:
         raise InteractiveTerminalUnavailable(
             "macOS Terminal could not be opened from this session."
         ) from exc
-    if result.returncode != 0:
-        log.warning("macOS Terminal launch failed with exit code %s", result.returncode)
+    try:
+        returncode = process.wait(timeout=8.0)
+    except subprocess.TimeoutExpired:
+        # The first time Jarvis drives Terminal.app, macOS blocks osascript on
+        # the one-time Automation (Apple Events) consent sheet until the user
+        # answers. A timed run() KILLED osascript here, so the FIRST sign-in on
+        # every fresh Mac failed even when the user clicked Allow. Leave the
+        # detached osascript running: once consent is granted the Terminal
+        # window still opens; a denial exits it with -1743 and opens nothing.
+        log.info(
+            "macOS Terminal launch is still pending (likely the one-time "
+            "Automation consent dialog); leaving it to finish in the background."
+        )
+        return InteractiveTerminalLaunch(pid=process.pid, method="macos-terminal")
+    if returncode != 0:
+        log.warning("macOS Terminal launch failed with exit code %s", returncode)
         raise InteractiveTerminalUnavailable(
             "macOS Terminal could not be opened from this session."
         )

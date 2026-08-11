@@ -21,12 +21,12 @@ def test_macos_opens_terminal_app_with_shell_quoted_argv(
         lambda name: "/usr/bin/osascript" if name == "osascript" else None,
     )
 
-    def fake_run(argv, **kwargs):  # noqa: ANN001, ANN003
+    def fake_popen(argv, **kwargs):  # noqa: ANN001, ANN003
         captured["argv"] = argv
         captured["kwargs"] = kwargs
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(pid=55, wait=lambda timeout=None: 0)
 
-    monkeypatch.setattr(terminal.subprocess, "run", fake_run)
+    monkeypatch.setattr(terminal.subprocess, "Popen", fake_popen)
     launch = terminal.launch_interactive_terminal(
         ["/Users/Test User/.local/bin/claude", "auth", "login", "--claudeai"],
         title="Claude sign-in",
@@ -46,12 +46,42 @@ def test_macos_launch_failure_is_honest(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(terminal.shutil, "which", lambda _name: "/usr/bin/osascript")
     monkeypatch.setattr(
         terminal.subprocess,
-        "run",
-        lambda *_a, **_k: SimpleNamespace(returncode=1, stdout="", stderr="denied"),
+        "Popen",
+        lambda *_a, **_k: SimpleNamespace(pid=56, wait=lambda timeout=None: 1),
     )
 
     with pytest.raises(terminal.InteractiveTerminalUnavailable, match="could not be opened"):
         terminal.launch_interactive_terminal(["claude"], title="Claude sign-in")
+
+
+def test_macos_first_run_consent_dialog_does_not_kill_the_launch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one-time Automation consent blocks osascript past any sane timeout.
+
+    The launcher must leave the detached osascript alive (clicking Allow then
+    still opens the Terminal window) and report the launch as in flight —
+    never kill it and fail the user's FIRST sign-in on a fresh Mac.
+    """
+    monkeypatch.setattr(terminal.sys, "platform", "darwin")
+    monkeypatch.setattr(terminal.shutil, "which", lambda _name: "/usr/bin/osascript")
+    state = {"killed": False}
+
+    def wait(timeout=None):  # noqa: ANN001
+        raise terminal.subprocess.TimeoutExpired(cmd="osascript", timeout=timeout)
+
+    process = SimpleNamespace(
+        pid=57,
+        wait=wait,
+        kill=lambda: state.__setitem__("killed", True),
+        terminate=lambda: state.__setitem__("killed", True),
+    )
+    monkeypatch.setattr(terminal.subprocess, "Popen", lambda *_a, **_k: process)
+
+    launch = terminal.launch_interactive_terminal(["claude"], title="Claude sign-in")
+
+    assert launch == terminal.InteractiveTerminalLaunch(57, "macos-terminal")
+    assert state["killed"] is False
 
 
 def test_windows_native_binary_gets_a_fresh_visible_console(
