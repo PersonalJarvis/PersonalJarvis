@@ -24,7 +24,7 @@ import contextlib
 import logging
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
 
 from jarvis.core import config as cfg
@@ -548,15 +548,46 @@ class GeminiFlashTTS:
                 )
             return b""
 
-        if pcm and not self._sibling_bridge_announced:
-            self._sibling_bridge_announced = True
-            log.warning(
-                "Gemini TTS sibling bridge active: primary=%s throttled → speaking "
-                "via %s. Voice (%s) is language-agnostic and identical. As soon as the "
-                "primary quota reopens, the code switches back automatically.",
-                self._model_name, self._sibling_bridge_model, voice,
-            )
+        if pcm:
+            self._announce_sibling_bridge(voice, self._sibling_bridge_model)
         return pcm
+
+    def _announce_sibling_bridge(self, voice: str, model: str) -> None:
+        """Log the bridge switch exactly once, whichever transport took it.
+
+        Shared by the blocking ladder and the streaming ladder: both rungs
+        end on the SAME sibling model, so the user must see the model change
+        once per process — not once per transport.
+        """
+        if self._sibling_bridge_announced:
+            return
+        self._sibling_bridge_announced = True
+        logging.getLogger("jarvis.tts").warning(
+            "Gemini TTS sibling bridge active: primary=%s throttled → speaking "
+            "via %s. Voice (%s) is language-agnostic and identical. As soon as the "
+            "primary quota reopens, the code switches back automatically.",
+            self._model_name, model, voice,
+        )
+
+    def _stream_model_ladder(self) -> list[tuple[str, bool]]:
+        """Which models the streaming transport may try, in order.
+
+        Mirrors ``_synthesize_one``'s blocking ladder exactly — primary
+        first, sibling bridge only while the primary is quota-blocked — so a
+        429 never changes WHICH model speaks depending on which transport
+        happened to run. A model whose own cooldown is armed is skipped, and
+        an empty ladder simply yields no audio (the blocking path then
+        returns its own silence receipt).
+        """
+        now = time.monotonic()
+        ladder: list[tuple[str, bool]] = []
+        if not (self._quota_blocked_until and now < self._quota_blocked_until):
+            ladder.append((self._model_name, False))
+        if self._sibling_bridge_model and not (
+            self._sibling_blocked_until and now < self._sibling_blocked_until
+        ):
+            ladder.append((self._sibling_bridge_model, True))
+        return ladder
 
     async def _synthesize_stream_one(
         self, text: str, voice: str, language_code: str | None = None
@@ -568,24 +599,96 @@ class GeminiFlashTTS:
         only the transport differs: ``generate_content_stream`` hands out the
         audio while the model is still generating.
 
+        The ladder carries the SIBLING BRIDGE too (live forensic 2026-08-11
+        21:27): a quota block on the primary used to end streaming for this
+        sentence outright, and the surface fallback — one whole-answer take
+        by construction (``chunk_by_sentence=False``) — then went out as a
+        single blocking generation that took 36 s for a 1000-character
+        answer. The user heard nothing and hung up 15 s before the audio
+        existed. Bridging to the sibling while STAYING on the streaming
+        transport keeps time-to-first-audio sub-second in exactly the case
+        that produced the silence; it speaks through the same model the
+        blocking ladder would have reached, so no new voice is introduced.
+
         Failure contract (composes with the blocking ladder + FallbackTTS):
-          * primary quota-cooldown active → yield nothing; the caller falls
-            back to ``_synthesize_one`` (which routes to the sibling bridge).
-          * stream fails BEFORE the first audio byte → yield nothing (caller
-            falls back, zero audio lost).
+          * every ladder rung cooled down → yield nothing; the caller falls
+            back to ``_synthesize_one`` (which reports the silence).
+          * rung 429s BEFORE the first audio byte → arm that model's cooldown
+            and try the next rung, still streaming.
+          * a rung fails otherwise before the first audio byte → yield
+            nothing (caller falls back to blocking, zero audio lost); the
+            sibling is NOT tried, so a transient blip keeps the primary voice.
           * stream fails AFTER audio was yielded → stop with the partial
             audio; never re-synthesize (would replay the opening words).
-          * RESOURCE_EXHAUSTED arms the same ``_quota_blocked_until`` cooldown
-            the blocking path maintains.
         """
         log = logging.getLogger("jarvis.tts")
-        if self._quota_blocked_until and time.monotonic() < self._quota_blocked_until:
-            return
-        produced = False
+        for model, is_sibling in self._stream_model_ladder():
+            outcome: dict[str, Any] = {}
+            pieces = self._stream_one_model(
+                text, voice, model, is_sibling, language_code, outcome
+            )
+            try:
+                async for piece in pieces:
+                    yield piece
+            finally:
+                # ``async for`` never closes its iterator (PEP 525); on a
+                # barge-in the GeneratorExit lands on the yield above and
+                # this is the only deterministic release of the inner
+                # generator's genai HTTP stream.
+                with contextlib.suppress(Exception):
+                    await pieces.aclose()
+            exc = outcome.get("error")
+            if outcome.get("produced"):
+                if is_sibling:
+                    self._announce_sibling_bridge(voice, model)
+                if exc is not None:
+                    log.warning(
+                        "Gemini-TTS stream broke mid-sentence (%s) — keeping the "
+                        "partial audio, not re-synthesizing.",
+                        exc.__class__.__name__,
+                    )
+                return
+            if exc is None:
+                # A clean stream that carried no audio (safety filter, empty
+                # candidates). The next rung would meet the same content, so
+                # hand the sentence to the blocking ladder unchanged.
+                return
+            if not outcome.get("quota"):
+                log.warning(
+                    "Gemini-TTS stream failed before first audio (%s) — blocking "
+                    "fallback will synthesize this sentence.",
+                    exc.__class__.__name__,
+                )
+                return
+
+    async def _stream_one_model(
+        self,
+        text: str,
+        voice: str,
+        model: str,
+        is_sibling: bool,
+        language_code: str | None,
+        outcome: dict[str, Any],
+    ) -> AsyncGenerator[bytes, None]:
+        """Stream ONE generation from ONE model and report why it stopped.
+
+        Typed as a generator, not a bare ``AsyncIterator``: the caller's
+        barge-in path closes it explicitly, and ``aclose`` is the whole
+        reason this layer is deterministic about the genai HTTP stream.
+
+        An async generator cannot return a value, so ``outcome`` is filled in
+        place: ``produced`` says whether any PCM was yielded, ``error`` holds
+        the exception that ended the stream, and ``quota`` marks it as a
+        RESOURCE_EXHAUSTED on ``model``. Arming the cooldown stays here,
+        where the model that actually 429'd is unambiguous.
+        """
+        log = logging.getLogger("jarvis.tts")
+        outcome["produced"] = False
+        outcome["quota"] = False
         stream = None
         try:
             stream = await self._client.aio.models.generate_content_stream(
-                model=self._model_name,
+                model=model,
                 contents=text,
                 config=self._build_config(voice, language_code),
             )
@@ -595,31 +698,24 @@ class GeminiFlashTTS:
                     for part in (content.parts if content else None) or []:
                         data = part.inline_data.data if part.inline_data else None
                         if data:
-                            produced = True
+                            outcome["produced"] = True
                             yield data
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 — degrade to the blocking ladder
+        except Exception as exc:  # noqa: BLE001 — degrade to the next rung
+            outcome["error"] = exc
             msg = str(exc)
             if "RESOURCE_EXHAUSTED" in msg or "429" in msg:
+                outcome["quota"] = True
                 retry_s = _parse_retry_delay(msg)
-                self._quota_blocked_until = time.monotonic() + retry_s
+                if is_sibling:
+                    self._sibling_blocked_until = time.monotonic() + retry_s
+                else:
+                    self._quota_blocked_until = time.monotonic() + retry_s
                 log.warning(
                     "Gemini-TTS stream quota-blocked on %s (retry in %.0f min).",
-                    self._model_name, retry_s / 60,
+                    model, retry_s / 60,
                 )
-            if produced:
-                log.warning(
-                    "Gemini-TTS stream broke mid-sentence (%s) — keeping the "
-                    "partial audio, not re-synthesizing.",
-                    exc.__class__.__name__,
-                )
-                return
-            log.warning(
-                "Gemini-TTS stream failed before first audio (%s) — blocking "
-                "fallback will synthesize this sentence.",
-                exc.__class__.__name__,
-            )
         finally:
             # GeneratorExit (barge-in) bypasses both except clauses above —
             # this finally is the only deterministic release of the genai

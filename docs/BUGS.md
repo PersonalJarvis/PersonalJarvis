@@ -8875,3 +8875,86 @@ to) · `paneSocket.test.ts` "geometry reconciliation" (the frame reaches
 holding an assumption, not a measurement. Any wire that lets one side clamp or
 refuse needs a path back, or the two sides drift silently and the damage surfaces
 somewhere that looks unrelated — here, as a rendering fault on one OS.
+
+## BUG-129: Jarvis speaks three words, then goes silent for the rest of the answer — the emergency voice is one blocking whole-answer take (HIGH, FIXED 2026-08-11)
+
+**Symptom (maintainer field report, voice session 2026-08-11 21:26, realtime).**
+Asked on camera to explain what it can do, Jarvis started the answer, spoke
+roughly three words, and stopped. Nothing else was ever heard. The session
+transcript showed a complete, well-formed answer — so the recording claims
+Jarvis delivered a paragraph the user never heard, and the only honest reading
+from the chair is "it broke mid-sentence".
+
+**What the log actually shows** (session `88eb1137`, `provider=gemini-live`,
+tool mode `delegate`):
+
+| time | event |
+|---|---|
+| 21:26:56.679 | `RT-SPAWN span=first_audio ms=8145` — the live model starts speaking its own answer |
+| 21:26:56.842 | `OutputStream opened @ 24000 Hz (… actual_latency=1.542s)` |
+| 21:26:59.713 | `blocked an action promise with no execution evidence` |
+| 21:26:59.787 | `withholding provider audio … awaiting a new response after a barge-in or delegation` |
+| 21:27:01.063 | the router brain (grok) returns the grounded answer — **this is the text in the transcript** |
+| 21:27:04.786 | `provider produced no audio for a grounded Brain result; using surface TTS fallback` |
+| 21:27:05.301 | `Gemini-TTS stream quota-blocked on gemini-3.1-flash-tts-preview (retry in 1 min)` |
+| 21:27:05.302 | `stream failed before first audio — blocking fallback will synthesize this sentence` |
+| 21:27:20.731 | `request_hangup` — the user gives up after **15.4 s of silence** |
+| 21:27:41.345 | the blocking `gemini-2.5-flash-preview-tts` POST returns 200 — **36.0 s** after it started, 20.6 s after the session was gone |
+
+Three of those lines are working as designed. The provider promised
+capabilities it had not exercised, the action-promise guard blocked the
+rendering 2.9 s in and delegated to the Brain, and the Brain produced a
+grounded answer. With a 1.542 s output latency, 2.9 s of sent frames is about
+1.4 s of *audible* speech — the three words. Everything after that point was
+supposed to arrive through the surface TTS fallback.
+
+**Root cause.** The realtime surface fallback is built with
+`chunk_by_sentence=False` on purpose: one whole-answer generation is what keeps
+the session's voice identity intact (BUG-090). That is only survivable because
+the transport is meant to stream — `build_realtime_surface_tts` says so in a
+comment. But `_synthesize_stream_one` streamed from `self._model_name` and
+nothing else: it had **no sibling-bridge rung**, while the blocking ladder in
+`_synthesize_one` has had one since 2026-05-14. So a `RESOURCE_EXHAUSTED` on
+the primary model ended streaming for that text outright, and the one-take
+design fell through to a single blocking `generate_content` — 36 s for a
+1000-character answer, with nothing audible until the very end.
+
+Two multipliers made it worse than a one-turn accident. The cooldown the 429
+arms runs up to an hour, and the old code returned from the stream immediately
+while it was armed — so *every* following turn took the same blocking take, not
+just the one that tripped the quota. And `streaming` was inherited from the
+pipeline's `[tts]` knob, so an install that had turned pipeline streaming off
+was in this state permanently, with no quota involved at all.
+
+**Fix.** `jarvis/plugins/tts/gemini_flash_tts.py` — `_stream_model_ladder()`
+mirrors the blocking ladder exactly (primary first, sibling only while the
+primary is quota-blocked, each rung skipped while its own cooldown is armed),
+and `_synthesize_stream_one` walks it, delegating one generation per rung to
+`_stream_one_model`. A 429 now bridges to the sibling **on the streaming
+transport**, so the answer keeps a sub-second time-to-first-audio in exactly
+the case that produced the silence. It reaches the same model the blocking
+ladder would have used, so no new voice is introduced, and the bridge
+announcement is now shared by both transports (`_announce_sibling_bridge`) so
+it stays once-per-process. A non-quota error still does NOT bridge — it falls
+to the blocking ladder, which retries the primary, so a transient blip cannot
+flip which model speaks. `jarvis/plugins/tts/__init__.py` pins `streaming=True`
+for the surface instance: it is the one-take design's precondition, not a
+preference to inherit.
+
+**Guards.** `tests/unit/plugins/tts/test_gemini_streaming.py` — a primary 429
+streams from the sibling and never reaches the blocking path; an already-armed
+cooldown starts on the sibling without calling the blocked primary at all; a
+sibling 429 arms its **own** timer; both cooldowns armed skips the network
+entirely; a transient error does not bridge and does not arm a cooldown.
+`test_realtime_surface_tts.py` — the surface instance streams even with
+`[tts].streaming = false`. Verified sharp: four of these fail against the
+previous implementation.
+
+**Class rule.** A fallback whose latency budget depends on a transport must own
+that transport, not inherit it — and every degradation ladder needs the same
+rungs on every transport that can walk it. Here the blocking path had a quota
+bridge and the streaming path did not, so a quota error silently demoted the
+answer from "streams in under a second" to "one 36-second generation", and the
+turn reported itself healthy the whole way down. When the last mile before the
+speaker can take that long, silence is indistinguishable from a crash to the
+only person who can tell you it broke.

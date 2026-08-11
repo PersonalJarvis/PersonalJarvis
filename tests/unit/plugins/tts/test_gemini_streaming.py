@@ -22,6 +22,7 @@ Contract pinned here:
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
@@ -212,6 +213,166 @@ async def test_streaming_closes_provider_stream_on_early_exit() -> None:
     assert closed == [True], (
         "generate_content_stream was not aclose()d on early generator exit"
     )
+
+
+# ---------------------------------------------------------------------------
+# Streaming ladder: a quota block must not demote the answer to a blocking
+# whole-text generation (live forensic 2026-08-11 21:27).
+# ---------------------------------------------------------------------------
+
+_SIBLING = "gemini-2.5-flash-preview-tts"
+_PRIMARY = "gemini-3.1-flash-tts-preview"
+
+
+@dataclass
+class _FakeAioModelsPerModel:
+    """``client.aio.models`` fake whose behaviour depends on the model asked for."""
+
+    pieces_by_model: dict[str, list[bytes]] = field(default_factory=dict)
+    raise_by_model: dict[str, Exception] = field(default_factory=dict)
+    calls: list[str] = field(default_factory=list)
+
+    async def generate_content_stream(
+        self, *, model: str, contents: str, config: Any
+    ) -> Any:
+        self.calls.append(model)
+        exc = self.raise_by_model.get(model)
+        if exc is not None:
+            raise exc
+        pieces = self.pieces_by_model.get(model, [])
+
+        async def _gen():
+            for piece in pieces:
+                yield _audio_chunk(piece)
+
+        return _gen()
+
+
+def _blocking_must_not_run(tts: GeminiFlashTTS, seen: list[str]) -> None:
+    """Pin the blocking path as a tripwire: reaching it is the regression."""
+
+    async def fake_one(text: str, voice: str, language_code: str | None = None) -> bytes:
+        seen.append(text)
+        return b"BLOCKING_WHOLE_TEXT"
+
+    tts._synthesize_one = fake_one  # type: ignore[assignment]
+
+
+@pytest.mark.asyncio
+async def test_primary_quota_block_bridges_to_the_sibling_STREAM() -> None:
+    """The whole point: a 429 keeps the answer STREAMING.
+
+    Live forensic 2026-08-11 21:27 — the realtime surface fallback is one
+    whole-answer take by construction (``chunk_by_sentence=False``). When the
+    primary 429'd, the stream gave up and that single take went out as a
+    BLOCKING generation: 36 s for a 1000-character answer, nothing audible
+    until the very end, and the user hung up 15 s before the audio existed.
+    The sibling bridge must therefore exist on the streaming transport too,
+    not only on the blocking one.
+    """
+    aio = _FakeAioModelsPerModel(
+        raise_by_model={_PRIMARY: RuntimeError(_GOOGLE_429_MESSAGE)},
+        pieces_by_model={_SIBLING: [b"S1", b"S2", b"S3"]},
+    )
+    tts = _new_streaming_tts(aio)
+    blocking: list[str] = []
+    _blocking_must_not_run(tts, blocking)
+
+    pcm = await _collect_pcm(tts, "Ein langer Satz ohne Satzzeichen dazwischen")
+
+    assert pcm == [b"S1", b"S2", b"S3"], "the sibling must stream, not buffer"
+    assert aio.calls == [_PRIMARY, _SIBLING]
+    assert blocking == [], "a quota block must never fall to a blocking whole-text take"
+    assert tts._quota_blocked_until > 0.0, "the primary cooldown is still armed"
+
+
+@pytest.mark.asyncio
+async def test_armed_primary_cooldown_starts_on_the_sibling_stream() -> None:
+    """Every FOLLOWING turn inside the cooldown streams too.
+
+    The cooldown runs up to an hour, so the turn that trips the 429 is not
+    the only victim: the old code returned from the stream immediately while
+    ``_quota_blocked_until`` was armed, handing every later turn the same
+    blocking whole-text take.
+    """
+    aio = _FakeAioModelsPerModel(pieces_by_model={_SIBLING: [b"S1"]})
+    tts = _new_streaming_tts(aio)
+    tts._quota_blocked_until = time.monotonic() + 3600.0
+    blocking: list[str] = []
+    _blocking_must_not_run(tts, blocking)
+
+    pcm = await _collect_pcm(tts, "Zweiter Satz im selben Cooldown")
+
+    assert pcm == [b"S1"]
+    assert aio.calls == [_SIBLING], "the blocked primary must not be called at all"
+    assert blocking == []
+
+
+@pytest.mark.asyncio
+async def test_sibling_429_arms_its_own_cooldown_then_hands_over() -> None:
+    """Both rungs exhausted → the blocking path owns the outcome, fast."""
+    aio = _FakeAioModelsPerModel(
+        raise_by_model={
+            _PRIMARY: RuntimeError(_GOOGLE_429_MESSAGE),
+            _SIBLING: RuntimeError(_GOOGLE_429_MESSAGE),
+        }
+    )
+    tts = _new_streaming_tts(aio)
+
+    async def fake_one(text: str, voice: str, language_code: str | None = None) -> bytes:
+        return b""
+
+    tts._synthesize_one = fake_one  # type: ignore[assignment]
+
+    pcm = await _collect_pcm(tts, "Ein kurzer Satz.")
+
+    assert pcm == []
+    assert aio.calls == [_PRIMARY, _SIBLING]
+    assert tts._quota_blocked_until > 0.0
+    assert tts._sibling_blocked_until > 0.0, "the sibling 429 must arm its OWN timer"
+
+
+@pytest.mark.asyncio
+async def test_both_cooldowns_armed_skips_the_stream_entirely() -> None:
+    """No pointless API call against two models that are known to be blocked."""
+    aio = _FakeAioModelsPerModel()
+    tts = _new_streaming_tts(aio)
+    tts._quota_blocked_until = time.monotonic() + 3600.0
+    tts._sibling_blocked_until = time.monotonic() + 3600.0
+
+    async def fake_one(text: str, voice: str, language_code: str | None = None) -> bytes:
+        return b"BLOCKING_SILENCE_RECEIPT"
+
+    tts._synthesize_one = fake_one  # type: ignore[assignment]
+
+    pcm = await _collect_pcm(tts, "Ein kurzer Satz.")
+
+    assert pcm == [b"BLOCKING_SILENCE_RECEIPT"]
+    assert aio.calls == []
+
+
+@pytest.mark.asyncio
+async def test_transient_stream_error_does_not_bridge_to_the_sibling() -> None:
+    """Voice continuity: only a QUOTA block changes which model speaks.
+
+    A network blip must keep the primary voice by falling to the blocking
+    ladder (which retries the primary), exactly as ``_synthesize_one`` does.
+    Bridging on any error would flip the model on every transient failure.
+    """
+    aio = _FakeAioModelsPerModel(
+        raise_by_model={_PRIMARY: RuntimeError("transport exploded")},
+        pieces_by_model={_SIBLING: [b"MUST_NOT_APPEAR"]},
+    )
+    tts = _new_streaming_tts(aio)
+    blocking: list[str] = []
+    _blocking_must_not_run(tts, blocking)
+
+    pcm = await _collect_pcm(tts, "Ein kurzer Satz.")
+
+    assert pcm == [b"BLOCKING_WHOLE_TEXT"]
+    assert aio.calls == [_PRIMARY], "a transient error must not reach the sibling"
+    assert blocking == ["Ein kurzer Satz."]
+    assert tts._quota_blocked_until == 0.0, "a non-429 must not arm the cooldown"
 
 
 def test_factory_wires_tts_streaming_flag() -> None:

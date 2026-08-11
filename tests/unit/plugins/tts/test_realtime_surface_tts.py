@@ -126,6 +126,29 @@ def test_surface_fallback_is_one_take_even_without_configured_knobs() -> None:
     assert tts._temperature is None
 
 
+def test_surface_fallback_always_streams_whatever_the_pipeline_knob_says() -> None:
+    """One whole-answer take is only safe while the transport streams it.
+
+    Live forensic 2026-08-11 21:27: the emergency re-render of a
+    1000-character answer went out as a single BLOCKING generation and took
+    36 s — the user heard nothing and hung up 15 s before the audio existed.
+    ``chunk_by_sentence=False`` (voice identity) and blocking synthesis
+    (first audio == whole generation) are only compatible via streaming, so
+    streaming is this instance's precondition, not an inherited preference:
+    ``_cfg()`` deliberately carries ``[tts].streaming = False``.
+    """
+    cfg = _cfg()
+    assert cfg.tts.streaming is False, "fixture must model the pipeline knob OFF"
+    with override_provider_secrets({"gemini-live": "rt-scoped-key"}):
+        tts = build_realtime_surface_tts(cfg, "gemini-live")
+    assert isinstance(tts, GeminiFlashTTS)
+    assert tts._streaming is True, (
+        "a pipeline knob turned off must never convert the emergency voice "
+        "into a blocking whole-answer take"
+    )
+    assert tts._chunk_by_sentence is False
+
+
 def test_keyless_realtime_provider_yields_no_surface_tts() -> None:
     with override_provider_secrets({"gemini-live": None}):
         assert build_realtime_surface_tts(_cfg(), "gemini-live") is None

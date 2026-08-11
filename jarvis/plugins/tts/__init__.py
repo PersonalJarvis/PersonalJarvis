@@ -341,7 +341,16 @@ def build_realtime_surface_tts(cfg: Any, realtime_provider: str) -> Any | None:
                 allow_sapi5_fallback=bool(
                     getattr(tts_cfg, "allow_sapi5_fallback", False)
                 ),
-                streaming=bool(getattr(tts_cfg, "streaming", False)),
+                # Streaming is this instance's PRECONDITION, not a preference
+                # inherited from [tts]: one whole-answer take (below) only has
+                # an acceptable time-to-first-audio while the transport hands
+                # the PCM out during generation. Blocking, a 1000-character
+                # answer is a single 36 s generation with nothing audible
+                # until the very end (live forensic 2026-08-11 21:27 — the
+                # user hung up 15 s before the audio existed). A pipeline
+                # knob turned off for the pipeline's own reasons must never
+                # convert the emergency voice into dead air.
+                streaming=True,
                 # Voice-identity profile (BUG-090). Gemini TTS is generative:
                 # every generation re-rolls the delivery, and a performance cue
                 # in the text (dialect persona, quoted lines) can flip the
@@ -350,10 +359,9 @@ def build_realtime_surface_tts(cfg: Any, realtime_provider: str) -> Any | None:
                 # fallback one generation PER SENTENCE — the second take came
                 # out as a different-gender voice mid-answer. The emergency
                 # re-render exists solely to keep the session's voice identity,
-                # so it is always ONE take (with streaming=True the single
-                # whole-text generation still streams, no first-audio cost)
-                # and inherits the [tts] drift knobs the pipeline instance
-                # already honors.
+                # so it is always ONE take — which the pinned streaming above
+                # keeps cheap to start — and inherits the [tts] drift knobs
+                # the pipeline instance already honors.
                 chunk_by_sentence=False,
                 seed=getattr(tts_cfg, "seed", None),
                 temperature=getattr(tts_cfg, "temperature", None),
