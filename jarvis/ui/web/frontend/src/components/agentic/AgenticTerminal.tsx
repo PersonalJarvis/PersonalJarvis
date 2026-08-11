@@ -303,6 +303,33 @@ const MAX_TERMINAL_NAME = 40;
 const MIN_REAL_COLS = 10;
 const MIN_REAL_ROWS = 4;
 
+/**
+ * The width below which a coding CLI stops drawing a frame anyone can read.
+ *
+ * A NOTICE threshold, and nothing else — the distinction is the whole reason
+ * this is allowed to exist again. Three attempts to act on this number were
+ * shipped and rejected inside a day (2026-08-11): drawing the pane 60 columns
+ * wide and clipping it read as terminals shoved behind one another, shrinking
+ * the text until 60 fitted made the size controls look dead, and widening a
+ * pane on hover shuffled the workspace under the cursor. The rule that
+ * survived all three is the maintainer's: **a pane is exactly as wide as its
+ * tile.** Nothing here changes a single column of that.
+ *
+ * What was left unanswered is what the user actually SEES. The rule was
+ * shipped on the reasoning that "a pane too narrow to be useful is a pane they
+ * can see is too narrow", and that turned out to be false. Below roughly this
+ * width a coding CLI does not degrade gracefully — it reserves its gutter out
+ * of what little there is and lays the remainder out in one- and two-character
+ * columns, so a pane at 20 columns does not look narrow, it looks CORRUPTED
+ * (reported 2026-08-11: a file listing printed one character per line, read as
+ * a rendering bug in this app). The pane therefore says which it is.
+ *
+ * 60 is where both installed CLIs were measured to stop laying out a usable
+ * frame (2026-08-09, thirteen panes) — the same number the backend's floor
+ * used to enforce before enforcing it turned out to cost more than it bought.
+ */
+const WORKABLE_COLS = 60;
+
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
 
 /**
@@ -553,6 +580,15 @@ export function AgenticTerminal({
    * Reconnects therefore stay quiet: the replayed screen is already there.
    */
   const [painted, setPainted] = useState(false);
+  /*
+   * How many columns this pane last fitted to, or null before it has measured.
+   *
+   * Mirrored into state for one reader — the width notice below. It changes
+   * when the workspace is re-laid out, never per chunk of output, and React
+   * bails out on an unchanged value, so a pane that keeps measuring the same
+   * tile re-renders nothing.
+   */
+  const [paneCols, setPaneCols] = useState<number | null>(null);
   // A parked chat pane may have a large asynchronous xterm write to parse when
   // it takes the stage again. Keep its terminal surface out of the paint until
   // that write and the final viewport restoration have both landed; otherwise xterm
@@ -1313,6 +1349,11 @@ export function AgenticTerminal({
         cols: Math.max(proposed.cols, MIN_REAL_COLS),
         rows: Math.max(proposed.rows, MIN_REAL_ROWS),
       };
+      // What the pane is about to draw at — read by the width notice, which is
+      // the one thing in this component that has an opinion about whether that
+      // number is enough (see WORKABLE_COLS). Recorded whatever happens below:
+      // a fit that changes nothing still measured the tile.
+      setPaneCols(size.cols);
       try {
         if (size.cols === proposed.cols && size.rows === proposed.rows) {
           fit.fit();
@@ -2074,6 +2115,22 @@ export function AgenticTerminal({
         light={appearance === "light"}
         onRestart={onRestart}
       />
+      {/*
+        And the other reason a pane can be unreadable: it is simply too narrow
+        for the agent inside it. Second, because a pane that has stopped or
+        cannot be reached has a more specific answer and only one row to say it
+        in. See PaneWidthNotice.
+      */}
+      {visibleStatus !== "exited" && visibleStatus !== "error" && (
+        <PaneWidthNotice
+          name={name}
+          displayName={displayName}
+          cols={paneCols}
+          light={appearance === "light"}
+          maximized={maximized}
+          onToggleMaximize={onToggleMaximize}
+        />
+      )}
       {/*
         Keep the visual inset OUTSIDE xterm's measured host. FitAddon reads the
         host's border-box but does not subtract padding on that host, so putting
@@ -2840,6 +2897,100 @@ function PaneStatusNotice({
         >
           <RotateCcw className="h-3 w-3" aria-hidden="true" />
           Restart
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Say that this pane is too narrow for its agent, rather than letting the agent
+ * prove it in one-character columns.
+ *
+ * The gap this closes is between what is TRUE and what is VISIBLE. Everything
+ * about a narrow pane is already working exactly as designed — the tile is
+ * measured honestly, the agent is told that measurement, and it draws the best
+ * frame it can into it (see WORKABLE_COLS for the three attempts to do
+ * something else and why none of them survived). But a coding CLI below its
+ * usable width does not produce a small, tidy interface. It reserves its gutter
+ * out of what little there is and lays the rest out one and two characters
+ * wide, and the result is indistinguishable from this app rendering the
+ * terminal wrong — which is what it was reported as (2026-08-11), twice, by
+ * someone reading a workspace that was doing precisely what it was told.
+ *
+ * So the pane answers the question the screen raises. It states its own width
+ * against the number the agent needs, and offers the one gesture that fixes it
+ * without changing anything the user chose: fill the workspace with this pane.
+ * The other two ways out — a smaller text size, fewer panes across — belong to
+ * controls the toolbar already carries, and a notice that listed every option
+ * would be a paragraph in a row that is eleven pixels tall.
+ *
+ * Deliberately NOT an error tone. Nothing has failed, and nothing needs
+ * restarting; the workspace is simply asking more of the window than it has.
+ */
+function PaneWidthNotice({
+  name,
+  displayName,
+  cols,
+  light,
+  maximized,
+  onToggleMaximize,
+}: {
+  name: string;
+  displayName: string;
+  cols: number | null;
+  light: boolean;
+  maximized: boolean;
+  onToggleMaximize?: () => void;
+}) {
+  // Nothing measured yet, or a tile that gives its agent room to work.
+  if (cols === null || cols >= WORKABLE_COLS) return null;
+  const tone = NOTICE_TONE.warning[light ? "light" : "dark"];
+  const message =
+    `${cols} columns — ${displayName} needs about ${WORKABLE_COLS} to draw ` +
+    `its interface. Below that it wraps into fragments.`;
+  return (
+    <div
+      data-testid={`pane-width-notice-${name}`}
+      data-tone="warning"
+      data-cols={cols}
+      role="status"
+      aria-live="polite"
+      // The same shape as the status notice above it — a rule down the left
+      // edge, no fill, no icon. A second, louder box in a pane header would
+      // cost more of the terminal than the sentence is worth.
+      className="flex shrink-0 items-center gap-2 border-l-2 px-2 py-1 text-[11px] leading-tight"
+      style={{ borderColor: tone.border, color: tone.text }}
+    >
+      <span className="min-w-0 flex-1 truncate" title={message}>
+        {message}
+      </span>
+      {/*
+        Offered only when it would change something. A pane already filling the
+        workspace and still short of the width its agent wants is a small
+        window, not a layout the user can press their way out of — and a button
+        that does nothing is worse than no button.
+      */}
+      {onToggleMaximize && !maximized && (
+        <button
+          type="button"
+          aria-label={`Fill the workspace with ${name}`}
+          title={`Give ${name} the whole workspace`}
+          data-testid={`pane-width-maximize-${name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleMaximize();
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className={cn(
+            "flex shrink-0 items-center gap-1 rounded bg-primary/20 px-2 py-0.5",
+            "text-[11px] font-medium text-primary",
+            "transition-colors duration-150 hover:bg-primary/30",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/70",
+          )}
+        >
+          <Maximize2 className="h-3 w-3" aria-hidden="true" />
+          Widen
         </button>
       )}
     </div>

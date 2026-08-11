@@ -1600,6 +1600,88 @@ describe("pane refit while the agent is drawing", () => {
     });
   });
 
+  /*
+   * A pane too narrow for its agent SAYS so.
+   *
+   * The rule that a pane is exactly as wide as its tile is not in question
+   * here — none of this changes a column. What it closes is the gap the rule
+   * left open: a coding CLI below its usable width does not draw a small tidy
+   * frame, it lays its interface out one and two characters wide, and that is
+   * indistinguishable from this app rendering the terminal wrong. It was
+   * reported as exactly that, twice, on a workspace doing what it was told.
+   */
+  it("says when the tile is too narrow for the agent to draw in", () => {
+    terminalHarness.size = { cols: 22, rows: 30 };
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        onToggleMaximize={() => undefined}
+      />,
+    );
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+
+    const notice = screen.getByTestId("pane-width-notice-Dana");
+    expect(notice.dataset.cols).toBe("22");
+    expect(notice.textContent).toContain("22 columns");
+    // The one gesture that fixes it without overriding anything the user chose.
+    expect(screen.getByTestId("pane-width-maximize-Dana")).toBeTruthy();
+  });
+
+  it("offers no way out that a press would not take", () => {
+    // A pane already filling the workspace and still short of the width its
+    // agent wants is a small window, not a layout anyone can press their way
+    // out of — and a button that does nothing is worse than no button.
+    terminalHarness.size = { cols: 22, rows: 30 };
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        maximized
+        onToggleMaximize={() => undefined}
+      />,
+    );
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(screen.getByTestId("pane-width-notice-Dana")).toBeTruthy();
+    expect(screen.queryByTestId("pane-width-maximize-Dana")).toBeNull();
+  });
+
+  it("stays quiet on a pane with room to work", () => {
+    terminalHarness.size = { cols: 80, rows: 24 };
+    render(pane());
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(screen.queryByTestId("pane-width-notice-Dana")).toBeNull();
+  });
+
+  it("takes the notice away once the pane is given room", () => {
+    terminalHarness.size = { cols: 22, rows: 30 };
+    render(pane());
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(screen.getByTestId("pane-width-notice-Dana")).toBeTruthy();
+
+    terminalHarness.size = { cols: 120, rows: 30 };
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(screen.queryByTestId("pane-width-notice-Dana")).toBeNull();
+  });
+
   it("still fits a quiet pane in the same pass", () => {
     // The gate must cost nothing when there is nothing to wait for: a pane
     // whose agent is idle refits immediately, as it always did.
