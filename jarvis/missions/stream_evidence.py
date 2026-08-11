@@ -219,6 +219,18 @@ def _normalize_worker_stream(stream_text: str) -> str:
     return "\n".join(out)
 
 
+def normalize_worker_stream(stream_text: str) -> str:
+    """Public canonicalizer for archived worker streams.
+
+    Single source of truth shared by the Critic/Kontrollierer extractors above
+    and the Outputs/Visualization step-timeline reader
+    (``jarvis.ui.web.run_plan``). Both must see the SAME claude-shaped frames
+    for every worker backend, or a codex/gemini run would grade one way and
+    display another.
+    """
+    return _normalize_worker_stream(stream_text)
+
+
 def extract_stream_evidence(
     stream_text: str,
     *,
@@ -1315,6 +1327,7 @@ __all__ = [
     "informational_file_answer",
     "is_clarification_only_answer",
     "is_informational_request",
+    "normalize_worker_stream",
     "readonly_answer",
     "strip_spawn_meta",
     "summarize_answers",

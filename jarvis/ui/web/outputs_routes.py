@@ -35,6 +35,7 @@ from jarvis.missions.kontrollierer.deliverable_paths import (
 from jarvis.missions.state_machine import MissionState, is_terminal
 from jarvis.platform import detect_platform
 from jarvis.ui.web.artifact_view import VIEW_CSP, render_artifact_html
+from jarvis.ui.web.run_plan import build_run_plan
 
 logger = logging.getLogger(__name__)
 
@@ -667,16 +668,21 @@ def outputs_capabilities(request: Request) -> dict[str, Any]:
 
 @router.get("/{slug}/plan")
 async def get_output_plan(slug: str, request: Request) -> dict[str, Any]:
-    """Return the plan + steps for a single session — empty stub for now.
+    """Return the run's reconstructed step timeline (plan + steps).
 
-    The `OutputsView` shows a `PlanStepList` in the right pane. Welle-4 hasn't
-    plumbed plan/step persistence back through the Mission stack yet, so this
-    intentionally returns `{plan: null, steps: []}` instead of 404 — the view
-    treats that as "no plan available" and the user sees the session metadata
-    plus the "open in Explorer" button.
+    The steps are not a separate store — they are read on demand from the
+    worker transcripts the mission archived under ``tasks/*/logs/stream.jsonl``
+    (see :mod:`jarvis.ui.web.run_plan`), so every run ever archived has its
+    timeline without a migration. A run with no readable stream still returns
+    ``{plan: null, steps: []}`` — the former stub's contract — which consumers
+    render as "no step data available".
+
+    Off the event loop for the same reason the artifact counts are: the parse
+    is bounded but still a filesystem read of potentially many MB.
     """
-    _resolve_output_dir(request, slug)
-    return {"plan": None, "steps": []}
+    session_dir = _resolve_output_dir(request, slug)
+    utterance = _parse_slug(session_dir.name)["utterance"]
+    return await asyncio.to_thread(build_run_plan, session_dir, utterance=utterance)
 
 
 # Soft size limits for the artifact preview endpoint — full bytes are
