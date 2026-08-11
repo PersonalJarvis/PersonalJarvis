@@ -1502,6 +1502,35 @@ export function AgenticTerminal({
         onOutput: (text) => writeToPane(text),
         onReplay: (text) => replayToPane(text),
         /**
+         * The agent is in a different size than this pane asked for — follow it.
+         *
+         * `applyResize` reflows xterm the instant it measures the tile, before
+         * anything has agreed to that size, and the server is allowed to say no
+         * (a tile under the floor keeps the working geometry, a displaced viewer
+         * is ignored). Nothing used to reconcile the two afterwards — the wire
+         * had no way to say "not granted" — so a refusal left this grid and the
+         * agent's permanently different widths, and the agent's relative cursor
+         * moves then finished its repaints into rows holding other text. That is
+         * the doubled, character-by-character text a narrow pane showed
+         * (2026-08-11): not a renderer fault, two screens in one grid.
+         *
+         * `sentSize` is deliberately NOT updated. It records what was ASKED,
+         * and that is what stops this from oscillating: the same tile measured
+         * again matches it and is never re-sent, so a pane whose size is refused
+         * asks once and then stays quiet — while a tile that really changes
+         * still speaks up. Following the agent also repairs what is already on
+         * screen, because that content was drawn for this geometry all along.
+         */
+        onGeometry: ({ cols, rows }) => {
+          if (disposed) return;
+          if (term.cols === cols && term.rows === rows) return;
+          try {
+            term.resize(cols, rows);
+          } catch {
+            /* the terminal is being torn down — nothing left to reconcile */
+          }
+        },
+        /**
          * A prompt just landed in this pane — make that impossible to miss.
          *
          * Two things, and the order matters. The pane is un-parked FIRST:

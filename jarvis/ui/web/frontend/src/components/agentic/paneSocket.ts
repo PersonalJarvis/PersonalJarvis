@@ -218,6 +218,22 @@ export interface PaneSocketHandlers {
   }) => void;
   /** This pane was handed a prompt just now. */
   onPrompt?: (delivery: PromptDelivery) => void;
+  /**
+   * The agent is in a DIFFERENT size than this pane asked for.
+   *
+   * A resize is a request. The server turns one down when the tile is under the
+   * viewer floor or when this socket no longer holds the pane, and it lifts a
+   * pane that is stuck below the floor — so what a pane asked for and what its
+   * agent got are not always the same number. Only the disagreements arrive
+   * here; being granted what you asked for stays silent.
+   *
+   * Acting on it is not optional. The pane reflowed its own xterm the moment it
+   * measured its tile, and a grid that disagrees with the agent's is worse than
+   * a grid that is too small: a TUI moves its cursor RELATIVELY, so its next
+   * repaint lands on rows holding other text and the two screens interleave
+   * character by character.
+   */
+  onGeometry?: (size: { cols: number; rows: number }) => void;
   /** The agent itself finished. Final: nothing reconnects after this. */
   onExit: (code: number) => void;
   /**
@@ -453,6 +469,8 @@ export function openPaneSocket(
         last_prompt_at?: number | null;
         last_prompt_chars?: number;
         last_prompt_preview?: string;
+        cols?: number;
+        rows?: number;
       };
       try {
         msg = JSON.parse((ev as MessageEvent).data as string);
@@ -494,6 +512,21 @@ export function openPaneSocket(
           submitted: msg.submitted ?? null,
           prompts_sent: msg.prompts_sent ?? 0,
         });
+      } else if (msg.t === "size") {
+        // The size this pane's agent is really in, sent only when it differs
+        // from what this pane asked for. Guarded rather than trusted: a grid of
+        // zero columns wrecks a TUI's drawing permanently, so a malformed frame
+        // must not be able to do what the floors elsewhere exist to prevent.
+        if (
+          typeof msg.cols === "number" &&
+          typeof msg.rows === "number" &&
+          Number.isFinite(msg.cols) &&
+          Number.isFinite(msg.rows) &&
+          msg.cols > 0 &&
+          msg.rows > 0
+        ) {
+          handlers.onGeometry?.({ cols: msg.cols, rows: msg.rows });
+        }
       } else if (msg.t === "exit") {
         agentExited = true;
         handlers.onExit(msg.code ?? 0);

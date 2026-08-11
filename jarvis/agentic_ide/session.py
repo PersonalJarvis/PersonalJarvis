@@ -880,6 +880,22 @@ class Terminal:
     account: str | None = None
     status: Status = "pending"
     pty_id: str | None = None
+    # The geometry the PTY ACTUALLY holds, as last handed to `setwinsize`.
+    #
+    # Not derivable from anything else that was already here, which is why it
+    # exists. `transcript.cols` looks like the same number and is not: it is the
+    # DISPLAY mirror, and it drifts from the PTY in both directions. `resize`
+    # floors a request before recording it there, so the transcript can hold a
+    # size the child was never given; and `Transcript.resize` stores whatever it
+    # is handed while its own `ScreenBuffer` clamps to `screen.MIN_COLS` (20), so
+    # `transcript.cols` can equally hold a size the replayed grid is not in.
+    # Two things were reading it as the real geometry — the reattach fallback and
+    # the below-the-floor rescue — and only the PTY's own numbers can answer the
+    # question both are really asking: what size is the AGENT drawing in?
+    #
+    # Zero until the first spawn, meaning "no process has been sized yet".
+    pty_cols: int = 0
+    pty_rows: int = 0
     # Set just before this pane's agent is killed on purpose (viewer gone, pane
     # closed, workspace closed). A killed process reports a failure exit exactly
     # like a crashed one, so without this the resume self-healing in `attach`
@@ -2631,8 +2647,13 @@ class Registry:
             # its own, and handing it back here would reconnect the agent to
             # the very strip it stopped drawing in. Reattaching is the moment
             # such a pane can be put right.
-            cols = max(term.transcript.cols, MIN_VIEWER_COLS)
-            rows = max(term.transcript.rows, MIN_VIEWER_ROWS)
+            #
+            # From the PTY's own geometry rather than the transcript's, which
+            # only agrees with it above `screen.MIN_COLS` (see `pty_cols`). A
+            # pane that has never spawned has no PTY geometry, and there the
+            # transcript's default is exactly the right answer.
+            cols = max(term.pty_cols or term.transcript.cols, MIN_VIEWER_COLS)
+            rows = max(term.pty_rows or term.transcript.rows, MIN_VIEWER_ROWS)
         if appearance in THEME_COLOURS:
             term.queries.appearance = appearance
 
@@ -2662,6 +2683,7 @@ class Registry:
             if geometry_changed:
                 geometry_changed = manager.resize(term.pty_id, cols, rows)
                 if geometry_changed:
+                    term.pty_cols, term.pty_rows = cols, rows
                     term.transcript.resize(cols, rows)
                     # The TUI is about to redraw itself for the new geometry;
                     # that redraw must not read as the agent working.
@@ -2933,6 +2955,9 @@ class Registry:
                 agent_start_gate.release()
 
         term.pty_id = pty_session.terminal_id
+        # The size the child was actually born with — `spawn` was handed these
+        # two numbers directly above, so this is the geometry, not a guess.
+        term.pty_cols, term.pty_rows = cols, rows
         term.status = "live"
         term.error = ""
         term.exit_code = None
@@ -3422,6 +3447,31 @@ class Registry:
             viewer=claimed.output,
         )
 
+    def pty_geometry(
+        self, key: str, workspace_id: str | None = None
+    ) -> tuple[int, int] | None:
+        """The size this pane's agent is really drawing in, or ``None``.
+
+        The answer a viewer needs to keep its own grid honest. ``resize`` is
+        allowed to refuse (a tile under the floor, a viewer that no longer holds
+        the pane) and to clamp, and until this existed a viewer had no way to
+        learn that its request had not been granted — it had already reflowed
+        its own xterm and would then hold a grid the agent was never told about.
+        A TUI addresses rows by RELATIVE moves, so at that point its repaints
+        finish into rows holding something else, and the pane reads as corrupted
+        rather than as merely narrow (reported 2026-08-11).
+
+        ``None`` while no process has been sized: a pane that has not spawned has
+        no geometry to disagree with.
+        """
+        found = self._locate(key, workspace_id)
+        if found is None:
+            return None
+        term = found[1]
+        if not term.pty_cols or not term.pty_rows:
+            return None
+        return term.pty_cols, term.pty_rows
+
     def resize(
         self,
         key: str,
@@ -3469,9 +3519,19 @@ class Registry:
             # the floor rather than left there. It is the one place a clamp is
             # right: no window is showing a workable frame anyway, so there is
             # no honest geometry left to preserve.
-            current = found[1].transcript if found is not None else None
+            # The PTY's own geometry, NOT the transcript's. The question here is
+            # whether the AGENT is stuck in a terminal it cannot draw in, and only
+            # the size last handed to `setwinsize` answers it; the transcript is a
+            # display mirror that drifts from the PTY in both directions. See
+            # `Terminal.pty_cols`.
+            term_found = found[1] if found is not None else None
+            current = (
+                (term_found.pty_cols, term_found.pty_rows)
+                if term_found is not None and term_found.pty_cols
+                else None
+            )
             if current is None or (
-                current.cols >= MIN_VIEWER_COLS and current.rows >= MIN_VIEWER_ROWS
+                current[0] >= MIN_VIEWER_COLS and current[1] >= MIN_VIEWER_ROWS
             ):
                 logger.debug(
                     "Agentic IDE: kept {}'s working geometry instead of a {}x{} tile",
@@ -3483,8 +3543,8 @@ class Registry:
             logger.info(
                 "Agentic IDE: lifting {} off a {}x{} terminal its agent cannot draw in",
                 key,
-                current.cols,
-                current.rows,
+                current[0],
+                current[1],
             )
             cols = max(cols, MIN_VIEWER_COLS)
             rows = max(rows, MIN_VIEWER_ROWS)
@@ -3526,6 +3586,7 @@ class Registry:
             return True
         if not self._manager().resize(term.pty_id, cols, rows):
             return False
+        term.pty_cols, term.pty_rows = cols, rows
         # The TUI answers the new size with a full redraw — shadow it so a
         # finished pane does not read as "working" every time the grid
         # re-lays itself out (chat view toggle, maximize, a dragged seam).

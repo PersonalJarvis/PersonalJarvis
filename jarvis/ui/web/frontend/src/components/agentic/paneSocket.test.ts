@@ -556,3 +556,73 @@ describe("openPaneSocket delivery receipts", () => {
     socket.close();
   });
 });
+
+describe("openPaneSocket geometry reconciliation", () => {
+  const originalWs = globalThis.WebSocket;
+
+  beforeEach(() => {
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = MockWebSocket;
+    (globalThis as unknown as { window: unknown }).window = globalThis;
+    (window as unknown as { location: unknown }).location = {
+      protocol: "http:",
+      host: "localhost:5173",
+    };
+    MockWebSocket.last = null;
+    MockWebSocket.opened = [];
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = originalWs;
+  });
+
+  it("passes on the size the agent really got when a resize was refused", () => {
+    // The pane already reflowed its own xterm to the tile it measured. If the
+    // server turned that size down and the pane never hears so, the two grids
+    // disagree for good — and a TUI moving its cursor RELATIVELY then finishes
+    // its repaints into rows holding other text. That is the doubled,
+    // character-by-character output a narrow pane showed (2026-08-11).
+    const onGeometry = vi.fn();
+    const socket = openPaneSocket(
+      { name: "Mika", cols: 24, rows: 8 },
+      { ...handlers(), onGeometry },
+    );
+    MockWebSocket.last!.fire("open");
+
+    MockWebSocket.last!.deliver({ t: "size", cols: 96, rows: 30 });
+
+    expect(onGeometry).toHaveBeenCalledWith({ cols: 96, rows: 30 });
+    socket.close();
+  });
+
+  it("ignores a size frame that cannot be a real geometry", () => {
+    // A grid of zero columns wrecks a TUI's drawing permanently, so a malformed
+    // frame must not be able to do what the floors elsewhere exist to prevent.
+    const onGeometry = vi.fn();
+    const socket = openPaneSocket(
+      { name: "Mika", cols: 80, rows: 24 },
+      { ...handlers(), onGeometry },
+    );
+    MockWebSocket.last!.fire("open");
+
+    MockWebSocket.last!.deliver({ t: "size", cols: 0, rows: 24 });
+    MockWebSocket.last!.deliver({ t: "size", cols: 80 });
+    MockWebSocket.last!.deliver({ t: "size", cols: "80", rows: "24" });
+
+    expect(onGeometry).not.toHaveBeenCalled();
+    socket.close();
+  });
+
+  it("survives a client that registered no geometry handler", () => {
+    // Every older viewer is one of these: the frame is new, and a pane that
+    // ignores it is no worse off than it was before the frame existed.
+    const socket = openPaneSocket({ name: "Mika", cols: 80, rows: 24 }, handlers());
+    MockWebSocket.last!.fire("open");
+
+    expect(() =>
+      MockWebSocket.last!.deliver({ t: "size", cols: 96, rows: 30 }),
+    ).not.toThrow();
+    socket.close();
+  });
+});

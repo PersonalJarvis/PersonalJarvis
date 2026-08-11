@@ -405,11 +405,17 @@ async def test_a_pane_under_the_crash_guard_is_lifted_off_it(
     "the last honest geometry", which here is a broken one. The pane would stay
     silent and the status badge would go on reading that silence as a finished
     job (:mod:`jarvis.agentic_ide.activity`).
+
+    "Under the guard" is a fact about the PTY, so it is staged on the PTY's own
+    geometry. Staging it on the transcript instead would prove nothing: that is
+    the display mirror, and the rescue deliberately does not ask it (see
+    `Terminal.pty_cols`).
     """
     session = await _open(registry, tmp_path, [{"agent": "claude"}])
     term = session.terminals[0]
     await registry.attach(term.name, 120, 40, _noop_output, _noop_exit)
     pty = term.pty_id
+    term.pty_cols, term.pty_rows = 3, 2
     term.transcript.resize(3, 2)
     fake_pty.resizes.clear()
 

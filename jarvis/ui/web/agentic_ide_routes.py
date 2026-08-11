@@ -3547,7 +3547,9 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
     Wire protocol (JSON both ways) — client: ``{t:"i",d}`` input,
     ``{t:"r",cols,rows}`` resize, ``{t:"claim",cols,rows}`` foreground
     ownership; server: ``{t:"o",d}`` output, ``{t:"ready"}``,
-    ``{t:"exit",code}``, ``{t:"error",message}``.
+    ``{t:"exit",code}``, ``{t:"error",message}``, ``{t:"size",cols,rows}``
+    the geometry a REFUSED or clamped resize actually left the agent in (see
+    ``report_geometry`` — a resize is a request, not an instruction).
 
     The optional ``workspace`` query parameter names the workspace this pane
     belongs to. It matters because several can be open and the front one changes
@@ -3620,6 +3622,38 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
         async with send_lock:
             try:
                 await ws.send_json({"t": "exit", "code": code})
+            except Exception:  # noqa: BLE001, S110 - viewer gone
+                pass
+
+    async def report_geometry(requested: tuple[int, int]) -> None:
+        """Tell the viewer the size its agent really got — but only if it lost.
+
+        A resize is a REQUEST, and ``SessionRegistry.resize`` is allowed to turn
+        it down: a tile under the viewer floor keeps the working geometry, a
+        viewer that no longer holds the pane is ignored outright, and a pane
+        stuck below the floor is lifted to it. The pane meanwhile reflowed its
+        own xterm the moment it measured its tile, so a refusal used to leave the
+        two grids permanently disagreeing — and a TUI addresses rows relatively,
+        so its next repaint finishes into rows holding something else. That is
+        the doubled, character-by-character text a narrow pane was showing
+        (reported 2026-08-11); it looks like a rendering fault and is really two
+        different screens in one grid.
+
+        Sent ONLY when the granted size differs from the requested one. The
+        normal path — the overwhelming majority of resizes — stays silent, so
+        this adds no chatter to a dragged seam, and a viewer that never hears
+        back can go on believing it was granted what it asked for, because it
+        was. A client that does not know this frame ignores it and is no worse
+        off than before.
+        """
+        granted = registry.pty_geometry(term.key, pane_workspace)
+        if granted is None or granted == requested:
+            return
+        async with send_lock:
+            try:
+                await ws.send_json(
+                    {"t": "size", "cols": granted[0], "rows": granted[1]}
+                )
             except Exception:  # noqa: BLE001, S110 - viewer gone
                 pass
 
@@ -3758,6 +3792,14 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
         }
     )
 
+    # The handshake carries a size too, and ``attach`` is allowed to turn that
+    # one down for the same reasons a later resize can be. Reported through the
+    # same channel rather than as extra fields on ``ready``: a pane re-joining a
+    # running agent is the MOST likely place to inherit a geometry it did not
+    # ask for, and one reconciliation path is the only way the handshake and
+    # every later resize cannot drift apart.
+    await report_geometry((cols, rows))
+
     # Register only once the handshake is out. A notice arriving before the
     # pane knows its own name would be dropped by the client as belonging to
     # nothing, and the state read that follows would then be its first hint.
@@ -3799,21 +3841,21 @@ async def agentic_pty(ws: WebSocket, name: str) -> None:
                 # from the viewer that no longer holds the pane would set the
                 # agent's screen to a window nobody is reading — and the viewer
                 # that IS being read has no way to notice or correct it.
-                registry.resize(
-                    term.key,
+                want = (
                     _safe_int(msg.get("cols"), cols),
                     _safe_int(msg.get("rows"), rows),
-                    pane_workspace,
-                    viewer=on_output,
                 )
+                registry.resize(term.key, *want, pane_workspace, viewer=on_output)
+                await report_geometry(want)
             elif kind == "claim":
-                registry.claim_viewer(
-                    term.key,
+                want = (
                     _safe_int(msg.get("cols"), cols),
                     _safe_int(msg.get("rows"), rows),
-                    pane_workspace,
-                    viewer=on_output,
                 )
+                registry.claim_viewer(
+                    term.key, *want, pane_workspace, viewer=on_output
+                )
+                await report_geometry(want)
     finally:
         # The viewer went away — switched tab, reloaded, closed the browser.
         # None of those mean "stop working", so the agent keeps running and

@@ -8822,3 +8822,56 @@ wake path) verifies via a transcript too and has NO equivalent
 before-the-phrase isolation gate — the identical false-wake class is
 plausibly still open there whenever that engine is active. Port the same
 word-agnostic lead-in check to its match site, calibrated on real windows.
+
+## BUG-128: a narrow pane's agent draws two screens into one grid — the "mirrored" terminal on macOS (HIGH, FIXED 2026-08-11)
+
+**Symptoms (2026-08-11).** In the Agentic IDE the maintainer's macOS panes
+showed doubled, character-by-character text: output interleaved with itself so
+the pane read as corrupted rather than as merely narrow. The same build on
+Windows looked perfect, which made it read as a macOS renderer or WebView fault.
+It was neither. The distinguishing variable was never the platform: the Windows
+window was maximized and the Mac window was not, and only a pane below the
+viewer floor triggers it. Restarting a pane cleared it — a fresh PTY is spawned
+at the size the pane currently measures, so the two grids agree again until the
+next refused resize.
+
+**Root.** A resize is a REQUEST. `Registry.resize` is allowed to turn one down
+(a tile under `MIN_VIEWER_COLS`/`MIN_VIEWER_ROWS` keeps the working geometry, a
+viewer that no longer holds the pane is ignored) and to clamp one (a pane stuck
+below the floor is lifted onto it). The pane, meanwhile, reflows its own xterm
+the instant it measures the tile — before anything has agreed to that size — and
+the wire had no frame for "not granted". So a refusal left the viewer's grid and
+the agent's PTY permanently different widths, with neither side able to notice.
+A TUI addresses rows by RELATIVE cursor moves, so from that point the agent's
+repaints finished into rows holding other text. Two screens, one grid.
+
+The handshake had the same hole: `attach` may refuse the size a re-joining pane
+asks for, and a pane re-joining a running agent is the likeliest place of all to
+inherit a geometry it never requested.
+
+**Fix.** `Terminal.pty_cols`/`pty_rows` record the geometry actually handed to
+`setwinsize` — the transcript is a display mirror and drifts from the PTY in both
+directions, so it cannot answer "what size is the agent drawing in?".
+`Registry.pty_geometry` exposes it; `report_geometry` in `agentic_pty` sends
+`{t:"size",cols,rows}` whenever the granted size differs from the requested one,
+on the handshake and on every later resize. Sent ONLY on disagreement, so a
+dragged seam adds no chatter and a client that does not know the frame is no
+worse off than before. The pane follows it via `onGeometry` → `term.resize`,
+deliberately without updating `sentSize`: that records what was ASKED, which is
+what stops a refused pane from oscillating — it asks once, then stays quiet.
+Following the agent also repairs what is already on screen, because that content
+was drawn for the agent's geometry all along.
+
+The below-the-floor rescue was reading the transcript too, and now reads the PTY.
+
+**Guards:** `tests/unit/agentic_ide/test_refused_geometry.py` (a refused resize
+reports, a granted one stays silent, a lifted pane reports where it was lifted
+to) · `paneSocket.test.ts` "geometry reconciliation" (the frame reaches
+`onGeometry`, a malformed one is ignored, an older client survives it) ·
+`test_session.py::test_a_pane_under_the_crash_guard_is_lifted_off_it` now stages
+"under the guard" on the PTY, where the fact lives.
+
+**Lesson.** A viewer that reflows itself on a request it has not had granted is
+holding an assumption, not a measurement. Any wire that lets one side clamp or
+refuse needs a path back, or the two sides drift silently and the damage surfaces
+somewhere that looks unrelated — here, as a rendering fault on one OS.
