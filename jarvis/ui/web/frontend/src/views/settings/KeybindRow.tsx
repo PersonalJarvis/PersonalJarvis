@@ -56,11 +56,16 @@ const _LOST_KEYUP_MS = 900;
 /** Pretty-print a combo string ("ctrl+right_alt+j" → "Ctrl + AltGr + J"). */
 export function formatCombo(combo: string): string {
   const labels: Record<string, string> = {
-    ctrl: "Ctrl",
-    control: "Ctrl",
-    right_ctrl: "Right-Ctrl",
-    alt: "Alt",
-    left_alt: "Left-Alt",
+    // Same rule as ``win`` below, applied to the other two Mac modifiers: a
+    // Mac keycap prints ⌃ and ⌥, never "Ctrl" or "Alt". Leaving these as PC
+    // words put a chip on screen that named a key the machine does not have,
+    // right next to the on-screen keyboard drawing that very key as ⌥ — and
+    // the mismatch is what made a saved Mac shortcut read as a Windows one.
+    ctrl: _KB_PLATFORM === "mac" ? "⌃" : "Ctrl",
+    control: _KB_PLATFORM === "mac" ? "⌃" : "Ctrl",
+    right_ctrl: _KB_PLATFORM === "mac" ? "⌃" : "Right-Ctrl",
+    alt: _KB_PLATFORM === "mac" ? "⌥" : "Alt",
+    left_alt: _KB_PLATFORM === "mac" ? "⌥" : "Left-Alt",
     // The right Alt key is labelled the way the keycap actually reads — "AltGr"
     // on a PC layout, the Option glyph on a Mac — so the chip in the row and the
     // cap on the on-screen keyboard name the SAME physical key. "Right-Alt"
