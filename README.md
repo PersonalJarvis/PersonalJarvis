@@ -32,6 +32,14 @@ below. If you would rather use a hosted model, you pick the provider per tier: G
 Claude, OpenAI, or OpenRouter, one setting for each. It can rewrite its own configuration,
 and it runs on a headless server just as well as on a desktop with a microphone.
 
+<p align="center">
+  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/app-chat.webp" alt="The desktop app's chat view: voice history in the sidebar, the ghost mascot over a golden wave wallpaper, and the Ready for commands prompt" width="900" />
+</p>
+
+<p align="center">
+  <sub>The desktop app, ready for commands. The assistant takes whatever name you pick as your wake word &mdash; this install answers to George.</sub>
+</p>
+
 ## What you can say
 
 | You say | What happens |
@@ -62,13 +70,9 @@ Real work, the kind that takes minutes, goes to a **third**: a coding agent runn
 own isolated copy of the workspace, reviewed by a critic, that comes back with a file
 instead of just an answer.
 
-<p align="center">
-  <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/screenshots/model-tiers.png" alt="The API Keys screen in the desktop app, with one tab per model tier: Realtime, Tool Model, and Agents" width="900" />
-</p>
-
-<p align="center">
-  <sub>One tab per tier, each with its own provider, and you only need keys for the tiers you use. Every provider says how it bills: a subscription login you already have, or an API key charged per token.</sub>
-</p>
+In the app this lives on one screen: API Keys has one tab per tier, each with its own
+provider, and you only need keys for the tiers you use. Every provider says how it bills:
+a subscription login you already have, or an API key charged per token.
 
 ## Runs on your own hardware
 
