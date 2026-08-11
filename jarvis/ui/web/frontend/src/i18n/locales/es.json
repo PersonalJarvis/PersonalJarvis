@@ -4153,6 +4153,7 @@
     "reveal": "Mostrar en la carpeta",
     "reveal_failed": "No se pudo mostrar el archivo en la carpeta.",
     "open_from_agent": "Visuales",
-    "open_from_agent_hint": "Muestra las imágenes, diagramas y páginas de las últimas ejecuciones."
+    "open_from_agent_hint": "Muestra las imágenes, diagramas y páginas de las últimas ejecuciones.",
+    "mission_map": "Mapa de la misión"
   }
 }

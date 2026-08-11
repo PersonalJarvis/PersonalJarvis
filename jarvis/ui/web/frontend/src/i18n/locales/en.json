@@ -4153,6 +4153,7 @@
     "reveal": "Show in folder",
     "reveal_failed": "That file could not be shown in the folder.",
     "open_from_agent": "Visuals",
-    "open_from_agent_hint": "Show the images, diagrams and pages the latest runs produced."
+    "open_from_agent_hint": "Show the images, diagrams and pages the latest runs produced.",
+    "mission_map": "Mission map"
   }
 }

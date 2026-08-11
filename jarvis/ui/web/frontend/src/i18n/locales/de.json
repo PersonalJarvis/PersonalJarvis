@@ -4153,6 +4153,7 @@
     "reveal": "Im Ordner zeigen",
     "reveal_failed": "Die Datei konnte nicht im Ordner gezeigt werden.",
     "open_from_agent": "Visualisierungen",
-    "open_from_agent_hint": "Zeigt die Bilder, Diagramme und Seiten der letzten Läufe an."
+    "open_from_agent_hint": "Zeigt die Bilder, Diagramme und Seiten der letzten Läufe an.",
+    "mission_map": "Missions-Karte"
   }
 }

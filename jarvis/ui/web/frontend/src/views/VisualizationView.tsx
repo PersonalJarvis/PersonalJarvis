@@ -9,6 +9,7 @@ import {
   Maximize2,
   RefreshCw,
   ShieldAlert,
+  Workflow,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -179,6 +180,7 @@ export function VisualizationView() {
             <ul className="space-y-1 p-2" data-testid="visualization-gallery">
               {visuals.map((artifact) => {
                 const id = visualId(artifact);
+                const isMap = artifact.kind === "map";
                 return (
                   <li key={id}>
                     <button
@@ -192,10 +194,14 @@ export function VisualizationView() {
                           : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
                       )}
                     >
-                      <FileImage className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                      {isMap ? (
+                        <Workflow className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+                      ) : (
+                        <FileImage className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                      )}
                       <span className="min-w-0 flex-1">
                         <span className="block truncate font-medium text-foreground">
-                          {artifact.name}
+                          {isMap ? t("visualization.mission_map") : artifact.name}
                         </span>
                         <span className="block truncate">{runLabel(artifact)}</span>
                       </span>
@@ -245,9 +251,15 @@ export function VisualizationView() {
                   every pixel spent on chrome is a pixel off the picture. */}
               <footer className="flex shrink-0 items-center gap-3 border-t border-border px-4 py-2">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-medium">{selected.path}</p>
+                  <p className="truncate text-xs font-medium">
+                    {selected.kind === "map"
+                      ? t("visualization.mission_map")
+                      : selected.path}
+                  </p>
                   <p className="truncate text-[11px] text-muted-foreground">
-                    {runLabel(selected)} · {formatSize(selected.size)}
+                    {selected.kind === "map"
+                      ? runLabel(selected)
+                      : `${runLabel(selected)} · ${formatSize(selected.size)}`}
                   </p>
                 </div>
 
@@ -298,18 +310,22 @@ export function VisualizationView() {
                     <ExternalLink className="mr-1.5 h-3.5 w-3.5" aria-hidden />
                     {t("visualization.open_external")}
                   </Button>
-                  <Button variant="ghost" size="sm" asChild>
-                    <a
-                      href={artifactDownloadUrl(selected.slug, selected.path)}
-                      download
-                      title={t("visualization.download")}
-                    >
-                      <Download className="h-3.5 w-3.5" aria-hidden />
-                    </a>
-                  </Button>
+                  {/* The mission map is a server-rendered page, not an archived
+                      file — there is nothing to download or reveal. */}
+                  {selected.kind !== "map" && (
+                    <Button variant="ghost" size="sm" asChild>
+                      <a
+                        href={artifactDownloadUrl(selected.slug, selected.path)}
+                        download
+                        title={t("visualization.download")}
+                      >
+                        <Download className="h-3.5 w-3.5" aria-hidden />
+                      </a>
+                    </Button>
+                  )}
                   {/* Desktop only: a headless host has no file manager to open,
                       so the button is absent rather than dead. */}
-                  {capabilities.data?.native_file_actions && (
+                  {selected.kind !== "map" && capabilities.data?.native_file_actions && (
                     <Button
                       variant="ghost"
                       size="sm"

@@ -25,7 +25,7 @@ import {
 } from "@/hooks/useOutputs";
 
 /** How a visual is put on screen — one branch of the stage per kind. */
-export type VisualKind = "image" | "vector" | "page" | "document";
+export type VisualKind = "image" | "vector" | "page" | "document" | "map";
 
 /**
  * Extension → kind. Deliberately narrow: everything here must render inside the
@@ -99,8 +99,37 @@ export function visualId(artifact: Pick<VisualArtifact, "slug" | "path">): strin
   return `${artifact.slug}::${artifact.path}`;
 }
 
+/**
+ * The synthetic path of a run's mission map. Real deliverable paths always
+ * start with `tasks/`, so this can never collide with a listed file.
+ */
+export const MISSION_MAP_PATH = "::mission-map::";
+
+/** The server-rendered node-graph page for one run (no JS, brand-themed). */
+export function missionMapUrl(slug: string): string {
+  return `/api/outputs/${encodeURIComponent(slug)}/graph`;
+}
+
 function toVisuals(run: OutputSummary, files: ArtifactSummary[]): VisualArtifact[] {
-  const visuals: VisualArtifact[] = [];
+  // Every successfully listed run leads with its mission map — the n8n-style
+  // node graph of what ran and what came out. It shares the run's newest
+  // mtime, and the stable sort below keeps it AHEAD of that file, so opening
+  // the section stages the newest run's map: the overview first, then its
+  // pictures. A run whose deliverables are all text still gets a visual this
+  // way, which is precisely when "what happened" needs drawing the most.
+  const newest = files.reduce((max, file) => Math.max(max, file.mtime), 0);
+  const visuals: VisualArtifact[] = [
+    {
+      slug: run.slug,
+      utterance: run.utterance,
+      path: MISSION_MAP_PATH,
+      name: "Mission map", // display label is localized in the view
+      kind: "map",
+      size: 0,
+      mtime: newest,
+      url: missionMapUrl(run.slug),
+    },
+  ];
   for (const file of files) {
     const kind = classifyVisual(file.path);
     if (kind === null) continue;

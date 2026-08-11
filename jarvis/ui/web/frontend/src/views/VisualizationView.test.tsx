@@ -107,7 +107,7 @@ describe("classifyVisual", () => {
 });
 
 describe("VisualizationView", () => {
-  it("lists only the visual artifacts and stages the newest one", async () => {
+  it("lists the visual artifacts plus one mission map per run, map staged first", async () => {
     installFetchMock(
       [
         { slug: "run-new", utterance: "draw the architecture" },
@@ -125,11 +125,18 @@ describe("VisualizationView", () => {
     renderView();
 
     const gallery = await screen.findByTestId("visualization-gallery");
-    await waitFor(() => expect(gallery.querySelectorAll("li")).toHaveLength(2));
+    // Two visuals + one mission map per scanned run.
+    await waitFor(() => expect(gallery.querySelectorAll("li")).toHaveLength(4));
     // The .log is a deliverable, but not a picture.
     expect(screen.queryByText("build.log")).toBeNull();
 
-    // Newest file first, and the stage opens on it without a click.
+    // The newest run's mission map leads and is staged without a click — the
+    // overview of what ran comes before its individual pictures.
+    const frame = await screen.findByTestId("visualization-frame");
+    expect(frame.getAttribute("src")).toContain("/api/outputs/run-new/graph");
+
+    // Its pictures are one click away.
+    fireEvent.click(screen.getByText("diagram.svg"));
     const image = await screen.findByTestId("visualization-image");
     expect(image.getAttribute("src")).toContain("diagram.svg");
   });
@@ -168,10 +175,24 @@ describe("VisualizationView", () => {
     expect(screen.queryByTestId("visualization-image")).toBeNull();
   });
 
-  it("says so when the scanned runs produced nothing visual", async () => {
+  it("still offers the mission map when a run produced nothing visual", async () => {
+    // A text-only run is exactly when "what happened" needs drawing the most:
+    // the map is the run's one visual, and file actions (download/reveal) are
+    // absent because a server-rendered page is not an archived file.
     installFetchMock([{ slug: "run-1", utterance: "tidy the notes" }], {
       "run-1": [file("notes.md", { is_text: true })],
     });
+
+    renderView();
+
+    const frame = await screen.findByTestId("visualization-frame");
+    expect(frame.getAttribute("src")).toContain("/api/outputs/run-1/graph");
+    expect(screen.queryByText("notes.md")).toBeNull();
+    expect(screen.queryByTitle("Save a copy")).toBeNull();
+  });
+
+  it("says so when there are no runs at all", async () => {
+    installFetchMock([], {});
 
     renderView();
 
