@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <sub>In a voice conversation, a tool model does the work: it runs shell commands, takes mouse and keyboard, connects to anything that speaks MCP, and hands heavier tasks to subagents. Add dictation into any app, real phone calls, and a memory that spans it all. Everything can run on your own hardware.</sub>
+  <sub>It drives coding agents, operates your computer, connects anything that speaks MCP, dictates into any app, makes real phone calls, and remembers everything. It can run fully on your own hardware.</sub>
 </p>
 
 ---
