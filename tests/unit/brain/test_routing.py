@@ -1965,6 +1965,19 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # never a spawn (AP-5/AP-14). See ADR-0011 amendment
             # "MCP-Tools Virtual Loader".
             "mcp-tools",
+            # On-demand visualisation (2026-08-11, maintainer mandate): draws
+            # what is under discussion as a flow / hierarchy / comparison /
+            # timeline / bar chart, archives it in the run tree, and opens the
+            # Visualization section. Risk safe (writes one artifact of its own,
+            # touches nothing else), never a spawn (AP-5/AP-14).
+            #
+            # Router-tier membership makes it REACHABLE; it is emphatically not
+            # ambient. The tool is removed from the surface on every turn whose
+            # utterance does not explicitly ask for a picture
+            # (BrainManager._hide_visualize_tool_without_request over
+            # jarvis/brain/visualize_gate.py), because the mandate is that a
+            # visualisation is asked for, never volunteered.
+            "visualize",
         }
     )
     assert ROUTER_TOOLS == expected, (

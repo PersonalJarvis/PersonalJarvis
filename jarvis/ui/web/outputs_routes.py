@@ -32,6 +32,8 @@ from starlette.responses import FileResponse, HTMLResponse
 from jarvis.missions.kontrollierer.deliverable_paths import (
     is_nondeliverable_scratch,
 )
+from jarvis.missions.standalone_run import marker_label as standalone_marker_label
+from jarvis.missions.standalone_run import read_marker as read_standalone_marker
 from jarvis.missions.state_machine import MissionState, is_terminal
 from jarvis.missions.stream_evidence import clean_request_body
 from jarvis.platform import detect_platform
@@ -545,9 +547,27 @@ async def list_outputs(request: Request) -> OutputsResponse:
         # scaffolding (cleaned in ``Kontrollierer._run_task_with_critic_loop``
         # finally); power users can still address it via
         # ``/api/outputs/{slug}/artifacts`` directly.
-        if dir_to_mission_prefix.get(entry.name) is None:
+        #
+        # A STANDALONE run is the documented exception: it has no
+        # ``mission_<short>`` sibling to be a duplicate of, so skipping it does
+        # not de-duplicate anything — it just hides the run entirely. An
+        # on-demand visualisation is the first of these; see
+        # jarvis/missions/standalone_run.py for why the exception is a marker
+        # file rather than a naming trick.
+        standalone = read_standalone_marker(entry)
+        if standalone is None and dir_to_mission_prefix.get(entry.name) is None:
             continue
         parsed = _parse_slug(entry.name)
+        if standalone is not None:
+            # The run finished the moment the directory existed: there is no
+            # worker, no review, and nothing that can still change. Saying
+            # "unknown" would put a question mark on a file that is right there.
+            summary_status_override: str | None = "success"
+            standalone_label = standalone_marker_label(standalone)
+            if standalone_label:
+                parsed["utterance"] = standalone_label
+        else:
+            summary_status_override = None
         # Persistent mission_* dirs have no timestamp in the slug — fall back
         # to mtime so the sidebar still sorts newest-first sensibly.
         if parsed["started_at"] is None:
@@ -566,7 +586,7 @@ async def list_outputs(request: Request) -> OutputsResponse:
         summary: dict[str, Any] = {
             "slug": entry.name,
             "utterance": parsed["utterance"],
-            "status": "unknown",
+            "status": summary_status_override or "unknown",
             "mission_id": None,
             "started_at": parsed["started_at"],
             "completed_at": None,

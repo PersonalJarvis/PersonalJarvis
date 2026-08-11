@@ -35,23 +35,13 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from jarvis.visuals.brand import BRAND
+
 # --- Brand palette -----------------------------------------------------------
-# Mirrors video/src/intro/theme.ts COLORS, which mirrors the desktop app's
-# frontend/src/index.css dark tokens. Change all three together.
-BRAND: Mapping[str, str] = {
-    "bg": "#0A0A0A",
-    "bg_elevated": "#141414",
-    "bg_card": "#181818",
-    "primary": "#FFD60A",
-    "primary_deep": "#E6BE00",
-    "text": "#FAFAFA",
-    "text_muted": "#9A9A9A",
-    "text_faint": "#6B6B6B",
-    "border": "rgba(255,255,255,0.10)",
-    "border_strong": "rgba(255,255,255,0.18)",
-    "good": "#4ADE80",
-    "primary_glow": "rgba(255,214,10,0.35)",
-}
+# ``BRAND`` moved to jarvis.visuals.brand once the on-demand visualisation
+# renderer needed the same colours. It is imported at the top of this module
+# and re-exported (see __all__): this module's ``BRAND`` is already part of its
+# API for outputs_routes and the tests.
 
 # Status → pill/track accent. Keys match OUTPUT_STATUSES in outputs_routes.
 _STATUS_ACCENTS: Mapping[str, str] = {

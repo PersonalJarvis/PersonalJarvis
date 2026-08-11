@@ -347,15 +347,30 @@ export function useWebSocket(): void {
 
         if (env.event_name === "NavigateSidebar") {
           const p = env.payload as { section?: string };
-          // A detached solo window is pinned to its one section; the spoken
-          // "go to settings" targets the main window, and following it here
-          // would blank the very view the user split off to keep.
-          if (isSectionId(p.section) && !useEventStore.getState().solo) {
-            setActiveSection(p.section);
-            pushToast(
-              "info",
-              `${translate("use_web_socket.jarvis_opened")} ${SECTION_LABELS[p.section]}`,
-            );
+          const solo = useEventStore.getState().solo;
+          if (isSectionId(p.section)) {
+            if (p.section === "visualization") {
+              // The one section whose event can mean "and here is a NEW
+              // picture": the visualize tool publishes this right after
+              // archiving one. Landing on the gallery with the newest tile
+              // merely selected would make the user hunt for what they just
+              // asked to see, so stage it. `requestVisual` does both halves in
+              // one update, and is the safe call in a solo window too — there
+              // it stages without switching the section, which is precisely
+              // what a detached Visualization window needs.
+              useEventStore.getState().requestVisual();
+            } else if (!solo) {
+              // A detached solo window is pinned to its one section; the spoken
+              // "go to settings" targets the main window, and following it here
+              // would blank the very view the user split off to keep.
+              setActiveSection(p.section);
+            }
+            if (!solo) {
+              pushToast(
+                "info",
+                `${translate("use_web_socket.jarvis_opened")} ${SECTION_LABELS[p.section]}`,
+              );
+            }
           }
         }
 

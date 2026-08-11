@@ -31,6 +31,8 @@ import pytest_asyncio
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from jarvis.missions.standalone_run import MARKER_NAME as STANDALONE_MARKER_NAME
+from jarvis.missions.standalone_run import write_marker as write_standalone_marker
 from jarvis.ui.web.outputs_routes import (
     _is_deliverable_relpath,
     _mission_id_prefix_for_dir,
@@ -747,6 +749,69 @@ async def test_list_outputs_hides_worktree_slug_dirs(app: FastAPI, tmp_path: Pat
     assert sessions == [], (
         f"worktree slug dir must not appear in the Outputs list, got {sessions!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_shows_a_marked_standalone_run(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    """A slug dir that marked itself standalone is listed — with its label.
+
+    The rule above hides slug dirs because each one duplicates a canonical
+    ``mission_<short>`` sibling. A standalone run (an on-demand visualisation)
+    has no sibling, so hiding it does not de-duplicate anything: it makes a
+    finished, complete run invisible. The marker is the explicit opt-out —
+    see jarvis/missions/standalone_run.py.
+    """
+    run_dir = _make_worktree_dir(tmp_path, utterance="drawn-on-request", short="feedface")
+    write_standalone_marker(
+        run_dir,
+        kind="visualization",
+        utterance="visualisier mir den ablauf",  # i18n-allow: DE test vocabulary
+        title="How a turn is answered",
+    )
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    sessions = r.json()["sessions"]
+
+    assert [s["slug"] for s in sessions] == [run_dir.name]
+    # The label is what the user asked, not the directory's slugified echo.
+    assert sessions[0]["utterance"] == "visualisier mir den ablauf"
+    # Nothing about it can still change, so "unknown" would be a false question.
+    assert sessions[0]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_still_hides_an_unmarked_neighbour(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    """The marker is an opt-in for one directory, not a loosening for all.
+
+    Pinned next to the standalone case because a regression here restores the
+    2026-05-26 "two agents for one task" cards.
+    """
+    marked = _make_worktree_dir(tmp_path, utterance="drawn", short="feedface")
+    write_standalone_marker(marked, kind="visualization", title="Drawn")
+    _make_worktree_dir(tmp_path, utterance="worker-scaffolding", short="cafebabe")
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+
+    assert [s["slug"] for s in r.json()["sessions"]] == [marked.name]
+
+
+@pytest.mark.asyncio
+async def test_list_outputs_tolerates_a_corrupt_marker(app: FastAPI, tmp_path: Path) -> None:
+    """A half-written marker degrades that ONE entry, never the whole listing."""
+    run_dir = _make_worktree_dir(tmp_path, utterance="broken", short="feedface")
+    (run_dir / STANDALONE_MARKER_NAME).write_text("{not json", encoding="utf-8")
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+
+    assert r.status_code == 200
+    assert r.json()["sessions"] == []  # falls back to the ordinary hidden case
 
 
 @pytest.mark.asyncio

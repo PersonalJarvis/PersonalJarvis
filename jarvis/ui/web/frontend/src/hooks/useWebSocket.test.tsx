@@ -227,6 +227,52 @@ describe("useWebSocket VoiceBootStatus handling", () => {
     );
   });
 
+  it("stages the newest picture when the brain opens the Visualization section", async () => {
+    // The visualize tool publishes NavigateSidebar right after archiving a
+    // picture the user asked for. Merely landing on the gallery would make
+    // them hunt for the tile they just requested, so the stage is pulled to
+    // the newest visual — the "latest" target of requestVisual.
+    useEventStore.setState({ solo: false, visualStage: null, toasts: [] });
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(envelope("NavigateSidebar", { section: "visualization" }));
+
+    expect(useEventStore.getState().activeSection).toBe("visualization");
+    expect(useEventStore.getState().visualStage?.target).toBe("latest");
+  });
+
+  it("stages into a detached Visualization window without switching its section", async () => {
+    // A solo window is pinned to the section it was split off for. The request
+    // still has to land — that window is exactly the one showing the picture.
+    useEventStore.setState({
+      solo: true,
+      activeSection: "visualization",
+      visualStage: null,
+      toasts: [],
+    });
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(envelope("NavigateSidebar", { section: "visualization" }));
+
+    expect(useEventStore.getState().visualStage?.target).toBe("latest");
+    expect(useEventStore.getState().activeSection).toBe("visualization");
+    // A solo window announces nothing: it did not navigate anywhere.
+    expect(useEventStore.getState().toasts).toHaveLength(0);
+  });
+
+  it("leaves every other section on the plain navigation path", async () => {
+    useEventStore.setState({ solo: false, visualStage: null, toasts: [] });
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(envelope("NavigateSidebar", { section: "settings" }));
+
+    expect(useEventStore.getState().activeSection).toBe("settings");
+    expect(useEventStore.getState().visualStage).toBeNull();
+  });
+
   it("invalidates every documentation query after a registry reload", async () => {
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     render(<Harness />);

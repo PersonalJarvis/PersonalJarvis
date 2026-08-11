@@ -76,6 +76,17 @@ ROUTER_TOOLS = frozenset({
     # frontend listener moves the UI. Pure UI action, risk safe, NO spawn —
     # never in a worker set (AP-5/AP-14). See ADR-0011 amendment "Navigate tool".
     "navigate",
+    # On-demand visualisation (2026-08-11): draw what is under discussion as a
+    # flow / hierarchy / comparison / timeline / bar chart, archive it, and
+    # open the Visualization section. Router-tier, risk safe, NO spawn — never
+    # in a worker set (AP-5/AP-14).
+    #
+    # ASK-ONLY, and enforced structurally rather than by prompt: the tool is
+    # removed from the tool set on every turn whose utterance does not
+    # explicitly ask for a picture (BrainManager
+    # ._hide_visualize_tool_without_request over jarvis/brain/visualize_gate).
+    # Membership here is what makes it REACHABLE; the gate decides WHEN.
+    "visualize",
     # Command Registry executor (2026-07-09): run ONE curated app command
     # (jarvis/commands/registry.py) through the SAME REST endpoint the UI
     # uses, in-process via ASGI transport. Enum-constrained command_id +
@@ -459,6 +470,11 @@ def _load_tools_for_tier(
                 # UI navigation: publishes NavigateSidebar on the shared bus,
                 # which the WS forwarder streams to the frontend (event_name
                 # "NavigateSidebar") to switch the active section.
+                inst = cls(bus=bus)
+            elif ep.name == "visualize":
+                # Same bus, same event: after archiving the rendered picture the
+                # tool publishes NavigateSidebar("visualization") so the section
+                # showing it comes to the front.
                 inst = cls(bus=bus)
             elif ep.name == "whoami":
                 inst = cls(profile=user_profile, people=people)
@@ -1371,7 +1387,7 @@ def _phase2_full_brain(
                     search=search,
                     max_chars=getattr(wiki_cfg, "max_chars", 1500),
                     latency_budget_ms=getattr(wiki_cfg, "latency_budget_ms", 150),
-                    min_keyword_length=getattr(wiki_cfg, "min_keyword_length", 4),
+                    min_keyword_length=getattr(wiki_cfg, "min_keyword_length", 3),
                     relevance_gate=bool(getattr(wiki_cfg, "relevance_gate", True)),
                     min_coverage=float(getattr(wiki_cfg, "min_coverage", 0.5)),
                     strict_min_coverage=float(
