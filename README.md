@@ -15,7 +15,11 @@
 </p>
 
 <p align="center">
-  <b>An open-source AI ecosystem in one app: a voice agent that operates your computer, system-wide dictation, a fleet of coding agents, a store of skills and plugins that connects almost anything over the MCP standard, real outbound phone calls, and a shared memory across it all. It can run entirely on your own hardware.</b>
+  <b>An open-source AI ecosystem, controlled entirely by voice.</b>
+</p>
+
+<p align="center">
+  <sub>It drives coding agents, connects your services over MCP, dictates into any app, makes real phone calls, and remembers everything. It can run fully on your own hardware.</sub>
 </p>
 
 ---
