@@ -1389,6 +1389,60 @@ describe("pane refit", () => {
     expect(screen.queryByTestId("agentic-terminal-clip-veil-Dana")).toBeNull();
   });
 
+  it("turns a clamped tile into a horizontal window instead of a hard clip", () => {
+    // "The terminals are wider than the pane" is true by design (the floor
+    // grid), so the pane must be an honest WINDOW on that width: scrollable
+    // sideways, never painting past its own edge onto a neighbour.
+    const view = render(pane(false));
+    settle();
+    const host = screen.getByTestId("agentic-terminal-host-Dana");
+    expect(host.className).toContain("overflow-hidden");
+
+    terminalHarness.size = { cols: 40, rows: 20 };
+    view.rerender(pane(true));
+    settle();
+    expect(host.className).toContain("overflow-x-auto");
+    expect(host.className).not.toContain("overflow-hidden");
+
+    terminalHarness.size = { cols: 90, rows: 30 };
+    view.rerender(pane(false));
+    settle();
+    expect(host.className).toContain("overflow-hidden");
+  });
+
+  it("moves the veils with the window as it slides", () => {
+    const view = render(pane(false));
+    settle();
+    terminalHarness.size = { cols: 40, rows: 20 };
+    view.rerender(pane(true));
+    settle();
+    const host = screen.getByTestId("agentic-terminal-host-Dana");
+    // jsdom lays nothing out; stage a 700px-wide surface in a 600px host
+    // (the prototype stub above), so max scroll is 100.
+    Object.defineProperty(host, "scrollWidth", { configurable: true, value: 700 });
+    Object.defineProperty(host, "scrollLeft", {
+      configurable: true,
+      writable: true,
+      value: 50,
+    });
+
+    // Mid-window: more columns on BOTH sides, so both veils show.
+    act(() => {
+      fireEvent.scroll(host);
+    });
+    expect(screen.getByTestId("agentic-terminal-clip-veil-start-Dana")).toBeTruthy();
+    expect(screen.getByTestId("agentic-terminal-clip-veil-Dana")).toBeTruthy();
+
+    // Slid to the far right: nothing hides there any more — the right veil
+    // must yield, or it would promise columns that do not exist.
+    host.scrollLeft = 100;
+    act(() => {
+      fireEvent.scroll(host);
+    });
+    expect(screen.getByTestId("agentic-terminal-clip-veil-start-Dana")).toBeTruthy();
+    expect(screen.queryByTestId("agentic-terminal-clip-veil-Dana")).toBeNull();
+  });
+
   it("restores the reader's text size over one a stale build left behind", () => {
     // A pane shrunken by the rejected auto-shrink can survive into this build
     // through a rebuilt terminal or a long-lived window. The refit restates

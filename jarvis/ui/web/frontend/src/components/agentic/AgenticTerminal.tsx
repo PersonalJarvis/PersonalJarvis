@@ -76,13 +76,6 @@ import {
   type TerminalAppearance,
 } from "./terminalThemes";
 import {
-  clearTerminalPreview,
-  publishTerminalPreview,
-  readTerminalPreview,
-  registerTerminalPreviewSource,
-  terminalPreviewRequested,
-} from "./terminalPreview";
-import {
   extractPaneDrop,
   extractPasteFiles,
   isEmptyPayload,
@@ -147,9 +140,6 @@ import { useT } from "@/i18n";
  * the user long since watched play out.
  */
 const RECEIPT_MAX_AGE_MS = 30 * 60 * 1000;
-
-/** React cards need fresh output, but not one render for every PTY frame. */
-const TERMINAL_PREVIEW_REFRESH_MS = 160;
 
 type PreservedTerminalViewport = {
   line: number;
@@ -225,71 +215,69 @@ export const REBUILD_SETTLE_MAX_MS = 450;
 const MAX_TERMINAL_NAME = 40;
 
 /**
- * The narrowest geometry that may be announced to a pane's REAL terminal.
+ * The floor under a pane's geometry — a CRASH GUARD, not a layout opinion.
  *
- * Not a plausibility check on the measurement — a floor on what a coding CLI
- * can still be asked to work in. Those are two different questions, and
- * answering only the first is what this constant used to do at 8x2: a grid of
- * a dozen panes measures 17 columns per cell perfectly correctly, sails past a
- * floor of 8, and resizes the shared PTY to a strip the agent cannot lay its
- * interface out in. Measured on the maintainer's own workspace (2026-08-09,
- * thirteen panes): one pane printed its whole answer ONE CHARACTER PER LINE,
- * and six others simply stopped drawing — a Claude Code holding `Discombobu-
- * lating…` on screen, its process visibly burning CPU, while not one byte
- * reached the app for five minutes.
+ * ## The rule this serves
  *
- * That silence is also what broke the status badge. The badge reads whether a
- * pane's screen is moving (`jarvis/agentic_ide/activity.py`), so an agent that
- * has been squeezed out of drawing reads as one that has finished — the
- * "working panes shown as done" the maintainer kept reporting. The badge was
- * telling the truth; this floor is what makes the truth worth reading.
+ * A terminal is exactly as wide as the tile it is shown in, and every
+ * character inside that tile is visible. Nothing this pane draws may reach
+ * past its own edge. That is the maintainer's rule for this screen
+ * (2026-08-11), and it settles a run of attempts that each broke it:
  *
- * 60x15 is where both installed coding CLIs still render a usable frame, with
- * room under the 80x24 the handshake already falls back to when nothing has
- * been measured yet. A measurement under a floor is CLAMPED to it — per
- * dimension, and the clamped size is what BOTH the local grid and the agent
- * are given, so the two can never disagree about the pane's geometry again.
+ * * **Clipping** (until 2026-08-11) rendered a fixed 60-column grid whatever
+ *   the tile could show and cut the remainder off at the edge. Six terminals
+ *   then each showed about two thirds of themselves, and the maintainer read
+ *   the result — correctly — as terminals shoved behind one another. Adding a
+ *   sideways scrollbar and two scroll shadows did not change what it was.
+ * * **Auto-shrinking** (the same day) walked the pane's text size down until
+ *   that 60-column grid fitted. It silently overrode the toolbar's size on
+ *   every narrow pane — nine columns at ~5 px glyphs while the control read 20
+ *   — so the size controls looked dead. Do not reintroduce it.
  *
- * Per dimension, because the two floors fail differently and only one of
- * them is usually failing. A tile in a five-pane row measures 33 columns and
- * a perfectly honest 37 rows. Refusing the whole size (what this floor did
- * first) left the PTY at whatever it had — measured live on 2026-08-10 at
- * 69x64, from a mount-time fit taken at the default font — and a coding
- * CLI anchors its input box to the BOTTOM of its screen: row 64 of a pane
- * showing 37 rows, which is how every pane in the workspace came up with no
- * visible prompt at all. Clamped to 60x37 instead, the height is exactly
- * what the tile shows (the input box sits in its bottom visible row) and
- * only the width is clipped, which a narrow tile cannot avoid: the agent
- * cannot lay its interface out under 60 columns — squeezing a PTY below
- * that is what printed an answer one character per line and left six agents
- * silently stuck (2026-08-09, thirteen panes).
+ * So the fit is honest in both directions: xterm is given what the tile
+ * measures, and the agent behind it is told the SAME number. The two must
+ * never disagree — an agent laying lines out for 60 columns into an xterm
+ * showing 33 re-wraps every one of them, and the TUI's cursor moves then land
+ * on rows that no longer hold what they held when it drew them, which came
+ * back as shredded one-word fragments (2026-08-10).
  *
- * The local grid takes the SAME clamped size, never the raw fit. Fitting
- * xterm to the 33-column measurement while the agent lays lines out for 60+
- * re-wraps every one of them at the narrower measure, and the TUI's cursor
- * moves then land on rows that no longer hold what they held when it drew
- * them — every squeezed pane came back as shredded one-word fragments (also
- * 2026-08-10). The tile's overflow-hidden container clips what the clamped
- * grid cannot show, and the pane marks that clipped edge with a veil so a cut
- * line reads as "narrow window on a wide screen" rather than as one terminal
- * shoved behind another (which is how the maintainer read it, 2026-08-11).
+ * ## What is left for this floor to do
  *
- * Clipping is the DELIBERATE answer, and the one alternative has been tried
- * and rejected the same day it shipped: auto-shrinking the pane's text until
- * the floor grid fits the tile (2026-08-11). It silently overrode the
- * toolbar's text size on every narrow pane — nine columns rendered ~5px
- * glyphs with the control standing at 20, which read as the size controls
- * being dead — and the maintainer's mandate is explicit: the chosen text size
- * is shown everywhere, and what does not fit is clipped at the pane's OWN
- * edge. Do not reintroduce the shrink.
+ * Only the absurd. A tile mid-layout measures 0, a hidden one measures
+ * nothing at all, and a PTY resized to zero columns permanently wrecks the
+ * agent's drawing. 10x4 is far below any arrangement a person builds on
+ * purpose — with a workspace opening two panes deep (`WIZARD_COLUMN_HEIGHT`)
+ * even twenty terminals leave roughly twice this — so in practice it is only
+ * ever met by a measurement that is not real.
  *
- * Both the resize path and the connect-time handshake below refuse anything
- * under these floors; the backend enforces the same ones
- * (`jarvis/agentic_ide/session.py`), so a stale or older client cannot do the
- * damage either.
+ * It is deliberately NOT a floor on what a coding CLI needs. That question is
+ * answered where it belongs: the launcher warns from twenty terminals up
+ * (`CROWDED_TERMINAL_COUNT`) and opens as many as the user confirms. How many
+ * agents fit on their display is theirs to decide, and a pane too narrow to be
+ * useful is a pane they can see is too narrow — which is exactly what clipping
+ * hid.
+ *
+ * The backend holds the same floor (`jarvis/agentic_ide/session.py`), so a
+ * stale or older client cannot resize a PTY into nothing either.
  */
-const MIN_REAL_COLS = 60;
-const MIN_REAL_ROWS = 15;
+const MIN_REAL_COLS = 10;
+const MIN_REAL_ROWS = 4;
+
+/**
+ * The width at which a coding CLI has room to lay its interface out.
+ *
+ * What the old floor got RIGHT, kept as what it always honestly was: an
+ * opinion about comfort, not a limit. Below roughly this, an agent's boxes,
+ * diffs and file trees start wrapping in places that make them harder to read
+ * — measured against both installed CLIs, and the number the pane was forcibly
+ * held at until 2026-08-11.
+ *
+ * Nothing is resized by it and nothing is refused. A pane narrower than this
+ * simply says so, and the grid opens it up while the pointer rests on it
+ * (`onClipWidth` → `focusColumnWeights`). The pane still shows all of itself
+ * the whole time; this only decides which panes are worth widening.
+ */
+const COMFORTABLE_COLS = 60;
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
 
@@ -453,6 +441,16 @@ interface AgenticTerminalProps {
    */
   layoutBusy?: boolean;
   /**
+   * How wide this pane would have to be to show its whole terminal grid.
+   *
+   * Reported rather than acted on, because the pane cannot widen itself — its
+   * tile is the grid's to size. `0` means nothing is hidden. Anything larger is
+   * the width at which the reader's text size and the agent's floor grid (see
+   * MIN_REAL_COLS) both fit, which is what the grid opens the pane to while the
+   * pointer is over it.
+   */
+  onClipWidth?: (name: string, neededPx: number) => void;
+  /**
    * Bump to reconnect this pane.
    *
    * An exited agent leaves a dead pane with no way back: the connect effect runs
@@ -489,6 +487,7 @@ export function AgenticTerminal({
   onClose,
   splitDisabled = false,
   onAttachError,
+  onClipWidth,
   onRestart,
   restartToken = 0,
   onArrangeStart,
@@ -523,15 +522,6 @@ export function AgenticTerminal({
    * way back to it at all. The notice below is that way back.
    */
   const [statusDetail, setStatusDetail] = useState<string>("");
-  /*
-   * Is the floor grid wider than this tile can show — columns clipped behind
-   * the pane's right edge? True only for a pane narrower than 60 columns at
-   * the reader's text size (see MIN_REAL_COLS). Drives the veil over that
-   * edge, which is what keeps a clipped line reading as "narrow window on a
-   * wide screen" instead of as one terminal shoved behind another — the
-   * maintainer's actual reading of the bare cut (2026-08-11).
-   */
-  const [edgeClipped, setEdgeClipped] = useState(false);
   /*
    * Has this pane's agent drawn anything yet?
    *
@@ -612,6 +602,7 @@ export function AgenticTerminal({
   // Latest callbacks/appearance without re-running the connect effect.
   const onStatusRef = useRef(onStatus);
   const onAttachErrorRef = useRef(onAttachError);
+  const onClipWidthRef = useRef(onClipWidth);
   /*
    * The text size this pane draws at, as of NOW.
    *
@@ -642,6 +633,7 @@ export function AgenticTerminal({
   const layoutBusyRef = useRef(layoutBusy);
   onStatusRef.current = onStatus;
   onAttachErrorRef.current = onAttachError;
+  onClipWidthRef.current = onClipWidth;
   fontSizeRef.current = fontSize;
   appearanceRef.current = appearance;
   activeRef.current = active;
@@ -824,29 +816,47 @@ export function AgenticTerminal({
       attachCustomKeyEventHandler: keys.add,
       input: (data) => term.input(data),
     });
+    /**
+     * Say how much room this pane would need to be comfortable to read.
+     *
+     * Not a report of anything HIDDEN — nothing is hidden any more, the pane
+     * shows its whole terminal. It is how the grid knows which pane is worth
+     * opening up when the pointer rests on it (see `focusColumnWeights`): the
+     * caller has just measured the tile in columns, so the width one column
+     * takes is known exactly, with no second measurement and no assumption
+     * about the font. `0` once the pane has room enough.
+     */
+    const reportNarrow = (cols: number) => {
+      const perColumn = container.clientWidth / Math.max(1, cols);
+      onClipWidthRef.current?.(
+        name,
+        cols < COMFORTABLE_COLS ? Math.ceil(perColumn * COMFORTABLE_COLS) : 0,
+      );
+    };
+
     try {
-      // The same clamp the resize path applies (see MIN_REAL_COLS), taken
-      // BEFORE the handshake below reads the terminal's geometry — so the
-      // grid this pane draws on and the size its agent is spawned at are the
-      // same thing from the very first byte.
+      // Taken BEFORE the handshake below reads the terminal's geometry — so
+      // the grid this pane draws on and the size its agent is spawned at are
+      // the same thing from the very first byte.
       const proposed = fit.proposeDimensions();
       if (
         proposed &&
         Number.isFinite(proposed.cols) &&
         Number.isFinite(proposed.rows)
       ) {
-        const cols = Math.max(proposed.cols, MIN_REAL_COLS);
-        const rows = Math.max(proposed.rows, MIN_REAL_ROWS);
-        if (cols === proposed.cols && rows === proposed.rows) fit.fit();
-        else term.resize(cols, rows);
-        // Clamped means the terminal is DELIBERATELY bigger than its tile and
-        // the overflow clip is doing its job — the grid's layout watchdog
-        // reads this so it never mistakes that designed clipping for a missed
-        // refit (see `paneLayoutGuard`).
-        container.dataset.paneClamped = String(
-          cols !== proposed.cols || rows !== proposed.rows,
-        );
-        setEdgeClipped(cols !== proposed.cols);
+        // The tile's own measurement, and only the absurd is refused (see
+        // MIN_REAL_COLS). `fit()` rather than a resize to the same numbers:
+        // it is what xterm offers and it keeps the renderer's own bookkeeping
+        // in step.
+        if (proposed.cols >= MIN_REAL_COLS && proposed.rows >= MIN_REAL_ROWS) {
+          fit.fit();
+        } else {
+          term.resize(
+            Math.max(proposed.cols, MIN_REAL_COLS),
+            Math.max(proposed.rows, MIN_REAL_ROWS),
+          );
+        }
+        reportNarrow(proposed.cols);
       }
     } catch {
       /* not measured yet — the ResizeObserver below will fit */
@@ -895,8 +905,6 @@ export function AgenticTerminal({
     let parkedCheckedAt = 0;
     /** The pending deadline flush, if this pane is holding anything. */
     let holdTimer: number | undefined;
-    /** The deck sees at most one parsed-screen snapshot per short frame. */
-    let previewTimer: number | undefined;
 
     const cancelHoldTimer = () => {
       if (holdTimer === undefined) return;
@@ -919,30 +927,6 @@ export function AgenticTerminal({
       }
       afterFlush?.();
     };
-
-    const publishPreview = () => {
-      previewTimer = undefined;
-      if (disposed || !terminalPreviewRequested(name)) return;
-      publishTerminalPreview(name, readTerminalPreview(term));
-    };
-
-    const schedulePreview = () => {
-      if (previewTimer !== undefined || !terminalPreviewRequested(name)) return;
-      previewTimer = window.setTimeout(
-        publishPreview,
-        TERMINAL_PREVIEW_REFRESH_MS,
-      );
-    };
-
-    /** Flush queued output, then snapshot after xterm has parsed every write. */
-    const requestPreview = () => {
-      if (disposed || !terminalPreviewRequested(name)) return;
-      flushHeld(() => term.write("", schedulePreview));
-    };
-    const unregisterPreviewSource = registerTerminalPreviewSource(
-      name,
-      requestPreview,
-    );
 
     /** Make sure the held output has a flush coming, without moving one nearer. */
     const armHoldTimer = () => {
@@ -1095,15 +1079,8 @@ export function AgenticTerminal({
       // at it. Cheap to call per chunk: React bails out on an unchanged value.
       setPainted(true);
       if (!paneVisible) recheckParked();
-      if (paneVisible || terminalPreviewRequested(name)) {
-        // The card is a view onto THIS xterm buffer. A hidden pane therefore
-        // keeps parsing while its deck card is visible, but it never opens a
-        // second socket or mounts another agent-owning terminal component.
-        if (!paneVisible) flushHeld();
-        term.write(text, () => {
-          schedulePreview();
-          afterWrite?.();
-        });
+      if (paneVisible) {
+        term.write(text, afterWrite);
         return;
       }
       offscreen.push(text);
@@ -1287,20 +1264,17 @@ export function AgenticTerminal({
       ) {
         return;
       }
-      // The one size everyone gets — the grid here, the agent below. Clamped
-      // per dimension (see the floors' comment): a narrow tile still hands
-      // the agent its honest HEIGHT, which is what keeps the CLI's
-      // bottom-anchored input box inside the visible rows.
+      // The one size everyone gets — the grid here, the agent below, and it is
+      // what the TILE measures. The two may never disagree: an agent laying
+      // its lines out for a width its xterm does not have re-wraps every one
+      // of them, and its cursor moves then land on rows that hold something
+      // else (shredded one-word fragments, 2026-08-10). Only the absurd is
+      // refused, which is all MIN_REAL_COLS is for now.
       const size = {
         cols: Math.max(proposed.cols, MIN_REAL_COLS),
         rows: Math.max(proposed.rows, MIN_REAL_ROWS),
       };
-      // Same stamp as the mount-time fit above, for the same reader: the
-      // layout watchdog must not "repair" a clamp that is working as designed.
-      container.dataset.paneClamped = String(
-        size.cols > proposed.cols || size.rows > proposed.rows,
-      );
-      setEdgeClipped(size.cols > proposed.cols);
+      reportNarrow(proposed.cols);
       try {
         if (size.cols === proposed.cols && size.rows === proposed.rows) {
           fit.fit();
@@ -1607,9 +1581,6 @@ export function AgenticTerminal({
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onDocumentVisible);
       }
-      if (previewTimer !== undefined) window.clearTimeout(previewTimer);
-      unregisterPreviewSource();
-      clearTerminalPreview(name);
       ro.disconnect();
       io?.disconnect();
       disposeFontSync();
@@ -2008,26 +1979,15 @@ export function AgenticTerminal({
           // the length of a drag — see the rule there for why that is the side
           // the unused ground belongs on.
           data-layout-busy={layoutBusy ? "true" : "false"}
+          /*
+           * Nothing sideways, ever. The terminal is fitted to this element (see
+           * MIN_REAL_COLS), so there is no wider surface to scroll to — and a
+           * pane that could scroll sideways is a pane drawing past its own
+           * edge, which is the thing that read as terminals standing on one
+           * another.
+           */
           className="agentic-terminal-host h-full min-h-0 w-full overflow-hidden"
         />
-        {/*
-          The clipped edge, made visible. A tile narrower than the 60-column
-          floor shows the LEFT of every line and hides the rest behind this
-          edge (see MIN_REAL_COLS) — a hard cut there looks like the neighbour
-          pane standing on this one. The veil says "continues past here" the
-          way every reader already understands it, and costs no terminal room:
-          it hangs over the last few characters that were half-cut anyway.
-        */}
-        {edgeClipped && (
-          <div
-            aria-hidden
-            data-testid={`agentic-terminal-clip-veil-${name}`}
-            className={cn(
-              "pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l to-transparent",
-              appearance === "dark" ? "from-black/60" : "from-white/75",
-            )}
-          />
-        )}
         <PaneConversationDialog
           terminal={name}
           open={historyOpen}
