@@ -15,11 +15,11 @@
 </p>
 
 <p align="center">
-  <b>An open-source AI ecosystem, controlled entirely by voice.</b>
+  <b>Your personal AI ecosystem, controlled entirely by voice.</b>
 </p>
 
 <p align="center">
-  <sub>It drives coding agents, operates your computer, connects anything that speaks MCP, dictates into any app, makes real phone calls, and remembers everything. It can run fully on your own hardware.</sub>
+  <sub>It drives coding agents, runs shell commands, operates your computer, connects anything that speaks MCP, dictates into any app, and remembers everything. Open source, and it can run fully on your own hardware.</sub>
 </p>
 
 ---
