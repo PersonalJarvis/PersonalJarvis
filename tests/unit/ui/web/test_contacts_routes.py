@@ -210,3 +210,83 @@ def test_store_file_is_written_under_data_dir(client: TestClient, tmp_path: Path
     created = _make(client, name="On Disk")
     md = tmp_path / "Jarvis" / "data" / "contacts" / f"{created['slug']}.md"
     assert md.is_file()
+
+
+# ----------------------------------------------------------------------
+# Profile fields over the wire
+# ----------------------------------------------------------------------
+
+
+def test_post_and_patch_profile_fields(client: TestClient) -> None:
+    created = _make(
+        client,
+        name="Profiled Person",
+        favorite=True,
+        birthday="1990-04-12",
+        organization="ACME GmbH",
+        role="CTO",
+        urls=["https://example.com"],
+        tags=["tennis"],
+    )
+    assert created["favorite"] is True
+    assert created["birthday"] == "1990-04-12"
+    assert created["organization"] == "ACME GmbH"
+    assert created["role"] == "CTO"
+    assert created["urls"] == ["https://example.com"]
+    assert created["tags"] == ["tennis"]
+
+    # Summary carries the list-view fields.
+    summary = client.get("/api/contacts").json()["contacts"][0]
+    assert summary["favorite"] is True
+    assert summary["organization"] == "ACME GmbH"
+    assert summary["tags"] == ["tennis"]
+
+    # PATCH toggles favorite without touching anything else.
+    res = client.patch(f"/api/contacts/{created['slug']}", json={"favorite": False})
+    assert res.status_code == 200, res.text
+    assert res.json()["favorite"] is False
+    assert res.json()["organization"] == "ACME GmbH"
+
+
+def test_post_rejects_bad_birthday(client: TestClient) -> None:
+    res = client.post("/api/contacts", json={"name": "X", "birthday": "12.04.1990"})
+    assert res.status_code == 400
+    assert "birthday" in res.json()["detail"].lower()
+
+
+# ----------------------------------------------------------------------
+# vCard export / import
+# ----------------------------------------------------------------------
+
+
+def test_export_returns_vcf_download(client: TestClient) -> None:
+    _make(client, name="Exported Person")
+    res = client.get("/api/contacts/export")
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"].startswith("text/vcard")
+    assert "attachment" in res.headers["content-disposition"]
+    assert "BEGIN:VCARD" in res.text
+    assert "FN:Exported Person" in res.text
+    # The fixed /export path must not be swallowed by GET /{slug}.
+    assert client.get("/api/contacts/export").status_code == 200
+
+
+def test_import_creates_and_merges(client: TestClient) -> None:
+    _make(client, name="Christoph Meyer", emails=["old@example.com"])
+    vcf = (
+        "BEGIN:VCARD\nFN:Christoph Meyer\nEMAIL:new@example.com\nEND:VCARD\n"
+        "BEGIN:VCARD\nFN:Brand New\nTEL:+49 151 99\nEND:VCARD\n"
+    )
+    res = client.post("/api/contacts/import", json={"vcf": vcf})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["ok"] is True
+    assert body["created"] == 1
+    assert body["updated"] == 1
+    merged = client.get("/api/contacts/christoph_meyer").json()
+    assert merged["emails"] == ["old@example.com", "new@example.com"]
+
+
+def test_import_rejects_empty_payload(client: TestClient) -> None:
+    res = client.post("/api/contacts/import", json={"vcf": "no cards here"})
+    assert res.status_code == 400

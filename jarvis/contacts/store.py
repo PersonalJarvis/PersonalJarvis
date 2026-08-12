@@ -26,6 +26,12 @@ Frontmatter layout::
       name: Christoph Meyer
       aliases: [Chris]
     relationship: friend            # optional; one of jarvis.contacts.schema
+    favorite: true                  # only present when true
+    birthday: 1990-04-12            # optional; ISO date
+    organization: ACME GmbH         # optional
+    role: CTO                       # optional
+    urls: [https://example.com]     # optional
+    tags: [tennis, uni]             # optional; free-form (no enum, no parity duty)
     contact:
       emails: [christoph@example.com]
       phones: ['+4915123456789']    # E.164-normalised (separators stripped)
@@ -40,7 +46,7 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +73,35 @@ def _validate_email(raw: str) -> str:
     if not _EMAIL_RE.match(s):
         raise ValueError(f"Invalid e-mail address: {raw!r}.")
     return s
+
+
+def _validate_birthday(raw: str | None) -> str | None:
+    """Return a canonical ``YYYY-MM-DD`` string, ``None`` for blank input, or
+    raise ``ValueError``. ISO-only keeps the value machine-usable (reminders,
+    sorting) without a date-parsing dependency — the UI's date input already
+    produces this exact shape.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s).isoformat()
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid birthday {raw!r} — expected ISO format YYYY-MM-DD."
+        ) from exc
+
+
+def _clean_str_list(values: list[str] | None) -> list[str]:
+    """Trim + drop empties + dedupe case-insensitively (first spelling wins)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for v in values or []:
+        s = (v or "").strip()
+        if s and s.lower() not in seen:
+            seen.add(s.lower())
+            out.append(s)
+    return out
 
 
 def _normalize_phone(raw: str) -> str:
@@ -122,6 +157,30 @@ class Contact:
     def relationship(self) -> str | None:
         return self._meta.get("relationship") or None
 
+    @property
+    def favorite(self) -> bool:
+        return bool(self._meta.get("favorite"))
+
+    @property
+    def birthday(self) -> str | None:
+        return self._meta.get("birthday") or None
+
+    @property
+    def organization(self) -> str | None:
+        return self._meta.get("organization") or None
+
+    @property
+    def role(self) -> str | None:
+        return self._meta.get("role") or None
+
+    @property
+    def urls(self) -> list[str]:
+        return list(self._meta.get("urls", []) or [])
+
+    @property
+    def tags(self) -> list[str]:
+        return list(self._meta.get("tags", []) or [])
+
     # --- contact info --------------------------------------------------
     @property
     def _contact(self) -> dict[str, Any]:
@@ -160,6 +219,12 @@ class Contact:
             "name": self.name,
             "aliases": self.aliases,
             "relationship": self.relationship,
+            "favorite": self.favorite,
+            "birthday": self.birthday,
+            "organization": self.organization,
+            "role": self.role,
+            "urls": self.urls,
+            "tags": self.tags,
             "emails": self.emails,
             "phones": self.phones,
             "address": self.address,
@@ -176,6 +241,9 @@ class Contact:
             "name": self.name,
             "aliases": self.aliases,
             "relationship": self.relationship,
+            "favorite": self.favorite,
+            "organization": self.organization,
+            "tags": self.tags,
             "primary_email": self.primary_email,
             "primary_phone": self.primary_phone,
             "email_count": len(self.emails),
@@ -303,6 +371,15 @@ class ContactStore:
                 name=existing.name,
                 aliases=existing.aliases,
                 relationship=rel if rel is not None else existing.relationship,
+                # A voice-upsert only carries the fields in its schema; the
+                # profile fields below MUST ride along or the replace-in-place
+                # put() would silently wipe them (the restore-trap bug class).
+                favorite=existing.favorite,
+                birthday=existing.birthday,
+                organization=existing.organization,
+                role=existing.role,
+                urls=existing.urls,
+                tags=existing.tags,
                 emails=emails,
                 phones=phones,
                 address=addr,
@@ -328,6 +405,12 @@ class ContactStore:
         name: str,
         aliases: list[str] | None = None,
         relationship: str | None = None,
+        favorite: bool = False,
+        birthday: str | None = None,
+        organization: str | None = None,
+        role: str | None = None,
+        urls: list[str] | None = None,
+        tags: list[str] | None = None,
         emails: list[str] | None = None,
         phones: list[str] | None = None,
         address: dict[str, Any] | None = None,
@@ -338,6 +421,11 @@ class ContactStore:
         if not clean_name:
             raise ValueError("A contact requires a non-empty name.")
         rel = normalize_relationship(relationship)
+        clean_birthday = _validate_birthday(birthday)
+        clean_org = (organization or "").strip()
+        clean_role = (role or "").strip()
+        clean_urls = _clean_str_list(urls)
+        clean_tags = _clean_str_list(tags)
 
         clean_emails: list[str] = []
         for e in emails or []:
@@ -370,6 +458,20 @@ class ContactStore:
         meta: dict[str, Any] = {"identity": {"name": clean_name, "aliases": clean_aliases}}
         if rel is not None:
             meta["relationship"] = rel
+        # Optional profile fields: written only when set, so untouched records
+        # keep their minimal frontmatter (and diffs stay readable).
+        if favorite:
+            meta["favorite"] = True
+        if clean_birthday:
+            meta["birthday"] = clean_birthday
+        if clean_org:
+            meta["organization"] = clean_org
+        if clean_role:
+            meta["role"] = clean_role
+        if clean_urls:
+            meta["urls"] = clean_urls
+        if clean_tags:
+            meta["tags"] = clean_tags
         meta["contact"] = {"emails": clean_emails, "phones": clean_phones, "address": addr}
         meta["last_updated"] = datetime.now(UTC).isoformat(timespec="seconds")
 
@@ -390,6 +492,12 @@ class ContactStore:
             "name": current.name,
             "aliases": current.aliases,
             "relationship": current.relationship,
+            "favorite": current.favorite,
+            "birthday": current.birthday,
+            "organization": current.organization,
+            "role": current.role,
+            "urls": current.urls,
+            "tags": current.tags,
             "emails": current.emails,
             "phones": current.phones,
             "address": current.address,
@@ -420,20 +528,35 @@ class ContactStore:
 
         Detail (emails/phones/address/README) is fetched on demand via the
         ``contact-lookup`` tool (Chunk B) — never injected into every prompt.
+
+        A book larger than the budget is cut at a LINE boundary with an honest
+        "…and N more" tail, never mid-name: a half-visible name is one the
+        brain can neither resolve nor admit to missing.
         """
         contacts = self.list_all()
         if not contacts:
             return ""
-        parts = ["## Contacts"]
+        entries: list[str] = []
         for c in contacts:
             aliases = c.aliases
             tag = f" (aka {', '.join(aliases)})" if aliases else ""
             rel = c.relationship
             if rel:
-                parts.append(f"- **{c.name}**{tag} — {rel}")
+                entries.append(f"- **{c.name}**{tag} — {rel}")
             else:
-                parts.append(f"- **{c.name}**{tag}")
-        out = "\n".join(parts)
-        if len(out) > max_chars:
-            out = out[: max_chars - 1] + "…"
-        return out
+                entries.append(f"- **{c.name}**{tag}")
+        header = "## Contacts"
+        full = "\n".join([header, *entries])
+        if len(full) <= max_chars:
+            return full
+        for keep in range(len(entries) - 1, -1, -1):
+            omitted = len(entries) - keep
+            tail = (
+                f"- …and {omitted} more saved contacts — resolve them on "
+                "demand with the contact-lookup tool."
+            )
+            out = "\n".join([header, *entries[:keep], tail])
+            if len(out) <= max_chars:
+                return out
+        # Degenerate budget (smaller than header + tail): old hard cut.
+        return full[: max_chars - 1] + "…"

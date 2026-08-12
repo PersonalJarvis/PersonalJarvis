@@ -211,6 +211,94 @@ def test_render_for_prompt_respects_max_chars(store: ContactStore) -> None:
     assert len(out) <= 200
 
 
+def test_render_for_prompt_cuts_at_line_boundary_with_honest_tail(
+    store: ContactStore,
+) -> None:
+    for i in range(50):
+        store.upsert(name=f"Person {i:02d}", relationship="other")
+    out = store.render_for_prompt(max_chars=300)
+    assert len(out) <= 300
+    # Never a mid-name cut: every kept line is complete, and the omission is
+    # stated instead of hidden.
+    lines = out.splitlines()
+    assert lines[0] == "## Contacts"
+    assert "more saved contacts" in lines[-1]
+    assert "contact-lookup" in lines[-1]
+    for line in lines[1:-1]:
+        assert line.startswith("- **") and line.endswith("— other")
+
+
+# ----------------------------------------------------------------------
+# Profile fields (favorite / birthday / organization / role / urls / tags)
+# ----------------------------------------------------------------------
+
+
+def test_put_roundtrips_profile_fields(store: ContactStore) -> None:
+    c = store.put(
+        name="Frida",
+        favorite=True,
+        birthday="1985-12-01",
+        organization="Studio F",
+        role="Painter",
+        urls=["https://frida.example", "https://frida.example"],
+        tags=["art", "Art", "friends-of-friends"],
+    )
+    assert c.favorite is True
+    assert c.birthday == "1985-12-01"
+    assert c.organization == "Studio F"
+    assert c.role == "Painter"
+    assert c.urls == ["https://frida.example"]  # deduped
+    assert c.tags == ["art", "friends-of-friends"]  # case-insensitive dedupe
+
+    fresh = ContactStore(base_dir=store.base_dir).get("frida")
+    assert fresh is not None
+    assert fresh.favorite is True
+    assert fresh.birthday == "1985-12-01"
+
+
+def test_put_rejects_non_iso_birthday(store: ContactStore) -> None:
+    with pytest.raises(ValueError):
+        store.put(name="X", birthday="12.04.1990")
+
+
+def test_upsert_preserves_profile_fields_on_merge(store: ContactStore) -> None:
+    store.put(
+        name="Gero",
+        favorite=True,
+        birthday="1970-01-05",
+        organization="Org",
+        role="Boss",
+        urls=["https://gero.example"],
+        tags=["vip"],
+    )
+    # A voice-upsert only carries its own schema fields — the profile fields
+    # must survive the replace-in-place write untouched.
+    store.upsert(name="Gero", email="gero@example.com")
+    c = store.get("gero")
+    assert c is not None
+    assert c.emails == ["gero@example.com"]
+    assert c.favorite is True
+    assert c.birthday == "1970-01-05"
+    assert c.organization == "Org"
+    assert c.role == "Boss"
+    assert c.urls == ["https://gero.example"]
+    assert c.tags == ["vip"]
+
+
+def test_update_partial_touches_only_given_profile_fields(store: ContactStore) -> None:
+    created = store.put(name="Hana", organization="Old Org", tags=["a"])
+    updated = store.update(created.slug, favorite=True, tags=["a", "b"])
+    assert updated is not None
+    assert updated.favorite is True
+    assert updated.tags == ["a", "b"]
+    assert updated.organization == "Old Org"  # untouched
+    # Clearing works via empty string / empty list (never via absence).
+    cleared = store.update(created.slug, organization="", tags=[])
+    assert cleared is not None
+    assert cleared.organization is None
+    assert cleared.tags == []
+
+
 # ----------------------------------------------------------------------
 # slug + helpers
 # ----------------------------------------------------------------------
