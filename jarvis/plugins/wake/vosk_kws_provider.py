@@ -263,32 +263,14 @@ SHAPE_WAKE = "wake"            # looks like a call — competition confirms as b
 SHAPE_UNDECIDED = "undecided"  # tokenisation/confidence contradicts — competition decides
 SHAPE_SPEECH = "speech"        # too much sound, or no name-sized body: never a wake
 
-# --- leading isolation: a wake call STANDS ALONE (live forensic 2026-08-10) --
-# Three fires in 94 s while the user dictated German to a coding agent
-# (19:57:53 'herr tracks' undecided, 19:58:34 'hey george' SPELLED by the en
-# model out of German flow, 19:59:27 'aufbürdet' undecided; i18n-allow:
-# recognition content quoted from the live log). Two leaked through
-# the acoustic competition — which measurably does not discriminate mid-stream
-# audio (the forced grammar happily keeps the phrase at conf 1.0 inside flowing
-# speech) — and one through the spelling path itself, so no per-path tightening
-# can close the class.
-#
-# What every genuine call has and every one of these fires lacks is word-
-# agnostic and durational (AP-27-safe): a wake call stands alone, with silence
-# immediately BEFORE it, while a forced hit on conversation has the previous
-# word ending at the phrase's doorstep. Mid-speech no-fire is the ACCEPTED
-# product trade-off (the maintainer explicitly chose it over mid-speech
-# recall), so lead-in speech is a HARD rejection for BOTH confirm paths.
-# Only the LEADING side is gated — trailing speech is the legitimate
-# wake+command breath (2026-07-25) and stays untouched.
-#
-# Bounds: voiced overlap of strictly-preceding free-decode words with the
-# ``_ISOLATION_LEAD_S`` window before the span may not exceed
-# ``_ISOLATION_MAX_LEAD_VOICED_S`` (a syllable of slack for breath sounds and
-# decoder timing jitter). Combined with the span's own 0.3 s guard this asks
-# for ~0.65 s of quiet before the phrase — a natural pause, not a staged one.
-_ISOLATION_LEAD_S = 0.6
-_ISOLATION_MAX_LEAD_VOICED_S = 0.25
+# (The former "leading isolation" gate — a hard rejection of any candidate
+# with voiced speech in the 0.6 s before the span, added 2026-08-10 — was
+# REMOVED 2026-08-12 by explicit maintainer mandate: the wake word must fire
+# when spoken in the middle or at the end of a longer sentence, with no dead
+# time after prior speech. The mid-stream precision it bought is now owed by
+# the SPAN-TRIMMED, hypothesis-aware acoustic competition below, which was
+# bench-measured to kill the same mid-dictation false-fire classes WITHOUT
+# demanding silence before the phrase — see scripts/vosk_wake_bench.py.)
 
 # --- acoustic competition for the SHAPE path (live forensic 2026-07-17) -----
 # The shape gate accepts anything that LOOKS like a wake call — which a call of
@@ -320,6 +302,16 @@ _COMPETITION_KIND = "competition"
 # Ring buffer length for the confirm pass — long enough to hold the full
 # spoken phrase plus lead-in at the moment the partial trigger fires.
 _RING_SECONDS = 3.0
+
+# Trailing-cut length for the SECOND grammar re-score attempt (embedded
+# wakes). A candidate fires DURING the phrase and waits ~0.6 s of confirm
+# tail, so at verify time the phrase occupies roughly the last 0.6-1.6 s of
+# the ring; 1.8 s covers it plus alignment slack while excluding most of the
+# preceding sentence — which is exactly what made the full-ring re-score
+# deaf to a mid-/end-of-sentence wake (bench 2026-08-12: pos_mid/pos_end
+# 0 % -> see scripts/vosk_wake_bench.py). Runs ONLY when the full-ring
+# re-score failed, so an isolated call never pays it.
+_RESCORE_TAIL_S = 1.8
 
 # Refractory period after a fired wake.
 _COOLDOWN_S = 5.0
@@ -456,6 +448,7 @@ def candidate_shape_verdict(
     max_voiced_s_per_token: float = _SHAPE_MAX_VOICED_S_PER_TOKEN,
     max_other_word_conf: float = _SHAPE_MAX_OTHER_WORD_CONF,
     min_core_body_s: float = _SHAPE_MIN_CORE_BODY_S,
+    span: tuple[float, float] | None = None,
 ) -> str:
     """Does the free ear's output AT the candidate span look like a wake call?
 
@@ -495,14 +488,31 @@ def candidate_shape_verdict(
 
     Empty input is ``SHAPE_SPEECH``: the grammar claimed the phrase where the
     free ear heard no speech at all.
+
+    ``span`` (start_s, end_s — the UNPADDED phrase span from the grammar
+    re-score) clips each word's duration contribution to the audio the phrase
+    actually claims. Without it, a wake embedded in a sentence always fails
+    the duration bounds: the ±0.3 s slack that selects ``local_words`` pulls
+    the neighbouring sentence words in, and their full durations overflow a
+    budget meant to measure the CALL (bench 2026-08-12: a genuine embedded
+    'Hey George' arrived as 'fetish hate you watch much' — 1.62 s voiced —
+    and was hard-rejected). Clipping is pure timing arithmetic (AP-27-safe)
+    and keeps the original rejection intact: a grammar hit STRETCHED across
+    flowing speech has its span full of speech, clipped or not.
     """
     if not local_words:
         return SHAPE_SPEECH
+
+    def _voiced(w: dict) -> float:
+        start = float(w.get("start", 0.0))
+        end = float(w.get("end", 0.0))
+        if span is not None:
+            start = max(start, span[0])
+            end = min(end, span[1])
+        return max(0.0, end - start)
+
     n_tokens = max(1, len(normalize_phrase_for_match(phrase)))
-    voiced_s = sum(
-        max(0.0, float(w.get("end", 0.0)) - float(w.get("start", 0.0)))
-        for w in local_words
-    )
+    voiced_s = sum(_voiced(w) for w in local_words)
     if voiced_s > max_voiced_s_per_token * n_tokens:
         return SHAPE_SPEECH
     # A confidently recognised wake prefix is expected evidence, not proof the
@@ -525,10 +535,7 @@ def candidate_shape_verdict(
     # A phrase that IS nothing but prefixes ("Hey", "Hallo") has no core to
     # demand, so it must not be gated on a core duration.
     if not phrase_is_all_prefix:
-        core_body_s = sum(
-            max(0.0, float(w.get("end", 0.0)) - float(w.get("start", 0.0)))
-            for w in core_words
-        )
+        core_body_s = sum(_voiced(w) for w in core_words)
         if core_body_s < min_core_body_s:
             return SHAPE_SPEECH
     contested = len(local_words) > n_tokens + _SHAPE_TOKEN_SLACK
@@ -545,6 +552,7 @@ def candidate_shape_ok(
     max_voiced_s_per_token: float = _SHAPE_MAX_VOICED_S_PER_TOKEN,
     max_other_word_conf: float = _SHAPE_MAX_OTHER_WORD_CONF,
     min_core_body_s: float = _SHAPE_MIN_CORE_BODY_S,
+    span: tuple[float, float] | None = None,
 ) -> bool:
     """True only for an UNCONTESTED wake shape (see ``candidate_shape_verdict``).
 
@@ -559,6 +567,7 @@ def candidate_shape_ok(
         max_voiced_s_per_token=max_voiced_s_per_token,
         max_other_word_conf=max_other_word_conf,
         min_core_body_s=min_core_body_s,
+        span=span,
     ) == SHAPE_WAKE
 
 
@@ -602,8 +611,6 @@ class VoskKwsProvider:
         cooldown_s: float = _COOLDOWN_S,
         rejected_candidate_backoff_s: float = _REJECTED_CANDIDATE_BACKOFF_S,
         confirm_tail_s: float = _CONFIRM_TAIL_S,
-        isolation_lead_s: float = _ISOLATION_LEAD_S,
-        isolation_max_lead_voiced_s: float = _ISOLATION_MAX_LEAD_VOICED_S,
         # Production poll-loop parity: peak-normalize the confirm window to
         # -3 dBFS (gain capped at 40 dB) exactly like the other wake paths.
         target_peak: float = 0.7079,
@@ -646,8 +653,6 @@ class VoskKwsProvider:
             0.0, float(rejected_candidate_backoff_s)
         )
         self._confirm_tail_bytes = int(float(confirm_tail_s) * sample_rate) * 2
-        self._isolation_lead_s = float(isolation_lead_s)
-        self._isolation_max_lead_voiced_s = float(isolation_max_lead_voiced_s)
         self._target_peak = float(target_peak)
         self._max_gain = float(max_gain)
         self._models: dict[str, Any] = {}
@@ -709,7 +714,6 @@ class VoskKwsProvider:
         self._stat_early_shown = 0
         self._stat_early_retracted = 0
         self._stat_suppressed_shape_competition = 0
-        self._stat_suppressed_lead_speech = 0
         # Rate limiter for the verify-suppression log. Every rejection used to
         # be DEBUG-only, so a dropped GENUINE wake left no production trace at
         # all: the log could not tell "never heard" from "heard, verified,
@@ -808,9 +812,10 @@ class VoskKwsProvider:
         not await the full stock (see ``start``).
         """
         limit = self._stock_target if target is None else target
-        kinds = ("grammar", "free") if self._competition_grammar is None else (
-            "grammar", "free", _COMPETITION_KIND,
-        )
+        # The competition kind is stocked for EVERY phrase now: since
+        # 2026-08-12 an unprefixed phrase competes too (against the free
+        # ear's hypothesis and "[unk]") instead of standing unconditionally.
+        kinds = ("grammar", "free", _COMPETITION_KIND)
         for path in self._model_paths:
             for kind in kinds:
                 key = (path, kind)
@@ -946,7 +951,6 @@ class VoskKwsProvider:
             "suppressed_shape_competition": (
                 self._stat_suppressed_shape_competition
             ),
-            "suppressed_lead_speech": self._stat_suppressed_lead_speech,
         }
 
     # -- early candidate (visual-only) ----------------------------------------
@@ -1137,10 +1141,14 @@ class VoskKwsProvider:
            OVERLAPPING the span (±0.3 s) — the permissive sound match then
            judges what was said AT the candidate's position instead of
            fishing the best pair out of three seconds of conversation.
-        4. **Leading isolation**: a wake call STANDS ALONE — voiced free-decode
-           words immediately BEFORE the span reject the candidate outright,
-           ahead of both confirm paths (see the ``_ISOLATION_*`` note; live
-           forensic 2026-08-10, three mid-dictation fires in 94 s).
+        4. **Span-trimmed acoustic competition** (shape/undecided acceptances
+           only): the candidate's OWN audio, cut to the phrase span, must be
+           better explained by the configured phrase than by "<prefix> [unk]",
+           plain "[unk]", or the free ear's own hypothesis — see
+           ``_shape_competition_ok``. (This replaced the 2026-08-10 "leading
+           isolation" silence-before-the-phrase gate on 2026-08-12: the
+           maintainer mandated mid-sentence wakes, so precision now comes
+           from judging the span's content, not its position.)
 
         On infrastructure errors the ``fail_open`` polarity decides: the
         authoritative confirm accepts (a broken confirm must never eat a real
@@ -1199,23 +1207,83 @@ class VoskKwsProvider:
                 gres = grammar_future.result()
                 fres = free_future.result()
 
-            gwords = [
-                w for w in gres.get("result", [])
-                if w.get("word") in self._grammar_words
-            ]
-            if self._phrase.lower() not in gres.get("text", "") or not gwords:
+            def _rescored(res: dict, offset_s: float) -> tuple[list[dict], float] | None:
+                """The best CONSECUTIVE phrase-token run in a grammar decode.
+
+                The old check collected every occurrence of any phrase word in
+                the whole decode ('hey hey george hey [unk]' -> four entries):
+                the min-conf then included stray low-conf tokens far from the
+                actual call and the span stretched across seconds — an
+                embedded wake could never pass (bench 2026-08-12). Matching
+                the phrase as an ADJACENT in-order token run scores exactly
+                the words that ARE the call; the best-conf run wins. This is
+                also the stricter reading: "hey ... george" with other words
+                between the parts no longer counts as the phrase (a multi-part
+                wake is one unit).
+
+                ``offset_s`` shifts word times back into FULL-window seconds
+                when the decode ran over a trailing cut of the window.
+                """
+                tokens = self._grammar_words
+                result = [w for w in res.get("result", []) if isinstance(w, dict)]
+                best: tuple[list[dict], float] | None = None
+                for i in range(len(result) - len(tokens) + 1):
+                    run = result[i : i + len(tokens)]
+                    if [w.get("word") for w in run] != tokens:
+                        continue
+                    run_conf = min(float(w.get("conf", 0.0)) for w in run)
+                    if run_conf < self._min_final_conf:
+                        continue
+                    if best is None or run_conf > best[1]:
+                        best = (run, run_conf)
+                if best is None:
+                    return None
+                words, min_conf = best
+                if offset_s:
+                    words = [
+                        {
+                            **w,
+                            "start": float(w.get("start", 0.0)) + offset_s,
+                            "end": float(w.get("end", 0.0)) + offset_s,
+                        }
+                        for w in words
+                    ]
+                return words, min_conf
+
+            scored = _rescored(gres, 0.0)
+            if scored is None:
+                # Embedded-wake retry (bench-measured 2026-08-12): over the
+                # full 3 s ring the grammar decode of a wake spoken MID- or
+                # END-of-sentence routinely absorbs the name into the
+                # surrounding "[unk]"s ('hey [unk] [unk]') and the re-score
+                # goes deaf — pos_mid/pos_end recall was 0. A second pass over
+                # the trailing cut re-hears it. The 2026-07-10 objection to a
+                # shorter-cut retry ("helped room speech more than genuine
+                # calls") predates the span-trimmed hypothesis competition:
+                # the extra candidates a permissive cut admits are now killed
+                # downstream (same bench: 0/48 negative fires WITH this
+                # retry), while the recall it buys is what makes a wake work
+                # inside a flowing sentence at all.
+                tail_samples = int(_RESCORE_TAIL_S * self._sample_rate)
+                if len(window) > tail_samples:
+                    offset_s = (len(window) - tail_samples) / self._sample_rate
+                    pcm_tail = pcm[2 * (len(window) - tail_samples):]
+
+                    def _tail_pass() -> dict:
+                        g = self._take_verify_rec(model_path, "grammar")
+                        g.AcceptWaveform(pcm_tail)
+                        return _parse_recognizer_json(
+                            g.FinalResult(), where="verify.grammar_tail"
+                        )
+
+                    scored = _rescored(_tail_pass(), offset_s)
+            if scored is None:
                 self._log_suppression(
-                    "re-score did not re-hear %r (heard %r)",
+                    "re-score did not re-hear %r reliably (heard %r)",
                     self._phrase, gres.get("text", "")[:60],
                 )
                 return False
-            conf = min(w.get("conf", 0.0) for w in gwords)
-            if conf < self._min_final_conf:
-                self._log_suppression(
-                    "re-score conf %.2f < %.2f for %r",
-                    conf, self._min_final_conf, self._phrase,
-                )
-                return False
+            gwords, conf = scored
             start_s = min(w.get("start", 0.0) for w in gwords)
             end_s = max(w.get("end", 0.0) for w in gwords)
             span_a = start_s - 0.3
@@ -1243,32 +1311,13 @@ class VoskKwsProvider:
             ]
             free_local = " ".join(w.get("word", "") for w in local_words)
 
-            # 4) leading isolation — a wake call STANDS ALONE (see the
-            # _ISOLATION_* note). Voiced duration of strictly-preceding free
-            # words inside the lead window; a HARD rejection for both confirm
-            # paths, ahead of spelling and shape alike, because the spelled
-            # path leaked too (live 2026-08-10: the en model spelled
-            # 'hey george' out of flowing German dictation). Reads only word
-            # TIMINGS, never text (AP-27).
-            lead_a = span_a - self._isolation_lead_s
-            lead_voiced = 0.0
-            for w in fres.get("result", []):
-                if float(w.get("end", 0.0)) >= span_a:
-                    continue  # candidate-adjacent or later: not lead-in
-                lead_voiced += max(
-                    0.0,
-                    min(float(w.get("end", 0.0)), span_a)
-                    - max(float(w.get("start", 0.0)), lead_a),
-                )
-            if lead_voiced > self._isolation_max_lead_voiced_s:
-                self._stat_suppressed_lead_speech += 1
-                self._log_suppression(
-                    "lead-in speech %.2fs in the %.1fs before the span — "
-                    "a wake call stands alone, this was mid-speech",
-                    lead_voiced,
-                    self._isolation_lead_s,
-                )
-                return False
+            # 4) span-trimmed audio for the acoustic competition: the bytes of
+            # the candidate span itself (±0.3 s pad), so the competition below
+            # judges ONLY the audio the phrase claims to be — surrounding
+            # sentence audio must not hand the forced alignment room to fake.
+            # (The former hard "leading isolation" gate stood here until
+            # 2026-08-12 — see the module-level note on its removal.)
+            pcm_span = pcm[2 * a : 2 * b] if b > a else pcm
             # OPEN (2026-07-25, measured): a wake spoken in ONE breath with the
             # command is materially less likely to fire than an isolated call.
             # A command word starting inside the trailing 0.3 s slack is counted
@@ -1323,9 +1372,17 @@ class VoskKwsProvider:
         # questions stay hard rejections — they measure how much sound was
         # made, never what it was.
         ok = sound_confirm(free_local, self._phrase, ratio=self._confirm_ratio)
-        shape = "" if ok else candidate_shape_verdict(local_words, self._phrase)
+        shape = (
+            ""
+            if ok
+            else candidate_shape_verdict(
+                local_words, self._phrase, span=(start_s, end_s)
+            )
+        )
         if not ok and shape in (SHAPE_WAKE, SHAPE_UNDECIDED):
-            ok = self._shape_competition_ok(pcm, model_path)
+            ok = self._shape_competition_ok(
+                pcm_span, model_path, free_hypothesis=free_local
+            )
             if not ok:
                 self._stat_suppressed_shape_competition += 1
         if ok:
@@ -1363,19 +1420,35 @@ class VoskKwsProvider:
             )
         return ok
 
-    def _shape_competition_ok(self, pcm: bytes, model_path: str | None) -> bool:
+    def _shape_competition_ok(
+        self, pcm: bytes, model_path: str | None, free_hypothesis: str = ""
+    ) -> bool:
         """Must the shape-only acceptance stand? Purely acoustic, fail-OPEN.
 
-        Re-scores the window with a grammar that offers the configured phrase
-        AND an explicit "<prefix> [unk]" competitor: the decoder itself decides
-        whether the name slot is better explained by the configured wake word
-        or by any other word. The window already passed the normal re-score,
-        the energy gate, and the shape gate — this only breaks the tie the
-        forced no-alternative grammar could not express (replay-calibrated
-        2026-07-17: kills every shape-path foreign-name fire at a 1-2 %
-        genuine-recall cost; see the _COMPETITION_KIND note).
+        Re-scores the candidate with a grammar that offers, next to the
+        configured phrase, an explicit "<prefix> [unk]" competitor, a plain
+        "[unk]", and — decisively — the free ear's OWN hypothesis for the
+        span: the decoder itself chooses whether the audio is better explained
+        by the configured wake word or by what the unconstrained pass actually
+        heard there. The candidate already passed the normal re-score, the
+        energy gate, and the shape gate — this breaks the tie the forced
+        no-alternative grammar could not express.
 
-        An unprefixed phrase has no competitor to offer — it always stands.
+        Two changes bench-measured on 2026-08-12 (scripts/vosk_wake_bench.py;
+        live false fires 'pedro' / 'age watch' / 'hey nova' for "Hey George"):
+
+        * ``pcm`` is the SPAN-TRIMMED audio, not the whole 3 s ring. Over the
+          full ring the forced alignment could place the phrase anywhere and
+          absorb the rest into [unk]s — it kept the phrase at conf 1.0 for
+          nearly every short speech burst, so the competition confirmed
+          random words. On the span alone the phrase must explain exactly the
+          audio it claims.
+        * ``free_hypothesis`` (the free decode's words at the span, in-vocab
+          for the SAME model by construction) joins the alternatives. A
+          decoder offered its own best guess next to the phrase only keeps
+          the phrase when the audio genuinely supports it — 'peter' audio
+          picks 'peter', a garbled genuine call still picks the phrase.
+
         Infrastructure errors accept (a broken extra check must never make the
         detector deaf; the spelling path never consults this at all).
 
@@ -1383,13 +1456,26 @@ class VoskKwsProvider:
         rather than only confirming a clean one. The fail-open polarity is kept
         deliberately: it matches the authoritative confirm this runs inside, and
         a candidate only gets here after the grammar re-score (conf >= 0.9), the
-        energy gate and BOTH hard shape bounds — so a broken competitor
-        recognizer degrades to those four gates, not to no gate at all.
+        energy gate and the hard shape bounds — so a broken competitor
+        recognizer degrades to those gates, not to no gate at all.
         """
-        if self._competition_grammar is None:
-            return True
+        alternatives = [self._phrase.lower()]
+        raw_tokens = [t for t in self._phrase.lower().split() if t]
+        if self._competition_grammar is not None and raw_tokens:
+            alternatives.append(f"{raw_tokens[0]} [unk]")
+        hypothesis = " ".join(free_hypothesis.lower().split())
+        if hypothesis and hypothesis != self._phrase.lower():
+            alternatives.append(hypothesis)
+        alternatives.append("[unk]")
         try:
             rec = self._take_verify_rec(model_path, _COMPETITION_KIND)
+            # The prewarmed stock recognizer carries the STATIC competitor
+            # grammar; swap in the per-candidate alternatives when the vosk
+            # build supports it (0.3.32+). Without SetGrammar the static
+            # grammar still runs — a weaker but valid competition.
+            set_grammar = getattr(rec, "SetGrammar", None)
+            if callable(set_grammar):
+                set_grammar(json.dumps(alternatives))
             rec.AcceptWaveform(pcm)
             res = json.loads(rec.FinalResult())
             if self._phrase.lower() not in res.get("text", ""):
@@ -1503,14 +1589,24 @@ class VoskKwsProvider:
                 recs = self._fresh_recs()
             if pending is not None:
                 pending_tail += len(pcm)
+                # Keep every model's stream fed during the tail/backoff wait so
+                # their decode state stays aligned with the ring.
+                found = await _in_pool(self._grammar_hit_all, recs, pcm)
                 if backpressure_active:
-                    # The retry is already latched.  Advancing the ring is
-                    # enough; do not spend stage-one or verifier work yet.
+                    if found is not None:
+                        # A NEWER hit refreshes the latch. The old behaviour
+                        # kept the first latched candidate and went deaf for
+                        # anything after it, so room speech rejected moments
+                        # earlier could hold the slot while the user's real
+                        # wake landed in it unheard ("say it twice"). Still
+                        # exactly ONE verify runs, at the same deadline — the
+                        # BUG-045 load bound is untouched.
+                        is_final_new, _conf_new, _path_new = found
+                        pending = found
+                        pending_tail = (
+                            self._confirm_tail_bytes if is_final_new else 0
+                        )
                     continue
-                # Keep every model's stream fed during the tail wait so their
-                # decode state stays aligned with the ring. The verdict is
-                # irrelevant here — the latched candidate already won the slot.
-                await _in_pool(self._grammar_hit_all, recs, pcm)
                 # A POSITIVE early check is already authoritative for this
                 # candidate (later audio belongs to the session and cannot
                 # revoke it — see _run_early_check). Waiting out the rest of

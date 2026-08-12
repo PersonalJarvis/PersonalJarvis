@@ -246,7 +246,13 @@ def test_verify_fires_on_a_wake_the_free_ear_could_not_spell(monkeypatch) -> Non
 
 
 def test_verify_still_rejects_room_speech_forced_onto_the_phrase(monkeypatch) -> None:
-    """The precision contract the free-ear check was added for stays intact."""
+    """The precision contract the free-ear check was added for stays intact.
+
+    Since the span-duration clipping (2026-08-12) this fixture sits at the
+    duration bound and is decided by the span-trimmed competition; on
+    unrelated flowing speech the decoder keeps the alternative ("[unk]"
+    scripted — the measured outcome, 0/48 negative fires on the bench).
+    """
     p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
 
     grammar = {
@@ -266,8 +272,9 @@ def test_verify_still_rejects_room_speech_forced_onto_the_phrase(monkeypatch) ->
             _w("gibt", 1.40, 1.70, conf=1.0),
         ],
     }
+    competition = {"text": "[unk]", "result": []}
 
-    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(grammar, free))
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(grammar, free, competition))
     assert p._verify_window(_loud_window(), fail_open=True) is False
 
 
@@ -361,11 +368,32 @@ def test_a_broken_competition_pass_fails_open(monkeypatch) -> None:
     assert p._verify_window(_loud_window(), fail_open=True) is True
 
 
-def test_an_unprefixed_phrase_has_no_competition_to_lose() -> None:
-    """"Computer" offers no prefix anchor — the check always stands."""
+def test_an_unprefixed_phrase_competes_against_the_free_hypothesis(
+    monkeypatch,
+) -> None:
+    """"Computer" has no prefix anchor, but since 2026-08-12 it still competes
+    — against the free ear's own hypothesis and "[unk]". A shape acceptance
+    whose audio the decoder rather explains as the hypothesis is rejected;
+    one the decoder keeps as the phrase stands. (Before this, an unprefixed
+    phrase's competition ALWAYS stood, which left the live 'pedro' class —
+    a random word firing through the shape path — open for those phrases.)
+    """
     p = VoskKwsProvider("Computer", model_path="fake", keyword="computer")
-    assert p._competition_grammar is None
-    assert p._shape_competition_ok(b"", None) is True
+    assert p._competition_grammar is None  # still no static prefix competitor
+
+    grammar = {
+        "text": "computer",
+        "result": [{"word": "computer", "start": 0.40, "end": 0.95, "conf": 1.0}],
+    }
+    free = {"text": "kompott", "result": [_w("kompott", 0.40, 0.95, conf=0.6)]}
+
+    lost = {"text": "kompott", "result": []}
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(grammar, free, lost))
+    assert p._verify_window(_loud_window(), fail_open=True) is False
+
+    p2 = VoskKwsProvider("Computer", model_path="fake", keyword="computer")
+    monkeypatch.setattr(p2, "_take_verify_rec", _stub_take(grammar, free))
+    assert p2._verify_window(_loud_window(), fail_open=True) is True
 
 
 def test_the_competition_grammar_derives_from_the_configured_phrase() -> None:
@@ -434,8 +462,13 @@ def test_room_speech_across_the_phrase_span_is_still_rejected(monkeypatch) -> No
     """The narrower shape window must not become a way in for room speech.
 
     Here the surrounding words OVERLAP the phrase span rather than following
-    it, which is what a forced grammar hit on conversation actually looks like
-    — so they are still counted and the candidate is still rejected.
+    it, which is what a forced grammar hit on conversation actually looks
+    like. Since the span-duration clipping (2026-08-12) such a candidate is
+    UNDECIDED rather than hard-rejected, and the span-trimmed competition
+    decides: on unrelated flowing speech the decoder keeps the alternative
+    ("[unk]" scripted here — the measured outcome for unrelated audio, 0/20
+    kept in the 2026-08-04 calibration and 0/48 negative fires in the
+    2026-08-12 bench).
     """
     p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
 
@@ -456,9 +489,11 @@ def test_room_speech_across_the_phrase_span_is_still_rejected(monkeypatch) -> No
             _w("gibt", 1.40, 1.70, conf=1.0),
         ],
     }
+    competition = {"text": "[unk]", "result": []}
 
-    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(grammar, free))
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(grammar, free, competition))
     assert p._verify_window(_loud_window(), fail_open=True) is False
+    assert p.stats()["suppressed_shape_competition"] == 1
 
 
 def test_a_bare_interjection_plus_a_command_is_still_not_a_wake() -> None:
@@ -586,17 +621,19 @@ def test_a_contested_shape_that_loses_the_competition_does_not_fire(
     assert p.stats()["suppressed_shape_competition"] == 1
 
 
-# --- a wake call STANDS ALONE (live forensic 2026-08-10) ---------------------
+# --- a wake spoken MID-SENTENCE must fire (maintainer mandate 2026-08-12) ----
 #
-# Three fires in 94 s while the user dictated German to a coding agent: the
-# grammar forced flowing speech onto 'Hey George' and the verify let it
-# through — twice via the acoustic competition, with unrelated German words
-# ('herr tracks', 'aufbürdet' — i18n-allow: live-log recognition content)
-# at the span, both conf 1.0), once via the SPELLING path itself (the en
-# model heard a literal 'hey george' inside German flow). What every genuine
-# call has and all three fires lack: silence immediately BEFORE the phrase.
-# Mid-speech no-fire is the accepted product trade-off, so lead-in speech is
-# a hard rejection for BOTH confirm paths — word-agnostic (timings only).
+# REVERSAL of the 2026-08-10 "a wake call stands alone" rule. The hard lead-in
+# silence gate made the wake word dead in the middle and at the end of a
+# longer sentence, and after normal speech the user had to wait seconds of
+# quiet before the detector would listen again — both explicitly rejected by
+# the maintainer on 2026-08-12 ("no dead time; the phrase fires embedded in a
+# flowing sentence"). Precision against the 2026-08-10 mid-dictation fires is
+# now owed by CONTENT, not position: the acoustic competition judges the
+# SPAN-TRIMMED audio against the free ear's own hypothesis. Bench evidence
+# (scripts/vosk_wake_bench.py, real de+en models, synthesized de+en voices):
+# 0/144 negative fires across three phrases while every mid-/end-of-sentence
+# positive for "Hey George" fires.
 
 
 _GEORGE_LEAD_IN = [
@@ -616,27 +653,11 @@ _GEORGE_GRAMMAR = {
 }
 
 
-def test_a_mid_speech_shape_fire_is_rejected_by_lead_in_speech(monkeypatch) -> None:
-    """LIVE (2026-08-10 19:59:27): free ear 'aufbürdet' (i18n-allow:
-    recognition content quoted from the live log), shape UNDECIDED, the
-    competition kept the phrase at conf 1.0 mid-stream — and it fired."""
-    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
-    free = {
-        "text": "und dann machen wir aufbürdet",  # i18n-allow: recognition content under test
-        "result": [*_GEORGE_LEAD_IN, _w("aufbürdet", 1.45, 2.20, conf=1.0)],  # i18n-allow
-    }
-
-    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(_GEORGE_GRAMMAR, free))
-    assert p._verify_window(_loud_window(3.0), fail_open=True) is False
-    assert p.stats()["suppressed_lead_speech"] == 1
-
-
-def test_a_mid_speech_spelled_phrase_is_rejected_by_lead_in_speech(
-    monkeypatch,
-) -> None:
-    """LIVE (2026-08-10 19:58:34): the en free ear SPELLED 'hey george' out of
-    flowing German — the accept-only spelling path cannot be the way around
-    the isolation rule, or mentioning the wake word mid-sentence fires."""
+def test_a_mid_sentence_spelled_wake_fires(monkeypatch) -> None:
+    """The free ear SPELLED the phrase inside flowing speech — that IS the
+    wake word, spoken mid-sentence, and under the 2026-08-12 mandate it
+    activates. (This exact fixture was the isolation gate's canonical
+    suppression case before the reversal.)"""
     p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
     free = {
         "text": "und dann machen wir hey george",  # i18n-allow: recognition content under test
@@ -648,7 +669,84 @@ def test_a_mid_speech_spelled_phrase_is_rejected_by_lead_in_speech(
     }
 
     monkeypatch.setattr(p, "_take_verify_rec", _stub_take(_GEORGE_GRAMMAR, free))
+    assert p._verify_window(_loud_window(3.0), fail_open=True) is True
+
+
+def test_mid_sentence_room_speech_loses_the_competition(monkeypatch) -> None:
+    """The 2026-08-10 false-fire class ('aufbürdet' at the span, i18n-allow:
+    recognition content quoted from the live log) stays dead — by content,
+    not position: the shape is contested and the span-trimmed competition
+    hears the alternative, so the candidate falls."""
+    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
+    free = {
+        "text": "und dann machen wir aufbürdet",  # i18n-allow: recognition content under test
+        "result": [*_GEORGE_LEAD_IN, _w("aufbürdet", 1.45, 2.20, conf=1.0)],  # i18n-allow
+    }
+    competition = {"text": "[unk]", "result": []}
+
+    monkeypatch.setattr(
+        p, "_take_verify_rec", _stub_take(_GEORGE_GRAMMAR, free, competition)
+    )
     assert p._verify_window(_loud_window(3.0), fail_open=True) is False
+    assert p.stats()["suppressed_shape_competition"] == 1
+
+
+def test_a_bare_random_word_loses_the_competition(monkeypatch) -> None:
+    """LIVE (2026-08-12): the free ear heard a bare 'pedro' — one word, no
+    prefix at all — and 'Hey George' fired through the shape/undecided path
+    because the full-ring competition rubber-stamped it. With the span-trimmed
+    hypothesis-aware competition the decoder keeps 'pedro', and no part of a
+    multi-part wake phrase on its own (nor any random word) can activate."""
+    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
+    free = {"text": "pedro", "result": [_w("pedro", 1.60, 2.10, conf=1.0)]}
+    competition = {"text": "pedro", "result": []}
+
+    monkeypatch.setattr(
+        p, "_take_verify_rec", _stub_take(_GEORGE_GRAMMAR, free, competition)
+    )
+    assert p._verify_window(_loud_window(3.0), fail_open=True) is False
+    assert p.stats()["suppressed_shape_competition"] == 1
+
+
+def test_the_competition_judges_span_trimmed_audio_with_the_hypothesis(
+    monkeypatch,
+) -> None:
+    """The two mechanics the 2026-08-12 precision rests on, pinned:
+
+    * the competition decodes ONLY the candidate span's audio (±0.3 s pad),
+      never the whole ring — over the full ring the forced alignment could
+      place the phrase anywhere and confirmed nearly everything;
+    * the free ear's hypothesis joins the grammar alternatives, so the
+      decoder chooses between the phrase and what was actually heard.
+    """
+    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
+    free = {"text": "pedro", "result": [_w("pedro", 1.60, 2.10, conf=1.0)]}
+    seen: dict = {}
+
+    class _RecordingRec(_StubRec):
+        def SetGrammar(self, grammar: str) -> None:  # noqa: N802 - vosk API
+            seen["alternatives"] = json.loads(grammar)
+
+        def AcceptWaveform(self, pcm: bytes) -> bool:  # noqa: N802 - vosk API
+            seen["pcm_bytes"] = len(pcm)
+            return True
+
+    def _take(model_path, kind):  # noqa: ANN001
+        if kind == "competition":
+            return _RecordingRec({"text": "pedro", "result": []})
+        return _StubRec(_GEORGE_GRAMMAR if kind == "grammar" else free)
+
+    monkeypatch.setattr(p, "_take_verify_rec", _take)
+    assert p._verify_window(_loud_window(3.0), fail_open=True) is False
+    # span [1.50, 2.15] padded ±0.3 -> [1.20, 2.45] = 1.25 s of 3.0 s audio
+    # (± a couple of samples of float rounding, never the whole ring).
+    assert abs(seen["pcm_bytes"] - int(1.25 * 16_000) * 2) <= 4
+    assert seen["alternatives"] == [
+        "hey george",
+        "hey [unk]",
+        "pedro",
+        "[unk]",
+    ]
 
 
 def test_an_isolated_call_still_fires_with_nothing_before_it(monkeypatch) -> None:
@@ -661,7 +759,6 @@ def test_an_isolated_call_still_fires_with_nothing_before_it(monkeypatch) -> Non
 
     monkeypatch.setattr(p, "_take_verify_rec", _stub_take(_GEORGE_GRAMMAR, free))
     assert p._verify_window(_loud_window(3.0), fail_open=True) is True
-    assert p.stats()["suppressed_lead_speech"] == 0
 
 
 def test_a_call_after_a_natural_pause_still_fires(monkeypatch) -> None:
@@ -681,9 +778,24 @@ def test_a_call_after_a_natural_pause_still_fires(monkeypatch) -> None:
     assert p._verify_window(_loud_window(3.0), fail_open=True) is True
 
 
+def test_a_garbled_wake_after_flowing_speech_still_fires(monkeypatch) -> None:
+    """The dead-time complaint, pinned from the other side: speech ending at
+    the phrase's doorstep must not eat a wake whose shape and competition are
+    clean. Under the removed isolation gate this exact fixture ('wir' ends
+    0.02 s before the span pad) was a guaranteed rejection."""
+    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
+    free = {
+        "text": "und dann machen wir gorsch",  # i18n-allow: recognition content under test
+        "result": [*_GEORGE_LEAD_IN, _w("gorsch", 1.50, 2.15, conf=0.6)],
+    }
+
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(_GEORGE_GRAMMAR, free))
+    assert p._verify_window(_loud_window(3.0), fail_open=True) is True
+
+
 def test_trailing_command_speech_is_never_lead_in(monkeypatch) -> None:
-    """Only the LEADING side is gated: the wake+command breath (2026-07-25)
-    has all its extra words AFTER the phrase and keeps firing."""
+    """The wake+command breath (2026-07-25) has all its extra words AFTER the
+    phrase and keeps firing."""
     p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
     free = {
         "text": "gorsch wie ist das wetter",  # i18n-allow: recognition content under test
@@ -699,12 +811,12 @@ def test_trailing_command_speech_is_never_lead_in(monkeypatch) -> None:
     assert p._verify_window(_loud_window(3.0), fail_open=True) is True
 
 
-def test_the_sibling_rescue_cannot_bypass_the_isolation_gate(monkeypatch) -> None:
+def test_the_sibling_rescue_faces_the_same_competition(monkeypatch) -> None:
     """The sibling rescue verifies through the SAME window check (the
-    fail-closed ``_early_check``): a sibling model whose free ear also heard
-    flowing speech right up to the span must not resurrect a mid-speech
-    candidate the primary model already rejected. Secondary rescue paths are
-    exactly where earlier gates in this file leaked, so this is pinned."""
+    fail-closed ``_early_check``): a sibling whose span audio loses the
+    competition must not resurrect a candidate the primary model already
+    rejected. Secondary rescue paths are exactly where earlier gates in this
+    file leaked, so this is pinned."""
     p = VoskKwsProvider(
         "Hey George",
         model_path="primary",
@@ -715,13 +827,108 @@ def test_the_sibling_rescue_cannot_bypass_the_isolation_gate(monkeypatch) -> Non
         "text": "und dann machen wir aufbürdet",  # i18n-allow
         "result": [*_GEORGE_LEAD_IN, _w("aufbürdet", 1.45, 2.20, conf=1.0)],  # i18n-allow
     }
+    competition = {"text": "[unk]", "result": []}
 
     def _take(model_path, kind):  # noqa: ANN001
         assert model_path == "sibling", "the rescue must verify on the sibling"
+        if kind == "competition":
+            return _StubRec(competition)
         return _StubRec(free if kind == "free" else _GEORGE_GRAMMAR)
 
     monkeypatch.setattr(p, "_take_verify_rec", _take)
     assert p._early_check(_loud_window(3.0), "sibling") is False
+
+
+# --- embedded-wake re-score mechanics (2026-08-12) ---------------------------
+
+
+def test_the_rescore_scores_the_adjacent_run_not_scattered_phrase_words(
+    monkeypatch,
+) -> None:
+    """A ring decode like 'hey hey george hey [unk]' contains the phrase ONCE,
+    plus stray forced 'hey's elsewhere in the window. The old check pooled
+    EVERY phrase word in the decode: the min-conf swallowed a distant weak
+    'hey' and the span stretched seconds wide, so an embedded wake could
+    never pass. Only an adjacent in-order token run counts now — which is
+    also the stricter reading: scattered parts ('hey ... george') are not
+    the phrase, a multi-part wake is one unit."""
+    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
+    grammar = {
+        "text": "hey hey george hey [unk]",
+        "result": [
+            _w("hey", 0.20, 0.40, conf=0.30),   # stray forced hit, weak
+            _w("hey", 1.50, 1.72, conf=1.0),    # the call
+            _w("george", 1.72, 2.15, conf=1.0),
+            _w("hey", 2.50, 2.60, conf=0.40),   # stray forced hit, weak
+        ],
+    }
+    free = {
+        "text": "hey george",
+        "result": [_w("hey", 1.50, 1.72, conf=1.0), _w("george", 1.72, 2.15, conf=0.8)],
+    }
+
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(grammar, free))
+    assert p._verify_window(_loud_window(3.0), fail_open=True) is True
+
+
+def test_scattered_phrase_parts_are_not_the_phrase(monkeypatch) -> None:
+    """'hey ... george' with other audio between the parts must NOT re-score:
+    the parts of a multi-part wake count only spoken together, in order."""
+    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
+    scattered = {
+        "text": "hey [unk] george",
+        "result": [
+            _w("hey", 0.20, 0.40, conf=1.0),
+            _w("[unk]", 0.60, 1.50, conf=1.0),
+            _w("george", 1.72, 2.15, conf=1.0),
+        ],
+    }
+    free = {
+        "text": "hey george",
+        "result": [_w("hey", 0.20, 0.40, conf=1.0), _w("george", 1.72, 2.15, conf=0.8)],
+    }
+
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(scattered, free))
+    assert p._verify_window(_loud_window(3.0), fail_open=True) is False
+
+
+def test_an_embedded_wake_is_rescored_over_the_trailing_cut(monkeypatch) -> None:
+    """Over the full ring the grammar absorbs an embedded phrase into the
+    surrounding "[unk]"s and the re-score goes deaf (bench 2026-08-12:
+    pos_mid/pos_end recall was 0 before this). The trailing 1.8 s cut
+    re-hears it; its word times are shifted back into full-window seconds so
+    every downstream span check (energy, free-word localisation, trimmed
+    competition) still lines up."""
+    p = VoskKwsProvider("Hey George", model_path="fake", keyword="george")
+    ring_gres = {"text": "hey [unk] [unk]", "result": [_w("hey", 0.3, 0.5, conf=1.0)]}
+    # Times below are CUT-relative; the cut starts at 3.0 - 1.8 = 1.2 s.
+    tail_gres = {
+        "text": "hey george",
+        "result": [_w("hey", 0.35, 0.55, conf=1.0), _w("george", 0.55, 1.00, conf=1.0)],
+    }
+    # The free decode runs over the FULL window — times are window-relative;
+    # the spelled phrase sits at 1.55-2.20 s, exactly where the shifted tail
+    # span must land for the localisation to find it.
+    free = {
+        "text": "machen wir hey george",  # i18n-allow: recognition content under test
+        "result": [
+            _w("machen", 0.90, 1.25, conf=1.0),  # i18n-allow
+            _w("wir", 1.25, 1.40, conf=1.0),
+            _w("hey", 1.55, 1.75, conf=1.0),
+            _w("george", 1.75, 2.20, conf=0.8),
+        ],
+    }
+    grammar_calls = {"n": 0}
+
+    def _take(model_path, kind):  # noqa: ANN001
+        if kind == "grammar":
+            grammar_calls["n"] += 1
+            return _StubRec(ring_gres if grammar_calls["n"] == 1 else tail_gres)
+        return _StubRec(free)
+
+    monkeypatch.setattr(p, "_take_verify_rec", _take)
+    assert p._verify_window(_loud_window(3.0), fail_open=True) is True
+    assert grammar_calls["n"] == 2  # the cut ran only after the ring failed
 
 
 # --- diagnosability: a suppressed wake must leave a trace (2026-07-25) --------

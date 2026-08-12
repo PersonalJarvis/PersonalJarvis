@@ -9121,3 +9121,71 @@ opened, the panes were briefed, every receipt looked healthy — only the
 routing the user spoke was gone. When users hand out work they do it in
 exactly two ways, by NAME and by ENUMERATION; an executor that models only
 the collective address will mash both.
+
+## BUG-133: the wake word fires on random words and goes deaf mid-sentence — the shape path's competition rubber-stamps the full ring while the isolation gate demands staged silence (HIGH, FIXED 2026-08-12)
+
+**Symptoms (2026-08-12, vosk_kws, phrase "Hey George").** Both accuracy
+directions broken at once. False fires: three activations this session, and
+in two the free ear heard something with NO resemblance to the phrase — a
+bare `'pedro'` (16:43:34) and `'age watch'` (16:09:32); a single random word
+activated a two-word wake phrase. Missed activations: the phrase spoken in
+the middle or at the end of a sentence never fired, and after normal speech
+the user had to stay silent for seconds before the detector would accept the
+real wake word again.
+
+**Root — four causes stacked.** (1) The acoustic competition, the shape
+path's only content gate, re-scored the WHOLE 3 s ring: forced alignment
+over that much audio places the phrase anywhere and absorbs the rest into
+"[unk]"s, so it kept the phrase at conf 1.0 for nearly any short speech
+burst — 'pedro' won a competition it should have lost. (2) The shape path
+demanded no prefix-part evidence, so one bare word could satisfy a
+multi-part phrase. (3) The 2026-08-10 leading-isolation gate hard-rejected
+any candidate with >0.25 s of voiced speech in the 0.6 s before it — the
+mid-/end-of-sentence deafness and the "wait in silence" dead time, by
+design. (4) The verify re-score pooled every phrase word anywhere in the
+ring decode ('hey hey george hey [unk]' → min-conf over four entries, span
+seconds wide), so an embedded wake failed the re-score even where it was
+heard; rejected candidates then armed a 2 s verify backoff whose latch
+kept the FIRST candidate and dropped everything after it.
+
+**Fix.** `jarvis/plugins/wake/vosk_kws_provider.py`: the competition now
+judges the SPAN-TRIMMED audio (±0.3 s pad) and offers the free ear's own
+hypothesis as an explicit grammar alternative next to "<prefix> [unk]" and
+"[unk]" — the decoder keeps the phrase only when the span's audio genuinely
+supports it; unprefixed phrases compete too. The isolation gate is removed
+(maintainer mandate: mid-sentence wakes must fire); shape durations are
+clipped to the unpadded span so neighbouring sentence words no longer
+overflow the call-sized budget. The re-score scores only an ADJACENT
+in-order token run (scattered 'hey … george' never counts — a multi-part
+wake is one unit) and retries over the trailing 1.8 s cut when the full
+ring absorbed the phrase. A stage-1 hit during reject-backoff refreshes the
+latch instead of dying in it.
+
+**Evidence.** `scripts/vosk_wake_bench.py` (new): synthesized de+en voices
+through the REAL detector and models, HEAD vs fixed on the SAME corpus
+(stream-time clock, so backoff deadlines behave as in the live pipeline).
+False fires 10/48 → 0/48 for "Hey George", and 0/144 across three phrases.
+Positives 14/16 → 15/16 with end-of-sentence 3/4 → 4/4 — and the baseline's
+embedded-wake numbers flatter it: the TTS renders comma pauses long enough
+to satisfy the isolation gate, which real flowing dictation does not (the
+live "wait in silence" reports). Generalization: "Hey Jarvis" 15/16,
+"Hey Alex" (a hard first-name phrase) 14/16, all at zero false fires.
+Borderline candidates may flicker ±1 between runs (Kaldi prewarm conf
+jitter ≤0.09 at the 0.9 anchor); the negative classes are stable at zero.
+
+**Guards:** `tests/unit/plugins/wake/test_vosk_wake_word_agnostic.py` —
+'pedro' and the 2026-08-10 mid-dictation transcripts stay silent (by
+content, not position), the mid-sentence spelled wake fires, the competition
+provably receives span-trimmed audio plus the hypothesis, scattered phrase
+parts never re-score, and the trailing-cut retry runs only after the full
+ring failed.
+
+**Lesson.** Position was standing in for content: the isolation gate
+suppressed mid-speech fires because the competition could not discriminate
+mid-speech audio — but the competition was weak only because it judged
+audio the candidate never claimed. Trim the question to the claimed span
+and give the decoder its own best alternative, and the position heuristic
+(with its dead time) becomes unnecessary. A verify stage that pools
+evidence across the whole window ('any phrase word anywhere') will both
+under-accept the genuine embedded case and over-accept the scattered one;
+score exactly the run that claims to be the phrase.
