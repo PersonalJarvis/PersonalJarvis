@@ -11,6 +11,49 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [1.3.2] — 2026-08-12
+
+The five hundred generated wallpapers are now one click away on any machine,
+the Contacts section grew into a real address book, and Gemini keys from
+Vertex express are routed automatically everywhere a Google key is used.
+
+### Added
+
+- A "Download library" button in the Wallpaper section. It fetches the
+  500-piece generated collection (~190 MB) from the project's asset release,
+  shows live progress, unpacks it safely, and fills the grid without a
+  restart. The app stays fully usable without it: the bundled original
+  remains the default, and a failed download is an honest message with a
+  retry, never a broken section.
+- Contacts became an actionable live master-detail section: profile fields,
+  vCard import/export (UI and CLI), a deep link, and a layout that survives
+  narrow panes.
+- Google keys are probed once for their home (AI Studio or Vertex express)
+  and every Gemini client — chat, realtime voice, wiki embeddings — follows
+  that route automatically; the key form and cards explain it.
+- The in-app feedback form is back beside the Discord invite.
+- The voice bubble in the Agentic IDE shows a subtitle-style live transcript.
+- Dictation keeps soft word onsets and lifts quiet utterances before they
+  reach speech recognition.
+
+### Fixed
+
+- The emergency voice keeps streaming when a TTS quota blocks the primary.
+- Provider errors say "free tier day limit" instead of 500 characters of
+  JSON.
+- macOS: the input-monitoring probe reads `IOHIDCheckAccess`'s 32-bit enum
+  correctly; on Apple Silicon the old 64-bit read could see garbage high
+  bits and silently degrade the permission check.
+- Agentic IDE: a pane follows the size its agent really got, a briefed
+  terminal position no longer spawns a fleet, and background tasks are
+  reaped on any early exit.
+
+### Security
+
+- pypdf lifted past PYSEC-2026-3655 and PYSEC-2026-3656.
+
+---
+
 ## [1.3.1] — 2026-08-11
 
 This release teaches Jarvis to draw. Ask for a picture in plain conversation

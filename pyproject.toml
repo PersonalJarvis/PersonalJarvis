@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "1.3.1"
+version = "1.3.2"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
@@ -239,7 +239,7 @@ dependencies = [
     # RFC 5545 ICS calendars every provider exports. Both pure-Python universal
     # wheels; lazy-imported in jarvis/ultrawiki/connectors/export_import.py with
     # honest per-file degradation when absent (mail/zip/csv ride the stdlib).
-    "pypdf>=5.1",
+    "pypdf>=6.15",
     "icalendar>=6.0",
     # Phase F1 — Telegram channel bot via long-polling (ChannelAdapter).
     "python-telegram-bot>=22,<23",
