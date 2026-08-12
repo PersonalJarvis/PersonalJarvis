@@ -37,6 +37,7 @@
  * as the sentence needs while still pointing at the pane it belongs to.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import {
   ChevronDown,
@@ -50,6 +51,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { RecapReason, RecapSource } from "@/lib/agenticIdeApi";
+import { PANE_BRAND } from "./terminalThemes";
 
 /** How wide the card gets before it starts wrapping, and its floor on a phone. */
 const CARD_WIDTH = 400;
@@ -242,13 +244,17 @@ export function PaneRecap({
     };
   }, [close, open]);
 
+  // The pane's brand ink, keyed to the PANE's own ground (a light pane in a
+  // dark app is a supported combination — see PANE_BRAND in ./terminalThemes).
+  const brand = PANE_BRAND[light ? "light" : "dark"];
+
   // A pane with nothing to say yet keeps showing which CLI it runs, exactly as
   // it did before recaps existed. Inventing a sentence for it would be noise.
   if (!headline) {
     return (
       <span
-        className="truncate text-[11px] uppercase tracking-wider"
-        style={{ color: light ? "#77777f" : "#8a8a95" }}
+        className="truncate font-display text-[11px] font-medium uppercase tracking-[0.14em]"
+        style={{ color: brand.inkFaint }}
         data-testid={`pane-agent-${name}`}
       >
         {displayName}
@@ -273,7 +279,20 @@ export function PaneRecap({
   const attribution = credit(source, writer);
 
   return (
-    <span className="flex min-w-0 flex-1 items-center">
+    <span
+      className="flex min-w-0 flex-1 items-center"
+      // The brand ink as variables rather than inline colours, because an
+      // inline `color` beats every class and would silence the hover below.
+      // Set here as well as on the header, so the line styles itself even when
+      // rendered outside a pane header (tests, future reuse).
+      style={
+        {
+          "--pane-accent": brand.accent,
+          "--pane-ink": brand.ink,
+          "--pane-ink-muted": brand.inkMuted,
+        } as CSSProperties
+      }
+    >
       <button
         ref={lineRef}
         type="button"
@@ -288,8 +307,13 @@ export function PaneRecap({
           if (open) close();
           else reveal();
         }}
-        className="flex min-w-0 flex-1 items-center gap-1 rounded-sm text-left text-[11px] leading-tight outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-primary/60"
-        style={{ color: light ? "#5f5f68" : "#9b9ba6" }}
+        // The title is the bar's main text and dresses like it: the display
+        // face at a readable size, quiet ink that sharpens under the pointer.
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-1 rounded-sm text-left font-display text-[12px] font-medium leading-tight tracking-tight outline-none",
+          "text-[color:var(--pane-ink-muted)] transition-colors hover:text-[color:var(--pane-ink)]",
+          "focus-visible:ring-1 focus-visible:ring-[color:var(--pane-accent)]",
+        )}
       >
         <span className="min-w-0 flex-1 truncate">{headline}</span>
         <ChevronDown

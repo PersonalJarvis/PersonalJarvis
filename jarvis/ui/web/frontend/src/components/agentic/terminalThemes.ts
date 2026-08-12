@@ -152,6 +152,61 @@ export interface PaneChrome {
  * combination), so a token picked for the app lands on the wrong ground exactly
  * when the two disagree.
  */
+/**
+ * Brand ink for a pane's title bar, resolved against the PANE's own ground.
+ *
+ * Not the app's `--primary` token, for the same reason `NOTICE_TONE` exists in
+ * ./AgenticTerminal: terminal appearance is a separate setting from the app
+ * theme (a light pane inside a dark app is a supported combination), and the
+ * app's accent lands on the wrong ground exactly when the two disagree —
+ * signal-yellow on paper is 1.4:1, a call-sign nobody can read. Each
+ * appearance therefore carries its own accent, and it is the same hue that
+ * appearance's terminal theme already uses for the cursor: the dark panes'
+ * signal-yellow, the light panes' gold. The title bar reads as part of the
+ * terminal it crowns, in the brand's two voices.
+ */
+export interface PaneBrand {
+  /** The brand accent on this ground — the focused pane's call-sign plate. */
+  accent: string;
+  /** Ink ON the filled accent plate (black on yellow, white on gold). */
+  onAccent: string;
+  /** Translucent accent for hairlines, tints, and hover grounds. */
+  accentSoft: string;
+  /** A whisper of accent — the wash across the focused title bar. */
+  accentWash: string;
+  /** Primary ink — the resting call-sign, the headline under the pointer. */
+  ink: string;
+  /** Secondary ink — the recap headline at rest. */
+  inkMuted: string;
+  /** Tertiary ink — the CLI label and the seat chip. */
+  inkFaint: string;
+  /** Quiet chip ground behind the resting call-sign and the seat chip. */
+  chip: string;
+}
+
+export const PANE_BRAND: Record<TerminalAppearance, PaneBrand> = {
+  light: {
+    accent: "#a86b00",
+    onAccent: "#ffffff",
+    accentSoft: "rgba(168,107,0,0.18)",
+    accentWash: "rgba(168,107,0,0.05)",
+    ink: "#2b2b33",
+    inkMuted: "#54545d",
+    inkFaint: "#77777f",
+    chip: "rgba(0,0,0,0.055)",
+  },
+  dark: {
+    accent: "#ffd60a",
+    onAccent: "#0a0a0a",
+    accentSoft: "rgba(255,214,10,0.18)",
+    accentWash: "rgba(255,214,10,0.05)",
+    ink: "#f2f2f5",
+    inkMuted: "#a8a8b4",
+    inkFaint: "#8a8a95",
+    chip: "rgba(255,255,255,0.07)",
+  },
+};
+
 export const PANE_CHROME: Record<TerminalAppearance, PaneChrome> = {
   light: {
     shell: "rgba(252, 251, 248, 0.68)",

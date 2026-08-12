@@ -70,6 +70,7 @@ import { SplitBelowIcon, SplitRightIcon } from "./splitIcons";
 import { cn } from "@/lib/utils";
 import {
   MINIMUM_CONTRAST_RATIO,
+  PANE_BRAND,
   PANE_CHROME,
   themeFor,
   type TerminalAppearance,
@@ -2344,6 +2345,9 @@ function PaneHeader({
 }) {
   const t = useT();
   const light = appearance === "light";
+  // The title bar's brand voice, keyed to the PANE's ground rather than the
+  // app theme — see PANE_BRAND in ./terminalThemes for why the two differ.
+  const brand = PANE_BRAND[appearance];
   // What the split menu hangs off. The pane clips everything inside it, so the
   // menu is measured against this bar and drawn in front of the window — see
   // `anchorTo` in ./AgentPicker.
@@ -2456,14 +2460,44 @@ function PaneHeader({
         "group/header relative flex min-h-7 items-center justify-between gap-1.5 overflow-hidden border-b px-2 py-0.5",
         onArrangeStart && (arranging ? "cursor-grabbing" : "cursor-grab"),
       )}
-      style={{
-        borderColor: PANE_CHROME[appearance].border,
-        // Claims the touch gesture for the drag. Without it a touch that starts
-        // on the header scrolls the workspace instead of lifting the pane, and
-        // the drag never begins at all.
-        touchAction: onArrangeStart ? "none" : undefined,
-      }}
+      style={
+        {
+          borderColor: PANE_CHROME[appearance].border,
+          // The focused pane's bar gets a whisper of the accent — one wash on
+          // one pane, never twelve tinted bands (see the class note above).
+          backgroundImage: focused
+            ? `linear-gradient(180deg, ${brand.accentWash}, transparent)`
+            : undefined,
+          // Claims the touch gesture for the drag. Without it a touch that
+          // starts on the header scrolls the workspace instead of lifting the
+          // pane, and the drag never begins at all.
+          touchAction: onArrangeStart ? "none" : undefined,
+          // The bar's brand, published as variables so hover/focus states can
+          // be CLASSES. An inline `color` beats every class (see PaneAction's
+          // note), so anything that changes on interaction reads these instead
+          // of receiving an inline style.
+          "--pane-accent": brand.accent,
+          "--pane-accent-soft": brand.accentSoft,
+          "--pane-ink": brand.ink,
+          "--pane-ink-muted": brand.inkMuted,
+        } as React.CSSProperties
+      }
     >
+      {/* The brand hairline: a signal-yellow (gold, on paper) rule that sweeps
+          from under the call-sign of THE focused pane. It is the workspace's
+          "you are here" mark — drawn on one pane at a time, so it stays a mark
+          rather than a uniform. Opacity, not mounting, so focus changes glide. */}
+      <span
+        aria-hidden="true"
+        data-testid={`pane-header-accent-${name}`}
+        className={cn(
+          "pointer-events-none absolute inset-x-0 bottom-0 h-[2px] transition-opacity duration-200",
+          focused ? "opacity-100" : "opacity-0",
+        )}
+        style={{
+          background: `linear-gradient(90deg, ${brand.accent}, ${brand.accentSoft} 55%, transparent 92%)`,
+        }}
+      />
       <div className="flex min-w-0 flex-1 items-center gap-2">
         {draft !== null ? (
           /*
@@ -2503,14 +2537,11 @@ function PaneHeader({
               }}
               className={cn(
                 "w-full min-w-0 max-w-[9rem] rounded-md px-2 py-0.5 font-display text-[13px] font-semibold tracking-tight outline-none",
-                "border border-primary/50 transition-colors focus:border-primary disabled:opacity-60",
+                // The pane's own accent, not the app's: the vars are set on the
+                // header, so a light pane in a dark app still edits in gold.
+                "border border-[color:var(--pane-accent-soft)] transition-colors focus:border-[color:var(--pane-accent)] disabled:opacity-60",
               )}
-              style={{
-                color: light ? "#2b2b33" : "#e8e8ec",
-                background: light
-                  ? "rgba(0,0,0,0.04)"
-                  : "rgba(255,255,255,0.06)",
-              }}
+              style={{ color: brand.ink, background: brand.chip }}
             />
             <button
               type="submit"
@@ -2518,9 +2549,9 @@ function PaneHeader({
               aria-label={`Save name for ${name}`}
               data-testid={`pane-rename-save-${name}`}
               className={cn(
-                "flex h-5 w-5 shrink-0 items-center justify-center rounded text-primary",
-                "transition-colors duration-150 hover:bg-primary/15 disabled:opacity-40",
-                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/70",
+                "flex h-5 w-5 shrink-0 items-center justify-center rounded text-[color:var(--pane-accent)]",
+                "transition-colors duration-150 hover:bg-[color:var(--pane-accent-soft)] disabled:opacity-40",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--pane-accent)]",
               )}
             >
               {saving ? (
@@ -2535,9 +2566,14 @@ function PaneHeader({
               aria-label={`Cancel renaming ${name}`}
               onClick={() => setDraft(null)}
               className={cn(
-                "flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground",
-                "transition-colors duration-150 hover:bg-muted hover:text-foreground",
-                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/70",
+                "flex h-5 w-5 shrink-0 items-center justify-center rounded",
+                "transition-colors duration-150",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--pane-accent)]",
+                // On the pane's ground, so the pane's ink — not the app's
+                // muted-foreground, which disagrees exactly in mixed mode.
+                light
+                  ? "text-[#6b6b73] hover:bg-scrim/10 hover:text-[#2b2b33]"
+                  : "text-[#9a9aa5] hover:bg-sheen/10 hover:text-[#e8e8ec]",
               )}
             >
               <X className="h-3 w-3" />
@@ -2563,16 +2599,22 @@ function PaneHeader({
                   : undefined
               }
               title={onRename ? `${name} — double-click to rename` : undefined}
-              // The focused pane's call-sign is the workspace's one standing
-              // accent; every other name is plain text. A filled badge on all
-              // twelve panes marked nothing, because a marker everyone wears
-              // is a uniform.
-              className={cn(
-                "shrink-0 rounded-md px-1.5 py-0.5 font-display text-[13px] font-semibold tracking-tight",
-                focused ? "bg-primary/20 text-primary" : "",
-              )}
+              // The focused pane's call-sign wears the brand plate — filled
+              // signal-yellow with black type on dark panes, gold with white
+              // type on light ones. Every other name sits on a quiet chip so
+              // the plate stays the workspace's one standing accent: a filled
+              // badge on all twelve panes marked nothing, because a marker
+              // everyone wears is a uniform. The colours come from PANE_BRAND
+              // (the pane's own ground), never the app theme.
+              className="shrink-0 rounded-md px-1.5 py-0.5 font-display text-[13px] font-semibold leading-none tracking-tight transition-[background-color,color,box-shadow] duration-150"
               style={
-                focused ? undefined : { color: light ? "#2b2b33" : "#e8e8ec" }
+                focused
+                  ? {
+                      background: brand.accent,
+                      color: brand.onAccent,
+                      boxShadow: `0 1px 8px ${brand.accentSoft}`,
+                    }
+                  : { background: brand.chip, color: brand.ink }
               }
             >
               {name}
@@ -2647,10 +2689,11 @@ function PaneHeader({
             // Allowed to give way (`min-w-0`, no `shrink-0`): which seat a pane
             // bills is worth a badge, but never worth pushing the call-sign or
             // the pane's own state off a narrow header to say it.
-            className="min-w-0 max-w-[8rem] truncate rounded-full px-1.5 text-[10px] tracking-wide"
+            className="min-w-0 max-w-[8rem] truncate rounded-full px-2 py-px font-display text-[10px] font-medium tracking-wide"
             style={{
-              color: light ? "#6b6b73" : "#9a9aa5",
-              backgroundColor: light ? "#00000010" : "#ffffff12",
+              color: brand.inkFaint,
+              backgroundColor: brand.chip,
+              boxShadow: `inset 0 0 0 1px ${PANE_CHROME[appearance].border}`,
             }}
             title={`Running on ${accountLabel}`}
             data-testid={`pane-account-${name}`}
@@ -2806,8 +2849,9 @@ function PaneAction({
         "transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-30",
         // Reachable by keyboard and visibly so. The cluster is revealed by
         // `focus-within`, which is worth nothing if the focused button then
-        // looks identical to its four neighbours.
-        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/70",
+        // looks identical to its four neighbours. The ring reads the header's
+        // brand variable, so it is yellow on dark panes and gold on light ones.
+        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--pane-accent)]",
         // The resting colour is a CLASS rather than an inline style, and that is
         // load-bearing rather than tidiness: an inline `color` beats every
         // class, so the hover colour below would simply never take effect.
