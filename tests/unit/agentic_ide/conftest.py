@@ -101,6 +101,19 @@ def _never_touch_real_agent_configs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _fresh_writer_cache() -> None:
+    """Start every test without a remembered brief writer.
+
+    ``writer.resolve_writer`` answers repeats from a short-lived cache in
+    production. Between tests that cache is a leak: the first test to resolve a
+    writer would hand its monkeypatched brain to every later test in the run.
+    """
+    from jarvis.agentic_ide import writer
+
+    writer.invalidate_writer_cache()
+
+
+@pytest.fixture(autouse=True)
 def _agent_history_in_tmp(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Path:

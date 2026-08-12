@@ -46,10 +46,50 @@ the user their instruction.
 
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Sequence
 from typing import Any
 
 from loguru import logger
+
+#: How long one successful resolution answers for everybody. Resolving costs a
+#: config load plus a sign-in probe per candidate CLI (~0.5-1 s, run per PANE of
+#: a fan-out today), and the answer changes on human timescales: a sign-in, a
+#: sign-out, a settings change. Failures are never cached — a user who just
+#: fixed their key must not wait out a stale "nothing qualifies".
+_CACHE_TTL_S = 45.0
+
+_cache_lock = threading.Lock()
+#: ``(resolved_at, cli_timeout_s, brain, source)`` of the last success, or None.
+#: Deliberately NOT the resolver's shared ``(provider, model)`` cache: these are
+#: structured-prompt instances, and parking one where a voice tier could pick it
+#: up is the exact leak ``resolve_subscription_brain`` documents against.
+_cached: tuple[float, float | None, Any, str] | None = None
+
+
+def invalidate_writer_cache() -> None:
+    """Forget the cached writer (settings change, sign-out, failed call)."""
+    global _cached
+    with _cache_lock:
+        _cached = None
+
+
+def _cached_writer(cli_timeout_s: float | None) -> tuple[Any, str] | None:
+    """The still-fresh cached resolution for this budget, or None."""
+    with _cache_lock:
+        if _cached is None:
+            return None
+        resolved_at, budget, brain, source = _cached
+        if time.monotonic() - resolved_at > _CACHE_TTL_S or budget != cli_timeout_s:
+            return None
+        return brain, source
+
+
+def _remember_writer(cli_timeout_s: float | None, brain: Any, source: str) -> None:
+    global _cached
+    with _cache_lock:
+        _cached = (time.monotonic(), cli_timeout_s, brain, source)
 
 
 def _load_config() -> Any:
@@ -89,7 +129,21 @@ def resolve_writer(*, cli_timeout_s: float | None = None) -> tuple[Any | None, s
 
     Returns ``(None, "")`` whenever nothing qualifies — the caller then uses its
     deterministic layer and reports that honestly.
+
+    A success is answered from a short-lived cache (``_CACHE_TTL_S``): a fleet
+    fan-out resolves once per pane within the same second, and each miss spends
+    a config load plus a sign-in probe per candidate CLI on the same answer.
     """
+    hit = _cached_writer(cli_timeout_s)
+    if hit is not None:
+        return hit
+    brain, source = _resolve_writer_uncached(cli_timeout_s=cli_timeout_s)
+    if brain is not None:
+        _remember_writer(cli_timeout_s, brain, source)
+    return brain, source
+
+
+def _resolve_writer_uncached(*, cli_timeout_s: float | None) -> tuple[Any | None, str]:
     try:
         config = _load_config()
         choice = _configured_choice(config)
@@ -141,6 +195,9 @@ def resolve_rescue_writer(
     pin still degrades at resolution time rather than quietly landing on a
     provider the user did not choose.
     """
+    # A rescue means the resolved writer just failed in someone's hands, so a
+    # cached copy of that resolution must not answer the next composition.
+    invalidate_writer_cache()
     tried = {str(source).split(":", 1)[0] for source in exclude if source}
     try:
         config = _load_config()
@@ -209,4 +266,4 @@ def _tool_model_writer(config: Any) -> tuple[Any | None, str]:
     return brain, f"tool_model:{name}"
 
 
-__all__ = ["resolve_rescue_writer", "resolve_writer"]
+__all__ = ["invalidate_writer_cache", "resolve_rescue_writer", "resolve_writer"]

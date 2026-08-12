@@ -116,3 +116,109 @@ async def test_complete_raises_a_clear_error_when_the_cli_is_absent(
     with pytest.raises(RuntimeError, match="Claude CLI"):
         async for _delta in brain.complete(_req()):
             pass
+
+
+_FAST_FLAGS = frozenset(
+    {
+        "--tools",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--no-session-persistence",
+        "--effort",
+    }
+)
+
+
+def test_structured_turns_shed_startup_weight_the_cli_supports() -> None:
+    """A structured turn is pure writing: no tools, no MCP servers, no skills,
+    no saved session. Every one of those is cold-start cost on a call the user
+    is waiting through (27.5 s -> 16.4 s measured on the composer's payload)."""
+    brain = ClaudeCliBrain(structured_prompts=True)
+    argv, _prompt = brain.build_invocation(_req(), cli_flags=_FAST_FLAGS)
+    assert "--tools" in argv
+    assert argv[argv.index("--tools") + 1] == ""
+    for flag in ("--strict-mcp-config", "--disable-slash-commands",
+                 "--no-session-persistence"):
+        assert flag in argv
+
+
+def test_an_older_cli_never_sees_a_flag_it_would_die_on() -> None:
+    """An unknown option makes the CLI exit with a usage error instead of an
+    answer — a speed-up that bricks the writer on an older install (§3)."""
+    brain = ClaudeCliBrain(structured_prompts=True)
+    for flags in (frozenset(), None):
+        argv, _prompt = brain.build_invocation(_req(), cli_flags=flags)
+        for flag in _FAST_FLAGS:
+            assert flag not in argv
+
+
+def test_the_callers_reasoning_effort_is_forwarded() -> None:
+    """The composer documents "medium" as its quality floor; the CLI's own
+    default may think longer without writing a better brief."""
+    from jarvis.core.protocols import BrainMessage, BrainRequest
+
+    req = BrainRequest(
+        messages=(BrainMessage(role="user", content="payload"),),
+        system="CONTRACT",
+        reasoning_effort="medium",
+        stream=True,
+    )
+    brain = ClaudeCliBrain(structured_prompts=True)
+    argv, _prompt = brain.build_invocation(req, cli_flags=_FAST_FLAGS)
+    assert argv[argv.index("--effort") + 1] == "medium"
+    # An unsupported CLI never sees it; "none" has no CLI level and stays home.
+    bare, _prompt = brain.build_invocation(req, cli_flags=frozenset())
+    assert "--effort" not in bare
+
+
+def test_conversational_turns_keep_their_shape() -> None:
+    """The lean set belongs to structured briefs; the voice path deliberately
+    keeps its read-only lookups and is not this change's to alter."""
+    brain = ClaudeCliBrain(structured_prompts=False)
+    argv, _prompt = brain.build_invocation(_req(), cli_flags=_FAST_FLAGS)
+    assert "--tools" not in argv
+    assert "--strict-mcp-config" not in argv
+
+
+def test_the_flag_probe_reads_the_clis_own_help(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ground truth over version guesswork: the help text is the CLI's own
+    statement of what it accepts."""
+    from types import SimpleNamespace
+
+    from jarvis.plugins.brain import claude_cli
+
+    claude_cli.reset_flag_probe_cache()
+    monkeypatch.setattr(claude_cli, "_resolve_claude_binary", lambda: "claude")
+    monkeypatch.setattr(
+        claude_cli.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(
+            stdout="Options:\n  --tools <tools...>\n  --effort <level>\n"
+        ),
+    )
+    try:
+        flags = claude_cli._probe_supported_flags()  # noqa: SLF001
+        assert {"--tools", "--effort"} <= flags
+        assert "--strict-mcp-config" not in flags
+    finally:
+        claude_cli.reset_flag_probe_cache()
+
+
+def test_a_failed_probe_degrades_to_the_minimal_invocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No probe answer means no gated flag — slower, never broken."""
+    from jarvis.plugins.brain import claude_cli
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise OSError("no spawn on this host")
+
+    claude_cli.reset_flag_probe_cache()
+    monkeypatch.setattr(claude_cli, "_resolve_claude_binary", lambda: "claude")
+    monkeypatch.setattr(claude_cli.subprocess, "run", _boom)
+    try:
+        assert claude_cli._probe_supported_flags() == frozenset()  # noqa: SLF001
+    finally:
+        claude_cli.reset_flag_probe_cache()

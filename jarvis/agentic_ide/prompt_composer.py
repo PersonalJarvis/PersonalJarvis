@@ -72,6 +72,16 @@ All of that now overlaps and none of it runs on the loop, so the model call
 starts as soon as the slowest single piece of preparation is done instead of
 after their sum.
 
+Measured again live 2026-08-12 (09:54, T1+T3): the writer call was 95%+ of a
+72 s delivery, and two things inside it were pure overhead. First, every
+subscription-CLI turn paid to start MCP servers, skills, and session
+persistence it can never use — the CLI brain now switches those off for
+structured turns (see ``claude_cli``), which cut the same real payload from
+27.5 s to 16.4 s with the brief unchanged. Second, a slow writer was waited
+out IN FULL before anyone else was allowed to start; attempts now overlap
+after ``HEDGE_AFTER_S`` and the first valid brief wins, which bounds the tail
+without demoting the model.
+
 **On the silence.** The rest is perceived latency: for 10-27 s nothing at all
 was said, so a working composer and a wedged one looked identical. The three
 beats below (``start`` → ``thinking``/``drafting`` → ``ready``, and ``sent``
@@ -81,6 +91,7 @@ than none. They are terminal lines, so they follow the English-artifact rule
 like every other log line; the SPOKEN readback the user hears is a separate
 surface and stays in the turn's resolved output language.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -129,6 +140,20 @@ MAX_FILE_REFERENCES = 5
 # pays a 10-12 s cold process start before it thinks at all, so handing one a
 # shorter window buys the deterministic prompt AND the wait.
 _MIN_ATTEMPT_S = 20.0
+
+# How long the chosen writer may stay silent before the next rung starts
+# WRITING ALONGSIDE it — not instead of it: the first valid brief wins and the
+# other attempt is cancelled. The serial shape this replaces is where the
+# minute-plus deliveries came from (live 2026-08-12 09:54: a healthy but slow
+# subscription call ran 71.4 s while the user waited; a hung one could burn 70 s
+# before the rescue was even ALLOWED to start). Hedging bounds that tail at
+# roughly this constant plus the second writer's own time.
+#
+# Above the healthy p90 on purpose: a brief on the lean CLI invocation measures
+# 16-25 s end to end, so a hedge at 30 s fires only on genuinely slow calls and
+# the double spend stays rare. The hedge crosses to the SAME rungs the rescue
+# already uses on failure — quality-tier by construction, never a demotion.
+HEDGE_AFTER_S = 30.0
 
 # Speech artefacts the deterministic layer removes. Matching *input vocabulary*
 # in the supported locales — these are the words people actually say while
@@ -204,6 +229,7 @@ STAGE_START = "start"
 STAGE_THINKING = "thinking"
 STAGE_DRAFTING = "drafting"
 STAGE_RETRY = "retry"
+STAGE_HEDGE = "hedge"
 STAGE_READY = "ready"
 STAGE_FALLBACK = "fallback"
 STAGE_SENT = "sent"
@@ -342,9 +368,7 @@ _READY_PHRASES = (
 def _start_message(kind: str, instruction: str, terminal_name: str) -> str:
     """The opening line, matched to what the user actually asked for."""
     options = _START_PHRASES.get(kind) or _START_PHRASES[KIND_NEUTRAL]
-    return _variant(options, instruction).format(
-        name=terminal_name, subject=_subject(instruction)
-    )
+    return _variant(options, instruction).format(name=terminal_name, subject=_subject(instruction))
 
 
 def _thinking_message(
@@ -359,9 +383,7 @@ def _thinking_message(
         context = "no matching files, so your words alone"
     if writer_label:
         context = f"{context}, via {writer_label}"
-    return _variant(_THINKING_PHRASES, instruction).format(
-        name=terminal_name, context=context
-    )
+    return _variant(_THINKING_PHRASES, instruction).format(name=terminal_name, context=context)
 
 
 def _ready_message(
@@ -394,6 +416,20 @@ def _retry_message(terminal_name: str, *, reason: str, writer: str) -> str:
     """
     taking_over = f"{writer} is taking over" if writer else "another writer is taking over"
     return f"{terminal_name}'s writer dropped out ({reason}) - {taking_over}."
+
+
+def _hedge_message(terminal_name: str, *, writer: str) -> str:
+    """Said when a slow — not dead — writer gets a second one racing it.
+
+    Deliberately NOT the retry wording: "dropped out" would be a lie about a
+    writer that is still working, and the user should know two are now writing
+    so whichever brief arrives is not a surprise.
+    """
+    second = writer or "another writer"
+    return (
+        f"{terminal_name}'s brief is taking long - {second} is drafting in "
+        "parallel; the first good brief wins."
+    )
 
 
 def _brief_defect(composed: str) -> str:
@@ -668,9 +704,7 @@ async def _compose_once(
         ),
         on_first_delta=lambda: notify(
             STAGE_DRAFTING,
-            _variant(_DRAFTING_PHRASES, base_instruction or said).format(
-                name=terminal_name
-            ),
+            _variant(_DRAFTING_PHRASES, base_instruction or said).format(name=terminal_name),
         ),
     )
 
@@ -769,9 +803,7 @@ async def compose(
     def notify(stage: str, message: str) -> None:
         _emit(
             on_progress,
-            ComposeNotice(
-                stage=stage, message=message, terminal=terminal_name, kind=kind
-            ),
+            ComposeNotice(stage=stage, message=message, terminal=terminal_name, kind=kind),
         )
 
     def _deterministic(
@@ -789,9 +821,7 @@ async def compose(
         )
 
     if not use_llm:
-        found = await asyncio.to_thread(
-            _file_candidates, session, subject, max_files * 2
-        )
+        found = await asyncio.to_thread(_file_candidates, session, subject, max_files * 2)
         return _deterministic("raw", candidates=found)
 
     started = time.monotonic()
@@ -833,72 +863,142 @@ async def compose(
     # every composition for days. That is the single-provider brick of AP-22,
     # so a failed attempt crosses to the next rung.
     #
+    # Attempts run CONCURRENTLY, in two situations. On a FAILURE the next rung
+    # starts at once, as before. On a STALL (``HEDGE_AFTER_S`` with no answer)
+    # the next rung starts WHILE the first is still writing — the serial shape
+    # this replaces made the user wait out a slow writer in full before anyone
+    # else was allowed to begin, which is where the minute-plus deliveries came
+    # from. The first valid brief wins and every other attempt is cancelled.
+    #
     # All attempts share ONE budget. The user is waiting through the whole
     # sequence, and three full timeouts in a row is not a rescue — it is the
     # same fallback three times slower.
     deadline = started + COMPOSE_TIMEOUT_S
     tried: list[str] = [writer_source] if writer_source else []
+    attempts: dict[asyncio.Task[str], str] = {}
+    # A pinned brain is the caller deciding — no hedge, no rescue, as before.
+    may_substitute = writer_task is not None
+    hedged = not may_substitute
     composed = ""
     reason = ""
 
-    while True:
+    def _spawn_attempt(brn, source: str) -> bool:  # noqa: ANN001 - Brain
+        """Start one writer on the brief, unless the budget says otherwise."""
         remaining = deadline - time.monotonic()
         if remaining < _MIN_ATTEMPT_S:
-            _discard(context_task)
-            return degrade(reason or f"composer timed out after {COMPOSE_TIMEOUT_S:g}s")
-
-        try:
-            composed = _strip_wrapper(
-                await asyncio.wait_for(
-                    _compose_once(
-                        brain=writer,
-                        session=session,
-                        said=said,
-                        base_instruction=base_instruction,
-                        terminal_name=terminal_name,
-                        agent_display=agent_display,
-                        candidates=candidates,
-                        kind=kind,
-                        context=context_task,
-                        notify=notify,
-                        attachments=attached,
-                        conversation=spoken_before,
-                    ),
-                    timeout=remaining,
-                )
+            return False
+        task = asyncio.create_task(
+            asyncio.wait_for(
+                _compose_once(
+                    brain=brn,
+                    session=session,
+                    said=said,
+                    base_instruction=base_instruction,
+                    terminal_name=terminal_name,
+                    agent_display=agent_display,
+                    candidates=candidates,
+                    kind=kind,
+                    context=context_task,
+                    notify=notify,
+                    attachments=attached,
+                    conversation=spoken_before,
+                ),
+                timeout=remaining,
             )
-        except TimeoutError:
-            composed, reason = "", f"composer timed out after {COMPOSE_TIMEOUT_S:g}s"
-        except Exception as exc:  # noqa: BLE001 - any provider failure crosses over
-            logger.info("Agentic IDE prompt composer failed on {}: {}", writer_source, exc)
-            composed, reason = "", f"composer unavailable ({type(exc).__name__})"
-        else:
-            reason = _brief_defect(composed)
-            if not reason:
-                break
-            logger.info(
-                "Agentic IDE prompt composer: {} from {} ({} chars)",
-                reason,
-                writer_source or "the pinned writer",
-                len(composed),
-            )
-
-        if writer_task is None:
-            # The caller pinned this model explicitly. Substituting another one
-            # is not ours to decide.
-            _discard(context_task)
-            return degrade(reason)
-
-        nxt, nxt_source = await asyncio.to_thread(_rescue_writer, tried)
-        if nxt is None:
-            _discard(context_task)
-            return degrade(reason)
-        writer, writer_source = nxt, nxt_source
-        tried.append(nxt_source)
-        notify(
-            STAGE_RETRY,
-            _retry_message(terminal_name, reason=reason, writer=_writer_label(nxt)),
         )
+        attempts[task] = source
+        return True
+
+    def _cancel_attempts() -> None:
+        for leftover in attempts:
+            _discard(leftover)
+        attempts.clear()
+
+    if not _spawn_attempt(writer, writer_source):
+        _discard(context_task)
+        return degrade(f"composer timed out after {COMPOSE_TIMEOUT_S:g}s")
+
+    try:
+        while attempts and not composed:
+            now = time.monotonic()
+            if now >= deadline:
+                break
+            wait_s = deadline - now
+            if not hedged:
+                wait_s = min(wait_s, max(started + HEDGE_AFTER_S - now, 0.0))
+            done, _pending = await asyncio.wait(
+                set(attempts), timeout=wait_s, return_when=asyncio.FIRST_COMPLETED
+            )
+
+            if not done and not hedged:
+                # Nobody failed — the writer is just slow. The next rung starts
+                # alongside it rather than after it; at most once per brief.
+                hedged = True
+                if deadline - time.monotonic() >= _MIN_ATTEMPT_S:
+                    nxt, nxt_source = await asyncio.to_thread(_rescue_writer, tried)
+                    if nxt is not None and _spawn_attempt(nxt, nxt_source):
+                        tried.append(nxt_source)
+                        notify(
+                            STAGE_HEDGE,
+                            _hedge_message(terminal_name, writer=_writer_label(nxt)),
+                        )
+                continue
+
+            for task in done:
+                source = attempts.pop(task)
+                try:
+                    candidate = _strip_wrapper(task.result())
+                except (TimeoutError, asyncio.CancelledError):
+                    reason = f"composer timed out after {COMPOSE_TIMEOUT_S:g}s"
+                except Exception as exc:  # noqa: BLE001 - any failure crosses over
+                    logger.info(
+                        "Agentic IDE prompt composer failed on {}: {}",
+                        source or "the pinned writer",
+                        exc,
+                    )
+                    reason = f"composer unavailable ({type(exc).__name__})"
+                else:
+                    defect = _brief_defect(candidate)
+                    if not defect:
+                        composed = candidate
+                        break
+                    reason = defect
+                    logger.info(
+                        "Agentic IDE prompt composer: {} from {} ({} chars)",
+                        defect,
+                        source or "the pinned writer",
+                        len(candidate),
+                    )
+
+            if composed or attempts:
+                # Won, or a sibling attempt is still writing and may still win.
+                continue
+            if not may_substitute:
+                # The caller pinned this model explicitly. Substituting another
+                # one is not ours to decide.
+                break
+            if deadline - time.monotonic() < _MIN_ATTEMPT_S:
+                break
+            nxt, nxt_source = await asyncio.to_thread(_rescue_writer, tried)
+            if nxt is None or not _spawn_attempt(nxt, nxt_source):
+                break
+            tried.append(nxt_source)
+            notify(
+                STAGE_RETRY,
+                _retry_message(terminal_name, reason=reason, writer=_writer_label(nxt)),
+            )
+    except asyncio.CancelledError:
+        # The caller died mid-composition (voice hangup, dropped client). The
+        # attempt tasks are OURS — without this they would keep spending
+        # providers on a brief nobody can deliver.
+        _cancel_attempts()
+        _discard(context_task)
+        raise
+
+    _cancel_attempts()
+    if not composed:
+        _discard(context_task)
+        return degrade(reason or f"composer timed out after {COMPOSE_TIMEOUT_S:g}s")
 
     # Keep only the references that survive an existence check — the model may
     # echo a candidate that was renamed, or invent one outright. A dead @path
@@ -932,9 +1032,11 @@ async def compose(
 
 __all__ = [
     "COMPOSE_TIMEOUT_S",
+    "HEDGE_AFTER_S",
     "MAX_FILE_REFERENCES",
     "STAGE_DRAFTING",
     "STAGE_FALLBACK",
+    "STAGE_HEDGE",
     "STAGE_READY",
     "STAGE_RETRY",
     "STAGE_SENT",

@@ -30,13 +30,17 @@ Getting that choice wrong is the failure mode worth guarding: a structured
 caller served conversationally gets three fluent sentences that read like a
 valid result. Nobody inspects an answer that looks fine.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import suppress
@@ -84,6 +88,87 @@ _CLI_SYSTEM = (
 # slow here, so older history is dropped rather than paid for.
 _CONVO_TURNS = 6
 
+# What a STRUCTURED print-mode turn switches off, and why it may. A structured
+# caller hands over the complete material in the payload and wants prose back;
+# the turn never legitimately uses a tool, an MCP server, a skill, or the saved
+# session. Yet a bare ``claude -p`` starts all of it: it connects every
+# user-configured MCP server, syncs plugins and skills, and persists the session
+# to disk — pure cold-start cost on a call whose whole output is one brief.
+# Measured on the maintainer's box 2026-08-12 with the composer's real payload:
+# 27.5 s bare against 16.4 s with this set, identical brief quality (the lean
+# run also stopped wrapping the brief in a code fence, which the composer
+# otherwise has to peel off).
+#
+# Each entry is gated on the probed flag set below, because a downloader's CLI
+# may be older than these flags — an unknown option makes the CLI exit with an
+# error instead of an answer, which would turn a speed-up into a broken writer
+# (§3: any CLI version keeps working).
+_FAST_STRUCTURED_ARGS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("--tools", ("--tools", "")),  # no built-in tools at all — writing only
+    ("--strict-mcp-config", ("--strict-mcp-config",)),  # no MCP servers
+    ("--disable-slash-commands", ("--disable-slash-commands",)),  # no skills
+    ("--no-session-persistence", ("--no-session-persistence",)),  # no disk save
+)
+
+# ``BrainRequest.reasoning_effort`` values the CLI's ``--effort`` accepts
+# verbatim. "none" is deliberately absent: the CLI has no such level, and the
+# composer's documented floor is a modest effort, never zero.
+_EFFORT_LEVELS: frozenset[str] = frozenset({"low", "medium", "high"})
+
+# The probed set of long options this install's CLI understands, filled once
+# per process from ``claude --help``. ``None`` means "not probed yet"; an empty
+# set means the probe failed and every gated flag stays off — slower, but every
+# turn still works.
+_supported_flags: frozenset[str] | None = None
+_probe_lock = threading.Lock()
+
+_HELP_PROBE_TIMEOUT_S = 20.0
+_FLAG_RE = re.compile(r"--[a-z][a-z0-9-]*")
+
+
+def _probe_supported_flags() -> frozenset[str]:
+    """The long options ``claude --help`` advertises, probed once per process.
+
+    Ground truth over guesswork: gating on a version number means maintaining a
+    private map of which release introduced which flag, and getting one entry
+    wrong turns every composition into a CLI usage error. The help text is the
+    CLI's own statement of what it accepts.
+
+    Never raises. A missing binary, a hung probe, or unparseable output all
+    degrade to the empty set — the invocation then simply stays as lean as the
+    oldest supported CLI.
+    """
+    global _supported_flags
+    with _probe_lock:
+        if _supported_flags is not None:
+            return _supported_flags
+        flags: frozenset[str] = frozenset()
+        binary = _resolve_claude_binary()
+        if binary is not None:
+            try:
+                creationflags = NO_WINDOW_CREATIONFLAGS if sys.platform == "win32" else 0
+                result = subprocess.run(  # noqa: S603 - fixed argv, no user input
+                    [binary, "--help"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=_HELP_PROBE_TIMEOUT_S,
+                    creationflags=creationflags,
+                )
+                flags = frozenset(_FLAG_RE.findall(result.stdout or ""))
+            except Exception:  # noqa: BLE001 - a failed probe costs speed, not the turn
+                log.debug("claude-cli: --help probe failed", exc_info=True)
+        _supported_flags = flags
+        return flags
+
+
+def reset_flag_probe_cache() -> None:
+    """Forget the probed flag set (tests; a CLI upgrade mid-process)."""
+    global _supported_flags
+    with _probe_lock:
+        _supported_flags = None
+
 
 def _resolve_claude_binary() -> str | None:
     """On-PATH ``claude`` binary (Windows shim variants included), or None."""
@@ -107,8 +192,7 @@ def _claude_subscription_connected() -> bool:
 
         status = ClaudeAuthService().status()
         return bool(
-            getattr(status, "connected", False)
-            and getattr(status, "mode", "") == "subscription"
+            getattr(status, "connected", False) and getattr(status, "mode", "") == "subscription"
         )
     except Exception:  # noqa: BLE001 - a probe degrades, never raises
         log.debug("claude-cli: subscription probe failed", exc_info=True)
@@ -175,12 +259,19 @@ class ClaudeCliBrain:
 
     # ---- invocation ----------------------------------------------------
 
-    def build_invocation(self, req: BrainRequest) -> tuple[list[str], str]:
+    def build_invocation(
+        self, req: BrainRequest, cli_flags: frozenset[str] | None = None
+    ) -> tuple[list[str], str]:
         """The argv and the stdin payload for one turn.
 
         Pure and public because this pair — not the subprocess plumbing — is
         what decides whether the answer comes back in the right shape, and that
         is the property worth testing directly.
+
+        ``cli_flags`` is the probed set of long options this install's CLI
+        understands (see ``_probe_supported_flags``). Only flags present there
+        are added, so an older CLI never sees an option it would die on. ``None``
+        reads as "unknown" and keeps the invocation at its lowest common shape.
         """
         binary = _resolve_claude_binary() or "claude"
         argv: list[str] = [binary, "-p", "--output-format", "text"]
@@ -189,6 +280,17 @@ class ClaudeCliBrain:
         argv += ["--disallowed-tools", *_DISALLOWED_TOOLS]
 
         if self._structured_prompts:
+            known = cli_flags or frozenset()
+            for flag, args in _FAST_STRUCTURED_ARGS:
+                if flag in known:
+                    argv += args
+            # The caller's reasoning_effort is a QUALITY decision it already
+            # made (the composer documents "medium" as its floor). The CLI's
+            # own default may think longer without writing a better brief, so
+            # the choice is forwarded rather than dropped.
+            effort = str(getattr(req, "reasoning_effort", "") or "").strip()
+            if "--effort" in known and effort in _EFFORT_LEVELS:
+                argv += ["--effort", effort]
             system = str(getattr(req, "system", "") or "").strip()
             if system:
                 argv += ["--system-prompt", system]
@@ -236,15 +338,21 @@ class ClaudeCliBrain:
                 "and run 'claude' once to sign in."
             )
 
-        argv, prompt = self.build_invocation(req)
+        # One help spawn per process lifetime: the first turn pays ~2-3 s for
+        # the probe, every later turn reads the cached set.
+        cli_flags = (
+            _supported_flags
+            if _supported_flags is not None
+            else await asyncio.to_thread(_probe_supported_flags)
+        )
+        argv, prompt = self.build_invocation(req, cli_flags=cli_flags)
         # A throwaway working directory: this brain answers questions and has no
         # business seeing, or being trusted in, the user's repository.
         workdir = tempfile.mkdtemp(prefix="jarvis-claude-brain-")
         creationflags = NO_WINDOW_CREATIONFLAGS if sys.platform == "win32" else 0
 
         log.info(
-            "claude-cli: spawning print-mode turn (model=%s, structured=%s, "
-            "prompt=%d chars)",
+            "claude-cli: spawning print-mode turn (model=%s, structured=%s, prompt=%d chars)",
             self._model or "<cli default>",
             self._structured_prompts,
             len(prompt),
@@ -324,9 +432,7 @@ class ClaudeCliBrain:
             raise
         except TimeoutError as exc:
             await _kill()
-            log.warning(
-                "claude-cli: no answer within %.0fs (killed)", self.cli_timeout_s
-            )
+            log.warning("claude-cli: no answer within %.0fs (killed)", self.cli_timeout_s)
             raise RuntimeError(
                 f"Claude CLI did not answer within {self.cli_timeout_s:.0f}s."
             ) from exc
@@ -343,9 +449,7 @@ class ClaudeCliBrain:
                 proc.returncode,
                 detail[:200],
             )
-            raise RuntimeError(
-                "Claude CLI returned no answer" + (f": {detail}" if detail else ".")
-            )
+            raise RuntimeError("Claude CLI returned no answer" + (f": {detail}" if detail else "."))
 
         log.info(
             "claude-cli turn ok: %d chars in %.1fs on the subscription",
@@ -364,4 +468,4 @@ class ClaudeCliBrain:
         return 0.0
 
 
-__all__ = ["ClaudeCliBrain"]
+__all__ = ["ClaudeCliBrain", "reset_flag_probe_cache"]

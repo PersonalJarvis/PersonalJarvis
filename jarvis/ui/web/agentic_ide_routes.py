@@ -4108,6 +4108,12 @@ async def set_prompt_writer(payload: PromptWriterRequest) -> PromptWriterState:
         )
         raise HTTPException(status_code=409, detail=detail)
     _persist_prompt_writer(requested)
+    # The composer answers "who writes" from a short-lived cache; a user who
+    # just changed the answer must not have the next brief written by the old
+    # one for the rest of the TTL.
+    from jarvis.agentic_ide.writer import invalidate_writer_cache
+
+    invalidate_writer_cache()
     return PromptWriterState(prompt_writer=requested, options=_writer_options())
 
 
