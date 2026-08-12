@@ -79,7 +79,6 @@ import {
 import { ContinueInterrupted } from "./ContinueInterrupted";
 import { PaneNotifications } from "./PaneNotifications";
 import { isVoiceActive } from "./useVoiceCall";
-import { PromptPreview } from "./PromptPreview";
 import { PromptEditor } from "./PromptEditor";
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { WorkspaceExplorer } from "./WorkspaceExplorer";
@@ -106,7 +105,6 @@ import {
   attachToTerminal,
   closeTerminal,
   closeTerminals,
-  composePrompt,
   moveTerminal,
   clearTerminalRecap,
   fetchTerminalActivity,
@@ -118,7 +116,6 @@ import {
   syncAgenticIdeSurface,
   setTerminalRecap,
   promptTerminal,
-  type ComposedPreview,
   type DropAttachment,
   type IdeAccountState,
   type IdeState,
@@ -794,17 +791,12 @@ export function AgenticGrid({
     recapCache.workspaceId === session.id ? recapCache.rows : {};
   // The editor owns ordinary keystrokes so typing does not re-render every
   // xterm pane in this very large component. This seed changes only when the
-  // parent intentionally replaces the draft (successful send or preview undo).
+  // parent intentionally replaces the draft (successful send).
   const [promptSeed, setPromptSeed] = useState({ value: "", revision: 0 });
   const replacePrompt = useCallback((value: string) => {
     setPromptSeed((current) => ({ value, revision: current.revision + 1 }));
   }, []);
   const [sending, setSending] = useState(false);
-  // The composed prompt waiting for the user's approval, and the wording they
-  // originally typed. Both are kept so "Send verbatim" and Escape can hand the
-  // original back — nothing typed here is ever lost behind the preview.
-  const [preview, setPreview] = useState<ComposedPreview | null>(null);
-  const [previewSource, setPreviewSource] = useState("");
 
   // Bumping a pane's token reconnects just that pane, which respawns its agent.
   // Keyed by call-sign so closing or splitting never disturbs the others.
@@ -2267,13 +2259,30 @@ export function AgenticGrid({
     setAttachments((prev) => prev.filter((a) => a.name !== name));
   }, []);
 
-  /** Type `text` into `target` and report honestly if it was not accepted. */
-  const deliver = async (text: string, carry: DropAttachment[] = []) => {
+  /**
+   * Compose and deliver in one request — the same thing "prompt Mika …" does
+   * by voice.
+   *
+   * The backend rewrites the typed instruction into a briefed task with the
+   * relevant `@file` references attached and types THAT into the pane. It owns
+   * every failure mode: a slow writer is hedged, a dead one is substituted,
+   * and when no capable model is reachable the deterministic rendering ships
+   * instead — so the pane always receives a prompt, never nothing. An earlier
+   * version composed in a dry run first and held the result for approval, with
+   * a "Send verbatim" escape; the maintainer retired that detour (2026-08-12)
+   * because its fallback paths sent the raw text, and the typed bar must
+   * behave exactly like the spoken one.
+   *
+   * On a failed REQUEST nothing was typed anywhere, so the draft stays in the
+   * editor rather than being retried verbatim — silently downgrading to the
+   * raw text is the one behaviour this path exists to rule out.
+   */
+  const send = async (draft: string) => {
+    const text = draft.trim();
+    if (!text || !target) return;
     setSending(true);
     try {
-      const result = await promptTerminal(target, text, { attachments: carry });
-      setPreview(null);
-      setPreviewSource("");
+      const result = await promptTerminal(target, text, { compose: true, attachments });
       replacePrompt("");
       setAttachments([]);
       // The pane's badge flips to "working" NOW, not when the poll catches the
@@ -2294,38 +2303,6 @@ export function AgenticGrid({
       }
     } catch (e) {
       pushToast("error", (e as Error).message);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  /**
-   * Compose first, then ask.
-   *
-   * Jarvis turns a rough instruction into a briefed task with the relevant
-   * files attached, which is a real improvement — but replacing someone's own
-   * wording without showing them would be the wrong kind of helpful. So the
-   * rewrite is offered, not imposed: send the brief, send what you typed, or
-   * back out. If composition fails outright the original goes straight through
-   * rather than blocking on a nicety.
-   */
-  const send = async (draft: string) => {
-    const text = draft.trim();
-    if (!text || !target) return;
-    setSending(true);
-    try {
-      const composed = await composePrompt(target, text, attachments);
-      if (composed.composed && composed.composed !== text) {
-        setPreviewSource(text);
-        setPreview(composed);
-        return;
-      }
-      // The composed text already contains the attachments, so it carries none
-      // of its own; this branch did not compose, so they still have to travel.
-      await deliver(text, attachments);
-    } catch (e) {
-      pushToast("warning", `Could not prepare the prompt: ${(e as Error).message}`);
-      await deliver(text, attachments);
     } finally {
       setSending(false);
     }
@@ -3482,29 +3459,6 @@ export function AgenticGrid({
                 attachments={attachments}
                 analyzing={analyzing}
                 onRemove={dropAttachment}
-              />
-            </div>
-          )}
-          {preview && (
-            <div className="mb-2 shrink-0 overflow-y-auto px-2 pt-2 scrollbar-jarvis">
-              <PromptPreview
-                terminal={target}
-                composed={preview.composed}
-                files={preview.files}
-                composedBy={preview.composed_by}
-                attachments={attachments}
-                // The composed text already contains the attachments; the
-                // verbatim path does not, so only that one carries them.
-                onSend={() => void deliver(preview.composed)}
-                onSendVerbatim={() => void deliver(previewSource, attachments)}
-                onCancel={() => {
-                // Give the user their own words back rather than dropping
-                // them. The attachments stay too — backing out of a rewrite
-                // is not a reason to lose the file they dropped.
-                replacePrompt(previewSource);
-                setPreview(null);
-                setPreviewSource("");
-              }}
               />
             </div>
           )}

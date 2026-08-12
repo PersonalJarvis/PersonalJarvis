@@ -1515,18 +1515,15 @@ export interface PromptResult {
  * Send an instruction to one terminal.
  *
  * `compose` asks the backend to rewrite a rough instruction into a briefed
- * prompt with `@file` references attached. The typed prompt bar sends with
- * `compose` OFF here — it composes in a separate step first (see
- * `composePrompt`) so the user approves the rewrite before it is typed into
- * their agent. Silently rewriting what someone typed would be the wrong kind
- * of helpful; showing it and asking is not.
+ * prompt with `@file` references attached before typing it in. The typed
+ * prompt bar sends with `compose` ON — the identical treatment a spoken
+ * "prompt Mika …" gets, in the same single request. An approval preview used
+ * to sit between the two steps; the maintainer retired it (2026-08-12)
+ * because its fallback paths delivered the raw text.
  *
- * `attachments` belong on the VERBATIM path, not on the composed one. Someone
- * who chose their own wording still dropped a screenshot on purpose, and
- * sending their sentence without it would lose the file they attached; the
- * backend appends the contents underneath their words rather than rewriting
- * them. The composed text already carries the same material, so passing them
- * with it would say everything twice.
+ * `attachments` travel with the instruction either way. With `compose` the
+ * backend folds their descriptions into the brief it writes; without it the
+ * contents are appended underneath the caller's own words.
  */
 export async function promptTerminal(
   name: string,
@@ -1547,54 +1544,6 @@ export async function promptTerminal(
   );
   if (!res.ok) throw new Error(await detail(res));
   return (await res.json()) as PromptResult;
-}
-
-export interface ComposedPreview {
-  /** The briefed markdown prompt, ready to send. */
-  composed: string;
-  /** `llm` when a model wrote it, `fallback` when no capable model was up. */
-  composed_by: "llm" | "fallback" | "raw";
-  /** Repo-relative files the prompt references with `@`. */
-  files: string[];
-}
-
-/**
- * Build the briefed prompt for `name` WITHOUT sending it.
- *
- * Same composition the spoken path uses, stopped one step short so the user can
- * read it. Takes as long as one model call plus reading a few files — the
- * caller should show that it is working.
- *
- * `attachments` are files the user dropped onto the prompt bar, already read by
- * the attach endpoint. They are passed HERE and not on the send that follows:
- * the composed text already contains their contents, so sending them twice
- * would append the same description underneath the brief that just described
- * it.
- */
-export async function composePrompt(
-  name: string,
-  prompt: string,
-  attachments: DropAttachment[] = [],
-): Promise<ComposedPreview> {
-  const res = await fetch(
-    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/prompt`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, compose: true, dry_run: true, attachments }),
-    },
-  );
-  if (!res.ok) throw new Error(await detail(res));
-  const data = (await res.json()) as {
-    composed: string;
-    composed_by: ComposedPreview["composed_by"];
-    files: string[];
-  };
-  return {
-    composed: data.composed,
-    composed_by: data.composed_by,
-    files: data.files ?? [],
-  };
 }
 
 // --------------------------------------------------------- prompt writer

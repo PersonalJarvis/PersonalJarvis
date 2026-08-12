@@ -3415,9 +3415,9 @@ async def terminal_prompt(request: Request, name: str, req: PromptRequest) -> di
 
     With ``compose=true`` the text is first rewritten into a prompt worth
     running — speech artefacts removed, the task stated as an imperative, and
-    the relevant files of this workspace attached as ``@path`` references. That
-    is the path a spoken instruction takes; the UI's prompt bar sends verbatim,
-    because someone who typed it already wrote what they meant.
+    the relevant files of this workspace attached as ``@path`` references. Both
+    the spoken path and the UI's typed prompt bar send with it on (maintainer
+    decision 2026-08-12): typed or said, Jarvis writes the brief either way.
 
     ``dry_run=true`` returns the composed prompt without sending it, so a caller
     can show it for approval first.

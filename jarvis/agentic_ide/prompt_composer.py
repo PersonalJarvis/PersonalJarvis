@@ -778,10 +778,10 @@ async def compose(
     to have understood more than the sentence.
 
     ``on_progress`` receives a ``ComposeNotice`` at each beat of the
-    composition; left None they are printed (see ``print_notice``). The typed
-    prompt bar passes ``use_llm=False`` and gets no notices at all — nothing is
-    being written there, and a progress line about an instant operation is
-    noise.
+    composition; left None they are printed (see ``print_notice``). A caller
+    that wants only the deterministic layer passes ``use_llm=False`` and gets
+    no notices at all — nothing is being written there, and a progress line
+    about an instant operation is noise.
 
     Never raises: every failure path lands on the deterministic prompt, because
     "the agent got a rougher prompt" is a far better outcome than "your

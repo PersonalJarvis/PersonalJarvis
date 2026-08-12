@@ -40,7 +40,6 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   attachToTerminal: vi.fn(),
   closeTerminal: vi.fn(),
   closeTerminals: vi.fn(),
-  composePrompt: vi.fn(),
   moveTerminal: vi.fn(),
   renameTerminal: vi.fn(),
   // Polled by the grid so the pane headers keep saying what their agents are
@@ -323,15 +322,10 @@ beforeEach(() => {
     failed: [],
     session: sessionWith([]),
   });
-  vi.mocked(api.composePrompt).mockResolvedValue({
-    composed: "## Task\nRun the tests.",
-    composed_by: "llm",
-    files: [],
-  });
   vi.mocked(api.promptTerminal).mockResolvedValue({
     terminal: "Mika",
     sent: "## Task\nRun the tests.",
-    composed_by: "raw",
+    composed_by: "llm",
     files: [],
     submitted: true,
   });
@@ -1023,79 +1017,68 @@ describe("restarting a dead pane", () => {
   });
 });
 
-describe("the prompt bar composes before it sends", () => {
+describe("the prompt bar composes as it sends", () => {
   const type = (text: string) => {
     const box = screen.getByLabelText(/instruction for Mika/i);
     fireEvent.change(box, { target: { value: text } });
     fireEvent.keyDown(box, { key: "Enter" });
   };
 
-  it("shows the briefed prompt for approval instead of sending straight away", async () => {
+  it("asks the backend to compose in the same request that sends", async () => {
+    // One step, exactly like the spoken "prompt Mika …": the backend writes
+    // the brief and types it in. The retired approval preview held the brief
+    // for a click here, and its fallback paths sent the raw text.
     renderGrid();
     type("run the tests");
-
-    await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
-    // The third argument is the dropped-file list — empty here, because this
-    // instruction was typed with nothing attached.
-    expect(api.composePrompt).toHaveBeenCalledWith("Mika", "run the tests", []);
-    expect(api.promptTerminal).not.toHaveBeenCalled();
-  });
-
-  it("sends the composed prompt when the user approves it", async () => {
-    renderGrid();
-    type("run the tests");
-    await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
-
-    fireEvent.click(screen.getByTestId("prompt-preview-send"));
-
-    await waitFor(() =>
-      expect(api.promptTerminal).toHaveBeenCalledWith(
-        "Mika",
-        "## Task\nRun the tests.",
-        // Nothing carried alongside: the composed text already contains
-        // whatever was dropped, so sending it again would duplicate it.
-        { attachments: [] },
-      ),
-    );
-  });
-
-  it("sends the user's own wording when they prefer it", async () => {
-    renderGrid();
-    type("run the tests");
-    await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
-
-    fireEvent.click(screen.getByTestId("prompt-preview-verbatim"));
 
     await waitFor(() =>
       expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "run the tests", {
+        compose: true,
         attachments: [],
       }),
     );
   });
 
-  it("gives the typed text back when the preview is discarded", async () => {
+  it("clears the editor once the instruction was delivered", async () => {
     renderGrid();
     type("run the tests");
-    await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
 
-    fireEvent.click(screen.getByTestId("prompt-preview-cancel"));
+    await waitFor(() =>
+      expect(pushToast).toHaveBeenCalledWith("warning", "Mika did not accept the prompt."),
+    );
+  });
 
-    await waitFor(() => expect(screen.queryByTestId("prompt-preview")).toBeNull());
+  it("keeps the draft when the request fails, instead of sending it raw", async () => {
+    // A failed request typed nothing anywhere. Retrying it verbatim would
+    // reintroduce the exact behaviour this path exists to rule out, so the
+    // words stay in the editor and the failure is said out loud.
+    vi.mocked(api.promptTerminal).mockRejectedValue(new Error("no session"));
+    renderGrid();
+    type("run the tests");
+
+    await waitFor(() => expect(pushToast).toHaveBeenCalledWith("error", "no session"));
+    expect(api.promptTerminal).toHaveBeenCalledTimes(1);
     expect(
       (screen.getByLabelText(/instruction for Mika/i) as HTMLTextAreaElement).value,
     ).toBe("run the tests");
-    expect(api.promptTerminal).not.toHaveBeenCalled();
   });
 
-  it("still delivers the instruction when composing fails outright", async () => {
-    vi.mocked(api.composePrompt).mockRejectedValue(new Error("no session"));
+  it("warns when the pane held the prompt without starting on it", async () => {
+    vi.mocked(api.promptTerminal).mockResolvedValue({
+      terminal: "Mika",
+      sent: "## Task\nRun the tests.",
+      composed_by: "llm",
+      files: [],
+      submitted: false,
+      detail: "Mika did not accept the prompt.",
+    });
     renderGrid();
     type("run the tests");
 
     await waitFor(() =>
-      expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "run the tests", {
-        attachments: [],
-      }),
+      expect(
+        (screen.getByLabelText(/instruction for Mika/i) as HTMLTextAreaElement).value,
+      ).toBe(""),
     );
   });
 });
@@ -1162,26 +1145,11 @@ describe("dropping files on the prompt bar", () => {
     fireEvent.change(box, { target: { value: "fix this" } });
     fireEvent.keyDown(box, { key: "Enter" });
 
-    await waitFor(() => expect(api.composePrompt).toHaveBeenCalled());
-    const attachments = vi.mocked(api.composePrompt).mock.calls[0][2];
-    expect(attachments).toHaveLength(1);
-    expect(attachments?.[0].detail).toContain("submit button overflows");
-  });
-
-  it("keeps the attachment when the user backs out of the rewrite", async () => {
-    // Discarding a proposed wording is not a reason to lose the dropped file.
-    renderGrid();
-    drop();
-    await waitFor(() => expect(screen.getByTestId("agentic-attachments")).toBeTruthy());
-
-    const box = screen.getByLabelText(/instruction for Mika/i);
-    fireEvent.change(box, { target: { value: "fix this" } });
-    fireEvent.keyDown(box, { key: "Enter" });
-    await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
-
-    fireEvent.click(screen.getByTestId("prompt-preview-cancel"));
-
-    expect(screen.getByTestId("agentic-attachments").textContent).toContain("shot.png");
+    await waitFor(() => expect(api.promptTerminal).toHaveBeenCalled());
+    const options = vi.mocked(api.promptTerminal).mock.calls[0][2];
+    expect(options?.compose).toBe(true);
+    expect(options?.attachments).toHaveLength(1);
+    expect(options?.attachments?.[0].detail).toContain("submit button overflows");
   });
 
   it("lets an attachment be taken back off", async () => {
@@ -1202,8 +1170,6 @@ describe("dropping files on the prompt bar", () => {
     const box = screen.getByLabelText(/instruction for Mika/i);
     fireEvent.change(box, { target: { value: "fix this" } });
     fireEvent.keyDown(box, { key: "Enter" });
-    await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
-    fireEvent.click(screen.getByTestId("prompt-preview-send"));
 
     // Otherwise the next, unrelated instruction would silently carry the old
     // screenshot along with it.
