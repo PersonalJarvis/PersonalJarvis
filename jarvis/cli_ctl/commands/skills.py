@@ -85,6 +85,42 @@ def reload(yes: bool = options.yes_opt(), dry_run: bool = options.dry_opt()) -> 
     invoke.run("POST", "/api/skills/reload", assume_yes=yes, dry_run=dry_run)
 
 
+@app.command("import")
+def import_skill(
+    source: str = typer.Argument(
+        ...,
+        help="Local skill folder (or its SKILL.md), or an http(s) SKILL.md link.",
+    ),
+    yes: bool = options.yes_opt(),
+    dry_run: bool = options.dry_opt(),
+) -> None:
+    """Install a skill from a local folder or a SKILL.md link.
+
+    A local folder is copied into the Jarvis skills directory including its
+    bundle resources — the bridge for skills authored in a coding agent's
+    folder (e.g. .claude/skills/<name>/), which Jarvis does not scan.
+    """
+    if source.lower().startswith(("http://", "https://")):
+        invoke.run(
+            "POST",
+            "/api/skills/import",
+            body={"input": source},
+            assume_yes=yes,
+            dry_run=dry_run,
+        )
+        return
+    from pathlib import Path
+
+    path = str(Path(source).expanduser().resolve())
+    invoke.run(
+        "POST",
+        "/api/skills/import-local",
+        body={"path": path},
+        assume_yes=yes,
+        dry_run=dry_run,
+    )
+
+
 @app.command("catalog-search")
 def catalog_search(query: str = typer.Argument(...)) -> None:
     """Search the installable skill catalog."""

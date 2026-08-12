@@ -8,7 +8,7 @@ order: 2
 diataxis: explanation
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-08-12
 phase: "-"
 audience: end-user
 tags: [skills, automation, triggers, safety, extensions]
@@ -96,6 +96,39 @@ copy before deleting it to make room for a replacement; deletion is permanent.
 > [!note] A direct catalog install downloads only `SKILL.md`. It does not clone
 > the source repository or download sibling bundle folders. A catalog result
 > marked **Manual** only opens its source page; Jarvis does not install it.
+
+## Import a Skill from a Folder
+
+Jarvis only reads skills from its own skills directory. A skill written
+anywhere else — for example in a coding agent's project folder such as
+`.claude/skills/<name>/` (Claude Code) or a Codex equivalent — is invisible to
+Jarvis until it is imported. Those agent folders belong to a **separate skill
+system** with a similar file format; placing a file there does not install
+anything in Jarvis, and vice versa.
+
+To bridge a skill across, run:
+
+```bash
+jarvis skills import <path-to-skill-folder>
+```
+
+The command copies the folder's `SKILL.md` and its bundle folders
+(`references/`, `scripts/`, `assets/`, `agents/`) into the Jarvis skills
+directory and reloads the registry. The same command accepts an `http(s)`
+link to a raw `SKILL.md` and then behaves like a catalog install.
+
+Import rules:
+
+- A folder import is treated like the manual install: a structurally valid
+  file with no declared state arrives as **Validated** (on). A file that
+  declares a state keeps it.
+- If the instructions contain code with disallowed calls, the copy arrives as
+  **Draft** instead, and the findings are reported. Review it before
+  promotion, exactly as with an AI-written draft.
+- A name that collides with an installed or built-in skill is refused.
+- Not every field of another agent's skill format is supported. An
+  unsupported setting makes the import fail with the exact validation error;
+  remove the offending field from the source file and import again.
 
 ## Create Your Own Skill
 

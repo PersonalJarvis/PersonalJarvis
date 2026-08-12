@@ -252,6 +252,18 @@ class SkillImportBody(BaseModel):
     input: str = Field(min_length=5, max_length=4000)
 
 
+class SkillImportLocalBody(BaseModel):
+    """Body for ``POST /api/skills/import-local`` — a folder on this machine.
+
+    ``path`` points at a skill folder (or its ``SKILL.md`` directly). The
+    folder is copied into the user skills directory including bundle
+    resources, which is exactly the documented manual install path — just
+    automated.
+    """
+
+    path: str = Field(min_length=1, max_length=4096)
+
+
 class SkillOrderBody(BaseModel):
     """Body for ``PUT /api/skills/order`` — the user-defined list order.
 
@@ -550,6 +562,127 @@ async def import_skill(body: SkillImportBody, request: Request) -> dict[str, Any
     installed = parse_skill(target_file)
     reg._skills[name] = installed  # type: ignore[attr-defined]
     return _skill_to_detail(installed)
+
+
+def _import_skill_folder(path_str: str, reg: Any) -> tuple[str, list[str]]:
+    """Sync body of the local import: validate, lint, copy. Raises HTTPException.
+
+    Runs in a worker thread (``asyncio.to_thread``) — every step here is
+    blocking filesystem work.
+    """
+    import shutil
+
+    src = Path(path_str).expanduser()
+    try:
+        src = src.resolve()
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Unreadable path: {exc}") from exc
+    folder = src.parent if src.name == "SKILL.md" else src
+    skill_md = folder / "SKILL.md"
+    if not skill_md.is_file():
+        raise HTTPException(
+            status_code=400,
+            detail=f"No SKILL.md found at '{folder}'.",
+        )
+    try:
+        base = user_skills_dir().resolve()
+        if folder == base or folder.is_relative_to(base):
+            raise HTTPException(
+                status_code=400,
+                detail="This folder is already inside the Jarvis skills directory.",
+            )
+    except OSError:
+        pass
+
+    parsed = parse_skill(skill_md)
+    if parsed.frontmatter is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"SKILL.md could not be read: {parsed.error}",
+        )
+
+    name = parsed.name
+    if name in BUILTIN_SKILL_NAMES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"'{name}' is a built-in skill name and cannot be imported.",
+        )
+    try:
+        reg.get(name)
+    except KeyError:
+        pass
+    else:
+        raise HTTPException(status_code=409, detail=f"Skill '{name}' already exists.")
+
+    content = skill_md.read_text(encoding="utf-8-sig")
+    lint_findings: list[str] = []
+    try:
+        from jarvis.skills.authoring.draft_writer import safe_lint_skill_body
+
+        lint_findings = list(safe_lint_skill_body(parsed.body))
+    except Exception:  # noqa: BLE001 — a missing lint module must not block import
+        lint_findings = []
+    if lint_findings:
+        from jarvis.skills.registry import _rewrite_state_in_frontmatter
+
+        content = _rewrite_state_in_frontmatter(
+            content, SkillLifecycleState.DRAFT.value
+        )
+
+    target_dir = user_skills_dir() / name
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (target_dir / "SKILL.md").write_text(content, encoding="utf-8")
+        for kind in RESOURCE_KINDS:
+            src_kind = folder / kind
+            if src_kind.is_dir():
+                shutil.copytree(src_kind, target_dir / kind, dirs_exist_ok=True)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Could not copy skill: {exc}"
+        ) from exc
+    return name, lint_findings
+
+
+@router.post("/import-local")
+async def import_skill_from_path(
+    body: SkillImportLocalBody, request: Request
+) -> dict[str, Any]:
+    """Imports a skill folder from a local path into the user skills dir.
+
+    This is the bridge for skills the user authored OUTSIDE the Jarvis skill
+    root — most commonly a coding agent's skill folder (Claude Code / Codex
+    style ``.claude/skills/<name>/``), which Jarvis never scans. Live
+    forensic 2026-08-12: every skill the maintainer "built" lived there, so
+    the brain literally could not know them.
+
+    Trust model, deliberately different from ``POST /import`` (URL): a local
+    path names a file already on this machine that the user chose explicitly
+    — the exact act the product docs bless as the manual install ("copy the
+    folder"). So the parsed state is honored (missing ``state:`` loads as
+    VALIDATED, the loader's normal rule) — EXCEPT when the safety lint that
+    guards draft promotion finds disallowed calls in the body; then the copy
+    is stamped DRAFT and the findings are returned, so review stays a human
+    act exactly where it has teeth. Bundle folders (references/, scripts/,
+    assets/, agents/) are copied along.
+    """
+    reg = _require_registry(request)
+    name, lint_findings = await asyncio.to_thread(
+        _import_skill_folder, body.path, reg
+    )
+
+    # A real reload (not a dict insert): bumps the registry generation so the
+    # relevance match index rebuilds and paired capabilities sync — otherwise
+    # the imported skill is listed but invisible to the paraphrase channel.
+    try:
+        await reg.reload()
+    except Exception:  # noqa: BLE001 — fall back to the minimal insert
+        installed = parse_skill(user_skills_dir() / name / "SKILL.md")
+        reg._skills[name] = installed  # type: ignore[attr-defined]
+
+    detail = _skill_to_detail(reg.get(name))
+    detail["lint_findings"] = lint_findings
+    return detail
 
 
 # NB: registered BEFORE ``/{name}`` so a ``PUT /order`` is not captured by the
