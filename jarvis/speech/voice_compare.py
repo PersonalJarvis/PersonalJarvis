@@ -70,8 +70,9 @@ async def _synth(voice: str, text: str) -> bytes:
         or os.environ.get("GOOGLE_AIStudio_API_KEY")
         or os.environ.get("GOOGLE_API_KEY")
     )
-    # Routed builder: AI Studio or Vertex express, decided per key.
-    client = build_genai_client(key or "")
+    # Routed builder: AI Studio or Vertex express, decided per key. Built in
+    # a thread — the first build may run the routing probe.
+    client = await asyncio.to_thread(build_genai_client, key or "")
     resp = await asyncio.to_thread(
         client.models.generate_content,
         model="gemini-3.1-flash-tts-preview",

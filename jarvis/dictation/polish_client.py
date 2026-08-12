@@ -77,6 +77,7 @@ credential lookup.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Sequence
@@ -901,7 +902,9 @@ class GeminiPolishClient:
         timeout_s: float,
     ) -> str | None:
         try:
-            client = self._ensure_client(timeout_s)
+            # First use builds the client: google-genai import + (for an AQ.
+            # key) the one-time routing probe — neither belongs on the loop.
+            client = await asyncio.to_thread(self._ensure_client, timeout_s)
             from google.genai import types as genai_types
 
             response = await client.aio.models.generate_content(

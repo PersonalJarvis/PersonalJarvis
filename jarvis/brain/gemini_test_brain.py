@@ -120,8 +120,10 @@ class GeminiTestBrain:
     async def __call__(self, user_text: str) -> str:
         """Brain callback signature: async (str) -> str."""
         import asyncio
-        self._ensure_client()
-        model = self._resolve_model()
+        # Client build (SDK import + possible routing probe) and the model
+        # ping loop both do blocking work — keep them off the event loop.
+        await asyncio.to_thread(self._ensure_client)
+        model = await asyncio.to_thread(self._resolve_model)
         return await asyncio.to_thread(self._generate_sync, model, user_text)
 
     def _generate_sync(self, model: str, user_text: str) -> str:

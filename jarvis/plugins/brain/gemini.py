@@ -12,6 +12,7 @@ where the Google SDK dependency graph has no installable wheel.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -728,7 +729,9 @@ class GeminiBrain:
         self._cache_slots.clear()
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
-        client = self._ensure_client()
+        # First use builds the client: google-genai import + (for an AQ. key)
+        # the one-time routing probe — neither belongs on the event loop.
+        client = await asyncio.to_thread(self._ensure_client)
         if self._transport == _TRANSPORT_OPENAI_COMPAT:
             async for delta in stream_complete(
                 client,

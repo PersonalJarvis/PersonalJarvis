@@ -349,7 +349,9 @@ class GeminiFlashTTS:
         `language_code` can be overridden per call (e.g. "de-DE" / "en-US"),
         so the multi-language pipeline can switch the voice pronunciation accordingly.
         """
-        self._ensure_client()
+        # First use builds the client: google-genai import + (for an AQ. key)
+        # the one-time routing probe — neither belongs on the event loop.
+        await asyncio.to_thread(self._ensure_client)
         voice = voice or self._default_voice
         self.last_voice = voice
         self.last_voice_provider = self.name

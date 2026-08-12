@@ -186,7 +186,9 @@ class GeminiNativeCU:
         Returns a list of loop action dicts, or ``None`` on ANY failure so the
         caller falls back to the hand-rolled engine.
         """
-        client = self._ensure_client()
+        # First use builds the client: google-genai import + (for an AQ. key)
+        # the one-time routing probe — neither belongs on the event loop.
+        client = await asyncio.to_thread(self._ensure_client)
         if client is None:
             return None
         try:

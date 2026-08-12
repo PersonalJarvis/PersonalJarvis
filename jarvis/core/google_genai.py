@@ -118,7 +118,8 @@ def _configured_mode() -> str:
         from jarvis.core.config import load_config
 
         mode = str(load_config().google.vertex_mode or "auto").strip().lower()
-    except Exception:  # noqa: BLE001 — config trouble must never break clients
+    except Exception as exc:  # noqa: BLE001 — config trouble must never break clients
+        log.debug("vertex_mode unreadable (%s: %s) — using 'auto'.", type(exc).__name__, exc)
         return "auto"
     return mode if mode in ("auto", "always", "never") else "auto"
 

@@ -327,7 +327,9 @@ class GeminiSTT:
     async def _post_transcription(
         self, wav_bytes: bytes, *, language: str | None = None
     ) -> Transcript:
-        client = self._ensure_client()
+        # First use builds the client: google-genai import + (for an AQ. key)
+        # the one-time routing probe — neither belongs on the event loop.
+        client = await asyncio.to_thread(self._ensure_client)
         contents = self._build_contents(wav_bytes, language=language)
         # ``config`` as a plain dict is accepted by google-genai; temperature 0.0
         # keeps the transcription as deterministic as a generative model allows.

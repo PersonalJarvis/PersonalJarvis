@@ -56,7 +56,11 @@ class GeminiFlashAck:
         persona_prompt: str,
     ) -> str | None:
         try:
-            client = self._ensure_client()
+            # First use builds the client: google-genai import + (for an AQ.
+            # key) the one-time routing probe — neither belongs on the loop.
+            import asyncio
+
+            client = await asyncio.to_thread(self._ensure_client)
             from google.genai import types as genai_types
 
             response = await client.aio.models.generate_content(
@@ -87,7 +91,10 @@ class GeminiFlashAck:
         non-streaming ``run()`` so a broken stream never silences the ack.
         """
         try:
-            client = self._ensure_client()
+            # Same off-loop client build as ``run`` above.
+            import asyncio
+
+            client = await asyncio.to_thread(self._ensure_client)
             from google.genai import types as genai_types
 
             # The google-genai async API has shipped both an awaitable-returning
