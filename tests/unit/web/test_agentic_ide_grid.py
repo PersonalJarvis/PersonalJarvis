@@ -1,17 +1,19 @@
 """Grid geometry of the Agentic-IDE workspace: where a split puts a pane.
 
-The workspace is a left-to-right list of columns, each a top-to-bottom stack.
-The distinction these tests defend is that "split down" affects the anchor's
-column ONLY. The earlier one-axis model could not express that — a downward
-split opened a window-wide row, so splitting one pane halved the height of
-every other pane in the workspace.
+The workspace is a split TREE (see ``layout_tree``): every split carves the
+clicked pane's own rectangle and leaves every other pane alone, in both
+directions and at any depth. The ``(column, slot)`` tuples these tests read
+are the coarse hints `_renumber` projects from that tree — for the flat
+columns-of-stacks shapes most of this file builds, the projection is exact,
+which is why the assertions written against the old flat grid still hold.
 """
 from __future__ import annotations
 
 import pytest
 
+from jarvis.agentic_ide import layout_tree
 from jarvis.agentic_ide import session as session_mod
-from jarvis.agentic_ide.session import Registry
+from jarvis.agentic_ide.session import Registry, SessionError
 
 
 @pytest.fixture(autouse=True)
@@ -138,6 +140,66 @@ async def test_terminals_stay_in_reading_order(tmp_path) -> None:
     placed = grid(registry)
     assert [(c, s) for _, c, s in placed] == [(0, 0), (0, 1), (1, 0), (1, 1)]
     assert [t.index for t in registry.session.terminals] == [0, 1, 2, 3]
+
+
+async def test_split_right_in_a_stack_keeps_the_other_pane_full_width(tmp_path) -> None:
+    """THE reported bug (2026-08-12), end to end through the registry.
+
+    Two panes stacked; "split right" on the TOP one. The old flat grid could
+    only answer with a full-height column — the new pane arrived beside BOTH
+    panes and everything was squeezed. The tree answers locally: the top half
+    holds two panes side by side, the bottom pane keeps the full width.
+    """
+    registry = await _workspace(tmp_path, 2)
+    session = registry.session
+    assert session is not None
+    top, bottom = session.terminals[0], session.terminals[1]
+    added = await registry.add_terminal(anchor=top.name, direction="right")
+
+    layout = session.layout
+    assert isinstance(layout, layout_tree.Split) and layout.direction == "column"
+    upper, lower = layout.children
+    assert isinstance(upper, layout_tree.Split) and upper.direction == "row"
+    assert layout_tree.leaves(upper) == [top.key, added.key]
+    # The bottom pane is a direct child of the stack: full width, untouched.
+    assert lower == layout_tree.Leaf(pane=bottom.key)
+    # And the wire state carries the tree for the grid to draw from.
+    assert session.to_dict()["layout"] == layout_tree.to_dict(layout)
+
+
+async def test_dragged_sizes_are_adopted_when_the_shape_matches(tmp_path) -> None:
+    registry = await _workspace(tmp_path, 2)
+    session = registry.session
+    assert session is not None and session.layout is not None
+    dragged = layout_tree.to_dict(session.layout)
+    dragged["weights"] = [3.0, 1.0]
+
+    await registry.set_layout_weights(dragged)
+
+    assert isinstance(session.layout, layout_tree.Split)
+    assert session.layout.weights == [3.0, 1.0]
+
+
+async def test_dragged_sizes_from_a_reshaped_workspace_are_declined(tmp_path) -> None:
+    """A drag races a voice-opened pane: the drag loses, the workspace wins."""
+    registry = await _workspace(tmp_path, 2)
+    session = registry.session
+    assert session is not None and session.layout is not None
+    stale = layout_tree.to_dict(session.layout)
+    stale["weights"] = [3.0, 1.0]
+    await registry.add_terminal(direction="right")  # reshapes the tree
+
+    await registry.set_layout_weights(stale)
+
+    assert isinstance(session.layout, layout_tree.Split)
+    # Every weight still even — the stale drag was quietly declined.
+    assert all(weight == 1.0 for weight in session.layout.weights)
+
+
+async def test_unreadable_dragged_sizes_are_refused_out_loud(tmp_path) -> None:
+    registry = await _workspace(tmp_path, 2)
+    with pytest.raises(SessionError):
+        await registry.set_layout_weights({"direction": "diagonal", "children": []})
 
 
 async def test_split_may_name_a_different_agent(tmp_path) -> None:

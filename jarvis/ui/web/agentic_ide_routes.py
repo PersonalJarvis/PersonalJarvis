@@ -289,9 +289,9 @@ class MoveTerminalRequest(BaseModel):
     position: str = Field(
         default="swap",
         description=(
-            "'swap' exchanges the two panes and keeps the grid's shape; "
-            "'left'/'right' give the moved pane its own column beside the "
-            "target; 'above'/'below' put it in the target's own column."
+            "'swap' exchanges the two panes and keeps the workspace's shape; "
+            "'left'/'right'/'above'/'below' put the moved pane on that side "
+            "OF THE TARGET, splitting the target's own rectangle in half."
         ),
     )
 
@@ -306,6 +306,18 @@ class RefoldRequest(BaseModel):
             "Panes stacked per column. 1 is the single row a workspace opens "
             "in; 2 folds it into two rows, which is what a row too narrow for "
             "the agents' own interface needs."
+        ),
+    )
+
+
+class LayoutWeightsRequest(BaseModel):
+    """The workspace tree as the dragging client saw it, weights included."""
+
+    layout: dict = Field(
+        description=(
+            "The whole split tree in its wire form (the session state's "
+            "'layout' field), carrying the dragged weights. Only the weights "
+            "are adopted; the structure stays the server's."
         ),
     )
 
@@ -2364,10 +2376,10 @@ async def move_terminal(name: str, req: MoveTerminalRequest) -> dict:
 
     Nothing is started or stopped — this only changes where a running pane is
     drawn, which is what makes rearranging safe on a grid full of working
-    agents. ``position="swap"`` exchanges the two panes and leaves the grid's
-    shape untouched; ``"left"``/``"right"`` give the moved pane a column of its
-    own beside the target; ``"above"``/``"below"`` put it into the target's own
-    column, moving only that stack.
+    agents. ``position="swap"`` exchanges the two panes and leaves the
+    workspace's shape untouched; the four sides put the moved pane on that
+    side OF THE TARGET, carving the target's own rectangle in half — the same
+    local meaning the split buttons have.
 
     Dropping a pane onto itself succeeds and changes nothing.
     """
@@ -2393,6 +2405,25 @@ async def move_terminal(name: str, req: MoveTerminalRequest) -> dict:
         "terminal": term.to_dict(),
         "state": get_registry().state(),
     }
+
+
+@router.post("/layout/weights", summary="Apply dragged pane sizes to the workspace")
+async def set_layout_weights(req: LayoutWeightsRequest) -> dict:
+    """Persist the pane sizes a seam drag produced.
+
+    The client sends back the whole tree it was looking at; the server adopts
+    the WEIGHTS when the shape still matches its own and quietly declines when
+    the workspace was reshaped mid-drag (a voice-opened pane, another client)
+    — the returned state carries the authoritative tree either way, so the
+    caller redraws from the answer rather than guessing.
+    """
+    try:
+        await get_registry().set_layout_weights(req.layout)
+    except SessionError as exc:
+        message = str(exc)
+        status = 409 if "No Agentic-IDE session" in message else 422
+        raise HTTPException(status_code=status, detail=message) from exc
+    return {"ok": True, "state": get_registry().state()}
 
 
 @router.delete(
