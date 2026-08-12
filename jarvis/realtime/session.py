@@ -796,7 +796,14 @@ def _delegate_result_prompt(
     Gemini's native audio deliver a line in a different (female, distorted)
     voice on 2026-07-17 08:47, and BUG-086 heard the audible voice flip
     gender between turns while every label still read the pinned voice.
-    """
+
+    The identifier-fidelity clause is a PROMPT-ONLY mitigation: on 2026-08-12
+    the rendering swapped the result's pane names for the one the user had
+    asked about ("ich habe T2 angewiesen" over a result that opened T5/T6),
+    and nothing downstream verifies compliance. If a provider or model swap
+    resurfaces that class, the deterministic fix belongs at the readback
+    boundary, not in more prompt wording.
+    """  # i18n-allow: quoted live transcript
     language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
     status = "success" if success else "failure"
     # The injected result lives in the provider context for the REST OF THE
@@ -823,7 +830,11 @@ def _delegate_result_prompt(
         f"{SPEAK_REQUEST_OPENER} "
         "A trusted Jarvis action result is ready. Speak only a concise, natural "
         f"rendering of the tagged result in {language_name}. {framing}Preserve "
-        "its exact success or failure meaning and every material fact. Say it "
+        "its exact success or failure meaning and every material fact. Any "
+        "name or identifier the result states (a terminal, a file, a count) "
+        "must be repeated exactly as written there — never swap in a name "
+        "from the user's request that the result itself does not contain: "
+        "when they differ, that difference IS the news. Say it "
         "as yourself, continuing in exactly the same voice, tone, and pace as "
         "your previous replies in this conversation. Do not imitate another "
         "person, do not change or dramatize your voice. Do not "

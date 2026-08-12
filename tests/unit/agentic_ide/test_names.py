@@ -70,6 +70,10 @@ class TestSpokenForms:
             "prompte Terminal zwei",  # i18n-allow: input vocab under test
             "prompte Terminal Nummer zwei",  # i18n-allow: input vocab under test
             "tee zwei soll das machen",  # i18n-allow: input vocab under test
+            "terminal t zwei soll das machen",  # i18n-allow: input vocab under test
+            # The live 2026-08-12 transcript: "Terminal T2" mangled into a
+            # t-led consonant cluster in front of the number word.
+            "prompt wird du terminal tft zwei",  # i18n-allow: input vocab under test
             "das zweite Terminal soll das machen",  # i18n-allow: input vocab under test
             "prompt terminal two",
             "the second terminal should run the tests",
@@ -127,6 +131,29 @@ class TestABareNumberNeverAddressesAPane:
         """
         assert spoken_positions("mach acht Terminals auf", count=8) == []
         assert spoken_positions("öffne vier Terminals", count=4) == []
+
+    def test_a_real_word_is_not_a_mangled_call_sign_letter(self) -> None:
+        """The garble tolerance admits consonant debris, never vocabulary.
+
+        The cluster between the pane noun and the number exists for transcripts
+        like "terminal tft zwei" (live 2026-08-12). A real t-word in that spot
+        carries a vowel, and reading it as the letter would turn ordinary
+        speech into an address.
+        """
+        assert spoken_positions("Terminal Typ zwei", count=4) == []  # i18n-allow: input vocab
+        assert spoken_positions("terminal the two", count=4) == []
+        assert resolve("das tolle zwei", PANES) is None  # i18n-allow: input vocab
+
+    def test_a_dictated_variable_is_not_a_pane(self) -> None:
+        """"t eins" / "t two" without a pane noun is a variable, not a pane.
+
+        The bare letter in front of a number word is exactly how a dictated
+        time index or variable name sounds in a coding workspace, so it never
+        addresses a pane on its own — only behind the pane noun does the same
+        debris count (the cluster branch of the noun pattern).
+        """
+        assert resolve("ob t eins kleiner ist als t zwei", PANES) is None  # i18n-allow: input vocab
+        assert resolve("check if t one is less than t two", PANES) is None
 
 
 class TestPositionsNeverMatchFuzzily:

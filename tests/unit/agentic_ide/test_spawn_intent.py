@@ -399,6 +399,107 @@ def test_an_addressed_terminal_still_wins_over_the_spawn_grammar() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Live voice regression from 2026-08-12                                        #
+# --------------------------------------------------------------------------- #
+
+POSITIONS = ["T1", "T2", "T3", "T4"]
+
+
+def test_a_mangled_call_sign_brief_still_reaches_its_pane() -> None:
+    """"Terminal T2" garbled to "terminal tft zwei" must not size a fleet.
+
+    The live failure: speech recognition mangled the call-sign, the addressing
+    detector found no pane, and the pane's NAME was re-read as a count — two
+    fresh panes opened and were briefed while T2 sat idle, and the voice reply
+    claimed T2 had been instructed.
+    """
+    utterance = (
+        "prompt wird du terminal tft zwei, dass es ein deep dive machen soll "
+        "und schauen soll, ob irgendwas mit unserer git historie nicht gut "
+        "ausschaut"
+    )  # i18n-allow: production transcript under test
+
+    found = intent.detect(utterance, names=POSITIONS)
+    assert found is not None
+    assert found.terminal == "T2"
+    assert found.kind == intent.KIND_PROMPT
+    assert intent.detect_spawn(utterance, names=POSITIONS) is None
+
+
+def test_a_briefed_position_never_becomes_a_fleet_size() -> None:
+    """Even with no such pane open, "prompt terminal two …" is not a spawn.
+
+    The number stands BEHIND the pane noun, which is the position shape; a
+    fleet size stands in front of it ("öffne zwei Terminals"). With the pane
+    missing, the turn falls through to the ordinary brain — which can say
+    "there is no terminal two" — rather than opening panes the user never
+    asked for.
+    """
+    utterance = (
+        "prompt wird du terminal tft zwei, dass es ein deep dive machen soll"
+    )  # i18n-allow: production transcript under test
+
+    assert intent.detect_spawn(utterance, names=["T1"]) is None
+    assert (
+        intent.detect_spawn(
+            "Prompte Terminal 2, mach einen Report",  # i18n-allow: spoken input under test
+            names=["T1"],
+        )
+        is None
+    )
+
+
+def test_a_brief_beside_a_real_fleet_size_still_spawns() -> None:
+    """A clause may brief a position AND ask for panes; the spawn survives."""
+    utterance = (
+        "prompte Terminal zwei und öffne noch drei Terminals"  # i18n-allow: spoken input under test
+    )
+
+    found = intent.detect_spawn(utterance, names=["T1"])
+    assert found is not None
+    assert found.count == 3
+
+
+def test_an_elided_pane_noun_still_carries_its_fleet_size() -> None:
+    """"… und öffne noch drei" keeps its three panes without repeating the noun.
+
+    Ordinary spoken continuation elides a noun the sentence already
+    established; the opener and the additive in front of the count are what
+    mark it as a fleet size rather than task vocabulary, and the veto for the
+    briefed position must not swallow it.
+    """
+    utterance = (
+        "prompte Terminal zwei und öffne noch drei"  # i18n-allow: spoken input under test
+    )
+
+    found = intent.detect_spawn(utterance, names=["T1"])
+    assert found is not None
+    assert found.count == 3
+
+    trailing = intent.detect_spawn(
+        "prompt terminal two and open three more",
+        names=["T1"],
+    )
+    assert trailing is not None
+    assert trailing.count == 3
+
+
+def test_an_opened_position_is_one_pane_not_a_count() -> None:
+    """"öffne Terminal 2" opens ONE pane — the number is the pane's name.
+
+    The open-verb sibling of the briefed shape: with no pane answering to the
+    position, the count fallback used to read the position's number as a
+    fleet size and open two panes for a sentence that asked for one.
+    """
+    found = intent.detect_spawn(
+        "öffne Terminal 2",  # i18n-allow: spoken input under test
+        names=["T1"],
+    )
+    assert found is not None
+    assert found.count == 1
+
+
+# --------------------------------------------------------------------------- #
 # Live voice regressions from 2026-07-27                                       #
 # --------------------------------------------------------------------------- #
 

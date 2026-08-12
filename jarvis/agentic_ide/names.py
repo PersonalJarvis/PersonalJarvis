@@ -260,11 +260,19 @@ _LAST_ALT = "|".join(sorted((re.escape(w) for w in _LAST_WORDS), key=len, revers
 #: Order matters: the longest, most explicit shapes are tried first, so
 #: "terminal number two" is read once as position 2 rather than twice.
 _POSITION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # "terminal 2" / "Terminal Nummer zwei" / "pane number two" / "tab dos"
+    # "terminal 2" / "Terminal Nummer zwei" / "pane number two" / "tab dos".
+    # ONE t-led consonant cluster may sit between the noun and the number: it
+    # is what is left of the spoken call-sign letter when speech recognition
+    # mangles it ("Terminal T2" arrived as "terminal tft zwei" live on
+    # 2026-08-12, and with the letter lost the pane's NAME was re-read one
+    # layer up as a fleet size — two fresh panes opened for a brief aimed at
+    # T2). Consonants only, so a real word ("Typ", "ten", "the") that happens
+    # to start with t never smuggles a number into a position.
     re.compile(
         rf"\b{_PANE_NOUN}\s*"
         # i18n-allow: speech-recognition input vocabulary, not prose
         rf"(?:(?:nummer|nr\.?|number|n[uú]mero)\s*)?"
+        rf"(?:t[bcdfghjklmnpqrstvwxz]{{0,3}}\s+)?"
         rf"(?P<value>\d{{1,3}}|{_NUMBER_WORD_ALT})\b",
         re.IGNORECASE,
     ),
@@ -291,7 +299,11 @@ _POSITION_PATTERNS: tuple[re.Pattern[str], ...] = (
     # which is what happens when it is said together with the number. The
     # spellings are the ones speech recognition actually produces; each is a
     # non-word in all three locales, so a number word behind one is never
-    # ordinary speech.
+    # ordinary speech. The BARE letter is deliberately absent: "t zwei" is
+    # also how a dictated variable or time index sounds ("t eins kleiner als
+    # t zwei"), and with no pane noun nearby nothing vouches for the pane
+    # reading. Behind the noun the same debris IS admitted — that is the
+    # cluster branch of the first pattern.
     re.compile(
         # i18n-allow: speech-recognition input vocabulary, not prose
         rf"\b(?:tee|te|ti|tea|tey)\s*[-.]?\s*(?P<value>\d{{1,3}}|{_NUMBER_WORD_ALT})\b",

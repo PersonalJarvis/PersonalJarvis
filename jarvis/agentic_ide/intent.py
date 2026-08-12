@@ -39,7 +39,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .names import CALL_SIGN_WORD_RE, canonical_positions, resolve
+from .names import CALL_SIGN_WORD_RE, canonical_positions, resolve, spoken_positions
 
 # Kinds of turn this module recognises.
 KIND_PROMPT = "prompt"   # the user wants the agent to do something
@@ -2362,6 +2362,88 @@ def _is_agent_fleet(text: str, names: list[str] | None) -> bool:
     return wants_split(text) or _AGENT_RE.search(text) is not None
 
 
+#: How close an additive must hug a number to vouch for it as a fleet size
+#: when the pane noun is elided ("noch drei", "three more"). Much tighter
+#: than ``_COUNT_AGENT_MAX_GAP`` on purpose: an additive a whole clause away
+#: is ordinary conversation, and reading it as spawn evidence would hand the
+#: veto below back the very over-reach it exists to stop.
+_ADDITIVE_NEAR_GAP = 16
+
+
+def _briefed_position_only(parse_text: str) -> bool:
+    """Whether the clause briefs a pane named BY POSITION, not sizes a fleet.
+
+    The live 2026-08-12 failure this pins: "prompt … terminal tft zwei, dass
+    es ein deep dive machen soll" — speech recognition mangled the call-sign
+    "T2" into "tft zwei", the addressing detector found no pane, and the
+    number that was the pane's NAME was then re-read here as a fleet size:
+    two fresh panes opened and were briefed while the addressed one sat idle.
+
+    Word order is what separates the two readings. A fleet size stands in
+    FRONT of the pane noun ("öffne zwei Terminals"); a position stands BEHIND
+    it ("Terminal zwei"), and ``spoken_positions`` is the one authority on
+    that shape. So when the clause carries a briefing verb and the number the
+    spawn path would read as its count — the FIRST one, which is
+    ``_spoken_count``'s contract — is part of a spoken position, it is a
+    brief for an existing pane, never a spawn, even when no pane answers to
+    that position: falling through to the ordinary brain, which can say
+    "there is no terminal two", beats opening a fleet the user never asked
+    for.
+
+    One exception keeps mixed sentences honest: a number OUTSIDE every
+    position that still reads as a fleet size of its own — fronting a pane
+    noun or a CLI name ("… und öffne noch drei Terminals"), or hugging an
+    additive when the noun is elided ("… öffne noch drei", "open three
+    more") — keeps the spawn half of such a clause alive. The additive is
+    deliberately the ONLY elision evidence: open-verb stems double as task
+    vocabulary ("mach einen Deep-Dive-Report" briefs, it does not open), so
+    a verb near the number proves nothing. A stray task word that merely
+    doubles as a number ("dass es EIN deep dive machen soll") shows none of
+    those shapes and vetoes nothing.
+    """  # i18n-allow: quoted spoken input
+    if _FLEET_BRIEF_RE.search(parse_text) is None:
+        return False
+    positions = spoken_positions(parse_text)
+    if not positions:
+        return False
+    counts = _count_tokens(parse_text)
+    if not counts:
+        return False
+
+    def _covered(c_start: int, c_end: int) -> bool:
+        return any(start <= c_start and c_end <= end for start, end, _n in positions)
+
+    if not _covered(counts[0][0], counts[0][1]):
+        return False
+    for c_start, c_end, _value in counts:
+        if _covered(c_start, c_end):
+            continue
+        ahead = parse_text[c_end : c_end + _COUNT_AGENT_MAX_GAP]
+        if _PANE_NOUN_RE.search(ahead) or _AGENT_RE.search(ahead):
+            return False
+        near_before = parse_text[max(0, c_start - _ADDITIVE_NEAR_GAP) : c_start]
+        near_after = parse_text[c_end : c_end + _ADDITIVE_NEAR_GAP]
+        if _ADDITIVE_RE.search(near_before) or _ADDITIVE_RE.search(near_after):
+            return False
+    return True
+
+
+def _mask_spoken_positions(text: str) -> str:
+    """``text`` with every spoken pane position blanked to spaces.
+
+    The count fallback in ``detect_spawn`` reads the FIRST number of the
+    clause, and a position carries a number that is a pane's NAME, not a
+    size: "öffne Terminal 2" asks for one pane, spoken while looking at the
+    grid — the open-verb sibling of the briefed shape above, and the same
+    live 2026-08-12 misreading one verb over. Blanking rather than removing
+    keeps every offset stable for the shapes parsed around it.
+    """  # i18n-allow: quoted spoken input
+    out = text
+    for start, end, _number in spoken_positions(text):
+        out = f"{out[:start]}{' ' * (end - start)}{out[end:]}"
+    return out
+
+
 def detect_spawn(
     user_text: str, *, names: list[str] | None = None
 ) -> SpawnTerminalsRequest | None:
@@ -2401,6 +2483,9 @@ def detect_spawn(
 
     parse_text = addressed_text
 
+    if _briefed_position_only(parse_text):
+        return None
+
     unsupported = _unsupported_clis(parse_text)
     uncertain_cli = _uncertain_clis(parse_text)
 
@@ -2434,7 +2519,9 @@ def detect_spawn(
     agent: str | None = None
     if agent_match is not None:
         agent = _canonical_agent(agent_match.group("agent"))
-    count = _spoken_count(parse_text)
+    # A number inside a spoken position is the pane's NAME and never feeds
+    # the fallback: "öffne Terminal 2" opens ONE pane.  # i18n-allow: quoted spoken input
+    count = _spoken_count(_mask_spoken_positions(parse_text))
     return SpawnTerminalsRequest(
         count=count,
         agent=agent,
