@@ -2391,12 +2391,13 @@ function PaneHeader({
    * The bar's gesture explainer — our own card, not the browser's `title`.
    *
    * It used to be a native tooltip, and a native tooltip is drawn by the OS:
-   * always the same system box, blind to the app's theme and to the brand,
-   * and limited to one unbroken sentence. The explainer is the one piece of
+   * always the same white-and-black system box, square-cornered, blind to
+   * the app's theme and to the brand. The explainer is the one piece of
    * teaching UI on the bar — it deserves the same design language as the bar
-   * it explains. So it is a portal card now (the pane clips its children, the
-   * same reason the recap card portals), one row per gesture, keyed to the
-   * PANE's own appearance so it reads in light and dark alike.
+   * it explains. So it is a portal card now (the pane clips its children,
+   * the same reason the recap card portals) carrying the SAME single
+   * sentence, keyed to the PANE's own appearance so it reads in light and
+   * dark alike.
    *
    * It stays strictly a tooltip: pointer-events: none, opened by a settled
    * hover on the bar itself (never over one of the bar's own controls, which
@@ -2455,32 +2456,27 @@ function PaneHeader({
     };
   }, [tip]);
 
-  // One row per gesture the bar answers to, in the order of how often each
-  // is reached for. Only rows whose gesture is actually wired appear — a
-  // maximized pane cannot be dragged, so its card never claims it can.
-  const gestures: Array<{ chip: string; text: string }> = [];
-  if ((recap ?? "").trim())
-    gestures.push({
-      chip: "Click title",
-      text: "Read the full note of what this terminal is doing.",
-    });
-  if (onArrangeStart)
-    gestures.push({
-      chip: "Drag",
-      text: "Move this terminal — drop it on another to swap places, or near an edge to set it there.",
-    });
-  if (onToggleMaximize)
-    gestures.push({
-      chip: "2× click",
-      text: maximized
-        ? "Put it back in its place in the grid."
-        : "Fill the whole workspace with it.",
-    });
-  if (onRename)
-    gestures.push({
-      chip: "2× name",
-      text: "Rename it — the pencil does the same.",
-    });
+  // The explainer's words: ONE plain sentence, the same one the native
+  // tooltip carried — by the maintainer's explicit choice. A first redesign
+  // broke it into chip-led rows, and that was more furniture than the answer
+  // needed; the card is branded, not busy. Only wired gestures make it in —
+  // a maximized pane cannot be dragged, so its sentence never claims it can.
+  const tipText = [
+    onArrangeStart
+      ? `Drag ${name} by this bar to move it — drop it on another terminal to swap, or near an edge to place it there.`
+      : "",
+    onToggleMaximize
+      ? onArrangeStart
+        ? maximized
+          ? "Double-click to put it back."
+          : "Double-click to fill the workspace."
+        : maximized
+          ? `Double-click to put ${name} back in the grid.`
+          : `Double-click to make ${name} fill the workspace.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <header
@@ -2512,7 +2508,7 @@ function PaneHeader({
       onPointerOver={(event) => {
         const target = event.target as HTMLElement | null;
         if (target?.closest("[title], input, [role='menuitem']")) hideTip();
-        else if (gestures.length > 0) scheduleTip();
+        else if (tipText) scheduleTip();
       }}
       onPointerLeave={hideTip}
       /*
@@ -2908,7 +2904,7 @@ function PaneHeader({
           split menu open, or while the call-sign is being renamed — a card
           that teaches gestures must never sit on top of one in progress. */}
       {tip &&
-        gestures.length > 0 &&
+        tipText !== "" &&
         !arranging &&
         picking === null &&
         draft === null &&
@@ -2918,7 +2914,7 @@ function PaneHeader({
             name={name}
             appearance={appearance}
             pos={tip}
-            gestures={gestures}
+            text={tipText}
           />,
           document.body,
         )}
@@ -2930,23 +2926,24 @@ function PaneHeader({
  * The title bar's gesture explainer — the branded card that replaced the
  * native `title` tooltip (see the long note in PaneHeader for why).
  *
- * Structure over prose: the one system sentence became a kicker naming the
- * bar and one row per gesture, each led by a chip in the brand accent. The
- * colours come from PANE_BRAND/PANE_CHROME — the PANE's own ground — so the
- * card matches the terminal it explains in light mode, dark mode, and the
- * mixed configurations. `pointer-events: none` keeps it a label, never a
- * thing the pointer can land on.
+ * Deliberately the SAME one sentence the system tooltip carried, redressed:
+ * the maintainer liked the words and rejected a chip-and-row redesign of
+ * them — the ask was brand, not furniture. So the card is exactly a rounded
+ * corner, the brand hairline, and the sentence, coloured off PANE_BRAND /
+ * PANE_CHROME — the PANE's own ground — so it reads in light mode, dark
+ * mode, and the mixed configurations. `pointer-events: none` keeps it a
+ * label, never a thing the pointer can land on.
  */
 function PaneHeaderTip({
   name,
   appearance,
   pos,
-  gestures,
+  text,
 }: {
   name: string;
   appearance: TerminalAppearance;
   pos: { left: number; top?: number; bottom?: number };
-  gestures: Array<{ chip: string; text: string }>;
+  text: string;
 }) {
   const brand = PANE_BRAND[appearance];
   const light = appearance === "light";
@@ -2955,7 +2952,7 @@ function PaneHeaderTip({
       role="tooltip"
       data-testid={`pane-header-tip-${name}`}
       className={cn(
-        "pointer-events-none fixed z-[70] w-max max-w-[300px] overflow-hidden rounded-lg border",
+        "pointer-events-none fixed z-[70] w-max max-w-[360px] overflow-hidden rounded-xl border",
         "animate-in fade-in-0 duration-150",
         pos.top !== undefined ? "slide-in-from-top-1" : "slide-in-from-bottom-1",
       )}
@@ -2977,36 +2974,12 @@ function PaneHeaderTip({
           background: `linear-gradient(90deg, ${brand.accent}, ${brand.accentSoft} 60%, transparent 95%)`,
         }}
       />
-      <div className="flex flex-col gap-1.5 px-3 py-2.5">
-        <span
-          className="font-display text-[9.5px] font-semibold uppercase tracking-[0.16em]"
-          style={{ color: brand.inkFaint }}
-        >
-          <span style={{ color: brand.accent }}>{name}</span>
-          <span className="mx-1 opacity-50">·</span>
-          title bar
-        </span>
-        {gestures.map((gesture) => (
-          <span key={gesture.chip} className="flex items-baseline gap-2">
-            <kbd
-              className="shrink-0 rounded border px-1.5 py-px font-display text-[9px] font-semibold uppercase tracking-[0.08em]"
-              style={{
-                color: brand.accent,
-                borderColor: brand.accentSoft,
-                background: brand.chip,
-              }}
-            >
-              {gesture.chip}
-            </kbd>
-            <span
-              className="text-[11px] leading-snug"
-              style={{ color: brand.inkMuted }}
-            >
-              {gesture.text}
-            </span>
-          </span>
-        ))}
-      </div>
+      <p
+        className="px-3.5 py-2.5 text-[11.5px] leading-relaxed"
+        style={{ color: brand.ink }}
+      >
+        {text}
+      </p>
     </div>
   );
 }

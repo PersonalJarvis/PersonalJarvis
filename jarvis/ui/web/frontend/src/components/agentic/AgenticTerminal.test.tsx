@@ -992,11 +992,11 @@ describe("pane header actions", () => {
       vi.advanceTimersByTime(600);
     });
 
-    // One row per wired gesture, replacing the old native `title` tooltip.
+    // The same single sentence the native `title` tooltip carried, now in
+    // the pane's own branded card.
     const tip = screen.getByTestId("pane-header-tip-Dana");
-    expect(tip.textContent).toContain("Drag");
-    expect(tip.textContent).toContain("Fill the whole workspace");
-    expect(tip.textContent).toContain("Rename");
+    expect(tip.textContent).toContain("Drag Dana by this bar");
+    expect(tip.textContent).toContain("Double-click to fill the workspace");
     expect(
       screen.getByTestId("pane-header-Dana").getAttribute("title"),
     ).toBeNull();
@@ -1052,8 +1052,7 @@ describe("pane header actions", () => {
     });
 
     const tip = screen.getByTestId("pane-header-tip-Dana");
-    expect(tip.textContent).toContain("Drag");
-    expect(tip.textContent).toContain("Read the full note");
+    expect(tip.textContent).toContain("Drag Dana by this bar");
     vi.useRealTimers();
   });
 
