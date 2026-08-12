@@ -148,6 +148,14 @@ class SnapshotWorkspace:
     # Custom tab label. Empty for snapshots written before renaming existed.
     name: str = ""
     terminals: list[SnapshotTerminal] = field(default_factory=list)
+    # The workspace's split tree (``layout_tree.to_dict`` form), or None for
+    # snapshots written before the tree existed. Deliberately additive and
+    # deliberately opaque here: this module never interprets it, and a pane's
+    # legacy column/slot still rides along on every terminal — so an OLDER
+    # build reading a newer file simply ignores this key and still places
+    # every pane on the coarse grid, and a newer build reading an older file
+    # rebuilds the tree from those hints.
+    layout: dict[str, Any] | None = None
     # When this workspace was last recorded. Its own stamp rather than the
     # file's, because the file holds workspaces that closed at different times
     # and the merge in `save` has to know which record is the newer one.
@@ -159,6 +167,7 @@ class SnapshotWorkspace:
             "folder": self.folder,
             "name": self.name,
             "saved_at": self.saved_at,
+            "layout": self.layout,
             "terminals": [t.to_dict() for t in self.terminals],
         }
 
@@ -184,11 +193,13 @@ class SnapshotWorkspace:
             saved_at = float(data.get("saved_at") or 0.0)
         except (TypeError, ValueError):
             saved_at = 0.0
+        raw_layout = data.get("layout")
         return SnapshotWorkspace(
             session_id=str(data.get("session_id") or ""),
             folder=folder,
             name=str(data.get("name") or "").strip(),
             terminals=terminals,
+            layout=raw_layout if isinstance(raw_layout, dict) else None,
             saved_at=saved_at,
         )
 
@@ -426,6 +437,7 @@ def _restamp(workspace: SnapshotWorkspace, when: float) -> SnapshotWorkspace:
         folder=workspace.folder,
         name=workspace.name,
         terminals=workspace.terminals,
+        layout=workspace.layout,
         saved_at=when,
     )
 

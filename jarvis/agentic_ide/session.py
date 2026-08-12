@@ -78,7 +78,7 @@ from loguru import logger
 
 from jarvis.workspace import agents as workspace_agents
 
-from . import prompt_history, recap_engine, resume_store
+from . import layout_tree, prompt_history, recap_engine, resume_store
 from .activity import NO_READING, Reading, has_work_behind_it, observed
 from .agent_sessions import (
     ResumeHandle,
@@ -859,17 +859,17 @@ class Terminal:
     # still the same pane. Prompt-history files use this id to preserve exactly
     # that boundary across app restarts.
     history_id: str = field(default_factory=lambda: uuid4().hex)
-    # Where the pane sits in the grid, on TWO axes: the workspace is a
-    # left-to-right list of columns, and each column is a top-to-bottom stack.
-    # "Split right" opens a new column beside the anchor; "split down" adds a
-    # pane to the anchor's OWN column and leaves every other column alone.
-    #
-    # The second axis is load-bearing. With only a row number, "split down"
-    # could only mean "open a new row", and a row is window-wide by definition —
-    # so splitting one pane squashed every other pane to half height. A full
-    # split TREE (arbitrary nesting, draggable separators) is still deliberately
-    # NOT modelled: two axes express both buttons the UI offers and stay
-    # readable.
+    # Coarse "where does this pane roughly sit" HINTS, derived from the
+    # workspace's layout tree by `_renumber` after every structural change —
+    # never authoritative. The tree (``Session.layout``) is the geometry now:
+    # the flat two-axis grid these fields came from could not say "beside the
+    # top pane only" ("split right" was a full-height column by construction,
+    # so splitting the top pane of a stack restructured the whole workspace —
+    # reported with a drawing on 2026-08-12, fixed by the tree). The two
+    # integers survive because consumers that only SPEAK about the grid
+    # ("the top-left terminal", the resume offer's dots) still think in
+    # columns, and because older builds reading a new resume snapshot can
+    # still place every pane somewhere sensible.
     column: int = 0
     slot: int = 0
     # Which subscription of `agent` this pane runs on (see jarvis.agent_accounts).
@@ -1274,6 +1274,12 @@ class Session:
     profile: ProjectProfile
     terminals: list[Terminal]
     created_at: float
+    # WHERE every pane sits and how much room it has — the split tree, the one
+    # authority on workspace geometry (see ``layout_tree``). Every structural
+    # change (split, close, move, refold, restore) rewrites it and then lets
+    # `_renumber` project reading order and the coarse per-pane hints from it.
+    # ``None`` only for a workspace with no panes.
+    layout: layout_tree.LayoutNode | None = None
     # Focus mode: while on, Jarvis answers inside this workspace's context. The
     # flag lives here (not in jarvis.toml) on purpose — it is a mode of the
     # current session, and a restart should land the user back in normal mode
@@ -1371,6 +1377,10 @@ class Session:
             "project": self.profile.to_dict(),
             "created_at": self.created_at,
             "focus_mode": self.focus_mode,
+            # The split tree the grid draws from. The per-terminal column/slot
+            # fields riding along below are coarse hints for consumers that
+            # only talk ABOUT the layout; a client that renders it needs this.
+            "layout": layout_tree.to_dict(self.layout) if self.layout else None,
             "terminals": [t.to_dict() for t in self.terminals],
         }
 
@@ -1904,6 +1914,12 @@ class Registry:
             profile=profile,
             terminals=terminals,
             created_at=time.time(),
+            # Both callers prepare panes with legacy (column, slot) positions
+            # — the wizard's opening arithmetic, a snapshot's remembered grid
+            # — and the columns-of-stacks shape those describe is exactly
+            # representable as a tree. A restore that remembered a real tree
+            # replaces this afterwards (`_restore_one_locked`).
+            layout=layout_tree.from_grid((t.key, t.column, t.slot) for t in terminals),
         )
         self._sessions[session.id] = session
         self._focus_locked(session)
@@ -2119,8 +2135,24 @@ class Registry:
         # Which record this came back from, so a second restore of the same file
         # recognises it rather than opening a duplicate.
         session.restored_from = _restore_key(space)
+        # The remembered split tree, when the snapshot carries one and it
+        # parses. `_open_locked` already built the coarse columns-of-stacks
+        # equivalent from the legacy (column, slot) pairs, so a snapshot from
+        # an older build — or a truncated tree — degrades to the shape those
+        # hints describe instead of failing the reopen.
+        if space.layout is not None:
+            try:
+                session.layout = layout_tree.from_dict(space.layout)
+            except ValueError as exc:
+                logger.warning(
+                    "Agentic IDE: the remembered layout of {} is unreadable, "
+                    "restoring its panes on the coarse grid instead: {}",
+                    space.folder,
+                    exc,
+                )
         # Pack the grid: a snapshot can carry gaps if it was written between a
-        # close and its renumbering, and a gap renders as a blank stripe.
+        # close and its renumbering (or a remembered tree can disagree with the
+        # panes that really came back), and `_renumber` settles both.
         self._renumber(session)
         return session
 
@@ -2253,6 +2285,7 @@ class Registry:
                     folder=session.folder,
                     name=session.name,
                     terminals=[t.to_snapshot() for t in session.terminals],
+                    layout=layout_tree.to_dict(session.layout) if session.layout else None,
                 )
                 for session in self._sessions.values()
             ],
@@ -3742,24 +3775,6 @@ class Registry:
                 wanted = free_positions([t.name for t in session.terminals], 1)[0]
             final = _unique_name(wanted, used)
 
-            if base is None:
-                column, slot = 0, 0
-            elif direction == "right":
-                # A new column of its own, immediately right of the anchor's;
-                # everything further right shifts one column over.
-                column, slot = base.column + 1, 0
-                for other in session.terminals:
-                    if other.column >= column:
-                        other.column += 1
-            else:
-                # Inside the anchor's column, directly beneath it. No other
-                # column is touched — that is what makes this a real split
-                # rather than a new window-wide row.
-                column, slot = base.column, base.slot + 1
-                for other in session.terminals:
-                    if other.column == column and other.slot >= slot:
-                        other.slot += 1
-
             # Which subscription the new pane opens on, when the caller named
             # none. Two different questions, so two different answers:
             #
@@ -3785,11 +3800,24 @@ class Registry:
                 agent=chosen,
                 display_name=agent_display(chosen),
                 index=len(session.terminals),
-                column=column,
-                slot=slot,
                 account=resolve_account(chosen, account or inherited),
             )
             session.terminals.append(term)
+            # Where it goes is the tree's business, and the distinction is the
+            # whole feature: a NAMED anchor is a split — the new pane carves
+            # the clicked pane's own rectangle and nothing else moves — while
+            # an anchor-less add ("open five more", the empty grid's button)
+            # joins the workspace edge as a full-height column, because no
+            # pane was chosen to give up half its room.
+            if anchor and base is not None:
+                session.layout = layout_tree.split_pane(
+                    session.layout,
+                    base.key,
+                    term.key,
+                    "right" if direction == "right" else "down",
+                )
+            else:
+                session.layout = layout_tree.append_pane(session.layout, term.key)
             self._renumber(session)
             await self._persist()
             logger.info(
@@ -3885,29 +3913,13 @@ class Registry:
             if anchor.key == moved.key:
                 return moved
 
-            if position == "swap":
-                moved.column, anchor.column = anchor.column, moved.column
-                moved.slot, anchor.slot = anchor.slot, moved.slot
-            elif position in ("left", "right"):
-                # A column of its own beside the target. The moved pane is left
-                # out of the shift — it is being placed, not pushed — and the
-                # column it vacates is closed by `_renumber` below, so a pane
-                # that was already on that side lands exactly where it started.
-                column = anchor.column if position == "left" else anchor.column + 1
-                for other in session.terminals:
-                    if other is not moved and other.column >= column:
-                        other.column += 1
-                moved.column, moved.slot = column, 0
-            else:
-                # Into the target's own stack. Every other column stays put —
-                # the same property that makes "split down" a real split.
-                column = anchor.column
-                slot = anchor.slot if position == "above" else anchor.slot + 1
-                for other in session.terminals:
-                    if other is not moved and other.column == column and other.slot >= slot:
-                        other.slot += 1
-                moved.column, moved.slot = column, slot
-
+            # "swap" exchanges the two panes and keeps the tree's exact shape;
+            # the four sides carve the TARGET's own rectangle — the same local
+            # meaning the split buttons have, at any depth. The moved pane's
+            # old room dissolves to its former siblings on the way out.
+            session.layout = layout_tree.move_pane(
+                session.layout, moved.key, anchor.key, position
+            )
             self._renumber(session)
             await self._persist()
             logger.info(
@@ -3960,10 +3972,13 @@ class Registry:
             # clamp: the grid asks with a number it derived from a measurement.
             depth = min(depth, max(1, len(session.terminals)))
 
-            for index, term in enumerate(session.terminals):
-                term.column = index // depth
-                term.slot = index % depth
-
+            # A fresh tree in the wizard's shape, weights reset: a re-fold is
+            # a whole-workspace re-deal by definition, and carrying dragged
+            # weights from an arrangement that no longer exists would re-fold
+            # into something nobody has seen before.
+            session.layout = layout_tree.wizard_tree(
+                [t.key for t in session.terminals], depth
+            )
             self._renumber(session)
             await self._persist()
             logger.info(
@@ -3971,6 +3986,41 @@ class Registry:
                 len(session.terminals),
                 depth,
             )
+            return session
+
+    async def set_layout_weights(self, layout: dict[str, Any]) -> Session:
+        """Adopt a client's dragged pane sizes; the STRUCTURE stays the server's.
+
+        A seam drag changes exactly one thing about a workspace — how much
+        room neighbours give each other — and that is all this accepts. The
+        client sends back the whole tree it was looking at; if its shape still
+        matches the live one, its weights are adopted, persisted, and pushed
+        to every viewer like any other layout change.
+
+        A mismatch is a RACE, not a fault: a voice-opened pane or a second
+        client reshaped the workspace mid-drag. The drag is quietly declined —
+        the response (and the next state poll) carries the authoritative tree,
+        so the client snaps back to reality rather than painting a red banner
+        over a background event the user never saw.
+        """
+        async with self._lock:
+            session = self.session
+            if session is None:
+                raise SessionError("No Agentic-IDE session is running.")
+            try:
+                proposed = layout_tree.from_dict(layout)
+            except ValueError as exc:
+                raise SessionError(f"Unreadable layout: {exc}") from exc
+            if session.layout is not None and layout_tree.same_shape(
+                session.layout, proposed
+            ):
+                session.layout = layout_tree.adopt_weights(session.layout, proposed)
+                await self._persist()
+            else:
+                logger.info(
+                    "Agentic IDE: dragged sizes arrived for a reshaped workspace — "
+                    "keeping the live arrangement"
+                )
             return session
 
     async def rename_terminal(self, wanted: str, name: str) -> tuple[Session, Terminal]:
@@ -4084,6 +4134,11 @@ class Registry:
                 term.watchers.clear()
                 term.prompt_viewers.clear()
                 session.terminals.remove(term)
+                # The pane's rectangle folds away with it: its room goes to
+                # its siblings and any container left holding one child
+                # dissolves, so a workspace that was split apart closes back
+                # to simple shapes.
+                session.layout = layout_tree.remove_pane(session.layout, term.key)
                 # The recap cache is keyed by pane, and pane keys are reused
                 # (a new "Mika" in the same workspace). Dropping it here is what
                 # stops a fresh pane opening under the last one's sentence.
@@ -4112,24 +4167,37 @@ class Registry:
 
     @staticmethod
     def _renumber(session: Session) -> None:
-        """Re-pack the grid after an insert or a removal.
+        """Re-align the pane LIST with the layout tree after any change.
 
-        Three things at once, all of them about not leaking holes into the UI:
-        the terminal list is sorted back into reading order (left to right, top
-        to bottom), column numbers are packed so emptying a column does not
-        render as a blank stripe, and each column's slots are packed so closing
-        the middle of a stack does not leave a gap in it.
+        The tree is the geometry; this keeps everything derived from it
+        honest, defensively in both directions:
+
+        * A pane the tree does not know (opened by a code path that predates
+          the tree, or a snapshot written half-way through a close) is
+          appended at the workspace edge rather than rendered nowhere.
+        * A tree entry whose pane is gone is pruned rather than drawn as a
+          blank rectangle.
+
+        Then the list is sorted into the tree's reading order (left to right,
+        top to bottom — the order the prompt-bar chips use), ``index`` is
+        re-packed, and the coarse ``column``/``slot`` hints are re-projected
+        for the consumers that only talk ABOUT the grid.
         """
-        session.terminals.sort(key=lambda t: (t.column, t.slot))
+        live = {t.key for t in session.terminals}
+        for key in layout_tree.leaves(session.layout):
+            if key not in live:
+                session.layout = layout_tree.remove_pane(session.layout, key)
+        placed = set(layout_tree.leaves(session.layout))
+        for term in session.terminals:
+            if term.key not in placed:
+                session.layout = layout_tree.append_pane(session.layout, term.key)
 
-        columns = sorted({t.column for t in session.terminals})
-        remap = {old: new for new, old in enumerate(columns)}
-        next_slot: dict[int, int] = {}
+        order = {key: at for at, key in enumerate(layout_tree.leaves(session.layout))}
+        session.terminals.sort(key=lambda t: order.get(t.key, len(order)))
+        hints = layout_tree.grid_hints(session.layout)
         for position, term in enumerate(session.terminals):
             term.index = position
-            term.column = remap.get(term.column, 0)
-            term.slot = next_slot.get(term.column, 0)
-            next_slot[term.column] = term.slot + 1
+            term.column, term.slot = hints.get(term.key, (0, 0))
 
     # --------------------------------------------------------------- prompt
     async def send_prompt(
