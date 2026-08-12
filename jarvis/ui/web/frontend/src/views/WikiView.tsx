@@ -116,6 +116,14 @@ export function WikiView(): JSX.Element {
   const [isReindexing, setIsReindexing] = useState(false);
   const [reindexError, setReindexError] = useState<string | null>(null);
 
+  // A staged "open this page" request from another section (e.g. the Contacts
+  // detail's wiki link). Same consumption idiom as the Visualization stage:
+  // `seq` bumps on every request, so re-opening the same slug still fires.
+  const wikiPageRequest = useEventStore((s) => s.wikiPageRequest);
+  useEffect(() => {
+    if (wikiPageRequest) setSelectedSlug(wikiPageRequest.slug);
+  }, [wikiPageRequest]);
+
   // Tree query lives both here (for header stats + empty-state detection)
   // and inside TreeSidebar (for the list). React Query dedupes them.
   const treeQuery = useQuery({

@@ -124,7 +124,9 @@ describe("ContactsView (master–detail)", () => {
     });
     render(<ContactsView />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /add contact/i }));
+    // Two "Add contact" buttons exist on an empty book: the header one and
+    // the empty-state CTA. Either opens the same create dialog.
+    fireEvent.click((await screen.findAllByRole("button", { name: /add contact/i }))[0]);
     // The dialog has a name field (a create form, not a detail view).
     expect(await screen.findByPlaceholderText("Christoph Meyer")).toBeTruthy();
   });
@@ -135,5 +137,72 @@ describe("ContactsView (master–detail)", () => {
     });
     render(<ContactsView />);
     expect(await screen.findByText(/no contacts yet/i)).toBeTruthy();
+  });
+
+  it("filters by relationship chips (toggle on/off)", async () => {
+    installFetchMock({
+      "GET /api/contacts": () => ({ body: { contacts: [CHRISTOPH_SUMMARY, LAURA_SUMMARY] } }),
+    });
+    render(<ContactsView />);
+    await screen.findByText("Christoph Meyer");
+
+    fireEvent.click(screen.getByRole("button", { name: /partner · 1/i }));
+    expect(screen.queryByText("Christoph Meyer")).toBeNull();
+    expect(screen.getByText("Laura")).toBeTruthy();
+
+    // Clicking the active chip again clears the filter.
+    fireEvent.click(screen.getByRole("button", { name: /partner · 1/i }));
+    expect(screen.getByText("Christoph Meyer")).toBeTruthy();
+  });
+
+  it("groups the list by first letter", async () => {
+    installFetchMock({
+      "GET /api/contacts": () => ({ body: { contacts: [CHRISTOPH_SUMMARY, LAURA_SUMMARY] } }),
+    });
+    render(<ContactsView />);
+    await screen.findByText("Christoph Meyer");
+    // "C" appears only as Christoph's group header; "L" is both Laura's group
+    // header and her avatar initial.
+    expect(screen.getByText("C")).toBeTruthy();
+    expect(screen.getAllByText("L").length).toBeGreaterThan(0);
+  });
+
+  it("reloads the list when a contact changes elsewhere (voice/CLI)", async () => {
+    let listing: unknown[] = [CHRISTOPH_SUMMARY];
+    installFetchMock({
+      "GET /api/contacts": () => ({ body: { contacts: listing } }),
+    });
+    render(<ContactsView />);
+    await screen.findByText("Christoph Meyer");
+    expect(screen.queryByText("Laura")).toBeNull();
+
+    listing = [CHRISTOPH_SUMMARY, LAURA_SUMMARY];
+    fireEvent(
+      window,
+      new CustomEvent("jarvis:contact-changed", {
+        detail: { action: "created", slug: "laura", name: "Laura" },
+      }),
+    );
+    expect(await screen.findByText("Laura")).toBeTruthy();
+  });
+
+  it("asks before discarding unsaved dialog changes", async () => {
+    installFetchMock({
+      "GET /api/contacts": () => ({ body: { contacts: [] } }),
+    });
+    render(<ContactsView />);
+    fireEvent.click((await screen.findAllByRole("button", { name: /add contact/i }))[0]);
+    const nameInput = await screen.findByPlaceholderText("Christoph Meyer");
+    fireEvent.change(nameInput, { target: { value: "Anna" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /^close$/i }));
+    expect(await screen.findByText(/discard changes\?/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /keep editing/i }));
+    expect(screen.getByPlaceholderText("Christoph Meyer")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /^close$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^discard$/i }));
+    expect(screen.queryByPlaceholderText("Christoph Meyer")).toBeNull();
   });
 });

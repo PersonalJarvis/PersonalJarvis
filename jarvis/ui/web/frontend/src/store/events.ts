@@ -360,6 +360,13 @@ interface EventStore {
    * Written by `requestVisual`, read by the section — see VisualStageRequest.
    */
   visualStage: VisualStageRequest | null;
+  /**
+   * The pending "open this wiki page" request for the Wiki section, or null
+   * when nobody has asked for one. Written by `requestWikiPage`, consumed by
+   * WikiView — the same staging idiom as `visualStage`, so a request made
+   * while the section is not mounted still lands once it is.
+   */
+  wikiPageRequest: { slug: string; seq: number } | null;
   transcription: string;
   transcriptionFinal: boolean;
   toasts: Toast[];
@@ -437,6 +444,8 @@ interface EventStore {
    * `visualId(artifact)`, or omit the argument for the newest visual.
    */
   requestVisual: (target?: string) => void;
+  /** Stage a wiki page (by slug) and switch to the Wiki section. */
+  requestWikiPage: (slug: string) => void;
   setTranscription: (text: string, isFinal: boolean) => void;
   pushToast: (
     kind: Toast["kind"],
@@ -513,6 +522,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
   ),
   detachedViews: [],
   visualStage: null,
+  wikiPageRequest: null,
   transcription: "",
   transcriptionFinal: true,
   toasts: [],
@@ -559,6 +569,14 @@ export const useEventStore = create<EventStore>((set, get) => ({
       // very view the user split off to keep. The request itself still lands,
       // which is what a detached Visualization window needs.
       activeSection: state.solo ? state.activeSection : "visualization",
+    })),
+
+  requestWikiPage: (slug) =>
+    set((state) => ({
+      wikiPageRequest: { slug, seq: (state.wikiPageRequest?.seq ?? 0) + 1 },
+      // Same solo rule as requestVisual: a detached window is pinned to its
+      // one section, so only the staged request travels — never the section.
+      activeSection: state.solo ? state.activeSection : "memory",
     })),
 
   setTranscription: (text, isFinal) =>

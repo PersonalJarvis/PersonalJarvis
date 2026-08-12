@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { relationshipLabel } from "./constants";
+import { contactAvatarStyle, contactInitials } from "./avatar";
 import type { ContactSummary } from "./api";
 
 /** One row in the master (left) list of the Contacts master–detail view. */
@@ -30,9 +31,10 @@ export function ContactRow({
       >
         <span
           aria-hidden
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-secondary/50 text-xs font-semibold uppercase text-primary"
+          style={contactAvatarStyle(contact.name)}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
         >
-          {initial(contact.name)}
+          {contactInitials(contact.name)}
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-sm font-medium text-foreground">{contact.name}</span>
@@ -48,9 +50,4 @@ export function ContactRow({
       </button>
     </li>
   );
-}
-
-function initial(name: string): string {
-  const trimmed = name.trim();
-  return trimmed ? trimmed[0]!.toUpperCase() : "?";
 }

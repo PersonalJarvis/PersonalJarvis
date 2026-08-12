@@ -412,6 +412,15 @@ export function useWebSocket(): void {
           window.dispatchEvent(new CustomEvent("jarvis:secret-configured", { detail: env.payload }));
         }
 
+        if (env.event_name === "ContactChanged") {
+          // Trigger only — ContactsView re-fetches its own list, so a contact
+          // saved by voice (contact-upsert) appears without a manual refresh.
+          // payload: { action: created|updated|deleted, slug, name }.
+          window.dispatchEvent(
+            new CustomEvent("jarvis:contact-changed", { detail: env.payload }),
+          );
+        }
+
         if (
           env.event_name === "AgenticIdeTerminalsAdded" ||
           env.event_name === "AgenticIdeTerminalsClosed" ||
