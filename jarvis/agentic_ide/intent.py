@@ -1034,7 +1034,7 @@ _INSTRUCTION_VERB_RE = re.compile(
     r"k[uü]e?mmer\w*|"  # i18n-allow: input vocab
     r"audit\w*|inspect\w*|verify|update|handle|cover|take\s+over|"
     r"build|write|make|run|implement\w*|change|create|add|remove|delete|"
-    r"investigate|look|read|find|search|explain|document|"
+    r"investigate|look|read|find|search|explain|document|hunt\w*|"
     # "do a deep dive on X" describes the work with a noun phrase, and it is
     # the single most common way this workspace is asked for anything — yet
     # every verb in this list missed it, so "would you have Alex do a deep
@@ -1696,6 +1696,27 @@ def _spoken_groups(text: str) -> tuple[SpawnGroup, ...]:
     # A count that no CLI name claimed, sitting in front of the pane noun, is a
     # group of its own: "two terminals and one Codex" is three panes, and the
     # two that were not given a name inherit one.
+    #
+    # Unless the sentence is TALKING ABOUT the panes rather than ordering more
+    # of them. Live 2026-08-12 17:40: "open two new cloud code terminals and
+    # the two terminals should hunt bugs, one terminal takes macOS and one
+    # terminal takes Linux" — the restated count and the enumeration items
+    # were each read as more fleet, and a request for two opened FOUR panes,
+    # every one of them billed. Two shapes are task-side and are dropped, but
+    # only for a group that is NOT the first of its clause (the first is the
+    # request itself, however it is phrased — "zwei Terminals sollen
+    # aufgehen" stays a request) and never for one carrying an additive
+    # ("noch ein Terminal" extends the fleet, full stop):
+    #
+    # * the noun is directly followed by its own predicate — a modal or work
+    #   verb ("the two terminals SHOULD …", "ein Terminal SOLL …") or the
+    #   elided-verb complement ("ein Terminal FÜR Linux"). A fleet request
+    #   puts the panes at the END of its clause; a restatement gives them a
+    #   job to do in the same breath;
+    # * two or more value-one groups in one clause ("one terminal … and one
+    #   terminal …") — spoken enumeration counts items off one at a time,
+    #   while a fleet request states its size once ("two terminals").
+    candidates: list[tuple[int, int, re.Match[str]]] = []
     for match in _pane_nouns(text):
         index = next(
             (
@@ -1710,7 +1731,28 @@ def _spoken_groups(text: str) -> tuple[SpawnGroup, ...]:
         if index is None:
             continue
         spent.add(index)
-        found.append((counts[index][0], SpawnGroup(count=max(1, counts[index][2]), agent=None)))
+        candidates.append((counts[index][0], index, match))
+
+    first_at = min(
+        [at for at, _g in found] + [at for at, _i, _m in candidates],
+        default=0,
+    )
+    ones = sum(1 for _at, i, _m in candidates if counts[i][2] == 1)
+    for at, index, noun in candidates:
+        value = max(1, counts[index][2])
+        additive_near = (
+            _ADDITIVE_RE.search(text[max(0, counts[index][0] - _ADDITIVE_NEAR_GAP) : noun.start()])
+            is not None
+        )
+        if at > first_at and not additive_near:
+            after_noun = text[noun.end() : noun.end() + 18]
+            predicated = bool(
+                _DISTRIBUTIVE_PREDICATE_RE.search(after_noun)
+                or _INSTRUCTION_VERB_RE.search(after_noun)
+            )
+            if predicated or (value == 1 and ones >= 2):
+                continue
+        found.append((at, SpawnGroup(count=value, agent=None)))
 
     if not found:
         return ()
@@ -1800,6 +1842,11 @@ def _span_gap(left: re.Match[str], right: re.Match[str]) -> int:
 _FLEET_BRIEF_RE = re.compile(
     r"\b(?:jede\w*\s+(?:davon|dieser)|each\s+(?:one|of\s+them)|"
     r"prompt\w*|brief\w*|instruct\w*|assign\w*|tell\w*|"
+    # "sag ihnen, …" / "diles que …" — the plain-speech handover verbs. They
+    # were missing while "tell" was not, so a German fleet order's task half
+    # was parsed as MORE FLEET: the counts inside it opened extra panes
+    # (live 2026-08-12 17:40, four billed panes for a spoken "two").
+    r"sag\w*|diles?|d[ií]gale|"  # i18n-allow: input vocab
     r"anweis\w*|beauftrag\w*|gib\w*\s+.*\baufgabe\w*)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
@@ -2105,17 +2152,65 @@ def _spawn_span(text: str) -> _SpawnSpan | None:
         # Mixed fleets may continue after the first pane noun ("three terminals
         # of Codex and two of Claude"). Parse the rest of this one clause, but
         # stop when it begins telling the fleet what to do; repeated counts in
-        # that task are not additional pane groups.
+        # that task are not additional pane groups. The handover shows up two
+        # ways: a briefing verb ("and prompt them …"), or the panes returning
+        # as the SUBJECT of their own work ("and the two terminals should …",
+        # "one terminal takes macOS …") — see ``_task_subject_cut``.
         parse_end = len(clause)
         briefing = _FLEET_BRIEF_RE.search(clause, anchor_end)
         if briefing is not None:
             parse_end = briefing.start()
+        subject = _task_subject_cut(clause, anchor_end)
+        if subject is not None:
+            parse_end = min(parse_end, subject)
         return _SpawnSpan(
             start=clause_match.start(),
             end=clause_match.start() + anchor_end,
             parse_text=clause[:parse_end],
-            truncated=briefing is not None,
+            truncated=parse_end < len(clause),
         )
+    return None
+
+
+def _task_subject_cut(clause: str, from_pos: int) -> int | None:
+    """Where the clause stops describing the fleet and starts its WORK, or None.
+
+    The verbless handover: after the fleet is asked for, the panes come back
+    as the SUBJECT of a job — "… and the two terminals should do a deep
+    dive", "… one terminal takes macOS and one terminal takes Linux". No
+    briefing verb marks the turn, so ``_FLEET_BRIEF_RE`` sails past it and
+    every count in that job was read as MORE fleet: a spoken "two" opened
+    four billed panes (live 2026-08-12 17:40).
+
+    A pane noun past the anchor whose next words are its own predicate — a
+    modal, a work verb, or the elided-verb complement ("ein Terminal FÜR
+    Linux") — is that turn. The cut lands in front of the count/article that
+    introduces it, so the whole subject phrase becomes the remainder that
+    ``spawn_instruction`` hands to the new panes.
+
+    Two exemptions keep real fleet extensions whole, the same ones the group
+    parser applies: an additive in front of the noun ("noch ein Terminal")
+    extends the fleet, and a CLI name directly in front of the noun ("… und 3
+    Claude Code Terminals auf") is a named group whose trailing word — the
+    German separable particle, usually — must not be read as a predicate.
+    """
+    counts = _count_tokens(clause)
+    named = [m.end() for m in _AGENT_RE.finditer(clause)]
+    for noun in _pane_nouns(clause):
+        if noun.start() <= from_pos:
+            continue
+        if _ADDITIVE_RE.search(clause[max(0, noun.start() - _COUNT_AGENT_MAX_GAP) : noun.start()]):
+            continue
+        if any(0 <= noun.start() - end <= 2 for end in named):
+            continue
+        window = clause[noun.end() : noun.end() + 18]
+        if not (_DISTRIBUTIVE_PREDICATE_RE.search(window) or _INSTRUCTION_VERB_RE.search(window)):
+            continue
+        cut = noun.start()
+        for c_start, c_end, _value in counts:
+            if c_end <= cut and cut - c_end <= 12:
+                cut = min(cut, c_start)
+        return cut
     return None
 
 
@@ -2287,12 +2382,13 @@ def spawn_includes_task(user_text: str) -> bool:
 
 _TASK_AFTER_BRIEF_RE = re.compile(
     r"\b(?:prompt\w*|brief\w*|instruct\w*|assign\w*|tell\w*|"
+    r"sag\w*|diles?|d[ií]gale|"  # i18n-allow: input vocab
     r"anweis\w*|beauftrag\w*)\b\s*"
     r"(?:,?\s*(?:dass|damit|that|to|que)\s*)?"  # i18n-allow: input vocab
     # The pronoun standing for the fleet. "them" was missing, so "prompt
     # them, one fixes …" handed fresh agents a task that OPENED with the
     # word "them," — a fragment of the address baked into their work.
-    r"(?:(?:sie|er|es|they|it|them(?:\s+all)?|those|"  # i18n-allow: input vocab
+    r"(?:(?:sie|er|es|ihnen|ihm|they|it|them(?:\s+all)?|those|"  # i18n-allow: input vocab
     r"each(?:\s+one|\s+of\s+them)?|all(?:\s+of\s+them)?|everyone|"
     r"beiden?|allen?|cada\s+uno|todos|todas|ellos|ellas)"  # i18n-allow: input vocab
     r"[\s,:]+)?"

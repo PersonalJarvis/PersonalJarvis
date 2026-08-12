@@ -946,6 +946,66 @@ def test_prompt_them_does_not_leak_the_pronoun_into_the_task() -> None:
     assert intent.distributes_tasks(instruction) is True
 
 
+# --------------------------------------------------------------------------- #
+# Live voice regression from 2026-08-12 17:40: four billed panes for a "two"   #
+# --------------------------------------------------------------------------- #
+# The task half of the sentence talked ABOUT the panes — a restated count
+# ("the two terminals should …") or an enumeration ("one terminal takes macOS
+# and one terminal takes Linux") — and every count in it was read as MORE
+# fleet: 2+1+1 or 2+2 panes opened for a spoken "two", each on a paid
+# subscription. The handover verb was either absent or one the boundary regex
+# did not know ("sag ihnen" was missing while "tell them" was covered).
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # German handover via "sag ihnen" — previously not a task boundary.
+        "Kannst du bitte zwei neue Cloud Code Terminals öffnen und sag ihnen, "
+        "ein Terminal soll einen Deep Dive für Bugs auf macOS machen und ein "
+        "Terminal für Linux",  # i18n-allow: spoken input under test
+        # The restated count: the panes return as the SUBJECT of their work.
+        "Can you open two new cloud code terminals and the two terminals "
+        "should do a deep dive hunting bugs, one on macOS and one on Linux",
+        # Enumeration items carrying pane nouns, no handover verb at all.
+        "Open two new cloud code terminals, one terminal hunts bugs on macOS "
+        "and one terminal hunts bugs on Linux",
+        # Enumeration behind a known briefing verb (the always-safe control).
+        "Open two new cloud code terminals and prompt them, one terminal "
+        "takes macOS and one terminal takes Linux",
+    ],
+)
+def test_counts_in_the_task_half_never_add_panes(utterance: str) -> None:
+    found = intent.detect_spawn(utterance, names=NAMES)
+
+    assert found is not None
+    assert found.groups == (intent.SpawnGroup(count=2, agent="claude"),)
+    assert found.count == 2
+    # The task half is still the task: it reaches the panes, and its
+    # enumeration is recognised as a division so each pane gets its slice.
+    assert intent.spawn_includes_task(utterance) is True
+    assert intent.distributes_tasks(intent.spawn_instruction(utterance)) is True
+
+
+def test_an_additive_extension_is_never_mistaken_for_task_talk() -> None:
+    """"one MORE terminal for the tests" extends the fleet, full stop."""
+    found = intent.detect_spawn(
+        "Open two terminals and one more terminal for the tests", names=NAMES
+    )
+    assert found is not None
+    assert found.count == 3
+
+
+def test_a_named_groups_trailing_particle_is_not_a_predicate() -> None:
+    """German separable "auf" after a named group must not cut the fleet."""
+    found = intent.detect_spawn(
+        "Mach mir 5 Codex Terminals und 3 Claude Code Terminals auf",  # i18n-allow: fixture
+        names=NAMES,
+    )
+    assert found is not None
+    assert [(g.count, g.agent) for g in found.groups] == [(5, "codex"), (3, "claude")]
+
+
 def test_a_garble_before_the_next_group_still_earns_the_question() -> None:
     """"two closed, one codex" garbles "Claudes" — Jarvis must ask, not guess.
 
