@@ -136,3 +136,38 @@ def test_partial_namespaced_name_does_not_match() -> None:
 def test_empty_and_none_inputs() -> None:
     assert resolve_explicit_skill_request("", _REGISTRY) is None
     assert resolve_explicit_skill_request("use the gmail skill", None) is None
+
+
+def test_informational_questions_never_execute() -> None:
+    """Review finding 2026-08-12: "how do I use the X skill?" satisfies the
+    verb + skill-word + name gates exactly like a command, but running the
+    skill (worst case: dispatching a background mission) would be the wrong
+    answer. The question-opener veto must catch every phrasing shape.
+    """
+    questions = [
+        "how do I use the gmail skill?",
+        "what does the skill morning-routine do",
+        "wofür benutzt man den skill morning-routine",  # i18n-allow
+        "wie nutze ich den skill deep-work-mode",  # i18n-allow
+        "warum startet der skill morning-routine nicht",  # i18n-allow
+        "hey jarvis, how do I run the gcloud skill",
+    ]
+    for utterance in questions:
+        assert resolve_explicit_skill_request(utterance, _REGISTRY) is None, utterance
+
+
+def test_polite_modal_requests_still_resolve() -> None:
+    """"kannst du … nutzen" is a command in politeness clothing — it must NOT
+    be caught by the question veto (only information openers veto).
+    """
+    hit = resolve_explicit_skill_request(
+        "kannst du den skill morning routine nutzen", _REGISTRY  # i18n-allow
+    )
+    assert hit is not None
+    assert hit[0].name == "morning-routine"
+
+    hit = resolve_explicit_skill_request(
+        "can you run the gmail skill for me", _REGISTRY
+    )
+    assert hit is not None
+    assert hit[0].name == "plugin-gmail"

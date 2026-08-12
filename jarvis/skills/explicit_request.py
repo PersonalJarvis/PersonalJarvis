@@ -13,11 +13,13 @@ precision over recall. It fires only when ALL THREE hold:
 
 1. an explicit use-verb ("nutz", "starte", "run", "use", "ejecuta", …),
 2. the literal word "skill(s)" — the user is talking about the mechanism,
-3. an installed, active skill whose NAME is spoken in the utterance.
+3. an installed, active skill whose NAME is spoken in the utterance,
+4. and the utterance is NOT an informational question ("how do I use the X
+   skill?" must be answered, never executed — see the opener veto below).
 
 "Welche skills habe ich?" has no use-verb; "erstell mir einen skill …" has no
 resolvable installed name; "starte die morgenroutine" has no "skill" word and
-stays with the trigger/relevance channels. All three miss here by design.
+stays with the trigger/relevance channels. All of these miss by design.
 
 Name matching is speech-tolerant: kebab-case names are compared as normalized
 token sequences ("morning-routine" ↔ "morning routine"), and the namespace
@@ -40,14 +42,38 @@ from jarvis.skills.match_eval import (
 from jarvis.skills.relevance import normalize_text
 
 #: Imperative use-verbs in DE / EN / ES, matched against the RAW utterance
-#: (umlaut and digraph forms both listed). Deliberately excludes authoring
-#: verbs ("erstell", "bau", "create") — creating a skill is not running one.
+#: (umlaut and digraph forms both listed). Infinitives are included because
+#: polite modal phrasing is how people actually speak ("kannst du den Skill X
+#: nutzen"). Deliberately excludes authoring verbs ("erstell", "bau",
+#: "create") — creating a skill is not running one.
 _EXPLICIT_VERB_RE = re.compile(
     r"\b("
-    r"nutz(?:e|t)?|benutz(?:e|t)?|verwende?|starte?|"  # i18n-allow: speech-input vocabulary
-    r"f[üu]hr(?:e|t)?|fuehre?|aktiviere?|"  # i18n-allow: speech-input vocabulary
+    r"nutz(?:e|t|en)?|benutz(?:e|t|en)?|verwend(?:e|et|en)?|"  # i18n-allow: speech-input vocabulary
+    r"start(?:e|et|en)?|f[üu]hr(?:e|t|en)?|fuehr(?:e|t|en)?|"  # i18n-allow: speech-input vocabulary
+    r"aktivier(?:e|t|en)?|"  # i18n-allow: speech-input vocabulary
     r"run|use|execute|launch|trigger|invoke|activate|start|"
     r"usa|ejecuta|lanza|activa"  # i18n-allow: speech-input vocabulary
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: Informational question openers (DE / EN / ES), after an optional wake or
+#: politeness run. A question ABOUT a skill — "how do I use the cloud-debug
+#: skill?", or its German "what is it used for" form —  # i18n-allow: example
+#: satisfies the verb + skill-word + name gates exactly like a command does,
+#: yet running the skill would be the wrong answer: for a mission skill it
+#: would silently dispatch a background worker off a question (review finding
+#: 2026-08-12). Only interrogative INFORMATION openers veto; polite-modal
+#: request forms ("kannst du …", "can you …") stay commands. Mirrors the
+#: manager's ``_QUESTION_OPENER_RE`` shape.
+_INFO_QUESTION_OPENER_RE = re.compile(
+    r"^\s*(?:(?:hey|hallo|hi|hello|ok(?:ay)?|bitte|please|jarvis)[\s,]+){0,3}"
+    r"(?:"
+    r"was|wie|wieso|warum|weshalb|wann|wer|wen|wem|wessen|"  # i18n-allow: speech-input vocabulary
+    r"welche[rsnm]?|wof[üu]r|wofuer|wozu|woher|wohin|wo|"  # i18n-allow: speech-input vocabulary
+    r"how|what|whats|why|which|who|whom|whose|when|where|"
+    r"qu[ée]|c[óo]mo|cu[áa]ndo|d[óo]nde|por\s+qu[ée]|"  # i18n-allow: speech-input vocabulary
+    r"para\s+qu[ée]|qui[ée]n(?:es)?|cu[áa]l(?:es)?"  # i18n-allow: speech-input vocabulary
     r")\b",
     re.IGNORECASE,
 )
@@ -100,6 +126,9 @@ def resolve_explicit_skill_request(
         if not _SKILL_WORD_RE.search(utterance):
             return None
         if not _EXPLICIT_VERB_RE.search(utterance):
+            return None
+        if _INFO_QUESTION_OPENER_RE.match(utterance):
+            # A question about the skill must be ANSWERED, never executed.
             return None
         spoken = tuple(_TOKEN_RE.findall(normalize_text(utterance)))
         if not spoken:

@@ -456,6 +456,38 @@ async def commit_skill_draft(
 
 _URL_RE = re.compile(r"https?://[^\s\"'<>]+")
 
+#: Charset an imported skill's frontmatter ``name`` must satisfy before it is
+#: used as an install folder name. ``SkillFrontmatter.name`` itself only
+#: requires non-empty, so without this gate a crafted ``name: ../../evil``
+#: (or an absolute path — ``Path(base) / "C:/..."`` discards the base) turns
+#: the import routes into an arbitrary-file-write primitive. Mirrors the slug
+#: rule in ``jarvis/skills/authoring/schema.py``.
+_IMPORT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def _safe_import_target(name: str) -> Path:
+    """The install folder for an imported skill — guaranteed inside the root.
+
+    Raises ``HTTPException(400)`` on a name that is not a plain slug or that
+    resolves outside the user skills directory (path-traversal fail-closed).
+    """
+    if not _IMPORT_NAME_RE.match(name or ""):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Skill name {name!r} is not a valid slug "
+                "(letters, digits, '-', '_'; max 64 chars)."
+            ),
+        )
+    base = user_skills_dir().resolve()
+    target = (base / name).resolve()
+    if target.parent != base:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Skill name {name!r} resolves outside the skills directory.",
+        )
+    return target
+
 
 def _extract_import_url(value: str) -> str:
     match = _URL_RE.search(value.strip())
@@ -546,7 +578,7 @@ async def import_skill(body: SkillImportBody, request: Request) -> dict[str, Any
 
     content = _rewrite_state_in_frontmatter(content, SkillLifecycleState.DRAFT.value)
 
-    target_dir = user_skills_dir() / name
+    target_dir = _safe_import_target(name)
     target_file = target_dir / "SKILL.md"
     target_dir.mkdir(parents=True, exist_ok=True)
     tmp_file = target_file.with_suffix(".md.tmp")
@@ -591,7 +623,7 @@ def _import_skill_folder(path_str: str, reg: Any) -> tuple[str, list[str]]:
                 status_code=400,
                 detail="This folder is already inside the Jarvis skills directory.",
             )
-    except OSError:
+    except OSError:  # base dir unresolvable — skip this convenience check, not fatal
         pass
 
     parsed = parse_skill(skill_md)
@@ -609,7 +641,7 @@ def _import_skill_folder(path_str: str, reg: Any) -> tuple[str, list[str]]:
         )
     try:
         reg.get(name)
-    except KeyError:
+    except KeyError:  # not installed yet — exactly what a fresh import needs
         pass
     else:
         raise HTTPException(status_code=409, detail=f"Skill '{name}' already exists.")
@@ -629,7 +661,7 @@ def _import_skill_folder(path_str: str, reg: Any) -> tuple[str, list[str]]:
             content, SkillLifecycleState.DRAFT.value
         )
 
-    target_dir = user_skills_dir() / name
+    target_dir = _safe_import_target(name)
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
         (target_dir / "SKILL.md").write_text(content, encoding="utf-8")

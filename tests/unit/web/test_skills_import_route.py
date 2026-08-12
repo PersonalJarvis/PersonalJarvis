@@ -127,3 +127,27 @@ async def test_import_preserves_the_body(
     stored = (tmp_path / "remote-skill" / "SKILL.md").read_text(encoding="utf-8")
     assert "Just a marker body." in stored
     assert "description: a skill downloaded from the internet" in stored
+
+
+@pytest.mark.asyncio
+async def test_import_refuses_a_traversal_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review finding 2026-08-12 (BLOCKER class): a remote SKILL.md declaring
+    ``name: ../../evil`` must never turn the install path into a write
+    outside the skills root.
+    """
+    payload = _NO_STATE.replace("name: remote-skill", 'name: "../../evil"')
+    monkeypatch.setattr("httpx.AsyncClient", _client_returning(payload))
+    skills_root = tmp_path / "skills-root"
+    skills_root.mkdir()
+    monkeypatch.setattr(routes, "user_skills_dir", lambda: skills_root)
+
+    from fastapi import HTTPException
+
+    body = routes.SkillImportBody(input="https://example.invalid/SKILL.md")
+    with pytest.raises(HTTPException) as exc:
+        await routes.import_skill(body, _request(_Registry()))
+    assert exc.value.status_code == 400
+    assert not (tmp_path / "evil").exists()
+    assert not list(skills_root.iterdir())

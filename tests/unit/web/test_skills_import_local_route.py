@@ -169,3 +169,35 @@ async def test_importing_from_inside_the_skills_dir_is_refused(
     with pytest.raises(HTTPException) as exc:
         await routes.import_skill_from_path(body, request)
     assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "evil_name",
+    [
+        "../../evil",
+        "..\\\\..\\\\evil",
+        "C:/Users/Public/evil",
+        "sub/dir",
+        "name with spaces",
+    ],
+)
+async def test_traversal_name_in_frontmatter_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, evil_name: str
+) -> None:
+    """Review finding 2026-08-12 (BLOCKER): the frontmatter ``name`` becomes
+    the install folder, and pydantic only checks non-empty — a crafted
+    ``name: ../../evil`` (or an absolute path, which pathlib joins by
+    DISCARDING the base) must never produce a write outside the skills root.
+    """
+    content = _CLAUDE_CODE_STYLE.replace("my-own-skill", f'"{evil_name}"')
+    src = _write_source(tmp_path, content)
+    skills_root, _, request = _setup(tmp_path, monkeypatch)
+
+    body = routes.SkillImportLocalBody(path=str(src))
+    with pytest.raises(HTTPException) as exc:
+        await routes.import_skill_from_path(body, request)
+    assert exc.value.status_code == 400
+    # Nothing escaped: the only entries under tmp_path are the fixtures.
+    assert not (tmp_path / "evil").exists()
+    assert not list(skills_root.iterdir())

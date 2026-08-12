@@ -57,7 +57,7 @@ def _is_builtin(skill: object) -> bool:
         from jarvis.skills.builtin import BUILTIN_SKILL_NAMES
 
         return str(getattr(skill, "name", "")) in BUILTIN_SKILL_NAMES
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — import fault must not demote a user skill
         return False
 
 
