@@ -4958,6 +4958,37 @@ class BrainManager:
             if ctx is None:
                 return None
 
+            # Channel 0 (2026-08-12): the user NAMED a skill ("nutz den Skill
+            # X"). autofire_policy sanctions exactly this as the human path to
+            # any skill class, so it resolves deterministically and inherits
+            # trigger-grade rights — the prompt-only version of this promise
+            # converted to zero invocations in 14 live days. Still subject to
+            # the block-tier guard below via the shared decision flow.
+            from jarvis.skills.explicit_request import (
+                resolve_explicit_skill_request,
+            )
+
+            explicit = resolve_explicit_skill_request(user_text, ctx.registry)
+            if explicit is not None:
+                explicit_skill, explicit_decision = explicit
+                if self._skill_is_blocked(explicit_skill):
+                    log.info(
+                        "explicitly named skill %s is block-tier — not captured",
+                        getattr(explicit_skill, "name", "?"),
+                    )
+                    self._record_skill_decision(
+                        user_text, explicit_decision, lang=lang,
+                        vetoed_by=guards.VETO_BLOCK_TIER, skill=explicit_skill,
+                    )
+                    return None
+                self._skill_match_band = explicit_decision.band
+                self._skill_match_class = classify(explicit_skill)
+                self._record_skill_decision(
+                    user_text, explicit_decision, lang=lang,
+                    skill=explicit_skill, fired=True,
+                )
+                return explicit_skill
+
             cfg = self._skills_config()
             decision = match_eval.evaluate_match(
                 ctx.registry,

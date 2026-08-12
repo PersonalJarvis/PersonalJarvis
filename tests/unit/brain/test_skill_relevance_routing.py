@@ -602,3 +602,50 @@ def test_matching_never_raises_without_a_skill_context() -> None:
     """Headless and mock boots have no skill subsystem at all."""
     manager = _make_manager()
     assert manager._match_skill_for_turn(FIRE_UTTERANCE) is None
+
+
+# ---------------------------------------------------------------------------
+# Channel 0: the user names the skill (2026-08-12)
+# ---------------------------------------------------------------------------
+
+
+def test_an_explicitly_named_mission_skill_captures(tmp_path: Path) -> None:
+    """Naming a skill is the sanctioned human path to a dispatching skill.
+
+    The relevance channel must never start a background worker
+    (class_dispatching veto), but "nutz den Skill cloud-debug" states intent
+    verbatim — it captures with trigger-grade rights.
+    """
+    _write_skill(
+        tmp_path,
+        "cloud-debug",
+        description="Dispatch a bug hunt to the background worker.",
+        execution="mission",
+    )
+    for filler in range(6):
+        _write_skill(tmp_path, f"filler-{filler}", description=f"topic{filler}")
+    _install(tmp_path)
+
+    manager = _make_manager()
+    matched = manager._match_skill_for_turn("nutz den skill cloud-debug")  # i18n-allow
+    assert matched is not None
+    assert matched.name == "cloud-debug"
+    assert manager._skill_relevance is None, "explicit naming has trigger rights"
+
+    entry = match_log.recent(1)[0]
+    assert entry.fired is True
+    assert entry.source == "trigger"
+
+
+def test_an_explicitly_named_block_tier_skill_stays_blocked(
+    tmp_path: Path,
+) -> None:
+    """block > everything: even a spoken name does not unlock a blocked skill."""
+    _write_skill(tmp_path, "locked", tier="block")
+    for filler in range(6):
+        _write_skill(tmp_path, f"filler-{filler}", description=f"topic{filler}")
+    _install(tmp_path)
+
+    manager = _make_manager()
+    assert manager._match_skill_for_turn("use the skill locked") is None
+    assert match_log.recent(1)[0].vetoed_by == "block_tier"
