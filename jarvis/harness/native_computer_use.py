@@ -238,15 +238,16 @@ class _RealGeminiCUClient:
     """
 
     def __init__(self, *, api_key: str | None = None) -> None:
-        from google import genai  # noqa: PLC0415
-
         if api_key is None:
             from jarvis.core.config import get_secret  # noqa: PLC0415
 
             api_key = get_secret("GEMINI_API_KEY", env_fallback="GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("no Gemini API key for native computer_use")
-        self._client = genai.Client(api_key=api_key)
+        # Routed builder: AI Studio or Vertex express, decided per key.
+        from jarvis.core.google_genai import build_genai_client  # noqa: PLC0415
+
+        self._client = build_genai_client(api_key)
 
     def generate(self, *, model: str, screenshot: bytes, goal: str, history: list[str]) -> Any:
         from google.genai import types  # noqa: PLC0415

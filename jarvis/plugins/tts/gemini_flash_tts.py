@@ -110,7 +110,7 @@ DEFAULT_VOICES: tuple[str, ...] = (
 # triggered the SAPI5 fallback more often — the different sample rate
 # (22050 vs 24000) forced mid-stream resample flushes, producing crackling
 # and robotic artifacts.
-_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")  # i18n-allow: DE+EN capital-letter lookahead, matched in logic
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")  # i18n-allow: DE+EN lookahead
 
 
 class GeminiFlashTTS:
@@ -279,7 +279,12 @@ class GeminiFlashTTS:
                 self._vertex_project, self._vertex_location, self._model_name,
             )
             return
-        self._client = genai.Client(api_key=self._resolve_api_key())
+        # Routed builder: an AI Studio key stays on AI Studio; a Vertex
+        # express key (AQ.) transparently gets ``vertexai=True`` — the
+        # API-key sibling of the service-account path above.
+        from jarvis.core.google_genai import build_genai_client
+
+        self._client = build_genai_client(self._resolve_api_key())
 
     @staticmethod
     def _project_id_from_sa(path: str) -> str | None:
@@ -446,7 +451,8 @@ class GeminiFlashTTS:
                 continue
 
             log.warning(
-                "Gemini TTS empty for sentence %d/%d — SAPI5 emergency brake active (config opt-in).",
+                "Gemini TTS empty for sentence %d/%d — SAPI5 emergency brake "
+                "active (config opt-in).",
                 i + 1, len(tasks),
             )
             # SAPI5 deliberately DOES fall back to ``self._language_code`` here
@@ -741,12 +747,12 @@ class GeminiFlashTTS:
         )
         # Robust against empty responses (safety filter, rate limit, etc.)
         if not resp.candidates:
-            finish = "unknown"
-            try:
-                pf = resp.prompt_feedback
-                finish = f"block_reason={pf.block_reason}"
-            except Exception:  # noqa: BLE001
-                pass
+            pf = getattr(resp, "prompt_feedback", None)
+            block_reason = getattr(pf, "block_reason", None) if pf else None
+            finish = (
+                f"block_reason={block_reason}" if block_reason is not None
+                else "unknown"
+            )
             log.warning("Gemini TTS returned no candidates (%s) — voice=%s text=%r",
                         finish, voice, text[:80])
             return b""
@@ -792,11 +798,11 @@ def _sapi5_synthesize(text: str, language_code: str = "de-DE") -> bytes:
         log.warning("pywin32 not installed — SAPI5 fallback not available.")
         return b""
 
-    # pywin32 braucht CoInitialize in jedem Thread neu
+    # pywin32 needs a fresh CoInitialize per thread.
     try:
         pythoncom.CoInitialize()
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001 — an already-initialized COM apartment is fine
+        log.debug("CoInitialize skipped: %s", exc)
 
     try:
         voice = win32com.client.Dispatch("SAPI.SpVoice")

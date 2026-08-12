@@ -467,17 +467,46 @@ def _openai_compat_base_url(resolved_base_url: str | None) -> str:
 
 
 def _create_native_client(endpoint: Any) -> Any:
-    """Create the preferred google-genai client at the import boundary."""
-    from google import genai
+    """Create the preferred google-genai client at the import boundary.
 
-    client_kwargs: dict[str, Any] = {"api_key": endpoint.credential}
+    Routing: an explicitly resolved ``base_url`` (team proxy / override)
+    speaks the AI Studio wire format, so it pins the AI Studio route; a bare
+    key is routed by ``jarvis.core.google_genai`` (AI Studio vs Vertex AI
+    express mode, decided once per process).
+    """
+    from jarvis.core.google_genai import build_genai_client
+
+    http_options: Any = None
+    route: Any = None
     if endpoint.base_url:
         from google.genai import types as genai_types
 
-        client_kwargs["http_options"] = genai_types.HttpOptions(
-            base_url=endpoint.base_url,
-        )
-    return genai.Client(**client_kwargs)
+        http_options = genai_types.HttpOptions(base_url=endpoint.base_url)
+        route = "aistudio"
+    return build_genai_client(
+        endpoint.credential, http_options=http_options, route=route
+    )
+
+
+def _reject_compat_fallback_for_vertex(endpoint: Any, cause: BaseException) -> None:
+    """Fail loudly when the OpenAI-compat fallback cannot serve this key.
+
+    The compatibility transport only speaks AI Studio's endpoint. A key that
+    routes through Vertex AI express mode would hit it with a foreign
+    credential and die on every call with a bare auth error — an honest
+    RuntimeError naming the real conflict beats that silent dead end (§3).
+    """
+    if endpoint.base_url:
+        return
+    from jarvis.core.google_genai import resolve_google_key_route
+
+    if resolve_google_key_route(endpoint.credential) == "vertex":
+        raise RuntimeError(
+            "This Google API key routes through Vertex AI express mode, "
+            "which requires the google-genai SDK; the OpenAI-compatible "
+            "fallback only reaches AI Studio. Install google-genai (pip "
+            "install google-genai) or switch to a Google AI Studio key."
+        ) from cause
 
 
 def _create_openai_compat_client(endpoint: Any) -> Any:
@@ -603,6 +632,7 @@ class GeminiBrain:
                 # documented HTTPS compatibility API. Log only the exception
                 # class: dependency messages can contain local paths, and the
                 # credential must never enter logs.
+                _reject_compat_fallback_for_vertex(ep, exc)
                 log.info(
                     "Gemini native SDK unavailable (%s); using the "
                     "OpenAI-compatible transport",
@@ -1103,6 +1133,7 @@ class GeminiBrain:
                     ep = cfg.resolve_provider_endpoint("gemini")
                     if not ep.credential:
                         raise
+                    _reject_compat_fallback_for_vertex(ep, exc)
                     log.info(
                         "Gemini native stream dependency unavailable (%s); "
                         "using the OpenAI-compatible transport",

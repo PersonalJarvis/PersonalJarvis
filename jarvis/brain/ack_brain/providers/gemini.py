@@ -43,8 +43,9 @@ class GeminiFlashAck:
                     f"No Gemini API key in keyring/env "
                     f"({self._config.api_key_secret} / GEMINI_API_KEY)."
                 )
-            from google import genai
-            self._client = genai.Client(api_key=api_key)
+            # Routed builder: AI Studio or Vertex express, decided per key.
+            from jarvis.core.google_genai import build_genai_client
+            self._client = build_genai_client(api_key)
         return self._client
 
     async def run(

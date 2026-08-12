@@ -43,7 +43,8 @@ SYSTEM_PROMPT = (
     "**CRITICAL HANGUP RULE**: If the user wants to end the conversation "
     "(typical signals regardless of language: 'hang up', 'goodbye', 'bye', "
     "'stop', 'exit', 'quit', 'shut down', 'that's all', 'thanks jarvis', "
-    "'good night', 'ciao', 'auflegen', 'tschüss' — even if Whisper transcribes "  # i18n-allow: German hangup-trigger vocabulary the LLM must match against user speech
+    "'good night', 'ciao', "
+    "'auflegen', 'tschüss' — even if Whisper transcribes "  # i18n-allow: hangup vocabulary
     "it strangely like 'offleging'), reply EXACTLY AND EXCLUSIVELY with the "
     "string: \"Goodbye, Ruben.\" (without quotes, exactly 15 characters). "
     "This is the hangup signal — the pipeline detects this response and ends "
@@ -86,8 +87,9 @@ class GeminiTestBrain:
 
     def _ensure_client(self) -> None:
         if self._client is None:
-            from google import genai
-            self._client = genai.Client(api_key=self._resolve_api_key())
+            # Routed builder: AI Studio or Vertex express, decided per key.
+            from jarvis.core.google_genai import build_genai_client
+            self._client = build_genai_client(self._resolve_api_key())
 
     def _resolve_model(self) -> str:
         """On the first call, find the best available model alias."""
@@ -141,11 +143,8 @@ class GeminiTestBrain:
             return text
 
         # Debug aid: if empty, log the finish_reason
-        finish = None
-        try:
-            finish = resp.candidates[0].finish_reason
-        except Exception:  # noqa: BLE001
-            pass
+        candidates = getattr(resp, "candidates", None) or []
+        finish = getattr(candidates[0], "finish_reason", None) if candidates else None
         log.warning("Brain returned empty response (model=%s, finish=%s)",
                     model, finish)
         return "Entschuldige, ich habe gerade nichts zu sagen."

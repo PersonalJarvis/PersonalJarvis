@@ -865,7 +865,8 @@ class GeminiPolishClient:
 
     def _ensure_client(self, timeout_s: float) -> Any:
         if self._client is None:
-            from google import genai
+            # Routed builder: AI Studio or Vertex express, decided per key.
+            from jarvis.core.google_genai import build_genai_client
 
             # google-genai forces ``timeout=None`` on its own httpx client, so
             # an explicit http_options timeout is the ONLY thing below the
@@ -882,8 +883,8 @@ class GeminiPolishClient:
             # to accept; the caller's ``wait_for`` is what actually bounds the
             # wait, and it is unchanged. Giving up at 1.5 s and letting the
             # socket close on its own is strictly better than not asking at all.
-            self._client = genai.Client(
-                api_key=self._api_key,
+            self._client = build_genai_client(
+                self._api_key,
                 http_options={
                     "timeout": int(max(timeout_s, _GEMINI_MIN_DEADLINE_S) * 1000)
                 },

@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import time
 from pathlib import Path
 
 import numpy as np
@@ -63,14 +62,16 @@ def _setup() -> None:
 
 async def _synth(voice: str, text: str) -> bytes:
     """Synthesizes the test phrase with one voice and returns PCM bytes."""
-    from google import genai
     from google.genai import types
+
+    from jarvis.core.google_genai import build_genai_client
     key = (
         os.environ.get("GEMINI_API_KEY")
         or os.environ.get("GOOGLE_AIStudio_API_KEY")
         or os.environ.get("GOOGLE_API_KEY")
     )
-    client = genai.Client(api_key=key)
+    # Routed builder: AI Studio or Vertex express, decided per key.
+    client = build_genai_client(key or "")
     resp = await asyncio.to_thread(
         client.models.generate_content,
         model="gemini-3.1-flash-tts-preview",
@@ -105,29 +106,38 @@ async def main() -> None:
     pcms = await asyncio.gather(*tasks, return_exceptions=True)
     print("Done.\n")
 
-    # Save to WAVs for later comparison
-    out_dir = Path(__file__).resolve().parents[2] / "data" / "voice_compare"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # Save to WAVs for later comparison. Blocking filesystem work moves to a
+    # thread — this is a manual comparison CLI, but the async lints hold.
+    def _ensure_out_dir() -> Path:
+        d = Path(__file__).resolve().parents[2] / "data" / "voice_compare"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    out_dir = await asyncio.to_thread(_ensure_out_dir)
     import wave
-    for voice, pcm in zip(JARVIS_CANDIDATES, pcms):
-        if isinstance(pcm, Exception):
-            print(f"  ! {voice}: ERROR {pcm}")
-            continue
-        p = out_dir / f"jarvis_test_{voice}.wav"
-        with wave.open(str(p), "wb") as wf:
+
+    def _write_wav(path: Path, pcm: bytes) -> None:
+        with wave.open(str(path), "wb") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
             wf.setframerate(24_000)
             wf.writeframes(pcm)
 
+    for voice, pcm in zip(JARVIS_CANDIDATES, pcms, strict=True):
+        if isinstance(pcm, Exception):
+            print(f"  ! {voice}: ERROR {pcm}")
+            continue
+        p = out_dir / f"jarvis_test_{voice}.wav"
+        await asyncio.to_thread(_write_wav, p, pcm)
+
     # Play back one after another, with an announcement
-    for voice, pcm in zip(JARVIS_CANDIDATES, pcms):
+    for voice, pcm in zip(JARVIS_CANDIDATES, pcms, strict=True):
         if isinstance(pcm, Exception):
             continue
         duration = len(pcm) / 2 / 24_000
         print(f"▶ {voice}  ({duration:.1f}s)")
         _play(pcm, 24_000)
-        time.sleep(0.7)
+        await asyncio.sleep(0.7)
 
     print()
     print("=" * 64)

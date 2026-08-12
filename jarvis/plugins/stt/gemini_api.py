@@ -274,7 +274,10 @@ class GeminiSTT:
                 "key is shared with the Gemini brain and TTS."
             )
         try:
-            from google import genai
+            # Availability check only — the client itself is built below by the
+            # routed builder. A plain import (not find_spec) so a broken
+            # dependency chain also lands in the clear RuntimeError.
+            from google import genai  # noqa: F401
         except ImportError as exc:
             raise RuntimeError(
                 "Gemini STT needs the 'google-genai' package (installed with the "
@@ -284,7 +287,12 @@ class GeminiSTT:
         # ``Any`` keeps that fact from needing a types import the plugin must
         # not make (the SDK is absent on a base install).
         http_options: Any = self._http_options()
-        self._client = genai.Client(api_key=key, http_options=http_options)
+        # Routed builder: AI Studio or Vertex express, decided per key. Lazy
+        # import, like the config import above (plugin stays jarvis.*-free at
+        # import time).
+        from jarvis.core.google_genai import build_genai_client
+
+        self._client = build_genai_client(key, http_options=http_options)
         return self._client
 
     def _build_contents(

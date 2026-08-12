@@ -558,10 +558,14 @@ class GeminiLiveProvider:
         if not self._api_key:
             raise RuntimeError("Gemini Live API key is not configured")
 
-        from google import genai  # lazy (AP-26)
-        from google.genai import types
+        from google.genai import types  # lazy (AP-26)
 
-        client = genai.Client(api_key=self._api_key)
+        # Routed builder: AI Studio or Vertex express, decided per key. The
+        # async twin keeps a first-ever AQ. key's routing probe off the event
+        # loop; every later session open hits the process-wide cache.
+        from jarvis.core.google_genai import build_genai_client_async
+
+        client = await build_genai_client_async(self._api_key)
         voice = str(getattr(cfg, "voice", "") or "").strip()
         speech_config: dict[str, Any] = {}
         if voice:
