@@ -45,6 +45,11 @@ skills:
         lang: de
         min_band: narrow
         source: authored
+      - text: "ich brauch jetzt ruhe zum arbeiten"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: forensic
     hard_negatives:
       - text: "was bedeutet eigentlich deep work als konzept"
         reason: definitional question about the topic, not a request to enter it
@@ -459,15 +464,22 @@ skills:
 
   skill-creator:
     positives:
+      # Upgraded relevance→trigger 2026-08-12: the new authoring trigger
+      # catches the "…einen (neuen) skill <verb>" noun phrase deterministically.
       - text: "ich moechte einen neuen skill bauen"
-        channel: relevance
+        channel: trigger
         lang: de
-        min_band: narrow
+        min_band: fire
         source: authored
       - text: "turn this workflow into a skill"
         channel: relevance
         lang: en
         min_band: narrow
+        source: authored
+      - text: "bau mir einen skill der abends das licht dimmt"
+        channel: trigger
+        lang: de
+        min_band: fire
         source: authored
 
   # --- Known gaps -------------------------------------------------------

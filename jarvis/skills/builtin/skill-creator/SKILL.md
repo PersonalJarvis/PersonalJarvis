@@ -1,20 +1,40 @@
 ---
 schema_version: "1"
 name: skill-creator
-version: "1.0.0"
+version: "1.1.0"
 description: |
   Creates new Jarvis skills and iteratively improves existing ones. Activates when
   the user wants to build a new skill ("erstell einen skill fuer X" / "create a
-  skill for X" / "mach aus diesem Workflow einen Skill"). No auto voice trigger —
-  the Supervisor dispatches this skill on an intent basis.
+  skill for X" / "mach aus diesem Workflow einen Skill").
 when_to_use: >-
   Use when the user wants to build a new skill, turn a workflow into a
   skill, or iteratively improve an existing skill.
 category: meta
 tags: [meta, authoring, developer, skill-creator]
+# Matcher vocabulary (2026-08-12): authoring requests name the mechanism, so
+# "skill" plus the automation nouns must score here — before this list,
+# "bau mir einen skill der abends das licht dimmt" lost to the DOMAIN skill
+# (home assistant) because only the domain words carried weight. No
+# intent_verbs on purpose (plugin_coupling needs verbs AND objects to
+# register a capability; this feeds only the matcher).
+intent_objects: [skill, skills, automatisierung, automation, workflow, ablauf, faehigkeit]  # i18n-allow: speech-input vocabulary
 author: anthropic (adapted for jarvis)
 license: MIT
-triggers: []
+# 2026-08-12: precise authoring trigger. Historically "no auto voice trigger —
+# the Supervisor dispatches on an intent basis", but the measured intent path
+# was zero invocations; an explicit "…einen Skill erstellen/bauen…" phrase is
+# unambiguous authoring intent and now fires deterministically. The generated
+# draft still lands as state=draft behind the review pipeline either way.
+# Verb heads are written with a character class ([e]rstell, b[a]u, …) ON
+# PURPOSE: mine_pattern_literals flushes literal runs at "[", so the generic
+# creation verbs never enter the relevance index as trigger-weight vocabulary.
+# Without the break, "schreib" scored for THIS skill and stole "schreib eine
+# mail an das team" from plugin-gmail (offline golden eval, 2026-08-12). The
+# skill-specific noun ("skill") is the only strong literal this pattern feeds.
+triggers:
+  - type: voice
+    pattern: "([e]rstell\\w*|b[a]u\\w*|m[a]ch\\w*|schr[e]ib\\w*|gener[i]er\\w*)\\s+(mir\\s+)?(bitte\\s+)?(doch\\s+)?einen?\\s+(neuen?\\s+)?skill|einen?\\s+(neuen?\\s+)?skill\\s+([e]rstellen|[b]auen|[a]nlegen|[s]chreiben|[g]enerieren)|aus\\s+(diesem|dem|meinem)\\s+\\w+\\s+einen\\s+skill|(cre[a]te|b[u]ild|m[a]ke)\\s+(me\\s+)?an?\\s+(new\\s+)?skill|t[u]rn\\s+(this|that|it)\\s+into\\s+a\\s+skill"
+    language: [de, en]
 requires_tools: []
 risk_policy:
   default_tier: ask

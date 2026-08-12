@@ -1,7 +1,7 @@
 ---
 schema_version: "1"
 name: deep-work-mode
-version: "2.0.0"
+version: "2.1.0"
 description: >-
   Activates a distraction-free focus sprint: quiet notifications where
   possible, focus music if Spotify is connected, and a clear spoken start
@@ -14,6 +14,12 @@ when_to_use: >-
   clear activation intent.
 category: productivity
 tags: [focus, dnd, timer, slack]
+# Paraphrase vocabulary for the deterministic relevance matcher (2026-08-12):
+# the nouns a user actually says when they want quiet WITHOUT naming the mode
+# ("ich brauch jetzt ruhe zum arbeiten" matched nothing before this list).
+# intent_verbs stays absent on purpose — plugin_coupling requires verbs AND
+# objects to register a capability, so this feeds ONLY the matcher.
+intent_objects: [ruhe, stille, ungestoert, ablenkung, ablenkungen, ablenkungsfrei, konzentration, fokusphase, quiet, peace, distraction, distractions, concentration, tranquilidad, concentracion, enfoque, silencio]  # i18n-allow: speech-input vocabulary
 author: builtin
 license: MIT
 triggers:
