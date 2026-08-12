@@ -9189,3 +9189,59 @@ and give the decoder its own best alternative, and the position heuristic
 evidence across the whole window ('any phrase word anywhere') will both
 under-accept the genuine embedded case and over-accept the scattered one;
 score exactly the run that claims to be the phrase.
+
+## BUG-134: a spoken "two terminals" opens FOUR — counts inside the task half of the sentence are read as more fleet (HIGH, FIXED 2026-08-12)
+
+**Symptoms (live 2026-08-12 17:40, maintainer report).** "Open two new cloud
+code terminals and prompt them" — the workspace opened FOUR Claude Code panes,
+each on a paid subscription seat, and briefed all four. The four composed
+briefs even disagree about the plan: two say "two terminals share this work",
+one says "audit both platforms", one says "macOS only" — the composer
+downstream reconstructing sense from a fleet that was already wrong. All four
+pane sessions started the same second (17:40:07), so this was ONE spawn
+misread, not a repeated turn.
+
+**Root.** The parser has exactly two buckets — "fleet description" and "task"
+— and the boundary between them was a fixed briefing-verb list. Everything in
+front of the first known briefing verb is fleet, so when the task half talked
+ABOUT the panes, its counts became MORE panes:
+
+- the restated count: "… and the two terminals SHOULD do a deep dive …" —
+  2 + 2;
+- the spoken enumeration: "… one terminal takes macOS and one terminal takes
+  Linux" — 2 + 1 + 1;
+- the handover verbs of plain speech were missing from the boundary list:
+  "sag ihnen, …" sailed past while "tell them" was caught. <!-- i18n-allow: input vocab -->
+
+The 2026-07-27 guard ("counts inside a briefed task never double the spawn")
+only ever held when a KNOWN briefing verb marked where the task starts.
+
+**Fix** (`jarvis/agentic_ide/intent.py`):
+
+- `_task_subject_cut`: the verbless handover boundary. A pane noun past the
+  anchor whose next words are its own predicate — a modal ("terminals
+  should"), a work verb ("terminal hunts"), or the elided-verb complement
+  ("ein Terminal für Linux") — marks where the clause stops describing the <!-- i18n-allow: quoted spoken input -->
+  fleet and starts its work. Additive counts ("one MORE terminal") and
+  named-CLI groups ("… und 3 Claude Code Terminals AUF" — the separable <!-- i18n-allow: quoted spoken input -->
+  particle) are exempt, so real fleet extensions stay whole.
+- `_spoken_groups` drops task-side unclaimed groups as a second net: non-first
+  groups whose noun carries its own predicate, and coordinated value-one
+  pairs — spoken enumeration counts items off one at a time ("one … one …"),
+  while a fleet request states its size once ("two terminals").
+- `_FLEET_BRIEF_RE` / `_TASK_AFTER_BRIEF_RE` learn `sag`/`diles`; "hunt"
+  joins the work-verb vocabulary.
+
+The rescued task text flows on through `distributes_tasks` (BUG-132), so the
+two panes now get their own macOS/Linux slices as well.
+
+**Guards:** `tests/unit/agentic_ide/test_spawn_intent.py` — all four live
+shapes pinned to exactly two panes WITH the task and the division intact,
+plus the additive-extension and separable-particle exemptions.
+
+**Lesson.** A two-bucket parser puts everything it cannot classify into
+whichever bucket is cheaper to reach, and here that bucket spends money: every
+phantom pane is a billed subscription seat doing unasked work. The boundary
+between "the fleet" and "the fleet's job" is not a verb list — speech hands
+work over by RESTATING the subject at least as often as by naming a verb, and
+the parser has to model that shape, not enumerate its vocabulary.
