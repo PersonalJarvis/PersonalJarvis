@@ -9015,3 +9015,51 @@ parser that executes speech has to model the repair marker itself, or it will
 execute the draft. And when a parser has only two buckets ("fleet" / "task for
 the fleet"), everything that fits neither lands in the more dangerous one:
 never hand a fresh agent a task the workspace itself should have executed.
+
+## BUG-131: one spoken order briefs the same pane twice — the provider's VAD splits the utterance and the tail becomes a second executor (HIGH, FIXED 2026-08-12)
+
+**Symptoms (2026-08-12 16:09, gemini-live).** The maintainer asked, in one
+breath, for a skills deep-dive: "Can you please prompt Gemini Pro that he
+looks at our skills and makes a deep dive … It never uses the skills I've
+built. It doesn't really — you know, recognize the skills." Pane T4 then
+received TWO complete deep-dive briefs three seconds apart (16:10:40 and
+16:10:43, `prompts_sent: 2` in the workspace snapshot) — two differently
+worded expansions of the same request, each opening its own agent turn —
+while the spoken announcement claimed a single handover.
+
+**Root.** Gemini-live's VAD read the thinking pause after "It doesn't
+really" as end-of-turn, so ONE utterance arrived as two final turns. Each
+final is planned independently, and the 5-word tail carried planner evidence
+of its own (the word "skills" matches `_SKILL_RE`), so it became a second
+orchestrator turn with a second deterministic delegate. Both Brain turns saw
+the same conversation history, both correctly reconstructed the same request,
+and each briefed T4 — two blind executors for one order. The existing
+repeat-order guard (`_order_already_executing`, built for the 2026-07-27
+provider-echo shape) is deliberately scoped to a turn that asked for NOTHING
+of its own; a tail fragment WITH planner evidence walked straight past it.
+
+**Fix.** `jarvis/realtime/session.py::_continues_executing_order` — a
+refusal that needs four independent probes to agree the fragment cannot
+stand alone as a new order: an earlier turn's delegate is still executing
+without a result; the fragment carries no self-standing order evidence (no
+ACTION/MISSION/WORKSPACE reason, no addressed pane); every planner reason it
+does carry is already covered by the running order's own reasons; and it is
+fragment-short. A refused turn gets the deterministic progress line and the
+trusted result via the late flush. Enforced at BOTH doors a second executor
+can open through: the deterministic dispatch site and the provider's
+`jarvis_action` call path.
+
+**Guards:** `tests/unit/realtime/test_split_utterance_single_order.py` — the
+live transcripts verbatim against the real planner, plus the counter-cases
+that must keep their dispatch: a command-verb follow-up, a question carrying
+new evidence, an addressed pane, a long same-topic follow-up, a completed
+order (clarify/confirm flows), and the provider tool-call door.
+
+**Lesson.** A provider's VAD is a turn-splitter, not a request-splitter:
+"final" marks where the model stopped listening, not where the user stopped
+meaning. When two segments of one utterance each carry planner evidence,
+text-level deduplication cannot see the repeat — the comparison has to
+happen at the EVIDENCE level, where a segment whose reasons are a subset of
+the running order's is a continuation, never a new order. And the asymmetry
+decides the ties: a wrongly refused turn degrades honestly into "still
+working on it", while a wrongly allowed turn executes a user order twice.

@@ -614,6 +614,23 @@ _PUBLIC_FACT_UNCERTAINTY: dict[str, str] = {
 # are pulled back to the orchestrator; a longer utterance is a new topic.
 _DELEGATE_ANSWER_MAX_TOKENS = 6
 
+# A trailing speech fragment can only CONTINUE an order already executing when
+# it stays within this length. Live 2026-08-12 16:09: the provider's VAD read
+# a thinking pause as end-of-turn and chopped ONE spoken request in two; the
+# 5-word tail "You know, recognize the skills." became its own turn and its
+# own second executor. A follow-up LONGER than this carries enough words to be
+# a request of its own even when every other continuation probe agrees, so it
+# keeps its dispatch.
+_CONTINUATION_FRAGMENT_MAX_TOKENS = 12
+
+# Plan reasons that make a turn a self-standing ORDER: a command verb, a
+# background mission, or an addressed workspace pane. A turn carrying any of
+# these asked for something new in its own words and must never be folded
+# into an earlier order as a continuation.
+_SELF_STANDING_ORDER_REASONS = frozenset(
+    {TurnReason.ACTION, TurnReason.MISSION, TurnReason.WORKSPACE}
+)
+
 # While a delegated action still runs, the wait is silent (or worse: a scrub
 # hold has just cut a running answer mid-sentence). A user speaking a bare
 # "hello? are you there?" into that silence is probing whether the assistant
@@ -3586,13 +3603,34 @@ class RealtimeVoiceSession:
                         and input_observed
                         and self._delegate_required_for_turn
                     ):
-                        # This branch runs on a FINAL input transcript, so the
-                        # utterance is provably over — no boundary wait needed.
-                        self._start_deterministic_delegate(
-                            self._last_user_text,
-                            input_final=True,
-                            turn_plan=turn_plan,
-                        )
+                        if self._continues_executing_order(turn_plan):
+                            # A provider VAD that reads a thinking pause as
+                            # end-of-turn finalizes ONE spoken request as two
+                            # turns; a second executor for the tail briefs
+                            # the same pane twice (live 2026-08-12 16:09).
+                            # The running order keeps this turn: the user
+                            # hears the deterministic progress line now and
+                            # the trusted result via the late flush. A later
+                            # final that grows this turn into a real new
+                            # order re-plans and dispatches normally.
+                            self._delegate_required_for_turn = False
+                            log.info(
+                                "realtime[%s] refused a deterministic "
+                                "dispatch that can only continue the order "
+                                "already executing",
+                                self.session_id,
+                            )
+                            if not self._response_requested_for_turn:
+                                await self._speak_pending_action_status()
+                        else:
+                            # This branch runs on a FINAL input transcript,
+                            # so the utterance is provably over — no
+                            # boundary wait needed.
+                            self._start_deterministic_delegate(
+                                self._last_user_text,
+                                input_final=True,
+                                turn_plan=turn_plan,
+                            )
                     if (
                         event.is_final
                         and input_observed
@@ -6939,6 +6977,78 @@ class RealtimeVoiceSession:
             or self._late_delegate_results
         )
 
+    def _executing_order_texts(self) -> tuple[str, ...]:
+        """User texts of earlier-turn delegates still executing, no result yet.
+
+        Deliberately excludes the CURRENT turn (its own delegate is what a
+        provider function call coalesces with) and every turn whose result is
+        already complete — a finished order that ended in a clarify question
+        must keep owning the user's short answer
+        (``_answers_open_delegate_question``), and a finished confirmation
+        must keep owning the "yes" (``_brain_awaits_voice_confirm``).
+        """
+        texts: list[str] = []
+        for turn_id, tasks in self._delegate_tasks_by_turn.items():
+            if turn_id == self._turn_id or all(task.done() for task in tasks):
+                continue
+            state = self._delegate_turns.get(turn_id)
+            if state is None or state.result_complete:
+                continue
+            order = str(state.user_text or "").strip()
+            if order:
+                texts.append(order)
+        return tuple(texts)
+
+    def _continues_executing_order(self, turn_plan: TurnPlan) -> bool:
+        """True when this final can only CONTINUE the order already executing.
+
+        The live 2026-08-12 16:09 failure in one line: ONE spoken request
+        briefed the same coding pane twice. The provider's VAD read a
+        thinking pause as end-of-turn, so "…the skill system doesn't work
+        properly. It doesn't really — you know, recognize the skills" became
+        TWO turns. The first dispatched its deterministic delegate; the
+        5-word tail then planned as an orchestrator turn of its own (the
+        word "skills" is planner evidence), opened a SECOND delegate, and
+        both executors briefed pane T4 with the same deep-dive three seconds
+        apart. ``_order_already_executing`` never saw it: that guard is for
+        a turn that asked for NOTHING of its own, and the tail carried a
+        planner reason.
+
+        Refusal therefore needs FOUR independent probes to agree that the
+        fragment cannot stand alone as a new order:
+
+        1. an earlier turn's order is still executing without a result
+           (``_executing_order_texts``) — a completed order, including one
+           awaiting a clarify answer or a confirmation, never captures the
+           next turn;
+        2. the fragment carries no self-standing order evidence: no command
+           verb, no mission, no addressed pane
+           (``_SELF_STANDING_ORDER_REASONS``, plus the workspace's own
+           ``owns_turn`` sweep) — "and turn on the lights" stays a real
+           second order;
+        3. every planner reason the fragment DOES carry is already covered
+           by the running order's own reasons — "what's on my calendar?"
+           spoken while an email check runs brings CURRENT/PRIVATE evidence
+           of its own and keeps its dispatch;
+        4. the fragment is short (``_CONTINUATION_FRAGMENT_MAX_TOKENS``) — a
+           long same-topic follow-up carries new content by sheer length.
+
+        A wrongly refused turn degrades honestly (the deterministic progress
+        line now, the trusted result via the late flush); a wrongly allowed
+        turn executes a user order TWICE. The asymmetry decides the ties.
+        """
+        text = str(self._last_user_text or "").strip()
+        if not text or len(text.split()) > _CONTINUATION_FRAGMENT_MAX_TOKENS:
+            return False
+        if turn_plan.reasons & _SELF_STANDING_ORDER_REASONS:
+            return False
+        if self._workspace_owns_turn(text):
+            return False
+        return any(
+            turn_plan.reasons <= self._plan_turn(order_text).reasons
+            for order_text in self._executing_order_texts()
+        )
+
     def _queue_late_delegate_result(self, turn_state: _DelegateTurnState) -> None:
         """Keep a trusted result whose turn closed before the action finished.
 
@@ -7154,7 +7264,15 @@ class RealtimeVoiceSession:
                     },
                 )
                 return
-            if self._order_already_executing(local_plan):
+            # Two disjoint repeat shapes share one refusal: a turn that asked
+            # for nothing of its own (the provider re-answering an old order,
+            # ``_order_already_executing``), and a turn that IS a fragment of
+            # the executing order itself (a provider VAD chopped one request
+            # in two and the tail carries planner evidence,
+            # ``_continues_executing_order``).
+            if self._order_already_executing(local_plan) or (
+                self._continues_executing_order(local_plan)
+            ):
                 log.info(
                     "realtime[%s] refused a delegate call that repeats an "
                     "order already executing",
