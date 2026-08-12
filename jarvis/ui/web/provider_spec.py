@@ -134,23 +134,28 @@ def provider_billing(spec: ProviderSpec) -> Billing:
     return "api"
 
 
-# Gemini's alternative credential path: Google Cloud Vertex AI via a
-# service-account JSON. A SEPARATE billing project from an AI Studio key — the
-# 2026-06-22 forensic was a user topping up AI Studio while Jarvis was wired to
-# Vertex. Shared by the Gemini brain + Gemini TTS specs so both surface the
-# choice. (Vertex is wired for the TTS path today via [tts].use_vertex.)
+# Gemini's alternative credential path: Google Cloud Vertex AI. A SEPARATE
+# billing project from an AI Studio key — the 2026-06-22 forensic was a user
+# topping up AI Studio while Jarvis was wired to Vertex. Shared by the Gemini
+# brain + Gemini TTS specs so both surface the choice. The EASY Vertex path is
+# an express-mode API key (AQ.) pasted into the normal key field — the routing
+# resolver (jarvis/core/google_genai.py) detects it on every tier (brain, tool
+# model, realtime, STT, TTS, dictation). The service-account JSON remains the
+# TTS-tier production path via [tts].use_vertex.
 _GEMINI_VERTEX = AltCredential(
-    label="Vertex AI (service account)",
+    label="Vertex AI (express key or service account)",
     billing="api",
     credential_help=(
         "Bill Gemini through a Google Cloud Vertex AI project instead of an AI "
-        "Studio key — this is a SEPARATE billing account. Enable the Vertex AI "
-        "API, create a service account, download its JSON key, and point Jarvis "
-        "at the file. Use this for higher quota than the AI Studio preview cap. "
-        "Don't mix them up: topping up AI Studio does nothing if Jarvis is on "
-        "Vertex, and vice versa."
+        "Studio account — a SEPARATE billing account. Easiest path: create a "
+        "Vertex express-mode API key (starts with AQ.) and paste it into the "
+        "normal key field above — Jarvis detects it and routes every tier "
+        "through Vertex automatically. For TTS production quota there is also "
+        "the service-account JSON path ([tts].use_vertex + the file below). "
+        "Don't mix the accounts up: topping up AI Studio does nothing if "
+        "Jarvis is on Vertex, and vice versa."
     ),
-    dashboard_url="https://console.cloud.google.com/iam-admin/serviceaccounts",
+    dashboard_url="https://console.cloud.google.com/vertex-ai/studio",
     credential_path_hint="~/.config/jarvis/vertex-sa.json",
 )
 
@@ -345,9 +350,10 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         secret_keys=("gemini_api_key",),
         dashboard_url="https://aistudio.google.com/app/apikey",
         credential_help=(
-            "Google AI Studio API key (starts with AIza or AQ.). Pay-as-you-go "
-            "on your AI Studio project. For higher quota, use the Vertex AI "
-            "service-account path instead — it bills a different account."
+            "Google AI Studio API key (starts with AIza or AQ.) or a Vertex AI "
+            "express-mode key (also AQ.) — Jarvis detects which one it is and "
+            "routes it to the right endpoint automatically. Mind the billing: "
+            "AI Studio and Vertex are SEPARATE accounts."
         ),
         alt_credential=_GEMINI_VERTEX,
         # Maintainer-recommended brain (2026-06-22): best real-world experience.
@@ -585,9 +591,10 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         secret_keys=("gemini_api_key",),
         dashboard_url="https://aistudio.google.com/app/apikey",
         credential_help=(
-            "Same Google AI Studio key as the Gemini brain (AIza/AQ.). Note: the "
-            "TTS preview model is hard-capped on AI Studio — switch to the Vertex "
-            "AI path for production quota."
+            "Same Google key as the Gemini brain (AIza/AQ.; a Vertex express "
+            "key is detected and routed automatically). Note: the TTS preview "
+            "model is hard-capped on AI Studio — use a Vertex path for "
+            "production quota."
         ),
         alt_credential=_GEMINI_VERTEX,
     ),

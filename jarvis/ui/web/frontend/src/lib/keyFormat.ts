@@ -58,11 +58,21 @@ export function detectKeyFormat(value: string): KeyFormatHint | null {
   if (/^sk_/.test(v)) return { kind: "elevenlabs", label: "ElevenLabs API key" };
   if (/^gsk_/.test(v)) return { kind: "groq", label: "Groq API key" };
   if (/^xai-/.test(v)) return { kind: "xai", label: "xAI (Grok) API key" };
-  if (/^AIza/.test(v) || /^AQ\./.test(v)) {
+  if (/^AIza/.test(v)) {
     return {
       kind: "google-aistudio",
       label: "Google AI Studio key",
-      note: "Looks like a Google AI Studio key — Jarvis uses it directly (Vertex stays off).",
+      note: "Looks like a Google AI Studio key — Jarvis uses it directly.",
+    };
+  }
+  // AQ. is issued by BOTH Google AI Studio and Vertex AI express mode — the
+  // prefix cannot tell them apart. Same kind (the Gemini slots accept both);
+  // the backend probes once and routes the key to the right endpoint.
+  if (/^AQ\./.test(v)) {
+    return {
+      kind: "google-aistudio",
+      label: "Google API key (AI Studio or Vertex)",
+      note: "AI Studio and Vertex AI express keys share this format — Jarvis detects the right endpoint automatically.",
     };
   }
   if (/^sk-/.test(v)) return { kind: "openai", label: "OpenAI API key" };

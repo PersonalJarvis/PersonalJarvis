@@ -12,6 +12,17 @@ describe("detectKeyFormat", () => {
     expect(detectKeyFormat("AQ.Ab8RN6...rest")?.kind).toBe("google-aistudio");
   });
 
+  it("tells AQ. keys they may be Vertex express (auto-routed), never 'Vertex stays off'", () => {
+    // AQ. is issued by BOTH AI Studio and Vertex express — the hint must not
+    // promise a fixed endpoint (the old text claimed "Vertex stays off" and
+    // sent express-key users into a silent auth dead end).
+    const hint = detectKeyFormat("AQ.Ab8RN6...rest");
+    expect(hint?.label).toBe("Google API key (AI Studio or Vertex)");
+    expect(hint?.note).toContain("detects the right endpoint");
+    const classic = detectKeyFormat("AIzaSyABCDEF1234567890");
+    expect(classic?.label).toBe("Google AI Studio key");
+  });
+
   it("recognizes a Vertex AI service-account JSON, not an AI Studio key", () => {
     const sa = '{ "type": "service_account", "project_id": "x" }';
     expect(detectKeyFormat(sa)?.kind).toBe("vertex-service-account");

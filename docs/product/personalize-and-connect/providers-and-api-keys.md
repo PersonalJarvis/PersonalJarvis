@@ -71,8 +71,12 @@ Card labels describe state, not a guarantee:
    access and billing note.
 2. Select **Get your key here** and create a key in the official provider
    account. When a card offers two credential types, choose deliberately. For
-   example, an AI Studio key and a Vertex service account use different Google
-   projects and billing.
+   example, an AI Studio key and a Vertex AI credential use different Google
+   projects and billing. Google keys need no manual endpoint choice: paste
+   either an AI Studio key or a Vertex AI express-mode key (both may start
+   with `AQ.`) into the same field — the app detects which service issued it
+   and routes every capability (brain, tool model, realtime, speech) through
+   the matching endpoint automatically.
 3. Paste the value into the password field and select **Save**. The field then
    becomes masked. The page receives only whether the credential exists; it
    does not read the saved value back.
