@@ -1,24 +1,30 @@
 import { useEffect, useState } from "react";
 import {
+  ArrowLeft,
   BookOpen,
+  Cake,
   Check,
   Copy,
+  Link2,
   Loader2,
   Mail,
   MapPin,
   Pencil,
   Phone,
   PhoneCall,
+  Star,
+  Tag,
   Trash2,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { relationshipLabel } from "./constants";
 import { contactAvatarStyle, contactInitials } from "./avatar";
-import type { Contact } from "./api";
+import { updateContact, type Contact } from "./api";
 
 /**
  * The detail (right) pane for the selected contact — a read view with actions:
@@ -49,10 +55,16 @@ export function ContactDetail({
   contact,
   onEdit,
   onDelete,
+  onBack,
+  onChanged,
 }: {
   contact: Contact;
   onEdit: () => void;
   onDelete: () => void;
+  /** Present only in the narrow (stacked) layout: return to the list. */
+  onBack?: () => void;
+  /** Inform the parent after an in-place PATCH (favorite toggle). */
+  onChanged?: (contact: Contact) => void;
 }) {
   const t = useT();
   const requestWikiPage = useEventStore((s) => s.requestWikiPage);
@@ -60,10 +72,25 @@ export function ContactDetail({
   const rel = relationshipLabel(t, contact.relationship);
   const addr = formatAddress(contact);
   const updated = formatUpdated(contact.last_updated);
+  const orgLine = [contact.organization, contact.role].filter(Boolean).join(" · ");
 
   const [callable, setCallable] = useState(false);
   const [confirmCall, setConfirmCall] = useState<string | null>(null);
   const [calling, setCalling] = useState(false);
+  const [togglingFav, setTogglingFav] = useState(false);
+
+  async function toggleFavorite() {
+    if (togglingFav) return;
+    setTogglingFav(true);
+    try {
+      const next = await updateContact(contact.slug, { favorite: !contact.favorite });
+      onChanged?.(next);
+    } catch (e) {
+      pushToast("error", e instanceof Error ? e.message : String(e));
+    } finally {
+      setTogglingFav(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -106,6 +133,16 @@ export function ContactDetail({
     <div className="flex h-full flex-col overflow-y-auto scrollbar-jarvis">
       <div className="border-b border-border p-6">
         <div className="flex items-start gap-4">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label={t("contacts.back")}
+              className="mt-1 shrink-0 rounded-md border border-border p-1.5 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+          )}
           <span
             aria-hidden
             style={contactAvatarStyle(contact.name)}
@@ -115,6 +152,9 @@ export function ContactDetail({
           </span>
           <div className="min-w-0 flex-1">
             <h3 className="font-display text-lg font-semibold tracking-tight">{contact.name}</h3>
+            {orgLine && (
+              <p className="truncate text-xs text-muted-foreground">{orgLine}</p>
+            )}
             {contact.aliases.length > 0 && (
               <p className="truncate text-xs text-muted-foreground">
                 {t("contacts.aliases")}: {contact.aliases.join(", ")}
@@ -134,6 +174,21 @@ export function ContactDetail({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void toggleFavorite()}
+              aria-label={t("contacts.favorite")}
+              title={t("contacts.favorite")}
+              disabled={togglingFav}
+              className={cn(
+                "rounded-md border border-border p-1.5 transition-colors disabled:opacity-50",
+                contact.favorite
+                  ? "border-primary/40 text-primary"
+                  : "text-muted-foreground hover:border-primary/40 hover:text-foreground",
+              )}
+            >
+              <Star className={cn("h-3.5 w-3.5", contact.favorite && "fill-current")} />
+            </button>
             <button
               type="button"
               onClick={onEdit}
@@ -212,11 +267,52 @@ export function ContactDetail({
           </Field>
         )}
 
+        {contact.birthday && (
+          <Field icon={<Cake className="h-4 w-4" />} label={t("contacts.birthday")}>
+            <p className="text-sm text-foreground">{formatBirthday(contact.birthday)}</p>
+          </Field>
+        )}
+
+        {contact.urls.length > 0 && (
+          <Field icon={<Link2 className="h-4 w-4" />} label={t("contacts.urls")}>
+            <ul className="space-y-1">
+              {contact.urls.map((u) => (
+                <li key={u} className="flex items-center gap-1.5">
+                  <a
+                    href={u.includes("://") ? u : `https://${u}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="truncate text-sm text-primary hover:underline"
+                  >
+                    {u}
+                  </a>
+                  <CopyButton value={u} label={t("contacts.copy")} />
+                </li>
+              ))}
+            </ul>
+          </Field>
+        )}
+
         {addr && (
           <Field icon={<MapPin className="h-4 w-4" />} label={t("contacts.address")}>
             <div className="flex items-start gap-1.5">
               <p className="whitespace-pre-line text-sm text-foreground">{addr}</p>
               <CopyButton value={addr.replace(/\n/g, ", ")} label={t("contacts.copy")} />
+            </div>
+          </Field>
+        )}
+
+        {contact.tags.length > 0 && (
+          <Field icon={<Tag className="h-4 w-4" />} label={t("contacts.tags")}>
+            <div className="flex flex-wrap gap-1.5">
+              {contact.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground"
+                >
+                  #{tag}
+                </span>
+              ))}
             </div>
           </Field>
         )}
@@ -332,4 +428,11 @@ function formatUpdated(iso: string | null): string | null {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
   return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function formatBirthday(iso: string): string {
+  // Parse as a plain date (no timezone shifts): "1990-04-12" stays April 12.
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return iso;
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { dateStyle: "long" });
 }

@@ -18,6 +18,9 @@ export interface ContactSummary {
   name: string;
   aliases: string[];
   relationship: Relationship | null;
+  favorite: boolean;
+  organization: string | null;
+  tags: string[];
   primary_email: string | null;
   primary_phone: string | null;
   email_count: number;
@@ -30,6 +33,12 @@ export interface Contact {
   name: string;
   aliases: string[];
   relationship: Relationship | null;
+  favorite: boolean;
+  birthday: string | null;
+  organization: string | null;
+  role: string | null;
+  urls: string[];
+  tags: string[];
   emails: string[];
   phones: string[];
   address: ContactAddress;
@@ -44,10 +53,25 @@ export interface ContactInput {
   name: string;
   aliases: string[];
   relationship: Relationship | null;
+  favorite: boolean;
+  birthday: string | null;
+  organization: string | null;
+  role: string | null;
+  urls: string[];
+  tags: string[];
   emails: string[];
   phones: string[];
   address: ContactAddress;
   note: string;
+}
+
+/** Result of POST /import (merge semantics live server-side). */
+export interface ImportStats {
+  ok: boolean;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
 }
 
 const BASE = "/api/contacts";
@@ -102,4 +126,21 @@ export async function updateContact(
 export async function deleteContact(slug: string): Promise<void> {
   const res = await fetch(`${BASE}/${encodeURIComponent(slug)}`, { method: "DELETE" });
   if (!res.ok) return asError(res);
+}
+
+export async function importVcf(vcf: string): Promise<ImportStats> {
+  const res = await fetch(`${BASE}/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ vcf }),
+  });
+  if (!res.ok) return asError(res);
+  return (await res.json()) as ImportStats;
+}
+
+/** The whole book as a .vcf blob (caller triggers the download). */
+export async function exportVcf(): Promise<Blob> {
+  const res = await fetch(`${BASE}/export`);
+  if (!res.ok) return asError(res);
+  return res.blob();
 }

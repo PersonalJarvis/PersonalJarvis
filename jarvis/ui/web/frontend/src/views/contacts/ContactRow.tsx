@@ -1,3 +1,5 @@
+import { Star } from "lucide-react";
+
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { relationshipLabel } from "./constants";
@@ -42,6 +44,9 @@ export function ContactRow({
             <span className="truncate text-xs text-muted-foreground">{subtitle}</span>
           )}
         </span>
+        {contact.favorite && (
+          <Star aria-hidden className="h-3 w-3 shrink-0 fill-current text-primary/70" />
+        )}
         {rel && (
           <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium text-primary">
             {rel}

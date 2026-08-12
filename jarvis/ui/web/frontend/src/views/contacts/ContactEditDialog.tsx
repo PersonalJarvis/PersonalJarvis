@@ -14,12 +14,12 @@ import {
 /**
  * Create / edit a contact. `initial === null` → create (POST); otherwise edit
  * (PATCH the existing slug). Non-blocking modal, same shape as PairDialog —
- * but closing with unsaved changes asks before discarding. Aliases are chips
- * (Enter/comma commits, Backspace removes), e-mail/phone fields validate with
- * the same rules the store applies server-side, and a phone that will be
- * normalised shows its stored form up front. Esc closes (guarded),
- * Ctrl/Cmd+Enter saves. The README field keeps its live word counter (the
- * store is designed for a short ~300-word bio).
+ * but closing with unsaved changes asks before discarding. Aliases and tags
+ * are chips (Enter/comma commits, Backspace removes), e-mail/phone fields
+ * validate with the same rules the store applies server-side, and a phone
+ * that will be normalised shows its stored form up front. Esc closes
+ * (guarded), Ctrl/Cmd+Enter saves. The README field keeps its live word
+ * counter (the store is designed for a short ~300-word bio).
  */
 
 // Mirrors jarvis/contacts/store.py: _EMAIL_RE and _normalize_phone. Kept in
@@ -51,11 +51,19 @@ export function ContactEditDialog({
   const [relationship, setRelationship] = useState<Relationship | "">(
     initial?.relationship ?? "",
   );
+  const [organization, setOrganization] = useState(initial?.organization ?? "");
+  const [role, setRole] = useState(initial?.role ?? "");
+  const [birthday, setBirthday] = useState(initial?.birthday ?? "");
+  const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
+  const [tagDraft, setTagDraft] = useState("");
   const [emails, setEmails] = useState<string[]>(
     initial?.emails?.length ? initial.emails : [""],
   );
   const [phones, setPhones] = useState<string[]>(
     initial?.phones?.length ? initial.phones : [""],
+  );
+  const [urls, setUrls] = useState<string[]>(
+    initial?.urls?.length ? initial.urls : [""],
   );
   const [street, setStreet] = useState(initial?.address?.street ?? "");
   const [postal, setPostal] = useState(initial?.address?.postal_code ?? "");
@@ -69,10 +77,10 @@ export function ContactEditDialog({
   const wordCount = note.trim() ? note.trim().split(/\s+/).length : 0;
 
   // Dirty tracking: snapshot the form once on mount, compare on every close
-  // request. Cheap (JSON of a dozen small strings) and exact.
+  // request. Cheap (JSON of a few small strings) and exact.
   const formSnapshot = JSON.stringify({
-    name, aliases, aliasDraft, relationship, emails, phones,
-    street, postal, city, country, note,
+    name, aliases, aliasDraft, relationship, organization, role, birthday,
+    tags, tagDraft, emails, phones, urls, street, postal, city, country, note,
   });
   const initialSnapshot = useRef(formSnapshot);
   const dirty = formSnapshot !== initialSnapshot.current;
@@ -107,17 +115,10 @@ export function ContactEditDialog({
   const hasInvalidField =
     emailErrors.some(Boolean) || phoneErrors.some(Boolean);
 
-  function commitAliasDraft(): string[] {
-    const value = aliasDraft.trim().replace(/,+$/, "");
-    if (!value) return aliases;
-    if (aliases.includes(value)) {
-      setAliasDraft("");
-      return aliases;
-    }
-    const next = [...aliases, value];
-    setAliases(next);
-    setAliasDraft("");
-    return next;
+  function commitDraft(values: string[], draft: string): string[] {
+    const value = draft.trim().replace(/,+$/, "");
+    if (!value || values.includes(value)) return values;
+    return [...values, value];
   }
 
   async function handleSave() {
@@ -129,8 +130,14 @@ export function ContactEditDialog({
     if (hasInvalidField || saving) return;
     const payload: ContactInput = {
       name: name.trim(),
-      aliases: commitAliasDraft(),
+      aliases: commitDraft(aliases, aliasDraft),
       relationship: relationship === "" ? null : relationship,
+      favorite: initial?.favorite ?? false,
+      birthday: birthday.trim() || null,
+      organization: organization.trim() || null,
+      role: role.trim() || null,
+      urls: urls.map((u) => u.trim()).filter(Boolean),
+      tags: commitDraft(tags, tagDraft),
       emails: emails.map((e) => e.trim()).filter(Boolean),
       phones: phones.map((p) => p.trim()).filter(Boolean),
       address: {
@@ -204,63 +211,15 @@ export function ContactEditDialog({
             />
           </Labeled>
 
-          <Labeled label={t("contacts.aliases")}>
-            <div
-              className={cn(
-                inputClass,
-                "flex min-h-[2.1rem] flex-wrap items-center gap-1.5 py-1",
-              )}
-            >
-              {aliases.map((alias) => (
-                <span
-                  key={alias}
-                  className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-xs text-primary"
-                >
-                  {alias}
-                  <button
-                    type="button"
-                    aria-label={`${t("contacts.delete")} ${alias}`}
-                    onClick={() => setAliases(aliases.filter((a) => a !== alias))}
-                    className="text-primary/70 hover:text-primary"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
-              ))}
-              <input
-                value={aliasDraft}
-                onChange={(e) => {
-                  // A comma commits, exactly like Enter — people paste
-                  // "Chris, Chrissi" and expect chips.
-                  if (e.target.value.includes(",")) {
-                    const parts = e.target.value.split(",");
-                    const last = parts.pop() ?? "";
-                    const committed = parts.map((p) => p.trim()).filter(Boolean);
-                    if (committed.length) {
-                      setAliases((prev) => [
-                        ...prev,
-                        ...committed.filter((p) => !prev.includes(p)),
-                      ]);
-                    }
-                    setAliasDraft(last);
-                  } else {
-                    setAliasDraft(e.target.value);
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    commitAliasDraft();
-                  } else if (e.key === "Backspace" && !aliasDraft && aliases.length) {
-                    setAliases(aliases.slice(0, -1));
-                  }
-                }}
-                onBlur={() => commitAliasDraft()}
-                placeholder={aliases.length ? "" : t("contacts.addAlias")}
-                className="min-w-[6rem] flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60"
-              />
-            </div>
-          </Labeled>
+          <ChipsField
+            label={t("contacts.aliases")}
+            values={aliases}
+            onChange={setAliases}
+            draft={aliasDraft}
+            onDraftChange={setAliasDraft}
+            placeholder={t("contacts.addAlias")}
+            removeLabel={t("contacts.delete")}
+          />
 
           <Labeled label={t("contacts.relationship")}>
             <BrandedSelect
@@ -277,6 +236,38 @@ export function ContactEditDialog({
                   label: relationshipLabel(t, item),
                 })),
               ]}
+            />
+          </Labeled>
+
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <Labeled label={t("contacts.organization")}>
+                <input
+                  value={organization}
+                  onChange={(e) => setOrganization(e.target.value)}
+                  className={inputClass}
+                  placeholder="ACME GmbH"
+                />
+              </Labeled>
+            </div>
+            <div className="flex-1">
+              <Labeled label={t("contacts.role")}>
+                <input
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  className={inputClass}
+                  placeholder="CTO"
+                />
+              </Labeled>
+            </div>
+          </div>
+
+          <Labeled label={t("contacts.birthday")}>
+            <input
+              type="date"
+              value={birthday}
+              onChange={(e) => setBirthday(e.target.value)}
+              className={inputClass}
             />
           </Labeled>
 
@@ -299,6 +290,25 @@ export function ContactEditDialog({
             addLabel={t("contacts.addPhone")}
             errors={phoneErrors}
             hints={phoneHints}
+          />
+
+          <ListField
+            label={t("contacts.urls")}
+            values={urls}
+            onChange={setUrls}
+            placeholder="https://example.com"
+            type="url"
+            addLabel={t("contacts.addUrl")}
+          />
+
+          <ChipsField
+            label={t("contacts.tags")}
+            values={tags}
+            onChange={setTags}
+            draft={tagDraft}
+            onDraftChange={setTagDraft}
+            placeholder={t("contacts.addTag")}
+            removeLabel={t("contacts.delete")}
           />
 
           <Labeled label={t("contacts.address")}>
@@ -413,6 +423,96 @@ function Labeled({ label, children }: { label: string; children: React.ReactNode
       </span>
       {children}
     </label>
+  );
+}
+
+/** Chip editor for short string lists (aliases, tags): Enter/comma commits
+ *  the draft, Backspace on an empty draft removes the last chip. The draft
+ *  lives in the parent so an uncommitted value still lands on Save. */
+function ChipsField({
+  label,
+  values,
+  onChange,
+  draft,
+  onDraftChange,
+  placeholder,
+  removeLabel,
+}: {
+  label: string;
+  values: string[];
+  onChange: (next: string[]) => void;
+  draft: string;
+  onDraftChange: (next: string) => void;
+  placeholder: string;
+  removeLabel: string;
+}) {
+  function commit() {
+    const value = draft.trim().replace(/,+$/, "");
+    if (!value) return;
+    if (!values.includes(value)) onChange([...values, value]);
+    onDraftChange("");
+  }
+  return (
+    <div className="space-y-1">
+      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </span>
+      <div
+        className={cn(
+          inputClass,
+          "flex min-h-[2.1rem] flex-wrap items-center gap-1.5 py-1",
+        )}
+      >
+        {values.map((value) => (
+          <span
+            key={value}
+            className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-xs text-primary"
+          >
+            {value}
+            <button
+              type="button"
+              aria-label={`${removeLabel} ${value}`}
+              onClick={() => onChange(values.filter((v) => v !== value))}
+              className="text-primary/70 hover:text-primary"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+        <input
+          value={draft}
+          onChange={(e) => {
+            // A comma commits, exactly like Enter — people paste
+            // "Chris, Chrissi" and expect chips.
+            if (e.target.value.includes(",")) {
+              const parts = e.target.value.split(",");
+              const last = parts.pop() ?? "";
+              const committed = parts.map((p) => p.trim()).filter(Boolean);
+              if (committed.length) {
+                onChange([
+                  ...values,
+                  ...committed.filter((p) => !values.includes(p)),
+                ]);
+              }
+              onDraftChange(last);
+            } else {
+              onDraftChange(e.target.value);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit();
+            } else if (e.key === "Backspace" && !draft && values.length) {
+              onChange(values.slice(0, -1));
+            }
+          }}
+          onBlur={commit}
+          placeholder={values.length ? "" : placeholder}
+          className="min-w-[6rem] flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60"
+        />
+      </div>
+    </div>
   );
 }
 

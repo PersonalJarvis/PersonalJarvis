@@ -52,6 +52,9 @@ const CHRISTOPH_SUMMARY = {
   name: "Christoph Meyer",
   aliases: ["Chris"],
   relationship: "friend",
+  favorite: false,
+  organization: null,
+  tags: ["uni"],
   primary_email: "christoph@example.com",
   primary_phone: "+4915123456789",
   email_count: 1,
@@ -62,6 +65,9 @@ const LAURA_SUMMARY = {
   name: "Laura",
   aliases: [],
   relationship: "partner",
+  favorite: true,
+  organization: null,
+  tags: [],
   primary_email: null,
   primary_phone: null,
   email_count: 0,
@@ -72,6 +78,12 @@ const CHRISTOPH_FULL = {
   name: "Christoph Meyer",
   aliases: ["Chris"],
   relationship: "friend",
+  favorite: false,
+  birthday: null,
+  organization: "ACME GmbH",
+  role: null,
+  urls: [],
+  tags: ["uni"],
   emails: ["christoph@example.com"],
   phones: ["+4915123456789"],
   address: { city: "Berlin" },
@@ -184,6 +196,50 @@ describe("ContactsView (master–detail)", () => {
       }),
     );
     expect(await screen.findByText("Laura")).toBeTruthy();
+  });
+
+  it("preselects a contact from the ?contact= deep link", async () => {
+    window.history.replaceState({}, "", "/?view=contacts&contact=christoph_meyer");
+    installFetchMock({
+      "GET /api/contacts/christoph_meyer": () => ({ body: CHRISTOPH_FULL }),
+      "GET /api/contacts": () => ({ body: { contacts: [CHRISTOPH_SUMMARY, LAURA_SUMMARY] } }),
+    });
+    render(<ContactsView />);
+    expect(
+      await screen.findByRole("link", { name: /christoph@example\.com/i }),
+    ).toBeTruthy();
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("pins favorites in their own group", async () => {
+    installFetchMock({
+      "GET /api/contacts": () => ({ body: { contacts: [CHRISTOPH_SUMMARY, LAURA_SUMMARY] } }),
+    });
+    render(<ContactsView />);
+    await screen.findByText("Laura");
+    expect(screen.getByText("Favorites")).toBeTruthy();
+  });
+
+  it("filters by tag chips", async () => {
+    installFetchMock({
+      "GET /api/contacts": () => ({ body: { contacts: [CHRISTOPH_SUMMARY, LAURA_SUMMARY] } }),
+    });
+    render(<ContactsView />);
+    await screen.findByText("Christoph Meyer");
+
+    fireEvent.click(screen.getByRole("button", { name: /#uni · 1/i }));
+    expect(screen.getByText("Christoph Meyer")).toBeTruthy();
+    expect(screen.queryByText("Laura")).toBeNull();
+  });
+
+  it("offers vCard import and export in the header", async () => {
+    installFetchMock({
+      "GET /api/contacts": () => ({ body: { contacts: [CHRISTOPH_SUMMARY] } }),
+    });
+    render(<ContactsView />);
+    await screen.findByText("Christoph Meyer");
+    expect(screen.getByRole("button", { name: /import vcard/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /export vcard/i })).toBeTruthy();
   });
 
   it("asks before discarding unsaved dialog changes", async () => {
