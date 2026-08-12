@@ -1,11 +1,11 @@
 import type { SVGProps } from "react";
 
-// The header's split buttons don't divide anything — they OPEN another
-// terminal beside or below this one. So the icons show exactly that: the
-// current pane as an outline, and a plus where the new pane will appear.
-// (The stock divided-rectangle glyphs also read as another editor's brand.)
-// Drawn on lucide's 24-unit grid with its stroke voice so they sit
-// indistinguishably next to the stock icons in the pane header.
+// The header's split buttons open another terminal beside or below this one.
+// The icons say it as "Half + Arrow": the pane already divided, with an arrow
+// in the fresh half pointing the way the layout grows — picked as design #17
+// from the twenty-candidate gallery. Drawn on lucide's 24-unit grid with its
+// stroke voice so they sit indistinguishably next to the stock icons in the
+// pane header.
 
 const strokeProps = {
   fill: "none",
@@ -15,7 +15,7 @@ const strokeProps = {
   strokeLinejoin: "round",
 } as const;
 
-/** Current pane on the left, a plus marking the new pane's spot beside it. */
+/** Divided pane; the arrow in the right half points where the new pane opens. */
 export function SplitRightIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg
@@ -26,14 +26,15 @@ export function SplitRightIcon(props: SVGProps<SVGSVGElement>) {
       {...strokeProps}
       {...props}
     >
-      <rect x="3" y="5" width="10" height="14" rx="2" />
-      <path d="M18.5 9.5v5" />
-      <path d="M16 12h5" />
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M10 4v16" />
+      <path d="M13 12h5" />
+      <path d="m15.5 9.5 2.5 2.5-2.5 2.5" />
     </svg>
   );
 }
 
-/** Current pane on top, a plus marking the new pane's spot below it. */
+/** Divided pane; the arrow in the lower half points where the new pane opens. */
 export function SplitBelowIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg
@@ -44,9 +45,10 @@ export function SplitBelowIcon(props: SVGProps<SVGSVGElement>) {
       {...strokeProps}
       {...props}
     >
-      <rect x="5" y="3" width="14" height="10" rx="2" />
-      <path d="M12 16v5" />
-      <path d="M9.5 18.5h5" />
+      <rect x="4" y="3" width="16" height="18" rx="2" />
+      <path d="M4 10h16" />
+      <path d="M12 13v5" />
+      <path d="m9.5 15.5 2.5 2.5 2.5-2.5" />
     </svg>
   );
 }
