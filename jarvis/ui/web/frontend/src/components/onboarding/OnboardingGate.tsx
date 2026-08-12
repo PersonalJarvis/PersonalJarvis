@@ -1,8 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useOnboarding } from "@/hooks/useOnboarding";
-import { OnboardingFlow } from "./OnboardingFlow";
-import { RiskGate } from "./RiskGate";
-import { IntroVideoScreen } from "./IntroVideoScreen";
+
+/**
+ * Code-split: a completed install renders this gate exactly once per mount —
+ * a no-op `null` return, forever — yet the risk screen, the intro video and
+ * the full six-step flow (with its own step components) used to travel in the
+ * entry chunk anyway, on every boot, for every returning user. Split the same
+ * way MainView.tsx splits section views: only the gate's own show/hide logic
+ * stays static, the screens load on the one boot that actually shows them.
+ */
+const OnboardingFlow = lazy(() =>
+  import("./OnboardingFlow").then((m) => ({ default: m.OnboardingFlow })),
+);
+const RiskGate = lazy(() =>
+  import("./RiskGate").then((m) => ({ default: m.RiskGate })),
+);
+const IntroVideoScreen = lazy(() =>
+  import("./IntroVideoScreen").then((m) => ({ default: m.IntroVideoScreen })),
+);
 
 /**
  * Blocking overlay that shows the onboarding flow until it is completed.
@@ -56,21 +71,25 @@ export function OnboardingGate() {
       aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-sm"
     >
-      {!riskAck ? (
-        <RiskGate
-          onAccept={() => {
-            // Persist the Terms record (fail-open: a warming/erroring backend
-            // must never block the gate; the fast-boot path usually answers
-            // immediately). The ack itself stays local-state-only by design.
-            void onb.acceptTerms().catch(() => undefined);
-            setRiskAck(true);
-          }}
-        />
-      ) : showVideo ? (
-        <IntroVideoScreen onContinue={() => setVideoSeen(true)} />
-      ) : (
-        <OnboardingFlow onb={onb} />
-      )}
+      {/* Fallback is empty: the backdrop above already gives the user
+          something to look at while the first-run chunk fetches. */}
+      <Suspense fallback={null}>
+        {!riskAck ? (
+          <RiskGate
+            onAccept={() => {
+              // Persist the Terms record (fail-open: a warming/erroring backend
+              // must never block the gate; the fast-boot path usually answers
+              // immediately). The ack itself stays local-state-only by design.
+              void onb.acceptTerms().catch(() => undefined);
+              setRiskAck(true);
+            }}
+          />
+        ) : showVideo ? (
+          <IntroVideoScreen onContinue={() => setVideoSeen(true)} />
+        ) : (
+          <OnboardingFlow onb={onb} />
+        )}
+      </Suspense>
     </div>
   );
 }

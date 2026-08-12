@@ -72,7 +72,8 @@ it("persists terms acceptance when the risk gate is accepted", async () => {
   render(<OnboardingGate />);
   await waitFor(() => expect(screen.getByRole("dialog")).toBeDefined());
 
-  fireEvent.click(screen.getByRole("checkbox"));
+  // RiskGate is a lazy chunk now — its controls appear only once it resolves.
+  fireEvent.click(await screen.findByRole("checkbox"));
   fireEvent.click(screen.getByRole("button", { name: /continue/i }));
 
   await waitFor(() =>
@@ -89,17 +90,20 @@ it("shows the tutorial video after the risk gate, then the step flow", async () 
   render(<OnboardingGate />);
   await waitFor(() => expect(screen.getByRole("dialog")).toBeDefined());
 
-  // Accept the risk gate (tick the box, then the proceed button).
-  fireEvent.click(screen.getByRole("checkbox"));
+  // Accept the risk gate (tick the box, then the proceed button). RiskGate is
+  // a lazy chunk, so its controls appear only once it resolves.
+  fireEvent.click(await screen.findByRole("checkbox"));
   fireEvent.click(screen.getByRole("button", { name: /continue/i }));
 
-  // Second screen: the tutorial video. It uses a click-to-play thumbnail
-  // facade, so the YouTube embed only mounts once the user presses play.
-  fireEvent.click(screen.getByRole("button", { name: /play the tutorial video/i }));
+  // Second screen: the tutorial video, its own lazy chunk. It uses a
+  // click-to-play thumbnail facade, so the YouTube embed only mounts once the
+  // user presses play.
+  fireEvent.click(await screen.findByRole("button", { name: /play the tutorial video/i }));
   const frame = screen.getByTitle(/tour/i) as HTMLIFrameElement;
   expect(frame.src).toContain("youtube-nocookie.com");
 
-  // Continue past the video → the step flow renders.
+  // Continue past the video → the step flow (mocked, but still a lazy import)
+  // renders.
   fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-  expect(screen.getByTestId("flow")).toBeDefined();
+  expect(await screen.findByTestId("flow")).toBeDefined();
 });
