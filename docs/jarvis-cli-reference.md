@@ -70,9 +70,11 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 
 ## contacts
 
-- `jarvis contacts add --json-body --yes --dry-run` — Add a contact.
+- `jarvis contacts add --name --alias --relationship --email --phone --url --tag --organization --role --birthday --note --favorite --json-body --yes --dry-run` — Add a contact (field flags, or --json-body for the full record).
 - `jarvis contacts delete <slug> --yes --dry-run` — Delete a contact.
-- `jarvis contacts edit <slug> --json-body --yes --dry-run` — Edit a contact (partial).
+- `jarvis contacts edit <slug> --name --alias --relationship --email --phone --url --tag --organization --role --birthday --note --favorite --json-body --yes --dry-run` — Edit a contact — only the given flags change (partial PATCH).
+- `jarvis contacts export --out` — Export all contacts as vCard 3.0 (.vcf).
+- `jarvis contacts import <file> --yes --dry-run` — Import contacts from a vCard file (merges, never clobbers).
 - `jarvis contacts list` — List contacts.
 - `jarvis contacts show <slug>` — Show one contact.
 
