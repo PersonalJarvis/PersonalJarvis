@@ -1,8 +1,18 @@
 # Public plugin marketplace — design analysis
 
-**Status:** analysis / decision document — no implementation yet ·
+**Status:** IMPLEMENTED 2026-08-12 — see [community-registry.md](community-registry.md)
+for the shipped architecture ·
 **Written:** 2026-08-12 ·
 **Depends on:** [Agent Plugins standard adoption](agent-plugins-standard.md)
+
+> **Decision record.** The maintainer resolved the open decisions the same
+> day: **D1** = Model A1 storage with **CI-only auto-merge** (open registry,
+> no human review queue — the D3 auto-merge variant), **D2** = plugins AND
+> skills (metadata only), **D5** = one-click in-app install + live refresh,
+> **D9** = storefront generated on personaljarvis.ai with a **web submit
+> form** as the upload path. Registry repo:
+> `github.com/PersonalJarvis/marketplace`. The rest of this document is the
+> preserved analysis that led there.
 
 The idea under analysis: a community-facing plugin marketplace (in the spirit
 of a hub like LobeHub) where **anyone** can publish a plugin for the Jarvis

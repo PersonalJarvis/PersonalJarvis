@@ -26,11 +26,13 @@ Plugins store: GitHub, Notion, Slack, Gmail, …).
    under `extensions["io.github.personaljarvis"]` in `plugin.json`, files
    under an `io.github.personaljarvis/` directory). Other clients ignore that
    namespace, exactly as the spec intends.
-4. Existing catalog entries are migrated per the audit below. Until the
-   loader wave lands, the runtime keeps consuming
-   `jarvis/marketplace/seed_catalog.json` unchanged — this document tracks
-   WHAT must change per plugin; the loader/aggregation work is a separate,
-   explicitly planned wave.
+4. Existing catalog entries are migrated per the audit below. The loader
+   wave has landed for COMMUNITY plugins: `agent_plugins_loader.py` converts
+   Agent Plugins v1.0.0 manifests from the
+   [community registry](community-registry.md) into `PluginSpec` at install
+   time. The runtime keeps consuming `jarvis/marketplace/seed_catalog.json`
+   unchanged for the shipped catalog — this document tracks WHAT must change
+   per seed plugin; that migration remains open.
 
 ## How the current catalog maps onto the standard
 
