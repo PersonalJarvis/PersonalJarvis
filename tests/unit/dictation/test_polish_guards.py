@@ -493,3 +493,162 @@ def test_a_genuinely_lost_word_is_still_caught_under_a_wrong_label() -> None:
         )
         == "lost_term"
     )
+
+
+# --------------------------------------------------------------------------- #
+# lost_verb — the loss the speaker cannot see
+# --------------------------------------------------------------------------- #
+#
+# Reported live: "sometimes it cuts the 'is' out of the sentence". Measured on
+# the local history, 33 of 68 polished dictations had lost at least one word
+# and exactly ONE had ever been rejected — a copula is too short for the
+# rare-token filter, too common for the frequency list, and too small for the
+# word-count band. The inputs below are taken from that history, not invented.
+
+
+def test_a_deleted_copula_is_rejected() -> None:
+    """The reported bug, verbatim from the live history."""
+    raw = "what I've meant is this expanded term when you go with your mouse"
+    cut = "What I meant this expanded term when you go with your mouse."
+
+    assert verdict(raw, cut) == "lost_verb"
+
+
+def test_a_deleted_modal_is_rejected() -> None:
+    """"I can see them" and "I see them" are not the same claim."""
+    raw = "I can see them in my download folder"
+    cut = "I see them in my downloads folder."
+
+    assert verdict(raw, cut) == "lost_verb"
+
+
+def test_a_deleted_negation_is_rejected() -> None:
+    """The loss that inverts the sentence rather than merely damaging it."""
+    raw = "the release is not ready for the demo on Friday"
+    cut = "The release is ready for the demo on Friday."
+
+    assert verdict(raw, cut) == "lost_verb"
+
+
+def test_a_deleted_german_copula_is_rejected() -> None:
+    """The same defect in the other language — also a live row."""
+    raw = "wir wollen das verbessern weil ist die Transkription"  # i18n-allow: live row
+    cut = "Wir wollen das verbessern, weil die Transkription."  # i18n-allow: live row
+
+    assert verdict(raw, cut, language="de") == "lost_verb"
+
+
+def test_a_corrected_verb_is_not_a_lost_one() -> None:
+    """Why the check is positional and not a word count.
+
+    Subject-verb agreement repair is what the pass is FOR, and it removes an
+    "is" exactly like the defect above does. Counting occurrences cannot tell
+    the two apart; asking whether anything stands where the word stood can.
+    """
+    raw = "the reasoning and which actions is called like if you use it"
+    fixed = "The reasoning and which actions are called, like if you use it."
+
+    assert verdict(raw, fixed) == ""
+
+
+def test_a_german_agreement_repair_is_not_a_lost_verb() -> None:
+    raw = "die Qualität meines Streams ist irgendwie so schlecht"  # i18n-allow: live row
+    fixed = "Die Qualität meiner Streams sind irgendwie schlecht."  # i18n-allow: live row
+
+    assert verdict(raw, fixed, language="de") == ""
+
+
+def test_a_reworded_clause_around_a_verb_is_not_a_lost_verb() -> None:
+    """A rewrite is licensed; only a clean excision is not.
+
+    "will catch up" -> "catches up" moves the tense into the main verb, and
+    "what I have meaning" -> "what I mean" repairs a mis-transcription. Both
+    lose a listed word inside a REPLACE, and rejecting them would hand the
+    user back the broken sentence they dictated.
+    """
+    assert (
+        verdict(
+            "if Grock will catch up in this pace they will be the frontier lap",
+            "If Grok catches up at this pace, they will be the frontier lab.",
+        )
+        == ""
+    )
+    assert (
+        verdict(
+            "if you're not sure what I have meaning then just ask me a question",
+            "If you are not sure what I mean, ask me a question.",
+        )
+        == ""
+    )
+
+
+def test_precision_mode_does_not_trade_the_verb_check_away() -> None:
+    """Precision licenses word CHOICE, never removing the clause's verb.
+
+    Precision mode switches the rare-token guard off, so if this check were
+    skipped there too, the strongest protection and the one that replaces it
+    would both be gone at once — on the setting that most needs a backstop.
+    """
+    from jarvis.dictation.polish_guards import (
+        PRECISION_DRIFT_REASONS,
+        precision_drift_reason,
+    )
+
+    raw = "what I've meant is this expanded term when you go with your mouse"
+    cut = "What I meant this expanded term when you go with your mouse."
+
+    assert (
+        precision_drift_reason(
+            raw,
+            cut,
+            language="en",
+            protected=(),
+            max_shrink=MAX_SHRINK,
+            max_growth=MAX_GROWTH,
+        )
+        == "lost_verb"
+    )
+    assert "lost_verb" in PRECISION_DRIFT_REASONS
+    assert "lost_verb" in DRIFT_REASONS
+
+
+def test_a_language_with_no_verb_table_has_no_opinion() -> None:
+    """Silence beats a veto — the rule every other word list here follows.
+
+    Asserted on the check itself rather than through ``drift_reason``, because
+    a Polish sentence trips the rare-token guard first and would hide the
+    answer this test is about.
+    """
+    from jarvis.dictation.polish_guards import _lost_essential_word
+
+    assert not _lost_essential_word(
+        "jutro nie wysylam raportu", "Jutro wysylam raportu.", language="pl"
+    )
+    assert not _lost_essential_word("we are not ready", "We ready.", language="")
+
+
+def test_a_false_start_may_still_take_its_verb_with_it() -> None:
+    """The licence the check must not revoke.
+
+    "Remove false starts" is one of the pass's stated jobs, and an abandoned
+    fragment nearly always contains a verb — so a check that fires on any
+    deleted verb would forbid the edit the prompt asks for. The span deleted
+    here is ["i", "will", "i", "mean"], and the pronoun in it is what says
+    "a construction went away" rather than "a word was taken out".
+    """
+    raw = "i will, i mean i would rather send it tomorrow morning"
+    fixed = "I would rather send it tomorrow morning."
+
+    assert verdict(raw, fixed) == ""
+
+
+def test_a_reduced_relative_clause_is_not_a_lost_verb() -> None:
+    """"the people who are in charge" -> "the people in charge" is a tightening.
+
+    Same shape as the false start: the deleted span is ["who", "are"], the
+    relative pronoun leaves with the verb, and the meaning is untouched.
+    """
+    raw = "send it to the three people who are in charge of it tomorrow"
+    fixed = "Send it to the 3 people in charge of it tomorrow."
+
+    assert verdict(raw, fixed) == ""

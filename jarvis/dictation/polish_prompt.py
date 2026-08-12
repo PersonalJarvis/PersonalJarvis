@@ -57,7 +57,17 @@ from typing import Final
 #: parallel list; and "turning speech into a list never deletes content" is a
 #: stated rule. Matched by the guards' ``_FORMAT_COMMAND_WORDS`` table, which
 #: licenses the command words to vanish into the marks that replace them.
-POLISH_PROMPT_VERSION: Final[int] = 6
+#:
+#: v7: the filler and false-start clauses grew an explicit floor — a finite
+#: verb, an auxiliary, a modal and a negation are never what gets removed. v6
+#: licensed removing "repeated words that carry no meaning" and left the model
+#: to decide which those are, and on live transcripts it decided a copula was
+#: one: "what I've meant IS this expanded term" came back as "I meant this
+#: expanded term". A deleted verb is the one loss the speaker cannot see, so
+#: the rule is stated where the licence to remove is granted rather than as a
+#: general plea for restraint. Backed deterministically by the ``lost_verb``
+#: drift guard, which rejects the answer when the model does it anyway.
+POLISH_PROMPT_VERSION: Final[int] = 7
 
 #: The delimiters that fence the untrusted transcript inside the user message.
 #: Deliberately ugly and unlikely to be dictated by accident; deliberately
@@ -115,6 +125,13 @@ WHAT YOU MAY DO:
 - Remove filler sounds and repeated words that carry no meaning.
 - Remove false starts and self-corrections: keep the corrected version, drop
   the abandoned one. ("at 2, actually 3" -> "at 3")
+- NEVER remove a verb, an auxiliary, a modal or a negation. A filler is a
+  SOUND; a word that carries tense, mood or truth is not filler, however small
+  and however often it occurs. "Tomorrow is Sunday" never becomes "Tomorrow
+  Sunday"; "I can see it" never becomes "I see it"; "not ready" never becomes
+  "ready". Where such a word is wrong, CORRECT it in place and leave one
+  standing ("which actions is called" -> "which actions are called") — the
+  sentence must never come back missing the word that made it a sentence.
 - Apply sentence-final punctuation, commas and capitalization. Repair
   capitalization broken by transcription segment boundaries.
 - Break the text into paragraphs where the speaker clearly moved to a new
@@ -184,7 +201,8 @@ WORD CHOICE:
 - Cut hedges and empty intensifiers that carry no information ("kind of",
   "sort of", "basically", "really", "very", "I mean", "you know").
 - Collapse padding into the plain verb ("make a decision" -> "decide",
-  "give an explanation" -> "explain", "is able to" -> "can").
+  "give an explanation" -> "explain", "is able to" -> "can"). The collapse
+  always leaves a verb behind — it swaps one for another, it never deletes.
 
 PLAIN, NOT ORNATE — this is the half that goes wrong, so it is a rule and not a
 preference:

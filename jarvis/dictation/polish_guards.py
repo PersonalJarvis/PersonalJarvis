@@ -44,6 +44,7 @@ The asymmetries are deliberate, not oversights
 
 from __future__ import annotations
 
+import difflib
 import re
 import unicodedata
 from collections import Counter
@@ -65,6 +66,7 @@ DRIFT_REASONS: Final[tuple[str, ...]] = (
     "language_flip",
     "lost_number",
     "lost_term",
+    "lost_verb",
 )
 
 #: Every reason :func:`precision_drift_reason` can return, plus ``""``.
@@ -89,6 +91,7 @@ PRECISION_DRIFT_REASONS: Final[tuple[str, ...]] = (
     "language_flip",
     "lost_number",
     "lost_term",
+    "lost_verb",
 )
 
 #: Every reason :func:`translate_drift_reason` can return, plus ``""``.
@@ -455,6 +458,87 @@ _QUANTITY_WORDS: Final[dict[str, frozenset[str]]] = {
 }
 
 
+# i18n-allow: the two non-English tables below are grammar DATA (§1 list #3) —
+# the literal German and Spanish finite-verb and negation forms a guard must
+# contain in order to notice that a clause lost the word that carried it.
+#
+# THE WORDS A FORMATTER MAY NEVER SIMPLY DELETE.
+#
+# Every other loss check here is about words that are unusual (``rare_tokens``),
+# countable (``_digit_runs``) or named by the user (``protected``). This one
+# covers the opposite end of the frequency curve, and it exists because that end
+# turned out to be completely unguarded: measured on 68 live polished dictations,
+# 33 lost at least one word and exactly ONE was ever rejected. The reported
+# symptom was "it cuts the 'is' out of my sentence" — verbatim, "what I've meant
+# IS this expanded term" came back as "I meant this expanded term", and the
+# German "weil IST die Transkription" lost it too.  # i18n-allow: quoted defect
+#
+# Nothing could catch that. A copula is two or three characters, so it is below
+# ``_RARE_MIN_CHARS``; it is in ``_COMMON_WORDS`` by construction, so it is never
+# "rare"; and one word out of sixty-seven is a 0.985 ratio, nowhere near
+# ``max_shrink``. The word-count band cannot be tightened to see it either — a
+# band narrow enough to notice one missing verb rejects every legitimate
+# tightening the pass exists to perform.
+#
+# ADMISSION RULE: an entry qualifies only if a sentence that loses it becomes
+# ungrammatical or untrue. That is finite verb forms — copula, auxiliary, modal —
+# and negations. Deliberately ABSENT, even though they are function words:
+#
+# * articles and pronouns ("the", "der", "it", "es") — a faithful restructuring
+#   legitimately drops them ("look how they did it" -> "look how it works");
+# * conjunctions ("and", "und", "dass") — splitting a run-on into two  # i18n-allow
+#   sentences is the pass's job, and the conjunction is what it spends;
+# * prepositions — they move with the phrase they govern in any repunctuation.
+#
+# The lists overlap across languages ("will" is a German verb and an English
+# modal, "es" is a German pronoun and the Spanish copula), and that costs
+# nothing: unlike a filler table, a wrong language tag here can only make the
+# guard fire where it need not, and the penalty for firing is that the user
+# keeps their own words.
+_ESSENTIAL_WORDS: Final[dict[str, frozenset[str]]] = {
+    "en": frozenset({
+        "is", "are", "am", "was", "were", "be", "been",
+        "has", "have", "had", "do", "does", "did",
+        "will", "would", "can", "could", "shall", "should", "may", "might",
+        "must", "ought",
+        "not", "no", "never", "none", "nothing", "nobody", "neither", "nor",
+        "without", "cannot",
+        "don't", "doesn't", "didn't", "isn't", "aren't", "wasn't", "weren't",
+        "haven't", "hasn't", "hadn't", "won't", "wouldn't", "can't",
+        "couldn't", "shouldn't", "mustn't",
+    }),
+    "de": frozenset({  # i18n-allow: German grammar data (§1 list #3)
+        "ist", "sind", "bin", "bist", "seid", "war", "warst", "waren",  # i18n-allow
+        "wart", "sei", "seien", "wäre", "wären",  # i18n-allow
+        "habe", "hast", "hat", "haben", "habt", "hatte", "hattest",  # i18n-allow
+        "hatten", "hättest", "hätte", "hätten",  # i18n-allow
+        "werde", "wirst", "wird", "werden", "werdet", "wurde", "wurden",  # i18n-allow
+        "würde", "würden",  # i18n-allow
+        "kann", "kannst", "können", "könnt", "konnte", "konnten",  # i18n-allow
+        "könnte", "könnten", "muss", "musst", "müssen", "müsst",  # i18n-allow
+        "musste", "mussten", "müsste", "müssten",  # i18n-allow
+        "soll", "sollst", "sollen", "sollt", "sollte", "sollten",  # i18n-allow
+        "will", "willst", "wollen", "wollt", "wollte", "wollten",  # i18n-allow
+        "darf", "darfst", "dürfen", "dürft", "durfte", "durften",  # i18n-allow
+        "mag", "mögen", "möchte", "möchten",  # i18n-allow
+        "nicht", "kein", "keine", "keinen", "keinem", "keiner", "keines",  # i18n-allow
+        "nichts", "nie", "niemals", "niemand", "ohne",  # i18n-allow
+    }),
+    "es": frozenset({  # i18n-allow: Spanish grammar data (§1 list #3)
+        "es", "son", "soy", "eres", "somos", "era", "eran", "eras",  # i18n-allow
+        "fue", "fueron", "fui", "sea", "sean",  # i18n-allow
+        "está", "están", "estoy", "estás", "estamos", "estaba",  # i18n-allow
+        "estaban", "estuvo", "estuvieron",  # i18n-allow
+        "ha", "han", "he", "hemos", "había", "habían", "hay", "haya",  # i18n-allow
+        "puede", "pueden", "puedo", "puedes", "podemos", "podía",  # i18n-allow
+        "podría", "podrían", "debe", "deben", "debo", "debes",  # i18n-allow
+        "debería", "deberían", "tiene", "tienen", "tengo", "tienes",  # i18n-allow
+        "no", "nunca", "jamás", "nada", "nadie", "ninguno", "ninguna",  # i18n-allow
+        "ni", "sin",  # i18n-allow
+    }),
+}
+
+
 def normalize_for_compare(text: str) -> str:
     """Collapse *text* to the form used to decide "did anything change at all".
 
@@ -733,6 +817,77 @@ def _lost_quantity_word(raw: str, out: str, *, language: str) -> bool:
     return not (_digit_runs(out) - _digit_runs(raw))
 
 
+def _lost_essential_word(raw: str, out: str, *, language: str) -> bool:
+    """Whether a finite verb or a negation was CUT OUT rather than rewritten.
+
+    The distinction in that sentence is the entire guard, and it is what makes
+    the check usable instead of merely strict. Both of these remove an "is" from
+    the transcript, and only one of them is a defect:
+
+    * ``"which actions is called"`` -> ``"which actions are called"`` is the
+      agreement repair the pass is FOR. The word was replaced, in place.
+    * ``"what I've meant is this expanded term"`` -> ``"I meant this expanded
+      term"`` is the reported bug. The word was deleted and nothing stands
+      where it stood; the sentence lost its verb and the speaker cannot see
+      what is missing, because nothing marks the hole.
+
+    A frequency table cannot tell those apart — both lose exactly one "is" — so
+    the question is answered POSITIONALLY instead, with :mod:`difflib` over the
+    two token sequences. An essential word inside a ``delete`` opcode was cut;
+    inside a ``replace`` opcode something took its place and the pass is
+    entitled to the benefit of the doubt. Measured over the same 68 live
+    dictations, that split clears every repair a count-based rule would have
+    mistaken for a loss: the two German agreement fixes, ``"will catch up"`` ->
+    ``"catches up"``, and ``"what I have meaning"`` -> ``"what I mean"``.
+
+    The deleted span must also consist of NOTHING BUT these words, and that
+    second condition is what keeps the check off two things the pass is
+    expressly allowed to do. Both delete a listed word, and neither is the
+    defect:
+
+    * a false start — ``"I will, I mean I would rather send it"`` -> ``"I would
+      rather send it"`` deletes ``["i", "will", "i", "mean"]``;
+    * a reduced relative clause — ``"the people who are in charge"`` -> ``"the
+      people in charge"`` deletes ``["who", "are"]``.
+
+    In each the model removed a CONSTRUCTION, and the word travelled out with
+    it. The reported defect looks different: the deleted span is the bare word
+    and nothing else — ``["is"]``, ``["ist"]``, ``["can"]``, ``["not"]`` — the
+    sentence around it untouched, which is a formatter reaching into a finished
+    clause and taking the verb out of it.
+
+    Two implementation details are load-bearing rather than incidental:
+
+    * ``autojunk=False``. :class:`difflib.SequenceMatcher` otherwise treats a
+      token appearing in more than 1 % of a sequence longer than 200 as junk —
+      which is a description of exactly these words. Left on, the opcodes for a
+      long dictation stop meaning what this function reads them as.
+    * The ``Counter`` pre-check. The diff is O(n²) in the worst case and the
+      overwhelmingly common answer is "nothing was lost", so the cheap set
+      arithmetic decides that case and the diff only runs on the transcripts
+      that could still fail.
+
+    Returns ``False`` for a language with no table, like every other
+    vocabulary-driven check here — silence beats a veto.
+    """
+    essential = _ESSENTIAL_WORDS.get(_language_key(language))
+    if not essential:
+        return False
+    before = _compare_tokens(raw)
+    after = _compare_tokens(out)
+    if not before:
+        return False
+    # Cheap gate: no essential token lost its last occurrence count-wise means
+    # no essential token can sit in a delete opcode either.
+    if not (essential & set(Counter(before) - Counter(after))):
+        return False
+    opcodes = difflib.SequenceMatcher(a=before, b=after, autojunk=False).get_opcodes()
+    return any(
+        tag == "delete" and all(token in essential for token in before[i1:i2])
+        for tag, i1, i2, _j1, _j2 in opcodes
+    )
+
+
 def _echoes_delimiter(raw: str, polished: str) -> bool:
     """True when the answer repeats the fence the transcript was sent inside.
 
@@ -820,7 +975,9 @@ def precision_drift_reason(
     * ``language_flip`` — precision is not a licence to translate;
     * ``lost_number`` — a quantity is never a wording choice;
     * ``lost_term`` for PROTECTED terms — names, the wake word and the STT
-      dictionary come from the user, and no register change touches them.
+      dictionary come from the user, and no register change touches them;
+    * ``lost_verb`` — sharpening a sentence never means deleting the verb or
+      the negation that made it a sentence.
 
     That is also why the mode ships off and is a deliberate switch: the trade is
     the user's to make, not ours to make for them.
@@ -918,6 +1075,18 @@ def _polish_drift_reason(
         needle = " " + " ".join(tokens) + " "
         if needle in raw_haystack and needle not in haystack:
             return "lost_term"
+
+    # Runs in BOTH modes, and unlike the rare-token check below it is not
+    # something precision mode may trade away. Precision licenses a change of
+    # WORD CHOICE — "the program is broken" -> "the application is faulty" — and
+    # nothing in that licence reaches the verb that holds the clause together.
+    # A sharpened sentence still has one; a sentence the formatter cut the "is"
+    # out of has none, and it is the one loss the speaker cannot see for
+    # themselves, because a missing word leaves no mark on the page.
+    if _lost_essential_word(
+        raw, polished, language=raw_language if raw_language != "unknown" else language
+    ):
+        return "lost_verb"
 
     # Skipped entirely in precision mode, where replacing an uncommon word with
     # a more precise one is the job rather than the defect. See
