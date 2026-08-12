@@ -14,6 +14,10 @@ import type { ITheme } from "@xterm/xterm";
  * The xterm canvas itself stays transparent. The stable reading ground comes
  * from the translucent pane shell below it, so the desktop artwork remains
  * visible without stacking two dark fills into an effectively opaque panel.
+ * A TUI that still paints its own `bg_base` on every cell (Grok Build's
+ * fullscreen themes do) is cleared on the way into xterm — see
+ * ./terminalGlass — so that fill becomes the same default background Claude
+ * Code already leaves alone.
  *
  * ## Why a palette alone cannot make every pane readable
  *

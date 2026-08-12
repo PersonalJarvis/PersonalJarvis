@@ -76,6 +76,7 @@ import {
   themeFor,
   type TerminalAppearance,
 } from "./terminalThemes";
+import { clearTuiCanvasFill } from "./terminalGlass";
 import {
   extractPaneDrop,
   extractPasteFiles,
@@ -979,7 +980,10 @@ export function AgenticTerminal({
     /** Hand bytes to xterm, keeping the count of what is still being parsed. */
     const writeToTerminal = (text: string, afterWrite?: () => void) => {
       parsing += 1;
-      term.write(text, () => {
+      // A TUI that paints its theme ground on every cell would hide the
+      // glass this pane sits on. Default-background those fills here, on
+      // the way into xterm — see ./terminalGlass.
+      term.write(clearTuiCanvasFill(text), () => {
         parsing = Math.max(0, parsing - 1);
         afterWrite?.();
         // The parser is between chunks — the one safe moment to reflow.

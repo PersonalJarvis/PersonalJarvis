@@ -2082,6 +2082,49 @@ describe("terminal text size across a rebuild", () => {
     );
   });
 
+  it("lets a TUI canvas fill fall through to the glass instead of covering it", () => {
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+      />,
+    );
+    terminalHarness.write.mockClear();
+
+    act(() => {
+      terminalHarness.handlers.current?.onOutput?.(
+        "\x1b[48;2;20;20;20m     \x1b[0m" as never,
+      );
+    });
+
+    // GrokNight paints #141414 on every empty cell. That RGB is the canvas
+    // fill; xterm must see the default background so the wallpaper shows.
+    // The rewrite is not keyed on the pane's product name.
+    expect(terminalHarness.write).toHaveBeenCalledWith("\x1b[49m     \x1b[0m");
+  });
+
+  it("clears GrokDay's light canvas the same way", () => {
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="light"
+        fontSize={13}
+      />,
+    );
+    terminalHarness.write.mockClear();
+
+    act(() => {
+      terminalHarness.handlers.current?.onOutput?.(
+        "\x1b[48;2;238;238;238m     \x1b[0m" as never,
+      );
+    });
+
+    expect(terminalHarness.write).toHaveBeenCalledWith("\x1b[49m     \x1b[0m");
+  });
+
   it("builds a replacement terminal at the size the user is looking at", () => {
     const view = render(
       <AgenticTerminal name="Dana" displayName="Claude Code" appearance="dark" fontSize={13} />,
