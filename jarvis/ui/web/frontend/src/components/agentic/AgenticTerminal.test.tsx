@@ -970,6 +970,66 @@ describe("pane header actions", () => {
     expect(onToggleMaximize).toHaveBeenCalledTimes(1);
   });
 
+  it("explains the bar's gestures in its own card after a settled hover", () => {
+    vi.useFakeTimers();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        onToggleMaximize={() => undefined}
+        onArrangeStart={() => undefined}
+        onRename={async () => true}
+      />,
+    );
+
+    // A pass-through hover shows nothing; the card waits for a settled one.
+    fireEvent.pointerOver(screen.getByTestId("pane-header-Dana"));
+    expect(screen.queryByTestId("pane-header-tip-Dana")).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+
+    // One row per wired gesture, replacing the old native `title` tooltip.
+    const tip = screen.getByTestId("pane-header-tip-Dana");
+    expect(tip.textContent).toContain("Drag");
+    expect(tip.textContent).toContain("Fill the whole workspace");
+    expect(tip.textContent).toContain("Rename");
+    expect(
+      screen.getByTestId("pane-header-Dana").getAttribute("title"),
+    ).toBeNull();
+
+    // A press is an answer, not a question — the card leaves as a drag begins.
+    fireEvent.pointerDown(screen.getByTestId("pane-header-Dana"));
+    expect(screen.queryByTestId("pane-header-tip-Dana")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("yields the gesture card to the bar's own controls", () => {
+    vi.useFakeTimers();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        appearance="dark"
+        fontSize={13}
+        onToggleMaximize={() => undefined}
+        onArrangeStart={() => undefined}
+      />,
+    );
+
+    // Hovering a control is a question about THAT control — the bar's card
+    // never opens on top of it.
+    fireEvent.pointerOver(screen.getByTestId("pane-maximize-Dana"));
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(screen.queryByTestId("pane-header-tip-Dana")).toBeNull();
+    vi.useRealTimers();
+  });
+
   it("renames instead of maximizing when the call-sign is the target", () => {
     const onToggleMaximize = vi.fn();
     render(
