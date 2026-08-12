@@ -176,7 +176,7 @@ def test_per_entry_char_cap() -> None:
     out = render_available_skills_section(registry)  # type: ignore[arg-type]
 
     assert out is not None
-    line = next(l for l in out.splitlines() if l.startswith("- `huge`"))
+    line = next(ln for ln in out.splitlines() if ln.startswith("- `huge`"))
     # 1536-char cap on description+when_to_use, plus bullet/name overhead.
     assert len(line) <= 1600
     assert line.endswith("…")
@@ -263,3 +263,121 @@ def test_total_budget_keeps_all_when_under_budget() -> None:
     assert out is not None
     assert "- `a`" in out and "- `b`" in out
     assert "more" not in out
+
+
+# ----------------------------------------------------------------------
+# 2026-08-12 "skills never fire" rework: complete-by-default listing,
+# user skills before builtins, and a NAMED overflow tail.
+# ----------------------------------------------------------------------
+
+
+def test_default_cap_covers_full_builtin_install() -> None:
+    """With the default cap, a realistic install (25+ skills) renders every
+    bullet — no skill is folded into the tail. Live forensic 2026-08-12: the
+    old default of 20 hid five of the user's 25 active skills (including
+    ``skill-creator``) and the measured model-initiated run-skill rate was 0.
+    """
+    skills = [
+        _FakeSkill(
+            name=f"skill-{i:02d}",
+            frontmatter=_FakeFrontmatter(description=f"description {i}"),
+        )
+        for i in range(30)
+    ]
+    registry = _FakeRegistry(skills=skills)
+
+    out = render_available_skills_section(registry)  # type: ignore[arg-type]
+
+    assert out is not None
+    assert "- `skill-29` — description 29" in out
+    assert "more" not in out
+
+
+def test_overflow_tail_names_folded_skills() -> None:
+    """A folded skill must stay CALLABLE: the tail bullet enumerates the
+    folded names, because run-skill resolves by exact name and an anonymous
+    "… and 5 more" hides exactly the string the model would need.
+    """
+    skills = [
+        _FakeSkill(
+            name=f"skill-{i:02d}",
+            frontmatter=_FakeFrontmatter(description=f"description {i}"),
+        )
+        for i in range(25)
+    ]
+    registry = _FakeRegistry(skills=skills)
+
+    out = render_available_skills_section(registry, max_skills=20)  # type: ignore[arg-type]
+
+    assert out is not None
+    tail = next(ln for ln in out.splitlines() if ln.startswith("- …"))
+    for i in range(20, 25):
+        assert f"`skill-{i:02d}`" in tail
+    # Folded skills carry no description in the tail — names only.
+    assert "description 24" not in out
+
+
+def test_user_skills_render_before_builtins() -> None:
+    """User-authored skills sort before shipped builtins in the listing."""
+    registry = _FakeRegistry(skills=[
+        # Real builtin name → _is_builtin() classifies it as shipped.
+        _FakeSkill(name="morning-routine", frontmatter=_FakeFrontmatter(
+            description="builtin briefing")),
+        _FakeSkill(name="my-own-skill", frontmatter=_FakeFrontmatter(
+            description="user authored")),
+    ])
+
+    out = render_available_skills_section(registry)  # type: ignore[arg-type]
+
+    assert out is not None
+    assert out.index("- `my-own-skill`") < out.index("- `morning-routine`")
+
+
+def test_builtins_fold_before_user_skills_on_overflow() -> None:
+    """When the cap forces folding, shipped builtins fold first — the user's
+    own skills keep their described bullets.
+    """
+    registry = _FakeRegistry(skills=[
+        _FakeSkill(name="morning-routine", frontmatter=_FakeFrontmatter(
+            description="builtin briefing")),
+        _FakeSkill(name="deep-work-mode", frontmatter=_FakeFrontmatter(
+            description="builtin focus")),
+        _FakeSkill(name="my-own-skill", frontmatter=_FakeFrontmatter(
+            description="user authored")),
+    ])
+
+    out = render_available_skills_section(registry, max_skills=2)  # type: ignore[arg-type]
+
+    assert out is not None
+    assert "- `my-own-skill` — user authored" in out
+    # One builtin survives (cap 2), the other folds into the named tail.
+    tail = next(ln for ln in out.splitlines() if ln.startswith("- …"))
+    assert "`deep-work-mode`" in tail
+
+
+def test_budget_eviction_prefers_builtins_over_user_skills() -> None:
+    """Char-budget eviction drops a STALE builtin before a user skill, even
+    when the user skill is older.
+    """
+    registry = _FakeRegistry(skills=[
+        _FakeSkillWithMtime(
+            name="morning-routine",
+            frontmatter=_FakeFrontmatter(description="B" * 200),
+            mtime=100.0,  # newer than the user skill
+        ),
+        _FakeSkillWithMtime(
+            name="my-own-skill",
+            frontmatter=_FakeFrontmatter(description="U" * 200),
+            mtime=1.0,  # oldest overall
+        ),
+    ])
+
+    out = render_available_skills_section(
+        registry, total_char_budget=300,  # type: ignore[arg-type]
+    )
+
+    assert out is not None
+    assert "- `my-own-skill`" in out
+    assert "- `morning-routine` — " not in out
+    tail = next(ln for ln in out.splitlines() if ln.startswith("- …"))
+    assert "`morning-routine`" in tail
