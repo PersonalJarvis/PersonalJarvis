@@ -236,6 +236,46 @@ describe("VisualizationView", () => {
     expect(inspector.textContent).toContain("3.2 s");
   });
 
+  it("draws a reasoning step as a dashed thought card, text in the inspector", async () => {
+    installFetchMock(
+      [{ slug: "run-think", utterance: "Explain the plan", status: "success" }],
+      { "run-think": [] },
+      {
+        "run-think": {
+          plan: { plan_id: "run-think", vision: "Explain", status: "complete" },
+          steps: [
+            {
+              step_id: "t1:0",
+              name: "Check the logs first.",
+              tool_name: null,
+              kind: "reasoning",
+              status: "done",
+              output: "Check the logs first, then decide.",
+            },
+            { step_id: "t1:1", name: "tail app.log", tool_name: "Bash", status: "done" },
+          ],
+          final_answer: "Done.",
+        },
+      },
+    );
+
+    renderView();
+
+    const nodes = await screen.findAllByTestId("graph-node-step");
+    const thought = nodes.find(
+      (n) => n.getAttribute("data-category") === "reasoning",
+    );
+    expect(thought).toBeTruthy();
+    // A thought is not an action — its card frame says so at a glance.
+    expect(thought!.className).toContain("border-dashed");
+
+    fireEvent.click(thought!);
+    const inspector = await screen.findByTestId("visualization-inspector");
+    // The full thought, not tool telemetry that never existed.
+    expect(inspector.textContent).toContain("Check the logs first, then decide.");
+    expect(inspector.textContent).not.toContain("Tool");
+  });
+
   it("frames a failed step in the alarm colour, not just a dot", async () => {
     installFetchMock(
       [{ slug: "run-bad", utterance: "Deploy the site", status: "error" }],

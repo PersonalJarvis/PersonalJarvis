@@ -9,28 +9,16 @@ import {
 import {
   Download,
   ExternalLink,
-  FileCode,
-  FileImage,
-  FileText,
-  Flag,
   FolderOpen,
   Frame,
-  Globe,
   Loader2,
   Maximize2,
-  MessageSquare,
-  Plug,
   RefreshCw,
-  Search,
   ShieldAlert,
-  SquarePen,
-  Terminal,
   Workflow,
-  Wrench,
   X,
   ZoomIn,
   ZoomOut,
-  type LucideIcon,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -67,6 +55,13 @@ import {
   type RunGraph,
   type RunGraphNode,
 } from "@/lib/runGraph";
+import {
+  categoryColor,
+  categoryTint,
+  NODE_CATEGORIES,
+  nodeCategory,
+  nodeGlyph,
+} from "@/lib/nodeSpec";
 
 /**
  * The Visualization section — a run drawn as a workflow, not listed as files.
@@ -122,34 +117,6 @@ const NODE_DOT: Record<string, string> = {
   running: "bg-primary animate-pulse",
   skipped: "bg-muted-foreground/40",
 };
-
-/** The glyph a step node wears — recognisable tools get their own. */
-function toolIcon(toolName: string | null | undefined): LucideIcon {
-  const name = (toolName ?? "").toLowerCase();
-  if (name.startsWith("mcp__") || name.includes("/")) return Plug;
-  if (["bash", "runcommand", "shell", "exec", "execute", "run_command", "run_shell_command"].includes(name))
-    return Terminal;
-  if (["write", "edit", "multiedit", "notebookedit", "file_write", "write_file", "create_file"].includes(name))
-    return SquarePen;
-  if (["read", "glob"].includes(name)) return FileText;
-  if (name === "grep" || name === "search") return Search;
-  if (name.includes("web") || name.includes("fetch")) return Globe;
-  return Wrench;
-}
-
-function artifactIcon(path: string): LucideIcon {
-  const kind = classifyVisual(path);
-  if (kind === "image" || kind === "vector") return FileImage;
-  if (kind === "page" || kind === "document") return FileCode;
-  return FileText;
-}
-
-function nodeIcon(node: RunGraphNode): LucideIcon {
-  if (node.kind === "start") return MessageSquare;
-  if (node.kind === "result") return Flag;
-  if (node.kind === "artifact") return artifactIcon(node.artifact?.path ?? "");
-  return toolIcon(node.step?.tool_name);
-}
 
 /** The rail row's timestamp — what tells two same-ask runs apart. */
 function formatRunDate(entry: OutputSummary): string {
@@ -755,8 +722,11 @@ function GraphCanvas({
         </svg>
 
         {graph.nodes.map((node) => {
-          const Icon = nodeIcon(node);
+          const category = nodeCategory(node);
+          const Icon = nodeGlyph(node);
+          const hue = categoryColor(category);
           const selected = node.id === selectedId;
+          const reasoning = category === "reasoning";
           const title =
             node.kind === "start"
               ? t("visualization.node_start")
@@ -764,6 +734,11 @@ function GraphCanvas({
                 ? t("visualization.node_result")
                 : node.title;
           const subtitle = node.kind === "start" ? node.title : node.subtitle;
+          /* Port dots come from the graph model (edge-derived), so a dot is
+           * always a real attachment point — a start node has no input, a
+           * deliverable no output, exactly like a workflow editor's nodes. */
+          const port =
+            "absolute h-1.5 w-1.5 rounded-full border border-background bg-primary/70";
           return (
             <button
               key={node.id}
@@ -771,9 +746,13 @@ function GraphCanvas({
               onClick={() => onSelect(node.id)}
               aria-current={selected}
               data-testid={`graph-node-${node.kind}`}
+              data-category={category}
               style={{ left: node.x, top: node.y, width: NODE_W, height: NODE_H }}
               className={cn(
                 "absolute flex items-center gap-2.5 rounded-xl border bg-card px-3 text-left shadow-sm transition-colors",
+                /* A thought is not an action: reasoning cards wear a dashed
+                 * frame, the visual grammar of "internal, produced nothing". */
+                reasoning && "border-dashed",
                 /* A failed or running step announces itself from the card
                  * frame — a 6px dot alone is not a glanceable alarm. */
                 selected
@@ -785,26 +764,57 @@ function GraphCanvas({
                       : "border-border hover:border-primary/50",
               )}
             >
-              {/* Ports — the connectors that make cards read as graph nodes. */}
+              {node.ports.left && (
+                <span
+                  className={cn(port, "-left-[3px] top-1/2 -translate-y-1/2")}
+                  aria-hidden
+                />
+              )}
+              {node.ports.right &&
+                (category === "agent" ? (
+                  /* A spawn node branches — its output port doubles, the way
+                   * n8n's if node wears one connector per outcome. */
+                  <>
+                    <span
+                      className={cn(port, "-right-[3px] top-1/2 -translate-y-[7px]")}
+                      aria-hidden
+                    />
+                    <span
+                      className={cn(port, "-right-[3px] top-1/2 translate-y-[1px]")}
+                      aria-hidden
+                    />
+                  </>
+                ) : (
+                  <span
+                    className={cn(port, "-right-[3px] top-1/2 -translate-y-1/2")}
+                    aria-hidden
+                  />
+                ))}
+              {node.ports.top && (
+                <span
+                  className={cn(port, "-top-[3px] left-1/2 -translate-x-1/2")}
+                  aria-hidden
+                />
+              )}
+              {node.ports.bottom && (
+                <span
+                  className={cn(port, "-bottom-[3px] left-1/2 -translate-x-1/2")}
+                  aria-hidden
+                />
+              )}
               <span
-                className="absolute -left-[3px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-primary/60"
-                aria-hidden
-              />
-              <span
-                className="absolute -right-[3px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-primary/60"
-                aria-hidden
-              />
-              <span
-                className={cn(
-                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
-                  node.kind === "artifact"
-                    ? "bg-secondary text-foreground"
-                    : "bg-primary/15 text-primary",
-                )}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+                style={{ color: hue, backgroundColor: categoryTint(category, 0.14) }}
               >
                 <Icon className="h-4 w-4" aria-hidden />
               </span>
               <span className="min-w-0 flex-1">
+                <span
+                  className="block truncate text-[9px] font-semibold uppercase tracking-widest"
+                  style={{ color: hue }}
+                >
+                  {t(NODE_CATEGORIES[category].labelKey)}
+                </span>
                 <span className="block truncate text-xs font-medium text-foreground">
                   {title}
                 </span>
@@ -814,7 +824,7 @@ function GraphCanvas({
                   </span>
                 )}
               </span>
-              {node.status !== "none" && (
+              {node.status !== "none" && !reasoning && (
                 <span
                   className={cn(
                     "h-1.5 w-1.5 shrink-0 rounded-full",
@@ -884,7 +894,17 @@ function NodeInspector({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-3 p-3">
-          {node.kind === "step" && node.step && (
+          {/* A reasoning step is a thought, not a call: it gets the thought
+              text and nothing pretending to be tool telemetry. */}
+          {node.kind === "step" && node.step?.kind === "reasoning" && (
+            <InspectorField label={t("visualization.field_thought")}>
+              <p className="whitespace-pre-wrap break-words text-xs">
+                {node.step.output || node.step.name}
+              </p>
+            </InspectorField>
+          )}
+
+          {node.kind === "step" && node.step && node.step.kind !== "reasoning" && (
             <>
               <InspectorField label={t("visualization.field_tool")}>
                 {node.step.tool_name ?? "—"}

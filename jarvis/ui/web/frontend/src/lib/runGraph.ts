@@ -27,6 +27,16 @@ export type RunNodeKind = "start" | "step" | "result" | "artifact";
 /** Node state, unified across kinds so one dot component can render them. */
 export type RunNodeStatus = "done" | "failed" | "skipped" | "running" | "none";
 
+/** Which card sides actually carry a connection — derived from the edges, so
+ * a drawn port ALWAYS means "something attaches here" (start has no input,
+ * a deliverable has no output, exactly like a workflow editor's nodes). */
+export interface NodePorts {
+  left: boolean;
+  right: boolean;
+  top: boolean;
+  bottom: boolean;
+}
+
 export interface RunGraphNode {
   /** Stable id — selection key, React key and edge endpoint. */
   id: string;
@@ -43,6 +53,8 @@ export interface RunGraphNode {
   /** Layout position (top-left corner) in unscaled canvas pixels. */
   x: number;
   y: number;
+  /** Where edges attach — the only sides that render a connector dot. */
+  ports: NodePorts;
 }
 
 export interface RunGraphEdge {
@@ -83,10 +95,12 @@ const PADDING = 24;
  */
 export const MAIN_TRACK_COLUMNS = 5;
 
-/** Top-left corner of the main-track slot `index` (start = slot 0). */
-function slotPosition(index: number): { x: number; y: number } {
+/** Top-left corner of main-track slot `index`, `rowOffset` rows down. A
+ * multi-worker mission gives each worker its own row band (a lane); a
+ * single-worker run keeps `rowOffset` 0 and reads exactly as before. */
+function slotPosition(index: number, rowOffset = 0): { x: number; y: number } {
   const column = index % MAIN_TRACK_COLUMNS;
-  const row = Math.floor(index / MAIN_TRACK_COLUMNS);
+  const row = rowOffset + Math.floor(index / MAIN_TRACK_COLUMNS);
   return {
     x: PADDING + column * (NODE_W + GAP_X),
     y: PADDING + row * (NODE_H + ROW_GAP),
@@ -138,6 +152,16 @@ export interface RunGraphInput {
   files: ArtifactSummary[];
 }
 
+const NO_PORTS: NodePorts = { left: false, right: false, top: false, bottom: false };
+
+/** The worker (lane) a step belongs to — explicit key, else the step_id's
+ * task prefix, else one shared lane (legacy payloads without either). */
+function laneKey(step: PlanStep): string {
+  if (step.task_key) return step.task_key;
+  const separator = step.step_id.indexOf(":");
+  return separator > 0 ? step.step_id.slice(0, separator) : "";
+}
+
 /** Build the fully laid-out graph for one run. Pure. */
 export function buildRunGraph(input: RunGraphInput): RunGraph {
   const steps = input.plan?.steps ?? [];
@@ -147,10 +171,22 @@ export function buildRunGraph(input: RunGraphInput): RunGraph {
 
   const lastUnconfirmed = [...steps].reverse().find((s) => s.status === "skipped");
 
-  /* Main track: start → steps → result, wrapping after MAIN_TRACK_COLUMNS
-   * so a long run reads like text — left to right, then down — instead of
-   * becoming a horizontal strip no screen can hold. */
-  let slot = 0;
+  /* Lanes: one per worker, in first-seen order. A single-worker run is one
+   * lane and lays out exactly as before; a mission that ran several workers
+   * branches out of the start node into parallel bands and merges into the
+   * result — the story a workflow editor would draw for parallel branches. */
+  const laneOrder: string[] = [];
+  const lanes = new Map<string, PlanStep[]>();
+  for (const step of steps) {
+    const key = laneKey(step);
+    const lane = lanes.get(key);
+    if (lane === undefined) {
+      lanes.set(key, [step]);
+      laneOrder.push(key);
+    } else {
+      lane.push(step);
+    }
+  }
 
   nodes.push({
     id: "start",
@@ -163,35 +199,55 @@ export function buildRunGraph(input: RunGraphInput): RunGraph {
         : input.runStatus === "error"
           ? "failed"
           : "none",
-    ...slotPosition(slot),
+    ...slotPosition(0),
+    ports: { ...NO_PORTS },
   });
-  let previousId = "start";
-  slot += 1;
 
-  for (const step of steps) {
-    const id = `step:${step.step_id}`;
-    const status = stepStatus(step, step === lastUnconfirmed, input.runStatus);
-    nodes.push({
-      id,
-      kind: "step",
-      title: step.tool_name || step.name,
-      subtitle: step.tool_name && step.name !== step.tool_name ? step.name : "",
-      status,
-      step,
-      ...slotPosition(slot),
-    });
-    edges.push({
-      id: `${previousId}->${id}`,
-      from: previousId,
-      to: id,
-      failed: status === "failed",
-    });
-    previousId = id;
-    slot += 1;
+  /* Main track(s): each lane wraps after MAIN_TRACK_COLUMNS so a long run
+   * reads like text — left to right, then down — instead of becoming a
+   * horizontal strip no screen can hold. Lane slots start at 1: the first
+   * step sits beside the start node, later lanes directly below it. */
+  let bandRow = 0;
+  let lastSlot = 1; // where the result lands when there are no steps at all
+  const laneEnds: { id: string }[] = [];
+  for (const key of laneOrder) {
+    const laneSteps = lanes.get(key) ?? [];
+    let previousId = "start";
+    let slot = 1;
+    for (const step of laneSteps) {
+      const id = `step:${step.step_id}`;
+      const status = stepStatus(step, step === lastUnconfirmed, input.runStatus);
+      nodes.push({
+        id,
+        kind: "step",
+        title: step.tool_name || step.name,
+        subtitle: step.tool_name && step.name !== step.tool_name ? step.name : "",
+        status,
+        step,
+        ...slotPosition(slot, bandRow),
+        ports: { ...NO_PORTS },
+      });
+      edges.push({
+        id: `${previousId}->${id}`,
+        from: previousId,
+        to: id,
+        failed: status === "failed",
+      });
+      previousId = id;
+      slot += 1;
+    }
+    laneEnds.push({ id: previousId });
+    lastSlot = slot;
+    bandRow += Math.ceil((laneSteps.length + 1) / MAIN_TRACK_COLUMNS);
   }
+  const lastBandRow = Math.max(
+    0,
+    bandRow - Math.ceil(((lanes.get(laneOrder.at(-1) ?? "") ?? []).length + 1) / MAIN_TRACK_COLUMNS),
+  );
 
   /* The result node closes the track whenever there is anything to close it
-   * with — an answer, or a terminal run outcome worth naming. */
+   * with — an answer, or a terminal run outcome worth naming. Every lane's
+   * last step merges into it. */
   const terminal =
     input.runStatus === "success" ||
     input.runStatus === "error" ||
@@ -210,15 +266,18 @@ export function buildRunGraph(input: RunGraphInput): RunGraph {
           : input.runStatus === "cancelled" && !finalAnswer
             ? "skipped"
             : "done",
-      ...slotPosition(slot),
+      ...slotPosition(lastSlot, lastBandRow),
+      ports: { ...NO_PORTS },
     });
-    edges.push({
-      id: `${previousId}->result`,
-      from: previousId,
-      to: "result",
-      failed: input.runStatus === "error",
-    });
-    slot += 1;
+    const sources = laneEnds.length > 0 ? laneEnds : [{ id: "start" }];
+    for (const source of sources) {
+      edges.push({
+        id: `${source.id}->result`,
+        from: source.id,
+        to: "result",
+        failed: input.runStatus === "error",
+      });
+    }
   }
   const hasResult = nodes[nodes.length - 1].id === "result";
 
@@ -226,9 +285,8 @@ export function buildRunGraph(input: RunGraphInput): RunGraph {
    * that wrote it (result/start node when no step claims it). Each artifact
    * sits UNDER its source node where the row allows — provenance readable
    * from position alone, not only by tracing an edge across the canvas. */
-  const mainRows = Math.max(1, Math.ceil(slot / MAIN_TRACK_COLUMNS));
-  const artifactY =
-    PADDING + (mainRows - 1) * (NODE_H + ROW_GAP) + NODE_H + TRACK_GAP;
+  const mainBottom = Math.max(...nodes.map((n) => n.y + NODE_H));
+  const artifactY = mainBottom + TRACK_GAP;
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const placed = input.files.map((file) => {
     const source = findSourceStep(steps, file.path);
@@ -249,9 +307,29 @@ export function buildRunGraph(input: RunGraphInput): RunGraph {
       artifact: file,
       x,
       y: artifactY,
+      ports: { ...NO_PORTS },
     });
     edges.push({ id: `${from}->${id}`, from, to: id, failed: false });
     artifactX = x + NODE_W + GAP_X;
+  }
+
+  /* Ports, derived from the edges that exist: the dot IS the attachment
+   * point, so a side without a connection never wears one. */
+  for (const edge of edges) {
+    const from = byId.get(edge.from) ?? nodes.find((n) => n.id === edge.from);
+    const to = byId.get(edge.to) ?? nodes.find((n) => n.id === edge.to);
+    if (!from || !to) continue;
+    const geometry = edgeGeometry(from, to);
+    if (geometry === "h") {
+      from.ports.right = true;
+      to.ports.left = true;
+    } else if (geometry === "down") {
+      from.ports.bottom = true;
+      to.ports.top = true;
+    } else {
+      from.ports.top = true;
+      to.ports.bottom = true;
+    }
   }
 
   const width =
@@ -269,16 +347,29 @@ export function buildRunGraph(input: RunGraphInput): RunGraph {
 }
 
 /**
- * The SVG path of one edge, n8n-style.
- *
- * Same-row edges leave the source's right port and enter the target's left
- * port with a horizontal S-curve; cross-row edges leave the source's bottom
- * and enter the target's top with a vertical one. Ports, not centers: an edge
- * that visibly leaves a card edge is what makes the cards read as connected
- * nodes rather than decorated boxes.
+ * How one edge attaches, n8n-style: "h" leaves the source's right port and
+ * enters the target's left port (also for branch/merge edges whose target
+ * sits right AND below — the S-curve carries the dy); "down"/"up" connect
+ * bottom to top when the target is not to the right (row wraps, artifacts
+ * directly underneath). One function decides — `edgePath` draws with it and
+ * `buildRunGraph` derives the port dots from it, so a dot and its edge can
+ * never disagree.
+ */
+export function edgeGeometry(
+  from: Pick<RunGraphNode, "x" | "y">,
+  to: Pick<RunGraphNode, "x" | "y">,
+): "h" | "down" | "up" {
+  if (from.y === to.y || to.x >= from.x + NODE_W) return "h";
+  return to.y > from.y ? "down" : "up";
+}
+
+/**
+ * The SVG path of one edge. Ports, not centers: an edge that visibly leaves
+ * a card edge is what makes the cards read as connected nodes rather than
+ * decorated boxes.
  */
 export function edgePath(from: RunGraphNode, to: RunGraphNode): string {
-  if (from.y === to.y) {
+  if (edgeGeometry(from, to) === "h") {
     const x1 = from.x + NODE_W;
     const y1 = from.y + NODE_H / 2;
     const x2 = to.x;

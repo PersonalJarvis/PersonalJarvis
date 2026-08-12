@@ -232,6 +232,117 @@ describe("buildRunGraph", () => {
     expect(graph.edges[0].failed).toBe(true);
   });
 
+  it("branches a multi-worker mission into parallel lanes that merge at the result", () => {
+    const graph = buildRunGraph({
+      slug: "r",
+      runStatus: "success",
+      plan: {
+        plan: { plan_id: "r", vision: "", status: "complete" },
+        steps: [
+          step({ step_id: "w1:0", task_key: "w1" }),
+          step({ step_id: "w1:1", task_key: "w1" }),
+          step({ step_id: "w2:0", task_key: "w2" }),
+          step({ step_id: "w2:1", task_key: "w2" }),
+        ],
+        final_answer: "done",
+      },
+      files: [],
+    });
+
+    // Both workers branch out of the start node…
+    const fromStart = graph.edges
+      .filter((e) => e.from === "start")
+      .map((e) => e.to);
+    expect(fromStart).toEqual(["step:w1:0", "step:w2:0"]);
+    // …into their own row bands, column-aligned…
+    const w1 = graph.nodes.find((n) => n.id === "step:w1:0")!;
+    const w2 = graph.nodes.find((n) => n.id === "step:w2:0")!;
+    expect(w2.y).toBeGreaterThan(w1.y);
+    expect(w2.x).toBe(w1.x);
+    // …and every lane's last step merges into ONE result.
+    const intoResult = graph.edges
+      .filter((e) => e.to === "result")
+      .map((e) => e.from);
+    expect(intoResult).toEqual(["step:w1:1", "step:w2:1"]);
+  });
+
+  it("keeps legacy steps without task keys in one shared lane", () => {
+    const graph = buildRunGraph({
+      slug: "r",
+      runStatus: "success",
+      plan: {
+        plan: { plan_id: "r", vision: "", status: "complete" },
+        steps: [step({ step_id: "a" }), step({ step_id: "b" })],
+        final_answer: "ok",
+      },
+      files: [],
+    });
+    // One chain on one row — never one lane per step.
+    const ys = new Set(graph.nodes.map((n) => n.y));
+    expect(ys.size).toBe(1);
+  });
+
+  it("draws ports only where an edge actually attaches", () => {
+    const graph = buildRunGraph({
+      slug: "r",
+      runStatus: "success",
+      plan: {
+        plan: { plan_id: "r", vision: "", status: "complete" },
+        steps: [step({ step_id: "t:0" })],
+        final_answer: "ok",
+      },
+      files: [file("tasks/t1/artifacts/files/report.md")],
+    });
+
+    // The request only ever feeds forward — no input connector.
+    const start = graph.nodes.find((n) => n.id === "start")!;
+    expect(start.ports.left).toBe(false);
+    expect(start.ports.right).toBe(true);
+    // The result receives the track and hands the unclaimed file down.
+    const result = graph.nodes.find((n) => n.id === "result")!;
+    expect(result.ports.left).toBe(true);
+    expect(result.ports.right).toBe(false);
+    expect(result.ports.bottom).toBe(true);
+    // A deliverable is an endpoint: one input from above, nothing else.
+    const artifact = graph.nodes.find((n) => n.kind === "artifact")!;
+    expect(artifact.ports).toEqual({
+      left: false,
+      right: false,
+      top: true,
+      bottom: false,
+    });
+  });
+
+  it("threads reasoning steps through the flow as ordinary nodes", () => {
+    const graph = buildRunGraph({
+      slug: "r",
+      runStatus: "success",
+      plan: {
+        plan: { plan_id: "r", vision: "", status: "complete" },
+        steps: [
+          step({
+            step_id: "t:0",
+            kind: "reasoning",
+            tool_name: null,
+            name: "Plan the deploy first.",
+          }),
+          step({ step_id: "t:1" }),
+        ],
+        final_answer: "ok",
+      },
+      files: [],
+    });
+
+    expect(graph.nodes.map((n) => n.id)).toEqual([
+      "start",
+      "step:t:0",
+      "step:t:1",
+      "result",
+    ]);
+    // Without a tool name the thought itself is the card headline.
+    expect(graph.nodes[1].title).toBe("Plan the deploy first.");
+  });
+
   it("sizes the canvas to hold every node plus padding", () => {
     const graph = buildRunGraph({
       slug: "r",

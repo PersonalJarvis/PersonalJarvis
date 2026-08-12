@@ -14,10 +14,17 @@ export type PlanStepStatus =
   | "failed"
   | "skipped";
 
+/** What a reconstructed step IS — an action, a sub-agent launch, or the
+ * worker's own thinking between actions. Absent on old payloads = "tool". */
+export type PlanStepKind = "tool" | "spawn" | "reasoning";
+
 export interface PlanStep {
   step_id: string;
   name: string;
   status: PlanStepStatus;
+  kind?: PlanStepKind;
+  /** The worker (task dir) this step belongs to — the graph's lane key. */
+  task_key?: string;
   output?: string | null;
   error?: string | null;
   duration_s?: number;
