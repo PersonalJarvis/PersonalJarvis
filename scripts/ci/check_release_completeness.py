@@ -179,14 +179,19 @@ def check_not_behind_public(root: Path, *, remote: str, branch: str) -> tuple[bo
     return True, f"{branch} is not behind {remote}/{branch}{note}"
 
 
-def _last_commit_ts(root: Path, path: str) -> int | None:
-    rc, out = _run_git(["log", "-1", "--format=%ct", "--", path], cwd=root)
+def _last_commit_ts(root: Path, *pathspecs: str) -> int | None:
+    rc, out = _run_git(["log", "-1", "--format=%ct", "--", *pathspecs], cwd=root)
     out = out.strip()
     return int(out) if rc == 0 and out.isdigit() else None
 
 
 def check_dist_freshness(root: Path) -> tuple[bool, str]:
-    src_ts = _last_commit_ts(root, _FRONTEND_SRC)
+    # Test files never reach the bundle, so a commit that only touches them
+    # must not mark the sources as newer than dist/ — that would demand a
+    # rebuild whose output is byte-identical and therefore uncommittable.
+    src_ts = _last_commit_ts(
+        root, _FRONTEND_SRC, f":(exclude){_FRONTEND_SRC}/**/*.test.*"
+    )
     dist_ts = _last_commit_ts(root, _FRONTEND_DIST)
     if src_ts is None:
         return True, "no committed frontend sources - dist check not applicable"
