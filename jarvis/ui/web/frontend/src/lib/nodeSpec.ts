@@ -137,8 +137,21 @@ const FILE_TOOLS = new Set([
   "file_write",
   "write_file",
   "create_file",
+  "replace", // gemini-cli's edit tool
 ]);
-const SEARCH_TOOLS = new Set(["read", "glob", "grep", "search", "ls", "list_files"]);
+const SEARCH_TOOLS = new Set([
+  "read",
+  "glob",
+  "grep",
+  "search",
+  "ls",
+  "list_files",
+  // gemini-cli's read/search family
+  "read_file",
+  "read_many_files",
+  "search_file_content",
+  "list_directory",
+]);
 
 /** Which category a tool call belongs to — the n8n-style family sort. */
 export function toolCategory(toolName: string | null | undefined): NodeCategory {

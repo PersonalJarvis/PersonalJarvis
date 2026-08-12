@@ -82,7 +82,17 @@ _DETAIL_KEYS: Final[tuple[str, ...]] = (
 # step (``writes``) so the frontend can connect an artifact node to the exact
 # step that produced it. Mirrors ``stream_evidence._WRITE_TOOL_NAMES``.
 _WRITE_TOOL_NAMES: Final[frozenset[str]] = frozenset(
-    {"Write", "Edit", "MultiEdit", "NotebookEdit", "file_write", "write_file", "create_file"}
+    {
+        "Write",
+        "Edit",
+        "MultiEdit",
+        "NotebookEdit",
+        "file_write",
+        "write_file",
+        "create_file",
+        # gemini-cli's edit tool ("replace") — params carry file_path.
+        "replace",
+    }
 )
 
 # Tool names (lowercased) that launch a sub-agent rather than acting directly.

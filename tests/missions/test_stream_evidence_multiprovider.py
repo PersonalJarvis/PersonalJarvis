@@ -25,6 +25,7 @@ from jarvis.missions.stream_evidence import (
     extract_verified_commands,
     extract_verified_desktop_actions,
     extract_write_targets,
+    normalize_worker_stream,
     readonly_answer,
 )
 
@@ -124,6 +125,126 @@ def test_gemini_plain_text_informational_is_spoken_back() -> None:
     answer = readonly_answer("", stream, prompt=INFO_PROMPT)
     assert answer is not None
     assert "Sydney" in answer
+
+
+# --- gemini: `--output-format stream-json` (CLI 0.47.0 shapes) ---------------
+# Frame shapes verified against the installed bundle's emit sites (2026-08-12).
+_GEM_TS = "2026-08-12T17:00:00.000Z"
+
+
+def _gem_msg(content: str, *, role: str = "assistant") -> str:
+    return json.dumps(
+        {
+            "type": "message",
+            "timestamp": _GEM_TS,
+            "role": role,
+            "content": content,
+            **({"delta": True} if role == "assistant" else {}),
+        }
+    )
+
+
+def _gem_tool_use(name: str, params: dict, tid: str) -> str:
+    return json.dumps(
+        {
+            "type": "tool_use",
+            "timestamp": _GEM_TS,
+            "tool_name": name,
+            "tool_id": tid,
+            "parameters": params,
+        }
+    )
+
+
+def _gem_tool_result(tid: str, *, status: str = "success", output: str = "") -> str:
+    return json.dumps(
+        {
+            "type": "tool_result",
+            "timestamp": _GEM_TS,
+            "tool_id": tid,
+            "status": status,
+            "output": output,
+        }
+    )
+
+
+def _gem_result() -> str:
+    return json.dumps(
+        {
+            "type": "result",
+            "timestamp": _GEM_TS,
+            "status": "success",
+            "stats": {"total_tokens": 1},
+        }
+    )
+
+
+def test_gemini_stream_json_write_is_credited() -> None:
+    stream = "\n".join(
+        [
+            _gem_tool_use("write_file", {"file_path": "report.md", "content": "x"}, "g1"),
+            _gem_tool_result("g1", output="Wrote report.md"),
+            _gem_result(),
+        ]
+    )
+    assert "report.md" in extract_write_targets(stream)
+    assert extract_stream_evidence(stream).has_tool_evidence
+
+
+def test_gemini_stream_json_answer_assembled_from_raw_deltas() -> None:
+    # Deltas split words mid-token — concatenation must be RAW, no separator.
+    stream = "\n".join(
+        [
+            _gem_msg("Syd"),
+            _gem_msg("ney is the best first-trip city."),
+            _gem_result(),
+        ]
+    )
+    ev = extract_stream_evidence(stream)
+    assert ev.final_answer == "Sydney is the best first-trip city."
+
+
+def test_gemini_stream_json_commentary_and_answer_are_separate_frames() -> None:
+    # Text before a tool call is commentary; text after the last tool call is
+    # the answer. The result frame restates only the latter.
+    stream = "\n".join(
+        [
+            _gem_msg("Let me check the workspace first."),
+            _gem_tool_use("run_shell_command", {"command": "ls"}, "g1"),
+            _gem_tool_result("g1", output="report.md"),
+            _gem_msg("There is one file: report.md."),
+            _gem_result(),
+        ]
+    )
+    ev = extract_stream_evidence(stream)
+    assert ev.final_answer == "There is one file: report.md."
+    assert ev.tool_calls == ("run_shell_command",)
+
+
+def test_gemini_stream_json_failed_command_is_not_credited() -> None:
+    stream = "\n".join(
+        [
+            _gem_tool_use("run_shell_command", {"command": "git push origin main"}, "g1"),
+            _gem_tool_result("g1", status="error", output="rejected"),
+            _gem_result(),
+        ]
+    )
+    assert extract_verified_commands(stream) == ()
+
+
+def test_gemini_killed_stream_still_flushes_trailing_deltas() -> None:
+    # A killed worker ends mid-stream: no result frame, but the words it said
+    # are still recoverable as the last assistant text.
+    stream = "\n".join([_gem_msg("Partial ans"), _gem_msg("wer before the kill.")])
+    ev = extract_stream_evidence(stream)
+    assert ev.final_answer == "Partial answer before the kill."
+
+
+def test_claude_result_frame_is_never_misread_as_gemini() -> None:
+    # Claude's result frame shares the type name; the discriminator is that
+    # gemini's carries timestamp+status/stats and never a `result` payload.
+    line = json.dumps({"type": "result", "result": "The claude answer."})
+    assert normalize_worker_stream(line) == line
 
 
 # --- regression: claude stream still parses byte-for-byte the same -----------

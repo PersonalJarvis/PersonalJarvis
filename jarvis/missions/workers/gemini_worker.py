@@ -10,15 +10,21 @@ Cmd-Layout:
     gemini --prompt <prompt>
            --model <gemini-3.1-pro-preview | gemini-3-flash-preview | ...>
            --yolo
-           --output-format text
+           --output-format stream-json
 
-We deliberately use plain `text` output instead of `stream-json`: the
-Gemini CLI's stream-json schema isn't a 1:1 match for the Claude
-schema we already parse, and the Kontrollierer doesn't need
-intermediate stream events — only WorkerSpawned + a terminal result so
-the diff-collector + Critic can take over. Yielding two synthetic
-`Claude*`-shaped events keeps the orchestrator code path unchanged
-(field shape mirrors `ClaudeSystemInit` + `ClaudeResult`).
+`stream-json` (not `text`): the archived ``stream.jsonl`` is the ONLY
+record of what a worker actually did — the Critic's evidence and the
+Visualization's node graph are both reconstructed from it. Text mode
+recorded nothing but the final prose, so gemini runs drew as bare
+Request → Result cards forever. The gemini event schema isn't the
+claude shape, but :func:`jarvis.missions.stream_evidence.
+normalize_worker_stream` rewrites it (verified against the installed
+CLI 0.47.0 bundle), so every downstream reader stays unchanged. The
+worker still yields only the two synthetic `Claude*`-shaped events
+(`ClaudeSystemInit` + `ClaudeResult`) — the orchestrator path is
+untouched; the final answer is assembled from the stream's assistant
+deltas, falling back to raw stdout for an older CLI that ignores the
+format flag.
 
 Spawn discipline:
 - Routed through `create_worker_subprocess` (NO shell=True, NO PTY); that
@@ -45,6 +51,8 @@ from collections.abc import AsyncIterator
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Literal
+
+from jarvis.missions.stream_evidence import extract_stream_evidence
 
 from .capabilities import WorkerCapabilityInventory
 from .process_utils import create_worker_subprocess
@@ -253,7 +261,7 @@ def _build_gemini_cmd(
         "--model",
         model,
         "--output-format",
-        "text",
+        "stream-json",
     ]
     if yolo:
         cmd.append("--yolo")
@@ -530,12 +538,17 @@ class GeminiWorker:
         wall_ms = int((time.perf_counter() - t0) * 1000)
         is_error = exit_code != 0
 
-        # Cost + tokens aren't reported by Gemini CLI in text mode. Leave
-        # them at None; the orchestrator falls back to 0 via the
+        # Cost + tokens aren't consumed from the stream's stats frame yet.
+        # Leave them at None; the orchestrator falls back to 0 via the
         # `tokens_used → total_tokens → num_turns` chain (also None here).
-        # Stamp the assistant's textual reply into `result` so the Critic
-        # can read it as part of the log summary if needed.
-        result_text = stdout_bytes.decode("utf-8", errors="replace")
+        # The spoken answer is assembled from the stream-json assistant
+        # deltas via the shared canonicalizer; raw stdout is the fallback
+        # for an older CLI that emitted plain text despite the flag.
+        stdout_text = stdout_bytes.decode("utf-8", errors="replace")
+        result_text = (
+            extract_stream_evidence(stdout_text, max_result_chars=400).final_answer
+            or stdout_text
+        )
         if is_error and stderr_bytes:
             tail = stderr_bytes.decode("utf-8", errors="replace")[-300:]
             result_text = (result_text or "") + f"\n[stderr-tail]\n{tail}"

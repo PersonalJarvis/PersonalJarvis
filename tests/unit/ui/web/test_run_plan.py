@@ -206,6 +206,65 @@ def test_codex_stream_is_normalized_before_walking(tmp_path: Path) -> None:
     assert payload["final_answer"] == "Done."
 
 
+def test_gemini_stream_json_walks_into_reasoning_and_tool_steps(tmp_path: Path) -> None:
+    """A gemini `--output-format stream-json` archive draws the full story:
+    commentary → reasoning step, tool_use/tool_result → correlated tool step,
+    trailing text → the final answer (never duplicated as a step)."""
+    ts = "2026-08-12T17:00:00.000Z"
+    lines = [
+        json.dumps({"type": "init", "timestamp": ts, "session_id": "s", "model": "gemini"}),
+        json.dumps(
+            {
+                "type": "message",
+                "timestamp": ts,
+                "role": "assistant",
+                "content": "I will write the report now.",
+                "delta": True,
+            }
+        ),
+        json.dumps(
+            {
+                "type": "tool_use",
+                "timestamp": ts,
+                "tool_name": "write_file",
+                "tool_id": "g1",
+                "parameters": {"file_path": "report.md", "content": "x"},
+            }
+        ),
+        json.dumps(
+            {
+                "type": "tool_result",
+                "timestamp": ts,
+                "tool_id": "g1",
+                "status": "success",
+                "output": "Wrote report.md",
+            }
+        ),
+        json.dumps(
+            {
+                "type": "message",
+                "timestamp": ts,
+                "role": "assistant",
+                "content": "Done — the report is ready.",
+                "delta": True,
+            }
+        ),
+        json.dumps(
+            {"type": "result", "timestamp": ts, "status": "success", "stats": {}}
+        ),
+    ]
+    (_stream_dir(tmp_path) / "stream.jsonl").write_text("\n".join(lines), encoding="utf-8")
+
+    payload = build_run_plan(tmp_path)
+
+    kinds = [(s.get("kind"), s.get("tool_name")) for s in payload["steps"]]
+    assert kinds == [("reasoning", None), ("tool", "write_file")]
+    assert payload["steps"][0]["name"] == "I will write the report now."
+    assert payload["steps"][1]["status"] == "done"
+    assert payload["steps"][1]["writes"] == ["report.md"]
+    assert payload["final_answer"] == "Done — the report is ready."
+
+
 def test_step_cap_reports_dropped_count(tmp_path: Path) -> None:
     lines: list[str] = []
     for i in range(MAX_STEPS + 25):

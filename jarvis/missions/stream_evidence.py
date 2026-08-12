@@ -73,6 +73,37 @@ _CLAUDE_FRAME_TYPES: frozenset[str] = frozenset(
 # (the extractors truncate again to ``max_result_chars`` downstream).
 _CODEX_OUTPUT_CAP: int = 4000
 
+# Gemini CLI `--output-format stream-json` frame types (flat NDJSON events):
+#   {type:"init", timestamp, session_id, model}
+#   {type:"message", timestamp, role:"user"|"assistant", content, delta?}
+#   {type:"tool_use", timestamp, tool_name, tool_id, parameters}
+#   {type:"tool_result", timestamp, tool_id, status:"success"|"error", output?, error?}
+#   {type:"error", timestamp, severity, message}
+#   {type:"result", timestamp, status, stats}   <- stats only, NO answer text
+# Schema verified against the installed bundle (gemini-cli 0.47.0,
+# packages/cli nonInteractiveCli emit sites, read 2026-08-12). The answer text
+# exists only as assistant `delta:true` chunks; they split words mid-token, so
+# they are concatenated RAW — inserting any separator would corrupt words.
+_GEMINI_FRAME_TYPES: frozenset[str] = frozenset(
+    {"init", "message", "tool_use", "tool_result", "error"}
+)
+
+
+def _is_gemini_result(obj: dict) -> bool:  # noqa: ANN001 — tolerant of arbitrary dicts
+    """A gemini terminal frame — collides with claude's ``result`` type.
+
+    Claude's result frame carries the answer under ``result`` and no ISO
+    ``timestamp``; gemini's carries ``timestamp`` + ``status``/``stats`` and
+    never ``result``. All three checks together keep a claude frame from ever
+    being misread.
+    """
+    return (
+        obj.get("type") == "result"
+        and "result" not in obj
+        and "timestamp" in obj
+        and ("status" in obj or "stats" in obj)
+    )
+
 
 def _codex_item_to_claude_lines(
     item: dict, counter: int
@@ -170,9 +201,11 @@ def _normalize_worker_stream(stream_text: str) -> str:
     """Rewrite codex / gemini worker streams into the canonical claude shape.
 
     See the module note above. A pure-claude stream returns unchanged; codex
-    ``item.completed`` frames become assistant/user pairs; a gemini plain-text
-    transcript (no JSON frames at all) becomes a single ``result`` frame so the
-    spoken answer is recoverable.
+    ``item.completed`` frames become assistant/user pairs; gemini
+    ``--output-format stream-json`` events (tool_use/tool_result/message
+    deltas) become the equivalent claude frames; a legacy gemini plain-text
+    transcript (no JSON frames at all) becomes a single ``result`` frame so
+    the spoken answer is recoverable.
     """
     if not stream_text:
         return stream_text
@@ -180,6 +213,31 @@ def _normalize_worker_stream(stream_text: str) -> str:
     plain_text: list[str] = []
     saw_json = False
     counter = 0
+
+    # Gemini state: assistant delta chunks since the last flush, concatenated
+    # RAW (deltas split words mid-token), and the last flushed segment — the
+    # candidate final answer, since gemini's result frame carries only stats.
+    gem_text: list[str] = []
+    gem_last_segment = ""
+
+    def _flush_gemini_text() -> None:
+        nonlocal gem_last_segment
+        text = "".join(gem_text).strip()
+        gem_text.clear()
+        if not text:
+            return
+        gem_last_segment = text
+        out.append(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": text}],
+                    },
+                }
+            )
+        )
 
     for raw in stream_text.splitlines():
         line = raw.strip()
@@ -195,6 +253,68 @@ def _normalize_worker_stream(stream_text: str) -> str:
             continue
         saw_json = True
         otype = obj.get("type")
+        # Gemini before the claude passthrough: its ``result`` frame shares
+        # claude's type name and must not slip through unrewritten.
+        if otype in _GEMINI_FRAME_TYPES or _is_gemini_result(obj):
+            if otype == "message":
+                if obj.get("role") == "assistant":
+                    chunk = obj.get("content")
+                    if isinstance(chunk, str) and chunk:
+                        gem_text.append(chunk)
+                # The echoed user prompt is not worker evidence — dropped.
+            elif otype == "tool_use":
+                _flush_gemini_text()
+                counter += 1
+                tid = str(obj.get("tool_id") or f"gemini_tool_{counter}")
+                name = str(obj.get("tool_name") or "tool").strip() or "tool"
+                params = obj.get("parameters")
+                out.append(
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "message": {
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "id": tid,
+                                        "name": name,
+                                        "input": params if isinstance(params, dict) else {},
+                                    }
+                                ],
+                            },
+                        }
+                    )
+                )
+            elif otype == "tool_result":
+                tid = str(obj.get("tool_id") or "")
+                is_error = str(obj.get("status") or "").strip().lower() == "error"
+                content = str(obj.get("output") or "")
+                if is_error and not content:
+                    err = obj.get("error")
+                    msg = str(err.get("message") or "") if isinstance(err, dict) else ""
+                    content = msg or "tool call failed"
+                blk: dict = {
+                    "type": "tool_result",
+                    "tool_use_id": tid,
+                    "content": content[:_CODEX_OUTPUT_CAP],
+                }
+                if is_error:
+                    blk["is_error"] = True
+                out.append(
+                    json.dumps(
+                        {"type": "user", "message": {"role": "user", "content": [blk]}}
+                    )
+                )
+            elif otype == "result":
+                # Terminal frame: the answer is whatever the assistant last
+                # said — flush and restate it as a claude result frame so
+                # every extractor sees the same spoken answer.
+                _flush_gemini_text()
+                if gem_last_segment:
+                    out.append(json.dumps({"type": "result", "result": gem_last_segment}))
+            # init / error frames carry no deliverable evidence — dropped.
+            continue
         if otype in _CLAUDE_FRAME_TYPES:
             out.append(line)  # claude frame — passed through unchanged
             continue
@@ -206,6 +326,11 @@ def _normalize_worker_stream(stream_text: str) -> str:
             continue
         # Any other codex frame (thread.started / turn.* / error / item.created
         # / item.delta) carries no deliverable evidence — drop it.
+
+    # A killed gemini worker can end mid-stream with buffered deltas and no
+    # result frame — the words it DID say are still evidence, so they flush;
+    # only the synthetic result frame stays absent (anti-hearsay).
+    _flush_gemini_text()
 
     # Gemini `--output-format text`: the whole transcript is plain text with no
     # JSON frames. Treat it as the worker's final answer so the spoken answer is
@@ -300,6 +425,9 @@ def extract_stream_evidence(
 _WRITE_TOOL_NAMES: frozenset[str] = frozenset({
     "Write", "Edit", "MultiEdit", "NotebookEdit",
     "file_write", "write_file", "create_file",
+    # gemini-cli's edit tool is literally named "replace" (params carry
+    # file_path); no other backend uses that name.
+    "replace",
 })
 
 # Keys under `tool_use.input` that carry the target path, in priority order.
