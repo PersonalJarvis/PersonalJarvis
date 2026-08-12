@@ -330,6 +330,27 @@ describe("VisualizationView", () => {
     await screen.findByTestId("visualization-open-map");
   });
 
+  it("pre-selects the run named by ?run= in the URL", async () => {
+    installFetchMock(
+      [
+        { slug: "run-new", utterance: "Draw the architecture", status: "success" },
+        { slug: "run-old", utterance: "Summarise the logs", status: "success" },
+      ],
+      { "run-new": [], "run-old": [] },
+      { "run-new": CHART_PLAN },
+    );
+    window.history.replaceState(null, "", "/?view=visualization&run=run-old");
+
+    try {
+      renderView();
+      // The deep-linked run wins over the newest-first default.
+      const start = await screen.findByTestId("graph-node-start");
+      expect(start.textContent).toContain("Summarise the logs");
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
   it("says so when there are no runs at all", async () => {
     installFetchMock([], {});
 

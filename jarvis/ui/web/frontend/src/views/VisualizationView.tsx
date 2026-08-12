@@ -151,7 +151,12 @@ export function VisualizationView() {
   const outputs = useOutputsList();
   const runs = useMemo(() => outputs.data ?? [], [outputs.data]);
 
-  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  /* A `?run=<slug>` in the URL pre-selects that run — what makes a detached
+   * window or a pasted link open on the run it talks about, instead of
+   * whatever happens to be newest. Read once at mount; clicks own it after. */
+  const [selectedSlug, setSelectedSlug] = useState<string | null>(
+    () => new URLSearchParams(window.location.search).get("run"),
+  );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   /*
