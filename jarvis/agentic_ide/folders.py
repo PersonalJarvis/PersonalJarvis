@@ -347,12 +347,14 @@ def list_workspace_dir(
                     )
                 )
     except PermissionError:
+        # Reported through the listing's own error field, not a log call.
         return WorkspaceListing(
             path=normalized_path,
             entries=(),
             error="This folder cannot be read with the current permissions.",
         )
     except OSError:
+        # Reported through the listing's own error field, not a log call.
         return WorkspaceListing(
             path=normalized_path,
             entries=(),

@@ -73,6 +73,8 @@ def read_marker(run_dir: Path) -> dict[str, Any] | None:
     try:
         raw = (run_dir / MARKER_NAME).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
+        # Unreadable marker degrades to "ordinary directory", per the
+        # function's own contract above — nothing else to report.
         return None
     try:
         data = json.loads(raw)

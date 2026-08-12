@@ -47,6 +47,7 @@ def _parse_utc(raw: object) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(raw)
     except ValueError:
+        # Malformed stored timestamp is treated as absent, not fatal.
         return None
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 

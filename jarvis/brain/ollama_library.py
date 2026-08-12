@@ -92,6 +92,7 @@ def _size_to_gb(match: re.Match[str]) -> float | None:
     try:
         value = float(match.group(1))
     except ValueError:
+        # Regex guarantees digits, but not that they parse; treat as unreadable.
         return None
     gb = value * _SIZE_FACTOR_GB[match.group(2)]
     # Two decimals keeps a 398 MB model at 0.4 rather than collapsing to 0.0,

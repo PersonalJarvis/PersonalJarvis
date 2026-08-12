@@ -440,7 +440,7 @@ def usable_accelerator_gb() -> tuple[float, str]:
     if sys.platform == "darwin" and platform.machine() == "arm64":
         try:
             total_mb, _available = _detect_ram()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 — falls back to the "unknown accelerator" 0 above
             total_mb = 0
         if total_mb > 0:
             return total_mb / 1024.0, "apple-unified"
@@ -456,7 +456,7 @@ def system_ram_gb() -> float | None:
     """
     try:
         total_mb, _available = _detect_ram()
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — locked-down host; None is the real answer, see above
         return None
     return round(total_mb / 1024.0, 1) if total_mb > 0 else None
 

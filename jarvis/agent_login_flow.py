@@ -193,6 +193,7 @@ def _mark_onboarded(account: AgentAccount) -> None:
             try:
                 data = json.loads(path.read_text(encoding="utf-8-sig") or "{}")
             except (OSError, ValueError):
+                # Missing or corrupt config is fine — it is just recreated below.
                 data = {}
             if not isinstance(data, dict) or data.get("hasCompletedOnboarding"):
                 return
@@ -277,6 +278,8 @@ def _reader(flow: _Flow) -> None:
         try:
             data = handle.read(_READ_SIZE)
         except EOFError:
+            # The PTY closed normally — the loop below already reports the
+            # abnormal case (process died mid-read), so this one is quiet.
             break
         except Exception as exc:  # noqa: BLE001 — process died mid-read
             logger.debug("Guided login: PTY read ended: {}", exc)

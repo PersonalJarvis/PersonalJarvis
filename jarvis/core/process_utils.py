@@ -71,6 +71,8 @@ def ensure_standard_streams() -> None:
             try:
                 stream.reconfigure(encoding="utf-8", errors="replace")
             except (AttributeError, OSError):
+                # No reconfigure support or a closed/redirected stream — the
+                # original stream keeps working, just without forced UTF-8.
                 pass
 
 
