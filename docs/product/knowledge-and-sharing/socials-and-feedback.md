@@ -8,7 +8,7 @@ order: 4
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-08-12
 phase: "-"
 audience: end-user
 tags: [socials, feedback, community, privacy]
@@ -16,11 +16,12 @@ related: [profile-and-contacts, jarvis-board, privacy-and-local-data]
 ---
 
 **Socials** gives you a local directory of project and community links.
-**Feedback** opens the project's Discord server, where you can report a bug,
-suggest an idea, or ask a question.
+**Feedback** opens the project's Discord server and offers an in-app report
+form for a bug, an idea, or a question.
 
-Neither view posts anything for you. Jarvis opens the destination in an
-external browser, and you decide whether to sign in or share information.
+Neither view posts to a community for you. The Discord and GitHub paths open
+in an external browser where you decide what to share, and the in-app form
+sends only what you typed, after you press submit.
 
 ## Before You Start
 
@@ -75,11 +76,17 @@ older destinations, when project defaults change. Disabled entries are hidden.
    only when they help explain the problem.
 6. Review the post and any screenshot, then submit it in Discord.
 
-The current Feedback view has no report form. Its two buttons pass only the
-chosen Discord address to Jarvis's external-link opener. The view does not send
-your report text, screenshots, logs, conversations, or system details, and it
-does not queue a report while you are offline. Discord receives what your
-browser normally sends when it loads the site and anything you submit there.
+Below the Discord buttons, the view also offers an in-app form. Choose
+**Bug**, **Idea**, or **Question**, then write a title and a description. What
+happens on submit depends on the installation. When the server has a feedback
+channel configured, the report is delivered there directly, together with the
+app version, the operating system name, and the Python version; a screenshot
+can be attached, and you pick the image yourself. On an installation without
+a configured channel — the usual case for a personal install — the submit
+button instead opens your report as a prefilled issue on the project's public
+GitHub tracker, with the same system details appended, and you review and
+submit it in the browser. The form never sends conversations or logs, and it
+does not queue a report while you are offline.
 
 ## How It Fits Together
 
@@ -92,8 +99,9 @@ browser normally sends when it loads the site and anything you submit there.
    headless host reports that it cannot open one, so the Jarvis page tries a new
    tab in the browser you are already using. Browser popup rules can block that
    fallback.
-4. **Feedback follows the same opening path.** Jarvis does not turn the active
-   chat, a voice session, or an output file into a Discord report.
+4. **Feedback's Discord buttons follow the same opening path**, and its in-app
+   form sends only what you typed plus basic system details. Jarvis does not
+   turn the active chat, a voice session, or an output file into a report.
 5. **Sharing remains separate.** A card from [Jarvis Board](jarvis-board) is not
    attached to Feedback. Review anything you paste or upload, using
    [Privacy and Local Data](privacy-and-local-data) as a guide.
@@ -107,7 +115,8 @@ browser normally sends when it loads the site and anything you submit there.
 2. Use **Back**, then select any single-link platform. Confirm that an external
    browser or browser tab opens the selected site.
 3. Return to Jarvis, open **Feedback**, and confirm that **Open #report-a-bug**
-   and **Join Discord first** are both present.
+   and **Join Discord first** are both present, with the report form below
+   them.
 
 You do not need to sign in or publish a post to complete this check. If your
 saved Socials directory differs from the fresh-install list, use any group with
@@ -122,7 +131,7 @@ two or more links for the detail-page check.
 | A saved destination is old | The initial list was written on first use and is not replaced when defaults change | Compare the entry with the current project destination, then update it with `jarvis socials edit` if you administer the installation. |
 | A Socials tile or Feedback button does not open anything | The host has no working browser, a popup was blocked, or the destination is offline | Check the internet connection and desktop browser settings. On a headless installation, allow popups for the Jarvis page and try again. |
 | Discord opens a welcome page or denies the forum | The account has not joined the server or completed onboarding | Return to **Feedback**, select **Join Discord first**, finish onboarding, then use **Open #report-a-bug** again. |
-| You selected Feedback but nothing was submitted | The page only opens Discord; it does not send an in-app form | Finish and submit the post inside Discord. If Discord is unavailable, use the project's [GitHub Issues](https://github.com/PersonalJarvis/PersonalJarvis/issues) page. |
+| The form's submit button reads **Open a prefilled GitHub issue** | This installation has no direct feedback channel, so the report is handed to GitHub instead | Select the button, then review and submit the issue in the browser. Nothing is delivered until you submit it on [GitHub Issues](https://github.com/PersonalJarvis/PersonalJarvis/issues). |
 
 ## Next Steps
 

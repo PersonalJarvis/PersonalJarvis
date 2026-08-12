@@ -1,11 +1,20 @@
 """REST API for the in-app feedback / bug-report form.
 
-Endpoint:
+Endpoints:
 
-    POST /api/feedback  →  {"ok": bool, "status": str, "detail": str,
-                            "github_url": str | None}
+    GET  /api/feedback/status  →  {"configured": bool, "github_url": str,
+                                   "context": {...}}
+    POST /api/feedback         →  {"ok": bool, "status": str, "detail": str,
+                                   "github_url": str | None}
 
-The endpoint validates the payload, enriches it with system context (app
+``GET /status`` is the capability probe: the frontend calls it before the user
+types anything, so the form can honestly present the path this install really
+has — direct dispatch when the operator webhook exists, or a prefilled GitHub
+issue otherwise.  ``context`` carries the same system fields the POST route
+would attach server-side, so the GitHub fallback can include them in the
+issue body.
+
+The POST endpoint validates the payload, enriches it with system context (app
 version, OS, Python, UTC timestamp), and forwards it to a Discord webhook as
 a rich embed.  A screenshot may be included as a data-URL; if present it is
 sent as a multipart upload so Discord can render it as an inline image.
@@ -64,7 +73,7 @@ _DISCORD_EMBED_DESC_MAX = 4096
 # Maximum decoded size for an attached screenshot (8 MB).
 _SCREENSHOT_DECODED_MAX_BYTES = 8 * 1024 * 1024
 
-_SECRET_KEY = "discord_feedback_webhook_url"
+_SECRET_KEY = "discord_feedback_webhook_url"  # noqa: S105 — key NAME, not a value
 _ENV_KEY = "DISCORD_FEEDBACK_WEBHOOK_URL"
 
 # Public fallback for every downloader when the operator-only Discord webhook
@@ -95,6 +104,27 @@ class FeedbackResult(BaseModel):
     github_url: str | None = None
 
 
+class FeedbackContext(BaseModel):
+    """System fields the server would attach to a dispatched report."""
+
+    app_version: str
+    os: str
+    python: str
+
+
+class FeedbackChannelStatus(BaseModel):
+    """Capability probe result for the feedback form (GET /status)."""
+
+    # True when this install can dispatch feedback directly (operator webhook
+    # present). False on every fresh download — the frontend then offers a
+    # prefilled GitHub issue instead of a submit that would dead-end.
+    configured: bool
+    # Public issues page of the project — always present so the frontend never
+    # has to hardcode it.
+    github_url: str
+    context: FeedbackContext
+
+
 # ----------------------------------------------------------------------
 # Version helper
 # ----------------------------------------------------------------------
@@ -111,24 +141,54 @@ def _app_version() -> str:
         import jarvis  # type: ignore[import]
 
         return jarvis.__version__  # type: ignore[attr-defined]
-    except (ImportError, AttributeError):
-        pass
+    except (ImportError, AttributeError) as exc:
+        log.debug("feedback: jarvis.__version__ unavailable — %s", exc)
 
     try:
-        pyproject = Path(__file__).resolve().parents[4] / "pyproject.toml"
+        # This file lives at <repo>/jarvis/ui/web/feedback_routes.py, so the
+        # repo root (where pyproject.toml sits) is three parents up.
+        pyproject = Path(__file__).resolve().parents[3] / "pyproject.toml"
         text = pyproject.read_text(encoding="utf-8")
         m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
         if m:
             return m.group(1)
-    except Exception:  # noqa: BLE001 — best-effort, never fatal
-        pass
+    except Exception as exc:  # noqa: BLE001 — best-effort, never fatal
+        log.debug("feedback: pyproject.toml version probe failed — %s", exc)
 
     return "unknown"
 
 
+def _system_context() -> FeedbackContext:
+    """Gather the system fields attached to every dispatched report."""
+    return FeedbackContext(
+        app_version=_app_version(),
+        os=platform.platform(),
+        python=platform.python_version(),
+    )
+
+
 # ----------------------------------------------------------------------
-# Endpoint
+# Endpoints
 # ----------------------------------------------------------------------
+
+
+@router.get("/status")
+async def feedback_status() -> FeedbackChannelStatus:
+    """Report whether this install can dispatch feedback directly.
+
+    The frontend probes this before rendering the form so it can offer the
+    honest path up front: direct dispatch when the operator webhook is
+    configured, or a prefilled GitHub issue otherwise.  ``context`` carries
+    the system fields (app version, OS, Python) so the GitHub fallback can
+    embed them in the issue body — the same enrichment the POST route
+    performs server-side.
+    """
+    webhook_url = get_secret(_SECRET_KEY, env_fallback=_ENV_KEY)
+    return FeedbackChannelStatus(
+        configured=bool(webhook_url),
+        github_url=_GITHUB_ISSUES_URL,
+        context=_system_context(),
+    )
 
 
 @router.post("")
@@ -163,9 +223,7 @@ async def submit_feedback(body: FeedbackPayload) -> FeedbackResult:
         )
 
     # Gather server-side context so the client does not have to send it.
-    version = _app_version()
-    os_info = platform.platform()
-    py_version = platform.python_version()
+    ctx = _system_context()
     reported_at = datetime.datetime.now(datetime.UTC).isoformat()
 
     # Decode and size-check the screenshot if the client provided one.
@@ -198,9 +256,9 @@ async def submit_feedback(body: FeedbackPayload) -> FeedbackResult:
         "color": color,
         "fields": [
             {"name": "Type", "value": body.type.capitalize(), "inline": True},
-            {"name": "App version", "value": version, "inline": True},
-            {"name": "OS", "value": os_info, "inline": False},
-            {"name": "Python", "value": py_version, "inline": True},
+            {"name": "App version", "value": ctx.app_version, "inline": True},
+            {"name": "OS", "value": ctx.os, "inline": False},
+            {"name": "Python", "value": ctx.python, "inline": True},
             {"name": "Reported at", "value": reported_at, "inline": True},
         ],
         "footer": {"text": "Personal Jarvis · in-app feedback"},

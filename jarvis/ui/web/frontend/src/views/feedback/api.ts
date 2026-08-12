@@ -23,7 +23,31 @@ export interface FeedbackResult {
   github_url?: string | null;
 }
 
+/** System fields the server would attach to a dispatched report. */
+export interface FeedbackContext {
+  app_version: string;
+  os: string;
+  python: string;
+}
+
+/**
+ * Capability probe (GET /api/feedback/status). `configured: false` is the
+ * default on every fresh install — the operator webhook is the maintainer's
+ * own credential — and the form then routes to a prefilled GitHub issue.
+ */
+export interface FeedbackChannelStatus {
+  configured: boolean;
+  github_url: string;
+  context: FeedbackContext;
+}
+
 const BASE = "/api/feedback";
+
+export async function fetchFeedbackStatus(): Promise<FeedbackChannelStatus> {
+  const res = await fetch(`${BASE}/status`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return (await res.json()) as FeedbackChannelStatus;
+}
 
 export async function submitFeedback(payload: FeedbackPayload): Promise<FeedbackResult> {
   const res = await fetch(BASE, {

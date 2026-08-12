@@ -11,6 +11,8 @@ configure a credential that is meaningless for them.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -75,3 +77,51 @@ def test_no_webhook_configured_does_not_instruct_setting_a_credential(
     assert "discord_feedback_webhook_url" not in detail_lower
     assert "environment variable" not in detail_lower
     assert "credential" not in detail_lower
+
+
+# ----------------------------------------------------------------------
+# GET /api/feedback/status — the capability probe the form renders from
+# ----------------------------------------------------------------------
+
+
+def test_status_not_configured_offers_github_fallback(client: TestClient, monkeypatch) -> None:
+    """Fresh install (no webhook) -> configured=False plus everything the
+    frontend needs to compose a prefilled GitHub issue instead."""
+    import jarvis.ui.web.feedback_routes as feedback_routes
+
+    monkeypatch.setattr(feedback_routes, "get_secret", lambda *a, **k: None)
+
+    resp = client.get("/api/feedback/status")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["configured"] is False
+    assert body["github_url"] == GITHUB_ISSUES_URL
+    # The same system fields the POST route would attach server-side.
+    assert set(body["context"]) == {"app_version", "os", "python"}
+    assert all(isinstance(v, str) and v for v in body["context"].values())
+
+
+def test_status_configured_never_leaks_the_webhook_url(client: TestClient, monkeypatch) -> None:
+    """Operator install (webhook present) -> configured=True; the webhook URL
+    itself (an operator credential) must never appear in the response."""
+    import jarvis.ui.web.feedback_routes as feedback_routes
+
+    webhook_url = "https://discord.com/api/webhooks/123/abc"  # test dummy
+    monkeypatch.setattr(feedback_routes, "get_secret", lambda *a, **k: webhook_url)
+
+    resp = client.get("/api/feedback/status")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["configured"] is True
+    assert webhook_url not in resp.text
+
+
+def test_app_version_pyproject_fallback_reads_repo_root() -> None:
+    """The pyproject.toml fallback must resolve to the real repo root — it
+    regressed once by pointing one directory ABOVE it (parents[4])."""
+    import jarvis.ui.web.feedback_routes as feedback_routes
+
+    root = Path(feedback_routes.__file__).resolve().parents[3]
+    assert (root / "pyproject.toml").is_file()

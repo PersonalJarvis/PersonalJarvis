@@ -8,7 +8,7 @@ order: 5
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-08-12
 phase: "-"
 audience: end-user
 tags: [documentation, help, search, troubleshooting, support]
@@ -110,10 +110,16 @@ diagnostic API is a developer tool; Docs and Feedback do not run it or collect
 its output automatically.
 
 For a product bug, idea, or question, open **Feedback** in the main app
-sidebar. The current Feedback view does not submit an in-app form, run
-diagnostics, or attach logs. It opens the project's **#report-a-bug** forum in
-Discord and offers a separate **Join Discord first** button. If Discord is not
-suitable, use the project's [public issue tracker](https://github.com/PersonalJarvis/PersonalJarvis/issues).
+sidebar. The Discord buttons open the project's **#report-a-bug** forum, with
+a separate **Join Discord first** button for new members. Below them, an
+in-app form takes the same report without Discord: choose a type, write a
+title and description, and submit. On an installation with a configured
+feedback channel the report is delivered directly with the app version and
+operating system attached; on other installations — the usual case — the same
+button opens your text as a prefilled issue on the project's
+[public issue tracker](https://github.com/PersonalJarvis/PersonalJarvis/issues),
+so nothing has to be retyped. The view does not run diagnostics or attach
+logs.
 
 Before posting anywhere public, describe what you expected, what happened,
 and the shortest steps that reproduce it. Remove credentials, recovery codes,
