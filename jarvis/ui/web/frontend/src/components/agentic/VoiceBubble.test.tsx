@@ -372,6 +372,27 @@ describe("voice bubble", () => {
     expect(screen.queryByTestId("voice-bubble-transcript")).toBeNull();
   });
 
+  it("shows the streaming caret only while the sentence is provisional", () => {
+    storeState.voiceState = "listening";
+    storeState.transcription = "open the tests";
+    storeState.transcriptionFinal = false;
+    renderBubble();
+    expect(
+      screen
+        .getByTestId("voice-bubble-transcript")
+        .querySelector(".agentic-voice-transcript-caret"),
+    ).toBeTruthy();
+    cleanup();
+    // The recognizer committed — the "still writing" caret would be a lie.
+    storeState.transcriptionFinal = true;
+    renderBubble();
+    expect(
+      screen
+        .getByTestId("voice-bubble-transcript")
+        .querySelector(".agentic-voice-transcript-caret"),
+    ).toBeNull();
+  });
+
   /*
    * The bubble has no panel of its own. What that has to mean, mechanically, is
    * that the space it spans keeps belonging to the terminals underneath — the

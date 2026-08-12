@@ -88,6 +88,56 @@
     @apply bg-destructive;
   }
 
+  /*
+   * The live transcript pill under the orb. Presence is animated both ways —
+   * it slides in from the status pill above it, and `data-leaving` (set while
+   * the ghost text fades, see VoiceBubble) plays the same move backwards
+   * before the element unmounts.
+   */
+  .agentic-voice-transcript {
+    animation: agentic-transcript-in 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .agentic-voice-transcript[data-leaving="true"] {
+    animation: agentic-transcript-out 0.22s ease-out forwards;
+  }
+
+  /* A three-line window over the tail of the sentence. `lh` keeps the crop on
+     an exact line boundary whatever the font metrics resolve to; the fade mask
+     appears only when a line really was cropped (`data-overflowing` is
+     MEASURED in the component, CSS cannot know), so a short sentence keeps a
+     crisp top edge. */
+  .agentic-voice-transcript-window {
+    max-height: 3lh;
+    overflow: hidden;
+  }
+
+  .agentic-voice-transcript-window[data-overflowing="true"] {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1lh);
+    mask-image: linear-gradient(to bottom, transparent 0, #000 1lh);
+  }
+
+  /* inline-block, not inline: transforms do not apply to non-replaced inline
+     boxes, and an atomic box also stops a word from re-wrapping mid-animation. */
+  .agentic-voice-transcript-word {
+    display: inline-block;
+    animation: agentic-transcript-word 0.26s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  /* The "still writing" caret shown while the recognizer has not committed to
+     the sentence. App accent on purpose — same rule as the ring and the dot:
+     everything drawn around the sphere belongs to the interface. */
+  .agentic-voice-transcript-caret {
+    @apply bg-primary;
+    display: inline-block;
+    width: 2px;
+    height: 0.85em;
+    margin-left: 0.2em;
+    vertical-align: -0.08em;
+    border-radius: 9999px;
+    animation: agentic-transcript-caret 1.05s ease-in-out infinite;
+  }
+
   @keyframes agentic-orb-wave {
     0% {
       opacity: 0.62;
@@ -136,9 +186,44 @@
     }
   }
 
+  @keyframes agentic-transcript-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.97);
+    }
+  }
+
+  @keyframes agentic-transcript-out {
+    to {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.97);
+    }
+  }
+
+  @keyframes agentic-transcript-word {
+    from {
+      opacity: 0;
+      transform: translateY(3px);
+      filter: blur(3px);
+    }
+  }
+
+  @keyframes agentic-transcript-caret {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.25;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .agentic-voice-orb-ring,
-    .agentic-voice-state-dot {
+    .agentic-voice-state-dot,
+    .agentic-voice-transcript,
+    .agentic-voice-transcript-word,
+    .agentic-voice-transcript-caret {
       animation: none !important;
     }
 

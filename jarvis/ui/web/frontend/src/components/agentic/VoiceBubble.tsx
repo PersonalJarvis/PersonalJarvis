@@ -45,9 +45,11 @@
  */
 import {
   type DragEvent,
+  Fragment,
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -225,6 +227,10 @@ export function VoiceBubble({
   const t = useT();
   const { active, busy, connecting, toggleCall, voiceState } = useVoiceCall();
   const transcription = useEventStore((s) => s.transcription) ?? "";
+  // Whether the recognizer has committed to the sentence. Partial text is
+  // provisional — the STT may still rewrite it — and the transcript styles the
+  // two honestly instead of pretending every intermediate guess is settled.
+  const transcriptionFinal = useEventStore((s) => s.transcriptionFinal !== false);
   const assistantName =
     (useEventStore((s) => s.assistantName) ?? "").trim() ||
     t("agentic_grid.voice_bubble.assistant_fallback");
@@ -529,6 +535,50 @@ export function VoiceBubble({
     [pushToast],
   );
 
+  // ------------------------------------------------------------- transcript
+  // The transcript is shown only while a conversation runs and there is text —
+  // an idle bubble repeating the last sentence of a finished one would read as
+  // a stuck microphone. But a surface that BLINKS off the moment that stops
+  // being true reads as a glitch, so the last text is held as a ghost for one
+  // short fade-out and only then leaves the DOM. The ghost is a transition,
+  // not a memory: after ~250 ms the element is really gone.
+  const showTranscript = active && transcription.trim().length > 0;
+  const [transcriptGhost, setTranscriptGhost] = useState("");
+  useEffect(() => {
+    if (showTranscript) {
+      // Mirror while visible (a bail-out when unchanged), so the exact frame
+      // the transcript is dismissed already has the text to fade out with.
+      setTranscriptGhost(transcription);
+      return;
+    }
+    if (!transcriptGhost) return;
+    const timer = window.setTimeout(() => setTranscriptGhost(""), 260);
+    return () => window.clearTimeout(timer);
+  }, [showTranscript, transcription, transcriptGhost]);
+
+  const transcriptText = showTranscript ? transcription : transcriptGhost;
+  // Words carry their own spans so a NEW word can fade in while the already
+  // printed ones hold perfectly still — the word index keys them, and a word
+  // the recognizer revises re-mounts and visibly re-settles.
+  const transcriptWords = useMemo(
+    () => transcriptText.split(/\s+/).filter(Boolean),
+    [transcriptText],
+  );
+
+  // The window shows the TAIL of a long sentence, not the head: in a live
+  // transcript the newest words are the ones being listened for. An
+  // overflow-hidden block is still programmatically scrollable, so pinning
+  // scrollTop to the bottom is the whole mechanism — and the soft fade over
+  // the cropped top line exists only while something was actually cropped,
+  // measured here rather than guessed at in CSS.
+  const transcriptWindowRef = useRef<HTMLParagraphElement>(null);
+  useLayoutEffect(() => {
+    const el = transcriptWindowRef.current;
+    if (!el) return;
+    el.dataset.overflowing = el.scrollHeight > el.clientHeight + 1 ? "true" : "false";
+    el.scrollTop = el.scrollHeight;
+  }, [transcriptText]);
+
   // After every hook: hooks must run in the same order on every render, so
   // the bubble decides to be invisible down here, never above a hook.
   if (!mounted || !pos) return null;
@@ -672,21 +722,41 @@ export function VoiceBubble({
         </span>
       </span>
 
-      {/* What the microphone is hearing, as it hears it. Shown only while a
-          conversation runs — an idle bubble repeating the last sentence of a
-          finished one would read as a stuck microphone. */}
-      {active && transcription && (
-        <p
+      {/* What the microphone is hearing, as it hears it — set like a subtitle
+          under the orb. The pill spans the full column so the FRAME holds
+          still while words stream into it; only the text moves. Muted while
+          the recognizer is still guessing (plus a caret that says "still
+          writing"), brightening to foreground the moment the sentence is
+          final. Presence is animated both ways: see the ghost hooks above. */}
+      {transcriptText && (
+        <div
           data-testid="voice-bubble-transcript"
           data-drag-surface
+          data-leaving={showTranscript ? undefined : "true"}
           className={cn(
             BUBBLE_SURFACE,
-            "line-clamp-3 max-w-full shrink-0 rounded-2xl px-3 py-2",
-            "text-center text-[13px] leading-relaxed text-muted-foreground",
+            "agentic-voice-transcript w-full shrink-0 rounded-2xl px-3.5 py-2.5",
           )}
         >
-          {transcription}
-        </p>
+          <p
+            ref={transcriptWindowRef}
+            className={cn(
+              "agentic-voice-transcript-window break-words text-center text-[13px]",
+              "font-medium leading-relaxed transition-colors duration-300",
+              transcriptionFinal ? "text-foreground/90" : "text-muted-foreground",
+            )}
+          >
+            {transcriptWords.map((word, index) => (
+              <Fragment key={`${index}:${word}`}>
+                {index > 0 ? " " : null}
+                <span className="agentic-voice-transcript-word">{word}</span>
+              </Fragment>
+            ))}
+            {showTranscript && !transcriptionFinal && (
+              <span aria-hidden="true" className="agentic-voice-transcript-caret" />
+            )}
+          </p>
+        </div>
       )}
 
       {receipts.map((receipt) => (
