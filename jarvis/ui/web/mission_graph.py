@@ -146,6 +146,10 @@ def build_mission_graph(
     calls_by_task: dict[str, int] = {}
     failed_by_task: dict[str, int] = {}
     for plan_step in plan_steps:
+        # Reasoning steps are the worker's own thoughts, not tool calls — the
+        # per-task call count stays a count of ACTIONS.
+        if plan_step.get("kind") == "reasoning":
+            continue
         step_id = str(plan_step.get("step_id", ""))
         task_id, _, _seq = step_id.partition(":")
         if not task_id:

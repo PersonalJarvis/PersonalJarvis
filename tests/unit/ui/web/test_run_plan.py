@@ -49,6 +49,20 @@ def _result(text: str) -> str:
     return json.dumps({"type": "result", "result": text})
 
 
+def _assistant_blocks(*blocks: dict) -> str:
+    return json.dumps(
+        {"type": "assistant", "message": {"role": "assistant", "content": list(blocks)}}
+    )
+
+
+def _thinking(text: str) -> dict:
+    return {"type": "thinking", "thinking": text}
+
+
+def _text(text: str) -> dict:
+    return {"type": "text", "text": text}
+
+
 def test_no_stream_keeps_stub_contract(tmp_path: Path) -> None:
     assert build_run_plan(tmp_path) == {"plan": None, "steps": []}
 
@@ -87,6 +101,81 @@ def test_steps_carry_correlated_status_and_final_answer(tmp_path: Path) -> None:
     assert by_tool["Write"]["writes"] == ["report/chart.png"]
     # Anti-hearsay: a call whose result never arrived is skipped, not done.
     assert by_tool["Read"]["status"] == "skipped"
+
+
+def test_thinking_between_actions_collapses_into_one_reasoning_step(tmp_path: Path) -> None:
+    lines = [
+        _assistant_blocks(_thinking("Plan: run the script."), _thinking("Then verify.")),
+        _tool_use("t1", "Bash", {"command": "python plot.py"}),
+        _tool_result("t1", "ok"),
+        _assistant_blocks(_thinking("Looks good, write it out.")),
+        _tool_use("t2", "Write", {"file_path": "out.md", "content": "…"}),
+        _tool_result("t2", "written"),
+        _result("Done."),
+    ]
+    (_stream_dir(tmp_path) / "stream.jsonl").write_text("\n".join(lines), encoding="utf-8")
+
+    payload = build_run_plan(tmp_path)
+
+    kinds = [(s.get("kind"), s.get("tool_name")) for s in payload["steps"]]
+    assert kinds == [
+        ("reasoning", None),
+        ("tool", "Bash"),
+        ("reasoning", None),
+        ("tool", "Write"),
+    ]
+    # Two consecutive thinking blocks became ONE step, in reading order.
+    first = payload["steps"][0]
+    assert first["name"] == "Plan: run the script. Then verify."
+    assert first["status"] == "done"
+    assert first["task_key"] == "task-1"
+
+
+def test_trailing_text_is_the_answer_never_a_reasoning_step(tmp_path: Path) -> None:
+    lines = [
+        _tool_use("t1", "Bash", {"command": "ls"}),
+        _tool_result("t1", "ok"),
+        # Thinking after the last action still counts as a step; the final
+        # text does not — it IS the answer, and must not appear twice.
+        _assistant_blocks(_thinking("Summarise for the user."), _text("Here is the list.")),
+    ]
+    (_stream_dir(tmp_path) / "stream.jsonl").write_text("\n".join(lines), encoding="utf-8")
+
+    payload = build_run_plan(tmp_path)
+
+    assert [s.get("kind") for s in payload["steps"]] == ["tool", "reasoning"]
+    assert payload["steps"][1]["name"] == "Summarise for the user."
+    assert payload["final_answer"] == "Here is the list."
+
+
+def test_spawn_tools_carry_the_spawn_kind(tmp_path: Path) -> None:
+    lines = [
+        _tool_use("t1", "Task", {"prompt": "Audit shard A", "description": "Audit shard A"}),
+        _tool_result("t1", "spawned"),
+        _tool_use("t2", "Bash", {"command": "echo hi"}),
+        _tool_result("t2", "hi"),
+    ]
+    (_stream_dir(tmp_path) / "stream.jsonl").write_text("\n".join(lines), encoding="utf-8")
+
+    payload = build_run_plan(tmp_path)
+
+    by_tool = {s["tool_name"]: s for s in payload["steps"]}
+    assert by_tool["Task"]["kind"] == "spawn"
+    assert by_tool["Bash"]["kind"] == "tool"
+
+
+def test_all_actions_failed_verdict_ignores_reasoning_steps(tmp_path: Path) -> None:
+    lines = [
+        _assistant_blocks(_thinking("Try the deploy.")),
+        _tool_use("t1", "Bash", {"command": "npm run deploy"}),
+        _tool_result("t1", "boom", is_error=True),
+    ]
+    (_stream_dir(tmp_path) / "stream.jsonl").write_text("\n".join(lines), encoding="utf-8")
+
+    payload = build_run_plan(tmp_path)
+
+    # The reasoning step is "done", but the verdict is judged over actions.
+    assert payload["plan"]["status"] == "failed"
 
 
 def test_codex_stream_is_normalized_before_walking(tmp_path: Path) -> None:
