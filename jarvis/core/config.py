@@ -3237,6 +3237,13 @@ class MarketplaceConfig(BaseModel):
     """
 
     public_callback_base_url: str = ""
+    # Where the community marketplace index lives. The default is the public
+    # registry's GitHub Pages deployment; forks and air-gapped mirrors point
+    # this at their own compiled index. Empty string disables the community
+    # section entirely (browse shows only the shipped seed catalog).
+    community_index_url: str = (
+        "https://personaljarvis.github.io/marketplace/index.json"
+    )
     model_config = ConfigDict(extra="allow")
 
 
