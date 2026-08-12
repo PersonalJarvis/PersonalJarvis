@@ -9047,7 +9047,12 @@ does carry is already covered by the running order's own reasons; and it is
 fragment-short. A refused turn gets the deterministic progress line and the
 trusted result via the late flush. Enforced at BOTH doors a second executor
 can open through: the deterministic dispatch site and the provider's
-`jarvis_action` call path.
+`jarvis_action` call path. Review caught a vacuous-truth hole in the subset
+probe before it shipped: a bare "yes" answering a clarify question or an
+ask-tier confirmation plans with EMPTY reasons, and an empty set is a subset
+of every running order's — so a turn the clarify/confirm mechanism already
+owns bypasses the guard entirely, and refusal additionally requires the
+fragment to carry at least one reason of its own.
 
 **Guards:** `tests/unit/realtime/test_split_utterance_single_order.py` — the
 live transcripts verbatim against the real planner, plus the counter-cases

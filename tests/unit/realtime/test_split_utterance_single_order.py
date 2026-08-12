@@ -216,6 +216,53 @@ async def test_no_running_order_means_no_refusal() -> None:
     assert not _guard(session, LIVE_FRAGMENT)
 
 
+async def test_a_clarify_answer_dispatches_while_an_unrelated_order_runs() -> None:
+    # A bare "Yes." plans with EMPTY reasons, and an empty set is a subset
+    # of every running order's reasons — without the clarify/confirm bypass
+    # the vacuous subset would swallow the answer (not delay it: drop it)
+    # whenever any unrelated order is still in flight.
+    session = _session()
+    task = _pending_order(session, "Please check my email for anything urgent")
+    session._delegate_reply_awaits_answer = True
+    try:
+        assert not _guard(session, "Yes."), (
+            "a short answer to an open clarify question belongs to the "
+            "clarify flow — an unrelated executing order must never refuse it"
+        )
+    finally:
+        task.cancel()
+
+
+async def test_a_voice_confirmation_dispatches_while_an_unrelated_order_runs() -> None:
+    session = _session()
+    session._brain = SimpleNamespace(
+        conversation_language="en",
+        has_pending_voice_confirm=lambda: True,
+    )
+    task = _pending_order(session, "Please check my email for anything urgent")
+    try:
+        assert not _guard(session, "Yes, do it."), (
+            "a pending ask-tier confirmation owns the yes — refusing it "
+            "would silently drop a confirmed action"
+        )
+    finally:
+        task.cancel()
+
+
+async def test_an_empty_reason_fragment_is_never_refused_on_vacuous_evidence() -> None:
+    # Defense in depth past the clarify/confirm bypass: refusal must require
+    # the fragment to carry at least one planner reason of its own.
+    session = _session()
+    task = _pending_order(session, LIVE_ORDER)
+    try:
+        assert not _guard(session, "Nossa."), (
+            "an evidence-free fragment must not be refused on the vacuous "
+            "empty-subset — it never planned as an order in the first place"
+        )
+    finally:
+        task.cancel()
+
+
 async def test_the_provider_tool_call_path_refuses_the_fragment_too() -> None:
     """The same fragment arriving as a provider ``jarvis_action`` call.
 

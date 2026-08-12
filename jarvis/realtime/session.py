@@ -7036,7 +7036,20 @@ class RealtimeVoiceSession:
         A wrongly refused turn degrades honestly (the deterministic progress
         line now, the trusted result via the late flush); a wrongly allowed
         turn executes a user order TWICE. The asymmetry decides the ties.
+
+        A turn the clarify/confirm mechanism already owns bypasses the guard
+        entirely: a bare "yes" answering an ask-tier confirmation plans with
+        EMPTY reasons, and an empty set is a subset of every running order's
+        reasons — probe 3 would hold vacuously and the confirmation would be
+        swallowed (not delayed: dropped, no delegate ever starts for it)
+        whenever any UNRELATED order happens to be in flight. The same
+        vacuous-truth hole is closed generally below: refusal requires the
+        fragment to carry at least ONE reason of its own.
         """
+        if self._answers_open_delegate_question() or (
+            self._brain_awaits_voice_confirm()
+        ):
+            return False
         text = str(self._last_user_text or "").strip()
         if not text or len(text.split()) > _CONTINUATION_FRAGMENT_MAX_TOKENS:
             return False
@@ -7044,7 +7057,10 @@ class RealtimeVoiceSession:
             return False
         if self._workspace_owns_turn(text):
             return False
-        return any(
+        # The running order re-plans against the CURRENT delegate history;
+        # while it is still executing nothing has been appended for it, so
+        # both plans see the same context.
+        return bool(turn_plan.reasons) and any(
             turn_plan.reasons <= self._plan_turn(order_text).reasons
             for order_text in self._executing_order_texts()
         )
