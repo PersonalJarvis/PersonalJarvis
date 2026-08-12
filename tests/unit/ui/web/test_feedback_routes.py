@@ -118,6 +118,50 @@ def test_status_configured_never_leaks_the_webhook_url(client: TestClient, monke
     assert webhook_url not in resp.text
 
 
+def test_empty_screenshot_payload_sends_no_attachment(client: TestClient, monkeypatch) -> None:
+    """A data-URL without a base64 payload decodes to b"" — the dispatch must
+    fall back to the plain JSON webhook call instead of attaching an empty
+    file to Discord."""
+    import jarvis.ui.web.feedback_routes as feedback_routes
+
+    captured: dict = {}
+
+    class _FakeResponse:
+        is_success = True
+        status_code = 204
+        text = ""
+
+    class _FakeAsyncClient:
+        def __init__(self, timeout: float | None = None) -> None:
+            pass
+
+        async def __aenter__(self) -> _FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+        async def post(self, url: str, **kwargs: object) -> _FakeResponse:
+            captured.update({"url": url, **kwargs})
+            return _FakeResponse()
+
+    monkeypatch.setattr(
+        feedback_routes, "get_secret",
+        lambda *a, **k: "https://discord.com/api/webhooks/123/abc",
+    )
+    monkeypatch.setattr(feedback_routes.httpx, "AsyncClient", _FakeAsyncClient)
+
+    resp = client.post(
+        "/api/feedback", json=_payload(screenshot="data:image/png;base64,")
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "sent"
+    # Plain JSON dispatch, no multipart upload of a zero-byte "image".
+    assert "json" in captured
+    assert "files" not in captured
+
+
 def test_app_version_pyproject_fallback_reads_repo_root() -> None:
     """The pyproject.toml fallback must resolve to the real repo root — it
     regressed once by pointing one directory ABOVE it (parents[4])."""

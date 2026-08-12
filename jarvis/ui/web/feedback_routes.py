@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import base64
 import datetime
+import functools
 import json as _json
 import logging
 import platform
@@ -130,12 +131,17 @@ class FeedbackChannelStatus(BaseModel):
 # ----------------------------------------------------------------------
 
 
+@functools.lru_cache(maxsize=1)
 def _app_version() -> str:
     """Return the running app version string, with several fallback strategies.
 
     1. ``jarvis.__version__`` if present (editable install with metadata).
     2. The ``version = "..."`` field from ``pyproject.toml`` at repo root.
     3. ``"unknown"`` if both fail.
+
+    Memoized: the version never changes within a running process, and the
+    pyproject fallback does synchronous file IO that must not repeat on every
+    request handled by the async routes.
     """
     try:
         import jarvis  # type: ignore[import]
@@ -241,7 +247,9 @@ async def submit_feedback(body: FeedbackPayload) -> FeedbackResult:
                         f"({len(raw):,} bytes decoded)."
                     ),
                 )
-            screenshot_bytes = raw
+            # A data-URL without a payload decodes to b"" — treat that as "no
+            # screenshot" rather than attaching an empty file to Discord.
+            screenshot_bytes = raw or None
         except HTTPException:
             raise
         except Exception as exc:  # noqa: BLE001 — bad b64 → skip screenshot
