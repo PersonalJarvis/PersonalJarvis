@@ -16,11 +16,14 @@ dictation polish, computer use, ack brain):
 
 * ``AIza...`` keys route straight to AI Studio — zero added latency, the
   exact behaviour every install had before this module existed.
-* Ambiguous ``AQ....`` keys are probed ONCE per process: one cheap
-  ``models.list`` GET against AI Studio. Accepted → AI Studio; rejected with
-  an auth error → the key must be a Vertex express key. The verdict is
-  cached by key fingerprint, so realtime session opens and per-turn calls
-  never pay the probe again.
+* Ambiguous ``AQ....`` keys are probed ONCE per process, in two steps: a
+  cheap ``models.list`` GET against AI Studio, and — only if AI Studio
+  rejects the key — a free Vertex ``countTokens`` counter-probe. Accepted by
+  AI Studio → AI Studio; accepted by Vertex → express key; rejected by BOTH
+  → the key is simply invalid, so the historical AI Studio path surfaces
+  Google's own error and nothing is cached. A confirmed verdict is cached by
+  key fingerprint, so realtime session opens and per-turn calls never pay
+  the probe again.
 * ``[google].vertex_mode`` in jarvis.toml overrides the probe: ``always``
   forces Vertex for ambiguous keys, ``never`` restores the pre-Vertex
   behaviour. ``auto`` (default) probes. Read only here (AP-31).
@@ -41,15 +44,38 @@ log = logging.getLogger("jarvis.google_genai")
 
 KeyRoute = Literal["aistudio", "vertex"]
 
-#: AI Studio model-list endpoint used as the routing probe. A GET here is the
-#: cheapest documented call that authenticates the key without generating
-#: tokens; the key travels in the ``x-goog-api-key`` header, never the URL,
-#: so it cannot leak into access logs.
+#: AI Studio model-list endpoint used as the first routing probe. A GET here
+#: is the cheapest documented call that authenticates the key without
+#: generating tokens; the key travels in the ``x-goog-api-key`` header, never
+#: the URL, so it cannot leak into access logs.
 _AISTUDIO_PROBE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
-#: HTTP statuses that mean "this key is not an AI Studio key" (as opposed to
+#: Vertex express counter-probe. An AI Studio rejection alone does NOT prove
+#: the key is a Vertex express key — an invalid/expired ``AQ.`` key is
+#: rejected by BOTH endpoints (measured 2026-08-12: 401
+#: ACCESS_TOKEN_TYPE_UNSUPPORTED on either host). Only a successful
+#: ``countTokens`` — one of exactly three methods officially in scope for
+#: express mode, and free (it counts, it does not generate) — confirms the
+#: Vertex route. Express uses the GLOBAL aiplatform host: no project, no
+#: location, key in the same header.
+_VERTEX_PROBE_URL_TMPL = (
+    "https://aiplatform.googleapis.com/v1/publishers/google/models/{model}:countTokens"
+)
+
+#: Models tried for the counter-probe, in order. The probe needs SOME model id
+#: in the URL (there is no model-free express call in the documented set); a
+#: 404 means "this model id is gone", not an auth verdict, so the next
+#: candidate is tried. Auth semantics do not depend on which model answers
+#: (never a behavioural pin, AP-21).
+_VERTEX_PROBE_MODELS = ("gemini-2.5-flash", "gemini-2.5-flash-lite")
+
+#: Minimal countTokens body — one character to count, zero generation.
+_VERTEX_PROBE_BODY = {"contents": [{"role": "user", "parts": [{"text": "x"}]}]}
+
+#: HTTP statuses that mean "this endpoint rejects this key" (as opposed to
 #: "the service hiccuped"). 400 is what generativelanguage actually returns
-#: for a foreign key (API_KEY_INVALID); 401/403 are kept for robustness.
+#: for a foreign/invalid key (API_KEY_INVALID); 401 is what both hosts return
+#: for a bad authorization key; 403 is kept for robustness.
 _AUTH_REJECT_STATUSES = frozenset({400, 401, 403})
 
 #: Probe budget. The probe runs once per process per key, off the boot
@@ -97,20 +123,31 @@ def _configured_mode() -> str:
     return mode if mode in ("auto", "always", "never") else "auto"
 
 
-def _interpret_probe_status(status_code: int) -> KeyRoute | None:
-    """Map the AI Studio probe's HTTP status to a route (``None`` = unknown).
+def _probe_verdict(
+    aistudio_status: int, vertex_statuses: tuple[int, ...]
+) -> tuple[KeyRoute | None, str]:
+    """Combine both probe answers into ``(route, detail)``.
 
-    2xx proves the key is an AI Studio key. An auth-reject status proves it is
-    NOT one — and the only other family sharing the ``AQ.`` shape is Vertex
-    express, so that is the verdict; if the key is invalid everywhere, the
-    first real call surfaces the same upstream error either way. Anything else
-    (5xx, 429) proves nothing and must not be cached.
+    * AI Studio 2xx → the key IS an AI Studio key (an authorization key valid
+      for both services deterministically picks AI Studio; ``vertex_mode =
+      "always"`` overrides).
+    * AI Studio reject + Vertex ``countTokens`` 2xx → proven express key.
+    * Rejected by BOTH → the key is simply invalid; route ``None`` so the
+      caller defaults to the historical AI Studio path WITHOUT caching and
+      the first real call surfaces Google's own error message.
+    * Anything else (5xx, 429, network) proves nothing → ``None``.
     """
-    if 200 <= status_code < 300:
-        return "aistudio"
-    if status_code in _AUTH_REJECT_STATUSES:
-        return "vertex"
-    return None
+    if 200 <= aistudio_status < 300:
+        return "aistudio", f"AI Studio probe HTTP {aistudio_status}"
+    if aistudio_status not in _AUTH_REJECT_STATUSES:
+        return None, f"AI Studio probe HTTP {aistudio_status}"
+    for status in vertex_statuses:
+        if 200 <= status < 300:
+            return "vertex", (f"AI Studio {aistudio_status}, Vertex countTokens {status}")
+    return None, (
+        f"rejected by both endpoints (AI Studio {aistudio_status}, "
+        f"Vertex {list(vertex_statuses) or 'unprobed'}) — key likely invalid"
+    )
 
 
 def _cached_route(fp: str) -> KeyRoute | None:
@@ -150,27 +187,69 @@ def _resolve_preamble(api_key: str) -> tuple[str, KeyRoute | None]:
     return fp, None
 
 
+def _run_probe_sync(api_key: str, transport: Any | None) -> tuple[KeyRoute | None, str]:
+    """Two-step probe (sync): AI Studio GET, then the Vertex counter-probe.
+
+    The counter-probe runs ONLY after an AI Studio auth-reject. A Vertex 404
+    means "this model id is gone", not an auth verdict, so the next candidate
+    model is tried; any other answer is decisive and the loop stops.
+    """
+    import httpx
+
+    headers = {"x-goog-api-key": api_key}
+    with httpx.Client(timeout=_PROBE_TIMEOUT_S, transport=transport) as client:
+        aistudio = client.get(_AISTUDIO_PROBE_URL, params={"pageSize": 1}, headers=headers)
+        if aistudio.status_code not in _AUTH_REJECT_STATUSES:
+            return _probe_verdict(aistudio.status_code, ())
+        statuses: list[int] = []
+        for model in _VERTEX_PROBE_MODELS:
+            vertex = client.post(
+                _VERTEX_PROBE_URL_TMPL.format(model=model),
+                json=_VERTEX_PROBE_BODY,
+                headers=headers,
+            )
+            statuses.append(vertex.status_code)
+            if vertex.status_code != 404:
+                break
+        return _probe_verdict(aistudio.status_code, tuple(statuses))
+
+
+async def _run_probe_async(api_key: str, transport: Any | None) -> tuple[KeyRoute | None, str]:
+    """Async twin of :func:`_run_probe_sync` — same two-step semantics."""
+    import httpx
+
+    headers = {"x-goog-api-key": api_key}
+    async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_S, transport=transport) as client:
+        aistudio = await client.get(_AISTUDIO_PROBE_URL, params={"pageSize": 1}, headers=headers)
+        if aistudio.status_code not in _AUTH_REJECT_STATUSES:
+            return _probe_verdict(aistudio.status_code, ())
+        statuses: list[int] = []
+        for model in _VERTEX_PROBE_MODELS:
+            vertex = await client.post(
+                _VERTEX_PROBE_URL_TMPL.format(model=model),
+                json=_VERTEX_PROBE_BODY,
+                headers=headers,
+            )
+            statuses.append(vertex.status_code)
+            if vertex.status_code != 404:
+                break
+        return _probe_verdict(aistudio.status_code, tuple(statuses))
+
+
 def resolve_google_key_route(api_key: str, *, transport: Any | None = None) -> KeyRoute:
     """Decide the route for ``api_key`` (sync). Probes at most once per key.
 
     ``transport`` is a test seam: an ``httpx.MockTransport`` makes the probe
-    fully offline. On network trouble the verdict defaults to ``aistudio``
-    WITHOUT caching, so a flaky network cannot pin a wrong route for the
-    process lifetime.
+    fully offline. On network trouble — or when both endpoints reject the key
+    (an invalid key, not a routing signal) — the verdict defaults to
+    ``aistudio`` WITHOUT caching, so neither a flaky network nor a typo can
+    pin a wrong route for the process lifetime.
     """
     fp, decided = _resolve_preamble(api_key)
     if decided is not None:
         return decided
     try:
-        import httpx
-
-        with httpx.Client(timeout=_PROBE_TIMEOUT_S, transport=transport) as client:
-            response = client.get(
-                _AISTUDIO_PROBE_URL,
-                params={"pageSize": 1},
-                headers={"x-goog-api-key": api_key},
-            )
-        route = _interpret_probe_status(response.status_code)
+        route, detail = _run_probe_sync(api_key, transport)
     except Exception as exc:  # noqa: BLE001 — probe failure must not break calls
         log.warning(
             "Google key %s: routing probe failed (%s: %s) — defaulting to "
@@ -182,13 +261,12 @@ def resolve_google_key_route(api_key: str, *, transport: Any | None = None) -> K
         return "aistudio"
     if route is None:
         log.warning(
-            "Google key %s: routing probe returned HTTP %s — defaulting to "
-            "AI Studio without caching.",
+            "Google key %s: %s — defaulting to AI Studio without caching.",
             fp,
-            response.status_code,
+            detail,
         )
         return "aistudio"
-    return _remember_route(fp, route, source=f"probe HTTP {response.status_code}")
+    return _remember_route(fp, route, source=detail)
 
 
 async def resolve_google_key_route_async(api_key: str, *, transport: Any | None = None) -> KeyRoute:
@@ -197,15 +275,7 @@ async def resolve_google_key_route_async(api_key: str, *, transport: Any | None 
     if decided is not None:
         return decided
     try:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_S, transport=transport) as client:
-            response = await client.get(
-                _AISTUDIO_PROBE_URL,
-                params={"pageSize": 1},
-                headers={"x-goog-api-key": api_key},
-            )
-        route = _interpret_probe_status(response.status_code)
+        route, detail = await _run_probe_async(api_key, transport)
     except Exception as exc:  # noqa: BLE001 — probe failure must not break calls
         log.warning(
             "Google key %s: routing probe failed (%s: %s) — defaulting to "
@@ -217,13 +287,12 @@ async def resolve_google_key_route_async(api_key: str, *, transport: Any | None 
         return "aistudio"
     if route is None:
         log.warning(
-            "Google key %s: routing probe returned HTTP %s — defaulting to "
-            "AI Studio without caching.",
+            "Google key %s: %s — defaulting to AI Studio without caching.",
             fp,
-            response.status_code,
+            detail,
         )
         return "aistudio"
-    return _remember_route(fp, route, source=f"probe HTTP {response.status_code}")
+    return _remember_route(fp, route, source=detail)
 
 
 def _client_kwargs(api_key: str, route: KeyRoute, http_options: Any | None) -> dict[str, Any]:

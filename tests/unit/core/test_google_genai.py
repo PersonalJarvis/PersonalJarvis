@@ -1,10 +1,13 @@
 """Route resolution for Google keys: AI Studio vs Vertex AI express mode.
 
 The prefix ``AQ.`` is issued by BOTH Google AI Studio and Vertex express, so
-the resolver may only trust shape for ``AIza`` keys and must probe the rest —
-once, with the verdict cached, and never caching a network hiccup. These tests
-drive the probe through ``httpx.MockTransport`` (a real transport, no network)
-so every branch is exercised offline.
+the resolver may only trust shape for ``AIza`` keys and must probe the rest.
+The probe is two-step (verified against live endpoint behaviour, 2026-08-12):
+an AI Studio rejection alone does NOT prove a Vertex key — an invalid ``AQ.``
+key is rejected by both hosts — so only a successful Vertex ``countTokens``
+counter-probe confirms the Vertex route. Verdicts are cached once per key;
+network trouble and both-rejected keys are never cached. These tests drive
+the probe through ``httpx.MockTransport`` (a real transport, no network).
 """
 
 from __future__ import annotations
@@ -24,15 +27,41 @@ def _fresh_cache():
     gg.reset_route_cache()
 
 
-def _transport(status_code: int, counter: list[int]) -> httpx.MockTransport:
-    def handler(request: httpx.Request) -> httpx.Response:
-        counter[0] += 1
+class _FakeGoogle:
+    """Offline stand-in for both Google hosts, with per-endpoint call counts.
+
+    ``vertex_statuses`` maps a probe-model id to its countTokens answer, so a
+    test can retire one candidate model (404) and serve the next.
+    """
+
+    def __init__(
+        self,
+        aistudio_status: int,
+        vertex_statuses: dict[str, int] | int = 401,
+    ) -> None:
+        self.aistudio_status = aistudio_status
+        if isinstance(vertex_statuses, int):
+            vertex_statuses = dict.fromkeys(gg._VERTEX_PROBE_MODELS, vertex_statuses)
+        self.vertex_statuses = vertex_statuses
+        self.aistudio_calls = 0
+        self.vertex_calls: list[str] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
         # The key must travel in the header, never the URL (log safety).
         assert "key" not in request.url.params
         assert request.headers.get("x-goog-api-key")
-        return httpx.Response(status_code, json={})
+        if request.url.host == "generativelanguage.googleapis.com":
+            self.aistudio_calls += 1
+            return httpx.Response(self.aistudio_status, json={})
+        assert request.url.host == "aiplatform.googleapis.com"
+        assert request.method == "POST"
+        model = request.url.path.split("/")[-1].removesuffix(":countTokens")
+        self.vertex_calls.append(model)
+        return httpx.Response(self.vertex_statuses[model], json={})
 
-    return httpx.MockTransport(handler)
+    @property
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self.handler)
 
 
 # ── shape classification ─────────────────────────────────────────────────────
@@ -55,28 +84,47 @@ def test_foreign_shapes_fall_back_to_aistudio():
 # ── probe verdicts ───────────────────────────────────────────────────────────
 
 
-def test_probe_200_routes_aistudio_and_caches():
-    calls = [0]
-    t = _transport(200, calls)
-    assert gg.resolve_google_key_route("AQ.studio-key-1", transport=t) == "aistudio"
-    assert gg.resolve_google_key_route("AQ.studio-key-1", transport=t) == "aistudio"
-    assert calls[0] == 1, "second resolve must hit the cache, not the network"
+def test_aistudio_200_routes_aistudio_without_vertex_probe():
+    fake = _FakeGoogle(200)
+    assert gg.resolve_google_key_route("AQ.studio-key-1", transport=fake.transport) == "aistudio"
+    assert gg.resolve_google_key_route("AQ.studio-key-1", transport=fake.transport) == "aistudio"
+    assert fake.aistudio_calls == 1, "second resolve must hit the cache"
+    assert fake.vertex_calls == [], "an accepted key needs no counter-probe"
 
 
-def test_probe_400_routes_vertex_and_caches():
-    calls = [0]
-    t = _transport(400, calls)
-    assert gg.resolve_google_key_route("AQ.express-key-1", transport=t) == "vertex"
-    assert gg.resolve_google_key_route("AQ.express-key-1", transport=t) == "vertex"
-    assert calls[0] == 1
+def test_aistudio_reject_plus_vertex_ok_routes_vertex_and_caches():
+    fake = _FakeGoogle(401, {gg._VERTEX_PROBE_MODELS[0]: 200})
+    assert gg.resolve_google_key_route("AQ.express-key-1", transport=fake.transport) == "vertex"
+    assert gg.resolve_google_key_route("AQ.express-key-1", transport=fake.transport) == "vertex"
+    assert fake.aistudio_calls == 1
+    assert fake.vertex_calls == [gg._VERTEX_PROBE_MODELS[0]]
 
 
-def test_probe_5xx_defaults_aistudio_without_caching():
-    calls = [0]
-    t = _transport(503, calls)
-    assert gg.resolve_google_key_route("AQ.flaky-key-1", transport=t) == "aistudio"
-    assert gg.resolve_google_key_route("AQ.flaky-key-1", transport=t) == "aistudio"
-    assert calls[0] == 2, "an outage verdict must not be pinned for the process"
+def test_rejected_by_both_defaults_aistudio_without_caching():
+    # Measured live: an invalid AQ. key gets 401 from BOTH hosts. That is a
+    # key error, not a routing signal — the honest upstream error must come
+    # from the historical endpoint, and nothing may be cached.
+    fake = _FakeGoogle(401, 401)
+    assert gg.resolve_google_key_route("AQ.broken-key-1", transport=fake.transport) == "aistudio"
+    assert gg.resolve_google_key_route("AQ.broken-key-1", transport=fake.transport) == "aistudio"
+    assert fake.aistudio_calls == 2, "a both-rejected verdict must not be pinned"
+
+
+def test_vertex_404_tries_the_next_probe_model():
+    # A retired probe model answers 404 — that is "model gone", not an auth
+    # verdict, so the next candidate decides.
+    first, second = gg._VERTEX_PROBE_MODELS
+    fake = _FakeGoogle(401, {first: 404, second: 200})
+    assert gg.resolve_google_key_route("AQ.express-key-2", transport=fake.transport) == "vertex"
+    assert fake.vertex_calls == [first, second]
+
+
+def test_aistudio_5xx_defaults_aistudio_without_caching():
+    fake = _FakeGoogle(503)
+    assert gg.resolve_google_key_route("AQ.flaky-key-1", transport=fake.transport) == "aistudio"
+    assert gg.resolve_google_key_route("AQ.flaky-key-1", transport=fake.transport) == "aistudio"
+    assert fake.aistudio_calls == 2, "an outage verdict must not be pinned"
+    assert fake.vertex_calls == [], "a 5xx is not an auth reject — no counter-probe"
 
 
 def test_probe_network_error_defaults_aistudio_without_caching():
@@ -93,20 +141,23 @@ def test_probe_network_error_defaults_aistudio_without_caching():
 
 
 def test_async_resolver_shares_the_sync_cache():
-    calls = [0]
-    t = _transport(400, calls)
-    assert gg.resolve_google_key_route("AQ.shared-key-1", transport=t) == "vertex"
-    verdict = asyncio.run(gg.resolve_google_key_route_async("AQ.shared-key-1", transport=t))
+    fake = _FakeGoogle(401, {gg._VERTEX_PROBE_MODELS[0]: 200})
+    assert gg.resolve_google_key_route("AQ.shared-key-1", transport=fake.transport) == "vertex"
+    verdict = asyncio.run(
+        gg.resolve_google_key_route_async("AQ.shared-key-1", transport=fake.transport)
+    )
     assert verdict == "vertex"
-    assert calls[0] == 1, "the async twin must reuse the sync verdict"
+    assert fake.aistudio_calls == 1, "the async twin must reuse the sync verdict"
 
 
 def test_async_probe_works_standalone():
-    calls = [0]
-    t = _transport(200, calls)
-    verdict = asyncio.run(gg.resolve_google_key_route_async("AQ.async-key-1", transport=t))
-    assert verdict == "aistudio"
-    assert calls[0] == 1
+    fake = _FakeGoogle(401, {gg._VERTEX_PROBE_MODELS[0]: 200})
+    verdict = asyncio.run(
+        gg.resolve_google_key_route_async("AQ.async-key-1", transport=fake.transport)
+    )
+    assert verdict == "vertex"
+    assert fake.aistudio_calls == 1
+    assert fake.vertex_calls == [gg._VERTEX_PROBE_MODELS[0]]
 
 
 # ── config override ──────────────────────────────────────────────────────────
@@ -114,24 +165,23 @@ def test_async_probe_works_standalone():
 
 def test_vertex_mode_always_skips_the_probe(monkeypatch):
     monkeypatch.setattr(gg, "_configured_mode", lambda: "always")
-    calls = [0]
-    t = _transport(200, calls)
-    assert gg.resolve_google_key_route("AQ.forced-key-1", transport=t) == "vertex"
-    assert calls[0] == 0
+    fake = _FakeGoogle(200)
+    assert gg.resolve_google_key_route("AQ.forced-key-1", transport=fake.transport) == "vertex"
+    assert fake.aistudio_calls == 0
 
 
 def test_vertex_mode_never_skips_the_probe(monkeypatch):
     monkeypatch.setattr(gg, "_configured_mode", lambda: "never")
-    calls = [0]
-    t = _transport(400, calls)
-    assert gg.resolve_google_key_route("AQ.forced-key-2", transport=t) == "aistudio"
-    assert calls[0] == 0
+    fake = _FakeGoogle(401, 200)
+    assert gg.resolve_google_key_route("AQ.forced-key-2", transport=fake.transport) == "aistudio"
+    assert fake.aistudio_calls == 0
 
 
-def test_vertex_mode_never_leaves_aiza_untouched(monkeypatch):
+def test_vertex_mode_always_leaves_aiza_untouched(monkeypatch):
     monkeypatch.setattr(gg, "_configured_mode", lambda: "always")
     # ``always`` governs AMBIGUOUS keys only; an AIza key stays AI Studio —
-    # forcing it through Vertex could never work (wrong key family).
+    # a standard key can never authenticate against Vertex (measured: 401
+    # CREDENTIALS_MISSING), so forcing it would only break a working setup.
     assert gg.resolve_google_key_route("AIzaSyClassic") == "aistudio"
 
 
@@ -149,6 +199,8 @@ def test_client_kwargs_aistudio_matches_the_historical_call():
 
 
 def test_client_kwargs_vertex_sets_the_express_flag_only():
+    # Express mode is exactly vertexai=True + the key: no project, no location
+    # (officially documented; the key alone satisfies the SDK's auth gate).
     assert gg._client_kwargs("k", "vertex", None) == {
         "api_key": "k",
         "vertexai": True,
