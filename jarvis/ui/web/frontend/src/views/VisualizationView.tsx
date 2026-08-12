@@ -727,13 +727,23 @@ function GraphCanvas({
           const hue = categoryColor(category);
           const selected = node.id === selectedId;
           const reasoning = category === "reasoning";
+          /* Two calm lines per card. A reasoning card is titled as what it
+           * IS, with the thought as its detail line — a raw sentence as a
+           * bold headline reads like a rendering accident. */
           const title =
             node.kind === "start"
               ? t("visualization.node_start")
               : node.kind === "result"
                 ? t("visualization.node_result")
-                : node.title;
-          const subtitle = node.kind === "start" ? node.title : node.subtitle;
+                : reasoning
+                  ? t("visualization.cat_reasoning")
+                  : node.title;
+          const subtitle =
+            node.kind === "start"
+              ? node.title
+              : reasoning
+                ? node.title
+                : node.subtitle;
           /* Port dots come from the graph model (edge-derived), so a dot is
            * always a real attachment point — a start node has no input, a
            * deliverable no output, exactly like a workflow editor's nodes. */
@@ -802,19 +812,17 @@ function GraphCanvas({
                   aria-hidden
                 />
               )}
+              {/* The category speaks through the icon alone — its hue and
+                  glyph — never through an extra text line. The label survives
+                  as the tile's tooltip for whoever hovers to ask. */}
               <span
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                style={{ color: hue, backgroundColor: categoryTint(category, 0.14) }}
+                style={{ color: hue, backgroundColor: categoryTint(category, 0.12) }}
+                title={t(NODE_CATEGORIES[category].labelKey)}
               >
                 <Icon className="h-4 w-4" aria-hidden />
               </span>
               <span className="min-w-0 flex-1">
-                <span
-                  className="block truncate text-[9px] font-semibold uppercase tracking-widest"
-                  style={{ color: hue }}
-                >
-                  {t(NODE_CATEGORIES[category].labelKey)}
-                </span>
                 <span className="block truncate text-xs font-medium text-foreground">
                   {title}
                 </span>

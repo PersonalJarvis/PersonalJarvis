@@ -432,19 +432,19 @@
     --stage-vignette-strength: 0.1;
 
     /* --- Run-graph node categories (Visualization) -----------------------
-       The n8n-style family hues behind `nodeSpec.ts`. Every card's icon tile
-       and kicker read `hsl(var(--viz-*))`; light values are darker so the
-       category stays legible as ink on warm paper. */
+       The n8n-style family hues behind `nodeSpec.ts`. Only the card's icon
+       tile reads `hsl(var(--viz-*))` — QUIET accents against the brand, not
+       a rainbow. Light values are darker ink for warm paper. */
     --viz-trigger: 38 100% 33%; /* the brand gold — the run's ignition */
-    --viz-reasoning: 258 55% 45%; /* violet — the worker thinking */
-    --viz-terminal: 190 85% 27%; /* cyan — shell commands */
-    --viz-file: 210 80% 38%; /* blue — file writes/edits */
-    --viz-search: 168 75% 26%; /* teal — read/grep/glob */
-    --viz-web: 232 55% 46%; /* indigo — fetch/web */
-    --viz-integration: 24 90% 36%; /* orange — MCP / external tools */
-    --viz-agent: 292 60% 40%; /* magenta — sub-agent spawns */
+    --viz-reasoning: 258 35% 46%; /* muted violet — the worker thinking */
+    --viz-terminal: 190 50% 30%; /* muted cyan — shell commands */
+    --viz-file: 210 50% 38%; /* muted blue — file writes/edits */
+    --viz-search: 168 45% 28%; /* muted teal — read/grep/glob */
+    --viz-web: 232 35% 46%; /* muted indigo — fetch/web */
+    --viz-integration: 24 60% 38%; /* muted orange — MCP / external tools */
+    --viz-agent: 292 35% 40%; /* muted magenta — sub-agent spawns */
     --viz-tool: 240 6% 38%; /* neutral — unrecognised tools */
-    --viz-result: 152 65% 27%; /* green — the run's landing */
+    --viz-result: 152 45% 28%; /* muted green — the run's landing */
     --viz-deliverable: 240 6% 38%; /* neutral — files left behind */
 
     /* Legacy aliases. Kept because they are referenced from a handful of
@@ -497,17 +497,18 @@
     --stage-vignette-rgb: 0 0 0;
     --stage-vignette-strength: 0.62;
 
-    /* Run-graph node categories — signal hues on matte black (see :root). */
+    /* Run-graph node categories — quiet accents on matte black (see :root).
+       Saturation stays low so signal-yellow remains the only loud voice. */
     --viz-trigger: 50 100% 52%;
-    --viz-reasoning: 258 90% 72%;
-    --viz-terminal: 187 85% 55%;
-    --viz-file: 210 95% 66%;
-    --viz-search: 168 70% 50%;
-    --viz-web: 232 90% 74%;
-    --viz-integration: 24 95% 60%;
-    --viz-agent: 292 80% 70%;
+    --viz-reasoning: 258 45% 70%;
+    --viz-terminal: 187 40% 56%;
+    --viz-file: 210 50% 64%;
+    --viz-search: 168 35% 52%;
+    --viz-web: 232 45% 70%;
+    --viz-integration: 24 55% 58%;
+    --viz-agent: 292 40% 66%;
     --viz-tool: 0 0% 62%;
-    --viz-result: 152 65% 52%;
+    --viz-result: 152 40% 52%;
     --viz-deliverable: 0 0% 62%;
 
     --jarvis-yellow: 255 214 10;
