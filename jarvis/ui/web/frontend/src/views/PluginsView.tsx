@@ -22,6 +22,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
+import { CommunityTab } from "@/views/PluginsCommunity";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect } from "@/components/ui/select";
@@ -367,7 +368,7 @@ const OAUTH_CLIENT_CONSOLE: Record<string, string> = {
   asana: "https://app.asana.com/0/my-apps",
 };
 
-type TabId = "browse" | "installed";
+type TabId = "browse" | "installed" | "community";
 type FilterId = "all" | Category;
 
 /** Section order for the store, straight from the catalog. Any category the
@@ -717,12 +718,19 @@ export function PluginsView() {
           active={tab === "installed"}
           onClick={() => setTab("installed")}
         />
+        <Tab
+          label="Community"
+          active={tab === "community"}
+          onClick={() => setTab("community")}
+        />
       </div>
 
       <ScrollArea className="flex-1">
         <div className="relative mx-auto max-w-3xl px-6 pb-20 pt-14">
           <AttentionBanner plugins={attentionPlugins} onJump={jumpToFirstProblem} />
-          {tab === "browse" ? (
+          {tab === "community" ? (
+            <CommunityTab />
+          ) : tab === "browse" ? (
             <BrowseLayout
               plugins={visible}
               query={query}
@@ -1053,7 +1061,7 @@ function Tab({
   count,
   active,
   onClick,
-}: { label: string; count: number; active: boolean; onClick: () => void }) {
+}: { label: string; count?: number; active: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -1065,14 +1073,16 @@ function Tab({
     >
       <span className="flex items-center gap-2">
         {label}
-        <span
-          className={cn(
-            "rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
-            active ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground",
-          )}
-        >
-          {count}
-        </span>
+        {count !== undefined && (
+          <span
+            className={cn(
+              "rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+              active ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground",
+            )}
+          >
+            {count}
+          </span>
+        )}
       </span>
       {active && (
         <span
