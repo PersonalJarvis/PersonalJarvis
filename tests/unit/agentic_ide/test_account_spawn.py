@@ -230,7 +230,7 @@ async def test_switching_to_an_account_of_another_cli_is_refused(
 async def test_a_batch_of_terminals_opens_on_the_active_account(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """"Open five more" is five new terminals, so all five follow the switch."""
+    """ "Open five more" is five new terminals, so all five follow the switch."""
     second = agent_accounts.create_account("claude", "Second seat")
     await registry.start(str(tmp_path), [{"agent": "claude"}])
     await registry.set_active_account("claude", second.id)
@@ -239,16 +239,50 @@ async def test_a_batch_of_terminals_opens_on_the_active_account(
     assert [t.account for t in created] == [second.id] * 3
 
 
-async def test_a_split_still_stays_on_its_anchor_after_a_switch(
+async def test_a_split_of_a_default_pane_follows_the_switch(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """The switch governs NEW terminals; a split is "another one of these"."""
+    """A pane that merely followed the default has no seat worth propagating.
+
+    Splits used to inherit their anchor's account unconditionally, and in a
+    workspace whose panes all shared one seat that made the switcher
+    unreachable: every new pane was a split, every split resurrected the seat
+    the user had just left, and the switch changed nothing anyone could see —
+    the 2026-08-12 report, "I changed my subscriptions twice and it doesn't
+    change". Only a DELIBERATELY chosen seat is inherited (the test below).
+    """
     second = agent_accounts.create_account("claude", "Second seat")
     await registry.start(str(tmp_path), [{"agent": "claude"}])
     anchor = registry.session.terminals[0]
     await registry.set_active_account("claude", second.id)
     split = await registry.add_terminal(anchor=anchor.name, direction="down")
-    assert split.account == anchor.account
+    assert split.account == second.id
+
+
+async def test_a_split_of_a_deliberately_seated_pane_keeps_that_seat(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """An explicitly chosen seat survives both the split and a later switch."""
+    second = agent_accounts.create_account("claude", "Second seat")
+    third = agent_accounts.create_account("claude", "Third seat")
+    await registry.start(str(tmp_path), [{"agent": "claude", "account": second.id}])
+    anchor = registry.session.terminals[0]
+    await registry.set_active_account("claude", third.id)
+    split = await registry.add_terminal(anchor=anchor.name, direction="down")
+    assert split.account == second.id
+
+
+async def test_the_pin_travels_through_generations_of_splits(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """Splitting a split of a chosen seat is still "another one of these"."""
+    second = agent_accounts.create_account("claude", "Second seat")
+    await registry.start(str(tmp_path), [{"agent": "claude", "account": second.id}])
+    first_split = await registry.add_terminal(
+        anchor=registry.session.terminals[0].name, direction="down"
+    )
+    second_split = await registry.add_terminal(anchor=first_split.name, direction="down")
+    assert second_split.account == second.id
 
 
 async def test_the_state_names_the_active_account_in_words(
@@ -447,8 +481,7 @@ async def test_same_account_setup_waiters_do_not_fill_the_default_executor(
 
     monkeypatch.setattr(registry, "_prepare_spawn", _blocking_prepare)
     tasks = [
-        asyncio.create_task(_attach(registry, term.name))
-        for term in registry.session.terminals
+        asyncio.create_task(_attach(registry, term.name)) for term in registry.session.terminals
     ]
     for _ in range(100):
         if entered.is_set():
@@ -531,11 +564,14 @@ async def test_a_remembered_pane_carries_its_account_through_the_store() -> None
 
     second = agent_accounts.create_account("codex", "Second plan")
     pane = resume_store.SnapshotTerminal(
-        key="alex", name="Alex", agent="codex", account=second.id
+        key="alex", name="Alex", agent="codex", account=second.id, account_pinned=True
     )
     restored = resume_store.SnapshotTerminal.from_dict(pane.to_dict())
     assert restored is not None
     assert restored.account == second.id
+    # The pin rides along: a deliberately chosen seat must still be worth
+    # propagating to splits after the app restarts.
+    assert restored.account_pinned is True
 
 
 async def test_an_older_snapshot_without_an_account_still_reopens() -> None:
@@ -547,3 +583,6 @@ async def test_an_older_snapshot_without_an_account_still_reopens() -> None:
     )
     assert restored is not None
     assert restored.account is None
+    # No pin on older snapshots: an unpinned pane's splits follow the
+    # switcher, which is the safe direction to fail in.
+    assert restored.account_pinned is False

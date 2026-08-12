@@ -74,6 +74,12 @@ class SnapshotTerminal:
     # and silently start fresh. An absent value (an older snapshot) means "the
     # account that is active when it reopens" — the old behaviour exactly.
     account: str | None = None
+    # True when that seat was chosen deliberately (wizard picker, explicit API
+    # request, split of such a pane) rather than merely following the active
+    # default. Splits of a restored pane consult it — see ``Terminal.account_pinned``.
+    # Missing on older snapshots means False: an unpinned pane's splits follow
+    # the switcher, which is the safe direction to fail in.
+    account_pinned: bool = False
     # True only when the pane was observed actively working when its last live
     # state was checkpointed.  This is the evidence the Continue control needs:
     # a conversation existing does not mean its last turn was interrupted.
@@ -91,6 +97,7 @@ class SnapshotTerminal:
             "resume": self.resume.to_dict() if self.resume else None,
             "prompts_sent": self.prompts_sent,
             "account": self.account,
+            "account_pinned": self.account_pinned,
             "continuation_needed": self.continuation_needed,
         }
 
@@ -116,6 +123,7 @@ class SnapshotTerminal:
                 if isinstance(data.get("account"), str)
                 else None
             ),
+            account_pinned=data.get("account_pinned") is True,
             continuation_needed=data.get("continuation_needed") is True,
         )
 
@@ -406,9 +414,7 @@ def _merged_with_stored(snapshot: Snapshot) -> Snapshot:
     Ordered newest-first and trimmed, so the file cannot grow without limit and
     the offer leads with what was most recently worked in.
     """
-    stamped = [
-        w if w.saved_at else _restamp(w, snapshot.saved_at) for w in snapshot.workspaces
-    ]
+    stamped = [w if w.saved_at else _restamp(w, snapshot.saved_at) for w in snapshot.workspaces]
     live_folders = {folder_key(w.folder) for w in stamped}
     try:
         stored = load()
@@ -605,9 +611,7 @@ def _display_names() -> dict[str, str]:
         return {}
 
 
-def snapshot_now(
-    workspaces: list[SnapshotWorkspace], *, active_session_id: str = ""
-) -> Snapshot:
+def snapshot_now(workspaces: list[SnapshotWorkspace], *, active_session_id: str = "") -> Snapshot:
     """A snapshot of every open workspace, stamped with the current time."""
     now = time.time()
     return Snapshot(

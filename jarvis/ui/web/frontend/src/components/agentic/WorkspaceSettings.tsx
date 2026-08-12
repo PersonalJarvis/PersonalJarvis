@@ -171,10 +171,11 @@ export function WorkspaceSettings({
               <AgentAccountsPanel
                 onActivate={activate}
                 note={
-                  "Switching applies to terminals opened from now on — the panes " +
-                  "you already have keep the account they started with, so no " +
-                  "running agent loses its conversation. Splitting a pane keeps " +
-                  "that pane's account."
+                  "Switching applies to every terminal opened from now on, splits " +
+                  "included — the panes you already have keep the account they " +
+                  "started with, so no running agent loses its conversation. Only " +
+                  "a pane whose subscription was chosen deliberately (in the " +
+                  "workspace wizard) passes that choice on when you split it."
                 }
               />
             </div>

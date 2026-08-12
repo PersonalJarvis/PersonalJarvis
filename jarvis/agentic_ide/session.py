@@ -113,9 +113,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #
 # argv is built here rather than reused from jarvis.workspace.agents because the
 # IDE runs the agent as the PTY's OWN process, not inside a persistent shell.
-AGENT_BINARIES: dict[str, str] = {
-    a.name: a.executable for a in workspace_agents.coding_agents()
-}
+AGENT_BINARIES: dict[str, str] = {a.name: a.executable for a in workspace_agents.coding_agents()}
 
 
 def is_coding_agent(agent: str) -> bool:
@@ -141,6 +139,7 @@ def has_accounts(agent: str) -> bool:
     from jarvis import agent_accounts
 
     return agent in agent_accounts.platforms()
+
 
 # A pane that runs the machine's own shell and nothing else — see `agent_argv`.
 # It is NOT in AGENT_BINARIES on purpose: it has no account, no conversation to
@@ -198,6 +197,7 @@ def _unavailable(agent: str) -> str:
             "Install it from the CLIs page, then try again."
         )
     return f"{pretty} cannot open: this machine has no shell Jarvis can start."
+
 
 # How many panes one workspace may hold.
 #
@@ -793,9 +793,7 @@ def agent_argv(agent: str) -> tuple[str, ...] | None:
     return (exe, *spec.launch_args)
 
 
-def _behind_win_shim(
-    spec: workspace_agents.WorkspaceAgent, shim: str
-) -> tuple[str, ...] | None:
+def _behind_win_shim(spec: workspace_agents.WorkspaceAgent, shim: str) -> tuple[str, ...] | None:
     """What the Windows ``.cmd`` shim would have launched, launched directly.
 
     ``cmd /c <shim>`` works and stays the fallback, but it wedges a second
@@ -878,6 +876,16 @@ class Terminal:
     # that is already on screen — least of all one mid-conversation, which would
     # hand a resumed transcript to an account that has never seen it.
     account: str | None = None
+    # True only when `account` was DELIBERATELY chosen — named in the wizard's
+    # per-pane picker, passed explicitly to the API, or carried over by
+    # splitting such a pane. False for a pane that simply followed the
+    # workspace's active account at creation. Splits consult this: only a
+    # deliberate seat is worth propagating. Without the distinction every pane
+    # inherited its anchor's account, so in a workspace whose panes all shared
+    # one seat the subscription switcher could never reach a single new pane —
+    # the 2026-08-12 report: "I changed my subscriptions twice and it doesn't
+    # change", with every split resurrecting the seat the user had just left.
+    account_pinned: bool = False
     status: Status = "pending"
     pty_id: str | None = None
     # The geometry the PTY ACTUALLY holds, as last handed to `setwinsize`.
@@ -1257,6 +1265,7 @@ class Terminal:
             resume=self.resume,
             prompts_sent=self.prompts_sent,
             account=self.account,
+            account_pinned=self.account_pinned,
             continuation_needed=self.resume_continuation_needed,
         )
 
@@ -1815,6 +1824,8 @@ class Registry:
                 wanted = str(entry.get("name") or "").strip() or pool[index]
                 name = _unique_name(wanted, used)
                 used.add(normalize(name))
+                requested_account = _requested_account(entry)
+                resolved_account = resolve_account(agent, requested_account)
                 terminals.append(
                     Terminal(
                         key=normalize(name) or f"t{index}",
@@ -1828,7 +1839,13 @@ class Registry:
                         # workspace that appears is the one that was shown.
                         column=index // WIZARD_COLUMN_HEIGHT,
                         slot=index % WIZARD_COLUMN_HEIGHT,
-                        account=resolve_account(agent, _requested_account(entry)),
+                        account=resolved_account,
+                        # A seat named in the wizard is a deliberate choice and
+                        # travels through later splits; one that merely fell to
+                        # the active default (or an id that no longer resolves)
+                        # is not, and vouches for nothing.
+                        account_pinned=requested_account is not None
+                        and resolved_account == requested_account,
                     )
                 )
 
@@ -2087,8 +2104,13 @@ class Registry:
         except OSError as exc:
             raise SessionError(f"Cannot open {root}: {exc}") from exc
 
-        terminals = [
-            Terminal(
+        def _restored(index: int, entry: resume_store.SnapshotTerminal) -> Terminal:
+            # The remembered account, re-validated: a pane must come back on
+            # the subscription whose history holds its conversation, and an
+            # account deleted in the meantime falls back to the active one
+            # rather than failing the reopen.
+            account = resolve_account(entry.agent, entry.account)
+            return Terminal(
                 key=entry.key or normalize(entry.name) or f"t{index}",
                 name=entry.name,
                 agent=entry.agent,
@@ -2100,14 +2122,14 @@ class Registry:
                 resume=entry.resume,
                 prompts_sent=entry.prompts_sent,
                 resume_continuation_needed=entry.continuation_needed,
-                # The remembered account, re-validated: a pane must come back
-                # on the subscription whose history holds its conversation,
-                # and an account deleted in the meantime falls back to the
-                # active one rather than failing the reopen.
-                account=resolve_account(entry.agent, entry.account),
+                account=account,
+                # The pin survives the restart only while the seat it vouches
+                # for does — a fallback onto the active account is not the
+                # choice the snapshot remembered.
+                account_pinned=entry.account_pinned and account == entry.account,
             )
-            for index, entry in enumerate(space.terminals)
-        ]
+
+        terminals = [_restored(index, entry) for index, entry in enumerate(space.terminals)]
         # Which of them will come back mid-task, decided HERE rather than when
         # each pane's agent happens to start.
         #
@@ -2453,9 +2475,7 @@ class Registry:
         session.surface_terminal = selected.name if selected is not None else ""
         prompt = session.find(prompt_target or "") if session.surface_on_screen else None
         session.surface_prompt_target = (
-            prompt.name
-            if prompt is not None and accepts_prompts(prompt.agent)
-            else ""
+            prompt.name if prompt is not None and accepts_prompts(prompt.agent) else ""
         )
         return True
 
@@ -2504,15 +2524,11 @@ class Registry:
             started = True
         finally:
             if started:
-                asyncio.get_running_loop().call_later(
-                    COLD_START_SETTLE_S, gate.release
-                )
+                asyncio.get_running_loop().call_later(COLD_START_SETTLE_S, gate.release)
             else:
                 gate.release()
 
-    async def _acquire_agent_cold_start(
-        self, term: Terminal
-    ) -> asyncio.Semaphore | None:
+    async def _acquire_agent_cold_start(self, term: Terminal) -> asyncio.Semaphore | None:
         """Take this CLI/account's boot slot when its registry entry needs one.
 
         The machine-wide gate protects CPU and process count. This narrower gate
@@ -2822,9 +2838,7 @@ class Registry:
         # raising the flag again during attach would let a second click enqueue
         # the same nudge while the first is waiting for the input line.
         term.continuation_pending = (
-            term.resumed
-            and term.resume_continuation_needed
-            and not term.continue_when_ready
+            term.resumed and term.resume_continuation_needed and not term.continue_when_ready
         )
         if not term.resumed:
             term.resume_continuation_needed = False
@@ -2938,13 +2952,9 @@ class Registry:
                 env = await asyncio.to_thread(self._prepare_spawn, term, session.folder)
             else:
                 account_key = os.path.normcase(str(redirected_home))
-                account_gate = self._account_prepare_locks.setdefault(
-                    account_key, asyncio.Lock()
-                )
+                account_gate = self._account_prepare_locks.setdefault(account_key, asyncio.Lock())
                 async with account_gate:
-                    env = await asyncio.to_thread(
-                        self._prepare_spawn, term, session.folder
-                    )
+                    env = await asyncio.to_thread(self._prepare_spawn, term, session.folder)
         except SessionError as exc:
             term.status = "error"
             term.error = str(exc)
@@ -3080,6 +3090,7 @@ class Registry:
         closing that workspace cancels it rather than leaving a nudge in flight
         for a pane that no longer exists.
         """
+
         async def _nudge() -> None:
             try:
                 await self.send_prompt(
@@ -3465,9 +3476,7 @@ class Registry:
         # Most recently foregrounded last: if this owner closes, ``detach`` can
         # promote the viewer the user interacted with most recently before it.
         term.watchers = [
-            watched
-            for watched in term.watchers
-            if not _same_viewer(watched.output, viewer)
+            watched for watched in term.watchers if not _same_viewer(watched.output, viewer)
         ]
         term.watchers.append(claimed)
         term.viewer_output = claimed.output
@@ -3480,9 +3489,7 @@ class Registry:
             viewer=claimed.output,
         )
 
-    def pty_geometry(
-        self, key: str, workspace_id: str | None = None
-    ) -> tuple[int, int] | None:
+    def pty_geometry(self, key: str, workspace_id: str | None = None) -> tuple[int, int] | None:
         """The size this pane's agent is really drawing in, or ``None``.
 
         The answer a viewer needs to keep its own grid honest. ``resize`` is
@@ -3563,9 +3570,7 @@ class Registry:
                 if term_found is not None and term_found.pty_cols
                 else None
             )
-            if current is None or (
-                current[0] >= MIN_VIEWER_COLS and current[1] >= MIN_VIEWER_ROWS
-            ):
+            if current is None or (current[0] >= MIN_VIEWER_COLS and current[1] >= MIN_VIEWER_ROWS):
                 logger.debug(
                     "Agentic IDE: kept {}'s working geometry instead of a {}x{} tile",
                     key,
@@ -3736,11 +3741,13 @@ class Registry:
         installed agent, which is how the UI offers a choice of coding CLI.
 
         ``account`` names which subscription of that agent to run on. Without
-        one, a pane split off a NAMED anchor inherits that anchor's account —
-        splitting a pane that runs the second plan should stay on the second
-        plan, or a "split" would quietly move the work onto a different bill —
-        while every other new pane opens on the workspace's active account
-        (``set_active_account``).
+        one, every new pane opens on the workspace's active account
+        (``set_active_account``) — with one exception: a pane split off an
+        anchor whose seat was DELIBERATELY chosen (wizard picker, explicit
+        ``account``, or itself split off such a pane) stays on that seat, so
+        multiplying a second-plan pane cannot quietly move the work onto a
+        different bill. An anchor that merely followed the default vouches for
+        nothing, and its splits follow the switch like every other new pane.
         """
         async with self._lock:
             session = self.session
@@ -3776,31 +3783,51 @@ class Registry:
             final = _unique_name(wanted, used)
 
             # Which subscription the new pane opens on, when the caller named
-            # none. Two different questions, so two different answers:
+            # none. The rule, in priority order:
             #
-            # * **A named anchor is a split** — "another one of these". It
-            #   inherits, and only when the CLI matches (a Claude account id
-            #   means nothing to Codex), so splitting a pane that runs the
-            #   second plan cannot quietly move the work onto a different bill.
-            # * **Everything else is a NEW terminal** — the batch behind "open
-            #   five more", the empty grid's button, the CLI. Those follow the
-            #   workspace's active account, which is exactly the promise the
-            #   account switcher makes: switching applies to new terminals.
+            # * **An explicit ``account`` wins** and marks the pane as pinned —
+            #   this seat was chosen on purpose, so splits of it may carry it on.
+            # * **A split of a PINNED pane inherits that seat** (only when the
+            #   CLI matches — a Claude account id means nothing to Codex), so a
+            #   pane deliberately opened on the second plan can be multiplied
+            #   without quietly moving the work onto a different bill.
+            # * **Everything else follows the workspace's active account** —
+            #   the batch behind "open five more", the empty grid's button, the
+            #   CLI, and a split of a pane that itself only followed the default.
             #
-            # Anchor-less used to inherit from whatever pane happened to be last,
-            # which made the switch reach nothing a user could predict: flipping
-            # to the second seat and opening a terminal still billed the first.
-            if anchor and base is not None and base.agent == chosen:
-                inherited = base.account
-            else:
-                inherited = self.active_account_id(chosen)
+            # That last clause is the 2026-08-12 fix. Splits used to inherit
+            # their anchor's account unconditionally, and in a workspace whose
+            # panes all shared one seat that made the subscription switcher
+            # unreachable: the user switched twice, opened panes by splitting —
+            # the dominant gesture — and every one resurrected the seat they had
+            # just left ("I changed my subscriptions twice and it doesn't
+            # change"). A pane that merely followed the default is not a
+            # deliberate deviation, so it has no seat worth propagating; only a
+            # chosen one does. (Anchor-less adds learned the same lesson
+            # earlier: inheriting from whatever pane happened to be last made
+            # the switch reach nothing a user could predict.)
+            requested_account = (account or "").strip() or None
+            if (
+                requested_account is None
+                and anchor
+                and base is not None
+                and base.agent == chosen
+                and base.account_pinned
+            ):
+                requested_account = base.account
+            resolved_account = resolve_account(chosen, requested_account)
             term = Terminal(
                 key=normalize(final) or f"t{len(session.terminals)}",
                 name=final,
                 agent=chosen,
                 display_name=agent_display(chosen),
                 index=len(session.terminals),
-                account=resolve_account(chosen, account or inherited),
+                account=resolved_account,
+                # An unknown requested id falls back to the active account
+                # (see resolve_account) — a fallback is not a choice, so it
+                # must not be pinned as one.
+                account_pinned=requested_account is not None
+                and resolved_account == requested_account,
             )
             session.terminals.append(term)
             # Where it goes is the tree's business, and the distinction is the
@@ -3868,9 +3895,7 @@ class Registry:
                 break
         return created, len(created) < wanted
 
-    async def move_terminal(
-        self, wanted: str, *, target: str, position: str = "swap"
-    ) -> Terminal:
+    async def move_terminal(self, wanted: str, *, target: str, position: str = "swap") -> Terminal:
         """Put an existing pane somewhere else in the grid.
 
         The rearranging half of the two-axis model ``add_terminal`` builds: no
@@ -3917,9 +3942,7 @@ class Registry:
             # the four sides carve the TARGET's own rectangle — the same local
             # meaning the split buttons have, at any depth. The moved pane's
             # old room dissolves to its former siblings on the way out.
-            session.layout = layout_tree.move_pane(
-                session.layout, moved.key, anchor.key, position
-            )
+            session.layout = layout_tree.move_pane(session.layout, moved.key, anchor.key, position)
             self._renumber(session)
             await self._persist()
             logger.info(
@@ -3976,9 +3999,7 @@ class Registry:
             # a whole-workspace re-deal by definition, and carrying dragged
             # weights from an arrangement that no longer exists would re-fold
             # into something nobody has seen before.
-            session.layout = layout_tree.wizard_tree(
-                [t.key for t in session.terminals], depth
-            )
+            session.layout = layout_tree.wizard_tree([t.key for t in session.terminals], depth)
             self._renumber(session)
             await self._persist()
             logger.info(
@@ -4011,9 +4032,7 @@ class Registry:
                 proposed = layout_tree.from_dict(layout)
             except ValueError as exc:
                 raise SessionError(f"Unreadable layout: {exc}") from exc
-            if session.layout is not None and layout_tree.same_shape(
-                session.layout, proposed
-            ):
+            if session.layout is not None and layout_tree.same_shape(session.layout, proposed):
                 session.layout = layout_tree.adopt_weights(session.layout, proposed)
                 await self._persist()
             else:
@@ -4052,9 +4071,7 @@ class Registry:
         if not cleaned:
             raise SessionError("Give the terminal a name.")
         if len(cleaned) > MAX_TERMINAL_NAME:
-            raise SessionError(
-                f"Terminal names can be at most {MAX_TERMINAL_NAME} characters."
-            )
+            raise SessionError(f"Terminal names can be at most {MAX_TERMINAL_NAME} characters.")
         if not normalize(cleaned):
             raise SessionError("Give the terminal a name with letters or numbers in it.")
         async with self._lock:
@@ -4556,9 +4573,7 @@ def _unique_name(wanted: str, used: set[str]) -> str:
     if normalize(wanted) not in used:
         return wanted
     if position_of(wanted) is not None:
-        return free_positions(
-            [name for name in used if position_of(name) is not None], 1
-        )[0]
+        return free_positions([name for name in used if position_of(name) is not None], 1)[0]
     suffix = 2
     while normalize(f"{wanted} {suffix}") in used:
         suffix += 1
