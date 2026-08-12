@@ -178,15 +178,11 @@ class _HttpEmbedding:
                 f"{self.name}: embedding request failed ({type(exc).__name__})"
             ) from exc
         except ValueError as exc:  # response body is not JSON
-            raise EmbeddingError(
-                f"{self.name}: embedding response is not valid JSON"
-            ) from exc
+            raise EmbeddingError(f"{self.name}: embedding response is not valid JSON") from exc
 
     def _check_count(self, vectors: list[list[float]], expected: int) -> list[list[float]]:
         if len(vectors) != expected:
-            raise EmbeddingError(
-                f"{self.name}: expected {expected} vectors, got {len(vectors)}"
-            )
+            raise EmbeddingError(f"{self.name}: expected {expected} vectors, got {len(vectors)}")
         return vectors
 
 
@@ -235,19 +231,29 @@ class OllamaEmbedding(_HttpEmbedding):
             try:
                 got = [list(map(float, vec)) for vec in data["embeddings"]]
             except (KeyError, TypeError, ValueError) as exc:
-                raise EmbeddingError(
-                    f"{self.name}: unexpected embedding response shape"
-                ) from exc
+                raise EmbeddingError(f"{self.name}: unexpected embedding response shape") from exc
             vectors.extend(self._check_count(got, len(chunk)))
         return vectors
 
 
 class GeminiEmbedding(_HttpEmbedding):
-    """Google AI Studio (Gemini) via REST ``batchEmbedContents``."""
+    """Google Gemini embeddings — AI Studio REST, Vertex express when routed.
+
+    AI Studio keys use ``batchEmbedContents`` (unchanged historical path).
+    A key that :mod:`jarvis.core.google_genai` resolves to Vertex express
+    mode goes through ``:predict`` on the global aiplatform host instead —
+    the ``:embedContent`` route does not exist there (measured 2026-08-12).
+    Vertex serves gemini-embedding-001 one instance per request, so the
+    express path sends texts individually; embedding runs are background
+    jobs, and a correct slow lane beats a fast 400.
+    """
 
     name = "gemini"
 
     _BASE = "https://generativelanguage.googleapis.com/v1beta"
+    _VERTEX_URL_TMPL = (
+        "https://aiplatform.googleapis.com/v1beta1/publishers/google/models/{model}:predict"
+    )
     _KEY_LABEL = "Gemini"
 
     def _key(self) -> str | None:
@@ -273,6 +279,11 @@ class GeminiEmbedding(_HttpEmbedding):
         key = self._key()
         if not key:
             raise EmbeddingError(f"{self.name}: no API key configured")
+        # Route check is lazy and cached process-wide; AIza keys never probe.
+        from jarvis.core.google_genai import resolve_google_key_route_async
+
+        if await resolve_google_key_route_async(key) == "vertex":
+            return await self._embed_vertex(key, texts, model=model)
         url = f"{self._BASE}/models/{model}:batchEmbedContents"
         vectors: list[list[float]] = []
         for chunk in _chunks(texts, _CHUNK_SIZE):
@@ -292,11 +303,41 @@ class GeminiEmbedding(_HttpEmbedding):
             try:
                 got = [list(map(float, entry["values"])) for entry in data["embeddings"]]
             except (KeyError, TypeError, ValueError) as exc:
-                raise EmbeddingError(
-                    f"{self.name}: unexpected embedding response shape"
-                ) from exc
+                raise EmbeddingError(f"{self.name}: unexpected embedding response shape") from exc
             vectors.extend(self._check_count(got, len(chunk)))
         return vectors
+
+    async def _embed_vertex(self, key: str, texts: list[str], *, model: str) -> list[list[float]]:
+        """Vertex express ``:predict`` lane — one instance per request.
+
+        Embeddings are officially undocumented for express mode (only
+        countTokens/generateContent/streamGenerateContent are in scope), so a
+        rejection here is a real possibility — the wrapped error says what to
+        do about it instead of leaving a bare HTTP code.
+        """
+        url = self._VERTEX_URL_TMPL.format(model=model)
+        vectors: list[list[float]] = []
+        for text in texts:
+            try:
+                data = await self._post_json(
+                    url,
+                    headers={"x-goog-api-key": key},
+                    payload={"instances": [{"content": text}]},
+                )
+            except EmbeddingError as exc:
+                raise EmbeddingError(
+                    f"{exc} — this Google key routes through Vertex AI "
+                    "express mode; if embeddings stay unavailable there, use "
+                    "a Google AI Studio key for UltraWiki embeddings."
+                ) from exc
+            try:
+                values = data["predictions"][0]["embeddings"]["values"]
+                vectors.append([float(v) for v in values])
+            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                raise EmbeddingError(
+                    f"{self.name}: unexpected Vertex embedding response shape"
+                ) from exc
+        return self._check_count(vectors, len(texts))
 
 
 class _OpenAIShapedEmbedding(_HttpEmbedding):
@@ -326,8 +367,7 @@ class _OpenAIShapedEmbedding(_HttpEmbedding):
         # out the raw snake_case slot name, which is noise next to the input
         # box it names. The env var stays: that is the headless recovery path.
         return False, (
-            f"No {self._KEY_LABEL} API key yet - add one below, "
-            f"or set {self._SECRET_SLOT.upper()}."
+            f"No {self._KEY_LABEL} API key yet - add one below, or set {self._SECRET_SLOT.upper()}."
         )
 
     async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
@@ -346,9 +386,7 @@ class _OpenAIShapedEmbedding(_HttpEmbedding):
                 rows.sort(key=lambda row: int(row.get("index", 0)))
                 got = [list(map(float, row["embedding"])) for row in rows]
             except (KeyError, TypeError, ValueError) as exc:
-                raise EmbeddingError(
-                    f"{self.name}: unexpected embedding response shape"
-                ) from exc
+                raise EmbeddingError(f"{self.name}: unexpected embedding response shape") from exc
             vectors.extend(self._check_count(got, len(chunk)))
         return vectors
 
@@ -424,9 +462,7 @@ class CohereEmbedding(_HttpEmbedding):
             try:
                 got = [list(map(float, vec)) for vec in data["embeddings"]["float"]]
             except (KeyError, TypeError, ValueError) as exc:
-                raise EmbeddingError(
-                    f"{self.name}: unexpected embedding response shape"
-                ) from exc
+                raise EmbeddingError(f"{self.name}: unexpected embedding response shape") from exc
             vectors.extend(self._check_count(got, len(chunk)))
         return vectors
 

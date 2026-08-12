@@ -179,9 +179,7 @@ async def test_gemini_embed_uses_batch_endpoint_header_key_and_parses(fake_secre
 
     assert vectors == [[1.0, 2.0], [3.0, 4.0]]
     request = captured[0]
-    assert str(request.url).endswith(
-        "/v1beta/models/gemini-embedding-001:batchEmbedContents"
-    )
+    assert str(request.url).endswith("/v1beta/models/gemini-embedding-001:batchEmbedContents")
     assert request.headers["x-goog-api-key"] == FAKE_KEY
     body = _body(request)
     assert body["requests"][0]["model"] == "models/gemini-embedding-001"
@@ -193,6 +191,61 @@ def test_gemini_ready_without_key_is_false_with_honest_reason(no_secrets):
     usable, reason = GeminiEmbedding().ready()
     assert usable is False
     assert "gemini_api_key" in reason
+
+
+@pytest.fixture
+def vertex_routed_key(monkeypatch):
+    """A fake AQ. key whose route verdict is pre-cached as Vertex — offline.
+
+    The verdict is produced by the REAL resolver logic against a mock
+    transport (AI Studio rejects, Vertex countTokens accepts), then served
+    from the process-wide cache inside ``embed()`` — no network anywhere.
+    """
+    from jarvis.core import google_genai as gg
+
+    key = "AQ.unit-vertex-key"
+    monkeypatch.setattr(emb, "get_secret", lambda k, env_fallback=None: key)
+    monkeypatch.setattr(emb, "get_secret_any", lambda candidates: key)
+    gg.reset_route_cache()
+
+    def probe(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "generativelanguage.googleapis.com":
+            return httpx.Response(401, json={})
+        return httpx.Response(200, json={})
+
+    assert gg.resolve_google_key_route(key, transport=httpx.MockTransport(probe)) == "vertex"
+    yield key
+    gg.reset_route_cache()
+
+
+async def test_gemini_embed_routes_vertex_keys_through_predict(vertex_routed_key):
+    captured: list[httpx.Request] = []
+    handler = _json_handler({"predictions": [{"embeddings": {"values": [1.0, 2.0]}}]}, captured)
+    backend = GeminiEmbedding(transport=httpx.MockTransport(handler))
+
+    vectors = await backend.embed(["one", "two"], model="gemini-embedding-001")
+
+    assert vectors == [[1.0, 2.0], [1.0, 2.0]]
+    # One instance per request: Vertex serves gemini-embedding-001 singly.
+    assert len(captured) == 2
+    assert str(captured[0].url).endswith(
+        "/v1beta1/publishers/google/models/gemini-embedding-001:predict"
+    )
+    assert captured[0].headers["x-goog-api-key"] == vertex_routed_key
+    assert _body(captured[0]) == {"instances": [{"content": "one"}]}
+    assert _body(captured[1]) == {"instances": [{"content": "two"}]}
+
+
+async def test_gemini_vertex_rejection_names_the_way_out(vertex_routed_key):
+    handler = _json_handler({"error": {"status": "PERMISSION_DENIED"}}, [], status=403)
+    backend = GeminiEmbedding(transport=httpx.MockTransport(handler))
+
+    with pytest.raises(EmbeddingError) as exc_info:
+        await backend.embed(["one"], model="gemini-embedding-001")
+
+    # Express embeddings are undocumented territory — a rejection must tell
+    # the user what to do (switch to an AI Studio key), not just an HTTP code.
+    assert "AI Studio key" in str(exc_info.value)
 
 
 # ----------------------------------------------------------------------
