@@ -136,6 +136,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 ## outputs
 
 - `jarvis outputs files <slug>` — List the artifacts a mission produced.
+- `jarvis outputs graph <slug>` — Print a session's mission-map page (self-contained HTML node graph).
 - `jarvis outputs list` — List output sessions (a mission's deliverable folders).
 - `jarvis outputs open-with <slug> <path> --opener --yes --dry-run` — Open an artifact with a chosen editor (desktop only).
 - `jarvis outputs openers` — List installed editors/apps that can open an artifact.
