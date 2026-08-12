@@ -26,9 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 logger = logging.getLogger(__name__)
 
 # Repo-root data/ — same resolution as jarvis/marketplace/catalog_data.py.
-_CACHE_PATH = (
-    Path(__file__).resolve().parent.parent.parent / "data" / "marketplace_index.json"
-)
+_CACHE_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "marketplace_index.json"
 
 _FETCH_TIMEOUT = httpx.Timeout(connect=3.0, read=10.0, write=10.0, pool=10.0)
 # How long a fetched index stays fresh before a view-open refetches it. The

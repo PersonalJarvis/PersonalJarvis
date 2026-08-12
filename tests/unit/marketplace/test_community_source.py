@@ -52,9 +52,7 @@ def _transport(handler: Any) -> httpx.MockTransport:
 
 
 def _seed_cache(path: Path, payload: dict[str, Any], fetched_at: float) -> None:
-    path.write_text(
-        json.dumps({"fetched_at": fetched_at, "index": payload}), encoding="utf-8"
-    )
+    path.write_text(json.dumps({"fetched_at": fetched_at, "index": payload}), encoding="utf-8")
 
 
 def _cache_exists(path: Path) -> bool:
@@ -94,9 +92,7 @@ async def test_force_refetches_inside_ttl(cache_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_index_payload(revision=2))
 
-    index, status = await community_source.get_index(
-        force=True, transport=_transport(handler)
-    )
+    index, status = await community_source.get_index(force=True, transport=_transport(handler))
     assert status == "fetched"
     assert index is not None and index.revision == 2
 

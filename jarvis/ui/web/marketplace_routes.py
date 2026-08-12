@@ -6,6 +6,10 @@ Endpoints:
     POST   /api/marketplace/plugins/{id}/connect/start     — kick off OAuth redirect flow
     GET    /api/marketplace/plugins/{id}/connect/poll/{flow_id} — poll until completion
     DELETE /api/marketplace/plugins/{id}                   — disconnect
+    GET    /api/marketplace/community                      — community index browse
+    POST   /api/marketplace/community/refresh              — force index re-fetch
+    POST   /api/marketplace/community/plugins/{id}/install — one-click install
+    DELETE /api/marketplace/community/plugins/{id}         — uninstall + revoke
 """
 
 from __future__ import annotations
@@ -723,3 +727,225 @@ async def disconnect(plugin_id: str, request: Request) -> dict[str, Any]:
         # whether the user still has to remove the app at the provider.
         "revocation": revocation,
     }
+
+
+# ----------------------------------------------------------------------
+# Community marketplace (registry index browse / install / uninstall)
+# ----------------------------------------------------------------------
+
+
+def _community_payload(
+    index: Any, status: str
+) -> dict[str, Any]:
+    """Convert a fetched index into the wire shape the Plugins view renders.
+
+    Every plugin entry is run through the SAME converter the install path
+    uses, so "shown as installable" and "actually installs" cannot drift: an
+    entry the loader rejects renders as an explicit incompatible card instead
+    of failing later at install time. Skills carry their install state from
+    the user skills directory.
+    """
+    from jarvis.core.paths import user_skills_dir
+    from jarvis.marketplace.agent_plugins_loader import (
+        AgentPluginError,
+        convert_manifest,
+    )
+
+    catalog = load_catalog()
+    installed_specs = {spec.id: spec for spec in catalog.plugins}
+
+    plugins: list[dict[str, Any]] = []
+    skills: list[dict[str, Any]] = []
+    if index is not None:
+        for entry in index.plugins:
+            base = {
+                "name": entry.name,
+                "publisher": entry.publisher,
+                "version": entry.version,
+                "published_at": entry.published_at,
+                "source_url": entry.source_url,
+            }
+            try:
+                spec = convert_manifest(
+                    entry.plugin_json,
+                    entry.mcp_json,
+                    publisher=entry.publisher,
+                    version=entry.version,
+                    source_url=entry.source_url,
+                )
+                if spec.id != entry.name:
+                    raise AgentPluginError(
+                        f"index name {entry.name!r} does not match manifest "
+                        f"name {spec.id!r}"
+                    )
+            except AgentPluginError as exc:
+                plugins.append({**base, "valid": False, "error": str(exc)})
+                continue
+            item = spec.model_dump(mode="json")
+            item.update(base)
+            item["valid"] = True
+            existing = installed_specs.get(spec.id)
+            item["installed"] = existing is not None and existing.source == "community"
+            item["installed_version"] = (
+                existing.version if existing is not None else None
+            )
+            # A community name colliding with a shipped plugin is never
+            # installable — surfaced so the UI explains WHY the button is off.
+            item["seed_conflict"] = (
+                existing is not None and existing.source != "community"
+            )
+            item["has_usage_card"] = bool(entry.usage_card)
+            plugins.append(item)
+
+        skills_root = user_skills_dir()
+        for skill in index.skills:
+            skills.append(
+                {
+                    "name": skill.name,
+                    "title": skill.title or skill.name,
+                    "description": skill.description,
+                    "publisher": skill.publisher,
+                    "version": skill.version,
+                    "published_at": skill.published_at,
+                    "categories": list(skill.categories),
+                    "source_url": skill.source_url,
+                    "raw_url": skill.raw_url,
+                    "installed": (skills_root / skill.name / "SKILL.md").exists(),
+                }
+            )
+
+    return {
+        "status": status,
+        "revision": getattr(index, "revision", None),
+        "generated_at": getattr(index, "generated_at", None),
+        "plugins": plugins,
+        "skills": skills,
+    }
+
+
+@router.get("/community", openapi_extra={"x-jarvis-readonly": True})
+async def community_browse(response: Response) -> dict[str, Any]:
+    """The community index (TTL-cached fetch), enriched with install state."""
+    from jarvis.marketplace import community_source
+
+    response.headers["Cache-Control"] = "no-store"
+    index, status = await community_source.get_index()
+    return _community_payload(index, status)
+
+
+@router.post("/community/refresh")
+async def community_refresh(response: Response) -> dict[str, Any]:
+    """Force a re-fetch of the community index, bypassing the TTL."""
+    from jarvis.marketplace import community_source
+
+    response.headers["Cache-Control"] = "no-store"
+    index, status = await community_source.get_index(force=True)
+    return _community_payload(index, status)
+
+
+@router.post("/community/plugins/{plugin_id}/install")
+async def community_install(plugin_id: str) -> dict[str, Any]:
+    """One-click install: convert the manifest, persist the catalog entry and
+    usage card, refresh the live registry. The plugin then behaves exactly
+    like a seed plugin (connect flows, relevance gate, worker bridge)."""
+    from jarvis.marketplace import community_source
+    from jarvis.marketplace.agent_plugins_loader import (
+        AgentPluginError,
+        convert_manifest,
+    )
+    from jarvis.marketplace.community_install import (
+        install_plugin_spec,
+        seed_plugin_ids,
+    )
+    from jarvis.marketplace.usage_cards.loader import save_usage_card
+
+    index, _ = await community_source.get_index()
+    entry = None
+    if index is not None:
+        entry = next((e for e in index.plugins if e.name == plugin_id), None)
+    if entry is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"plugin {plugin_id!r} is not in the community index",
+        )
+    if plugin_id in seed_plugin_ids():
+        raise HTTPException(
+            status_code=409,
+            detail=f"{plugin_id!r} is a built-in plugin id and cannot be "
+            "installed from the community index",
+        )
+    existing = load_catalog().by_id(plugin_id)
+    if existing is not None and existing.source != "community":
+        raise HTTPException(
+            status_code=409,
+            detail=f"{plugin_id!r} already exists in the local catalog",
+        )
+    try:
+        spec = convert_manifest(
+            entry.plugin_json,
+            entry.mcp_json,
+            publisher=entry.publisher,
+            version=entry.version,
+            source_url=entry.source_url,
+        )
+        if spec.id != plugin_id:
+            raise AgentPluginError(
+                f"index name {plugin_id!r} does not match manifest name {spec.id!r}"
+            )
+    except AgentPluginError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        install_plugin_spec(spec)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    if entry.usage_card:
+        try:
+            save_usage_card(spec.id, entry.usage_card)
+        except (ValueError, OSError) as exc:
+            # Keywords are a quality upgrade, not a prerequisite — the
+            # relevance gate still matches on the plugin's own name/tools.
+            log.warning("usage card for %s not saved: %s", spec.id, exc)
+    _refresh_plugin_in_live_registry(spec.id)
+    item = spec.model_dump(mode="json")
+    item["status"] = "not_connected"
+    return {"ok": True, "plugin": item}
+
+
+@router.delete("/community/plugins/{plugin_id}")
+async def community_uninstall(plugin_id: str) -> dict[str, Any]:
+    """Remove an installed community plugin: revoke + drop stored tokens,
+    remove the catalog entry and its usage card, refresh the live registry."""
+    from jarvis.marketplace.community_install import remove_community_plugin
+    from jarvis.marketplace.usage_cards.loader import delete_usage_card
+
+    spec = load_catalog().by_id(plugin_id)
+    if spec is None:
+        raise HTTPException(
+            status_code=404, detail=f"plugin {plugin_id!r} not in catalog"
+        )
+    if spec.source != "community":
+        raise HTTPException(
+            status_code=409,
+            detail=f"{plugin_id!r} is a built-in plugin — disconnect it "
+            "instead of uninstalling",
+        )
+
+    store = TokenStore()
+    revocation = "unsupported"
+    try:
+        tokens = store.load(plugin_id)
+        if tokens is not None:
+            revocation = await revoke_tokens(spec, tokens)
+    except Exception as exc:  # noqa: BLE001 - never block the uninstall
+        log.info("plugin %s revocation skipped: %s", plugin_id, exc)
+        revocation = "failed"
+    store.delete(plugin_id)
+
+    try:
+        removed = remove_community_plugin(plugin_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    delete_usage_card(plugin_id)
+    _refresh_plugin_in_live_registry(plugin_id)
+    return {"ok": True, "removed": removed, "revocation": revocation}

@@ -84,14 +84,10 @@ def _reject_http_urls(value: Any, where: str) -> None:
 def _validate_auth_header_template(template: str) -> str:
     """The template must inject a token PLACEHOLDER, never a literal token."""
     if not _HEADER_PLACEHOLDER_RE.search(template):
-        raise AgentPluginError(
-            "mcp_auth_header_template must reference a $plugin_… placeholder"
-        )
+        raise AgentPluginError("mcp_auth_header_template must reference a $plugin_… placeholder")
     remainder = _HEADER_PLACEHOLDER_RE.sub(" ", template)
     if _TOKEN_LITERAL_RE.search(remainder):
-        raise AgentPluginError(
-            "mcp_auth_header_template may not embed literal credentials"
-        )
+        raise AgentPluginError("mcp_auth_header_template may not embed literal credentials")
     return template
 
 
@@ -100,9 +96,7 @@ def _convert_http_server(
 ) -> dict[str, Any]:
     url = _require_str(server.get("url"), f"mcp.json server {name!r}: url")
     if not url.lower().startswith("https://"):
-        raise AgentPluginError(
-            f"mcp.json server {name!r}: url must be https:// (got {url!r})"
-        )
+        raise AgentPluginError(f"mcp.json server {name!r}: url must be https:// (got {url!r})")
     if server.get("headers"):
         # The spec forbids credentials in headers; community manifests get the
         # stricter rule (no headers at all) because a static header IS how a
@@ -206,9 +200,7 @@ def convert_manifest(
     description = _require_str(plugin_json.get("description"), "plugin description")
 
     extensions = plugin_json.get("extensions")
-    extension = (
-        extensions.get(EXTENSION_NAMESPACE) if isinstance(extensions, Mapping) else None
-    )
+    extension = extensions.get(EXTENSION_NAMESPACE) if isinstance(extensions, Mapping) else None
     if not isinstance(extension, Mapping):
         raise AgentPluginError(
             f'plugin.json needs extensions["{EXTENSION_NAMESPACE}"] with the '
@@ -230,9 +222,7 @@ def convert_manifest(
         )
     _reject_http_urls(auth, "auth")
 
-    mcp_server = (
-        _convert_mcp_json(name, mcp_json, extension) if mcp_json is not None else None
-    )
+    mcp_server = _convert_mcp_json(name, mcp_json, extension) if mcp_json is not None else None
 
     logo_url = extension.get("logo_url")
     if logo_url is not None:
@@ -264,11 +254,12 @@ def convert_manifest(
             }
         )
     except ValidationError as exc:
-        first = exc.errors()[0] if exc.errors() else {}
-        location = ".".join(str(part) for part in first.get("loc", ())) or "manifest"
-        raise AgentPluginError(
-            f"manifest rejected at {location}: {first.get('msg', 'invalid value')}"
-        ) from exc
+        errors = exc.errors()
+        location, message = "manifest", "invalid value"
+        if errors:
+            location = ".".join(str(part) for part in errors[0]["loc"]) or location
+            message = str(errors[0]["msg"])
+        raise AgentPluginError(f"manifest rejected at {location}: {message}") from exc
 
 
 __all__ = ["AgentPluginError", "EXTENSION_NAMESPACE", "convert_manifest", "validate_spec_name"]

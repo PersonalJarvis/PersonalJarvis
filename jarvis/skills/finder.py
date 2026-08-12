@@ -303,6 +303,41 @@ async def _brain_rank(
 # Finder
 # ----------------------------------------------------------------------
 
+def _community_entries() -> list[dict[str, Any]]:
+    """Community skills from the CACHED marketplace index, in seed-entry shape.
+
+    Reads only the on-disk cache — search must stay fast and offline-safe, so
+    the network fetch happens at the route edge (TTL-gated), never here. An
+    unreadable or absent cache degrades to the seed catalog alone.
+    """
+    try:
+        from jarvis.marketplace.community_source import cached_index
+
+        index = cached_index()
+    except Exception:  # noqa: BLE001 - a broken cache must not kill search
+        log.warning("community skill entries unavailable", exc_info=True)
+        return []
+    if index is None:
+        return []
+    return [
+        {
+            "name": skill.name,
+            "title": skill.title or skill.name,
+            "description": skill.description,
+            "source": "marketplace",
+            "source_url": skill.source_url or "",
+            "raw_url": skill.raw_url,
+            "trust": "community",
+            "stars": None,
+            "categories": list(skill.categories),
+            "languages": ["en"],
+            "risk": "monitor",
+            "tags": [],
+        }
+        for skill in index.skills
+    ]
+
+
 class SkillFinder:
     """Mini-agent for skill search and installation."""
 
@@ -311,7 +346,13 @@ class SkillFinder:
 
     async def search(self, filters: SearchFilters) -> list[SkillCandidate]:
         """Filter + rank — returns up to ``filters.limit`` candidates."""
-        catalog = load_catalog()
+        catalog = list(load_catalog())
+        # Community entries join the pool AFTER the seed so a name the curated
+        # catalog already lists cannot be shadowed by a marketplace upload.
+        seen_names = {str(e.get("name")) for e in catalog}
+        catalog.extend(
+            e for e in _community_entries() if e["name"] not in seen_names
+        )
         filtered = [e for e in catalog if _passes_filter(e, filters)]
 
         if not filtered:
