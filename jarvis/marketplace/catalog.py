@@ -157,6 +157,19 @@ class PluginSpec(_BaseAuth):
     display_name: str
     description: str
     category: str
+    # Provenance. `source` is a plain string, not a Literal, for the same
+    # multi-layer-drift reason as `category` above: the value crosses
+    # Python -> JSON -> TS, and the frontend only ever compares it against
+    # "community" to decide whether to render the not-reviewed badge. Every
+    # existing seed entry and user override stays valid via the default.
+    source: str = "seed"
+    # GitHub login that published a community entry; None for shipped seeds.
+    publisher: str | None = None
+    # Manifest version string from the Agent Plugins package (community
+    # entries); the seed catalog versions as a whole via `PluginCatalog`.
+    version: str | None = None
+    # Where the entry came from (registry page for community entries).
+    source_url: str | None = None
     logo_slug: str
     logo_color: str | None = None
     # When set, the frontend uses this URL instead of the simpleicons CDN.
