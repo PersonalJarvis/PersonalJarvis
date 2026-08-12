@@ -405,8 +405,17 @@ def test_a_trigger_match_keeps_its_historical_rights(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_narrow_does_not_capture_but_does_narrow(tmp_path: Path) -> None:
-    """NARROW_UTTERANCE is measured to land in the NARROW band on this corpus."""
+def test_narrow_does_not_capture_but_injects_conditional_instructions(
+    tmp_path: Path,
+) -> None:
+    """NARROW_UTTERANCE is measured to land in the NARROW band on this corpus.
+
+    2026-08-12 escalation: a clear, non-dispatching top candidate carries its
+    FULL rendered instructions in a conditional frame — 60 name-only hints
+    shipped over 14 live days converted to zero run-skill calls, so the fast
+    router model needs the instructions in hand, not a tool round trip. The
+    decision (follow vs ignore) explicitly stays with the model.
+    """
     _write_skill(tmp_path, "focus", tags=FOCUS_TAGS)
     for filler in range(6):
         _write_skill(tmp_path, f"filler-{filler}", description=f"topic{filler}")
@@ -419,11 +428,95 @@ def test_narrow_does_not_capture_but_does_narrow(tmp_path: Path) -> None:
     assert manager._skill_relevance.band == "narrow"
     assert manager._skill_turn_match is None, "NARROW must never capture by default"
 
-    hint = manager._render_skill_candidate_hint()
+    hint = manager._render_skill_candidate_hint(NARROW_UTTERANCE)
     assert hint is not None
     assert "focus" in hint
-    assert "run-skill" in hint
-    assert "ranked suggestions" in hint, "the model must know it may ignore this"
+    # The stub runner's rendered body rides inline, conditionally framed.
+    assert "Do the thing." in hint
+    assert "--- skill instructions" in hint
+    assert "ignore this entire block" in hint, (
+        "the model must know it may ignore this"
+    )
+    # No capture side effects: run-skill stays visible for this turn.
+    assert manager._skill_injected_inline is False
+
+
+def test_a_dispatching_candidate_gets_a_named_hint_never_instructions(
+    tmp_path: Path,
+) -> None:
+    """A mission skill's body is a process-start directive. Off an INFERRED
+    match it may be named, never inlined — the same line may_capture draws.
+    """
+    _write_skill(
+        tmp_path,
+        "cloud-debug",
+        description="Dispatch a bug hunt to the background worker.",
+        tags=["debugsprint"],
+        execution="mission",
+    )
+    for filler in range(6):
+        _write_skill(tmp_path, f"filler-{filler}", description=f"topic{filler}")
+    _install(tmp_path)
+
+    manager = _make_manager()
+    manager._skill_turn_match = manager._match_skill_for_turn(
+        "mach mal einen debugsprint"
+    )
+    assert manager._skill_turn_match is None
+
+    hint = manager._render_skill_candidate_hint("mach mal einen debugsprint")
+    assert hint is not None
+    assert "cloud-debug" in hint
+    assert "ranked suggestions" in hint
+    assert "--- skill instructions" not in hint
+    assert "Do the thing." not in hint
+
+
+def test_a_near_tie_gets_a_short_list_not_instructions(tmp_path: Path) -> None:
+    """Two near-tied candidates are genuine ambiguity — the model picks from a
+    short list; the harness must not inline either one's instructions.
+    """
+    _write_skill(tmp_path, "focus-a", tags=["konzentrationsmodus"])
+    _write_skill(tmp_path, "focus-b", tags=["konzentrationsmodus"])
+    for filler in range(6):
+        _write_skill(tmp_path, f"filler-{filler}", description=f"topic{filler}")
+    _install(tmp_path)
+
+    manager = _make_manager()
+    manager._skill_turn_match = manager._match_skill_for_turn(NARROW_UTTERANCE)
+    assert manager._skill_turn_match is None
+
+    hint = manager._render_skill_candidate_hint(NARROW_UTTERANCE)
+    assert hint is not None
+    assert "focus-a" in hint and "focus-b" in hint
+    assert "--- skill instructions" not in hint
+
+
+def test_a_render_failure_falls_back_to_the_named_hint(tmp_path: Path) -> None:
+    """A broken Jinja body must degrade to the old hint, never to silence."""
+
+    class _RaisingRunner:
+        def render_instructions(
+            self, skill: Any, *, args: dict | None = None
+        ) -> str:
+            raise RuntimeError("template exploded")
+
+    _write_skill(tmp_path, "focus", tags=FOCUS_TAGS)
+    for filler in range(6):
+        _write_skill(tmp_path, f"filler-{filler}", description=f"topic{filler}")
+    registry = SkillRegistry(root=tmp_path)
+    registry.reload_sync()
+    set_skill_context(SkillContext(registry=registry, runner=_RaisingRunner()))  # type: ignore[arg-type]
+
+    manager = _make_manager()
+    manager._skill_turn_match = manager._match_skill_for_turn(NARROW_UTTERANCE)
+    assert manager._skill_turn_match is None
+
+    hint = manager._render_skill_candidate_hint(NARROW_UTTERANCE)
+    assert hint is not None
+    assert "focus" in hint
+    assert "ranked suggestions" in hint
+    assert "--- skill instructions" not in hint
 
 
 def test_the_hint_is_absent_on_a_captured_turn(tmp_path: Path) -> None:

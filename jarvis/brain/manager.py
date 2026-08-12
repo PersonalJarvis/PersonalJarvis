@@ -5265,14 +5265,36 @@ class BrainManager:
             return tools
         return {k: v for k, v in tools.items() if k != "run-skill"}
 
-    def _render_skill_candidate_hint(self) -> str | None:
+    #: Cap on the conditionally-injected instruction text for a NARROW match.
+    #: Bounded so one pathological skill body cannot flood a voice turn.
+    _NARROW_INJECTION_CHAR_CAP = 6_000
+
+    def _render_skill_candidate_hint(self, user_text: str = "") -> str | None:
         """Narrow the skill choice for a turn the matcher did NOT capture.
 
         The router's real problem was never that skills are invisible — it is
-        that all twenty listed skills look equally plausible while ~26k tokens
-        of tool schemas compete for attention. This block names the one to three
-        that actually scored, right next to the user's message, where recency is
+        that all the listed skills look equally plausible while ~26k tokens of
+        tool schemas compete for attention. This block puts the candidates that
+        actually scored right next to the user's message, where recency is
         worth more than position in a long cached list.
+
+        2026-08-12 escalation ("skills never fire" rework): a name-and-blurb
+        hint measurably did nothing — 60 NARROW hints shipped over 14 live days
+        and the model called run-skill exactly zero times. The fast router
+        model does not convert a suggestion into a tool round trip. So for a
+        CLEAR top candidate that cannot dispatch anything, the hint now carries
+        the skill's full rendered instructions in a conditional frame — the
+        model only has to decide "is this what the user meant", not decide AND
+        remember to call a tool (mirrors Claude Code loading a skill's whole
+        instruction body once selected). The decision explicitly stays with
+        the model: a wrong candidate is ignored, never executed, so a skill is
+        still only ever used when it serves the request.
+
+        A dispatching-class candidate (mission execution, block tier, macro
+        body) NEVER gets its instructions inlined off an inferred match — its
+        body is a process-start directive, and no matcher may authorize that
+        (same line ``autofire_policy.may_capture`` draws). It keeps the plain
+        named hint, where the model must consciously call ``run-skill``.
 
         Deliberately rides the PER-TURN context and never the cached system
         prefix: rewriting that prefix per turn would break prompt caching on
@@ -5301,9 +5323,10 @@ class BrainManager:
         except Exception:  # noqa: BLE001
             return None
 
-        lines: list[str] = []
+        # (candidate, skill, blurb) triples for every scoring candidate.
+        scored: list[tuple[Any, Any, str]] = []
         for candidate in candidates:
-            if len(lines) >= limit:
+            if len(scored) >= limit:
                 break
             if getattr(candidate, "band", BAND_NONE) == BAND_NONE:
                 continue
@@ -5318,16 +5341,93 @@ class BrainManager:
             description = (getattr(frontmatter, "description", "") or "").strip()
             when_to_use = (getattr(frontmatter, "when_to_use", "") or "").strip()
             blurb = f"{description} {when_to_use}".strip()[:400]
-            lines.append(f"- `{name}` — {blurb}")
-        if not lines:
+            scored.append((candidate, skill, blurb))
+        if not scored:
             return None
 
+        conditional = self._render_conditional_narrow_injection(
+            scored, ctx, user_text, decision
+        )
+        if conditional is not None:
+            return conditional
+
+        lines = [f"- `{getattr(s, 'name', '')}` — {b}" for _, s, b in scored]
         return (
             "[Skill candidates] The user's request scored against these "
             "installed skills. If one genuinely fits, call the `run-skill` tool "
             "with that name FIRST and follow the returned instructions. If none "
             "fits, ignore this block entirely and answer normally — these are "
             "ranked suggestions, not a verdict.\n" + "\n".join(lines)
+        )
+
+    def _render_conditional_narrow_injection(
+        self,
+        scored: list[tuple[Any, Any, str]],
+        ctx: Any,
+        user_text: str,
+        decision: Any,
+    ) -> str | None:
+        """Full instructions for a clear, non-dispatching top candidate.
+
+        Returns ``None`` whenever the escalation conditions do not hold, so the
+        caller falls back to the plain named hint. Never raises.
+        """
+        try:
+            from jarvis.skills.autofire_policy import CLASS_DISPATCHING, classify
+            from jarvis.skills.relevance import MARGIN_ABS
+
+            top_candidate, top_skill, top_blurb = scored[0]
+            if classify(top_skill) == CLASS_DISPATCHING:
+                return None
+            # Clear winner only: two near-tied candidates are genuine ambiguity
+            # and stay a short list the model disambiguates from.
+            margin = float(getattr(decision, "margin", 0.0) or 0.0)
+            if len(scored) > 1 and margin < MARGIN_ABS:
+                return None
+            instructions = ctx.runner.render_instructions(
+                top_skill,
+                args={
+                    "content": "",
+                    "utterance": user_text,
+                    "_trigger": "relevance-hint",
+                },
+            )
+        except Exception:  # noqa: BLE001
+            log.debug("conditional narrow injection failed", exc_info=True)
+            return None
+        if not instructions or not str(instructions).strip():
+            return None
+        text = str(instructions).strip()
+        if len(text) > self._NARROW_INJECTION_CHAR_CAP:
+            text = text[: self._NARROW_INJECTION_CHAR_CAP - 1] + "…"
+
+        name = getattr(top_skill, "name", "")
+        runner_up_lines = [
+            f"- `{getattr(s, 'name', '')}` — {b}" for _, s, b in scored[1:]
+        ]
+        tail = (
+            (
+                "\nLower-scored alternatives (ranked suggestions, not a "
+                "verdict):\n" + "\n".join(runner_up_lines) + "\n"
+                "If one of those fits the request better, call the `run-skill` "
+                "tool with that name instead."
+            )
+            if runner_up_lines
+            else ""
+        )
+        return (
+            f"[Likely skill match — decide, then act] The user's request "
+            f"scored closest to the installed skill `{name}` — {top_blurb}\n"
+            "Judge from the user's ACTUAL words: if they are asking for what "
+            "this skill does — even loosely, in wording that is not the "
+            "trigger phrase — follow the instructions below NOW with your "
+            "available tools instead of answering freely, and never read them "
+            "aloud. If the request is genuinely about something else, ignore "
+            "this entire block and answer normally; do not mention the skill. "
+            "A skill is only ever used when it truly serves the request.\n"
+            f"--- skill instructions (`{name}`) ---\n"
+            f"{text}\n"
+            f"--- end of skill instructions ---{tail}"
         )
 
     def _render_skill_turn_injection(self, user_text: str) -> str | None:
@@ -10197,7 +10297,7 @@ class BrainManager:
             # plausible candidates. Narrowing 20 undifferentiated bullets down
             # to the 1-3 that actually score is the cheapest part of this whole
             # change and the part with no blast radius: the model still decides.
-            _narrow_block = self._render_skill_candidate_hint()
+            _narrow_block = self._render_skill_candidate_hint(user_text)
             if _narrow_block:
                 turn_context = (
                     f"{turn_context}\n\n{_narrow_block}"
