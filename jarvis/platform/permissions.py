@@ -101,8 +101,9 @@ _SETTINGS_URLS: dict[PermissionId, str] = {
     ),
 }
 
-# IOKit HID access constants (IOHIDCheckAccess, macOS 10.15+). The header
-# declares both enums as CF_ENUM(uint64_t); the raw values are stable ABI.
+# IOKit HID access constants (IOHIDCheckAccess, macOS 10.15+). The SDK header
+# (IOKit/hidsystem/IOHIDLib.h) declares both as PLAIN C enums — 32-bit int,
+# not CF_ENUM(uint64_t); the raw values are stable ABI.
 _IOHID_REQUEST_POST_EVENT = 0  # kIOHIDRequestTypePostEvent
 _IOHID_REQUEST_LISTEN_EVENT = 1  # kIOHIDRequestTypeListenEvent
 _IOHID_ACCESS_STATES: dict[int, PermissionState] = {
@@ -125,8 +126,13 @@ def _default_iohid_check(request_type: int) -> int | None:
 
         iokit = ctypes.CDLL("/System/Library/Frameworks/IOKit.framework/IOKit")
         check = iokit.IOHIDCheckAccess
-        check.restype = ctypes.c_uint64
-        check.argtypes = [ctypes.c_uint64]
+        # 32-bit on purpose: IOHIDAccessType is a plain C enum. A c_uint64
+        # restype reads all of x0 on arm64, where the ABI does NOT promise
+        # zeroed high bits for a 32-bit return — garbage there would push the
+        # value out of _IOHID_ACCESS_STATES and silently demote the tri-state
+        # probe to the boolean preflight it exists to replace.
+        check.restype = ctypes.c_uint32
+        check.argtypes = [ctypes.c_uint32]
         return int(check(request_type))
     except Exception:  # noqa: BLE001 - a missing native bridge falls back
         return None
