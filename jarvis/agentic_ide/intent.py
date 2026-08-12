@@ -2265,7 +2265,12 @@ _TASK_AFTER_BRIEF_RE = re.compile(
     r"(?:(?:sie|er|es|they|it|them(?:\s+all)?|those|"  # i18n-allow: input vocab
     r"each(?:\s+one|\s+of\s+them)?|all(?:\s+of\s+them)?|everyone|"
     r"beiden?|allen?|cada\s+uno|todos|todas|ellos|ellas)"  # i18n-allow: input vocab
-    r"[\s,:]+)?",
+    r"[\s,:]+)?"
+    # Spoken filler introducing the task itself: "prompt them LIKE one fixes
+    # …", "prompte sie SO, DASS einer …". Part of the address, and the word
+    # in front of the enumerator is exactly what kept the distributive
+    # detector from seeing a clause-initial "one".
+    r"(?:(?:like|so)\b[\s,:]*(?:(?:dass|damit|that|to|que)\b\s*)?)?",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 

@@ -944,3 +944,25 @@ def test_prompt_them_does_not_leak_the_pronoun_into_the_task() -> None:
 
     assert instruction == "one fixes a bug on macOS and one fixes a bug on Linux"
     assert intent.distributes_tasks(instruction) is True
+
+
+def test_spoken_filler_in_front_of_the_enumeration_is_not_the_task() -> None:
+    """"prompt them LIKE one fixes …" — the filler must not hide the division.
+
+    The maintainer's own phrasing (2026-08-12). "like" in front of the first
+    enumerator kept it from opening its clause, so the distributive detector
+    saw an ordinary sentence and both panes got the whole enumeration.
+    """
+    english = (
+        "spawn two new terminals and prompt them like one fixes a bug on "
+        "macOS and one fixes a bug on Linux"
+    )
+    german = (
+        "Öffne zwei Terminals und prompte sie so, dass einer den Bug auf "
+        "macOS fixt und einer den auf Linux"
+    )  # i18n-allow: spoken input under test
+
+    for utterance in (english, german):
+        instruction = intent.spawn_instruction(utterance)
+        assert not instruction.casefold().startswith(("like", "so"))
+        assert intent.distributes_tasks(instruction) is True
