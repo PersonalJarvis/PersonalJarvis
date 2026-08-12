@@ -58,16 +58,15 @@ import "@xterm/xterm/css/xterm.css";
 import {
   BookOpenText,
   Check,
-  Columns2,
   Loader2,
   Maximize2,
   Minimize2,
   Paperclip,
   Pencil,
-  Rows2,
   RotateCcw,
   X,
 } from "lucide-react";
+import { SplitBelowIcon, SplitRightIcon } from "./splitIcons";
 import { cn } from "@/lib/utils";
 import {
   MINIMUM_CONTRAST_RATIO,
@@ -2713,7 +2712,7 @@ function PaneHeader({
           expanded={offersChoice ? picking === "right" : undefined}
           onClick={onSplit ? () => startSplit("right") : undefined}
         >
-          <Columns2 className="h-3.5 w-3.5" />
+          <SplitRightIcon className="h-3.5 w-3.5" />
         </PaneAction>
         <PaneAction
           label={`Split ${name} and open a terminal below it`}
@@ -2723,7 +2722,7 @@ function PaneHeader({
           expanded={offersChoice ? picking === "down" : undefined}
           onClick={onSplit ? () => startSplit("down") : undefined}
         >
-          <Rows2 className="h-3.5 w-3.5" />
+          <SplitBelowIcon className="h-3.5 w-3.5" />
         </PaneAction>
         <PaneAction
           label={`Close ${name}`}
