@@ -2,6 +2,10 @@
 // workspaceApi/chatsApi), `no-store` everywhere because WebView2 happily serves
 // a stale folder listing or terminal state from cache otherwise.
 
+// Type-only: the split tree's wire form is defined next to the code that lays
+// it out, and the session state simply carries it.
+import type { LayoutNode } from "../components/agentic/treeLayout";
+
 export interface AgentStatus {
   name: string;
   display_name: string;
@@ -140,9 +144,13 @@ export interface TerminalState {
    */
   accepts_prompts?: boolean;
   index: number;
-  /** Grid column, left to right. Each column is its own stack of panes. */
+  /**
+   * Coarse "roughly which column" hint, derived from the workspace's split
+   * tree. The GEOMETRY is `SessionState.layout`; these two numbers survive
+   * for consumers that only talk about the grid (the resume offer's dots).
+   */
   column: number;
-  /** Position within that column, top to bottom. */
+  /** Coarse position within that column, top to bottom — same caveat. */
   slot: number;
   status: "pending" | "live" | "exited" | "error";
   exit_code: number | null;
@@ -305,6 +313,12 @@ export interface SessionState {
   project: ProjectProfile;
   created_at: number;
   focus_mode: boolean;
+  /**
+   * WHERE every pane sits and how much room it has — the split tree the grid
+   * draws from (see `components/agentic/treeLayout`). Null only while the
+   * workspace has no panes; absent from states sent by older backends.
+   */
+  layout?: LayoutNode | null;
   terminals: TerminalState[];
 }
 
@@ -1029,6 +1043,27 @@ export async function addTerminal(payload: {
   const body = (await res.json()) as { state: IdeState };
   if (!body.state.session)
     throw new Error("The workspace closed while adding a terminal.");
+  return body.state.session;
+}
+
+/**
+ * Persist the pane sizes a seam drag produced.
+ *
+ * Sends back the whole tree this client was looking at. The backend adopts
+ * only the WEIGHTS, and only while the workspace still has that shape — a
+ * drag that raced a voice-opened pane is quietly declined, and the returned
+ * state carries the authoritative tree either way.
+ */
+export async function saveLayoutWeights(layout: LayoutNode): Promise<SessionState> {
+  const res = await fetch("/api/agentic-ide/layout/weights", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ layout }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState };
+  if (!body.state.session)
+    throw new Error("The workspace closed while saving pane sizes.");
   return body.state.session;
 }
 

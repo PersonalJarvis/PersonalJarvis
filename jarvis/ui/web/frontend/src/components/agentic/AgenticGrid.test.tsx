@@ -42,6 +42,7 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   closeTerminals: vi.fn(),
   moveTerminal: vi.fn(),
   renameTerminal: vi.fn(),
+  saveLayoutWeights: vi.fn(),
   // Polled by the grid so the pane headers keep saying what their agents are
   // doing. Resolves empty by default; the recap tests give it real rows.
   fetchTerminalRecaps: vi.fn(async () => ({
@@ -238,6 +239,7 @@ vi.mock("./AgenticTerminal", () => ({
 import { AgenticGrid } from "./AgenticGrid";
 import * as api from "@/lib/agenticIdeApi";
 import type { SessionState, TerminalState } from "@/lib/agenticIdeApi";
+import type { LayoutNode } from "./treeLayout";
 
 /** One pane at (column, slot) — the workspace is columns of stacked panes. */
 function pane(name: string, column: number, slot: number, index: number): TerminalState {
@@ -261,10 +263,43 @@ function pane(name: string, column: number, slot: number, index: number): Termin
   };
 }
 
+/**
+ * The split tree the backend would send for panes at these (column, slot)
+ * places — a row of stacks, every share even. Tests that are about UNEVEN
+ * shares pass an explicit `layout` instead.
+ */
+function treeFromGrid(terminals: TerminalState[]): LayoutNode | null {
+  const byColumn = new Map<number, TerminalState[]>();
+  for (const term of terminals) {
+    byColumn.set(term.column, [...(byColumn.get(term.column) ?? []), term]);
+  }
+  const columns: LayoutNode[] = [...byColumn.keys()]
+    .sort((a, b) => a - b)
+    .map((column) => {
+      const stack = (byColumn.get(column) ?? []).sort((a, b) => a.slot - b.slot);
+      return stack.length === 1
+        ? { pane: stack[0].key }
+        : {
+            direction: "column" as const,
+            children: stack.map((term) => ({ pane: term.key })),
+            weights: stack.map(() => 1),
+          };
+    });
+  if (columns.length === 0) return null;
+  if (columns.length === 1) return columns[0];
+  return { direction: "row", children: columns, weights: columns.map(() => 1) };
+}
+
 /** `panes` are [name, column, slot] triples; slot defaults to 0 (one row). */
-function sessionWith(panes: Array<[string, number] | [string, number, number]>): SessionState {
+function sessionWith(
+  panes: Array<[string, number] | [string, number, number]>,
+  layout?: LayoutNode | null,
+): SessionState {
+  const terminals = panes.map(([name, column, slot], i) => pane(name, column, slot ?? 0, i));
   return {
     id: "ide_test",
+    layout: layout === undefined ? treeFromGrid(terminals) : layout,
+    terminals,
     folder: "/work/project",
     project: {
       path: "/work/project",
@@ -282,7 +317,6 @@ function sessionWith(panes: Array<[string, number] | [string, number, number]>):
     },
     created_at: 0,
     focus_mode: false,
-    terminals: panes.map(([name, column, slot], i) => pane(name, column, slot ?? 0, i)),
   };
 }
 
@@ -309,6 +343,9 @@ beforeEach(() => {
   window.localStorage.clear();
   paneActiveHistory.clear();
   window.localStorage.setItem("jarvis.agenticIde.composerHeight.v2", "176");
+  // Seam drags post their result fire-and-forget; an auto-mock returning
+  // undefined would crash the `.catch` chain rather than fail an assertion.
+  vi.mocked(api.saveLayoutWeights).mockResolvedValue(sessionWith([]));
   vi.mocked(api.addTerminal).mockResolvedValue(
     sessionWith([
       ["Mika", 0],
@@ -1092,6 +1129,42 @@ describe("the compose narration line", () => {
       window,
       new CustomEvent("jarvis:agentic-ide-compose", { detail }),
     );
+
+  it("shows the latest beat while the brief is being written", () => {
+    renderGrid();
+
+    beat({
+      session_id: "ide_test",
+      terminal: "Mika",
+      stage: "thinking",
+      message: "Reading the code before Mika is briefed - 3 file outlines.",
+    });
+
+    expect(screen.getByTestId("agentic-compose-progress").textContent).toContain(
+      "Reading the code before Mika is briefed",
+    );
+  });
+
+  it("clears the line once the delivery is announced", () => {
+    renderGrid();
+    beat({ session_id: "ide_test", terminal: "Mika", stage: "drafting", message: "Writing." });
+
+    fireEvent(
+      window,
+      new CustomEvent("jarvis:agentic-ide-prompt", {
+        detail: { terminal: "Mika", submitted: true },
+      }),
+    );
+
+    expect(screen.queryByTestId("agentic-compose-progress")).toBeNull();
+  });
+
+  it("ignores beats that belong to another workspace", () => {
+    renderGrid();
+
+    beat({ session_id: "ide_other", terminal: "Mika", stage: "start", message: "Writing." });
+
+    expect(screen.queryByTestId("agentic-compose-progress")).toBeNull();
   });
 });
 
@@ -1129,42 +1202,6 @@ describe("dropping files on the prompt bar", () => {
 
     await waitFor(() => expect(api.attachToTerminal).toHaveBeenCalled());
     const [name, payload] = vi.mocked(api.attachToTerminal).mock.calls[0];
-
-  it("shows the latest beat while the brief is being written", () => {
-    renderGrid();
-
-    beat({
-      session_id: "ide_test",
-      terminal: "Mika",
-      stage: "thinking",
-      message: "Reading the code before Mika is briefed - 3 file outlines.",
-    });
-
-    expect(screen.getByTestId("agentic-compose-progress").textContent).toContain(
-      "Reading the code before Mika is briefed",
-    );
-  });
-
-  it("clears the line once the delivery is announced", () => {
-    renderGrid();
-    beat({ session_id: "ide_test", terminal: "Mika", stage: "drafting", message: "Writing." });
-
-    fireEvent(
-      window,
-      new CustomEvent("jarvis:agentic-ide-prompt", {
-        detail: { terminal: "Mika", submitted: true },
-      }),
-    );
-
-    expect(screen.queryByTestId("agentic-compose-progress")).toBeNull();
-  });
-
-  it("ignores beats that belong to another workspace", () => {
-    renderGrid();
-
-    beat({ session_id: "ide_other", terminal: "Mika", stage: "start", message: "Writing." });
-
-    expect(screen.queryByTestId("agentic-compose-progress")).toBeNull();
     expect(name).toBe("Mika");
     expect(payload.analyze).toBe(true);
     // Held rather than typed: the user is still writing the sentence that
@@ -1411,8 +1448,6 @@ describe("prompt bar seam", () => {
  * boundaries between them were plain borders with nothing to grab.
  */
 describe("resizing the workspace", () => {
-  const WEIGHTS_KEY = "jarvis.agenticIde.paneWeights.v1.ide_test";
-
   /** jsdom measures nothing, and a drag is pixels — so give it a size. */
   function measured(width: number, height: number) {
     const spies = [
@@ -1429,8 +1464,17 @@ describe("resizing the workspace", () => {
     return Math.round(Number(match[1]) * 10) / 10;
   }
 
-  function stored(): { columns: number[]; panes: Record<string, number> } {
-    return JSON.parse(window.localStorage.getItem(WEIGHTS_KEY) ?? "{}");
+  /** The tree the grid last posted to the backend, or null. */
+  function savedTree(): LayoutNode | null {
+    const calls = vi.mocked(api.saveLayoutWeights).mock.calls;
+    return calls.length > 0 ? (calls[calls.length - 1][0] as LayoutNode) : null;
+  }
+
+  /** Root-level weights of the last posted tree, rounded for assertions. */
+  function savedRootWeights(): number[] | null {
+    const tree = savedTree();
+    if (!tree || !("children" in tree)) return null;
+    return tree.weights.map((weight) => Math.round(weight * 100) / 100);
   }
 
   /*
@@ -1483,9 +1527,10 @@ describe("resizing the workspace", () => {
 
   it("puts a grab handle on every boundary between panes", () => {
     renderGrid(sessionWith([["Mika", 0], ["Nova", 0, 1], ["Aria", 1]]));
-    // One between the two columns, one between the panes stacked in the first.
-    expect(screen.getByTestId("pane-seam-column:0:1")).toBeTruthy();
-    expect(screen.getByTestId("pane-seam-pane:Mika:Nova")).toBeTruthy();
+    // One between the two columns (a root boundary), one between the panes
+    // stacked in the first column (a boundary inside child 0).
+    expect(screen.getByTestId("pane-seam-root:1")).toBeTruthy();
+    expect(screen.getByTestId("pane-seam-0:1")).toBeTruthy();
   });
 
   it("offers one seam per boundary the USER made, and no others", () => {
@@ -1502,7 +1547,7 @@ describe("resizing the workspace", () => {
     const restore = measured(1800, 600);
     try {
       renderGrid(sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2]]));
-      dragSeamBy("pane-seam-column:0:1", 600, 900);
+      dragSeamBy("pane-seam-root:1", 600, 900);
 
       // A sixth of the line moved from Nova to Mika...
       expect(widthOf("Mika")).toBe(50);
@@ -1549,23 +1594,25 @@ describe("resizing the workspace", () => {
     const restore = measured(1000, 600);
     try {
       renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
-      holdSeam("pane-seam-column:0:1", 500);
+      holdSeam("pane-seam-root:1", 500);
       act(() => {
         window.dispatchEvent(new MouseEvent("pointermove", { clientX: 750 }));
       });
       await flushFrame();
 
       expect(widthOf("Mika")).toBe(75);
-      // ...and the workspace has not been told yet: a drag that committed per
-      // frame is what re-rendered every terminal on every pointer move.
-      expect(stored().columns).toEqual([]);
+      // ...and nothing has been committed or posted yet: a drag that wrote
+      // per frame is what re-rendered every terminal on every pointer move.
+      expect(api.saveLayoutWeights).not.toHaveBeenCalled();
 
       act(() => window.dispatchEvent(new MouseEvent("pointerup")));
 
       // The release keeps exactly what was on screen — no snap back to the
       // frame before it, and no second jump.
       expect(widthOf("Mika")).toBe(75);
-      expect(stored().columns).toEqual([1.5, 0.5]);
+      // The result reaches the backend (debounced), so the sizes survive a
+      // restart on any machine and come back with a resumed workspace.
+      await waitFor(() => expect(savedRootWeights()).toEqual([1.5, 0.5]));
     } finally {
       restore();
     }
@@ -1589,7 +1636,7 @@ describe("resizing the workspace", () => {
       // pane once, and counting that as a frame of the drag would be measuring
       // the test's own setup.
       await flushFrame();
-      holdSeam("pane-seam-column:0:1", 500);
+      holdSeam("pane-seam-root:1", 500);
       const before = paneRenders.get("Mika") ?? 0;
 
       for (const x of [560, 620, 680, 750]) {
@@ -1626,7 +1673,7 @@ describe("resizing the workspace", () => {
       const busy = () => screen.getByTestId("pane-Mika").getAttribute("data-layout-busy");
       expect(busy()).toBe("no");
 
-      holdSeam("pane-seam-column:0:1", 500);
+      holdSeam("pane-seam-root:1", 500);
       expect(busy()).toBe("yes");
 
       act(() => window.dispatchEvent(new MouseEvent("pointerup")));
@@ -1649,12 +1696,14 @@ describe("resizing the workspace", () => {
     expect(busy()).toBe("no");
   });
 
-  it("remembers the sizes so a restart brings the workspace back as it was", () => {
+  it("posts the sizes so a restart brings the workspace back as it was", async () => {
     const restore = measured(1000, 600);
     try {
       renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
-      dragSeamBy("pane-seam-column:0:1", 500, 750);
-      expect(stored().columns).toEqual([1.5, 0.5]);
+      dragSeamBy("pane-seam-root:1", 500, 750);
+      // The whole tree travels; the backend adopts its weights and persists
+      // them in the resume snapshot — no browser storage involved any more.
+      await waitFor(() => expect(savedRootWeights()).toEqual([1.5, 0.5]));
     } finally {
       restore();
     }
@@ -1664,10 +1713,10 @@ describe("resizing the workspace", () => {
     const restore = measured(1000, 600);
     try {
       renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
-      dragSeamBy("pane-seam-column:0:1", 500, 750);
+      dragSeamBy("pane-seam-root:1", 500, 750);
       expect(widthOf("Mika")).toBe(75);
 
-      fireEvent.doubleClick(screen.getByTestId("pane-seam-column:0:1"));
+      fireEvent.doubleClick(screen.getByTestId("pane-seam-root:1"));
       expect(widthOf("Mika")).toBe(50);
     } finally {
       restore();
@@ -1683,7 +1732,7 @@ describe("resizing the workspace", () => {
    * rearrange anything — which pane sits in which column, and which pane is
    * stacked under which, is exactly what the user asked to keep.
    */
-  it("evens every terminal out on one click", () => {
+  it("evens every terminal out on one click", async () => {
     const restore = measured(1800, 900);
     try {
       renderGrid(
@@ -1696,8 +1745,8 @@ describe("resizing the workspace", () => {
       );
       // Out of shape on BOTH axes: one column dragged wide, and the stack
       // inside another column dragged so its two panes are unequal.
-      dragSeamBy("pane-seam-column:0:1", 600, 900);
-      dragSeamDownBy("pane-seam-pane:Nova:Vega", 450, 700);
+      dragSeamBy("pane-seam-root:1", 600, 900);
+      dragSeamDownBy("pane-seam-1:1", 450, 700);
       expect(widthOf("Mika")).not.toBe(33.3);
       expect(Math.round(box("Vega").height)).not.toBe(50);
 
@@ -1710,9 +1759,12 @@ describe("resizing the workspace", () => {
       // ...and the two panes sharing a column splitting its height equally.
       expect(box("Nova").height).toBeCloseTo(50, 3);
       expect(box("Vega").height).toBeCloseTo(50, 3);
-      // Remembered, so the workspace comes back straight rather than snapping
-      // to the pre-click sizes on the next mount.
-      expect(stored()).toEqual({ columns: [], panes: {} });
+      // Posted, so the workspace comes back straight rather than snapping to
+      // the pre-click sizes on the next mount.
+      await waitFor(() => {
+        const tree = savedTree();
+        expect(tree && "weights" in tree && tree.weights).toEqual([1, 1, 1]);
+      });
     } finally {
       restore();
     }
@@ -1729,7 +1781,7 @@ describe("resizing the workspace", () => {
           ["Aria", 2],
         ]),
       );
-      dragSeamBy("pane-seam-column:0:1", 600, 900);
+      dragSeamBy("pane-seam-root:1", 600, 900);
 
       fireEvent.click(screen.getByTestId("agentic-even-panes"));
 
@@ -1754,7 +1806,7 @@ describe("resizing the workspace", () => {
       renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
       expect(disabled("agentic-even-panes")).toBe(true);
 
-      dragSeamBy("pane-seam-column:0:1", 500, 750);
+      dragSeamBy("pane-seam-root:1", 500, 750);
       expect(disabled("agentic-even-panes")).toBe(false);
 
       fireEvent.click(screen.getByTestId("agentic-even-panes"));
@@ -1770,7 +1822,7 @@ describe("resizing the workspace", () => {
     const restore = measured(1000, 600);
     try {
       renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
-      dragSeamBy("pane-seam-column:0:1", 500, 750);
+      dragSeamBy("pane-seam-root:1", 500, 750);
       fireEvent.click(screen.getByTestId("pane-maximize-Mika"));
       expect(disabled("agentic-even-panes")).toBe(true);
 
@@ -1785,7 +1837,7 @@ describe("resizing the workspace", () => {
     const restore = measured(1000, 600);
     try {
       renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
-      const seam = screen.getByTestId("pane-seam-column:0:1");
+      const seam = screen.getByTestId("pane-seam-root:1");
       fireEvent.keyDown(seam, { key: "ArrowRight", shiftKey: true });
       // One coarse step of 64 px out of 1000, moved from Nova to Mika.
       expect(widthOf("Mika")).toBe(56.4);
@@ -1794,55 +1846,59 @@ describe("resizing the workspace", () => {
     }
   });
 
-  it("halves the pane that was split instead of resizing every other one", async () => {
-    // The complaint: splitting one terminal used to narrow all of them, because
-    // a new pane meant a new share of the window rather than half of its anchor.
-    vi.mocked(api.addTerminal).mockResolvedValue(
-      sessionWith([["Mika", 0], ["New", 1], ["Nova", 2]]),
+  it("draws the halved anchor the backend's tree describes after a split", async () => {
+    // The halving itself is the backend's (`layout_tree.split_pane`, covered
+    // there); the grid's job is to DRAW the tree the response carries instead
+    // of second-guessing it with its own weights.
+    const next = sessionWith([["Mika", 0], ["New", 1], ["Nova", 2]], {
+      direction: "row",
+      children: [{ pane: "mika" }, { pane: "new" }, { pane: "nova" }],
+      weights: [0.5, 0.5, 1],
+    });
+    vi.mocked(api.addTerminal).mockResolvedValue(next);
+    const { onSessionChanged, rerender } = renderGrid(
+      sessionWith([["Mika", 0], ["Nova", 1]]),
     );
-    renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
 
     fireEvent.click(screen.getByTestId("pane-split-right-Mika"));
+    await waitFor(() => expect(onSessionChanged).toHaveBeenCalledWith(next));
+    // The view owns the session prop, so the response reaches the grid the
+    // way it does in the app: as a new prop.
+    rerender({ session: next });
 
-    await waitFor(() => expect(stored().columns).toEqual([0.5, 0.5, 1]));
-  });
-
-  it("halves it downwards too, leaving the column beside it full height", async () => {
-    vi.mocked(api.addTerminal).mockResolvedValue(
-      sessionWith([["Mika", 0], ["New", 0, 1], ["Nova", 1]]),
-    );
-    renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
-
-    fireEvent.click(screen.getByTestId("pane-split-down-Mika"));
-
-    await waitFor(() => expect(stored().panes).toEqual({ Mika: 0.5, New: 0.5 }));
+    expect(widthOf("Mika")).toBe(25);
+    expect(widthOf("New")).toBe(25);
+    expect(widthOf("Nova")).toBe(50);
   });
 
   /*
    * The workspace changes WITHOUT this grid doing it.
    *
-   * A terminal opened by voice, closed by another client, or rearranged by the
-   * backend resuming after a restart arrives here as nothing but a new
-   * `session` prop — no callback ran, so nothing remapped the index-keyed
-   * column weights. This is how a closed pane's dragged width ended up on a
-   * different pane's column (2026-07-31: one pane squeezed, its nearly empty
-   * neighbour twice as wide).
+   * A terminal opened by voice, closed by another client, or the backend
+   * resuming after a restart arrives here as nothing but a new `session`
+   * prop. The tree in it is the whole answer now — including the sizes, which
+   * the backend carries per pane KEY, so nothing here has to guess which pane
+   * a dragged width belonged to (the index-keyed failure of 2026-07-31).
    */
-  it("keeps dragged widths with their panes when the workspace changes from outside", async () => {
+  it("follows the authoritative tree when the workspace changes from outside", async () => {
     const restore = measured(1800, 600);
     try {
       const { rerender } = renderGrid(
         sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2]]),
       );
-      // Drag the seam between Nova and Aria so Aria is the wide one.
-      dragSeamBy("pane-seam-column:1:2", 1200, 900);
+      dragSeamBy("pane-seam-root:2", 1200, 900);
       expect(widthOf("Aria")).toBe(50);
 
-      // Mika goes away without this grid being asked — every index shifts.
-      rerender({ session: sessionWith([["Nova", 0], ["Aria", 1]]) });
+      // Mika was closed elsewhere. The backend dissolved its share and kept
+      // Nova's and Aria's dragged weights — the new tree says all of that.
+      rerender({
+        session: sessionWith([["Nova", 0], ["Aria", 1]], {
+          direction: "row",
+          children: [{ pane: "nova" }, { pane: "aria" }],
+          weights: [0.5, 1.5],
+        }),
+      });
 
-      // Aria keeps the width it was dragged to; index-keyed weights would have
-      // handed it to Nova and squeezed Aria instead.
       expect(widthOf("Aria")).toBe(75);
       expect(widthOf("Nova")).toBe(25);
     } finally {
@@ -1850,64 +1906,42 @@ describe("resizing the workspace", () => {
     }
   });
 
-  it("carries dragged widths across a reload behind which the workspace changed", () => {
-    // What an earlier session left behind: Aria dragged wide while Mika still
-    // existed. The reload happens after Mika was closed elsewhere, so the
-    // stored index-keyed widths no longer match the session being mounted.
-    window.localStorage.setItem(
-      WEIGHTS_KEY,
-      JSON.stringify({ columns: [1, 0.5, 1.5], bands: [], panes: {} }),
-    );
-    window.localStorage.setItem(
-      "jarvis.agenticIde.paneArrangement.v1.ide_test",
-      JSON.stringify({ Mika: 0, Nova: 1, Aria: 2 }),
-    );
-    const restore = measured(1800, 600);
-    try {
-      renderGrid(sessionWith([["Nova", 0], ["Aria", 1]]));
-      expect(widthOf("Aria")).toBe(75);
-      expect(widthOf("Nova")).toBe(25);
-    } finally {
-      restore();
-    }
-  });
-
-  it("does not remap a second time when the session catches up with the grid's own action", async () => {
-    // The grid's own split remaps (and rebases) in the same breath as the
-    // request; the session prop then arrives describing the same arrangement.
-    // Reading that as fresh drift would remap already-remapped weights.
-    const next = sessionWith([["Mika", 0], ["New", 1], ["Nova", 2]]);
-    vi.mocked(api.addTerminal).mockResolvedValue(next);
-    const restore = measured(1800, 600);
+  it("keeps the dragged sizes when the same shape comes back with older weights", async () => {
+    // The session prop catches up on its own schedule (a poll, an event), and
+    // what it echoes may predate the drag that just happened. As long as the
+    // SHAPE matches, the local sizes are at least as fresh — snapping back to
+    // the server's would make every drag twitch a moment later.
+    const restore = measured(1000, 600);
     try {
       const { rerender } = renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
-      fireEvent.click(screen.getByTestId("pane-split-right-Mika"));
-      await waitFor(() => expect(stored().columns).toEqual([0.5, 0.5, 1]));
+      dragSeamBy("pane-seam-root:1", 500, 750);
+      expect(widthOf("Mika")).toBe(75);
 
-      rerender({ session: next });
+      rerender({ session: sessionWith([["Mika", 0], ["Nova", 1]]) });
 
-      expect(stored().columns).toEqual([0.5, 0.5, 1]);
-      expect(widthOf("Mika")).toBe(25);
-      expect(widthOf("Nova")).toBe(50);
+      expect(widthOf("Mika")).toBe(75);
     } finally {
       restore();
     }
   });
 
-  it("waits out a seam drag before answering outside drift, then answers it", async () => {
+  it("lets a structural change win over a drag it interrupted", async () => {
     const restore = measured(1800, 600);
     try {
       const { rerender } = renderGrid(
         sessionWith([["Mika", 0], ["Nova", 1], ["Aria", 2]]),
       );
-      dragSeamBy("pane-seam-column:1:2", 1200, 900);
-      expect(widthOf("Aria")).toBe(50);
-
       // Grab a seam and, while the pointer is down, let the workspace change
-      // under the gesture. The remap must not fight the drag's direct painting
-      // — and must still land once the pointer is released.
-      holdSeam("pane-seam-column:0:1", 600);
-      rerender({ session: sessionWith([["Nova", 0], ["Aria", 1]]) });
+      // under the gesture: the drag's tree describes panes that are partly
+      // gone, so on release the server's NEW tree is the only honest layout.
+      holdSeam("pane-seam-root:1", 600);
+      rerender({
+        session: sessionWith([["Nova", 0], ["Aria", 1]], {
+          direction: "row",
+          children: [{ pane: "nova" }, { pane: "aria" }],
+          weights: [0.5, 1.5],
+        }),
+      });
       act(() => window.dispatchEvent(new MouseEvent("pointerup")));
 
       expect(widthOf("Aria")).toBe(75);
@@ -1918,23 +1952,28 @@ describe("resizing the workspace", () => {
   });
 
   it("does not read a rename as a rearrangement", async () => {
-    vi.mocked(api.renameTerminal).mockResolvedValue(
-      sessionWith([["Frontend", 0], ["Nova", 1]]),
-    );
+    // The tree references panes by KEY, and a rename leaves the key alone —
+    // so the renamed pane keeps the width that was dragged for it.
+    const renamed = sessionWith([["Frontend", 0], ["Nova", 1]]);
+    renamed.terminals[0].key = "mika";
+    renamed.layout = {
+      direction: "row",
+      children: [{ pane: "mika" }, { pane: "nova" }],
+      weights: [1, 1],
+    };
+    vi.mocked(api.renameTerminal).mockResolvedValue(renamed);
     const restore = measured(1000, 600);
     try {
       const { rerender } = renderGrid(sessionWith([["Mika", 0], ["Nova", 1]]));
-      dragSeamBy("pane-seam-column:0:1", 500, 750);
+      dragSeamBy("pane-seam-root:1", 500, 750);
       expect(widthOf("Mika")).toBe(75);
 
       fireEvent.click(screen.getByTestId("pane-rename-Mika"));
       await waitFor(() =>
         expect(api.renameTerminal).toHaveBeenCalledWith("Mika", "Frontend"),
       );
-      rerender({ session: sessionWith([["Frontend", 0], ["Nova", 1]]) });
+      rerender({ session: renamed });
 
-      // The renamed pane keeps the width that was dragged for it — a remap
-      // here would have seen "Mika left, Frontend arrived" and reset it.
       expect(widthOf("Frontend")).toBe(75);
     } finally {
       restore();

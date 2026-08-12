@@ -57,19 +57,13 @@ import { AgentPickerMenu, offersAgentChoice, type SplitAgentChoice } from "./Age
 import type { TerminalAppearance } from "./terminalThemes";
 import { installZoomKeyBridge, type ZoomIntent } from "./terminalZoom";
 import {
-  evenWeights,
-  isEvenLayout,
-  paneArrangement,
-  paneLayout,
-  panesFromArrangement,
-  remapColumnWeights,
-  sameArrangement,
-  weightsAfterSplit,
+  isEvenTree,
+  treeLayout,
+  type LayoutNode,
   type PaneBox,
   type PaneSeam,
-  type PaneWeights,
-} from "./paneLayout";
-import { loadStoredArrangement, saveStoredArrangement, usePaneWeights } from "./usePaneWeights";
+} from "./treeLayout";
+import { useTreeSizes } from "./useTreeSizes";
 import {
   describeLayoutViolations,
   findLayoutViolations,
@@ -791,6 +785,12 @@ export function AgenticGrid({
     recapCache.workspaceId === session.id ? recapCache.rows : {};
   // The editor owns ordinary keystrokes so typing does not re-render every
   // xterm pane in this very large component. This seed changes only when the
+  // parent intentionally replaces the draft (successful send).
+  const [promptSeed, setPromptSeed] = useState({ value: "", revision: 0 });
+  const replacePrompt = useCallback((value: string) => {
+    setPromptSeed((current) => ({ value, revision: current.revision + 1 }));
+  }, []);
+  const [sending, setSending] = useState(false);
   // The live line about the brief being written for a pane of THIS workspace.
   // Composition is 10-30 s of real model work; without this line the bar
   // showed a silent spinner for all of it, and a working composer and a
@@ -839,12 +839,6 @@ export function AgenticGrid({
       window.removeEventListener("jarvis:agentic-ide-prompt", onDelivered);
     };
   }, [session.id]);
-  // parent intentionally replaces the draft (successful send).
-  const [promptSeed, setPromptSeed] = useState({ value: "", revision: 0 });
-  const replacePrompt = useCallback((value: string) => {
-    setPromptSeed((current) => ({ value, revision: current.revision + 1 }));
-  }, []);
-  const [sending, setSending] = useState(false);
 
   // Bumping a pane's token reconnects just that pane, which respawns its agent.
   // Keyed by call-sign so closing or splitting never disturbs the others.
@@ -1312,11 +1306,11 @@ export function AgenticGrid({
   /*
    * The sizes the panes are drawn at, and the seams between them.
    *
-   * Kept apart from the arrangement on purpose: `session.terminals` says which
-   * column and slot each pane is in and only the backend may change that, while
-   * the weights say how much room each one gets and only this browser does. A
-   * drag therefore never waits on a request, and a workspace opened on a second
-   * machine is the same arrangement at that machine's own sizes.
+   * Both live in ONE split tree (`session.layout`): the backend owns its
+   * structure — which pane sits where — and a seam drag here edits only its
+   * weights, locally first so the gesture never waits on a request, then
+   * posted back so the sizes survive a restart and come back with a resumed
+   * workspace (see `useTreeSizes`).
    */
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
@@ -1365,8 +1359,8 @@ export function AgenticGrid({
    * agrees with what is already on screen and nothing flickers on release.
    */
   const paintDraggedLayout = useCallback(
-    (next: PaneWeights) => {
-      const live = paneLayout(session.terminals, next);
+    (next: LayoutNode) => {
+      const live = treeLayout(next, session.terminals);
       session.terminals.forEach((term, index) => {
         const node = paneNodes.current.get(term.name);
         const box = live.boxes[index];
@@ -1382,8 +1376,8 @@ export function AgenticGrid({
     [session.terminals],
   );
 
-  const sizes = usePaneWeights(
-    session.id,
+  const sizes = useTreeSizes(
+    session.layout ?? null,
     // Measured at the moment of the drag rather than kept in state: the canvas
     // IS the visible workspace now, so its live size is the only truth a
     // pixels-to-weights conversion needs. A canvas that is not there yet
@@ -1398,8 +1392,8 @@ export function AgenticGrid({
     paintDraggedLayout,
   );
   const layout = useMemo(
-    () => paneLayout(session.terminals, sizes.weights),
-    [session.terminals, sizes.weights],
+    () => treeLayout(sizes.tree, session.terminals),
+    [session.terminals, sizes.tree],
   );
 
   /*
@@ -1417,82 +1411,16 @@ export function AgenticGrid({
    * another one; the boundaries simply even out where they already are. The
    * same act therefore covers every arrangement there is: columns side by
    * side share the width equally, and panes stacked in one column share that
-   * column's height equally.
+   * column's height equally. "Equal" is measured in TERMINALS, not tree
+   * nodes — a nested group of two stacks is two terminals wide and receives
+   * two shares, so every pane on screen lands at the same width.
    */
   const evenPanes = useCallback(() => {
-    sizes.setWeights(evenWeights());
-  }, [sizes.setWeights]);
+    sizes.evenAll();
+  }, [sizes.evenAll]);
 
   /** Would evening out change anything? Answers for the button's own state. */
-  const alreadyEven = useMemo(
-    () => isEvenLayout(session.terminals, sizes.weights),
-    [session.terminals, sizes.weights],
-  );
-
-  /*
-   * Which panes the current column weights are keyed to.
-   *
-   * Weights are stored by COLUMN INDEX (see `paneLayout`), and the backend
-   * renumbers columns on every open and close. The grid's own actions remap
-   * the weights in the same breath — but a workspace also changes from OUTSIDE
-   * this grid: a terminal opened by voice, a second client, the backend
-   * resuming after a restart. Those arrive as a new `session.terminals` with
-   * nothing else said, and index-keyed widths then land on whichever pane
-   * holds the index now (observed 2026-07-31: after a restart re-opened the
-   * workspace, one pane inherited the width its closed neighbour had been
-   * dragged to, and the pane that owned it was squeezed instead).
-   *
-   * So the arrangement the weights belong to is tracked in a ref — updated by
-   * every action that already remaps — and persisted beside the weights. The
-   * effect below answers any drift between it and the session with the same
-   * remap the grid's own actions use, which also covers a fresh mount whose
-   * stored weights were keyed to an arrangement that changed while no grid
-   * was watching.
-   */
-  const weightsBasis = useRef<Record<string, number> | null>(null);
-  const weightsBasisFor = useRef<string | null>(null);
-
-  /** Declare the weights remapped: they are keyed to ``terminals`` now. */
-  const rebaseWeights = useCallback(
-    (terminals: readonly { name: string; column: number; slot: number }[]) => {
-      const arrangement = paneArrangement(terminals);
-      weightsBasis.current = arrangement;
-      weightsBasisFor.current = session.id;
-      saveStoredArrangement(session.id, arrangement);
-    },
-    [session.id],
-  );
-
-  useEffect(() => {
-    // A workspace switch loads that workspace's weights (see `usePaneWeights`),
-    // so the basis switches with it: its stored arrangement when one survives,
-    // otherwise the session as it stands — never the outgoing workspace's. A
-    // workspace seen for the first time stores its arrangement right away,
-    // because the stored copy is what makes the weights readable after a
-    // restart behind which the workspace changed.
-    if (weightsBasisFor.current !== session.id) {
-      weightsBasisFor.current = session.id;
-      const stored = loadStoredArrangement(session.id);
-      weightsBasis.current = stored ?? paneArrangement(session.terminals);
-      if (!stored) saveStoredArrangement(session.id, weightsBasis.current);
-    }
-    const basis = weightsBasis.current;
-    const current = paneArrangement(session.terminals);
-    if (!basis || sameArrangement(basis, current)) return;
-    // Never mid-drag. The gesture paints the panes directly and commits its
-    // weights from a snapshot taken at pointer-down (see `usePaneWeights`), so
-    // a remap here would both be clobbered by that commit and re-render every
-    // live terminal under the pointer. `sizes.dragging` is a dependency, so
-    // the drift is answered the moment the pointer is released.
-    if (sizes.dragging !== null) return;
-    // Runs AFTER the hook's own load effect in the same commit, so on a
-    // workspace switch this updater already sees that workspace's weights.
-    sizes.setWeights((weights) =>
-      remapColumnWeights(weights, panesFromArrangement(basis), session.terminals),
-    );
-    weightsBasis.current = current;
-    saveStoredArrangement(session.id, current);
-  }, [session.id, session.terminals, sizes.dragging, sizes.setWeights]);
+  const alreadyEven = useMemo(() => isEvenTree(sizes.tree), [sizes.tree]);
 
   /*
    * Hold the dragged sizes against anything else that renders mid-gesture.
@@ -1511,7 +1439,7 @@ export function AgenticGrid({
    */
   useLayoutEffect(() => {
     if (sizes.dragging === null) return;
-    const inFlight = sizes.liveWeights.current;
+    const inFlight = sizes.liveTree.current;
     if (inFlight) paintDraggedLayout(inFlight);
   });
 
@@ -1683,27 +1611,9 @@ export function AgenticGrid({
       // A fresh pane should receive the next prompt — that is why it was opened.
       const known = new Set(session.terminals.map((t) => t.name));
       const added = next.terminals.find((t) => !known.has(t.name));
-      /*
-       * A split HALVES the pane it was asked of, and touches nothing else.
-       *
-       * This is the behaviour people expect from every tiling terminal and
-       * editor, and the one the old workspace did not have: a new pane became a
-       * new full-height column, so every other pane on the line lost width to
-       * make room for it. Splitting the pane you clicked should be a local
-       * event — see `weightsAfterSplit`.
-       */
-      sizes.setWeights((current) =>
-        anchor && added
-          ? weightsAfterSplit(
-              current,
-              session.terminals,
-              next.terminals,
-              anchor,
-              added.name,
-            )
-          : remapColumnWeights(current, session.terminals, next.terminals),
-      );
-      rebaseWeights(next.terminals);
+      // A split HALVES the pane it was asked of and touches nothing else —
+      // the backend's tree already says so (`layout_tree.split_pane`), and
+      // `next.layout` carries the result. Nothing to remap here any more.
       // ...unless it is a plain terminal — that one is typed into by hand, and
       // stealing the target would silently redirect the next prompt into a pane
       // that refuses it.
@@ -1774,22 +1684,19 @@ export function AgenticGrid({
          * (they repeat the identical gesture, observed 2026-08-07). Saying
          * "already there" turns a silent nothing into an answer.
          */
-        const placement = (
-          terms: readonly { name: string; column: number; slot: number }[],
-        ) => terms.map((pane) => `${pane.name}:${pane.column}.${pane.slot}`).join(" ");
-        if (placement(next.terminals) === placement(session.terminals)) {
+        // The tree IS the placement, so "did anything move" is one comparison
+        // — including moves the coarse column/slot hints cannot see, like a
+        // drop that only changes nesting.
+        if (
+          JSON.stringify(next.layout ?? null) ===
+          JSON.stringify(session.layout ?? null)
+        ) {
           pushToast(
             "info",
             t("agentic_grid.arrange.already_there").replace("{0}", moved),
           );
           return;
         }
-        // Column widths follow the panes that carried them, so a pane dropped
-        // into a wide column does not drag that column's width away with it.
-        sizes.setWeights((current) =>
-          remapColumnWeights(current, session.terminals, next.terminals),
-        );
-        rebaseWeights(next.terminals);
         onSessionChanged?.(next);
         setJustMoved({ name: moved, nonce: Date.now() });
       } catch (error) {
@@ -1798,7 +1705,7 @@ export function AgenticGrid({
         setWorking(false);
       }
     },
-    [onSessionChanged, pushToast, rebaseWeights, session.terminals, sizes.setWeights, t],
+    [onSessionChanged, pushToast, session.layout, t],
   );
 
   const arrange = usePaneArrange(
@@ -2121,18 +2028,8 @@ export function AgenticGrid({
         );
         setSentAt((current) => rekey(current, from, to));
         setRestartTokens((current) => rekey(current, from, to));
-        // The pane's dragged height is keyed by call-sign too, and the basis
-        // map is what stops the remap effect from reading a rename as "one
-        // pane left, another arrived" — which would put the lone column of a
-        // renamed pane back at its default width.
-        sizes.setWeights((current) => ({
-          ...current,
-          panes: rekey(current.panes, from, to),
-        }));
-        if (weightsBasis.current) {
-          weightsBasis.current = rekey(weightsBasis.current, from, to);
-          saveStoredArrangement(session.id, weightsBasis.current);
-        }
+        // The layout tree is keyed by the pane's KEY, which is exactly what a
+        // rename leaves alone — sizes need no rekeying at all.
         setTarget((current) => (current === from ? to : current));
         setMaximized((current) => (current === from ? to : current));
         setPendingClose((current) => (current === from ? to : current));
@@ -2157,7 +2054,7 @@ export function AgenticGrid({
         setWorking(false);
       }
     },
-    [onSessionChanged, pushToast, session.id, sizes.setWeights],
+    [onSessionChanged, pushToast, session.id],
   );
 
   /** Where the bell's "jump to pane" goes — here, or via the view for a tab. */
@@ -2194,10 +2091,8 @@ export function AgenticGrid({
       const next = await closeTerminal(name);
       setPendingClose(null);
       if (maximized === name) setMaximized(null);
-      // The surviving columns keep the widths they were dragged to; the closed
-      // pane's own height weight goes with it.
-      sizes.setWeights((current) => remapColumnWeights(current, session.terminals, next.terminals));
-      rebaseWeights(next.terminals);
+      // The survivors keep the room they were dragged to — the backend's tree
+      // dissolves the closed pane's share to its siblings (`remove_pane`).
       onSessionChanged?.(next);
       if (target === name) setTarget(next.terminals.find(takesPrompts)?.name ?? "");
     } catch (e) {
@@ -2213,10 +2108,6 @@ export function AgenticGrid({
       const result = await closeTerminals(names);
       setPendingSelectionClose(null);
       setSelectedTerminals(new Set(result.failed.map((item) => item.name)));
-      sizes.setWeights((current) =>
-        remapColumnWeights(current, session.terminals, result.session.terminals),
-      );
-      rebaseWeights(result.session.terminals);
       onSessionChanged?.(result.session);
       const remaining = new Set(result.session.terminals.map((term) => term.name));
       if (maximized && !remaining.has(maximized)) setMaximized(null);
@@ -2240,8 +2131,6 @@ export function AgenticGrid({
     }
   };
 
-      // No delivery event will arrive to clear the narration for this send.
-      setComposeBeat(null);
   const setStatus = useCallback((name: string, status: PaneStatus, detail?: string) => {
     setStatuses((prev) => ({ ...prev, [name]: { status, detail } }));
   }, []);
@@ -2353,6 +2242,8 @@ export function AgenticGrid({
       }
     } catch (e) {
       pushToast("error", (e as Error).message);
+      // No delivery event will arrive to clear the narration for this send.
+      setComposeBeat(null);
     } finally {
       setSending(false);
     }
@@ -3401,15 +3292,6 @@ export function AgenticGrid({
             onClick={() => composer.resize(COMPOSER_DEFAULT_PX)}
             className="flex shrink-0 items-center gap-1.5 rounded-control px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
-          {composeBeat && (
-            <div
-              data-testid="agentic-compose-progress"
-              className="flex shrink-0 items-center gap-2 px-3 pt-2 text-[11px] text-muted-foreground"
-            >
-              <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />
-              <span className="truncate">{composeBeat.message}</span>
-            </div>
-          )}
             <ChevronUp className="h-3.5 w-3.5" />
             Write instead
           </button>
@@ -3519,6 +3401,15 @@ export function AgenticGrid({
                 analyzing={analyzing}
                 onRemove={dropAttachment}
               />
+            </div>
+          )}
+          {composeBeat && (
+            <div
+              data-testid="agentic-compose-progress"
+              className="flex shrink-0 items-center gap-2 px-3 pt-2 text-[11px] text-muted-foreground"
+            >
+              <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />
+              <span className="truncate">{composeBeat.message}</span>
             </div>
           )}
           {/*
