@@ -81,7 +81,10 @@ click Restart in the desktop UI. The desktop WebView
 has no F5/console — frontend fix = `npm run build` in
 `jarvis/ui/web/frontend/`, nothing else: open windows reload themselves
 (`src/lib/bundleWatch.ts`). Never end a frontend change by asking for a restart.
-Check `MEMORY.md` before larger decisions.
+Every frontend change works in BOTH light and dark mode (and the terminal
+panes' own appearance): colours come from theme tokens or the per-appearance
+tables in `terminalThemes.ts`, never one hardcoded mode (CLOUD.md →
+"Frontend theming"). Check `MEMORY.md` before larger decisions.
 
 ## 10. Run & test
 Install `pip install -e . --no-deps` + `-r requirements.txt` + `".[dev]"`;

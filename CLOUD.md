@@ -94,6 +94,25 @@ If **no** → either (a) the OS/hardware-specific portion is correctly gated beh
 
 ---
 
+## Frontend theming — every UI change ships in light AND dark mode (added 2026-08-12)
+
+**Neither theme is "the" theme.** The web app has a light and a dark theme
+(`jarvis/ui/web/frontend/src/index.css` tokens), and the Agentic IDE's terminal
+panes additionally carry their own light/dark appearance that may differ from
+the app theme. Any frontend change — component, colour, chart, notice — must:
+
+1. **Read its colours from the theme system, never hardcode one mode.**
+   App-level surfaces use the CSS tokens (`--background`, `--primary`, …);
+   anything drawn on a terminal pane's own ground keys off the pane's
+   `TerminalAppearance` (the per-appearance tables in
+   `src/components/agentic/terminalThemes.ts`), because an app token lands on
+   the wrong ground exactly when pane and app disagree.
+2. **Be checked legible in BOTH modes before it is called done.** The brand
+   accent is signal-yellow `#FFD60A` on dark grounds and gold `#A86B00` on
+   light paper — never the same hex on both.
+
+---
+
 ## Pointer network
 
 - Full doctrine: [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md)

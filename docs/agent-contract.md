@@ -514,6 +514,15 @@ Detail in [`docs/BUGS.md`](BUGS.md):
   change by asking for a restart**: restarting stops the voice stack and the
   live terminal panes to replace files the window fetches on its own. Running
   from a browser against `--dev` is a contributor path, not the maintainer's.
+- **Frontend changes ship in BOTH themes.** The app has a light and a dark
+  mode, and the Agentic IDE's terminal panes carry their own light/dark
+  appearance on top that may disagree with the app theme. A UI change is done
+  only when it reads its colours from the theme system — the app's CSS tokens
+  (`--background`, `--primary`, …) for app-level surfaces, the per-appearance
+  tables in `jarvis/ui/web/frontend/src/components/agentic/terminalThemes.ts`
+  (`PANE_BRAND` / `PANE_CHROME`) for anything on a pane's own ground — and has
+  been checked legible in both modes. Hardcoding one mode's colours is a
+  defect, not a default. (Full rule: `CLOUD.md` → "Frontend theming".)
 - **New worktree:** run `pwsh scripts/preflight.ps1` before writing code;
   non-zero exit → fix first (BUG-006/014).
 - **Memory:** check `MEMORY.md` (`~/.claude/projects/.../memory/`) before
