@@ -243,6 +243,140 @@ async def test_queued_fleet_receives_the_task_not_the_spawn_scaffolding(
     assert "Spawn two Codex terminals" not in str(captured["instruction"])
 
 
+async def test_a_brief_by_kind_routes_each_kind_its_own_task(
+    manager: tuple[BrainManager, FakeBus],
+    registry: Registry,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """"prompt the claudes to X and the codex to Y" must not mash X and Y.
+
+    The maintainer's live failure (2026-08-12): every pane of a mixed fleet
+    received the ENTIRE enumeration as its own task, and each agent picked
+    whatever slice it liked.
+    """
+    from jarvis.agentic_ide import fanout, fleet_actions
+
+    mgr, _bus = manager
+    session = await registry.start(
+        str(tmp_path), [{"agent": "claude"}, {"agent": "claude"}, {"agent": "codex"}]
+    )
+    names = [term.name for term in session.terminals]
+    captured: dict[str, object] = {}
+
+    async def _ready(_session: object, wanted: list[str]) -> tuple[str, ...]:
+        return tuple(wanted)
+
+    async def _deliver(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return SimpleNamespace(delivered=(object(),) * 3)
+
+    monkeypatch.setattr(fleet_actions, "wait_for_prompt_ready", _ready)
+    monkeypatch.setattr(fanout, "deliver", _deliver)
+    utterance = (
+        "Open two claude terminals and one codex terminal. Prompt the claudes "
+        "to fix the failing login tests and prompt the codex to update the "
+        "developer docs."
+    )
+
+    await mgr._brief_spawned_agentic_ide_fleet(session, names, utterance)
+
+    assert captured["terminals"] == tuple(names)
+    assert captured["assignments"] == {
+        names[0]: "fix the failing login tests",
+        names[1]: "fix the failing login tests",
+        names[2]: "update the developer docs",
+    }
+
+
+async def test_a_kind_without_a_brief_is_not_briefed_at_all(
+    manager: tuple[BrainManager, FakeBus],
+    registry: Registry,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """"prompt the claudes …" leaves the codex pane blank — as asked."""
+    from jarvis.agentic_ide import fanout, fleet_actions
+
+    mgr, _bus = manager
+    session = await registry.start(
+        str(tmp_path), [{"agent": "claude"}, {"agent": "codex"}]
+    )
+    names = [term.name for term in session.terminals]
+    captured: dict[str, object] = {}
+
+    async def _ready(_session: object, wanted: list[str]) -> tuple[str, ...]:
+        return tuple(wanted)
+
+    async def _deliver(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return SimpleNamespace(delivered=(object(),))
+
+    monkeypatch.setattr(fleet_actions, "wait_for_prompt_ready", _ready)
+    monkeypatch.setattr(fanout, "deliver", _deliver)
+    utterance = (
+        "Open one claude terminal and one codex terminal. Prompt the claude "
+        "to fix the failing login tests."
+    )
+
+    await mgr._brief_spawned_agentic_ide_fleet(session, names, utterance)
+
+    assert captured["terminals"] == (names[0],)
+    assert captured["assignments"] == {names[0]: "fix the failing login tests"}
+
+
+async def test_an_enumerated_division_reaches_the_split_planner(
+    manager: tuple[BrainManager, FakeBus],
+    registry: Registry,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """"one fixes macOS, one fixes Linux" plans a split instead of one brief."""
+    from jarvis.agentic_ide import fanout, fleet_actions, work_split
+
+    mgr, _bus = manager
+    session = await registry.start(
+        str(tmp_path), [{"agent": "claude"}, {"agent": "claude"}]
+    )
+    names = [term.name for term in session.terminals]
+    captured: dict[str, object] = {}
+    planned: dict[str, object] = {}
+
+    async def _ready(_session: object, wanted: list[str]) -> tuple[str, ...]:
+        return tuple(wanted)
+
+    async def _deliver(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return SimpleNamespace(delivered=(object(),) * 2)
+
+    async def _split(instruction: str, **kwargs: object) -> object:
+        planned["instruction"] = instruction
+        planned["count"] = kwargs.get("count")
+        return work_split.WorkSplit(
+            assignments=(
+                work_split.Assignment(area="macOS", task="fix the macOS bug"),
+                work_split.Assignment(area="Linux", task="fix the Linux bug"),
+            ),
+            split_by="llm",
+        )
+
+    monkeypatch.setattr(fleet_actions, "wait_for_prompt_ready", _ready)
+    monkeypatch.setattr(fanout, "deliver", _deliver)
+    monkeypatch.setattr(work_split, "split", _split)
+    utterance = (
+        "Spawn two new terminals and prompt them, one fixes a bug on macOS "
+        "and one fixes a bug on Linux"
+    )
+
+    await mgr._brief_spawned_agentic_ide_fleet(session, names, utterance)
+
+    assert planned["count"] == 2
+    assert captured["assignments"] == {
+        names[0]: "fix the macOS bug",
+        names[1]: "fix the Linux bug",
+    }
+
+
 async def test_without_a_named_agent_the_new_panes_inherit(
     manager: tuple[BrainManager, FakeBus], registry: Registry, tmp_path: Path
 ) -> None:

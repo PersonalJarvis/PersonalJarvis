@@ -807,3 +807,140 @@ def test_counts_inside_a_briefed_task_never_become_more_panes() -> None:
     assert found is not None
     assert found.count == 2, "the tabs belong to the task, not the workspace"
     assert intent.spawn_includes_task(utterance) is True
+
+
+# --------------------------------------------------------------------------- #
+# Per-kind briefs: "prompt the five Claudes to X, the two Codexes to Y"        #
+# --------------------------------------------------------------------------- #
+# The maintainer's ask on 2026-08-12: a mixed fleet briefed by kind in the same
+# sentence must route each kind ITS task. The old single-string extraction gave
+# every pane the entire enumeration, and each agent then picked whatever slice
+# it liked — three groups, one mashed brief, no routing.
+
+
+def test_each_kind_gets_its_own_task() -> None:
+    utterance = (
+        "Open five claudes, two codexes and one opencode. Prompt the five "
+        "claudes to fix the login bug, prompt the two codexes to write tests "
+        "and prompt the opencode to update the docs"
+    )
+
+    assert intent.spawn_group_tasks(utterance) == {
+        "claude": "fix the login bug",
+        "codex": "write tests",
+        "opencode": "update the docs",
+    }
+
+
+def test_german_modal_briefs_route_by_kind() -> None:
+    """"Die Claudes sollen …" hands the group its work without a verb in front."""
+    utterance = (
+        "Öffne zwei Claude Terminals und einen Codex. Die Claudes sollen die "
+        "Tests fixen und der Codex soll die Docs aktualisieren."
+    )  # i18n-allow: spoken input under test
+
+    assert intent.spawn_group_tasks(utterance) == {
+        "claude": "die Tests fixen",  # i18n-allow: quoted spoken input
+        "codex": "die Docs aktualisieren",  # i18n-allow: quoted spoken input
+    }
+
+
+def test_a_kind_the_brief_does_not_name_stays_blank() -> None:
+    """"prompt the claudes …" deliberately leaves the codex without a task."""
+    utterance = (
+        "Open two claudes and one codex. Prompt the claudes to fix the "
+        "failing tests."
+    )
+
+    assert intent.spawn_group_tasks(utterance) == {
+        "claude": "fix the failing tests"
+    }
+
+
+def test_a_shared_brief_has_no_group_tasks() -> None:
+    """"prompt each one to …" addresses everyone; the map must stand down."""
+    utterance = (
+        "Spawn two Codex terminals and prompt each one to perform a read-only "
+        "platform compatibility review"
+    )
+
+    assert intent.spawn_group_tasks(utterance) == {}
+
+
+def test_work_in_front_of_the_first_kind_brief_disables_the_map() -> None:
+    """A shared task followed by one kind's extra job must not orphan the rest.
+
+    "Prompt each of them to do a deep dive and tell the codex to also update
+    the docs" briefs EVERYONE first. A per-kind map would cover only the codex
+    and silently withhold the deep dive from every other pane, so the whole
+    map stands down and the shared path keeps the turn.
+    """
+    utterance = (
+        "Open two terminals. Prompt each of them to do a deep dive and tell "
+        "the codex to also update the docs"
+    )
+
+    assert intent.spawn_group_tasks(utterance) == {}
+
+
+def test_a_cli_named_inside_another_groups_task_is_not_an_addressee() -> None:
+    """"prompt the claudes to fix codex bugs" briefs the claudes, not Codex."""
+    utterance = (
+        "Open two claude terminals. Prompt the claudes to fix the codex "
+        "integration bugs."
+    )
+
+    assert intent.spawn_group_tasks(utterance) == {
+        "claude": "fix the codex integration bugs"
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Distributive briefs: "one fixes the macOS bug, one fixes the Linux bug"      #
+# --------------------------------------------------------------------------- #
+# The user enumerating the division themselves. Without the detector, both
+# fresh panes received the whole enumeration and raced on the first slice —
+# two agents fixing macOS while Linux sat unclaimed (maintainer report
+# 2026-08-12).
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        "one fixes a bug on macOS and one fixes a bug on Linux",
+        "einer fixt den Bug auf macOS und einer auf Linux",  # i18n-allow: spoken input under test
+        "one should review the backend, the other the frontend",
+        "the first fixes macOS, the second fixes Linux",
+    ],
+)
+def test_an_enumerated_division_is_detected(task: str) -> None:
+    assert intent.distributes_tasks(task) is True
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        # One shared job — the ordinary fleet brief.
+        "perform a read-only platform compatibility review",
+        "einen Deep Dive machen",  # i18n-allow: spoken input under test
+        # "one"/ordinals as ordinary objects of the work, not as panes.
+        "fix bug one and bug two",
+        "review the first file, the second file and the third one",
+        "",
+    ],
+)
+def test_ordinary_tasks_are_not_divisions(task: str) -> None:
+    assert intent.distributes_tasks(task) is False
+
+
+def test_prompt_them_does_not_leak_the_pronoun_into_the_task() -> None:
+    """"prompt them, one fixes …" starts the task at the work, not at "them"."""
+    utterance = (
+        "spawn two new terminals and prompt them, one fixes a bug on macOS "
+        "and one fixes a bug on Linux"
+    )
+
+    instruction = intent.spawn_instruction(utterance)
+
+    assert instruction == "one fixes a bug on macOS and one fixes a bug on Linux"
+    assert intent.distributes_tasks(instruction) is True

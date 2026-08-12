@@ -2258,8 +2258,14 @@ def spawn_includes_task(user_text: str) -> bool:
 _TASK_AFTER_BRIEF_RE = re.compile(
     r"\b(?:prompt\w*|brief\w*|instruct\w*|assign\w*|tell\w*|"
     r"anweis\w*|beauftrag\w*)\b\s*"
-    r"(?:,?\s*(?:dass|damit|that|to|que)\s*)?"
-    r"(?:(?:sie|er|es|they|it|each(?:\s+one)?|cada\s+uno)\s+)?",
+    r"(?:,?\s*(?:dass|damit|that|to|que)\s*)?"  # i18n-allow: input vocab
+    # The pronoun standing for the fleet. "them" was missing, so "prompt
+    # them, one fixes …" handed fresh agents a task that OPENED with the
+    # word "them," — a fragment of the address baked into their work.
+    r"(?:(?:sie|er|es|they|it|them(?:\s+all)?|those|"  # i18n-allow: input vocab
+    r"each(?:\s+one|\s+of\s+them)?|all(?:\s+of\s+them)?|everyone|"
+    r"beiden?|allen?|cada\s+uno|todos|todas|ellos|ellas)"  # i18n-allow: input vocab
+    r"[\s,:]+)?",
     re.IGNORECASE,
 )
 
@@ -2315,6 +2321,154 @@ def spawn_instruction(user_text: str) -> str:
         if lead:
             return lead
     return remainder or text
+
+
+# --------------------------------------------------------------------------- #
+# "prompt the five Claudes to X, the two Codexes to Y, the OpenCode to Z"      #
+# --------------------------------------------------------------------------- #
+# A mixed fleet is regularly briefed BY KIND in the same breath that asks for
+# it — the counts and the product names are how the user tells the groups
+# apart, so they are also how the work is handed out. ``spawn_instruction``
+# cannot represent that: it returns ONE string, so every pane of an 8-pane
+# fleet received the entire enumeration ("the five claudes to fix the login
+# bug, prompt the two codexes to write tests …") as its own task, and each
+# agent then picked whatever slice it liked (maintainer report 2026-08-12).
+#
+# Deterministic on purpose, like the fleet parse above: the user has already
+# SAID which group gets which work, so there is nothing for a model to decide —
+# routing it is string work, and string work must not cost a provider call.
+
+#: The verbs that hand a GROUP its work. Broader than ``_BRIEFING_VERB_RE`` —
+#: "tell"/"sag" and "ask"/"frag" are unambiguous here because this vocabulary
+#: is only ever consulted in the remainder BEHIND a fleet request, where a
+#: status-question reading does not exist.
+_GROUP_BRIEF_VERB_RE = re.compile(
+    r"\b(?:prompt\w*|anprompt\w*|instruct\w*|instruy\w*|anweis\w*|"  # i18n-allow: input vocab
+    r"beauftrag\w*|brief\w*|assign\w*|encarga\w*|tell\w*|sag\w*|"  # i18n-allow: input vocab
+    r"dile|d[ií]gale|frag\w*|ask\w*|pregunt\w*)\b",  # i18n-allow: input vocab
+    re.IGNORECASE,
+)
+
+#: The modal directly behind a kind's name — the verbless way German (and
+#: English) hands a group its work: "die Claudes SOLLEN die Tests fixen".
+#: Commas are excluded from the gap so a name that merely opens a list cannot
+#: borrow a modal from the next clause.
+_GROUP_BRIEF_MODAL_RE = re.compile(
+    r"[^.!?;,]{0,12}?\b(?:soll(?:en|te|ten)?|should|shall|must|"  # i18n-allow: input vocab
+    r"m[uü]ss(?:en|t)?|deben?|deber[ií]an?)\b",  # i18n-allow: input vocab
+    re.IGNORECASE,
+)
+
+#: What may stand between a briefing verb's addressee and its work: an optional
+#: subordinator ("to" / "dass") and the pronoun re-stating the group. Part of
+#: the ADDRESS, never of the task.
+_GROUP_BRIEF_CONNECTIVE_RE = re.compile(
+    r"\s*[,:]?\s*(?:(?:to|that|dass|damit|que)\b\s*)?"  # i18n-allow: input vocab
+    r"(?:(?:sie|er|es|they|it|them)\b\s*)?",  # i18n-allow: input vocab
+    re.IGNORECASE,
+)
+
+#: Trailing debris once the next group's clause is cut away: the conjunction
+#: and the article that belonged to the NEXT addressee ("… fixen und der ").
+_GROUP_TASK_TRIM_RE = re.compile(
+    r"[\s,;.]*(?:\b(?:und|and|y|sowie|plus)\b)?"  # i18n-allow: input vocab
+    r"[\s,;.]*(?:\b(?:the|die|der|das|den|dem|el|la|los|las)\b)?"  # i18n-allow: input vocab
+    r"[\s,;.]*$",
+    re.IGNORECASE,
+)
+
+#: Words allowed in front of the FIRST group brief without disqualifying the
+#: per-group reading. Anything more substantial before it is a brief of its own
+#: ("prompt each of them to do X and tell the codex …"), and the per-group map
+#: would then silently withhold X from every pane the group clauses do not
+#: name — so the whole map stands down instead.
+_GROUP_BRIEF_LEAD_RE = re.compile(
+    r"[\s.,:;!?—–-]*(?:\b(?:und|and|y|dann|then|also|bitte|"  # i18n-allow: input vocab
+    r"please|jetzt|now|"
+    r"the|die|der|das|den|los|las|el|la)\b[\s,]*)*",  # i18n-allow: input vocab
+    re.IGNORECASE,
+)
+
+#: A group's task shorter than this is a fragment, not work ("do it" survives,
+#: a stray article does not). Deliberately below ``_MIN_INSTRUCTION_CHARS``:
+#: here there is no better fallback to prefer, and "write tests" is an order.
+_MIN_GROUP_TASK_CHARS = 6
+
+
+def _group_brief_anchors(text: str) -> list[tuple[int, int, str]]:
+    """Every per-kind brief in ``text`` as ``(cut_start, task_start, cli)``.
+
+    ``cut_start`` is where the PREVIOUS group's task ends (the verb for
+    verb-anchored briefs, the name for modal-anchored ones); ``task_start`` is
+    where this group's own task begins.
+
+    A verb may govern only the FIRST name after it: in "prompt the claudes to
+    fix codex bugs" the word "codex" stands inside the claudes' task, and the
+    guard that keeps it there is the previous mention's position — a verb in
+    front of an earlier addressee is spent.
+    """
+    out: list[tuple[int, int, str]] = []
+    previous_end = -1
+    for match in _AGENT_RE.finditer(text):
+        agent = _canonical_agent(match.group("agent"))
+        if agent is None:
+            continue
+        verb: re.Match[str] | None = None
+        for candidate in _GROUP_BRIEF_VERB_RE.finditer(text, 0, match.start()):
+            if candidate.start() <= previous_end:
+                continue
+            between = text[candidate.end() : match.start()]
+            if len(between) <= _COUNT_AGENT_MAX_GAP and not re.search(r"[.!?;:]", between):
+                verb = candidate
+        previous_end = match.end()
+        if verb is not None:
+            lead = _GROUP_BRIEF_CONNECTIVE_RE.match(text, match.end())
+            out.append((verb.start(), lead.end() if lead else match.end(), agent))
+            continue
+        modal = _GROUP_BRIEF_MODAL_RE.match(text, match.end())
+        if modal is not None:
+            out.append((match.start(), modal.end(), agent))
+    return out
+
+
+def spawn_group_tasks(user_text: str) -> dict[str, str]:
+    """Each spawned kind's OWN task, or ``{}`` when the brief is shared.
+
+    Reads the same remainder ``spawn_instruction`` reads — everything behind
+    the last fleet clause — and splits it at the briefs that name a CLI. The
+    caller maps each kind to the panes it just opened of that kind; a kind the
+    brief does not name gets NO task, because "open two claudes and a codex,
+    prompt the claudes to fix the tests" deliberately leaves the codex blank.
+
+    ``{}`` — the shared-brief reading — whenever the remainder briefs nobody by
+    kind, or carries work in front of the first kind-brief (that work belongs
+    to everyone, and a partial map would silently withhold it).
+    """
+    text = _spoken_correction_suffix((user_text or "").strip())
+    if len(text) < 6:
+        return {}
+    regions = _spawn_regions(text)
+    if not regions:
+        return {}
+    last = regions[-1]
+    remainder = text[last.start + len(last.parse_text) :]
+    if not remainder.strip():
+        return {}
+    anchors = _group_brief_anchors(remainder)
+    if not anchors:
+        return {}
+    lead = _GROUP_BRIEF_LEAD_RE.match(remainder)
+    if lead is None or lead.end() < anchors[0][0]:
+        return {}
+    out: dict[str, str] = {}
+    for index, (_cut, task_start, agent) in enumerate(anchors):
+        stop = anchors[index + 1][0] if index + 1 < len(anchors) else len(remainder)
+        task = remainder[task_start:stop].strip(" \t,:;-")
+        task = " ".join(_GROUP_TASK_TRIM_RE.sub("", task).split())
+        if len(task) < _MIN_GROUP_TASK_CHARS:
+            continue
+        out[agent] = f"{out[agent]}; {task}" if agent in out else task
+    return out
 
 
 _RECENT_FLEET_RE = re.compile(
@@ -2804,6 +2958,95 @@ def wants_split(user_text: str) -> bool:
     return bool(_DIVIDE_RECIPIENT_RE.search(text) or _DIVIDE_AREA_RE.search(text))
 
 
+# --------------------------------------------------------------------------- #
+# "one fixes the macOS bug, one fixes the Linux bug"                           #
+# --------------------------------------------------------------------------- #
+# The user enumerating the division THEMSELVES. ``wants_split`` catches the
+# request to divide ("teilt es unter euch auf"); this catches a division
+# already made. Both must end in the same place — the split planner — because
+# the panes need DIFFERENT briefs either way: delivering the whole enumeration
+# to every pane is how two fresh agents both fixed the macOS bug while the
+# Linux bug sat unclaimed (maintainer report 2026-08-12).
+#
+# The trap: "one"/"einer" is among the most ordinary words there are, and the
+# fleet description itself counts panes with it ("one Codex"). Two conditions
+# keep it honest — and the callers only ever pass the TASK text (the remainder
+# behind every fleet clause), never the raw utterance:
+#
+# 1. the enumerator must OPEN its clause: start of text, or directly behind
+#    a comma/semicolon/colon or a coordination ("and"/"und"/"y"). "bug one"
+#    and "Terminal eins" never stand there;
+# 2. it must carry its own predicate inside its clause — an instruction verb,
+#    a modal, or the elided-verb complement ("und einer auf Linux", where the
+#    preposition does the pointing). "The other"/"der andere" is exempt from
+#    the predicate: that word pair has no counting reading at all, so it is
+#    distributive on its own ("one takes the backend, the other the
+#    frontend").
+#
+# Two qualifying enumerators are the evidence; one is an ordinary sentence.
+
+_DISTRIBUTIVE_PREFIX = r"(?:^|[,;:]|\b(?:und|and|y)\b)\s*"  # i18n-allow: input vocab
+
+_DISTRIBUTIVE_ONE_RE = re.compile(
+    _DISTRIBUTIVE_PREFIX
+    + r"(?:ein(?:e[rs]?|s)?|one(?:\s+of\s+(?:them|you))?|un[oa]|"  # i18n-allow: input vocab
+    r"(?:(?:der|die|das|the|el|la)\s+)?"  # i18n-allow: input vocab
+    r"(?:erste[rs]?|zweite[rs]?|dritte[rs]?|vierte[rs]?|"  # i18n-allow: input vocab
+    r"first|second|third|fourth|"
+    r"primer[oa]?|segund[oa]?|tercer[oa]?))\b",
+    re.IGNORECASE,
+)
+
+_DISTRIBUTIVE_OTHER_RE = re.compile(
+    _DISTRIBUTIVE_PREFIX
+    + r"(?:(?:der|die|das)\s+andere[nrs]?|the\s+other(?:\s+one)?|"  # i18n-allow: input vocab
+    r"(?:el\s+|la\s+)?otr[oa])\b",
+    re.IGNORECASE,
+)
+
+#: What counts as an enumerator's own predicate when it is not a full
+#: instruction verb: a modal handing the slice over, or the preposition of an
+#: elided-verb complement.
+_DISTRIBUTIVE_PREDICATE_RE = re.compile(
+    r"\b(?:soll\w*|m[uü]ss\w*|kann|k[oö]nn\w*|darf\w*|"  # i18n-allow: input vocab
+    r"should|shall|must|can|could|will|would|takes?|gets?|does|"
+    r"deber?[ií]?an?|pueden?|podr[ií]an?|"
+    r"auf|f[uü]r|on|for|en|an|mit|with|con)\b",  # i18n-allow: input vocab
+    re.IGNORECASE,
+)
+
+#: How far an enumerator's predicate may sit behind it, within its clause.
+_DISTRIBUTIVE_PREDICATE_REACH = 60
+
+
+def _distributive_clause(text: str, start: int) -> str:
+    window = text[start : start + _DISTRIBUTIVE_PREDICATE_REACH]
+    return re.split(r"[.!?;]", window, maxsplit=1)[0]
+
+
+def distributes_tasks(task_text: str) -> bool:
+    """True when the task hands each pane a DIFFERENT job by enumeration.
+
+    Consulted on the extracted TASK text of a fleet brief (never the raw
+    utterance — the fleet description counts panes with the same words). A
+    True here routes the brief through the split planner, exactly like
+    ``wants_split``, so every pane receives its own slice instead of the whole
+    enumeration.
+    """
+    text = (task_text or "").strip()
+    if len(text) < 12:
+        return False
+    heads = 0
+    for match in _DISTRIBUTIVE_ONE_RE.finditer(text):
+        clause = _distributive_clause(text, match.end())
+        if _INSTRUCTION_VERB_RE.search(clause) or _DISTRIBUTIVE_PREDICATE_RE.search(clause):
+            heads += 1
+            if heads >= 2:
+                return True
+    heads += sum(1 for _ in _DISTRIBUTIVE_OTHER_RE.finditer(text))
+    return heads >= 2
+
+
 #: "both of you", "you two", "all three of them", "die zwei Terminals". What
 #: these have in common is a COUNT the utterance states out loud, which is the
 #: only evidence that survives a call-sign speech recognition mangled beyond
@@ -2958,10 +3201,12 @@ __all__ = [
     "detect_visible",
     "detect_close_fleet",
     "detect_spawn",
+    "distributes_tasks",
     "expects_several",
     "owns_turn",
     "references_recent_fleet",
     "reports_undelivered",
+    "spawn_group_tasks",
     "spawn_includes_task",
     "spawn_instruction",
     "spawn_vehicle_outranks_workspace",
