@@ -830,6 +830,11 @@ _DICTATION_WAKE_RELEASE_TIMEOUT_S = 3.0
 # was never delivered. See ``SpeechPipeline._on_dictate_press``.
 _DICTATE_HOLD_REPEAT_GRACE_S = 2.0
 
+# The voice hold key (push-to-talk) has the same physics and the same lost
+# key-up failure mode as the dictation hold; sharing the window keeps the two
+# self-healing latches from drifting apart. See ``SpeechPipeline._on_ptt_press``.
+_PTT_HOLD_REPEAT_GRACE_S = _DICTATE_HOLD_REPEAT_GRACE_S
+
 # How long an explicit dictation key press waits for a live voice conversation
 # to give the microphone back before it gives up and says so.
 #
@@ -1879,6 +1884,9 @@ class SpeechPipeline:
         self._ptt_mode = False
         self._ptt_release_event = asyncio.Event()
         self._ptt_max_hold_s = 60.0
+        # When the PTT chord last reported itself down — the self-healing
+        # latch's clock (see ``_on_ptt_press``). 0.0 = never.
+        self._ptt_key_seen_at = 0.0
         # A DELIBERATE user activation edge (PTT down, CALL hotkey, the
         # "Speak in this conversation" button) is pending in ``_call_event``.
         # The state loop consumes this to exempt exactly that call from the
@@ -5908,8 +5916,38 @@ class SpeechPipeline:
         session (or while already armed) is a no-op. Only a fresh press from
         IDLE starts a recording, which keeps PTT from racing a running
         wake-word session.
+
+        **The latch heals itself** (same repair as ``_on_dictate_press``): the
+        up edge can be lost — a focus change, a UAC prompt, an RDP reconnect,
+        a checker restart mid-hold, or a backend that clears its chord state
+        without firing ``on_release``. A latch only a release could clear then
+        left the recording pill open for the full max-hold and swallowed every
+        later press as key-repeat. The two cases are told apart by TIME: a
+        real hold re-reports itself every poll tick (tens of milliseconds), so
+        a press arriving past the grace window is physically a fresh press on
+        a key nobody is holding — treat it as the release that never arrived
+        and submit what was held.
         """
-        if self._ptt_mode or self._state != PipelineState.IDLE:
+        now = time.monotonic()
+        last_seen = float(getattr(self, "_ptt_key_seen_at", 0.0))
+        latched = self._ptt_mode
+        stale = latched and (now - last_seen) > _PTT_HOLD_REPEAT_GRACE_S
+        self._ptt_key_seen_at = now
+        if latched and not stale:
+            return  # the same hold, re-reported by a polling backend
+        if stale:
+            log.info(
+                "PTT key-up edge was lost %.1fs ago — treating this press as "
+                "the release that never arrived.",
+                now - last_seen,
+            )
+            # The running session is parked on this event; setting it submits
+            # the capture and the session teardown clears ``_ptt_mode`` — the
+            # exact path a real release takes, so nothing else may be touched
+            # here. The NEXT press then starts fresh from IDLE.
+            self._ptt_release_event.set()
+            return
+        if self._state != PipelineState.IDLE:
             return
         if not self._activation_allowed():
             # Push-to-talk is gated by the SAME predicate as wake, so a running

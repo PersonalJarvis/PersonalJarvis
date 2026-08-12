@@ -24,6 +24,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
+import jarvis.speech.pipeline as pipeline_mod
 from jarvis.core.events import TranscriptionUpdate
 from jarvis.core.protocols import AudioChunk
 from jarvis.sessions.constants import HANGUP_HOTKEY, HANGUP_TURN_COMPLETE
@@ -114,6 +115,35 @@ def test_ptt_press_is_idempotent_against_key_repeat():
     pipe._ptt_release_event.set()  # pretend a release slipped in
     pipe._on_ptt_press()  # key-repeat — must be a no-op
     assert pipe._ptt_release_event.is_set()  # not cleared by the repeat
+
+
+def test_ptt_press_after_lost_release_heals_the_latch():
+    """A key-up edge can be lost (focus change, UAC prompt, RDP reconnect,
+    checker restart mid-hold). The next press must act as the release that
+    never arrived — submitting what was held — instead of being swallowed as
+    key-repeat, which left the recording pill open until the max-hold cap."""
+    pipe = _make_pipeline()
+    pipe._on_ptt_press()
+    assert pipe._ptt_mode is True
+    # No poll tick has re-reported the chord for longer than the grace window:
+    # physically, nobody is holding the key any more.
+    pipe._ptt_key_seen_at = time.monotonic() - (
+        pipeline_mod._PTT_HOLD_REPEAT_GRACE_S + 1.0
+    )
+    pipe._on_ptt_press()
+    assert pipe._ptt_release_event.is_set()
+
+
+def test_ptt_key_repeat_within_grace_never_heals():
+    """A re-report inside the grace window is the SAME hold (the Windows
+    backend polls every few tens of milliseconds) — it must stay a no-op."""
+    pipe = _make_pipeline()
+    pipe._on_ptt_press()
+    pipe._ptt_key_seen_at = time.monotonic() - (
+        pipeline_mod._PTT_HOLD_REPEAT_GRACE_S - 0.5
+    )
+    pipe._on_ptt_press()
+    assert not pipe._ptt_release_event.is_set()
 
 
 def test_ptt_press_blocked_when_activation_gate_closed():
