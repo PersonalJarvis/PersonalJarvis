@@ -155,6 +155,14 @@ _MIN_ATTEMPT_S = 20.0
 # already uses on failure — quality-tier by construction, never a demotion.
 HEDGE_AFTER_S = 30.0
 
+# When the writer is a direct API call (the ``api`` and ``tool_model`` rungs),
+# insurance starts earlier. Those paths have no process to cold-start: measured
+# live 2026-08-12, a healthy API brief lands in 13-21 s, so the CLI-sized 30 s
+# above would let an already-fast path sit through half a minute of silence
+# before a second writer was allowed to begin. Still above the API path's
+# healthy band, so the double spend stays as rare as it is for the CLI.
+HEDGE_AFTER_API_S = 20.0
+
 # Speech artefacts the deterministic layer removes. Matching *input vocabulary*
 # in the supported locales — these are the words people actually say while
 # thinking, not prose.
@@ -941,7 +949,16 @@ async def compose(
                 break
             wait_s = deadline - now
             if not hedged:
-                wait_s = min(wait_s, max(started + HEDGE_AFTER_S - now, 0.0))
+                # The threshold follows the PRIMARY writer's family: a
+                # subscription CLI pays a cold process start a direct API call
+                # never does, so "suspiciously slow" starts earlier there.
+                # Read at loop time, not hoisted — tests pin these constants.
+                hedge_after_s = (
+                    HEDGE_AFTER_S
+                    if writer_source.startswith("subscription")
+                    else HEDGE_AFTER_API_S
+                )
+                wait_s = min(wait_s, max(started + hedge_after_s - now, 0.0))
             done, _pending = await asyncio.wait(
                 set(attempts), timeout=wait_s, return_when=asyncio.FIRST_COMPLETED
             )
@@ -1049,6 +1066,7 @@ async def compose(
 
 __all__ = [
     "COMPOSE_TIMEOUT_S",
+    "HEDGE_AFTER_API_S",
     "HEDGE_AFTER_S",
     "MAX_FILE_REFERENCES",
     "STAGE_DRAFTING",

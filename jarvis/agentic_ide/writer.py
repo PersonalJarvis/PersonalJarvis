@@ -58,7 +58,16 @@ from loguru import logger
 #: a fan-out today), and the answer changes on human timescales: a sign-in, a
 #: sign-out, a settings change. Failures are never cached — a user who just
 #: fixed their key must not wait out a stale "nothing qualifies".
-_CACHE_TTL_S = 45.0
+#:
+#: Ten minutes, raised from 45 s (2026-08-12): every path that CHANGES the
+#: answer already invalidates explicitly — the settings PUT calls
+#: ``invalidate_writer_cache`` and a failed call invalidates through
+#: ``resolve_rescue_writer`` — so the TTL only guards against a change nothing
+#: announced (a CLI signed out behind the app's back). The worst case there is
+#: one failed attempt that immediately crosses rungs; the 45 s version bought
+#: that narrow safety by re-paying the probes on nearly every compose after an
+#: idle minute.
+_CACHE_TTL_S = 600.0
 
 _cache_lock = threading.Lock()
 #: ``(resolved_at, cli_timeout_s, brain, source)`` of the last success, or None.

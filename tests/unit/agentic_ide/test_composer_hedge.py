@@ -97,6 +97,48 @@ async def test_a_stalled_writer_gets_a_parallel_second_and_the_fast_one_wins(
     assert hedges[0].terminal == "Kai"
 
 
+async def test_an_api_writer_hedges_on_its_own_faster_clock(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A direct API call has no process cold-start to excuse, so its insurance
+    starts at ``HEDGE_AFTER_API_S`` — waiting out the CLI-sized window would
+    hand the already-fast path the longest silence."""
+    stalled = asyncio.Event()
+    started: list[str] = []
+
+    async def _compose(*, brain: object, **_kwargs: object) -> str:
+        name = getattr(brain, "name", "?")
+        started.append(name)
+        if name == "slow-api":
+            await stalled.wait()  # never set — cancelled by the winner
+        return HEDGE_BRIEF
+
+    # The CLI threshold is far beyond this test's patience on purpose: if the
+    # source-aware pick ever regresses to HEDGE_AFTER_S, no hedge fires and
+    # the started-writers assertion fails instead of flaking.
+    monkeypatch.setattr(prompt_composer, "HEDGE_AFTER_S", 60.0)
+    monkeypatch.setattr(prompt_composer, "HEDGE_AFTER_API_S", 0.05)
+    monkeypatch.setattr(
+        prompt_composer,
+        "_resolve_writer",
+        lambda: (_Writer("slow-api"), "tool_model:grok"),
+    )
+    monkeypatch.setattr(
+        prompt_composer,
+        "_rescue_writer",
+        lambda tried: (_Writer("fast"), "subscription:fast"),
+    )
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _compose)
+
+    result = await prompt_composer.compose(
+        "make the wake path faster", session=workspace, terminal_name="Kai"
+    )
+
+    assert result.composed_by == "llm"
+    assert "quick" in result.text
+    assert started == ["slow-api", "fast"]
+
+
 async def test_the_original_writer_still_wins_when_it_answers_first(
     workspace: _Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:

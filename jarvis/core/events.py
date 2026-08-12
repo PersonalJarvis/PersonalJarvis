@@ -771,6 +771,33 @@ class AgenticIdePromptSent(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class AgenticIdeComposeProgress(Event):
+    """One beat of a task brief being written for one pane.
+
+    Writing a brief is 10-30 s of real model work, and the typed prompt bar
+    used to show a silent spinner for all of it — a working composer and a
+    wedged one looked identical from the outside. The composer already
+    narrates its progress (``jarvis.agentic_ide.prompt_composer``, the
+    ``STAGE_*`` beats); this event carries each line to every client on the
+    app socket they already hold, the same route ``AgenticIdePromptSent``
+    takes for the delivery itself.
+
+    ``stage`` is one of the composer's ``STAGE_*`` constants (``start``,
+    ``thinking``, ``drafting``, ``retry``, ``hedge``, ``ready``,
+    ``fallback``, ``sent``). ``message`` is the finished English line the
+    composer wrote, including which writer is working — clients display it,
+    they never parse it. ``kind`` is the detected task kind so a client can
+    style a review differently from a build; empty when unknown.
+    """
+
+    session_id: str = ""
+    terminal: str = ""
+    stage: str = ""
+    message: str = ""
+    kind: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class AgenticIdeCodingModeChanged(Event):
     """The focused coding mode was switched on or off.
 

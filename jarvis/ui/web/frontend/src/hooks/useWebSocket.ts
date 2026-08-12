@@ -464,6 +464,16 @@ export function useWebSocket(): void {
           }
         }
 
+        if (env.event_name === "AgenticIdeComposeProgress") {
+          // One beat of a brief being written for a pane — the prompt bar
+          // shows it as a live status line. Deliberately no toast: a single
+          // composition emits several beats, and toasting each would bury the
+          // warnings that matter.
+          window.dispatchEvent(
+            new CustomEvent("jarvis:agentic-ide-compose", { detail: env.payload }),
+          );
+        }
+
         if (env.event_name === "AgenticIdeCodingModeChanged") {
           // Coding mode changes how Jarvis answers on EVERY screen, so the
           // app-wide indicator has to hear about a switch made anywhere — by

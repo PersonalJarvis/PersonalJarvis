@@ -1044,7 +1044,9 @@ describe("the prompt bar composes as it sends", () => {
     type("run the tests");
 
     await waitFor(() =>
-      expect(pushToast).toHaveBeenCalledWith("warning", "Mika did not accept the prompt."),
+      expect(
+        (screen.getByLabelText(/instruction for Mika/i) as HTMLTextAreaElement).value,
+      ).toBe(""),
     );
   });
 
@@ -1076,9 +1078,19 @@ describe("the prompt bar composes as it sends", () => {
     type("run the tests");
 
     await waitFor(() =>
-      expect(
-        (screen.getByLabelText(/instruction for Mika/i) as HTMLTextAreaElement).value,
-      ).toBe(""),
+      expect(pushToast).toHaveBeenCalledWith("warning", "Mika did not accept the prompt."),
+    );
+  });
+});
+
+describe("the compose narration line", () => {
+  // Composition is 10-30 s of model work; the backend narrates each beat over
+  // the app socket, and the bar shows the latest line so a working composer
+  // and a wedged one stop looking identical.
+  const beat = (detail: Record<string, unknown>) =>
+    fireEvent(
+      window,
+      new CustomEvent("jarvis:agentic-ide-compose", { detail }),
     );
   });
 });
@@ -1117,6 +1129,42 @@ describe("dropping files on the prompt bar", () => {
 
     await waitFor(() => expect(api.attachToTerminal).toHaveBeenCalled());
     const [name, payload] = vi.mocked(api.attachToTerminal).mock.calls[0];
+
+  it("shows the latest beat while the brief is being written", () => {
+    renderGrid();
+
+    beat({
+      session_id: "ide_test",
+      terminal: "Mika",
+      stage: "thinking",
+      message: "Reading the code before Mika is briefed - 3 file outlines.",
+    });
+
+    expect(screen.getByTestId("agentic-compose-progress").textContent).toContain(
+      "Reading the code before Mika is briefed",
+    );
+  });
+
+  it("clears the line once the delivery is announced", () => {
+    renderGrid();
+    beat({ session_id: "ide_test", terminal: "Mika", stage: "drafting", message: "Writing." });
+
+    fireEvent(
+      window,
+      new CustomEvent("jarvis:agentic-ide-prompt", {
+        detail: { terminal: "Mika", submitted: true },
+      }),
+    );
+
+    expect(screen.queryByTestId("agentic-compose-progress")).toBeNull();
+  });
+
+  it("ignores beats that belong to another workspace", () => {
+    renderGrid();
+
+    beat({ session_id: "ide_other", terminal: "Mika", stage: "start", message: "Writing." });
+
+    expect(screen.queryByTestId("agentic-compose-progress")).toBeNull();
     expect(name).toBe("Mika");
     expect(payload.analyze).toBe(true);
     // Held rather than typed: the user is still writing the sentence that

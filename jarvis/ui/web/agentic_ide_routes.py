@@ -3448,6 +3448,7 @@ async def terminal_prompt(request: Request, name: str, req: PromptRequest) -> di
             drop_analysis.DropAnalysis.from_dict(a.model_dump()) for a in req.attachments
         ]
         if req.compose:
+            from jarvis.agentic_ide.prompt_composer import ComposeNotice, print_notice
             from jarvis.agentic_ide.prompt_composer import compose as compose_prompt
 
             # The pane decides which workspace composes the prompt. Composition
@@ -3455,12 +3456,48 @@ async def terminal_prompt(request: Request, name: str, req: PromptRequest) -> di
             # from the front workspace while sending to a pane in another one would
             # point the agent at files that are not in its tree.
             session, term_for_compose = found
+
+            # Composition is 10-30 s of real model work, and the typed prompt
+            # bar used to show a silent spinner for all of it. The composer's
+            # own beats ride the app socket so every client can narrate the
+            # wait; the stdout line stays, because a headless install watches
+            # THAT. A dry run keeps the default sink — it is a preview, and
+            # progress lines about a prompt nobody asked to send are noise.
+            beat_bus = getattr(request.app.state, "bus", None)
+            on_progress = None
+            if beat_bus is not None and not req.dry_run:
+                from jarvis.core.events import AgenticIdeComposeProgress
+
+                def _publish_beat(notice: ComposeNotice) -> None:
+                    print_notice(notice)
+                    task = asyncio.get_running_loop().create_task(
+                        beat_bus.publish(
+                            AgenticIdeComposeProgress(
+                                session_id=session.id,
+                                terminal=notice.terminal or term_for_compose.name,
+                                stage=notice.stage,
+                                message=notice.message,
+                                kind=notice.kind,
+                                source_layer="agentic_ide_routes",
+                            )
+                        )
+                    )
+                    # Fire-and-forget: a beat that cannot be delivered must
+                    # cost the line, never the brief (and never a warning
+                    # about an unobserved task at teardown).
+                    task.add_done_callback(
+                        lambda done: done.cancelled() or done.exception()
+                    )
+
+                on_progress = _publish_beat
+
             result = await compose_prompt(
                 req.prompt,
                 session=session,
                 terminal_name=term_for_compose.name,
                 agent_display=AGENT_DISPLAY.get(term_for_compose.agent, term_for_compose.agent),
                 attachments=attachments,
+                on_progress=on_progress,
             )
             text, composed_by, files = result.text, result.composed_by, result.files
             if not text:

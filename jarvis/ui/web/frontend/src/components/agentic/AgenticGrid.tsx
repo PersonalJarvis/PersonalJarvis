@@ -791,6 +791,54 @@ export function AgenticGrid({
     recapCache.workspaceId === session.id ? recapCache.rows : {};
   // The editor owns ordinary keystrokes so typing does not re-render every
   // xterm pane in this very large component. This seed changes only when the
+  // The live line about the brief being written for a pane of THIS workspace.
+  // Composition is 10-30 s of real model work; without this line the bar
+  // showed a silent spinner for all of it, and a working composer and a
+  // wedged one looked identical. Fed by the backend's own beats over the app
+  // socket, so it also narrates a compose another window of this workspace
+  // started; cleared by the delivery event, a failed send, or a stale timer.
+  const [composeBeat, setComposeBeat] = useState<{
+    terminal: string;
+    stage: string;
+    message: string;
+  } | null>(null);
+  useEffect(() => {
+    let staleTimer: number | undefined;
+    const onBeat = (event: Event) => {
+      const detail = (event as CustomEvent).detail as {
+        session_id?: string;
+        terminal?: string;
+        stage?: string;
+        message?: string;
+      };
+      if (detail.session_id && detail.session_id !== session.id) return;
+      if (!detail.terminal || !detail.message) return;
+      setComposeBeat({
+        terminal: detail.terminal,
+        stage: detail.stage ?? "",
+        message: detail.message,
+      });
+      window.clearTimeout(staleTimer);
+      // A beat never followed by a delivery (a killed backend, a dropped
+      // socket) must not leave a "writing…" line standing forever.
+      staleTimer = window.setTimeout(() => setComposeBeat(null), 120_000);
+    };
+    const onDelivered = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { terminal?: string };
+      setComposeBeat((current) =>
+        current && (!detail.terminal || detail.terminal === current.terminal)
+          ? null
+          : current,
+      );
+    };
+    window.addEventListener("jarvis:agentic-ide-compose", onBeat);
+    window.addEventListener("jarvis:agentic-ide-prompt", onDelivered);
+    return () => {
+      window.clearTimeout(staleTimer);
+      window.removeEventListener("jarvis:agentic-ide-compose", onBeat);
+      window.removeEventListener("jarvis:agentic-ide-prompt", onDelivered);
+    };
+  }, [session.id]);
   // parent intentionally replaces the draft (successful send).
   const [promptSeed, setPromptSeed] = useState({ value: "", revision: 0 });
   const replacePrompt = useCallback((value: string) => {
@@ -2192,6 +2240,8 @@ export function AgenticGrid({
     }
   };
 
+      // No delivery event will arrive to clear the narration for this send.
+      setComposeBeat(null);
   const setStatus = useCallback((name: string, status: PaneStatus, detail?: string) => {
     setStatuses((prev) => ({ ...prev, [name]: { status, detail } }));
   }, []);
@@ -3351,6 +3401,15 @@ export function AgenticGrid({
             onClick={() => composer.resize(COMPOSER_DEFAULT_PX)}
             className="flex shrink-0 items-center gap-1.5 rounded-control px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           >
+          {composeBeat && (
+            <div
+              data-testid="agentic-compose-progress"
+              className="flex shrink-0 items-center gap-2 px-3 pt-2 text-[11px] text-muted-foreground"
+            >
+              <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />
+              <span className="truncate">{composeBeat.message}</span>
+            </div>
+          )}
             <ChevronUp className="h-3.5 w-3.5" />
             Write instead
           </button>
