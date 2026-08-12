@@ -16,6 +16,7 @@ Used in "endpointing" mode: once a silence phase of `silence_ms` duration is
 detected after active speech, the utterance is considered complete and the
 pipeline sends the audio to Whisper.
 """
+
 from __future__ import annotations
 
 import logging
@@ -35,7 +36,7 @@ from jarvis.audio.vad_reasons import (
 from jarvis.core.protocols import AudioChunk
 
 VAD_SAMPLE_RATE = 16_000
-VAD_FRAME_SAMPLES = 512       # fixed requirement from Silero
+VAD_FRAME_SAMPLES = 512  # fixed requirement from Silero
 
 # WebRTC VAD middle tier: aggressiveness 0 (permissive) .. 3 (strict). 2 keeps
 # recall high enough for endpointing while filtering steady ambient noise.
@@ -53,6 +54,26 @@ _WEBRTC_FRAME_SAMPLES = 480
 # is a no-op (2 x 1.5 s == the historical fixed 3 s grant). See
 # tests/unit/audio/test_vad_turn_taking.py (stuck-in-LISTENING regression).
 _PATIENCE_FACTOR = 2
+
+# Post-capture gain for quiet speakers, applied to a FINISHED utterance just
+# before it leaves for STT. Whisper decodes soft recordings measurably worse;
+# lifting the peak toward a healthy level repairs that without touching the
+# endpointing math (all VAD decisions are made on the raw frames). Gain only
+# ever RAISES a quiet utterance — loud audio passes through untouched — and is
+# bounded so noise-floor recordings are not amplified into garbage:
+#   - below the amplification floor (2 x the caller's ``min_speech_rms``, i.e.
+#     0.004 at the default) the "utterance" is silence/noise; leave it alone,
+#   - at or above _GAIN_TARGET_PEAK the level is already healthy,
+#   - otherwise scale toward the target, capped at _GAIN_MAX.
+#
+# Scope: ONLY single-piece utterances (natural silence / stt_stable endpoints
+# with no pending carry). A ``max_utterance`` forced cut and every piece that
+# continues its carry are yielded RAW: the pipeline splices those fragments
+# back into one buffer, and per-fragment gain factors would put an audible
+# level jump at each splice — worse for Whisper than a uniformly quiet take.
+_GAIN_TARGET_PEAK = 0.70
+_GAIN_MAX = 4.0
+_GAIN_FLOOR_RMS_FACTOR = 2.0
 
 log = logging.getLogger("jarvis.audio.vad")
 
@@ -91,8 +112,28 @@ class SileroEndpointer:
         tail_loud_window_ms: int = 320,
         long_utterance_speech_ms: int = 2000,
         long_utterance_silence_ms: int = 3000,
+        # Entry sensitivity for the IDLE→SPEAKING transition ONLY. Soft word
+        # onsets (breathy consonants, low vowels) score 0.35-0.5 for their first
+        # frames; requiring the full ``speech_threshold`` to open the utterance
+        # meant those frames survived only as far as the pre-roll ring reached,
+        # and longer soft lead-ins were clipped ("word beginnings cut off",
+        # voice session 2026-07-29). Once SPEAKING, classification stays at the
+        # stricter ``speech_threshold`` so silence timing and false-start
+        # discards are unchanged. Ambient noise is still double-gated by
+        # ``min_speech_rms`` and the ``min_speech_ms`` false-start discard.
+        onset_threshold: float = 0.35,
+        # Pre-speech context carried into the utterance (rolling ring while
+        # IDLE). 480 ms rather than the historical 320 ms: with the onset gate
+        # above this covers even a slow soft attack, and Whisper tolerates half
+        # a second of leading room noise without hallucinating.
+        pre_roll_ms: int = 480,
     ) -> None:
         self._threshold = speech_threshold
+        # Never stricter than the hold threshold — a caller lowering
+        # ``speech_threshold`` below the onset default must not end up with an
+        # ENTRY gate harder than the hold gate.
+        self._onset_threshold = min(onset_threshold, speech_threshold)
+        self._pre_roll_frames = max(1, int(pre_roll_ms) // 32)
         self._silence_frames = max(1, silence_ms // 32)
         # Adaptive endpoint patience: extra silence frames granted to the CURRENT
         # utterance on top of ``_silence_frames``. Raised via
@@ -238,12 +279,9 @@ class SileroEndpointer:
                 spec = importlib.util.find_spec("silero_vad")
                 if spec is None or spec.origin is None:
                     raise RuntimeError(
-                        "neither the bundled Silero model nor an installed model "
-                        "asset is available"
+                        "neither the bundled Silero model nor an installed model asset is available"
                     )
-                model_path = os.path.join(
-                    os.path.dirname(spec.origin), "data", "silero_vad.onnx"
-                )
+                model_path = os.path.join(os.path.dirname(spec.origin), "data", "silero_vad.onnx")
             opts = onnxruntime.SessionOptions()
             opts.inter_op_num_threads = 1
             opts.intra_op_num_threads = 1
@@ -340,9 +378,7 @@ class SileroEndpointer:
                 return self._webrtc_prob(x)
             return self._energy_prob(x)
 
-    async def utterances(
-        self, chunks: AsyncIterator[AudioChunk]
-    ) -> AsyncIterator[bytes]:
+    async def utterances(self, chunks: AsyncIterator[AudioChunk]) -> AsyncIterator[bytes]:
         """Consumes mic chunks and yields complete utterance PCM bytes.
 
         Each yielded `bytes` value is int16 PCM at 16 kHz — ready to feed
@@ -353,8 +389,9 @@ class SileroEndpointer:
         # Re-frame: mic delivers 100 ms blocks (1600 samples), VAD wants 512 samples.
         # Buffer samples until >= 512 are available, split them, keep the remainder.
         residual = np.empty(0, dtype=np.float32)
-        # Rolling buffer of VAD frames for pre-speech context (preserves leading syllables).
-        pre_buffer: deque[np.ndarray] = deque(maxlen=10)  # ~320 ms
+        # Rolling buffer of VAD frames for pre-speech context (preserves leading
+        # syllables). Sized by ``pre_roll_ms`` — see the constructor rationale.
+        pre_buffer: deque[np.ndarray] = deque(maxlen=self._pre_roll_frames)
         active_frames: list[np.ndarray] = []
         silent_run = 0
         # Consecutive speech frames seen *while a silence timer is running*.
@@ -407,9 +444,7 @@ class SileroEndpointer:
             if prev_chunk_ts and ts > prev_chunk_ts and nominal_ms > 0.0:
                 missing_ms = (ts - prev_chunk_ts) / 1e6 - nominal_ms
                 if missing_ms >= 16.0:  # at least ~half a VAD frame went missing
-                    gap_frames = min(
-                        int(missing_ms // 32), self._effective_silence_frames
-                    )
+                    gap_frames = min(int(missing_ms // 32), self._effective_silence_frames)
             prev_chunk_ts = ts
             pending_gap_frames = gap_frames
 
@@ -419,7 +454,7 @@ class SileroEndpointer:
             # Extract all complete 512-sample frames
             n_full = len(buf) // VAD_FRAME_SAMPLES
             frames = buf[: n_full * VAD_FRAME_SAMPLES].reshape(n_full, VAD_FRAME_SAMPLES)
-            residual = buf[n_full * VAD_FRAME_SAMPLES:]
+            residual = buf[n_full * VAD_FRAME_SAMPLES :]
 
             for frame in frames:
                 prob = self._prob(frame)
@@ -444,10 +479,14 @@ class SileroEndpointer:
 
                 if not speaking:
                     pre_buffer.append(frame)
-                    if is_speech:
+                    # The ENTRY gate is deliberately softer than the hold gate:
+                    # a soft word onset must open the utterance so its first
+                    # frames are recorded, not merely ride along in the pre-roll
+                    # ring. See the ``onset_threshold`` constructor rationale.
+                    onset_speech = prob >= self._onset_threshold and rms >= self._min_speech_rms
+                    if onset_speech:
                         # Utterance begins — pull in the pre-buffer as context
                         active_frames = list(pre_buffer)
-                        active_frames.append(frame)
                         speaking = True
                         silent_run = 0
                         tail_silent_run = 0
@@ -462,7 +501,7 @@ class SileroEndpointer:
                             "VAD speech start: prob=%.3f rms=%.4f threshold=%.2f",
                             prob,
                             rms,
-                            self._threshold,
+                            self._onset_threshold,
                         )
                     elif tail_pending:
                         tail_silent_run += 1
@@ -552,7 +591,7 @@ class SileroEndpointer:
                         and total_frames >= self._probe_min_active_frames
                         and total_frames - last_probe_frame >= self._probe_interval_frames
                     ):
-                        tail = active_frames[-self._probe_tail_frames:]
+                        tail = active_frames[-self._probe_tail_frames :]
                         tail_arr = np.concatenate(tail)
                         # Tell the probe whether the tail is loud (speaker bleed)
                         # or a quiet thinking pause, reusing the per-frame
@@ -570,7 +609,7 @@ class SileroEndpointer:
                         # the endpoint, since the silence endpoint never fires
                         # there. Loud tail + empty/stable transcript = bleed;
                         # quiet tail = pause.
-                        recent = active_frames[-self._tail_loud_window_frames:]
+                        recent = active_frames[-self._tail_loud_window_frames :]
                         recent_arr = np.concatenate(recent)
                         recent_rms = float(np.sqrt(np.mean(np.square(recent_arr))))
                         relative_silence_rms = max(
@@ -612,11 +651,7 @@ class SileroEndpointer:
                         if silent_run < self._effective_silence_frames:
                             external_end = False
                     reached_max = total_frames * VAD_FRAME_SAMPLES >= self._max_samples
-                    if (
-                        silent_run >= self._effective_silence_frames
-                        or reached_max
-                        or external_end
-                    ):
+                    if silent_run >= self._effective_silence_frames or reached_max or external_end:
                         # Only yield if sufficient speech was collected
                         enough_speech = speech_frames >= self._min_speech_frames
                         if external_end:
@@ -635,12 +670,27 @@ class SileroEndpointer:
                                 speech_frames * 32,
                                 silent_run * 32,
                             )
+                            # Quiet-speaker gain, but ONLY for a single-piece
+                            # utterance: a forced cut and the piece that later
+                            # finalizes its carry are spliced back together by
+                            # the consumer, and per-fragment gain would put a
+                            # level jump at the splice (see the _GAIN_* block).
+                            forced_cut = reason == VAD_REASON_MAX_UTTERANCE
+                            continues_carry = tail_pending
                             # A forced cut arms the tail flush; any natural
                             # yield clears it (the carry was finalized). A
                             # false start leaves it untouched — the carry is
                             # still waiting.
-                            tail_pending = reason == VAD_REASON_MAX_UTTERANCE
-                            yield _float32_to_int16_bytes(utterance)
+                            tail_pending = forced_cut
+                            if forced_cut or continues_carry:
+                                yield _float32_to_int16_bytes(utterance)
+                            else:
+                                yield _float32_to_int16_bytes(
+                                    _amplify_quiet_utterance(
+                                        utterance,
+                                        self._min_speech_rms * _GAIN_FLOOR_RMS_FACTOR,
+                                    )
+                                )
                         else:
                             self._notify(self._on_endpoint, VAD_REASON_FALSE_START)
                             log.info(
@@ -668,6 +718,25 @@ class SileroEndpointer:
             callback(*args)
         except Exception as exc:  # noqa: BLE001
             log.debug("VAD callback failed: %s", exc)
+
+
+def _amplify_quiet_utterance(arr: np.ndarray, min_peak: float) -> np.ndarray:
+    """Lift a quiet finished utterance toward a healthy peak for STT.
+
+    Gain only ever raises the level (never attenuates), is skipped below
+    ``min_peak`` so a noise floor is not amplified into garbage, and is capped
+    at ``_GAIN_MAX`` — see the module constants for the rationale, including
+    why forced-cut carry fragments never reach this function. Applied after
+    every endpoint decision was already made on the raw frames, so endpoint
+    timing is byte-for-byte unaffected.
+    """
+    if arr.size == 0:
+        return arr
+    peak = float(np.max(np.abs(arr)))
+    if peak <= min_peak or peak >= _GAIN_TARGET_PEAK:
+        return arr
+    gain = min(_GAIN_TARGET_PEAK / peak, _GAIN_MAX)
+    return arr * gain
 
 
 def _float32_to_int16_bytes(arr: np.ndarray) -> bytes:
