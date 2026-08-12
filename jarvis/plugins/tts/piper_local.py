@@ -242,6 +242,7 @@ class PiperLocalTTS:
                     chunks.put(value, timeout=0.05)
                     return True
                 except queue.Full:
+                    # Consumer is just behind — retry until stopped, not an error.
                     continue
             return False
 

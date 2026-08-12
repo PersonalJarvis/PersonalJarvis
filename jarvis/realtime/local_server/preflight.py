@@ -71,6 +71,7 @@ def _disk_free_gb(root: Path) -> float:
     try:
         return shutil.disk_usage(probe).free / (1024**3)
     except OSError:
+        # Unreadable filesystem — 0 free is the honest, fail-safe answer.
         return 0.0
 
 

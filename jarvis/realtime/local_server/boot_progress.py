@@ -126,6 +126,7 @@ def read_log_tail(path: Path, *, max_bytes: int = TAIL_READ_BYTES) -> list[str]:
             handle.seek(max(0, size - max(0, max_bytes)))
             raw = handle.read(max(0, max_bytes))
     except OSError:
+        # Log file gone or unreadable mid-boot — an empty tail, not a crash.
         return []
     return raw.decode("utf-8", errors="replace").splitlines()
 
@@ -138,6 +139,7 @@ def _line_epoch(line: str) -> float | None:
     try:
         return time.mktime(time.strptime(match.group(1), "%Y-%m-%d %H:%M:%S"))
     except (OverflowError, ValueError):
+        # Unparseable timestamp — treat the line as untimestamped, not fatal.
         return None
 
 
@@ -207,6 +209,7 @@ def load_stats(path: Path) -> BootStats:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        # Absent or corrupt file — falls through to the empty-but-valid default below.
         data = None
     if not isinstance(data, dict):
         data = {}

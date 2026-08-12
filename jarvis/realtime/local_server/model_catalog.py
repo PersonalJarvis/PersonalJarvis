@@ -455,6 +455,7 @@ def _flag_value(command: str, flag: str) -> str:
 
         tokens = shlex.split(command or "", posix=os.name != "nt")
     except ValueError:
+        # Unbalanced quotes in a stored command — treat as "flag not found".
         return ""
     value = ""
     lowered_flag = flag.lower()

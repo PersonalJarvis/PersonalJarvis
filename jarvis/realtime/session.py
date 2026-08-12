@@ -5039,6 +5039,8 @@ class RealtimeVoiceSession:
                 try:
                     await self._session.request_response(required_tool=None)
                 except TypeError:
+                    # Older transport signature without required_tool — retry
+                    # with the plain call, not a failure to report.
                     await self._session.request_response()
             log.info(
                 "realtime[%s] retrying one blocked output in %s",
@@ -6712,6 +6714,8 @@ class RealtimeVoiceSession:
             try:
                 error = done.exception()
             except asyncio.CancelledError:
+                # Race with the cancelled() check above — already covered by
+                # the log call there, nothing new to report here.
                 return
             if error is not None:
                 log.warning(
@@ -7733,6 +7737,8 @@ class RealtimeVoiceSession:
                 timeout=max(0.05, float(timeout_s or 2.5)),
             )
         except TimeoutError:
+            # Tracked via the failure counter, not logged per-call — a slow
+            # grounding search is an expected outcome, not a bug to chase.
             self._public_fact_grounding_failures += 1
             return uncertainty, False
         except asyncio.CancelledError:

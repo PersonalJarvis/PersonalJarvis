@@ -130,6 +130,7 @@ class VisualizeTool:
         try:
             spec = parse_spec(args or {}, source_utterance=_utterance(ctx))
         except VisualSpecError as exc:
+            # Reported through the ToolResult's own error field, not a log call.
             return ToolResult(success=False, output={"kind": args.get("kind")}, error=str(exc))
 
         try:

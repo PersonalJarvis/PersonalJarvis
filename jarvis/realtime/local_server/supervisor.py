@@ -170,6 +170,7 @@ def _host_port(base_url: str) -> tuple[str, int]:
     try:
         port = parsed.port or _DEFAULT_PORT
     except ValueError:
+        # Unparseable port in a stored address — fall back to the pinned default.
         port = _DEFAULT_PORT
     return parsed.hostname or "127.0.0.1", port
 
@@ -183,6 +184,7 @@ def _port_open(port: int, timeout: float = 1.0) -> bool:
         with socket.create_connection(("127.0.0.1", port), timeout=timeout):
             return True
     except OSError:
+        # Connection refused/timed out — the port simply is not open yet.
         return False
 
 
@@ -196,6 +198,7 @@ def _pool_url(base_url: str) -> str:
     try:
         port = parsed.port or _DEFAULT_PORT
     except ValueError:
+        # Unparseable port in a stored address — fall back to the pinned default.
         port = _DEFAULT_PORT
     default_port = 443 if parsed.scheme == "https" else 80
     netloc = host_text if port == default_port else f"{host_text}:{port}"
@@ -242,6 +245,7 @@ def probe_runtime(base_url: str, timeout: float = 0.75) -> dict[str, int] | None
             return None
         raw = response.read(_MAX_POOL_RESPONSE_BYTES + 1)
     except (http.client.HTTPException, OSError, TimeoutError, ValueError):
+        # Reported through the documented "None means not ready" return contract above.
         return None
     finally:
         connection.close()
@@ -250,6 +254,7 @@ def probe_runtime(base_url: str, timeout: float = 0.75) -> dict[str, int] | None
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
+        # Reported through the documented "None means not ready" return contract above.
         return None
     if not isinstance(payload, dict):
         return None
@@ -418,10 +423,12 @@ def _read_pidfile() -> dict[str, object] | None:
     try:
         raw = _pidfile().read_text(encoding="utf-8")
     except OSError:
+        # No pidfile written yet, or unreadable — treat as "not owned".
         return None
     try:
         data = json.loads(raw)
     except ValueError:
+        # Corrupt pidfile — same "not owned" outcome as a missing one.
         return None
     return data if isinstance(data, dict) else None
 
@@ -432,6 +439,7 @@ def _json_int(value: object) -> int | None:
     try:
         return int(value)
     except ValueError:
+        # Non-numeric string in a stored/received field — treated as absent.
         return None
 
 
@@ -441,6 +449,7 @@ def _json_float(value: object) -> float | None:
     try:
         return float(value)
     except ValueError:
+        # Non-numeric string in a stored/received field — treated as absent.
         return None
 
 
@@ -460,6 +469,7 @@ def _process_create_time(pid: int) -> float | None:
     try:
         import psutil  # type: ignore[import-untyped]  # lazy, optional
     except ImportError:
+        # psutil not installed — ownership falls back to the caller's other checks.
         return None
     try:
         process = psutil.Process(pid)
@@ -600,6 +610,7 @@ def _try_lock_file(handle: BinaryIO) -> bool:
             )
         return True
     except OSError:
+        # Already locked by another process/thread — reported through the bool.
         return False
 
 
@@ -868,6 +879,7 @@ def _command_references_root(command: str, root: Path) -> bool:
         tokens = shlex.split(command, posix=os.name != "nt")
         resolved_root = root.resolve()
     except (OSError, ValueError):
+        # Unparseable command or unresolvable root — reported via the returned bool.
         return False
     for token in tokens:
         candidate = token.split("=", 1)[-1].strip("\"'")
@@ -877,6 +889,7 @@ def _command_references_root(command: str, root: Path) -> bool:
             if Path(candidate).resolve().is_relative_to(resolved_root):
                 return True
         except OSError:
+            # This one token cannot be resolved — check the remaining ones.
             continue
     return False
 
@@ -954,6 +967,7 @@ def _cli_flag_value(command: str, flag: str) -> str | None:
 
         tokens = shlex.split(command, posix=os.name != "nt")
     except ValueError:
+        # Unbalanced quotes in a stored command — treat as "flag not found".
         return None
     value: str | None = None
     normalized_flag = flag.lower()
@@ -1044,6 +1058,7 @@ def _uses_loopback_bind(command: str) -> bool:
 
         tokens = shlex.split(command, posix=os.name != "nt")
     except ValueError:
+        # Unbalanced quotes in a stored command — treat as "not explicitly loopback".
         return False
     host: str | None = None
     for index, token in enumerate(tokens):
@@ -1797,8 +1812,11 @@ def _kill_pid_tree(pid: int) -> bool:
         try:
             os.killpg(pid, signal.SIGTERM)  # type: ignore[attr-defined]
         except ProcessLookupError:
+            # Already gone — reported through the returned True, same as a
+            # confirmed kill.
             return True
         except (PermissionError, OSError):
+            # No process group to signal — fall back to killing just the pid.
             os.kill(pid, signal.SIGTERM)
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
@@ -1808,8 +1826,11 @@ def _kill_pid_tree(pid: int) -> bool:
         try:
             os.killpg(pid, signal.SIGKILL)  # type: ignore[attr-defined]
         except ProcessLookupError:
+            # Already gone — reported through the returned True, same as a
+            # confirmed kill.
             return True
         except (PermissionError, OSError):
+            # No process group to signal — fall back to killing just the pid.
             os.kill(pid, signal.SIGKILL)  # type: ignore[attr-defined]
         return True
     except Exception:  # noqa: BLE001 — best-effort teardown, reported honestly
@@ -1858,10 +1879,13 @@ def _pid_exists(pid: int) -> bool:
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
+        # No such pid — reported through the returned False.
         return False
     except PermissionError:
+        # Exists but not ours to signal — still alive, reported through True.
         return True
     except OSError:
+        # Any other kill(0) failure means the pid does not resolve to a live process.
         return False
     return True
 
@@ -1875,6 +1899,7 @@ def _path_is_within_root(value: str, root: Path) -> bool:
     try:
         candidate = Path(text).resolve()
     except OSError:
+        # Unresolvable path — reported through the returned False.
         return False
     return candidate == root or candidate.is_relative_to(root)
 
@@ -1889,6 +1914,7 @@ def _lexical_path_is_within_root(value: str, root: Path) -> bool:
     try:
         return os.path.commonpath((candidate, root_text)) == root_text
     except ValueError:
+        # Paths on different drives/roots — reported through the returned False.
         return False
 
 
@@ -1932,6 +1958,7 @@ def reconcile_ready_ownership(*, launch_command: str, base_url: str) -> bool:
         try:
             import psutil  # type: ignore[import-untyped]
         except ImportError:
+            # psutil not installed — adoption is skipped, reported via the returned False.
             return False
 
         candidates: list[Any] = []
@@ -1972,6 +1999,7 @@ def _kill_by_install_root(root: Path) -> tuple[int, int]:
     try:
         resolved_root = root.resolve()
     except OSError:
+        # Unresolvable root — nothing to sweep, reported through the (0, 0) result.
         return 0, 0
     if resolved_root.name.lower() != "local_realtime" or not resolved_root.exists():
         log.warning("supervisor: refused unsafe install-root sweep of %s", resolved_root)
@@ -2008,6 +2036,7 @@ def _kill_by_install_root(root: Path) -> tuple[int, int]:
             proc.kill()
             signalled.append(proc)
         except psutil.NoSuchProcess:
+            # Already gone — tracked via the vanished counter, not a failure to log.
             vanished += 1
         except (psutil.Error, OSError):
             failed += 1

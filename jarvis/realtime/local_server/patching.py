@@ -110,6 +110,7 @@ def patch_state(site_packages: Path) -> str:
     try:
         digest = _sha256(target.read_bytes())
     except OSError:
+        # Reported through the documented "missing" return state, not a log call.
         return "missing"
     if digest == PRISTINE_SHA256:
         return "pristine"
@@ -157,6 +158,7 @@ def pocket_language_patch_state(site_packages: Path) -> str:
     try:
         digest = _sha256(target.read_bytes())
     except OSError:
+        # Reported through the documented "missing" return state, not a log call.
         return "missing"
     if digest == POCKET_HANDLER_PRISTINE_SHA256:
         return "pristine"

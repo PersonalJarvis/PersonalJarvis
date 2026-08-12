@@ -141,6 +141,7 @@ def _walk_stream(stream_text: str, task_key: str) -> tuple[list[dict[str, Any]],
         try:
             obj = json.loads(line)
         except (json.JSONDecodeError, ValueError):
+            # A malformed line is skipped, not fatal — the rest of the stream still parses.
             continue
         if not isinstance(obj, dict):
             continue

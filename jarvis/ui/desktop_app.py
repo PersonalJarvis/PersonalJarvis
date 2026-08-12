@@ -4159,6 +4159,7 @@ class DesktopApp:
         try:
             window.destroy()
         except Exception as exc:  # noqa: BLE001
+            # Reported through the returned reason field, not a log call.
             return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
         return {"ok": True, "view": view}
 
@@ -4269,6 +4270,7 @@ class DesktopApp:
             try:
                 window.destroy()
             except Exception:  # noqa: BLE001, S110
+                # Teardown best-effort: the window may already be gone.
                 pass
 
     def _main_window_kwargs(self) -> dict[str, Any]:

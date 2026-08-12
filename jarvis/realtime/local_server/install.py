@@ -121,6 +121,7 @@ def _read_smoke_marker_payload() -> dict[str, object] | None:
     try:
         payload = json.loads(_smoke_marker().read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        # Absent or corrupt marker means "not proven yet" — the caller re-runs smoke.
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -471,6 +472,8 @@ def _kill_tree(proc: subprocess.Popen) -> bool:
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
+                # Reported through the returned bool, which the caller below
+                # logs as an incomplete teardown.
                 return False
             return proc.poll() is not None
         else:
@@ -479,13 +482,17 @@ def _kill_tree(proc: subprocess.Popen) -> bool:
             try:
                 os.killpg(proc.pid, signal.SIGTERM)  # type: ignore[attr-defined]
             except (ProcessLookupError, PermissionError, OSError):
+                # No process group to signal — fall back to killing just the launcher.
                 proc.terminate()
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
+                # SIGTERM did not land in time — escalate to SIGKILL; the
+                # final poll() below still reports overall success/failure.
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)  # type: ignore[attr-defined]
                 except (ProcessLookupError, PermissionError, OSError):
+                    # No process group to signal — fall back to killing just the launcher.
                     proc.kill()
                 proc.wait(timeout=10)
             return proc.poll() is not None
@@ -499,6 +506,7 @@ def _port_open(port: int, timeout: float = 1.0) -> bool:
         with socket.create_connection(("127.0.0.1", port), timeout=timeout):
             return True
     except OSError:
+        # Connection refused/timed out — the port simply is not open yet.
         return False
 
 
@@ -927,6 +935,7 @@ def _rmtree_tolerant(root: Path) -> None:
             os.chmod(path, stat.S_IWRITE)
             func(path)
         except FileNotFoundError:
+            # Vanished during the retry — already gone, same as the check above.
             return
 
     last_error: OSError | None = None
@@ -992,6 +1001,7 @@ def _uninstall_guarded() -> tuple[bool, str]:
     try:
         _rmtree_tolerant(root)
     except OSError as exc:
+        # Reported through the returned (ok, message) tuple, not a log call.
         return False, f"could not remove {root}: {exc}"
     _clear_managed_config(root)
     with _LOCK:

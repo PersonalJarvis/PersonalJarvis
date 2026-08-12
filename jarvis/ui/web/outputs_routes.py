@@ -732,6 +732,8 @@ def _collect_graph_files(session_dir: Path) -> list[dict[str, Any]]:
             try:
                 stat = child.stat()
             except OSError:
+                # A file can disappear mid-walk; skip it, the graph still
+                # draws the rest.
                 continue
             files.append({"path": "/".join(rel_parts), "size": stat.st_size})
             if len(files) >= _ARTIFACT_MAX_LISTING:

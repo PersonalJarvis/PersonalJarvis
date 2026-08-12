@@ -148,6 +148,7 @@ def _parse_bday(value: str) -> str | None:
     try:
         return _validate_birthday(v)
     except ValueError:
+        # Unparseable BDAY is dropped, not fatal — the rest of the card still imports.
         return None
 
 
@@ -274,6 +275,8 @@ def import_records(store: ContactStore, records: list[dict[str, Any]]) -> dict[s
             try:
                 phones.append(_normalize_phone(p))
             except ValueError:
+                # Field-level sanitising: an unparseable number is dropped,
+                # not the whole record.
                 pass
         try:
             existing = store.find_by_alias(name)
