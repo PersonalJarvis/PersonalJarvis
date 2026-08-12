@@ -9068,3 +9068,56 @@ happen at the EVIDENCE level, where a segment whose reasons are a subset of
 the running order's is a continuation, never a new order. And the asymmetry
 decides the ties: a wrongly refused turn degrades honestly into "still
 working on it", while a wrongly allowed turn executes a user order twice.
+
+## BUG-132: a fleet briefed BY KIND gets one mashed brief — every pane receives the whole enumeration and picks its own slice (HIGH, FIXED 2026-08-12)
+
+**Symptoms (maintainer report 2026-08-12).** Two shapes of the same failure:
+
+1. "Open five claudes, two codexes and one opencode. Prompt the five claudes
+   to fix the login bug, prompt the two codexes to write tests and prompt the
+   opencode to update the docs" — the fleet opened correctly, but every one of
+   the eight panes received the ENTIRE enumeration as its own task. Each agent
+   then picked whatever slice it liked; the routing the user had spoken out
+   loud was gone.
+2. "Spawn two new terminals and prompt them, one fixes a bug on macOS and one
+   fixes a bug on Linux" — both fresh agents received the whole sentence and
+   raced on the FIRST slice: two macOS fixes, no Linux fix. The task text even
+   opened with the leaked address fragment "them,".
+
+**Root.** `spawn_instruction` returns ONE string — everything behind the last
+fleet clause — and `SpawnGroup` carried no notion of a task. Per-pane briefs
+existed only behind `wants_split`, which requires the explicit divide
+vocabulary ("teilt es unter euch auf"); a division the user has ALREADY made, <!-- i18n-allow: quoted spoken input -->
+by kind or by enumeration, matched nothing and fell through to the shared
+brief. And `_TASK_AFTER_BRIEF_RE` did not know the pronoun "them", so the
+address bled into the work.
+
+**Fix.** Two detectors in `jarvis/agentic_ide/intent.py`, consumed by
+`BrainManager._brief_spawned_agentic_ide_fleet`:
+
+- `spawn_group_tasks`: deterministic per-CLI task map for kind-addressed
+  briefs ("prompt the claudes to X", "die Codexes sollen Y"). The manager maps
+  each new pane to its kind's task; a kind the brief does not name stays
+  BLANK on purpose, and any shared work in front of the first kind-brief
+  stands the whole map down so it is never withheld from unnamed panes. No
+  provider call: the user already divided the work, routing it is string work.
+- `distributes_tasks`: an enumeration that IS a division ("one fixes the
+  macOS bug, one fixes the Linux bug", "einer … der andere …") now reaches <!-- i18n-allow: quoted spoken input -->
+  the `work_split` planner exactly like an explicit split request, on both the
+  spawn-brief path and the addressed-fleet path. Two guards keep the ordinary
+  word "one" honest: the enumerator must open its clause, and it must carry
+  its own predicate — "the other"/"der andere" alone is exempt, having no
+  counting reading.
+
+**Guards:** `tests/unit/agentic_ide/test_spawn_intent.py` (per-kind maps in
+three locales, the stand-down cases, enumerations vs. ordinary counts) and
+`tests/unit/brain/test_agentic_ide_spawn_fast_path.py` (kind-routed
+assignments, the unnamed kind staying blank, the enumerated division reaching
+the split planner).
+
+**Lesson.** A parser whose output type cannot REPRESENT the request will
+flatten it into something it can, and the flattening is silent: the fleet
+opened, the panes were briefed, every receipt looked healthy — only the
+routing the user spoke was gone. When users hand out work they do it in
+exactly two ways, by NAME and by ENUMERATION; an executor that models only
+the collective address will mash both.
