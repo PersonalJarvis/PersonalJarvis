@@ -86,6 +86,9 @@ def _clean_weight(value: Any) -> float:
     try:
         number = float(value)
     except (TypeError, ValueError):
+        # A malformed persisted weight degrades to the default share by
+        # design — the same quiet treatment the non-positive and infinite
+        # numbers below get; the layout must render regardless.
         return 1.0
     if not (number > 0) or number == float("inf"):
         return 1.0
