@@ -3455,6 +3455,25 @@ class AgenticIdeConfig(BaseModel):
         return text if text.replace("-", "").replace("_", "").isalnum() else "auto"
 
 
+class GoogleAuthConfig(BaseModel):
+    """Google credential routing: AI Studio vs Vertex AI express mode.
+
+    Google serves the same Gemini models behind two API-key families. Classic
+    AI Studio keys (``AIza...``) talk to ``generativelanguage.googleapis.com``;
+    Vertex AI *express mode* keys (``AQ....``) are only accepted when the
+    google-genai client is built with ``vertexai=True``. Newer AI Studio keys
+    ALSO start with ``AQ.``, so the prefix alone cannot decide. ``auto`` (the
+    default) probes an ambiguous key once per process and remembers the
+    answer; ``always``/``never`` force the route for installs where the probe
+    guesses wrong or the network blocks it. Read exclusively by
+    ``jarvis.core.google_genai`` (AP-31: no unread switch).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    vertex_mode: Literal["auto", "always", "never"] = "auto"
+
+
 class JarvisConfig(BaseModel):
     """Root config model."""
     # populate_by_name=True lets callers use Python field names alongside
@@ -3467,6 +3486,8 @@ class JarvisConfig(BaseModel):
     stt: STTConfig = Field(default_factory=STTConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)
     brain: BrainConfig = Field(default_factory=BrainConfig)
+    # Google key routing (AI Studio vs Vertex express) — see GoogleAuthConfig.
+    google: GoogleAuthConfig = Field(default_factory=GoogleAuthConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
