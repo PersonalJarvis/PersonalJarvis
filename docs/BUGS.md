@@ -8958,3 +8958,60 @@ answer from "streams in under a second" to "one 36-second generation", and the
 turn reported itself healthy the whole way down. When the last mile before the
 speaker can take that long, silence is indistinguishable from a crash to the
 only person who can tell you it broke.
+
+## BUG-130: a spoken self-correction opens the RETRACTED fleet — and the correction is typed into the fresh agents as their coding task (HIGH, FIXED 2026-08-12)
+
+**Symptoms (2026-08-12 11:56, gemini-live).** The maintainer asked for two new
+terminals, took it back mid-sentence and replaced the request: "Kannst du bitte
+zwei neue Terminals öffnen? fünf neue Nee, nee, wir machen noch zwei neue Codex <!-- i18n-allow: production transcript -->
+Terminals und fünf neue Code Terminals." <!-- i18n-allow: production transcript -->
+What happened: two PLAIN panes opened (T4/T5 — the retracted half of the
+sentence), and the correction itself was treated as those panes' work. The
+prompt writer faithfully expanded it, so two fresh Claude Code agents were each
+briefed to "open seven new terminal sessions: two running Codex and five
+running Claude Code" — coding agents ordered to do the workspace's job, which
+no user has ever meant. The writer even understood the correction perfectly
+("the final, binding request is exactly two Codex plus five Claude Code"); the
+understanding sat in the wrong executor.
+
+**Root.** Two independent blind spots in `jarvis/agentic_ide/intent.py`, and
+they compounded:
+
+1. **Speech retracts, parsers don't.** `_spawn_span` reads exactly ONE clause —
+   a deliberate bound (BUG-class of 2026-07-27: unrelated numbers joined into a
+   50-terminal request). The first clause ("zwei neue Terminals öffnen") won, <!-- i18n-allow: quoted transcript -->
+   and nothing anywhere knew that "Nee, nee, …" had just withdrawn it. <!-- i18n-allow: quoted transcript -->
+2. **Everything after the spawn clause is "the task".** `spawn_includes_task`
+   saw the verb "machen" in the remainder and queued a fleet briefing;
+   `spawn_instruction` handed the whole correction to the new panes. A second
+   sentence that describes MORE PANES had no representation at all — its only
+   two possible readings were "noise" or "work for the fleet".
+
+**Fix.** Three deterministic pieces, still no LLM on the hot path (AP-9/AP-11):
+
+- `_RETRACTION_RE` + `_spoken_correction_suffix`: a spoken retraction cue
+  ("nee", "nein", "doch nicht", "no wait", "mejor dicho", …) cuts the <!-- i18n-allow: input vocab -->
+  utterance — but ONLY when what follows is a complete pane request of its own
+  (`_spawn_span`). A cue without a replacement changes nothing. The LAST
+  qualifying cue wins, because stutters repair themselves repeatedly.
+- `_spawn_regions`: a fleet may be described across SEVERAL clauses, each
+  carrying its own full evidence (pane noun + open verb/additive). Regions are
+  collected until the first briefing boundary and merged by `_merge_groups`, so
+  "Öffne zwei Terminals. Mach noch drei Codex Terminals auf" is five panes <!-- i18n-allow: spoken input -->
+  instead of two panes plus an absurd brief.
+- `spawn_includes_task` / `spawn_instruction` measure the remainder from the
+  END of the last fleet clause, so a fleet description can never leak into the
+  work handed to the panes it describes.
+
+**Guards:** `tests/unit/agentic_ide/test_spawn_intent.py` — the live transcript
+verbatim (`LIVE_CORRECTION`: replaced fleet, no task), corrections in all three
+locales, a retraction without a replacement changing nothing, the additive
+second sentence extending the fleet, a task after the full fleet still reaching
+the panes, and counts inside a briefed task never becoming more panes.
+
+**Lesson.** Spoken language edits by retraction, not by deletion — the words a
+transcription keeps are not all words the user still means. A deterministic
+parser that executes speech has to model the repair marker itself, or it will
+execute the draft. And when a parser has only two buckets ("fleet" / "task for
+the fleet"), everything that fits neither lands in the more dangerous one:
+never hand a fresh agent a task the workspace itself should have executed.

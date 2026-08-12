@@ -1614,8 +1614,6 @@ def _spoken_groups(text: str) -> tuple[SpawnGroup, ...]:
     Codex" is four Codex panes, and opening them in two batches would only slow
     the workspace down.
     """
-    from .session import MAX_TERMINALS
-
     counts = _count_tokens(text)
     spent = set()
 
@@ -1677,15 +1675,30 @@ def _spoken_groups(text: str) -> tuple[SpawnGroup, ...]:
     # group, and a fleet that comes up in a different order than it was asked
     # for is a fleet the user has to re-read before they can address it.
     found.sort(key=lambda item: item[0])
+    return _merge_groups([group for _at, group in found])
+
+
+def _merge_groups(found: list[SpawnGroup]) -> tuple[SpawnGroup, ...]:
+    """``found`` folded by CLI and clamped to the workspace total.
+
+    Groups naming the SAME CLI are merged: "two Codex and two more Codex" is
+    four Codex panes, and opening them in two batches would only slow the
+    workspace down. One function rather than a merge per caller, because a
+    fleet can now be described across SEVERAL clauses (see ``_spawn_regions``)
+    and two merge rules would be free to disagree about the same sentence.
+
+    The clamp takes the TOTAL, not each group: the workspace maximum is a
+    property of the workspace. Trimming from the back keeps the groups the
+    user named first intact rather than shrinking all of them into
+    uselessness.
+    """
+    from .session import MAX_TERMINALS
 
     merged: dict[str, int] = {}
-    for _at, group in found:
+    for group in found:
         key = group.agent or ""
         merged[key] = merged.get(key, 0) + group.count
 
-    # Clamp the TOTAL, not each group: the workspace maximum is a property of
-    # the workspace. Trimming from the back keeps the groups the user named
-    # first intact rather than shrinking all of them into uselessness.
     out: list[SpawnGroup] = []
     remaining = MAX_TERMINALS
     for agent, count in merged.items():
@@ -1727,6 +1740,9 @@ class _SpawnSpan:
     start: int
     end: int
     parse_text: str
+    truncated: bool = False
+    """A briefing verb cut the fleet parse short: everything after this span
+    is the new panes' WORK, and no later clause may be read as more panes."""
 
 
 def _span_gap(left: re.Match[str], right: re.Match[str]) -> int:
@@ -1998,8 +2014,52 @@ def _spawn_span(text: str) -> _SpawnSpan | None:
             start=clause_match.start(),
             end=clause_match.start() + anchor_end,
             parse_text=clause[:parse_end],
+            truncated=briefing is not None,
         )
     return None
+
+
+def _spawn_regions(text: str) -> list[_SpawnSpan]:
+    """Every clause of ``text`` that asks for panes, in speech order.
+
+    ``_spawn_span`` deliberately reads ONE clause — that bound is what keeps
+    unrelated fragments of a long sentence from being joined into a fleet
+    request (the 2026-07-27 "ten new terminals … start 50 sub-agents"
+    failure). But a fleet is regularly described across SEVERAL clauses, each
+    carrying its own full evidence: "Öffne zwei Terminals. Mach bitte noch
+    drei Codex Terminals auf" is five panes, and reading only the first clause
+    executed the request PARTIALLY while the second clause was handed to the
+    two fresh panes as their coding task — agents briefed to open terminals,
+    which is nobody's intention ever (live 2026-08-12 11:56, see
+    ``_spoken_correction_suffix`` for the transcript).
+
+    Collection stops at the first BRIEFING boundary, in either place it can
+    appear: a briefing verb inside a span's own clause (``truncated``), or one
+    between two spans ("… und prompte sie: erstelle drei Config-Tabs" — the
+    tabs there are the fleet's work, not more fleet). Past that point every
+    count belongs to the task, and the 50-subagent guard above keeps holding.
+    """  # i18n-allow: quoted spoken input
+    regions: list[_SpawnSpan] = []
+    offset = 0
+    while offset < len(text):
+        span = _spawn_span(text[offset:])
+        if span is None:
+            break
+        absolute = _SpawnSpan(
+            start=offset + span.start,
+            end=offset + span.end,
+            parse_text=span.parse_text,
+            truncated=span.truncated,
+        )
+        if regions:
+            previous_end = regions[-1].start + len(regions[-1].parse_text)
+            if _FLEET_BRIEF_RE.search(text, previous_end, absolute.end) is not None:
+                break
+        regions.append(absolute)
+        if absolute.truncated:
+            break
+        offset = absolute.start + len(absolute.parse_text)
+    return regions
 
 
 #: A spawn clause that is a CONDITION attached to work described earlier in the
@@ -2045,18 +2105,84 @@ def _leading_task(text: str, span: _SpawnSpan) -> str:
     return cleaned if len(cleaned) >= _MIN_INSTRUCTION_CHARS else lead
 
 
+# Spoken self-corrections. Speech does not edit, it RETRACTS: the words below
+# are how a person takes back what they just said and replaces it, mid-turn.
+# Matching *input vocabulary* across the supported locales, not prose.
+#
+# Live failure this pins (voice session 2026-08-12 11:56, gemini-live):
+# "Kannst du bitte zwei neue Terminals öffnen? fünf neue  # i18n-allow: transcript
+# Nee, nee, wir machen noch zwei neue Codex Terminals und  # i18n-allow: transcript
+# fünf neue Code Terminals." — the retracted opening half  # i18n-allow: transcript
+# was executed (two plain panes, T4/T5), and the CORRECTION was read as those
+# panes' coding task. Both fresh agents were then briefed to "open seven new
+# terminal sessions", which no user has ever meant.
+#
+# Deliberately narrow. Bare "nicht"/"not"/"no" are ordinary negation, bare
+# "ne" is the German tag question ("…, ne?"), and reading either as a
+# retraction would throw away fleet groups the user still wants. And a cue
+# alone never cuts anything — see ``_spoken_correction_suffix`` for the second
+# condition that makes acting on one safe.
+_RETRACTION_RE = re.compile(
+    r"\b(?:"
+    r"nee+|nö+|nein|quatsch|doch\s+nicht|stattdessen|"  # i18n-allow: input vocab
+    r"vergiss\s+(?:das|es)|ich\s+mein(?:e|te)|"  # i18n-allow: input vocab
+    r"no+[,\s]+wait|wait[,\s]+no+|no[,\s]+no|scratch\s+that|"
+    r"forget\s+(?:that|it)|i\s+meant?|actually[,\s]+no|instead|"
+    r"mejor\s+dicho|digo|olvida\s+eso|espera[,\s]+no"  # i18n-allow: input vocab
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _spoken_correction_suffix(text: str) -> str:
+    """The utterance after its last self-correction, or ``text`` unchanged.
+
+    Two conditions must hold before anything is cut, and each removes a way of
+    being wrong:
+
+    1. a RETRACTION cue stands in the utterance (``_RETRACTION_RE``) — the
+       spoken marker that what came before it no longer counts;
+    2. what follows the cue is a COMPLETE pane request of its own
+       (``_spawn_span``) — a correction that replaces a fleet has to describe
+       the replacement fleet. "öffne zwei Claude, äh nee" retracts without
+       replacing, and cutting there would leave nothing to parse; it stays
+       untouched and is read as it always was.
+
+    The LAST qualifying cue wins, because a stutter repairs itself repeatedly
+    ("Nee, nee, wir machen …") and each repair supersedes the one before it.
+
+    What this deliberately does NOT do: subtract a single named group ("doch
+    nicht Claude, Codex") — a retraction without a verb names no complete
+    request, fails condition 2, and keeps today's reading. The question path
+    (``uncertain_cli``) remains the honest answer for those.
+    """  # i18n-allow: quoted spoken input
+    best = text
+    for match in _RETRACTION_RE.finditer(text):
+        suffix = text[match.end() :].lstrip(" \t,.:;!?-–—")
+        if len(suffix) < 6:
+            continue
+        if _spawn_span(suffix) is not None:
+            best = suffix
+    return best
+
+
 def spawn_includes_task(user_text: str) -> bool:
     """Whether a pane-spawn request also tells the new fleet to do work."""
-    text = (user_text or "").strip()
-    span = _spawn_span(text)
-    if span is None:
+    text = _spoken_correction_suffix((user_text or "").strip())
+    regions = _spawn_regions(text)
+    if not regions:
         # The terminal-noun-free agent-fleet form can still carry a task.
         request = detect_spawn(text)
         return request is not None and bool(_INSTRUCTION_VERB_RE.search(text))
-    remainder = text[span.end :]
+    # Work can only ever FOLLOW the whole fleet description. Measuring from
+    # the first clause's anchor read a later "… und mach noch drei Codex
+    # Terminals auf" clause as the new panes' coding task — fresh agents
+    # briefed to open terminals (live 2026-08-12, see ``_spawn_regions``).
+    last = regions[-1]
+    remainder = text[last.start + len(last.parse_text) :]
     if _FLEET_BRIEF_RE.search(remainder) or _INSTRUCTION_VERB_RE.search(remainder):
         return True
-    return bool(_leading_task(text, span))
+    return bool(_leading_task(text, regions[0]))
 
 
 _TASK_AFTER_BRIEF_RE = re.compile(
@@ -2070,8 +2196,9 @@ _TASK_AFTER_BRIEF_RE = re.compile(
 
 def spawn_instruction(user_text: str) -> str:
     """Return the work for new panes without the instruction to open them."""
-    text = (user_text or "").strip()
-    span = _spawn_span(text)
+    text = _spoken_correction_suffix((user_text or "").strip())
+    regions = _spawn_regions(text)
+    span = regions[0] if regions else None
     if span is None:
         nouns = list(_AGENT_NOUN_RE.finditer(text))
         actors = _open_verbs(text)
@@ -2090,7 +2217,10 @@ def spawn_instruction(user_text: str) -> str:
             if remainder:
                 return remainder
         return text
-    remainder = text[span.end :].strip(" ,:-")
+    # The work starts after the LAST fleet clause — everything up to there is
+    # the fleet description itself (see ``spawn_includes_task``).
+    last = regions[-1]
+    remainder = text[last.start + len(last.parse_text) :].strip(" ,:-")
     briefing = _TASK_AFTER_BRIEF_RE.search(remainder)
     if briefing is not None:
         task = remainder[briefing.end() :].strip(" ,:-")
@@ -2455,10 +2585,16 @@ def detect_spawn(
     work for THAT pane, not a request for another one. Addressing therefore wins,
     and it is checked here so both callers inherit the same order.
     """
-    text = (user_text or "").strip()
-    if len(text) < 6:
+    original = (user_text or "").strip()
+    if len(original) < 6:
         return None
-    span = _spawn_span(text)
+    # A spoken self-correction RETRACTS everything in front of it, so the
+    # corrected request is parsed and the withdrawn half never opens a pane.
+    # ``utterance`` keeps the user's full words either way — the readback and
+    # any follow-up question must be able to quote what was actually said.
+    text = _spoken_correction_suffix(original)
+    regions = _spawn_regions(text)
+    span = regions[0] if regions else None
     agent_fleet = span is None and _is_agent_fleet(text, names)
     if span is None and not agent_fleet:
         return None
@@ -2481,23 +2617,36 @@ def detect_spawn(
     if addressed_before_spawn or detect(addressed_text, names=names) is not None:
         return None
 
-    parse_text = addressed_text
+    # One scope per fleet clause: "Öffne zwei Terminals. Mach noch drei Codex
+    # Terminals auf" is ONE request said in two sentences, and reading only
+    # the first opened it partially — with the second sentence handed to the
+    # fresh panes as their coding task (live 2026-08-12, ``_spawn_regions``).
+    scopes = [region.parse_text for region in regions] or [text]
 
-    if _briefed_position_only(parse_text):
+    if _briefed_position_only(scopes[0]):
         return None
 
-    unsupported = _unsupported_clis(parse_text)
-    uncertain_cli = _uncertain_clis(parse_text)
+    unsupported: list[str] = []
+    uncertain_cli: list[UncertainCli] = []
+    collected: list[SpawnGroup] = []
+    for scope in scopes:
+        for label in _unsupported_clis(scope):
+            if label not in unsupported:
+                unsupported.append(label)
+        for item in _uncertain_clis(scope):
+            if all(item.spoken != seen.spoken for seen in uncertain_cli):
+                uncertain_cli.append(item)
+        collected.extend(_spoken_groups(scope))
 
-    groups = _spoken_groups(parse_text)
+    groups = _merge_groups(collected)
     if groups:
         return SpawnTerminalsRequest(
             count=sum(g.count for g in groups),
             agent=groups[0].agent,
-            utterance=text,
+            utterance=original,
             groups=groups,
-            unsupported=unsupported,
-            uncertain_cli=uncertain_cli,
+            unsupported=tuple(unsupported),
+            uncertain_cli=tuple(uncertain_cli),
         )
 
     if unsupported and not groups:
@@ -2509,26 +2658,26 @@ def detect_spawn(
         return SpawnTerminalsRequest(
             count=0,
             agent=None,
-            utterance=text,
+            utterance=original,
             groups=(),
-            unsupported=unsupported,
-            uncertain_cli=uncertain_cli,
+            unsupported=tuple(unsupported),
+            uncertain_cli=tuple(uncertain_cli),
         )
 
-    agent_match = _AGENT_RE.search(parse_text)
+    agent_match = _AGENT_RE.search(scopes[0])
     agent: str | None = None
     if agent_match is not None:
         agent = _canonical_agent(agent_match.group("agent"))
     # A number inside a spoken position is the pane's NAME and never feeds
     # the fallback: "öffne Terminal 2" opens ONE pane.  # i18n-allow: quoted spoken input
-    count = _spoken_count(_mask_spoken_positions(parse_text))
+    count = _spoken_count(_mask_spoken_positions(scopes[0]))
     return SpawnTerminalsRequest(
         count=count,
         agent=agent,
-        utterance=text,
+        utterance=original,
         groups=(SpawnGroup(count=count, agent=agent),),
-        unsupported=unsupported,
-        uncertain_cli=uncertain_cli,
+        unsupported=tuple(unsupported),
+        uncertain_cli=tuple(uncertain_cli),
     )
 
 

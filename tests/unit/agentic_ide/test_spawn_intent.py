@@ -691,3 +691,119 @@ def test_talk_in_front_of_a_plain_spawn_is_not_a_brief(utterance: str) -> None:
     """
     assert intent.detect_spawn(utterance, names=NAMES) is not None
     assert intent.spawn_includes_task(utterance) is False
+
+
+# --------------------------------------------------------------------------- #
+# Live voice regression from 2026-08-12: the spoken self-correction            #
+# --------------------------------------------------------------------------- #
+# The user asked for two terminals, took it back mid-sentence and replaced it:
+# only the correction counts. What happened instead: the RETRACTED half opened
+# two plain panes (T4/T5), and the correction was read as those panes' coding
+# task — both fresh agents were briefed to "open seven new terminal sessions",
+# which no user has ever meant a coding agent to do.
+
+LIVE_CORRECTION = (
+    "Kannst du bitte zwei neue Terminals öffnen? fünf neue Nee, nee, wir "
+    "machen noch zwei neue Codex Terminals und fünf neue Code Terminals."
+)  # i18n-allow: production transcript under test
+
+
+def test_a_spoken_correction_replaces_the_retracted_fleet() -> None:
+    found = intent.detect_spawn(LIVE_CORRECTION, names=NAMES)
+
+    assert found is not None
+    assert found.groups == (
+        intent.SpawnGroup(count=2, agent="codex"),
+        intent.SpawnGroup(count=5, agent=None),
+    )
+    assert found.count == 7
+    assert found.utterance == LIVE_CORRECTION, "the readback quotes the full turn"
+
+
+def test_a_corrected_fleet_is_never_the_new_panes_task() -> None:
+    """The correction describes PANES, so there is no work to brief them with."""
+    assert intent.spawn_includes_task(LIVE_CORRECTION) is False
+
+
+@pytest.mark.parametrize(
+    ("utterance", "groups"),
+    [
+        (
+            "Open two new terminals... no wait, open three Codex terminals",
+            (intent.SpawnGroup(count=3, agent="codex"),),
+        ),
+        (
+            "Abre dos terminales... no, no, abre tres terminales de Codex",
+            (intent.SpawnGroup(count=3, agent="codex"),),
+        ),
+        (
+            # i18n-allow: spoken input under test
+            "Öffne fünf Claude Terminals, nein, mach zwei Codex Terminals auf",
+            (intent.SpawnGroup(count=2, agent="codex"),),
+        ),
+    ],
+)
+def test_corrections_replace_in_every_supported_locale(
+    utterance: str, groups: tuple[intent.SpawnGroup, ...]
+) -> None:
+    found = intent.detect_spawn(utterance, names=NAMES)
+
+    assert found is not None
+    assert found.groups == groups
+
+
+def test_a_retraction_without_a_replacement_changes_nothing() -> None:
+    """"nee" followed by no complete pane request keeps the original reading."""
+    utterance = "Öffne zwei neue Codex Terminals, nee warte"  # i18n-allow: spoken input under test
+
+    found = intent.detect_spawn(utterance, names=NAMES)
+
+    assert found is not None
+    assert found.groups == (intent.SpawnGroup(count=2, agent="codex"),)
+
+
+def test_an_additive_second_spawn_sentence_extends_the_fleet() -> None:
+    """Without a retraction, a second fleet sentence ADDS panes — and is never
+    handed to the first sentence's panes as their coding task."""
+    utterance = (
+        "Öffne zwei neue Terminals. Mach bitte auch noch drei "
+        "Codex Terminals auf."
+    )  # i18n-allow: spoken input under test
+
+    found = intent.detect_spawn(utterance, names=NAMES)
+
+    assert found is not None
+    assert found.groups == (
+        intent.SpawnGroup(count=2, agent=None),
+        intent.SpawnGroup(count=3, agent="codex"),
+    )
+    assert found.count == 5
+    assert intent.spawn_includes_task(utterance) is False
+
+
+def test_a_task_after_the_second_fleet_sentence_still_reaches_the_panes() -> None:
+    """Region collection must not eat the work that follows the whole fleet."""
+    utterance = (
+        "Öffne zwei neue Terminals. Mach noch drei Codex Terminals auf und "
+        "prompte jeden davon, dass er die failing Tests analysiert."
+    )  # i18n-allow: spoken input under test
+
+    found = intent.detect_spawn(utterance, names=NAMES)
+
+    assert found is not None
+    assert found.count == 5
+    assert intent.spawn_includes_task(utterance) is True
+    assert "analysiert" in intent.spawn_instruction(utterance)  # i18n-allow: quoted spoken input
+
+
+def test_counts_inside_a_briefed_task_never_become_more_panes() -> None:
+    """"…prompt them: create three config tabs" stays the task, not a fleet."""
+    utterance = (
+        "Open two terminals. Prompt them: create three config tabs for the app"
+    )
+
+    found = intent.detect_spawn(utterance, names=NAMES)
+
+    assert found is not None
+    assert found.count == 2, "the tabs belong to the task, not the workspace"
+    assert intent.spawn_includes_task(utterance) is True
