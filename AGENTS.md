@@ -19,7 +19,8 @@ for ALL layers; no layer re-derives it; all locales (de/en/es/…) equal.
 
 ## 2. GitHub (BINDING)
 ONE public repo: `github.com/PersonalJarvis/PersonalJarvis`. **A push is
-`git push`** — no staging trees, clones, builds, or file audits. `.gitignore`
+`git push`** — no staging trees, clones, builds, file audits, or review
+sub-agents (review happens when code is written, never at push time). `.gitignore`
 first (data/, .env, jarvis.toml, Vault, keys never tracked); never commit
 credentials; secret scanning ON; whole-tree checks live in CI, never pre-push.
 Default = plain push; Release ONLY when explicitly asked (SemVer + tag +
