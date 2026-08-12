@@ -18,8 +18,11 @@ A release is a **normal push plus four things**: a version bump, a CHANGELOG
 entry, a tag, and a published GitHub Release. Nothing else. There is no
 snapshot build, no staging tree, no parallel clone, no privacy sub-agent —
 that ceremony was retired on 2026-08-05 after it was measured at ~440k tokens
-per push (CLAUDE.md §2). If you catch yourself preparing a clean copy of the
-repo instead of tagging the commit you already have, stop.
+per push (CLAUDE.md §2). There is also no review sub-agent (retired
+2026-08-12): a release ships commits that already exist, and that code was
+reviewed when it was written — never spawn `code-reviewer` for a version
+bump, changelog entry, tag, or push. If you catch yourself preparing a clean
+copy of the repo instead of tagging the commit you already have, stop.
 
 **An ordinary push is not this skill.** "Push", "sichere den Stand", "commit
 and push" → `git push`. Only an explicit "release" / "neue Version" comes here.

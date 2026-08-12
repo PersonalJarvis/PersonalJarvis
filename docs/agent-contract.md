@@ -100,7 +100,12 @@ every file in the tree looking for personal data. That audit re-read 5,481
 already-published files on every push; a regex scan, `.gitignore`, and
 GitHub's own push protection already cover it. If you find yourself
 preparing a snapshot instead of pushing a commit, stop — that is the
-retired gate growing back.
+retired gate growing back. The same ban covers review sub-agents
+(maintainer directive 2026-08-12): a push or release ships commits that
+already exist, and that code was reviewed when it was written — spawning
+`code-reviewer` (or any reviewer) at push time is the retired ceremony in
+a different costume. Review happens when code is authored, never when it
+is published.
 
 What remains, fail-closed:
 
