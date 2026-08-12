@@ -1347,12 +1347,16 @@ class SkillsConfig(BaseModel):
     relevance_enabled: bool = True
 
     #: While true, a FIRE-band relevance match is RECORDED but does not capture
-    #: the turn — the narrowed candidate hint still ships. Default true for the
-    #: first release: the maintainer reviews a day of real decisions via
-    #: ``GET /api/skills/match-log`` and flips this off on measured numbers,
-    #: rather than on a hunch about a layer that can rewrite a turn's
-    #: instructions.
-    relevance_shadow: bool = True
+    #: the turn — the narrowed candidate hint still ships. Shipped true for the
+    #: first release so real decisions could be reviewed via
+    #: ``GET /api/skills/match-log`` before the layer was allowed to act.
+    #: Flipped to false on 2026-08-12 after that review ran its course: 14 days
+    #: of live telemetry showed zero FIRE-band relevance events (nothing to
+    #: capture, nothing miscaptured) while every paraphrase fell through to a
+    #: model that never called run-skill on its own. The guards that made the
+    #: shadow default safe (dispatching-class veto, clear-winner margin,
+    #: definitional-question guard, min-band floor) all remain armed.
+    relevance_shadow: bool = False
 
     #: Weakest band allowed to capture a turn. Anything below stays a
     #: suggestion the model may ignore.

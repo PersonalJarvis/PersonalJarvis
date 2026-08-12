@@ -5039,7 +5039,9 @@ class BrainManager:
                 )
                 return None
 
-            if bool(getattr(cfg, "relevance_shadow", True)):
+            # Fallback mirrors the SkillsConfig default (False since
+            # 2026-08-12) so a duck-typed config cannot silently re-shadow.
+            if bool(getattr(cfg, "relevance_shadow", False)):
                 # Shadow mode: record what WOULD have happened, change nothing.
                 # The narrowed candidate hint still ships, so the model keeps
                 # the benefit while the maintainer reviews real decisions.
@@ -6216,9 +6218,16 @@ class BrainManager:
         # Two agents told to "split the work between you" must get DIFFERENT
         # briefs — the same sentence twice is two agents racing on one file.
         # Only an explicit request plans a split: it costs a provider call, and
-        # "both of you run the tests" is one order for two agents.
+        # "both of you run the tests" is one order for two agents. A division
+        # the user enumerated THEMSELVES ("one fixes the macOS bug, one the
+        # Linux bug") is exactly as explicit and takes the same path — without
+        # it, both panes received the whole enumeration and raced on the first
+        # slice (maintainer report 2026-08-12).
         assignments: dict[str, str] | None = None
-        if len(names) > 1 and ide_intent.wants_split(user_text):
+        if len(names) > 1 and (
+            ide_intent.wants_split(user_text)
+            or ide_intent.distributes_tasks(found.instruction or user_text)
+        ):
             try:
                 from jarvis.agentic_ide import work_split as ide_split
 
@@ -6609,7 +6618,41 @@ class BrainManager:
         # turn, and the history it reads keeps moving underneath it.
         spoken_before = self._agentic_ide_conversation(user_text)
         assignments: dict[str, str] | None = None
-        if len(names) > 1 and ide_intent.wants_split(user_text):
+
+        # A brief BY KIND names its own panes ("prompt the claudes to fix the
+        # tests, the codex should update the docs"), so it outranks both the
+        # shared brief and a planned split: the user has already divided the
+        # work, and every pane of a kind the brief does not name stays blank —
+        # that silence is what was asked for. Without this, all panes of a
+        # mixed fleet received the ENTIRE enumeration as their own task
+        # (maintainer report 2026-08-12).
+        try:
+            group_tasks = ide_intent.spawn_group_tasks(user_text)
+        except Exception:  # noqa: BLE001 - the shared brief is still usable
+            log.warning("Agentic IDE spawned-fleet group parse failed", exc_info=True)
+            group_tasks = {}
+        if group_tasks:
+            per_pane: dict[str, str] = {}
+            for name in names:
+                term = session.find(name)
+                kind = str(getattr(term, "agent", "") or "") if term is not None else ""
+                task = group_tasks.get(kind)
+                if task:
+                    per_pane[name] = task
+            if per_pane:
+                assignments = per_pane
+                names = [name for name in names if name in per_pane]
+                log.info(
+                    "Agentic IDE spawned-fleet briefing: per-kind tasks for %s",
+                    ", ".join(names),
+                )
+
+        # ``distributes_tasks`` reads the extracted TASK, never the utterance:
+        # the fleet description counts panes with the same words ("one Codex").
+        if assignments is None and len(names) > 1 and (
+            ide_intent.wants_split(user_text)
+            or ide_intent.distributes_tasks(instruction)
+        ):
             try:
                 from jarvis.agentic_ide import work_split as ide_split
 

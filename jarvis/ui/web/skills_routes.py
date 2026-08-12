@@ -612,7 +612,8 @@ async def match_test(request: Request, body: MatchTestRequest) -> dict[str, Any]
     config = getattr(request.app.state, "config", None)
     skills_cfg = getattr(config, "skills", None)
     min_band = str(getattr(skills_cfg, "auto_fire_min_band", "fire"))
-    shadow = bool(getattr(skills_cfg, "relevance_shadow", True))
+    # Fallback mirrors the SkillsConfig default (False since 2026-08-12).
+    shadow = bool(getattr(skills_cfg, "relevance_shadow", False))
     enabled = bool(getattr(skills_cfg, "relevance_enabled", True))
 
     decision = evaluate_match(
@@ -1196,6 +1197,22 @@ async def search_catalog(
     """
     brain = getattr(request.app.state, "brain", None)
     finder = SkillFinder(brain=brain)
+
+    # Warm the community index cache (TTL-gated, short timeouts) so
+    # marketplace skills appear in the pool even when the Plugins view never
+    # ran a fetch this session. Offline: get_index degrades to cache/empty and
+    # the finder reads only the cache — search itself never blocks on this
+    # beyond the bounded fetch.
+    try:
+        from jarvis.marketplace.community_source import get_index
+
+        await get_index()
+    except Exception:  # noqa: BLE001 - community feed is optional for search
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "community index warm-up failed", exc_info=True
+        )
 
     # Type conversion: Pydantic doesn't allow a Literal union directly as a query param
     trust_val: Any = body.trust if body.trust in ("any", "official", "verified", "community", "experimental") else "any"
