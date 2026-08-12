@@ -208,6 +208,7 @@ class WallpaperLibrary:
         try:
             path.relative_to((self._root / "images").resolve())
         except ValueError:
+            # A manifest path that escapes the library is treated as absent.
             return None
         if not path.is_file():
             return None
@@ -366,11 +367,13 @@ class WallpaperUploads:
             try:
                 created = float(meta.get("createdAt", 0.0))
             except (TypeError, ValueError):
+                # A garbled timestamp only costs sort order, never the picture.
                 created = 0.0
         if not created:
             try:
                 created = image.stat().st_mtime
             except OSError:
+                # An unreadable mtime only costs sort order, never the picture.
                 created = 0.0
         return UploadedWallpaper(
             id=upload_id, title=title, theme=theme, created_at=created, path=image
@@ -549,6 +552,7 @@ def _atomic_write(target: Path, payload: bytes, *, prefix: str, suffix: str) -> 
         try:
             os.unlink(tmp_path)
         except OSError:
+            # Best-effort cleanup; the write failure below is what gets raised.
             pass
         raise
 
@@ -563,11 +567,14 @@ def _derive_thumbnail(source_path: Path, target: Path, label: str) -> Path:
         if target.is_file() and target.stat().st_mtime >= source_path.stat().st_mtime:
             return target
     except OSError:
+        # An unstattable cache entry: serve the original, a heavier grid beats
+        # an empty one.
         return source_path
 
     try:
         from PIL import Image
     except ImportError:
+        # No Pillow on this install: the full-size file stands in for its thumb.
         return source_path
 
     try:
@@ -663,6 +670,7 @@ class WallpaperLibraryInstaller:
                 try:
                     archive.unlink()
                 except OSError:
+                    # The library is installed; a stale temp zip is cosmetic.
                     pass
             self._library.reset()
             self._set(state="done")
@@ -717,6 +725,7 @@ class WallpaperLibraryInstaller:
             try:
                 tmp_path.unlink()
             except OSError:
+                # Best-effort cleanup; the download error below is the report.
                 pass
             reason = getattr(exc, "reason", None) or exc
             raise LibraryInstallError(
@@ -832,6 +841,7 @@ def register_wallpaper_routes(
         try:
             item = own.add(data, file.filename or "")
         except UploadRejected as exc:
+            # The rejection reaches the owner as the response body itself.
             return JSONResponse({"detail": exc.message}, status_code=exc.status_code)
         return item.to_json()
 
@@ -840,6 +850,7 @@ def register_wallpaper_routes(
         try:
             item = own.set_theme(upload_id, str(body.get("theme", "")))
         except UploadRejected as exc:
+            # The rejection reaches the owner as the response body itself.
             return JSONResponse({"detail": exc.message}, status_code=exc.status_code)
         if item is None:
             return JSONResponse({"detail": "Not Found"}, status_code=404)
