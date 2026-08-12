@@ -103,6 +103,12 @@ _CONVO_TURNS = 6
 # may be older than these flags — an unknown option makes the CLI exit with an
 # error instead of an answer, which would turn a speed-up into a broken writer
 # (§3: any CLI version keeps working).
+#
+# The probe below is a SYNTAX check, not a semantics one: ``--tools ""`` also
+# assumes the empty value stays the documented "disable all" spelling. If a
+# future CLI keeps the flag but stops accepting "", the turn ends as a usage
+# error on stdout — which the empty-answer path already reports and the
+# composer's rescue chain absorbs, so the worst case is one wasted rung.
 _FAST_STRUCTURED_ARGS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("--tools", ("--tools", "")),  # no built-in tools at all — writing only
     ("--strict-mcp-config", ("--strict-mcp-config",)),  # no MCP servers

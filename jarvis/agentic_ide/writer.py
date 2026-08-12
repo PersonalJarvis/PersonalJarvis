@@ -65,6 +65,13 @@ _cache_lock = threading.Lock()
 #: Deliberately NOT the resolver's shared ``(provider, model)`` cache: these are
 #: structured-prompt instances, and parking one where a voice tier could pick it
 #: up is the exact leak ``resolve_subscription_brain`` documents against.
+#:
+#: A SINGLE slot, on purpose. Every production caller passes the same
+#: ``COMPOSE_TIMEOUT_S`` budget, so one slot answers all of them; a second call
+#: site with a different budget would make the two alternate on the slot and
+#: mostly miss. If that caller ever appears, key this by budget instead.
+#: Concurrent misses are also not coalesced — each pays the full resolution and
+#: the last one wins the slot, which is wasteful but never wrong.
 _cached: tuple[float, float | None, Any, str] | None = None
 
 

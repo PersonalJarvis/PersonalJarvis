@@ -7,6 +7,7 @@ old loop was not allowed to start anyone else until that call ended or the
 whole budget was gone. After ``HEDGE_AFTER_S`` the next rung now writes
 ALONGSIDE the first, and the first valid brief wins.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -136,9 +137,7 @@ async def test_no_hedge_fires_while_the_writer_is_healthy(
     async def _compose(**_kwargs: object) -> str:
         return BRIEF
 
-    monkeypatch.setattr(
-        prompt_composer, "_resolve_writer", lambda: (_Writer("prompt"), "api")
-    )
+    monkeypatch.setattr(prompt_composer, "_resolve_writer", lambda: (_Writer("prompt"), "api"))
     monkeypatch.setattr(
         prompt_composer,
         "_rescue_writer",
@@ -186,6 +185,96 @@ async def test_a_pinned_brain_is_never_hedged(
     )
 
     assert result.composed_by == "fallback"
+
+
+async def test_cancelling_compose_reaps_every_background_task(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The attempt tasks and the context read are compose()'s own children.
+
+    Today's callers shield the whole call, so a hangup never cancels compose
+    mid-flight — but that is their defence. A future unshielded caller must
+    not leak a running provider call and a pending disk read into the loop.
+    """
+    entered = asyncio.Event()
+    reaped = asyncio.Event()
+
+    async def _hang_compose(**_kwargs: object) -> str:
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            reaped.set()
+            raise
+        return BRIEF
+
+    monkeypatch.setattr(prompt_composer, "_resolve_writer", lambda: (_Writer("w"), "api"))
+    monkeypatch.setattr(prompt_composer, "_rescue_writer", lambda tried: (None, ""))
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _hang_compose)
+
+    work = asyncio.create_task(
+        prompt_composer.compose("make the wake path faster", session=workspace, terminal_name="Kai")
+    )
+    await entered.wait()
+    work.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await work
+    await asyncio.wait_for(reaped.wait(), timeout=2.0)
+
+    # Nothing of compose()'s survives it: no attempt task, no context read.
+    for _ in range(20):
+        pending = [
+            task
+            for task in asyncio.all_tasks()
+            if task is not asyncio.current_task() and not task.done()
+        ]
+        if not pending:
+            break
+        await asyncio.sleep(0.05)
+    assert not pending
+
+
+async def test_cancelling_compose_mid_resolution_reaps_the_context_read(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The window BEFORE any attempt exists: the writer probe is still being
+    awaited and the context read runs as a sibling task nobody else knows."""
+    import threading
+
+    hold = threading.Event()
+    ctx_entered = asyncio.Event()
+    ctx_reaped = asyncio.Event()
+
+    async def _hanging_context(session: object, candidates: object) -> object:
+        ctx_entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            ctx_reaped.set()
+            raise
+        return {}, ""
+
+    def _slow_resolve() -> tuple[object, str]:
+        hold.wait(timeout=5.0)
+        return (_Writer("w"), "api")
+
+    monkeypatch.setattr(prompt_composer, "_read_context", _hanging_context)
+    monkeypatch.setattr(prompt_composer, "_resolve_writer", _slow_resolve)
+    monkeypatch.setattr(
+        prompt_composer,
+        "_llm_compose",
+        lambda **_kwargs: pytest.fail("no attempt may start"),
+    )
+
+    work = asyncio.create_task(
+        prompt_composer.compose("make the wake path faster", session=workspace, terminal_name="Kai")
+    )
+    await ctx_entered.wait()
+    work.cancel()
+    hold.set()  # let the probe thread finish so the cancellation lands
+    with pytest.raises(asyncio.CancelledError):
+        await work
+    await asyncio.wait_for(ctx_reaped.wait(), timeout=2.0)
 
 
 async def test_the_hedge_respects_the_shared_budget(

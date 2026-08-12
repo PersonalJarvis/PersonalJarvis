@@ -835,7 +835,16 @@ async def compose(
         asyncio.create_task(asyncio.to_thread(_resolve_writer)) if brain is None else None
     )
 
-    candidates = await asyncio.to_thread(_file_candidates, session, subject, max_files * 2)
+    try:
+        candidates = await asyncio.to_thread(_file_candidates, session, subject, max_files * 2)
+    except BaseException:
+        # Cancelled — or broken — before the writer probe was consumed. The
+        # probe task is OURS: abandoned here it would run on unobserved and
+        # complain at teardown. Today's callers shield this whole call, but
+        # that is their defence, not a property of this function.
+        if writer_task is not None:
+            _discard(writer_task)
+        raise
 
     def degrade(note: str) -> ComposedPrompt:
         notify(STAGE_FALLBACK, f"{terminal_name} gets the plain brief instead: {note}.")
@@ -845,9 +854,16 @@ async def compose(
     # subscription CLI the probe is the longer of the two.
     context_task = asyncio.create_task(_read_context(session, candidates))
 
-    writer, writer_source = (
-        (brain, "") if writer_task is None else await _resolved_writer(writer_task)
-    )
+    try:
+        writer, writer_source = (
+            (brain, "") if writer_task is None else await _resolved_writer(writer_task)
+        )
+    except BaseException:
+        # Same property one step later: cancelling the wait on the writer
+        # probe reaps the probe itself (we are awaiting it), but the context
+        # read is a sibling task nobody else knows about.
+        _discard(context_task)
+        raise
     if writer is None:
         # An unhonourable PIN still degrades here rather than quietly landing on
         # a provider the user did not choose: plain and honest beats polished
@@ -987,10 +1003,11 @@ async def compose(
                 STAGE_RETRY,
                 _retry_message(terminal_name, reason=reason, writer=_writer_label(nxt)),
             )
-    except asyncio.CancelledError:
-        # The caller died mid-composition (voice hangup, dropped client). The
-        # attempt tasks are OURS — without this they would keep spending
-        # providers on a brief nobody can deliver.
+    except BaseException:
+        # The caller died mid-composition (voice hangup, dropped client), or
+        # something unforeseen escaped the loop. Either way the attempt tasks
+        # are OURS — without this they would keep spending providers on a
+        # brief nobody can deliver.
         _cancel_attempts()
         _discard(context_task)
         raise
