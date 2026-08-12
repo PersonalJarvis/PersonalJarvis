@@ -141,7 +141,7 @@ describe("CommunityTab", () => {
     });
   });
 
-  it("installs a skill through the existing skill-catalog route", async () => {
+  it("installs a skill only after consent showing the download URL", async () => {
     const fetchMock = installFetchMock();
     renderTab();
     await screen.findByText("Three Point Check");
@@ -151,6 +151,21 @@ describe("CommunityTab", () => {
       skillRow.querySelectorAll("button"),
     ).find((b) => b.textContent === "Install");
     fireEvent.click(installButton!);
+
+    // Consent first: the dialog names the exact source URL, nothing posted yet.
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("Install Three Point Check?");
+    expect(dialog.textContent).toContain(
+      "https://raw.example/skills/three-point-check/SKILL.md",
+    );
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => (init as RequestInit)?.method === "POST"),
+    ).toHaveLength(0);
+
+    const confirm = Array.from(dialog.querySelectorAll("button")).find(
+      (b) => b.textContent === "Install",
+    );
+    fireEvent.click(confirm!);
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(

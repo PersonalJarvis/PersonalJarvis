@@ -931,21 +931,30 @@ async def community_uninstall(plugin_id: str) -> dict[str, Any]:
             "instead of uninstalling",
         )
 
+    # ALL local state changes happen before the first await: the provider
+    # revocation below can take seconds, and an install of the same id that
+    # completes inside that window must not be wiped when this handler
+    # resumes. The loaded tokens object stays in memory, so revoking after
+    # the local delete loses nothing.
     store = TokenStore()
-    revocation = "unsupported"
+    tokens: Tokens | None = None
     try:
         tokens = store.load(plugin_id)
-        if tokens is not None:
-            revocation = await revoke_tokens(spec, tokens)
     except Exception as exc:  # noqa: BLE001 - never block the uninstall
-        log.info("plugin %s revocation skipped: %s", plugin_id, exc)
-        revocation = "failed"
+        log.info("plugin %s token load for revocation skipped: %s", plugin_id, exc)
     store.delete(plugin_id)
-
     try:
         removed = remove_community_plugin(plugin_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     delete_usage_card(plugin_id)
     _refresh_plugin_in_live_registry(plugin_id)
+
+    revocation = "unsupported"
+    if tokens is not None:
+        try:
+            revocation = await revoke_tokens(spec, tokens)
+        except Exception as exc:  # noqa: BLE001 - never block the uninstall
+            log.info("plugin %s revocation skipped: %s", plugin_id, exc)
+            revocation = "failed"
     return {"ok": True, "removed": removed, "revocation": revocation}

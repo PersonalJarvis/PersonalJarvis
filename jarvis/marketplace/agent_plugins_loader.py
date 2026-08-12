@@ -38,9 +38,11 @@ _NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?$")
 _STDIO_LAUNCHERS = ("npx", "uvx", "docker")
 
 # Token placeholders the runtime resolves at connect time. Everything else in
-# an env value is treated as a smuggled literal credential.
-_ENV_PLACEHOLDER_RE = re.compile(r"^\$\{?plugin_[a-z0-9_]+\}?$")
-_HEADER_PLACEHOLDER_RE = re.compile(r"\$\{?plugin_[a-z0-9_]+\}?")
+# an env value is treated as a smuggled literal credential. Braces must be
+# MATCHED (both or neither), and the charset includes '-'/'.' because plugin
+# ids may carry them ("$plugin_todo-fox_access_token").
+_ENV_PLACEHOLDER_RE = re.compile(r"^\$(?:plugin_[a-z0-9_.-]+|\{plugin_[a-z0-9_.-]+\})$")
+_HEADER_PLACEHOLDER_RE = re.compile(r"\$(?:plugin_[a-z0-9_.-]+|\{plugin_[a-z0-9_.-]+\})")
 # A long unbroken token-ish run left over once placeholders are removed.
 _TOKEN_LITERAL_RE = re.compile(r"[A-Za-z0-9_\-]{20,}")
 

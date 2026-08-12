@@ -99,6 +99,7 @@ export function CommunityTab() {
   });
   const [query, setQuery] = useState("");
   const [consentPlugin, setConsentPlugin] = useState<CommunityPluginWire | null>(null);
+  const [consentSkill, setConsentSkill] = useState<CommunitySkillWire | null>(null);
 
   const refreshMutation = useMutation({
     mutationFn: async (): Promise<CommunityResponse> => {
@@ -174,6 +175,7 @@ export function CommunityTab() {
       return res.json();
     },
     onSuccess: () => {
+      setConsentSkill(null);
       queryClient.invalidateQueries({ queryKey: ["marketplace-community"] });
       queryClient.invalidateQueries({ queryKey: ["skills"] });
     },
@@ -286,7 +288,7 @@ export function CommunityTab() {
               <CommunitySkillRow
                 key={s.name}
                 skill={s}
-                onInstall={() => skillInstallMutation.mutate(s)}
+                onInstall={() => setConsentSkill(s)}
                 installing={
                   skillInstallMutation.isPending &&
                   skillInstallMutation.variables?.name === s.name
@@ -317,6 +319,23 @@ export function CommunityTab() {
             installMutation.reset();
           }}
           onConfirm={() => installMutation.mutate(consentPlugin.name)}
+        />
+      )}
+
+      {consentSkill && (
+        <SkillInstallConsentDialog
+          skill={consentSkill}
+          isPending={skillInstallMutation.isPending}
+          errorMessage={
+            skillInstallMutation.error instanceof Error
+              ? skillInstallMutation.error.message
+              : null
+          }
+          onCancel={() => {
+            setConsentSkill(null);
+            skillInstallMutation.reset();
+          }}
+          onConfirm={() => skillInstallMutation.mutate(consentSkill)}
         />
       )}
     </div>
@@ -602,6 +621,99 @@ function CommunitySkillRow({
         </span>
       )}
     </article>
+  );
+}
+
+/** Skills get the same trust boundary as plugins: a community skill is
+ *  instructions the assistant will follow, downloaded from a URL nobody
+ *  reviewed — so the dialog shows that exact URL and reminds the user to
+ *  read the instructions before switching the skill on. */
+export function SkillInstallConsentDialog({
+  skill,
+  isPending,
+  errorMessage,
+  onCancel,
+  onConfirm,
+}: {
+  skill: CommunitySkillWire;
+  isPending: boolean;
+  errorMessage: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isPending) onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel, isPending]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="community-skill-install-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/70 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isPending) onCancel();
+      }}
+    >
+      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+        <header className="border-b border-border px-5 py-4">
+          <h2
+            id="community-skill-install-title"
+            className="font-display text-base font-semibold tracking-tight"
+          >
+            Install {skill.title}?
+          </h2>
+          <p className="text-[11px] uppercase tracking-wider text-amber-500/80">
+            Community skill · not reviewed
+          </p>
+        </header>
+
+        <div className="space-y-3 px-5 py-4 text-sm">
+          <p className="text-muted-foreground">{skill.description}</p>
+          <p className="text-xs text-muted-foreground">
+            Published by{" "}
+            <span className="text-foreground">
+              {skill.publisher ?? "an unknown author"}
+            </span>
+            {skill.version ? ` · version ${skill.version}` : ""}
+          </p>
+          <div>
+            <p className="mb-1 text-xs font-medium text-foreground">
+              The instructions are downloaded from:
+            </p>
+            <code className="block break-all rounded-md border border-border bg-muted/40 px-2 py-1.5 text-xs text-foreground">
+              {skill.raw_url}
+            </code>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            A skill is a set of instructions the assistant follows. Read the
+            installed instructions before you switch it on.
+          </p>
+          {errorMessage && (
+            <p className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {errorMessage}
+            </p>
+          )}
+        </div>
+
+        <footer className="flex justify-end gap-2 border-t border-border px-5 py-3">
+          <Button size="sm" variant="ghost" onClick={onCancel} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={onConfirm} disabled={isPending}>
+            {isPending ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : null}
+            Install
+          </Button>
+        </footer>
+      </div>
+    </div>
   );
 }
 

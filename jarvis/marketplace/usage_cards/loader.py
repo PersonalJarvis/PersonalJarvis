@@ -7,9 +7,11 @@ hand. Missing card = None (a plugin without a card still works, just without
 curated keywords/guidance; the relevance gate then keeps it only when the turn
 NAMES it or a noun auto-derived from its own tools matches — not always-include).
 """
+
 from __future__ import annotations
 
 import functools
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -128,8 +130,10 @@ def delete_usage_card(plugin_id: str) -> None:
         return
     try:
         path.unlink(missing_ok=True)
-    except OSError:
+    except OSError as exc:
         # An undeletable card only means stale keywords until the next try;
-        # never let it abort an uninstall.
+        # never let it abort an uninstall — but say so (contract §7: no
+        # silent except).
+        logging.getLogger(__name__).warning("usage card %s not deleted: %s", path, exc)
         return
     load_usage_card.cache_clear()

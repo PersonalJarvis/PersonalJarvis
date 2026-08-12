@@ -16,12 +16,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,13 @@ class CommunityPluginEntry(_Tolerant):
     usage_card: str | None = None
 
 
+# The Agent Plugins name rules (same as agent_plugins_loader.validate_spec_name
+# and the registry CI). A skill's name later becomes a DIRECTORY under the
+# user's skills folder, so this is a security boundary, not cosmetics: a name
+# like "../../evil" or "C:/anywhere" must never survive index validation.
+_SKILL_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?$")
+
+
 class CommunitySkillEntry(_Tolerant):
     name: str
     title: str | None = None
@@ -75,12 +83,39 @@ class CommunitySkillEntry(_Tolerant):
     # /api/skills/catalog/install route.
     raw_url: str | None = None
 
+    @field_validator("raw_url")
+    @classmethod
+    def _https_only(cls, value: str | None) -> str | None:
+        # The backend fetches this URL server-side at install time. Anything
+        # but https is an SSRF vector (metadata endpoints, LAN admin pages),
+        # so a non-https URL degrades the entry to "Manual" instead of being
+        # fetched. The finder re-checks before the actual download.
+        if value is not None and not value.lower().startswith("https://"):
+            logger.warning("community index: dropping non-https raw_url %r", value)
+            return None
+        return value
+
 
 class CommunityIndex(_Tolerant):
     revision: int = 0
     generated_at: str | None = None
     plugins: list[CommunityPluginEntry] = Field(default_factory=list)
     skills: list[CommunitySkillEntry] = Field(default_factory=list)
+
+    @field_validator("skills", mode="after")
+    @classmethod
+    def _drop_unsafe_skill_names(
+        cls, value: list[CommunitySkillEntry]
+    ) -> list[CommunitySkillEntry]:
+        kept: list[CommunitySkillEntry] = []
+        for entry in value:
+            if _SKILL_NAME_RE.fullmatch(entry.name) and ".." not in entry.name:
+                kept.append(entry)
+            else:
+                # One malicious or malformed entry must cost exactly itself,
+                # never the whole index (that would be a delisting DoS).
+                logger.warning("community index: dropping skill with unsafe name %r", entry.name)
+        return kept
 
 
 def index_url() -> str:

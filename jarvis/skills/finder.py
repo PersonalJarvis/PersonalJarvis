@@ -128,6 +128,11 @@ class SearchFilters:
 
 _RISK_ORDER = {"safe": 0, "monitor": 1, "ask": 2, "block": 3}
 
+# Slug rule for the install target directory — same shape as the paste-import
+# guard in skills_routes (`_IMPORT_NAME_RE`), plus dots for spec-style names.
+# No separator can pass, so `user_skills_dir() / name` stays inside the root.
+_INSTALL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
 
 def _passes_filter(entry: dict[str, Any], f: SearchFilters) -> bool:
     """Hard filter before ranking — excludes on trust/stars/category/risk."""
@@ -405,6 +410,30 @@ class SkillFinder:
             raise RuntimeError(
                 f"No direct download available for '{candidate.name}'. "
                 f"Open {candidate.source_url} and install manually."
+            )
+        # Fail-closed guards for UNTRUSTED candidates (the community index is
+        # auto-merged registry data, and the catalog-install route accepts a
+        # caller-supplied name):
+        #  - https only — the download runs SERVER-side, so a plain-http or
+        #    internal address would be an SSRF primitive;
+        #  - the name becomes a directory under user_skills_dir(), and
+        #    pathlib's `/` DISCARDS the base on an absolute right-hand side,
+        #    so a non-slug name could write anywhere the process can.
+        if not candidate.raw_url.lower().startswith("https://"):
+            raise RuntimeError(
+                f"Refusing non-https download URL: {candidate.raw_url}"
+            )
+        if not _INSTALL_NAME_RE.fullmatch(candidate.name or ""):
+            raise RuntimeError(
+                f"Skill name {candidate.name!r} is not a valid slug "
+                "(letters, digits, '-', '_', '.'; max 64 chars)."
+            )
+        base = user_skills_dir().resolve()
+        resolved_target = (base / candidate.name).resolve()
+        if resolved_target.parent != base:
+            raise RuntimeError(
+                f"Skill name {candidate.name!r} resolves outside the skills "
+                "directory."
             )
 
         # httpx is in the runtime deps (mcp_routes etc.)
