@@ -14,6 +14,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 _CARDS_DIR = Path(__file__).parent
+# Second lookup root for cards that arrive at runtime (community marketplace
+# installs). Lives under the gitignored data/ next to plugin_catalog.json —
+# the package cannot be written on a user machine, data/ can.
+_DATA_CARDS_DIR = Path(__file__).resolve().parents[3] / "data" / "usage_cards"
 
 
 def _resolve_card_path(plugin_id: str) -> Path | None:
@@ -26,15 +30,19 @@ def _resolve_card_path(plugin_id: str) -> Path | None:
     ``-`` -> ``_`` and ``_`` -> ``-``, and return the first existing file. The
     swaps only touch ``-``/``_`` and so cannot introduce a path separator; the
     caller still applies the path-traversal guard beforehand.
+
+    The bundled package directory is searched BEFORE ``data/usage_cards/`` so a
+    community card can never shadow a shipped plugin's curated keywords.
     """
-    for candidate in (
-        plugin_id,
-        plugin_id.replace("-", "_"),
-        plugin_id.replace("_", "-"),
-    ):
-        path = _CARDS_DIR / f"{candidate}.md"
-        if path.exists():
-            return path
+    for directory in (_CARDS_DIR, _DATA_CARDS_DIR):
+        for candidate in (
+            plugin_id,
+            plugin_id.replace("-", "_"),
+            plugin_id.replace("_", "-"),
+        ):
+            path = directory / f"{candidate}.md"
+            if path.exists():
+                return path
     return None
 
 
@@ -83,3 +91,45 @@ def load_usage_card(plugin_id: str) -> UsageCard | None:
                 value = value.split(" #", 1)[0]
                 keywords = [k.strip() for k in value.split(",") if k.strip()]
     return UsageCard(plugin_id=plugin_id, keywords=keywords, body=body.strip())
+
+
+def _guarded_data_card_path(plugin_id: str) -> Path | None:
+    """The data-root card path for ``plugin_id``, or None when the id fails
+    the same traversal guard `load_usage_card` applies."""
+    if not plugin_id or "/" in plugin_id or "\\" in plugin_id or ".." in plugin_id:
+        return None
+    return _DATA_CARDS_DIR / f"{plugin_id}.md"
+
+
+def save_usage_card(plugin_id: str, text: str) -> Path:
+    """Persist a community plugin's usage card under ``data/usage_cards/``.
+
+    Atomic write (tmp file + replace) so a crash mid-write never leaves a
+    half card that would silently change the relevance gate's vocabulary.
+    Clears the loader cache — the gate runs on the voice critical path and
+    must see the new card without a restart.
+    """
+    path = _guarded_data_card_path(plugin_id)
+    if path is None:
+        raise ValueError(f"invalid plugin id for usage card: {plugin_id!r}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".md.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+    load_usage_card.cache_clear()
+    return path
+
+
+def delete_usage_card(plugin_id: str) -> None:
+    """Remove a community card from the data root (bundled cards are never
+    touched). Missing file is a no-op — uninstall must stay idempotent."""
+    path = _guarded_data_card_path(plugin_id)
+    if path is None:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        # An undeletable card only means stale keywords until the next try;
+        # never let it abort an uninstall.
+        return
+    load_usage_card.cache_clear()
