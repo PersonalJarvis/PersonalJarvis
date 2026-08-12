@@ -34,6 +34,7 @@ behaves exactly like one with the defaults.
 Cost: pure regex + an in-memory registry read, no IO, no LLM (AP-9 / AP-11), so
 it is safe on the voice hot path.
 """
+
 from __future__ import annotations
 
 import re
@@ -42,8 +43,8 @@ from dataclasses import dataclass
 from .names import CALL_SIGN_WORD_RE, canonical_positions, resolve, spoken_positions
 
 # Kinds of turn this module recognises.
-KIND_PROMPT = "prompt"   # the user wants the agent to do something
-KIND_REPORT = "report"   # the user asks what the agent is up to
+KIND_PROMPT = "prompt"  # the user wants the agent to do something
+KIND_REPORT = "report"  # the user asks what the agent is up to
 
 # Addressing shapes, per supported locale. These match *input vocabulary* — the
 # words a person actually says to hand work to a named agent — not prose.
@@ -310,10 +311,7 @@ def _canonical_text(text: str, candidates: list[str]) -> str:
 
     text = canonical_positions(text, candidates)
 
-    briefed: set[int] = {
-        match.start("word")
-        for match in _BRIEFED_NAME_RE.finditer(text)
-    }
+    briefed: set[int] = {match.start("word") for match in _BRIEFED_NAME_RE.finditer(text)}
 
     def _replace(match: re.Match[str]) -> str:
         word = match.group(0)
@@ -652,9 +650,9 @@ def _questioned_panes(text: str, candidates: list[str]) -> set[str]:
         return set()
     if _BRIEFING_VERB_RE.search(text):
         return set()
-    return {
-        name for _, _, name in _mentions(text, candidates, fuzzy=False)
-    } - _people_of_the_world(text, candidates)
+    return {name for _, _, name in _mentions(text, candidates, fuzzy=False)} - _people_of_the_world(
+        text, candidates
+    )
 
 
 def _coordinated_group(
@@ -685,16 +683,14 @@ def _coordinated_group(
     return group
 
 
-def _excluded_by_cue(
-    text: str, mentions: list[tuple[int, int, str]]
-) -> set[str]:
+def _excluded_by_cue(text: str, mentions: list[tuple[int, int, str]]) -> set[str]:
     """Names immediately following an explicit set-subtraction cue."""
     anchors: set[str] = set()
     for cue in _EXCLUSION_CUE_RE.finditer(text):
         for start, _, name in mentions:
             if start < cue.end():
                 continue
-            if _EXCLUSION_GAP_RE.fullmatch(text[cue.end():start]):
+            if _EXCLUSION_GAP_RE.fullmatch(text[cue.end() : start]):
                 anchors.add(name)
             break
     return _coordinated_group(mentions, text, anchors)
@@ -708,20 +704,18 @@ def _coordination_groups(
         return []
     groups = [[mentions[0]]]
     for previous, current in zip(mentions, mentions[1:], strict=False):
-        if _COORDINATION_RE.match(text[previous[1]:current[0]]):
+        if _COORDINATION_RE.match(text[previous[1] : current[0]]):
             groups[-1].append(current)
         else:
             groups.append([current])
     return groups
 
 
-def _excluded_by_no_work_clause(
-    text: str, mentions: list[tuple[int, int, str]]
-) -> set[str]:
+def _excluded_by_no_work_clause(text: str, mentions: list[tuple[int, int, str]]) -> set[str]:
     """Names in a collective sentence whose clause says Jarvis should skip them."""
     excluded: set[str] = set()
     for group in _coordination_groups(mentions, text):
-        suffix = text[group[-1][1]:]
+        suffix = text[group[-1][1] :]
         sentence = re.split(r"[.!?;]", suffix, maxsplit=1)[0]
         if _NO_WORK_AFTER_NAME_RE.search(sentence) or _TRAILING_NEGATION_RE.fullmatch(
             suffix.strip()
@@ -738,7 +732,7 @@ def _selection_instruction(
     """Best-effort task text after a target selector and its exception list."""
     excluded_mentions = [item for item in mentions if item[2] in excluded]
     if excluded_mentions:
-        suffix = text[max(end for _, end, _ in excluded_mentions):].strip()
+        suffix = text[max(end for _, end, _ in excluded_mentions) :].strip()
         match = _TASK_AFTER_EXCLUSION_RE.match(suffix)
         if match:
             task = " ".join(match.group("task").split())
@@ -752,9 +746,7 @@ def _selection_instruction(
     return _useful_instruction(text, *mentioned_names)
 
 
-def detect_all(
-    user_text: str, *, names: list[str] | None = None
-) -> list[TerminalIntent]:
+def detect_all(user_text: str, *, names: list[str] | None = None) -> list[TerminalIntent]:
     """Every terminal this turn addresses, in the order the utterance names them.
 
     Live failure this exists for (voice session 2026-07-26 09:18): "kannst du
@@ -801,9 +793,7 @@ def detect_all(
     # pane called Dana.
     people = _people_of_the_world(working, candidates)
     report_anchors = {
-        name
-        for name, pattern in _compile(_REPORT_TEMPLATES, candidates)
-        if pattern.search(working)
+        name for name, pattern in _compile(_REPORT_TEMPLATES, candidates) if pattern.search(working)
     } - people
     prompt_anchors = {
         name
@@ -822,11 +812,11 @@ def detect_all(
     mentions = _mentions(working, candidates)
     explicit_exclusions = _excluded_by_cue(working, mentions)
     no_work_exclusions = _excluded_by_no_work_clause(working, mentions)
-    collective = any(
-        pattern.search(working) for pattern in _EVERYONE_TEMPLATES
-    ) or bool(
-        _COLLECTIVE_EXCEPTION_RE.search(working) and explicit_exclusions
-    ) or bool(_OTHER_PANES_RE.search(working) and no_work_exclusions)
+    collective = (
+        any(pattern.search(working) for pattern in _EVERYONE_TEMPLATES)
+        or bool(_COLLECTIVE_EXCEPTION_RE.search(working) and explicit_exclusions)
+        or bool(_OTHER_PANES_RE.search(working) and no_work_exclusions)
+    )
     exclusions = explicit_exclusions | (no_work_exclusions if collective else set())
 
     # The collective address reaches EVERY open pane, so it is the costliest
@@ -844,9 +834,7 @@ def detect_all(
         if not selected:
             return []
         shared = (
-            ""
-            if kind == KIND_REPORT
-            else _selection_instruction(working, mentions, exclusions)
+            "" if kind == KIND_REPORT else _selection_instruction(working, mentions, exclusions)
         )
         return [
             TerminalIntent(
@@ -872,7 +860,7 @@ def detect_all(
         # shapes, so "ist Alex fertig?" is untouched.
         kind = KIND_PROMPT
         anchors = weak_prompt_anchors
-    elif (asked_about := _questioned_panes(working, candidates)):
+    elif asked_about := _questioned_panes(working, candidates):
         # A QUESTION that names a running pane is about that pane. This is the
         # maintainer's own rule (2026-07-27): while a coding workspace is open,
         # a call-sign belongs to the terminal carrying it, even though somebody
@@ -894,9 +882,7 @@ def detect_all(
         kind = KIND_REPORT
         anchors = asked_about
         mentions = [item for item in mentions if item[2] in asked_about]
-    elif mentions and (
-        _looks_like_instruction(working) or _BRIEFING_VERB_RE.search(working)
-    ):
+    elif mentions and (_looks_like_instruction(working) or _BRIEFING_VERB_RE.search(working)):
         # Last resort: the utterance names terminals and reads as an
         # instruction. Requiring a verb keeps a passing mention ("Alex is a
         # nice name") from being addressed. A briefing verb counts as that verb
@@ -929,15 +915,17 @@ def detect_all(
     # transcript the templates still caught) keeps its place at the end.
     ordered += [name for name in anchors if name not in ordered]
 
-    shared = "" if kind == KIND_REPORT else (
-        _selection_instruction(working, mentions, explicit_exclusions)
-        if explicit_exclusions
-        else _useful_instruction(working, *ordered)
+    shared = (
+        ""
+        if kind == KIND_REPORT
+        else (
+            _selection_instruction(working, mentions, explicit_exclusions)
+            if explicit_exclusions
+            else _useful_instruction(working, *ordered)
+        )
     )
     return [
-        TerminalIntent(
-            terminal=name, kind=kind, instruction=shared, utterance=text
-        )
+        TerminalIntent(terminal=name, kind=kind, instruction=shared, utterance=text)
         for name in ordered
     ]
 
@@ -1115,11 +1103,9 @@ def _pane_nouns(text: str) -> list[re.Match[str]]:
     return [
         match
         for match in _PANE_NOUN_RE.finditer(text)
-        if not (
-            browser_owns_tabs
-            and match.group(0).casefold() in {"tab", "tabs"}
-        )
+        if not (browser_owns_tabs and match.group(0).casefold() in {"tab", "tabs"})
     ]
+
 
 # Verbs that ask for something to be opened, plus the additive markers that
 # carry the same request without a verb ("noch drei Terminals").
@@ -1194,16 +1180,50 @@ _NUMBER_WORDS: dict[str, int] = {
     # umlaut ("funf") or transliterate it ("fuenf"), and only the first was
     # covered — so "starte fünf Agenten" fell back to a count of one whenever
     # the provider wrote it the common way.
-    "zwei": 2, "drei": 3, "vier": 4, "fünf": 5, "funf": 5, "fuenf": 5,  # i18n-allow: number words
-    "sechs": 6, "sieben": 7, "acht": 8, "neun": 9, "zehn": 10, "elf": 11,  # i18n-allow: numbers
-    "zwölf": 12, "zwolf": 12, "zwoelf": 12,  # i18n-allow: number words
+    "zwei": 2,
+    "drei": 3,
+    "vier": 4,
+    "fünf": 5,
+    "funf": 5,
+    "fuenf": 5,  # i18n-allow: number words
+    "sechs": 6,
+    "sieben": 7,
+    "acht": 8,
+    "neun": 9,
+    "zehn": 10,
+    "elf": 11,  # i18n-allow: numbers
+    "zwölf": 12,
+    "zwolf": 12,
+    "zwoelf": 12,  # i18n-allow: number words
     # English
-    "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
-    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+    "a": 1,
+    "an": 1,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
     "twelve": 12,
     # Spanish
-    "un": 1, "uno": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
-    "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10, "once": 11,
+    "un": 1,
+    "uno": 1,
+    "una": 1,
+    "dos": 2,
+    "tres": 3,
+    "cuatro": 4,
+    "cinco": 5,
+    "seis": 6,
+    "siete": 7,
+    "ocho": 8,
+    "nueve": 9,
+    "diez": 10,
+    "once": 11,
     "doce": 12,
     # Past a dozen, spoken counts are the round ones — nobody asks for
     # thirty-seven terminals out loud, and the workspace maximum is a hundred.
@@ -1212,17 +1232,45 @@ _NUMBER_WORDS: dict[str, int] = {
     # request for ONE (no digit, no listed word, silent fall back to the
     # default). A count the user said and did not get is the failure this whole
     # detector is shaped around.
-    "fünfzehn": 15, "funfzehn": 15, "fuenfzehn": 15,  # i18n-allow: number words
-    "zwanzig": 20, "dreißig": 30, "dreissig": 30, "vierzig": 40,  # i18n-allow: number words
-    "fünfzig": 50, "funfzig": 50, "fuenfzig": 50, "sechzig": 60,  # i18n-allow: number words
-    "siebzig": 70, "achtzig": 80, "neunzig": 90, "hundert": 100,  # i18n-allow: number words
-    "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40, "fourty": 40,
-    "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+    "fünfzehn": 15,
+    "funfzehn": 15,
+    "fuenfzehn": 15,  # i18n-allow: number words
+    "zwanzig": 20,
+    "dreißig": 30,
+    "dreissig": 30,
+    "vierzig": 40,  # i18n-allow: number words
+    "fünfzig": 50,
+    "funfzig": 50,
+    "fuenfzig": 50,
+    "sechzig": 60,  # i18n-allow: number words
+    "siebzig": 70,
+    "achtzig": 80,
+    "neunzig": 90,
+    "hundert": 100,  # i18n-allow: number words
+    "fifteen": 15,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fourty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
     "hundred": 100,
-    "quince": 15, "veinte": 20, "treinta": 30, "cuarenta": 40,  # i18n-allow: number words
-    "cincuenta": 50, "sesenta": 60, "setenta": 70, "ochenta": 80,  # i18n-allow: number words
-    "noventa": 90, "cien": 100, "ciento": 100,  # i18n-allow: number words
+    "quince": 15,
+    "veinte": 20,
+    "treinta": 30,
+    "cuarenta": 40,  # i18n-allow: number words
+    "cincuenta": 50,
+    "sesenta": 60,
+    "setenta": 70,
+    "ochenta": 80,  # i18n-allow: number words
+    "noventa": 90,
+    "cien": 100,
+    "ciento": 100,  # i18n-allow: number words
 }
+
 
 # Which coding agent, when the user names one. Bare "claude" counts — nobody
 # says a product name in full while talking. Everything else (including no
@@ -1401,9 +1449,7 @@ def canonical_agent(raw: str) -> str | None:
 def _standalone_spellings() -> dict[str, str]:
     """Spelling → CLI, for the spellings that name a product on their own."""
     return {
-        spelling: agent
-        for agent, spellings in _agent_spellings().items()
-        for spelling in spellings
+        spelling: agent for agent, spellings in _agent_spellings().items() for spelling in spellings
     }
 
 
@@ -1417,9 +1463,7 @@ def _open_verbs(text: str) -> list[re.Match[str]]:
     of panes goes to the wrong CLI or is dropped entirely.
     """
     return [
-        match
-        for match in _OPEN_VERB_RE.finditer(text)
-        if _canonical_agent(match.group(0)) is None
+        match for match in _OPEN_VERB_RE.finditer(text) if _canonical_agent(match.group(0)) is None
     ]
 
 
@@ -1834,11 +1878,37 @@ _CLI_POSITION_NOISE = frozenset(
         "weiteren",  # i18n-allow: input vocab
         "zusätzliche",  # i18n-allow: input vocab
         "zusaetzliche",  # i18n-allow: input vocab
-        "new", "more", "extra", "additional", "other", "another",
-        "otros", "otras", "más", "mas", "nuevos", "nuevas",  # i18n-allow: input vocab
-        "de", "del", "von", "vom", "of", "the", "a", "an",  # i18n-allow: input vocab
-        "und", "and", "y",  # i18n-allow: input vocab
-        "bitte", "please", "por", "favor", "mir", "me", "uns", "us",  # i18n-allow: input vocab
+        "new",
+        "more",
+        "extra",
+        "additional",
+        "other",
+        "another",
+        "otros",
+        "otras",
+        "más",
+        "mas",
+        "nuevos",
+        "nuevas",  # i18n-allow: input vocab
+        "de",
+        "del",
+        "von",
+        "vom",
+        "of",
+        "the",
+        "a",
+        "an",  # i18n-allow: input vocab
+        "und",
+        "and",
+        "y",  # i18n-allow: input vocab
+        "bitte",
+        "please",
+        "por",
+        "favor",
+        "mir",
+        "me",
+        "uns",
+        "us",  # i18n-allow: input vocab
     }
 )
 
@@ -2422,10 +2492,7 @@ def _closes_the_fleet(clause: str) -> bool:
                 # terminals") or behind it ("alle Terminals schließen").
                 ahead = quantifier.start() - verb.end()
                 behind = verb.start() - pane.end()
-                if (
-                    0 <= ahead <= _CLOSE_VERB_MAX_GAP
-                    or 0 <= behind <= _CLOSE_VERB_MAX_GAP
-                ):
+                if 0 <= ahead <= _CLOSE_VERB_MAX_GAP or 0 <= behind <= _CLOSE_VERB_MAX_GAP:
                     return True
     return False
 
@@ -2439,11 +2506,7 @@ def detect_close_fleet(user_text: str) -> CloseTerminalsRequest | None:
     clause has to actually contain lives in ``_closes_the_fleet``.
     """
     text = (user_text or "").strip()
-    if (
-        len(text) < 6
-        or _QUESTION_OPENER_RE.search(text)
-        or _CLOSE_STATE_QUESTION_RE.search(text)
-    ):
+    if len(text) < 6 or _QUESTION_OPENER_RE.search(text) or _CLOSE_STATE_QUESTION_RE.search(text):
         return None
     for clause_match in _CLAUSE_RE.finditer(text):
         clause = clause_match.group(0)
@@ -2574,9 +2637,7 @@ def _mask_spoken_positions(text: str) -> str:
     return out
 
 
-def detect_spawn(
-    user_text: str, *, names: list[str] | None = None
-) -> SpawnTerminalsRequest | None:
+def detect_spawn(user_text: str, *, names: list[str] | None = None) -> SpawnTerminalsRequest | None:
     """A request to open more terminals, or ``None``.
 
     ``names`` is the live call-signs (injectable for tests). They are needed for
@@ -2610,9 +2671,7 @@ def detect_spawn(
         return None
     addressed_text = span.parse_text if span is not None else text
     addressed_before_spawn = (
-        span is not None
-        and span.start > 0
-        and detect(text[: span.start], names=names) is not None
+        span is not None and span.start > 0 and detect(text[: span.start], names=names) is not None
     )
     if addressed_before_spawn or detect(addressed_text, names=names) is not None:
         return None
@@ -2742,9 +2801,7 @@ def wants_split(user_text: str) -> bool:
         return True
     if not _DIVIDE_VERB_RE.search(text):
         return False
-    return bool(
-        _DIVIDE_RECIPIENT_RE.search(text) or _DIVIDE_AREA_RE.search(text)
-    )
+    return bool(_DIVIDE_RECIPIENT_RE.search(text) or _DIVIDE_AREA_RE.search(text))
 
 
 #: "both of you", "you two", "all three of them", "die zwei Terminals". What
@@ -2832,9 +2889,7 @@ def _spawn_words_describe_pane_work(text: str, candidates: list[str]) -> bool:
     return all(start > first_name_at for start, _ in spans)
 
 
-def spawn_vehicle_outranks_workspace(
-    user_text: str, *, names: list[str] | None = None
-) -> bool:
+def spawn_vehicle_outranks_workspace(user_text: str, *, names: list[str] | None = None) -> bool:
     """True when explicit spawn vocabulary should beat an addressed pane.
 
     The vehicle stand-down, as ONE function, because it now has two exceptions
