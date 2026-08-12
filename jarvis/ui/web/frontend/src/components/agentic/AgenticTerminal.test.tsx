@@ -1030,6 +1030,33 @@ describe("pane header actions", () => {
     vi.useRealTimers();
   });
 
+  it("opens the gesture card over the title line, where the old tooltip lived", () => {
+    vi.useFakeTimers();
+    render(
+      <AgenticTerminal
+        name="Dana"
+        displayName="Claude Code"
+        recap="Fix the failing login test"
+        appearance="dark"
+        fontSize={13}
+        onToggleMaximize={() => undefined}
+        onArrangeStart={() => undefined}
+      />,
+    );
+
+    // The recap line is a button, but it spans nearly the whole bar — the
+    // card must show there, not only on the bar's empty slivers.
+    fireEvent.pointerOver(screen.getByTestId("pane-recap-Dana"));
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+
+    const tip = screen.getByTestId("pane-header-tip-Dana");
+    expect(tip.textContent).toContain("Drag");
+    expect(tip.textContent).toContain("Read the full note");
+    vi.useRealTimers();
+  });
+
   it("renames instead of maximizing when the call-sign is the target", () => {
     const onToggleMaximize = vi.fn();
     render(

@@ -2459,6 +2459,11 @@ function PaneHeader({
   // is reached for. Only rows whose gesture is actually wired appear — a
   // maximized pane cannot be dragged, so its card never claims it can.
   const gestures: Array<{ chip: string; text: string }> = [];
+  if ((recap ?? "").trim())
+    gestures.push({
+      chip: "Click title",
+      text: "Read the full note of what this terminal is doing.",
+    });
   if (onArrangeStart)
     gestures.push({
       chip: "Drag",
@@ -2497,12 +2502,16 @@ function PaneHeader({
         if (target?.closest("button, a, input, [role='menuitem']")) return;
         onArrangeStart(event);
       }}
-      // A settled hover on the bar itself asks what the bar can do; a hover
-      // on one of its controls is about THAT control (they keep their own
-      // labels), so the card yields to them instead of stacking on top.
+      // A settled hover on the bar asks what the bar can do. The card yields
+      // only to controls that carry their OWN native label (`[title]` — the
+      // action cluster, the pencil, the seat chip), so two explanations never
+      // stack. Everything else on the bar belongs to the bar — including the
+      // recap line, which is a button but spans nearly the whole width: the
+      // first version suppressed the card there, and "hover the title" is
+      // exactly where people ask.
       onPointerOver={(event) => {
         const target = event.target as HTMLElement | null;
-        if (target?.closest("button, a, input, [role='menuitem']")) hideTip();
+        if (target?.closest("[title], input, [role='menuitem']")) hideTip();
         else if (gestures.length > 0) scheduleTip();
       }}
       onPointerLeave={hideTip}
