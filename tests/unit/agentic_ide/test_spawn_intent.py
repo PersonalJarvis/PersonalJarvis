@@ -946,6 +946,32 @@ def test_prompt_them_does_not_leak_the_pronoun_into_the_task() -> None:
     assert intent.distributes_tasks(instruction) is True
 
 
+def test_a_garble_before_the_next_group_still_earns_the_question() -> None:
+    """"two closed, one codex" garbles "Claudes" — Jarvis must ask, not guess.
+
+    The old guard saw the codex six characters behind "closed" and treated it
+    as this group's real name — but it stands past a comma, in a group of its
+    own, so two panes of whatever kind happened to be inherited opened in
+    silence. A name only vouches for debris INSIDE its own group ("two NASA
+    Cloud Code terminals"), never across a boundary.
+    """
+    found = intent.detect_spawn(
+        "spawn two closed, one codex and one open code terminal", names=NAMES
+    )
+    assert found is not None
+    assert len(found.uncertain_cli) == 1
+    assert found.uncertain_cli[0].spoken == "closed"
+    assert "Claude Code" in found.uncertain_cli[0].candidates
+
+    # Within one group the real name still vouches for the debris word.
+    inside = intent.detect_spawn(
+        "Open two NASA Cloud Code terminals and one Codex terminal", names=NAMES
+    )
+    assert inside is not None
+    assert inside.uncertain_cli == ()
+    assert [(g.count, g.agent) for g in inside.groups] == [(2, "claude"), (1, "codex")]
+
+
 def test_spoken_filler_in_front_of_the_enumeration_is_not_the_task() -> None:
     """"prompt them LIKE one fixes …" — the filler must not hide the division.
 

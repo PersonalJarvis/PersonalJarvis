@@ -1942,6 +1942,25 @@ def _closest_clis(word: str) -> tuple[tuple[str, float], ...]:
     return tuple(sorted(scored, key=lambda item: (-item[1], item[0])))
 
 
+#: Punctuation or coordination that ends one fleet group and starts the next.
+_GROUP_BOUNDARY_RE = re.compile(
+    r"[,;]|\b(?:und|and|y)\b",  # i18n-allow: input vocab
+    re.IGNORECASE,
+)
+
+
+def _group_boundary_between(gap: str) -> bool:
+    """Whether ``gap`` separates two fleet groups rather than two of one name.
+
+    A comma, a coordination, or a fresh count each start a group of their own,
+    so a CLI name on the far side of one cannot vouch for the word on the near
+    side.
+    """
+    if _GROUP_BOUNDARY_RE.search(gap):
+        return True
+    return any(_count_of(token) is not None for token in _COUNT_TOKEN_RE.findall(gap))
+
+
 def _uncertain_clis(text: str) -> tuple[UncertainCli, ...]:
     """Words standing where a CLI name belongs that name none of them clearly.
 
@@ -1991,8 +2010,19 @@ def _uncertain_clis(text: str) -> tuple[UncertainCli, ...]:
         if not behind_count and not before_pane:
             continue
         # The real name may follow it ("two NASA Cloud Code terminals"): the
-        # group is not in doubt, so neither is this word.
-        if any(0 <= start - match.end() <= 12 for start, _end in known):
+        # group is not in doubt, so neither is this word. But only WITHIN the
+        # group — a comma, a coordination or a fresh count between them means
+        # the name belongs to the NEXT group, and vouches for nothing here:
+        # "two closed, one codex" garbles "Claudes" into "closed", and the
+        # codex behind the comma was read as this group's real name, so two
+        # panes of whatever kind happened to be inherited opened in silence
+        # instead of the question the garble deserves (maintainer report
+        # 2026-08-12).
+        if any(
+            0 <= start - match.end() <= 12
+            and not _group_boundary_between(text[match.end() : start])
+            for start, _end in known
+        ):
             continue
         candidates = _closest_clis(word)
         if not candidates:
