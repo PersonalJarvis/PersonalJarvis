@@ -9245,3 +9245,77 @@ phantom pane is a billed subscription seat doing unasked work. The boundary
 between "the fleet" and "the fleet's job" is not a verb list — speech hands
 work over by RESTATING the subject at least as often as by naming a verb, and
 the parser has to model that shape, not enumerate its vocabulary.
+
+---
+
+## BUG-135: speaking while Jarvis works on an action does nothing — barge-in never reached the thinking phase (HIGH, FIXED 2026-08-13)
+
+**Symptoms (maintainer report).** In realtime mode, talking while Jarvis is
+thinking does not interrupt him. Cutting into his SPEECH works; cutting into
+the silent stretch where a delegated action runs does not. Worse than silence
+in the common case: a short interruption came back as the progress line
+("I'm still working on it"), so the session demonstrably heard the user and
+carried on anyway.
+
+**Root.** Three independent absorbers on one path, each correct in isolation:
+
+1. **The edge is deferred, then confirmed toothlessly.** While an action runs,
+   `_pending_delegate_needs_endpoint_protection()` parks the provider's
+   `speech_started`/`interrupted` edge in `_deferred_provider_speech_start`
+   instead of acting on it — right, because Gemini reports room noise and real
+   barge-ins with the same event. The confirm path then calls
+   `_barge_in(interrupt_provider=False)`, which cuts audio and sets drop flags.
+2. **Nothing cancels the work.** `_barge_in` does not touch `_delegate_tasks`
+   at any point. Delegates are cancelled only at teardown; on a new turn they
+   are *detached* (`_retain_detached_delegate_task`) and their result is queued
+   for the late flush. `test_barge_in_detaches_late_delegate_result_from_new_turn`
+   pinned that as intended. So the action ran to completion and still spoke.
+3. **The words were classified as a continuation.** `_continues_executing_order`
+   (BUG from 2026-08-12: one sentence split by a thinking pause briefed a pane
+   twice) folds a fragment into the running order when it is under
+   `_CONTINUATION_FRAGMENT_MAX_TOKENS`, carries no self-standing planner
+   reason, and its reasons are covered by the running order. "Stop", "warte
+   mal", "never mind" satisfy all four, so the interruption was answered with
+   `_speak_pending_action_status()`.
+
+Absorber 3 is why the bug reads as being ignored rather than as a missed cut:
+the session took the turn, understood it, and replied that it was busy.
+
+**Fix.**
+
+- `jarvis/speech/interrupt_intent.py` (new, sibling of `hangup.py`): regex-only
+  probe, de/en/es at equal depth, whole-utterance anchored so a stop word
+  mid-sentence is inert. Two strengths — a bare "no" counts only as a complete
+  utterance ("no problem" must not abort), while a hard token also carries a
+  replacement ("wait, I meant Rome" → `INTERRUPT_REDIRECT`). Hang-up phrases
+  are refused: ending the CALL outranks ending the action.
+- `jarvis/realtime/session.py`: the probe runs on the final transcript before
+  any routing decision — deliberately NOT on the VAD edge, so it also works on
+  a provider that emits no `speech_started` at all. Guard order is
+  load-bearing: `_user_is_speaking()` first (a hesitation mid-sentence is not a
+  stop, and "warte" is also a thinking-filler — 872b05051), then the
+  clarify/confirm latches (a bare "no" may be an ANSWER), then the words.
+  `_cancel_running_delegates()` cancels the tasks, drops their queued late
+  results, and latches `delivery_started` so a delegate finishing inside the
+  cancellation window cannot re-queue itself. `_acknowledge_interrupt()`
+  confirms from a closed per-language pool — the provider's context still holds
+  the order and, left to itself, answers the request the user just withdrew.
+- `_continues_executing_order` returns False for any interrupt intent. An
+  explicit stop is never a continuation of the thing it asks to stop.
+
+**Guards:** `tests/unit/speech/test_interrupt_intent.py` (72 cases: the stop
+vocabulary per locale, the redirect shape, the ordinary-speech and hang-up
+negatives) and `tests/unit/realtime/test_session_action_interrupt.py` (the
+action is really cancelled and its result never surfaces; the stop is confirmed
+out loud and never with a progress line; a redirect cancels AND is answered; a
+continuation fragment, a clarify answer, and a mid-sentence hesitation still
+cancel nothing).
+
+**Lesson.** Every one of the three absorbers was added to fix a real incident,
+and none of them was wrong. What was missing is that "the user is still
+talking" and "the user wants me to stop" look identical from any single signal
+— the microphone cannot read intent and the words cannot tell a hesitation
+from a command. Guards accumulated along one path eventually cover the case
+they were each built for and, between them, the case nobody wrote a guard for.
+The fix is not a fourth heuristic but an explicit ordering of the ones already
+there, cheapest and most certain first.
