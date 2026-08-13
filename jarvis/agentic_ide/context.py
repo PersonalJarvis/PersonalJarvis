@@ -41,6 +41,31 @@ _LINES_PER_TERMINAL_CROWDED = 3
 _CROWDED_AT = 5
 _MAX_CHARS = 4500
 
+# The short block, added on every turn while a workspace is open but focus mode
+# is OFF. Two lines per pane and a hard 1 200-char cap: its job is to let the
+# model tell a pane apart from a person, not to brief it on the codebase, and it
+# rides turns that never mention the workspace at all.
+_LINES_PER_TERMINAL_OPEN = 2
+_OPEN_MAX_CHARS = 2000
+
+_OPEN_HEADER = (
+    "[AGENTIC IDE — a coding workspace is open]\n"
+    "Coding agents run in the terminals below. Reach them with "
+    "'agentic-ide-prompt' (one), 'agentic-ide-fanout' (several at once) or "
+    "'agentic-ide-terminal-report' (read what one printed).\n"
+    "These call-signs are ordinary first names too, and telling the two apart "
+    "is YOUR call — nothing upstream decides it any more:\n"
+    "- An instruction aimed at a pane goes to that pane. Send it; never answer "
+    "with what you WOULD have sent, and never spawn a background worker for "
+    "it.\n"
+    "- A sentence that merely CONTAINS a call-sign is not an order — a "
+    "colleague of the same name, a remark about earlier work, thinking out "
+    "loud. Answer it as conversation and type nothing.\n"
+    "- Genuinely unclear? ASK in one short sentence. A question costs a word; "
+    "a wrong guess puts a stranger's task into a working agent.\n"
+    "- NEVER claim you sent anything unless a function call in THIS turn did."
+)
+
 _HEADER = (
     "[AGENTIC IDE — focused coding mode is ON]\n"
     "You are the user's agentic-coding partner for the one repository below. "
@@ -127,16 +152,40 @@ def _terminal_block(  # noqa: ANN001 - Terminal, avoid import cycle
     return lines
 
 
-def focus_context_block(max_chars: int = _MAX_CHARS) -> str:
-    """Workspace-awareness block for this turn, or "" when focus mode is off."""
+def workspace_context_block(max_chars: int = _MAX_CHARS) -> str:
+    """Workspace-awareness block for this turn, or "" when none is open.
+
+    Two sizes, because two different questions have to be answerable:
+
+    * **Focus mode on** — the full block. The assistant IS the coding partner
+      for this repository, so it gets the stack, the branch, the skills and a
+      generous tail of each pane's output.
+    * **Focus mode off, a workspace open** — the short block (``_OPEN_HEADER``).
+      It exists because of 2026-08-13: the addressed-terminal fast path now
+      stands down on uncertain evidence and lets the MODEL decide whether a
+      sentence was aimed at a pane. A model that cannot see the panes cannot
+      make that decision — it would answer from the user's own words, which is
+      the exact failure ("I have let Alex know" over an idle terminal) that the
+      deterministic path was built to prevent. Handing the decision over
+      without handing over the facts would therefore not be an improvement, it
+      would be the old bug with a new cause.
+
+    The short form is deliberately thin: call-signs, status, two lines of
+    output. Enough to tell "the user means that pane" from "the user is talking
+    about a colleague", which is all this decision needs — and a fraction of
+    the uncacheable input the full block costs on every turn.
+    """
     try:
         from .session import get_registry
 
         session = get_registry().session
     except Exception:  # noqa: BLE001 - never let awareness break a turn
         return ""
-    if session is None or not session.focus_mode:
+    if session is None:
         return ""
+    focused = bool(session.focus_mode)
+    if not focused:
+        return _open_workspace_block(session)
 
     parts: list[str] = [_HEADER, ""]
     parts.extend(session.profile.summary_lines())
@@ -182,4 +231,49 @@ def focus_context_block(max_chars: int = _MAX_CHARS) -> str:
     return block
 
 
-__all__ = ["focus_context_block"]
+def _open_workspace_block(session, max_chars: int = _OPEN_MAX_CHARS) -> str:  # noqa: ANN001
+    """The short block: a workspace is open, but focus mode is off.
+
+    Answers one question — "which panes exist, and what are they doing?" — so
+    the model can tell an order to a pane from talk about a person who happens
+    to share its name. That distinction used to be made by a regex that had
+    only the sentence to go on; the facts below are what it was missing.
+    """
+    if not session.terminals:
+        return ""
+    parts: list[str] = [_OPEN_HEADER, ""]
+    try:
+        from .fanout import in_flight_briefs
+
+        writing = dict(in_flight_briefs(session))
+    except Exception:  # noqa: BLE001 - a missing fact never costs the block
+        writing = {}
+    visible = None
+    try:
+        visible = session.contextual_terminal()
+    except Exception:  # noqa: BLE001 - optional UI context
+        visible = None
+    parts.append(f"Terminals in the open workspace ({len(session.terminals)}):")
+    for term in session.terminals:
+        parts.extend(
+            _terminal_block(
+                term, _LINES_PER_TERMINAL_OPEN, writing_for_s=writing.get(term.name)
+            )
+        )
+    if visible is not None:
+        parts.append("")
+        parts.append(
+            f"{visible.name} is the terminal currently on screen, so 'this "
+            f"terminal' means {visible.name}."
+        )
+    block = "\n".join(parts)
+    if len(block) > max_chars:
+        block = block[: max_chars - 1] + "…"
+    return block
+
+
+#: Kept as the historical name: this module's block was focus-mode-only until
+#: 2026-08-13, and callers (plus their tests) spell it this way.
+focus_context_block = workspace_context_block
+
+__all__ = ["focus_context_block", "workspace_context_block"]

@@ -46,6 +46,50 @@ from .names import CALL_SIGN_WORD_RE, canonical_positions, resolve, spoken_posit
 KIND_PROMPT = "prompt"  # the user wants the agent to do something
 KIND_REPORT = "report"  # the user asks what the agent is up to
 
+# How much evidence the utterance carries for addressing this pane. The detector
+# always answered a yes/no, and every caller consumed it as one — which made the
+# weakest branch below (a call-sign plus any work verb, no addressing shape at
+# all) as authoritative as "sag Kai, er soll …". It is not, and the difference
+# is exactly where the maintainer's 2026-08-13 complaint lands: work was typed
+# into an agent on turns that never asked for it.
+#
+# So the answer now carries its own evidence level, and the callers decide what
+# each level may do:
+#
+# * ``certain`` — the utterance carries a real ADDRESSING SHAPE ("tell X to …",
+#   "X soll …", "kann X mal …", the vocative, a collective address) or asks a
+#   status question. Deterministic delivery stays, because that is the promise
+#   the whole surface is built on and the shape is what makes claiming it safe.
+# * ``likely`` — a call-sign is present and the sentence describes work, but
+#   nothing addresses the pane. Real often enough to keep detecting, far too
+#   thin to type on: "ich schau mal, was Alex so treibt" carries both
+#   ingredients. This level is HANDED TO THE MODEL, which sees the panes, their
+#   output and the conversation and can tell the two readings apart.
+#
+# A ``likely`` READ (a status question) keeps the deterministic path: answering
+# from what a pane printed changes nothing, so the asymmetry that motivates all
+# of this does not apply to it.
+CONFIDENCE_CERTAIN = "certain"
+CONFIDENCE_LIKELY = "likely"
+
+# The rest of an addressee list, between the first call-sign and the verb that
+# hands the work over: "Alex AND DAVE should …", "Iris UND BRUNO sollen …".
+# Without it, only the LAST name of a pair sits next to the modal and the first
+# one depends on the weakest branch there is — which is how "Alex and Dave
+# should both do a deep dive" was carried by nothing but a name and a verb.
+#
+# A pronoun is excluded rather than merely unmatched: "Alex, wir sollten …"
+# introduces a NEW subject, and reading the modal as Alex's is exactly the
+# misreading this whole distinction exists to make. Names may follow one
+# another; a new sentence subject ends the list.
+_ENUMERATED = (
+    r"(?:\s*(?:,|und|and|y|e)\s+"  # i18n-allow: input vocab
+    r"(?!wir\b|ich\b|du\b|man\b|sie\b|er\b|es\b|"  # i18n-allow: input vocab
+    r"we\b|i\b|you\b|they\b|he\b|she\b|it\b|"
+    r"nosotros\b|yo\b|t[uú]\b|ellos\b|[eé]l\b|ella\b)"  # i18n-allow: input vocab
+    r"\w+)*"
+)
+
 # Addressing shapes, per supported locale. These match *input vocabulary* — the
 # words a person actually says to hand work to a named agent — not prose.
 # ``{name}`` is substituted with the live call-signs at match time.
@@ -58,12 +102,23 @@ _DIRECTIVE_TEMPLATES: tuple[str, ...] = (
     # Plural forms carry their weight: the moment two panes are addressed the
     # user says "Iris und Bruno sollen …", and a singular-only verb list made
     # the second addressee depend on the weaker last-resort path.
-    r"\b{name}\b[^.!?]{{0,20}}?\b(?:soll|sollen|sollte|sollten|kann|"  # i18n-allow: input vocab
+    # The modal belongs to the call-sign: it follows it directly, or after the
+    # rest of an ADDRESSEE LIST ("Alex and Dave should …", "Iris und Bruno
+    # sollen …", "Kai, kannst du …"). ``_ENUMERATED`` is what admits the list
+    # while refusing a new sentence subject, which is the difference between an
+    # assignment and a remark; at any greater distance the modal routinely
+    # belongs to someone else — see ``_LOOSE_DIRECTIVE_TEMPLATES``.
+    r"\b{name}\b" + _ENUMERATED + r"\s*,?\s*"
+    r"(?:mal|bitte|doch|jetzt|dann|nochmal)?\s*"  # i18n-allow: input vocab
+    r"\b(?:soll|sollen|sollte|sollten|kann|"  # i18n-allow: input vocab
     r"k[oö]e?nnen|k[oö]e?nnte|k[oö]e?nnten|m[uü]e?ssen|muss|"  # i18n-allow: input vocab
     r"m[uü]e?sste|m[uü]e?ssten|darf|"  # i18n-allow: input vocab
     r"d[uü]e?rfen|d[uü]e?rfte|d[uü]e?rften)\b",  # i18n-allow: input vocab
-    r"\b{name}\b[^.!?]{{0,20}}?\b(?:should|can|could|please|must)\b",
-    r"\b{name}\b[^.!?]{{0,20}}?\b(?:deber[ií]an?|pueden?|podr[ií]an?)\b",
+    r"\b{name}\b" + _ENUMERATED + r"\s*,?\s*(?:both|just|please|now|also)?\s*"
+    r"\b(?:should|can|could|please|must)\b",
+    r"\b{name}\b" + _ENUMERATED + r"\s*,?\s*"
+    r"(?:ambos|ya|ahora|tambi[eé]n)?\s*"  # i18n-allow: input vocab
+    r"\b(?:deber[ií]an?|pueden?|podr[ií]an?)\b",
     r"\b(?:lass|l[aä]sst)\b[^.!?]{{0,20}}?\b{name}\b",
     r"\blet\b[^.!?]{{0,20}}?\b{name}\b",
     # "prompt this terminal Kai …" / "prompte Mika …" / "instruct Nova to …".
@@ -87,9 +142,11 @@ _DIRECTIVE_TEMPLATES: tuple[str, ...] = (
     r"[uü]bergib|[uü]bergebe|weiterleit\w*)\b[^.!?]{{0,40}}?\b{name}\b",
     r"\b(?:send|give|ask|hand|forward|assign)\b[^.!?]{{0,40}}?\b{name}\b",
     r"\b(?:env[ií]a|manda|preg[uú]nta|pasa|asigna)\b[^.!?]{{0,40}}?\b{name}\b",
-    # "an Kai:" / "in Mika:" / "bei Nova" / "über Kai" — a routing preposition
-    # immediately in front of the call-sign.
-    r"\b(?:an|in|bei|[uü]ber|via|to|into|en|a)\s+{name}\b",
+    # "an Kai:" / "to Mika:" — a routing preposition in front of the call-sign,
+    # closed by the punctuation that makes it a HEADER rather than a phrase.
+    # The bare preposition alone is not enough; see
+    # ``_LOOSE_DIRECTIVE_TEMPLATES``.
+    r"\b(?:an|in|bei|[uü]ber|via|to|into|en|a)\s+{name}\b\s*[:,—-]",
     # "setz Kai auf den Wake-Bug an" / "put Nova on the audit" / "point Aria at
     # the failing test". The PREPOSITION is what makes these unambiguous — bare
     # "setz"/"put" is ordinary work talk ("put the file back"), but putting a
@@ -100,6 +157,38 @@ _DIRECTIVE_TEMPLATES: tuple[str, ...] = (
     r"\b(?:pon|p[oó]n|asigna|encarga\w*)\b[^.!?]{{0,25}}?\b{name}\b",
     # Vocative: the name opens the utterance ("Kai, mach mal …").
     r"^{name}\b\s*[,:]",
+)
+
+# Shapes that LOOK like the anchored ones above but do not carry their evidence,
+# so they are reported as ``likely`` and decided by the model (2026-08-13).
+#
+# Both were part of ``_DIRECTIVE_TEMPLATES`` and matched far more than they were
+# written for, which is where the maintainer's "it just prompts a terminal, I
+# never asked" lands:
+#
+# 1. **The bare routing preposition.** Written for the header form "an Kai: …",
+#    it also matches every ordinary phrase that happens to put a preposition in
+#    front of a name — "bei Alex läuft der Test gerade durch" is a remark, not
+#    an order. The English "to"/"into" and the Spanish "a"/"en" are worse still:
+#    "according to Alex", and "a Kai" inside any ordinary Spanish sentence. The
+#    header form keeps its punctuation above; what is left over is this.
+# 2. **The distant modal.** "Alex soll …" is an assignment, but the same list at
+#    twenty characters' distance also caught "Alex meinte, wir sollten die Tests
+#    nochmal machen" — where the modal belongs to "wir" and Alex is being
+#    QUOTED. Adjacency is what tells the subject of the modal apart, so the
+#    adjacent form stays anchored above and the distant one lands here.
+#
+# Kept rather than deleted: each really is an assignment often enough that
+# dropping them would trade a visible annoyance for a silent miss. Handing them
+# to the model keeps both readings alive and costs nothing when it is right.
+_LOOSE_DIRECTIVE_TEMPLATES: tuple[str, ...] = (
+    r"\b(?:an|in|bei|[uü]ber|via|to|into|en|a)\s+{name}\b",
+    r"\b{name}\b[^.!?]{{0,20}}?\b(?:soll|sollen|sollte|sollten|kann|"  # i18n-allow: input vocab
+    r"k[oö]e?nnen|k[oö]e?nnte|k[oö]e?nnten|m[uü]e?ssen|muss|"  # i18n-allow: input vocab
+    r"m[uü]e?sste|m[uü]e?ssten|darf|"  # i18n-allow: input vocab
+    r"d[uü]e?rfen|d[uü]e?rfte|d[uü]e?rften)\b",  # i18n-allow: input vocab
+    r"\b{name}\b[^.!?]{{0,20}}?\b(?:should|can|could|please|must)\b",
+    r"\b{name}\b[^.!?]{{0,20}}?\b(?:deber[ií]an?|pueden?|podr[ií]an?)\b",
 )
 
 # Shapes that address a pane but are one step less certain than the ones above,
@@ -136,8 +225,17 @@ _WEAK_DIRECTIVE_TEMPLATES: tuple[str, ...] = (
     # matching it there would turn asking ABOUT a pane into typing at it.
     r"^(?:[¿¡]\s*)?que\s+{name}\b",
     # The German sentence bracket: name first, handing-over verb last.
+    #
+    # "lassen" earns its place here (2026-08-13): "deine Aufgabe ist es Bruno
+    # einen Deep Dive machen zu lassen" is the maintainer's own live utterance
+    # from the 2026-07-25 forensic, and it carried NO addressing shape at all —
+    # it only ever reached Bruno through the last-resort branch, on the same
+    # thin evidence as an idle remark. It is a textbook assignment, so it
+    # belongs with the shapes that say so. The bracket's own guard applies as
+    # everywhere here: it counts only when the utterance also describes work,
+    # which is what keeps the ordinary "lass mal gut sein" out.
     r"\b{name}\b[^.!?]{{0,30}}?\b(?:sagen|bitten|beauftragen|anweisen|"  # i18n-allow: input vocab
-    r"[uü]bergeben|weiterleiten|zuweisen|prompten|briefen)\b",  # i18n-allow: input vocab
+    r"lassen|[uü]bergeben|weiterleiten|zuweisen|prompten|briefen)\b",  # i18n-allow: input vocab
     # "have Alex review …" / "get Alex to fix …" / "I want Alex to …". The call
     # sign follows IMMEDIATELY: at any distance these verbs are ordinary speech
     # about a pane rather than an order to it ("I have a question about Alex").
@@ -212,6 +310,14 @@ class TerminalIntent:
 
     utterance: str
     """The original utterance, unmodified."""
+
+    confidence: str = CONFIDENCE_CERTAIN
+    """``certain`` or ``likely`` — see the module constants.
+
+    Defaults to ``certain`` so a caller that constructs one by hand (tests, the
+    clarify window) keeps the historical behaviour; every branch of
+    ``detect_all`` sets it explicitly.
+    """
 
 
 def _running_names() -> list[str]:
@@ -800,6 +906,15 @@ def detect_all(user_text: str, *, names: list[str] | None = None) -> list[Termin
         for name, pattern in _compile(_DIRECTIVE_TEMPLATES, candidates)
         if pattern.search(working)
     }
+    # Matched at the same point in the order as the anchored shapes — these WERE
+    # anchored shapes until 2026-08-13, so moving them would change which branch
+    # claims a sentence, not just how sure it is. Only the reported confidence
+    # differs: a turn carried by these alone is the model's to judge.
+    loose_prompt_anchors = {
+        name
+        for name, pattern in _compile(_LOOSE_DIRECTIVE_TEMPLATES, candidates)
+        if pattern.search(working)
+    }
     # The weaker shapes need the utterance to describe work as well; see
     # ``_WEAK_DIRECTIVE_TEMPLATES`` for why each of them cannot stand alone.
     weak_prompt_anchors: set[str] = set()
@@ -846,12 +961,21 @@ def detect_all(user_text: str, *, names: list[str] | None = None) -> list[Termin
             for name in selected
         ]
 
+    # Every branch below an addressing shape states its own evidence level; see
+    # the module constants for what each level is allowed to do.
+    confidence = CONFIDENCE_CERTAIN
     if report_anchors:
         kind = KIND_REPORT
         anchors = report_anchors
-    elif prompt_anchors:
+    elif prompt_anchors or loose_prompt_anchors:
         kind = KIND_PROMPT
-        anchors = prompt_anchors
+        anchors = prompt_anchors | loose_prompt_anchors
+        # An anchored shape anywhere in the utterance settles it for every pane
+        # it addresses — a fan-out is ONE instruction, and grading its members
+        # separately would type into half of them and hand the rest to the
+        # model. Only a turn carried purely by the loose shapes is ``likely``.
+        if not prompt_anchors:
+            confidence = CONFIDENCE_LIKELY
     elif weak_prompt_anchors:
         # Above the question branch on purpose: politeness and the German
         # sentence bracket both produce sentences that END in a question mark
@@ -899,12 +1023,22 @@ def detect_all(user_text: str, *, names: list[str] | None = None) -> list[Termin
         # to be exact (or fold to the same sound, which is what carries a
         # garbled transcript). An addressing shape, being independent evidence,
         # still admits a fuzzy call-sign in the branches above.
+        #
+        # Reported as ``likely`` rather than as an answer of the same standing
+        # as the branches above (2026-08-13): both ingredients occur together in
+        # ordinary talk ABOUT a pane — "ich schau mal, was Alex so treibt" has a
+        # call-sign and a work verb and addresses nobody — and nothing here can
+        # tell the two apart, because the evidence really is identical. Whether
+        # this becomes a prompt is therefore the model's call; it reads the
+        # panes, their output and the conversation, which is what the difference
+        # actually lives in.
         certain = _mentions(working, candidates, fuzzy=False)
         if not certain:
             return []
         mentions = certain
         kind = KIND_PROMPT
         anchors = {name for _, _, name in certain}
+        confidence = CONFIDENCE_LIKELY
     else:
         return []
 
@@ -925,7 +1059,13 @@ def detect_all(user_text: str, *, names: list[str] | None = None) -> list[Termin
         )
     )
     return [
-        TerminalIntent(terminal=name, kind=kind, instruction=shared, utterance=text)
+        TerminalIntent(
+            terminal=name,
+            kind=kind,
+            instruction=shared,
+            utterance=text,
+            confidence=confidence,
+        )
         for name in ordered
     ]
 
@@ -980,15 +1120,23 @@ def detect_visible(
             return None
     if not selected or selected not in candidates:
         return None
+    # A briefing verb ("prompte dieses Terminal …") IS the addressing shape, and
+    # a report is read-only — both keep full standing. A bare work verb beside
+    # "this terminal" does not: the pane on stage is a UI fact, not something
+    # the user said, so the sentence carries no evidence that it was meant at
+    # all. That reading is offered to the model rather than acted on.
+    confidence = CONFIDENCE_CERTAIN
     if _BRIEFING_VERB_RE.search(text):
         kind = KIND_PROMPT
     elif _VISIBLE_REPORT_RE.search(text):
         kind = KIND_REPORT
     elif _looks_like_instruction(text):
         kind = KIND_PROMPT
+        confidence = CONFIDENCE_LIKELY
     else:
         return None
     return TerminalIntent(
+        confidence=confidence,
         terminal=selected,
         kind=kind,
         instruction=text if kind == KIND_PROMPT else "",
@@ -1927,7 +2075,6 @@ _UNSUPPORTED_CLI_SPELLINGS: dict[str, str] = {
     "gimini": "Gemini",
     "giming": "Gemini",
     "jemini": "Gemini",
-    "antigravity": "Antigravity",
     "aider": "Aider",
     "windsurf": "Windsurf",
     "copilot": "Copilot",
@@ -3340,12 +3487,29 @@ def spawn_vehicle_outranks_workspace(user_text: str, *, names: list[str] | None 
     return not _spawn_words_describe_pane_work(text, candidates)
 
 
-def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
+def owns_turn(
+    user_text: str,
+    *,
+    names: list[str] | None = None,
+    only_certain: bool = False,
+) -> bool:
     """True when the open workspace should handle this turn instead of a spawn.
 
     Used by the router's force-spawn guard AND by ``spawn_gate`` — both already
     call this before they look for the delegation marker, which is why the
     precedence lives here and not in either of them: one answer, no drift.
+
+    ``only_certain`` narrows the answer to turns carrying a real addressing
+    shape, and the split follows what the caller DOES with it (2026-08-13):
+
+    * A caller that only ever WITHHOLDS something — the force-spawn guard, the
+      spawn gate — asks the wide question. Being wrong there costs a background
+      mission the user can simply ask for again in plainer words, and the wide
+      answer is what keeps the 2026-07-25 bug dead.
+    * A caller that ACTS on the answer — types into an agent, or switches off
+      the turn's other capabilities — asks the narrow one. Being wrong there
+      puts a stranger's sentence into a coding agent, or leaves the user unable
+      to change a setting because a call-sign happened to be in the room.
 
     Order:
 
@@ -3370,15 +3534,23 @@ def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
         return True
     if spawn_vehicle_outranks_workspace(text, names=names):
         return False
-    if detect(text, names=names) is not None:
-        return True
+    addressed = detect(text, names=names)
+    if addressed is not None:
+        return not (only_certain and addressed.confidence != CONFIDENCE_CERTAIN)
     # Only the process-wide form can honestly consult the active UI surface.
     # Injected candidate lists are used by pure detector tests and must not
     # acquire hidden global state.
-    return names is None and detect_visible(text) is not None
+    if names is not None:
+        return False
+    visible = detect_visible(text)
+    if visible is None:
+        return False
+    return not (only_certain and visible.confidence != CONFIDENCE_CERTAIN)
 
 
 __all__ = [
+    "CONFIDENCE_CERTAIN",
+    "CONFIDENCE_LIKELY",
     "KIND_PROMPT",
     "KIND_REPORT",
     "CloseTerminalsRequest",

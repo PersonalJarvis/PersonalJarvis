@@ -3998,7 +3998,13 @@ class BrainManager:
         return "\n\n".join(p for p in parts if p)
 
     def _agentic_focus_block(self) -> str:
-        """Workspace-awareness block while the Agentic IDE's focus mode is on.
+        """Workspace-awareness block while an Agentic-IDE workspace is open.
+
+        Two sizes (see ``agentic_ide.context``): the full coding-partner block
+        under focus mode, and a short pane roster whenever a workspace is merely
+        open. The short one is what makes the fast path's 2026-08-13 stand-down
+        honest — the model now decides some pane-addressing turns itself, and it
+        can only do that if it can see the panes.
 
         Pure in-memory read (the session's cached project profile + each
         terminal's ring buffer), so it stays off the latency budget the way
@@ -6125,13 +6131,24 @@ class BrainManager:
         )
         return f"Öffne {label}." if is_de else f"Opening {label}."  # i18n-allow
 
-    def _agentic_ide_owns_turn(self, user_text: str) -> bool:
+    def _agentic_ide_owns_turn(
+        self, user_text: str, *, only_certain: bool = False
+    ) -> bool:
         """True when this turn belongs to the open coding workspace.
 
         Asked by the deterministic gates that would otherwise consume the turn
         first — today the desktop/Computer-Use gate. The answer comes from
         ``intent.owns_turn``, the one precedence rule the force-spawn guard and
         the spawn gate already share, so a fourth opinion cannot appear here.
+
+        ``only_certain`` narrows it to turns carrying a real addressing shape,
+        and which callers pass it follows what they DO with the answer
+        (2026-08-13). A gate that merely STANDS DOWN — navigation, local-action
+        — asks the wide question: standing down costs nothing, because the turn
+        then reaches the ordinary path where the model can still do that same
+        thing through its tools. A gate that TAKES A CAPABILITY AWAY for the
+        rest of the turn asks the narrow one, because being wrong there leaves
+        the user unable to change a setting for no reason they can see.
 
         Cost is a regex sweep over the in-memory session, no IO and no LLM
         (AP-9 / AP-11), so it is safe to ask on every turn of the voice hot
@@ -6142,7 +6159,7 @@ class BrainManager:
         try:
             from jarvis.agentic_ide.intent import owns_turn
 
-            return owns_turn(user_text)
+            return owns_turn(user_text, only_certain=only_certain)
         except Exception:  # noqa: BLE001 - optional surface, never fatal
             return False
 
@@ -6239,6 +6256,45 @@ class BrainManager:
         # would get silence. Passed THIS path's roster — it may include a
         # just-closed fleet the global one no longer lists.
         if ide_intent.spawn_vehicle_outranks_workspace(user_text, names=candidates):
+            return None
+
+        # A reading the detector itself calls uncertain is HANDED TO THE MODEL
+        # rather than typed (maintainer directive 2026-08-13: "it must
+        # understand the actions intelligently — don't put the codebase in front
+        # of the model's intelligence").
+        #
+        # The two branches graded ``likely`` share one property: they match
+        # sentences that merely CONTAIN a call-sign and a work verb, with
+        # nothing addressing the pane — "der Kai aus dem Team wollte das Repo
+        # mal analysieren" has every ingredient and orders nobody. No amount of
+        # further pattern work separates those from real orders, because the
+        # written evidence genuinely is the same; what tells them apart is the
+        # workspace, the panes' output and what was just said, and the model is
+        # the only thing here that reads all three.
+        #
+        # Standing down is safe because it does not hand the turn to force-spawn:
+        # that guard (and ``spawn_gate``) still consults the WIDE ``owns_turn``,
+        # which keeps answering yes here — so the 2026-07-25 bug stays fixed.
+        # What the turn reaches instead is the ordinary path, where
+        # ``agentic-ide-prompt`` and its siblings sit in the tool set with the
+        # workspace block beside them. The model can still type into the pane;
+        # it just has to decide to.
+        #
+        # A REPORT is exempt: reading back what a pane printed changes nothing,
+        # so the asymmetry that motivates all of this does not apply to it. And
+        # one certain addressee carries the whole utterance — a fan-out is ONE
+        # instruction, and splitting it would type into half the panes.
+        if addressed and all(
+            item.kind == ide_intent.KIND_PROMPT
+            and item.confidence == ide_intent.CONFIDENCE_LIKELY
+            for item in addressed
+        ):
+            log.info(
+                "Agentic IDE fast-path stands down — %s addressed only on "
+                "'likely' evidence (no addressing shape). The model decides "
+                "this turn with agentic-ide-prompt available.",
+                ", ".join(item.terminal for item in addressed),
+            )
             return None
 
         out_lang = resolve_output_language(
@@ -9205,7 +9261,40 @@ class BrainManager:
                 task.cancel()
                 cancelled += 1
         log.info("Cancelled %d background Jarvis-Agent task(s)", cancelled)
-        return cancelled
+        return cancelled + self._cancel_workspace_briefs_in_flight()
+
+    def _cancel_workspace_briefs_in_flight(self) -> int:
+        """Drop every coding-agent brief still being WRITTEN, and say how many.
+
+        The undo this surface never had (2026-08-13). A spoken instruction to a
+        pane is not typed straight away: the prompt writer spends 10-30 seconds
+        turning it into a briefed task with the repository's files attached. For
+        that whole window the order is recallable and nothing has happened yet —
+        yet the only thing that could recall it was hanging up the call.
+
+        So "stop" / "nein, abbrechen" now reaches it, through the intercept that
+        already exists for background missions. Cheap to be right about: the PTY
+        write is the LAST step of a fan-out, so an abandoned brief leaves no text
+        in the input box, no receipt and no half-started agent. If the user was
+        too late, this simply cancels nothing and the readback says so.
+
+        Only SPOKEN deliveries are registered as abandonable (see
+        ``fanout.cancel_spoken_deliveries``); a prompt someone typed into the
+        prompt bar is not undone by a sentence in the chat.
+        """
+        try:
+            from jarvis.agentic_ide.fanout import cancel_spoken_deliveries
+
+            stopped = cancel_spoken_deliveries(reason="the user cancelled it")
+        except Exception:  # noqa: BLE001 - optional surface, never fatal
+            log.debug("could not cancel in-flight workspace briefs", exc_info=True)
+            return 0
+        if stopped:
+            log.info(
+                "Cancelled %d coding-agent brief(s) that were still being written",
+                stopped,
+            )
+        return stopped
 
     def _cancel_readback(self, count: int) -> str:
         """Honest spoken readback for a deterministic cancel: name the count, or
@@ -9652,7 +9741,16 @@ class BrainManager:
         # is a safety control and must keep working under every phrasing.
         # Cheap enough for the hot path — an in-memory regex sweep, no IO and
         # no model call (AP-9/AP-11) — and it answers "no" on any fault.
-        ide_owns_turn = self._agentic_ide_owns_turn(user_text)
+        #
+        # ``only_certain`` because this is the one consumer that TAKES SOMETHING
+        # AWAY (2026-08-13): the four gates below are switched off for the rest
+        # of the turn, so a merely plausible pane reading would leave the user
+        # unable to change the provider, the language or the depth for no reason
+        # they can see — and, since the fast path now stands down on that same
+        # evidence, without even briefing an agent in exchange. A real
+        # addressing shape still outranks all four, which is the precedence the
+        # 2026-07-28 live bug asked for.
+        ide_owns_turn = self._agentic_ide_owns_turn(user_text, only_certain=True)
 
         switch_target = (
             None if ide_owns_turn else self._detect_switch_intent(user_text)

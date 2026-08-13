@@ -38,12 +38,34 @@ def test_no_session_means_no_block() -> None:
     assert focus_context_block() == ""
 
 
-async def test_session_without_focus_mode_means_no_block(
+async def test_open_workspace_without_focus_mode_gets_the_short_block(
     wired: tuple[Registry, FakePtyManager], tmp_path: Path
 ) -> None:
+    """An open workspace is visible to the model even with focus mode off.
+
+    Until 2026-08-13 this case produced nothing, because the block only ever
+    served focus mode. It has to produce something now: the addressed-terminal
+    fast path stands down on uncertain evidence and lets the MODEL judge whether
+    a sentence was aimed at a pane, and a model that cannot see the panes would
+    answer that question from the user's own words — the "I have let Alex know"
+    failure over an idle terminal, arrived at by a new route.
+
+    It stays SHORT, though: this rides every turn while a workspace is open,
+    including the ones that never mention it. The project profile, the branch
+    and the generous output tails remain focus mode's.
+    """
     registry, _ = wired
     await registry.start(str(tmp_path), [{"agent": "claude"}])
-    assert focus_context_block() == ""
+
+    block = focus_context_block()
+    assert "AGENTIC IDE" in block
+    assert "T1" in block
+    # The tools are named, because naming them is what replaces the regex that
+    # used to make this decision without the model.
+    assert "agentic-ide-prompt" in block
+    # …and the full focus-mode block's expensive parts stay out.
+    assert len(block) <= 2000
+    assert "focused coding mode is ON" not in block
 
 
 async def test_focus_mode_block_names_the_folder_and_terminals(
@@ -157,12 +179,25 @@ async def test_a_brief_being_written_is_stated_as_not_arrived(
 async def test_turning_focus_off_removes_the_block_again(
     wired: tuple[Registry, FakePtyManager], tmp_path: Path
 ) -> None:
-    """Switching back must be complete — no residue in the next turn."""
+    """Switching back must be complete — no coding-partner residue.
+
+    What returns is the SHORT block, not nothing: the panes stay open and stay
+    addressable, so the model keeps seeing them (2026-08-13). The full block's
+    role directive and project profile are what must disappear, and the size
+    difference is the proof that they did.
+    """
     registry, _ = wired
     await registry.start(str(tmp_path), [{"agent": "claude"}])
     registry.set_focus_mode(True)
-    assert focus_context_block() != ""
+    focused = focus_context_block()
+    assert "focused coding mode is ON" in focused
+
     registry.set_focus_mode(False)
+    unfocused = focus_context_block()
+    assert "focused coding mode is ON" not in unfocused
+    assert len(unfocused) < len(focused)
+    # Closing the workspace is what removes the block entirely.
+    await registry.end()
     assert focus_context_block() == ""
 
 
