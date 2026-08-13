@@ -1202,6 +1202,22 @@ def set_overlay_style(style: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "ui", "orb_style", style)
 
 
+def set_active_mode(slug: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the active assistant mode to ``[persona] active_mode``.
+
+    ``slug`` is a mode id from ``jarvis.brain.modes`` — a built-in or one the
+    user created. Validation belongs to ``modes.set_active`` (it is the layer
+    that knows which modes exist); this function only writes.
+
+    TOML-only by design, same rationale as :func:`set_overlay_style`:
+    ``persona.active_mode`` is not in the drift-guard's reference snapshot, so
+    it is never reverted, and no ENV override reads it — a second layer would
+    be a lie about where the value lives. No restart is needed either way,
+    because the persona layer re-reads the pointer on every turn.
+    """
+    _patch_table(path, "persona", "active_mode", slug)
+
+
 def set_computer_use_engine(engine: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the active Computer-Use engine to ``[computer_use] engine``.
 

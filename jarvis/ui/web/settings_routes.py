@@ -2031,7 +2031,10 @@ class SystemPromptBody(BaseModel):
 def _system_prompt_payload() -> dict[str, object]:
     from jarvis.brain import persona_loader
 
-    content = persona_loader.load_effective_persona_prompt()
+    # The BASE persona, not the effective one: this editor writes the base text
+    # back, so showing the active mode's block here would let the user "edit" a
+    # block that the mode owns and then silently lose it on save.
+    content = persona_loader.base_persona_prompt()
     return {
         "content": content,
         "is_custom": persona_loader.has_custom_prompt(),

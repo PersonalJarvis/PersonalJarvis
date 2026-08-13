@@ -776,6 +776,10 @@ jarvis = [
     # allowlist (skills/authoring/draft_writer.py), Jarvis-Agent critic
     # verdict JSON-schema (core/review/spawns.py).
     "brain/JARVIS_PERSONA.md",
+    # Built-in assistant modes (brain/modes.py::packaged_modes_dir). Missing
+    # here, a wheel install would show an empty mode list and silently fall
+    # back to the base persona — the same class of bug as the note above.
+    "brain/modes/*.md",
     "skills/safe_imports.txt",
     "core/review/verdict_schema.json",
     # Seed catalogs (CLI tools / skills / marketplace plugins) — named

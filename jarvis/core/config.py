@@ -246,6 +246,17 @@ class PersonaConfig(BaseModel):
     # silently broken by a future base-class / project-wide model_config change.
     model_config = ConfigDict(extra="ignore")
 
+    # Which assistant mode is active — the user's deliberate, sticky choice
+    # (``jarvis.brain.modes``). Deliberately a free string rather than a
+    # Literal: user-created modes are the point of the feature, so the closed
+    # set lives in ``modes.BUILTIN_SLUGS`` and an unknown value degrades to the
+    # default at read time instead of failing config validation at boot.
+    #
+    # NOT the whole story on purpose: the Agentic IDE's screen-scoped override
+    # is in-memory only and never reaches this file, so a mode a screen turned
+    # on can never outlive the process.
+    active_mode: str = "assistant"
+
 
 class WakeWordConfig(BaseModel):
     """User-editable ``[trigger.wake_word]`` — the custom-wake-word config.
