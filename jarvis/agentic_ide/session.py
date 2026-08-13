@@ -2436,40 +2436,15 @@ class Registry:
         logger.info("Agentic IDE session ended: {}", session.id)
 
     def set_focus_mode(self, enabled: bool) -> bool:
-        """Turn the focused coding mode on/off. Returns the resulting state.
-
-        Also swaps the assistant's *character* to the built-in ``coding`` mode,
-        because "focused coding mode" was only ever half a mode: it added the
-        workspace facts to the prompt but left the tone alone. It is applied as
-        a SECTION OVERRIDE, which is in-memory and never persisted — so this
-        cannot overwrite the mode the user actually chose, and cannot survive a
-        restart the way the old sticky focus flag did.
-        """
+        """Turn the focused coding mode on/off. Returns the resulting state."""
         session = self.session
         if session is None:
             if enabled:
                 raise SessionError("No Agentic-IDE session is running — open one first.")
-            self._sync_coding_character(False)
             return False
         session.focus_mode = bool(enabled)
         logger.info("Agentic IDE focus mode {}", "on" if enabled else "off")
-        self._sync_coding_character(session.focus_mode)
         return session.focus_mode
-
-    @staticmethod
-    def _sync_coding_character(enabled: bool) -> None:
-        """Point the persona layer at the ``coding`` mode while focus mode is on.
-
-        Best-effort by design: the workspace context block is the part users
-        depend on, so a missing or renamed ``coding`` mode costs the tone and
-        nothing else.
-        """
-        try:
-            from jarvis.brain import modes
-
-            modes.set_section_override(modes.MODE_CODING if enabled else None)
-        except Exception as exc:  # noqa: BLE001 - never fail a toggle on the tone
-            logger.debug("Coding-mode character not applied: {}", exc)
 
     def set_surface_context(
         self,

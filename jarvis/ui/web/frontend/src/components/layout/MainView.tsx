@@ -78,9 +78,6 @@ const JarvisAgentsView = lazyView(() =>
 const WikiView = lazyView(() =>
   import("@/views/WikiView").then((m) => ({ default: m.WikiView })),
 );
-const ModesView = lazyView(() =>
-  import("@/views/ModesView").then((m) => ({ default: m.ModesView })),
-);
 const ApiKeysView = lazyView(() =>
   import("@/views/ApiKeysView").then((m) => ({ default: m.ApiKeysView })),
 );
@@ -436,10 +433,6 @@ function SwitchOnActiveSection({ active }: { active: string }) {
     // AROUND it looks like (see App.tsx).
     case "visualization":
       return <VisualizationView />;
-    // The assistant's character: which mode is active, and the workshop for
-    // building another one by talking to it.
-    case "modes":
-      return <ModesView />;
     // Deliberately nothing: the coding workspace is rendered by the STICKY
     // branch in `MainView` above, which keeps it mounted across section
     // changes. This switch is not rendered at all while one of those ids is

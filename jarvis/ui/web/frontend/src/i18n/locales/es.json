@@ -101,7 +101,6 @@
     "feedback": "Comentarios",
     "agent_instructions": "{name}.md",
     "wallpaper": "Fondo de pantalla",
-    "modes": "Modos",
     "agentic_ide": "IDE agéntico",
     "agentic_ide_beta": "Beta",
     "voice": "Voz de {name}",

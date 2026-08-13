@@ -2447,19 +2447,6 @@ class RealtimeVoiceSession:
             if provider_config is not None
             else ""
         )
-        # The active mode may ask for its own voice — a friend should not sound
-        # like a butler. Unlike the classic pipeline, which picks a voice per
-        # utterance, a realtime provider pins the voice when the session opens:
-        # switching modes mid-call therefore changes the voice on the NEXT call,
-        # not this sentence. Documented rather than worked around, because
-        # tearing down a live conversation to change its timbre would cost the
-        # user their turn.
-        try:
-            from jarvis.brain.modes import active_voice
-
-            voice = active_voice() or voice
-        except Exception as exc:  # noqa: BLE001 - a voice preference never costs a session
-            log.debug("Mode voice not applied to the realtime session: %s", exc)
         return model, voice
 
     @staticmethod

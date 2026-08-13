@@ -631,13 +631,6 @@ click-element = "jarvis.plugins.tool.click_element:ClickElementTool"
 scroll = "jarvis.plugins.tool.scroll:ScrollTool"
 wait-for-element = "jarvis.plugins.tool.wait_for_element:WaitForElementTool"
 remember = "jarvis.plugins.tool.remember:RememberTool"
-# Assistant modes (2026-08-13): the assistant's own character, switchable by
-# voice and buildable through an interview. Direct gated actions, never a spawn
-# (AP-5/AP-14). save_mode is ask-tier because it writes a file every future
-# turn reads.
-list-modes = "jarvis.plugins.tool.assistant_mode:ListModesTool"
-switch-mode = "jarvis.plugins.tool.assistant_mode:SwitchModeTool"
-save-mode = "jarvis.plugins.tool.assistant_mode:SaveModeTool"
 dispatch-to-harness = "jarvis.plugins.tool.dispatch_to_harness:DispatchToHarnessTool"
 # Computer-Use (Wave 1, 2026-05-29) — first-class router tool to drive the live
 # desktop via the in-process computer-use harness. Router-tier only (in
@@ -783,10 +776,6 @@ jarvis = [
     # allowlist (skills/authoring/draft_writer.py), Jarvis-Agent critic
     # verdict JSON-schema (core/review/spawns.py).
     "brain/JARVIS_PERSONA.md",
-    # Built-in assistant modes (brain/modes.py::packaged_modes_dir). Missing
-    # here, a wheel install would show an empty mode list and silently fall
-    # back to the base persona — the same class of bug as the note above.
-    "brain/modes/*.md",
     "skills/safe_imports.txt",
     "core/review/verdict_schema.json",
     # Seed catalogs (CLI tools / skills / marketplace plugins) — named

@@ -1978,18 +1978,6 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # jarvis/brain/visualize_gate.py), because the mandate is that a
             # visualisation is asked for, never volunteered.
             "visualize",
-            # Assistant modes (2026-08-13, maintainer mandate): the assistant's
-            # own character. list-modes (safe, property read), switch-mode
-            # (monitor, changes tone only and is visible on screen the moment it
-            # happens), save-mode (ask, echo-confirm — it writes a file every
-            # future turn reads). Deterministic, in-process, touching no
-            # external system: the same shape as switch-provider, which is the
-            # standing precedent for the assistant reconfiguring itself by
-            # voice. Direct gated actions, never spawns (AP-5/AP-14). See
-            # ADR-0011 amendment "Assistant-Mode Tools".
-            "list-modes",
-            "switch-mode",
-            "save-mode",
         }
     )
     assert ROUTER_TOOLS == expected, (
