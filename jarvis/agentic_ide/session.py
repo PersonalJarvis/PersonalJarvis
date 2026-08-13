@@ -3739,6 +3739,8 @@ class Registry:
         The agent defaults to the anchor's, because splitting a Claude Code pane
         usually means "another one of these" — but a caller may name any
         installed agent, which is how the UI offers a choice of coding CLI.
+        Without an anchor there is no "these" to copy, so the workspace's
+        prevailing CLI decides instead (``_prevailing_agent``).
 
         ``account`` names which subscription of that agent to run on. Without
         one, every new pane opens on the workspace's active account
@@ -3766,7 +3768,15 @@ class Registry:
             if base is None:
                 base = session.terminals[-1] if session.terminals else None
 
-            chosen = agent or (base.agent if base else "claude")
+            # A named CLI wins; a SPLIT inherits its anchor ("another one of
+            # these"); everything else takes the workspace's prevailing CLI
+            # rather than the last pane's — see ``_prevailing_agent``.
+            if agent:
+                chosen = agent
+            elif anchor and base is not None:
+                chosen = base.agent
+            else:
+                chosen = _prevailing_agent(session)
             if not is_runnable(chosen):
                 raise SessionError(f"Unknown agent: {chosen}")
             if agent_argv(chosen) is None:
@@ -4556,6 +4566,43 @@ class Registry:
         )
         known = ", ".join(term.name for term in panes)
         return SessionError(f"No terminal called {wanted!r}. Running: {known or 'none'}.")
+
+
+def _prevailing_agent(session: Session) -> str:
+    """The coding CLI an anchor-less new pane should run.
+
+    An add with NO anchor is the batch behind "open five more", the voice spawn
+    path, and the empty grid's button. None of them points at a pane, so none of
+    them says which CLI is meant — and the answer has to come from the workspace
+    itself.
+
+    Copying the LAST pane was the old answer and the wrong one. ``_renumber``
+    sorts the list into the grid's reading order, so "last" means the pane
+    furthest bottom-right — whatever happened to be opened most recently, which
+    is exactly the pane a user is least likely to mean. Live 2026-08-13: five
+    Claude panes and ONE Codex pane opened minutes earlier for an unrelated
+    errand, and a spoken order produced a sixth pane running Codex.
+
+    The majority is what "another one of these" means for a workspace as a
+    whole, and it is stable under the gesture that caused the surprise — one odd
+    pane cannot flip it. A tie falls to the first pane in reading order, so the
+    answer is deterministic rather than dependent on how the dict happened to
+    iterate, and an empty grid falls back to the default CLI.
+
+    A SPLIT is deliberately not routed through here: it names its anchor, and
+    splitting a Claude pane really does mean "another one of these".
+    """
+    counts: dict[str, int] = {}
+    for term in session.terminals:
+        if term.agent:
+            counts[term.agent] = counts.get(term.agent, 0) + 1
+    if not counts:
+        return "claude"
+    most = max(counts.values())
+    for term in session.terminals:
+        if term.agent and counts[term.agent] == most:
+            return term.agent
+    return "claude"
 
 
 def _unique_name(wanted: str, used: set[str]) -> str:

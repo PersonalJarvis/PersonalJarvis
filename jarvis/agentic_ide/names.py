@@ -268,11 +268,20 @@ _POSITION_PATTERNS: tuple[re.Pattern[str], ...] = (
     # layer up as a fleet size — two fresh panes opened for a brief aimed at
     # T2). Consonants only, so a real word ("Typ", "ten", "the") that happens
     # to start with t never smuggles a number into a position.
+    #
+    # The cluster may also sit GLUED to the number, which is the same garble
+    # one space tighter: "Terminal T1" came back as "Terminal TR1" live on
+    # 2026-08-13, the repair above needed the space it did not have, and the
+    # turn fell through to the spawn path — a fresh Codex pane opened and was
+    # briefed while T1 sat idle. Requiring the space was the whole bug; the
+    # consonant class is what keeps the branch honest either way, and a
+    # number word behind the cluster still wins by backtracking ("terminal
+    # two" is two, never a "tw" cluster in front of a number that is not there).
     re.compile(
         rf"\b{_PANE_NOUN}\s*"
         # i18n-allow: speech-recognition input vocabulary, not prose
         rf"(?:(?:nummer|nr\.?|number|n[uú]mero)\s*)?"
-        rf"(?:t[bcdfghjklmnpqrstvwxz]{{0,3}}\s+)?"
+        rf"(?:t[bcdfghjklmnpqrstvwxz]{{0,3}}\s*)?"
         rf"(?P<value>\d{{1,3}}|{_NUMBER_WORD_ALT})\b",
         re.IGNORECASE,
     ),

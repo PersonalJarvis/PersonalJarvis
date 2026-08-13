@@ -1554,13 +1554,15 @@ def _spoken_count(text: str) -> int:
     # Read the FIRST number in speech order. Searching all digits before number
     # words contradicted this function's contract and turned "five terminals;
     # each may start 50 workers" into a request for 50 terminals.
+    #
+    # An article that sizes nothing is skipped rather than read (``_count_at``),
+    # so a task word behind the fleet ("… und mach einen Deep Dive") cannot
+    # become the fleet's size. The default of one still stands behind it: a
+    # request with no number at all ("mach das Terminal auf") is one pane.
     for match in re.finditer(r"\b(?:\d{1,3}|[^\W\d_]+)\b", text, re.UNICODE):
-        raw = match.group(0).casefold()
-        if raw.isdigit():
-            return max(1, min(int(raw), MAX_TERMINALS))
-        cleaned = "".join(ch for ch in raw if ch.isalpha())
-        if cleaned in _NUMBER_WORDS:
-            return max(1, min(_NUMBER_WORDS[cleaned], MAX_TERMINALS))
+        value = _count_at(text, match)
+        if value is not None:
+            return max(1, min(value, MAX_TERMINALS))
     return 1
 
 
@@ -1592,6 +1594,45 @@ _COUNT_TOKEN_RE = re.compile(r"\b(?:\d{1,3}|[^\W\d_]+)\b", re.UNICODE)
 _COUNT_AGENT_MAX_GAP = 40
 
 
+#: Number words that are ALSO the indefinite article, in all three locales.
+#:
+#: They have to be counted — "mach noch ein Terminal auf" is a real request for
+#: one pane, and dropping them cost the user that pane. They also occur in
+#: ordinary speech constantly, attached to nothing this parser cares about:
+#: "also ein Deep Dive machen soll" is the live 2026-08-13 failure, where the
+#: article sitting behind a mis-transcribed call-sign became the size of a
+#: fleet nobody asked for.
+#:
+#: ``names._NUMBER_WORDS`` refuses the article outright and says why. It cannot
+#: be refused here, because sizing a fleet with it is a real request — so it
+#: has to EARN the reading instead, from what it stands in front of. "eins" and
+#: "uno" are absent on purpose: those are the bare numbers, never articles.
+_ARTICLE_ONES: frozenset[str] = frozenset(
+    # i18n-allow: speech-recognition input vocabulary, not prose
+    {"ein", "eine", "einen", "a", "an", "un", "una"}
+)
+
+#: How many words may sit between the article and the thing it sizes. Two, the
+#: same bound ``_COUNT_AGENT_RE`` allows between a count and its CLI: enough for
+#: "ein weiteres neues Terminal", too few to reach across into another clause.
+_ARTICLE_FILLER_WORDS = 2
+
+#: What an article must be sizing to count as a number: panes, or a coding CLI
+#: standing in for them ("mach noch einen Codex auf"). Anchored at the article
+#: and bounded by the filler above, so the evidence has to be adjacent — an
+#: article whose noun is a Deep Dive sizes nothing here.
+_ARTICLE_SIZES_RE = re.compile(
+    rf"\s*(?:[^\W\d_]+\s+){{0,{_ARTICLE_FILLER_WORDS}}}"
+    rf"(?:{_PANE_NOUN_RE.pattern}|{_AGENT_RE.pattern})",
+    re.IGNORECASE,
+)
+
+
+def _article_sizes_something(text: str, end: int) -> bool:
+    """Whether the article ending at ``end`` is sizing panes rather than prose."""
+    return _ARTICLE_SIZES_RE.match(text, end) is not None
+
+
 def _count_of(raw: str) -> int | None:
     """The number a token means, or None when it is not a number at all."""
     token = raw.casefold()
@@ -1599,6 +1640,23 @@ def _count_of(raw: str) -> int | None:
         return int(token)
     cleaned = "".join(ch for ch in token if ch.isalpha())
     return _NUMBER_WORDS.get(cleaned)
+
+
+def _count_at(text: str, match: re.Match[str]) -> int | None:
+    """``_count_of`` with the sentence around the token taken into account.
+
+    The one place that knows an article is only a number when it sizes
+    something. Every reader of a count goes through it, so the group parser and
+    the fallback cannot drift into two different opinions about whether "ein"
+    was a one.
+    """
+    value = _count_of(match.group(0))
+    if value is None:
+        return None
+    cleaned = "".join(ch for ch in match.group(0).casefold() if ch.isalpha())
+    if cleaned in _ARTICLE_ONES and not _article_sizes_something(text, match.end()):
+        return None
+    return value
 
 
 def _count_tokens(text: str) -> list[tuple[int, int, int]]:
@@ -1614,7 +1672,7 @@ def _count_tokens(text: str) -> list[tuple[int, int, int]]:
     raw = [
         (match.start(), match.end(), value)
         for match in _COUNT_TOKEN_RE.finditer(text)
-        if (value := _count_of(match.group(0))) is not None
+        if (value := _count_at(text, match)) is not None
     ]
     joined: list[tuple[int, int, int]] = []
     for start, end, value in raw:

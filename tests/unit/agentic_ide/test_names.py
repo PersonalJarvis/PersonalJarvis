@@ -74,6 +74,12 @@ class TestSpokenForms:
             # The live 2026-08-12 transcript: "Terminal T2" mangled into a
             # t-led consonant cluster in front of the number word.
             "prompt wird du terminal tft zwei",  # i18n-allow: input vocab under test
+            # The live 2026-08-13 transcript: the same garble one space
+            # tighter, glued straight onto the digit. The 08-12 repair required
+            # the space, so this addressed nothing and opened a pane instead.
+            "prompte Terminal TR2 mit dem deep dive",  # i18n-allow: input vocab under test
+            "prompte terminal tf2 mit dem deep dive",  # i18n-allow: input vocab under test
+            "prompt terminal tt2 to do a deep dive",
             "das zweite Terminal soll das machen",  # i18n-allow: input vocab under test
             "prompt terminal two",
             "the second terminal should run the tests",
@@ -143,6 +149,14 @@ class TestABareNumberNeverAddressesAPane:
         assert spoken_positions("Terminal Typ zwei", count=4) == []  # i18n-allow: input vocab
         assert spoken_positions("terminal the two", count=4) == []
         assert resolve("das tolle zwei", PANES) is None  # i18n-allow: input vocab
+        # Admitting the GLUED cluster (2026-08-13) must not admit vocabulary
+        # either: a number word behind a real t-word is still ordinary speech,
+        # and a number word whose own spelling starts with the debris letters
+        # ("two", "three", "tres") must keep winning as the number it is.
+        assert spoken_positions("Terminal Typ2", count=4) == []  # i18n-allow: input vocab
+        assert [n for *_, n in spoken_positions("terminal two", count=4)] == [2]
+        assert [n for *_, n in spoken_positions("terminal three", count=4)] == [3]
+        assert [n for *_, n in spoken_positions("terminal tres", count=4)] == [3]
 
     def test_a_dictated_variable_is_not_a_pane(self) -> None:
         """"t eins" / "t two" without a pane noun is a variable, not a pane.
