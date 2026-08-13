@@ -229,3 +229,85 @@ async def test_refresh_bypasses_ttl(community_env: Path, monkeypatch: pytest.Mon
         resp = await client.post("/api/marketplace/community/refresh")
     assert resp.status_code == 200
     assert calls == [True]
+
+
+# ----------------------------------------------------------------------
+# Update detection + browse facets
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_available_only_when_index_version_is_newer(
+    community_env: Path,
+) -> None:
+    """An install pins the version; a newer index entry flags the update.
+
+    The badge must stay off while the versions match, or every installed card
+    would permanently claim an update that re-installing cannot clear.
+    """
+    cache = community_env / "marketplace_index.json"
+    async with _client() as client:
+        await client.post("/api/marketplace/community/plugins/todo-fox/install")
+
+        same = await client.get("/api/marketplace/community")
+        entry = same.json()["plugins"][0]
+        assert entry["installed"] is True
+        assert entry["installed_version"] == "1.2.0"
+        assert entry["update_available"] is False
+
+        newer = _plugin_entry()
+        newer["version"] = "1.3.0"
+        newer["plugin_json"]["version"] = "1.3.0"
+        cache.write_text(
+            json.dumps({"fetched_at": time.time(), "index": _index_payload(newer)}),
+            encoding="utf-8",
+        )
+        bumped = await client.get("/api/marketplace/community")
+        assert bumped.json()["plugins"][0]["update_available"] is True
+
+
+@pytest.mark.asyncio
+async def test_update_flag_stays_off_for_unparseable_versions(
+    community_env: Path,
+) -> None:
+    """A publisher may write any string into ``version``.
+
+    A wrong "update available" badge is worse than none, so a version that is
+    not purely numeric-dotted never compares.
+    """
+    cache = community_env / "marketplace_index.json"
+    async with _client() as client:
+        await client.post("/api/marketplace/community/plugins/todo-fox/install")
+
+        odd = _plugin_entry()
+        odd["version"] = "2026-08-13-nightly"
+        odd["plugin_json"]["version"] = "2026-08-13-nightly"
+        cache.write_text(
+            json.dumps({"fetched_at": time.time(), "index": _index_payload(odd)}),
+            encoding="utf-8",
+        )
+        resp = await client.get("/api/marketplace/community")
+    assert resp.json()["plugins"][0]["update_available"] is False
+
+
+@pytest.mark.asyncio
+async def test_uninstalled_plugin_never_claims_an_update(community_env: Path) -> None:
+    async with _client() as client:
+        resp = await client.get("/api/marketplace/community")
+    entry = resp.json()["plugins"][0]
+    assert entry["installed"] is False
+    assert entry["update_available"] is False
+
+
+@pytest.mark.asyncio
+async def test_browse_serves_category_counts_matching_the_cards(
+    community_env: Path,
+) -> None:
+    """The filter chips are derived from the same converted specs the cards
+    render, so a chip can never promise a count the list cannot show."""
+    async with _client() as client:
+        resp = await client.get("/api/marketplace/community")
+    data = resp.json()
+    assert data["categories"] == [{"name": "Lists & Tasks", "count": 1}]
+    shown = [p["category"] for p in data["plugins"] if p["valid"]]
+    assert shown.count("Lists & Tasks") == 1

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,10 @@ from jarvis.marketplace.token_store import Tokens, TokenStore
 # channel (token + config), not just a stored token. Kept in sync with the
 # channel adapters under jarvis/channels/.
 _CHANNEL_PLUGIN_IDS = ("telegram", "discord")
+
+# A version this store is willing to COMPARE: dotted digits and nothing else.
+# Deliberately stricter than SemVer — see ``_version_tuple``.
+_NUMERIC_VERSION_RE = re.compile(r"\d+(?:\.\d+)*")
 
 log = logging.getLogger(__name__)
 
@@ -281,9 +286,7 @@ async def list_plugins(response: Response) -> dict[str, Any]:
             # Configuration state is safe to expose; the client id and secret
             # themselves never leave the backend. The dialog uses this to stop
             # placeholder-only installs before they launch a doomed OAuth tab.
-            item["oauth_client_configured"] = not is_placeholder_client_id(
-                effective_client_id
-            )
+            item["oauth_client_configured"] = not is_placeholder_client_id(effective_client_id)
         mcp = spec.mcp_server or {}
         mcp_live, runtime_missing = _mcp_live(mcp, plugin_id=spec.id, status=status)
         if runtime_missing:
@@ -734,9 +737,59 @@ async def disconnect(plugin_id: str, request: Request) -> dict[str, Any]:
 # ----------------------------------------------------------------------
 
 
-def _community_payload(
-    index: Any, status: str
-) -> dict[str, Any]:
+def _version_tuple(value: str | None) -> tuple[int, ...] | None:
+    """Parse a dotted numeric version into a comparable tuple.
+
+    Returns ``None`` for anything that is not purely numeric-dotted (a
+    pre-release suffix, a date, an empty string). A community publisher may
+    write any string they like into ``version``, and a WRONG "update available"
+    badge is worse than no badge at all — so an unparseable version simply
+    never compares and the entry stays quiet.
+    """
+    if not value:
+        return None
+    core = str(value).strip().lstrip("vV")
+    # Whole-string match on purpose. Trimming a "-suffix" first would read the
+    # date "2026-08-13" as version 2026 and flag a permanent bogus update; and
+    # a pre-release ("1.3.0-beta") is genuinely NOT the same version as its
+    # release, so the honest answer for both is "cannot compare".
+    if not _NUMERIC_VERSION_RE.fullmatch(core):
+        return None
+    return tuple(int(part) for part in core.split("."))
+
+
+def _is_newer(candidate: str | None, installed: str | None) -> bool:
+    """True only when BOTH versions parse and ``candidate`` is strictly newer.
+
+    Padding to equal width makes ``1.2`` and ``1.2.0`` compare equal rather
+    than the shorter one losing.
+    """
+    new, old = _version_tuple(candidate), _version_tuple(installed)
+    if new is None or old is None:
+        return False
+    width = max(len(new), len(old))
+    return new + (0,) * (width - len(new)) > old + (0,) * (width - len(old))
+
+
+def _installed_skill_version(skill_md: Path) -> str | None:
+    """The ``version`` in an installed SKILL.md's frontmatter, or ``None``.
+
+    Reuses the real skill parser rather than a second YAML reader, so a skill
+    the registry considers malformed reports no version here either instead of
+    quietly disagreeing with the Skills view.
+    """
+    try:
+        from jarvis.skills.loader import parse_skill
+
+        parsed = parse_skill(skill_md)
+    except Exception:  # noqa: BLE001 - a broken skill costs its version, not the list
+        return None
+    frontmatter = getattr(parsed, "frontmatter", None)
+    version = getattr(frontmatter, "version", None) if frontmatter else None
+    return str(version) if version else None
+
+
+def _community_payload(index: Any, status: str) -> dict[str, Any]:
     """Convert a fetched index into the wire shape the Plugins view renders.
 
     Every plugin entry is run through the SAME converter the install path
@@ -775,8 +828,7 @@ def _community_payload(
                 )
                 if spec.id != entry.name:
                     raise AgentPluginError(
-                        f"index name {entry.name!r} does not match manifest "
-                        f"name {spec.id!r}"
+                        f"index name {entry.name!r} does not match manifest name {spec.id!r}"
                     )
             except AgentPluginError as exc:
                 plugins.append({**base, "valid": False, "error": str(exc)})
@@ -786,19 +838,24 @@ def _community_payload(
             item["valid"] = True
             existing = installed_specs.get(spec.id)
             item["installed"] = existing is not None and existing.source == "community"
-            item["installed_version"] = (
-                existing.version if existing is not None else None
+            item["installed_version"] = existing.version if existing is not None else None
+            # Only an INSTALLED entry can be outdated. Re-running the install
+            # route is the whole update: it overwrites the catalog entry and
+            # the usage card, then refreshes the live registry.
+            item["update_available"] = item["installed"] and _is_newer(
+                entry.version, existing.version if existing else None
             )
             # A community name colliding with a shipped plugin is never
             # installable — surfaced so the UI explains WHY the button is off.
-            item["seed_conflict"] = (
-                existing is not None and existing.source != "community"
-            )
+            item["seed_conflict"] = existing is not None and existing.source != "community"
             item["has_usage_card"] = bool(entry.usage_card)
             plugins.append(item)
 
         skills_root = user_skills_dir()
         for skill in index.skills:
+            skill_md = skills_root / skill.name / "SKILL.md"
+            installed = skill_md.exists()
+            installed_version = _installed_skill_version(skill_md) if installed else None
             skills.append(
                 {
                     "name": skill.name,
@@ -810,9 +867,20 @@ def _community_payload(
                     "categories": list(skill.categories),
                     "source_url": skill.source_url,
                     "raw_url": skill.raw_url,
-                    "installed": (skills_root / skill.name / "SKILL.md").exists(),
+                    "installed": installed,
+                    "installed_version": installed_version,
+                    "update_available": installed and _is_newer(skill.version, installed_version),
                 }
             )
+
+    # Category counts for the browse filter. Derived from the SAME converted
+    # specs the cards render, so a filter chip can never promise a count the
+    # list cannot show. Only valid plugins carry a category.
+    category_counts: dict[str, int] = {}
+    for item in plugins:
+        category = item.get("category")
+        if item.get("valid") and isinstance(category, str) and category:
+            category_counts[category] = category_counts.get(category, 0) + 1
 
     return {
         "status": status,
@@ -820,6 +888,10 @@ def _community_payload(
         "generated_at": getattr(index, "generated_at", None),
         "plugins": plugins,
         "skills": skills,
+        "categories": [
+            {"name": name, "count": count}
+            for name, count in sorted(category_counts.items(), key=lambda pair: (-pair[1], pair[0]))
+        ],
     }
 
 
@@ -921,14 +993,11 @@ async def community_uninstall(plugin_id: str) -> dict[str, Any]:
 
     spec = load_catalog().by_id(plugin_id)
     if spec is None:
-        raise HTTPException(
-            status_code=404, detail=f"plugin {plugin_id!r} not in catalog"
-        )
+        raise HTTPException(status_code=404, detail=f"plugin {plugin_id!r} not in catalog")
     if spec.source != "community":
         raise HTTPException(
             status_code=409,
-            detail=f"{plugin_id!r} is a built-in plugin — disconnect it "
-            "instead of uninstalling",
+            detail=f"{plugin_id!r} is a built-in plugin — disconnect it instead of uninstalling",
         )
 
     # ALL local state changes happen before the first await: the provider
