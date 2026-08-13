@@ -6450,6 +6450,7 @@ class RealtimeVoiceSession:
                 self.session_id,
             )
             external_update = None
+        await self._check_readback_fidelity(answer, delegate_state, external_update)
         response_text = answer or (
             delegate_state.last_reply if delegate_state is not None else ""
         )
@@ -7110,6 +7111,70 @@ class RealtimeVoiceSession:
             and any(not task.done() for task in tasks)
             for turn_id, tasks in self._delegate_tasks_by_turn.items()
         )
+
+    async def _check_readback_fidelity(
+        self,
+        rendering: str,
+        delegate_state: Any,
+        external_update: _ExternalUpdateState | None,
+    ) -> None:
+        """Record it when the spoken readback renamed the pane it reported on.
+
+        The rendering order forbids swapping in a name the result does not
+        contain, and the model did it anyway twice — 2026-08-12 and 2026-08-13
+        — each time substituting the pane the USER had named for the one the
+        action actually touched. It is the one wrong readback nobody catches by
+        ear: it reports the action the user wanted, so a wrong action and a
+        right one sound identical, and the user finds out by looking at the
+        screen or not at all.
+
+        This is the boundary ``_delegate_result_prompt`` points at when it says
+        the deterministic fix does not belong in more prompt wording. It only
+        OBSERVES: a spoken correction has to be a same-voice provider
+        re-render, because the 2026-07-21 maintainer verdict rules out claiming
+        the turn for the surface TTS (it flipped the voice on every delegated
+        turn), and how often a correction would fire is not yet measured. What
+        this buys today is that the failure stops being invisible — it lands in
+        the log and on the bus with both texts side by side, so a recurrence is
+        a search rather than a reconstruction from provider rollout files.
+
+        Never raises. An observation must not be able to end a live call.
+        """
+        try:
+            trusted = ""
+            if delegate_state is not None:
+                trusted = str(getattr(delegate_state, "last_reply", "") or "")
+            elif external_update is not None:
+                trusted = str(external_update.source_text or "")
+            if not trusted.strip() or not str(rendering or "").strip():
+                return
+            from jarvis.realtime.readback_check import swapped_call_signs
+
+            swapped = swapped_call_signs(
+                trusted, rendering, roster=self._workspace_call_signs()
+            )
+            if not swapped:
+                return
+            log.warning(
+                "realtime[%s] readback named %s, which the trusted result does "
+                "not mention — spoken: %s | result: %s",
+                self.session_id,
+                ", ".join(swapped),
+                safe_preview(rendering, max_chars=200),
+                safe_preview(trusted, max_chars=200),
+            )
+            await self._publish_error(
+                "readback_identifier_swap",
+                f"The spoken readback named {', '.join(swapped)}, which the "
+                f"action result does not mention.",
+                recoverable=True,
+            )
+        except Exception:  # noqa: BLE001 - an observation never breaks a call
+            log.debug(
+                "realtime[%s] readback fidelity check failed",
+                self.session_id,
+                exc_info=True,
+            )
 
     def _workspace_owns_turn(self, text: str) -> bool:
         """True when THIS utterance addresses an open Agentic-IDE pane itself.
