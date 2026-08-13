@@ -53,8 +53,7 @@ class SwitchModeTool:
             "slug": {
                 "type": "string",
                 "description": (
-                    "The mode id to switch to, e.g. 'friend'. Must be one that "
-                    "already exists."
+                    "The mode id to switch to, e.g. 'friend'. Must be one that already exists."
                 ),
             },
         },
@@ -177,14 +176,10 @@ class SaveModeTool:
         except modes.ModeError as exc:
             return ToolResult(success=False, output=None, error=str(exc))
         except OSError as exc:
-            return ToolResult(
-                success=False, output=None, error=f"Could not save the mode: {exc}"
-            )
+            return ToolResult(success=False, output=None, error=f"Could not save the mode: {exc}")
 
         if not bool(args.get("activate")):
-            return ToolResult(
-                success=True, output=f"Saved the {mode.name} mode.", error=None
-            )
+            return ToolResult(success=True, output=f"Saved the {mode.name} mode.", error=None)
         try:
             modes.set_active(mode.slug)
         except modes.ModeError as exc:
