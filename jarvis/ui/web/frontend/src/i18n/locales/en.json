@@ -69,6 +69,7 @@
     "detach_bring_back": "Bring it back"
   },
   "nav": {
+    "smarthome": "Smart Home",
     "chat_workspace": "Chat",
     "chats": "Chats",
     "agents": "{name}-Agents",
@@ -2014,7 +2015,9 @@
     "running": "running",
     "saving": "Saving…",
     "error": "Error",
-    "status": "Status"
+    "status": "Status",
+    "done": "Done",
+    "optional": "optional"
   },
   "docs": {
     "search_placeholder": "Filter title/tag…",
@@ -3862,10 +3865,10 @@
       }
     },
     "crowded": {
-        "warning": "{0} terminals side by side will be too small to read on most displays, and the workspace may feel sluggish. Open it anyway if your screen has the room.",
-        "accept": "Open it anyway",
-        "accepted": "Opening {0} terminals anyway."
-      },
+      "warning": "{0} terminals side by side will be too small to read on most displays, and the workspace may feel sluggish. Open it anyway if your screen has the room.",
+      "accept": "Open it anyway",
+      "accepted": "Opening {0} terminals anyway."
+    },
     "resume": {
       "eyebrow": "Previous working set",
       "title": "Restore the room, not just the windows",
@@ -4265,5 +4268,142 @@
     "reveal_failed": "That file could not be shown in the folder.",
     "open_from_agent": "Visuals",
     "open_from_agent_hint": "Show what the latest runs did and produced, as a graph."
+  },
+  "smarthome": {
+    "subtitle_connected": "{devices} devices, {active} on right now",
+    "subtitle_idle": "Connect a hub and your whole home shows up here",
+    "tab": {
+      "devices": "Devices",
+      "rooms": "Rooms",
+      "connections": "Connections"
+    },
+    "search_placeholder": "Search devices or rooms",
+    "refresh": "Refresh",
+    "no_matches": "Nothing matches that search.",
+    "no_room": "No room assigned",
+    "unreachable": "Not answering",
+    "command_failed": "That did not work.",
+    "filter": {
+      "all": "All",
+      "lights": "Lights",
+      "climate": "Heating",
+      "covers": "Blinds",
+      "locks": "Locks",
+      "sensors": "Sensors",
+      "scenes": "Scenes"
+    },
+    "control": {
+      "brightness": "Brightness",
+      "position": "Open",
+      "temperature": "Target",
+      "lock": "Lock",
+      "unlock": "Unlock",
+      "open": "Open",
+      "close": "Close",
+      "activate": "Activate",
+      "confirm": "Really unlock"
+    },
+    "state": {
+      "on": "On",
+      "off": "Off",
+      "on_at": "On, {brightness}%",
+      "locked": "Locked",
+      "unlocked": "Unlocked",
+      "cover": "{position}% open",
+      "climate": "{current}° now, set to {target}°",
+      "climate_target": "Set to {target}°",
+      "reading": "{value}"
+    },
+    "empty": {
+      "title": "No home connected yet",
+      "body": "Connect Home Assistant once and everything it can see — lights, heating, blinds, locks, sensors — shows up here. No hardware yet? Switch on the demo home under Connections and try the section out first.",
+      "no_devices": "Connected, but nothing to show",
+      "no_devices_body": "The hub answered and reported no devices. Add an integration in your hub and they appear here on the next refresh.",
+      "cta": "Open Connections"
+    },
+    "rooms": {
+      "all_off": "Everything off",
+      "all_quiet": "All quiet",
+      "active_count": "{count} on",
+      "empty_title": "No rooms yet",
+      "empty_body": "Create the rooms you actually live in — they can exist before any hardware does. If a hub is connected, its areas are offered for import instead of typing them again.",
+      "add": "Add room",
+      "edit": "Edit",
+      "new_title": "New room",
+      "edit_title": "Edit room",
+      "editor_hint": "A name, a glyph and a colour. Devices are assigned from inside the room.",
+      "field_name": "Name",
+      "field_icon": "Icon",
+      "field_color": "Colour",
+      "field_floor": "Floor",
+      "name_placeholder": "Living room",
+      "floor_placeholder": "Ground floor",
+      "delete": "Delete",
+      "delete_confirm": "Really delete",
+      "devices_title": "Devices in {room}",
+      "devices_hint": "Tap to move a device in or out. A device belongs to exactly one room, so moving it takes it out of the old one.",
+      "group_in_room": "In this room",
+      "group_free": "Not in any room",
+      "group_elsewhere": "In another room",
+      "no_devices_at_all": "No devices yet. Connect a hub, or switch on the demo home under Connections.",
+      "suggestions": "{count} areas from your hub are not set up as rooms yet.",
+      "import": "Import them",
+      "unassigned_note": "{count} devices are in no room. Open a room and add them there.",
+      "device_total": "{count} devices",
+      "no_devices_yet": "No devices yet",
+      "favorites": "Favourites",
+      "favorite_add": "Mark as favourite",
+      "favorite_remove": "Remove from favourites",
+      "detail_empty": "This room is empty. Add the devices that belong in it.",
+      "add_devices": "Add devices"
+    },
+    "connections": {
+      "title": "Your connections",
+      "subtitle": "One hub is usually enough — it already speaks to nearly every brand in the list below.",
+      "connect": "Connect",
+      "device_count": "{count} devices"
+    },
+    "demo": {
+      "title": "Demo home (simulated)",
+      "body": "Adds a small simulated flat with lights, heating, blinds and a lock, so the section is usable before any hardware is connected. Nothing here is physical."
+    },
+    "ecosystems": {
+      "title": "Every ecosystem",
+      "subtitle": "What Jarvis can reach, how the connection is made, and how long it lasts before anyone has to log in again."
+    },
+    "reach": {
+      "direct": "Direct",
+      "via_hub": "Via hub",
+      "planned": "Planned",
+      "unavailable": "Not possible"
+    },
+    "longevity": {
+      "permanent": "Never expires",
+      "self_renewing": "Renews itself",
+      "provider_limited": "Needs re-approval"
+    },
+    "state_connected": "Connected",
+    "state_not_configured": "Not connected",
+    "state_needs_reauth": "Needs reconnecting",
+    "state_unreachable": "Not answering",
+    "kind": {
+      "light": "Lights",
+      "switch": "Switches",
+      "outlet": "Sockets",
+      "climate": "Heating",
+      "cover": "Blinds",
+      "lock": "Locks",
+      "sensor": "Sensors",
+      "binary_sensor": "Contacts",
+      "media_player": "Media",
+      "speaker": "Speakers",
+      "fan": "Fans",
+      "vacuum": "Vacuums",
+      "camera": "Cameras",
+      "scene": "Scenes",
+      "script": "Scripts",
+      "button": "Buttons",
+      "other": "Other"
+    }
   }
 }

@@ -69,6 +69,7 @@
     "detach_bring_back": "Zurückholen"
   },
   "nav": {
+    "smarthome": "Smart Home",
     "chat_workspace": "Chat",
     "chats": "Chats",
     "agents": "{name}-Agents",
@@ -2014,7 +2015,9 @@
     "running": "läuft",
     "saving": "Speichere…",
     "error": "Fehler",
-    "status": "Status"
+    "status": "Status",
+    "done": "Fertig",
+    "optional": "optional"
   },
   "docs": {
     "search_placeholder": "Titel/Tag filtern…",
@@ -3862,10 +3865,10 @@
       }
     },
     "crowded": {
-        "warning": "{0} Terminals nebeneinander sind auf den meisten Bildschirmen zu klein zum Lesen, und der Arbeitsbereich kann träge werden. Öffne ihn trotzdem, wenn dein Bildschirm den Platz hat.",
-        "accept": "Trotzdem öffnen",
-        "accepted": "{0} Terminals werden trotzdem geöffnet."
-      },
+      "warning": "{0} Terminals nebeneinander sind auf den meisten Bildschirmen zu klein zum Lesen, und der Arbeitsbereich kann träge werden. Öffne ihn trotzdem, wenn dein Bildschirm den Platz hat.",
+      "accept": "Trotzdem öffnen",
+      "accepted": "{0} Terminals werden trotzdem geöffnet."
+    },
     "resume": {
       "eyebrow": "Vorheriger Arbeitsstand",
       "title": "Den Arbeitsraum wiederherstellen, nicht nur die Fenster",
@@ -4265,5 +4268,142 @@
     "reveal_failed": "Die Datei konnte nicht im Ordner gezeigt werden.",
     "open_from_agent": "Visualisierungen",
     "open_from_agent_hint": "Zeigt als Graph, was die letzten Durchläufe getan und erzeugt haben."
+  },
+  "smarthome": {
+    "subtitle_connected": "{devices} Geräte, {active} gerade an",
+    "subtitle_idle": "Hub verbinden — dann steht hier dein ganzes Zuhause",
+    "tab": {
+      "devices": "Geräte",
+      "rooms": "Räume",
+      "connections": "Verbindungen"
+    },
+    "search_placeholder": "Geräte oder Räume suchen",
+    "refresh": "Aktualisieren",
+    "no_matches": "Dazu passt nichts.",
+    "no_room": "Keinem Raum zugeordnet",
+    "unreachable": "Antwortet nicht",
+    "command_failed": "Das hat nicht geklappt.",
+    "filter": {
+      "all": "Alle",
+      "lights": "Licht",
+      "climate": "Heizung",
+      "covers": "Rollläden",
+      "locks": "Schlösser",
+      "sensors": "Sensoren",
+      "scenes": "Szenen"
+    },
+    "control": {
+      "brightness": "Helligkeit",
+      "position": "Offen",
+      "temperature": "Soll",
+      "lock": "Abschließen",
+      "unlock": "Aufschließen",
+      "open": "Öffnen",
+      "close": "Schließen",
+      "activate": "Auslösen",
+      "confirm": "Wirklich aufschließen"
+    },
+    "state": {
+      "on": "An",
+      "off": "Aus",
+      "on_at": "An, {brightness}%",
+      "locked": "Abgeschlossen",
+      "unlocked": "Aufgeschlossen",
+      "cover": "{position}% offen",
+      "climate": "{current}° jetzt, {target}° eingestellt",
+      "climate_target": "{target}° eingestellt",
+      "reading": "{value}"
+    },
+    "empty": {
+      "title": "Noch kein Zuhause verbunden",
+      "body": "Verbinde Home Assistant einmal, und alles, was es sieht — Licht, Heizung, Rollläden, Schlösser, Sensoren — steht hier. Noch keine Hardware? Schalte unter Verbindungen das Demo-Zuhause ein und probiere die Sektion erst einmal aus.",
+      "no_devices": "Verbunden, aber nichts zu zeigen",
+      "no_devices_body": "Der Hub hat geantwortet und keine Geräte gemeldet. Richte im Hub eine Integration ein — beim nächsten Aktualisieren stehen die Geräte hier.",
+      "cta": "Verbindungen öffnen"
+    },
+    "rooms": {
+      "all_off": "Alles aus",
+      "all_quiet": "Alles ruhig",
+      "active_count": "{count} an",
+      "empty_title": "Noch keine Räume",
+      "empty_body": "Lege die Räume an, in denen du wirklich wohnst — das geht auch, bevor irgendein Gerät da ist. Wenn eine Zentrale verbunden ist, werden ihre Bereiche zum Übernehmen angeboten.",
+      "add": "Raum hinzufügen",
+      "edit": "Bearbeiten",
+      "new_title": "Neuer Raum",
+      "edit_title": "Raum bearbeiten",
+      "editor_hint": "Ein Name, ein Symbol und eine Farbe. Geräte werden im Raum selbst zugeordnet.",
+      "field_name": "Name",
+      "field_icon": "Symbol",
+      "field_color": "Farbe",
+      "field_floor": "Etage",
+      "name_placeholder": "Wohnzimmer",
+      "floor_placeholder": "Erdgeschoss",
+      "delete": "Löschen",
+      "delete_confirm": "Wirklich löschen",
+      "devices_title": "Geräte in {room}",
+      "devices_hint": "Zum Verschieben antippen. Ein Gerät gehört zu genau einem Raum — es verlässt den alten automatisch.",
+      "group_in_room": "In diesem Raum",
+      "group_free": "In keinem Raum",
+      "group_elsewhere": "In einem anderen Raum",
+      "no_devices_at_all": "Noch keine Geräte. Verbinde eine Zentrale oder schalte unter Verbindungen das Demo-Zuhause ein.",
+      "suggestions": "{count} Bereiche deiner Zentrale sind noch nicht als Räume angelegt.",
+      "import": "Übernehmen",
+      "unassigned_note": "{count} Geräte sind in keinem Raum. Öffne einen Raum und füge sie dort hinzu.",
+      "device_total": "{count} Geräte",
+      "no_devices_yet": "Noch keine Geräte",
+      "favorites": "Favoriten",
+      "favorite_add": "Als Favorit markieren",
+      "favorite_remove": "Aus Favoriten entfernen",
+      "detail_empty": "Dieser Raum ist leer. Füge die Geräte hinzu, die hineingehören.",
+      "add_devices": "Geräte hinzufügen"
+    },
+    "connections": {
+      "title": "Deine Verbindungen",
+      "subtitle": "Ein Hub reicht meistens — er spricht schon mit fast jeder Marke aus der Liste unten.",
+      "connect": "Verbinden",
+      "device_count": "{count} Geräte"
+    },
+    "demo": {
+      "title": "Demo-Zuhause (simuliert)",
+      "body": "Fügt eine kleine simulierte Wohnung mit Licht, Heizung, Rollläden und Türschloss hinzu, damit die Sektion schon vor der ersten Hardware bedienbar ist. Nichts davon ist echt."
+    },
+    "ecosystems": {
+      "title": "Alle Ökosysteme",
+      "subtitle": "Was Jarvis erreichen kann, wie die Verbindung zustande kommt und wie lange sie hält, bevor sich jemand neu anmelden muss."
+    },
+    "reach": {
+      "direct": "Direkt",
+      "via_hub": "Über Hub",
+      "planned": "Geplant",
+      "unavailable": "Nicht möglich"
+    },
+    "longevity": {
+      "permanent": "Läuft nie ab",
+      "self_renewing": "Erneuert sich",
+      "provider_limited": "Braucht Neufreigabe"
+    },
+    "state_connected": "Verbunden",
+    "state_not_configured": "Nicht verbunden",
+    "state_needs_reauth": "Neu verbinden",
+    "state_unreachable": "Antwortet nicht",
+    "kind": {
+      "light": "Licht",
+      "switch": "Schalter",
+      "outlet": "Steckdosen",
+      "climate": "Heizung",
+      "cover": "Rollläden",
+      "lock": "Schlösser",
+      "sensor": "Sensoren",
+      "binary_sensor": "Kontakte",
+      "media_player": "Medien",
+      "speaker": "Lautsprecher",
+      "fan": "Ventilatoren",
+      "vacuum": "Sauger",
+      "camera": "Kameras",
+      "scene": "Szenen",
+      "script": "Skripte",
+      "button": "Taster",
+      "other": "Sonstiges"
+    }
   }
 }
