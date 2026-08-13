@@ -215,6 +215,44 @@ _EMBEDDED_SILENCE_LOG_MS = 400.0
 # full scale — comfortably above the AP-27 silence-ghost RMS empirics, far
 # below any audible speech).
 _EMBEDDED_SILENCE_PEAK = 200
+# The MICROPHONE's own evidence that the user has not finished talking.
+#
+# A realtime provider commits the input turn on ITS server VAD, and its
+# transcript describes audio that is already seconds old. Between those two
+# moments the session had no signal at all: the Gemini adapter emits no
+# ``speech_started``, and the desktop's local Silero detector is armed only
+# while JARVIS speaks. So while the user talked, an idle-looking session
+# believed the floor was free.
+#
+# Live 2026-08-13 11:19:08 and 11:19:48 — two consecutive calls chopped ONE
+# spoken order into three turns each, every cut landing on a filler pause
+# ("...Like for example um our competitors when" | "and our what I estimate"),
+# and EVERY fragment dispatched an executor of its own: the same coding pane
+# was briefed twice with a quarter of the sentence, and the third fragment
+# ("Netflix") earned an invented confirmation. The semantic continuation
+# guard (``_continues_executing_order``, 2026-08-12) caught none of them —
+# it asks whether the WORDS read as a continuation, when the load-bearing
+# fact is that the user never stopped speaking.
+#
+# ~2.4 % of full scale: far above headset room noise, far below any voiced
+# syllable. A floor set too HIGH degrades to the pre-fix behaviour; too LOW
+# only delays a dispatch until the bounded cap below. Both ends fail safe.
+_USER_VOICE_PEAK = 800
+# How long after the last voiced input frame the user still owns the floor.
+# Long enough to bridge the hesitations inside one sentence, short enough
+# that a genuinely finished utterance dispatches without a perceptible wait.
+_USER_SPEAKING_HOLD_S = 0.7
+# Ceiling on how long the microphone may hold back a delegated dispatch. A
+# stuck-open floor (a noisy room, a hot mic) must cost a bounded delay, never
+# a turn that is never executed at all.
+_USER_SPEAKING_DISPATCH_CAP_S = 4.0
+# After the microphone finally goes quiet, the provider's transcript for the
+# LAST words is still in flight — Gemini's input transcription ran ~2.6 s
+# behind its own commit in the 2026-08-13 forensics. A dispatch that fires
+# inside that gap still executes an order missing its tail, so a wait that
+# was held by the microphone settles for this long before giving up on the
+# remaining words. Paid ONLY on a turn the provider already cut short.
+_UTTERANCE_TAIL_SETTLE_S = 2.5
 # In-place transport rebuild (BUG-071). A provider server may drop the duplex
 # WebSocket at any time mid-call (live incident 2026-07-17 10:44: Gemini Live
 # closed with ``1006 abnormal closure`` right as a 69 s surface-TTS fallback
@@ -1842,6 +1880,10 @@ class RealtimeVoiceSession:
         self._last_audio_emit_monotonic = 0.0
         self._last_audio_emit_turn = ""
         self._embedded_silence_ms = 0.0
+        # Monotonic stamp of the last microphone frame that carried voice.
+        # The one local answer to "is the user talking right now" while the
+        # provider owns turn detection (see _USER_VOICE_PEAK).
+        self._last_voiced_input_monotonic = 0.0
         self._loop_lag = _LoopLagProbe()
         # A write-only transport stall does not necessarily wake the provider
         # receive iterator. Queue a rebuild request for the long-lived pump so
@@ -2768,6 +2810,23 @@ class RealtimeVoiceSession:
             muted_s,
         )
 
+    def _user_is_speaking(self) -> bool:
+        """True while the microphone still carries the user's voice.
+
+        The provider's transcript is EVIDENCE ABOUT THE PAST — it describes
+        audio the server committed seconds ago. This predicate is about the
+        present, and it is the only thing that can tell a finished utterance
+        from a hesitation in the middle of one (see _USER_VOICE_PEAK).
+
+        Never consulted while Jarvis speaks: without half-duplex the mic
+        hears our own output, and speaker echo must not read as the user
+        holding the floor.
+        """
+        stamp = self._last_voiced_input_monotonic
+        if not stamp or self._output_active:
+            return False
+        return (time.monotonic() - stamp) < _USER_SPEAKING_HOLD_S
+
     async def handle_audio_frame(self, pcm_native: bytes) -> None:
         if self._ended or self._session is None or not pcm_native:
             return
@@ -2805,6 +2864,10 @@ class RealtimeVoiceSession:
             return
         if not pcm16:
             return
+        if not self._output_active and _pcm16_peak(pcm16) >= _USER_VOICE_PEAK:
+            # Measured on the frame we are about to FORWARD, so the floor
+            # tracks exactly the audio the provider is judging.
+            self._last_voiced_input_monotonic = time.monotonic()
         target_session = self._session
         try:
             await asyncio.wait_for(
@@ -2934,6 +2997,17 @@ class RealtimeVoiceSession:
         ``False`` means the caller must keep the classic TTS path. Refusing a
         busy session is load-bearing: Gemini text input interrupts generation,
         while OpenAI permits only one unambiguous response lifecycle at a time.
+
+        "Busy" includes A USER WHO IS TALKING. Every other probe below reads
+        Jarvis-side state, and none of them is true while the user speaks a
+        long request the provider has not committed yet — so a background
+        result from an EARLIER call was injected straight into the middle of
+        a sentence (live 2026-08-13 11:20:03.224, delivery_id from the
+        session that had already ended). On the Live API text input ends the
+        audio turn, so that injection is what closed the sentence: the
+        transcript landed 2.6 s later as "…That when you want to" and the
+        half-order was executed. Refusing here costs nothing — the caller
+        speaks the result through the classic TTS path instead.
         """
         cleaned = str(text or "").strip()
         self.remember_announcement_context(
@@ -2949,6 +3023,8 @@ class RealtimeVoiceSession:
             or self._failed.is_set()
             or not callable(send_text)
             or self._external_update is not None
+            or self._user_speech_active
+            or self._user_is_speaking()
             or self._turn_id
             or self._turn_has_activity()
             or self._output_active
@@ -3203,8 +3279,24 @@ class RealtimeVoiceSession:
                         # an orchestrator action that is still producing its
                         # answer.
                         self._deferred_provider_speech_start = False
-                        await self._begin_user_speech_turn()
-                        await self._barge_in(interrupt_provider=False)
+                        if self._user_is_speaking():
+                            # ...unless the microphone says the user never
+                            # stopped. A server-VAD edge inside ONE continuous
+                            # utterance is a hesitation, not a new request:
+                            # splitting here is what turned a single spoken
+                            # order into three turns and three executors
+                            # (live 2026-08-13 11:19/11:20, _USER_VOICE_PEAK).
+                            # Keep the turn; the text below appends to it.
+                            log.info(
+                                "realtime[%s] provider committed a boundary "
+                                "while the user is still audibly speaking — "
+                                "continuing the same turn instead of "
+                                "splitting it",
+                                self.session_id,
+                            )
+                        else:
+                            await self._begin_user_speech_turn()
+                            await self._barge_in(interrupt_provider=False)
                     input_item_id = str(getattr(event, "item_id", "") or "")
                     input_already_answered = bool(
                         input_item_id
@@ -3623,12 +3715,23 @@ class RealtimeVoiceSession:
                             if not self._response_requested_for_turn:
                                 await self._speak_pending_action_status()
                         else:
-                            # This branch runs on a FINAL input transcript,
-                            # so the utterance is provably over — no
-                            # boundary wait needed.
+                            # A FINAL input transcript normally proves the
+                            # utterance is over, and the boundary wait is
+                            # skipped. It proves nothing while the microphone
+                            # still carries the user's voice: the provider
+                            # committed a hesitation, and dispatching now
+                            # briefs an executor with a quarter of the
+                            # sentence (live 2026-08-13 11:20:05 — "Can you
+                            # please prompt Terminal T5 … That when you want
+                            # to" went to the pane as a complete order).
+                            # Withholding the finality lets
+                            # _await_stable_input_boundary hold the dispatch
+                            # until the mic goes quiet, by which time the
+                            # later finals have grown turn_state.user_text
+                            # into the whole request.
                             self._start_deterministic_delegate(
                                 self._last_user_text,
-                                input_final=True,
+                                input_final=not self._user_is_speaking(),
                                 turn_plan=turn_plan,
                             )
                     if (
@@ -7109,7 +7212,8 @@ class RealtimeVoiceSession:
 
         Mirrors ``deliver_announcement``: only an idle, healthy session can be
         given a response of its own without cutting into live speech or racing
-        an in-flight response lifecycle.
+        an in-flight response lifecycle — including the microphone probe, or
+        a late result would cut into the very sentence the user is speaking.
         """
         return not (
             self._ended
@@ -7117,6 +7221,7 @@ class RealtimeVoiceSession:
             or self._failed.is_set()
             or self._external_update is not None
             or self._user_speech_active
+            or self._user_is_speaking()
             or self._turn_id
             or self._turn_has_activity()
             or self._output_active
@@ -7741,36 +7846,86 @@ class RealtimeVoiceSession:
         """
         stability_s = _DELEGATE_INPUT_BOUNDARY_WAIT_S
         poll_s = max(min(_DELEGATE_INPUT_BOUNDARY_POLL_S, stability_s / 2), 0.01)
-        deadline = (
-            time.monotonic() + stability_s * _DELEGATE_INPUT_BOUNDARY_MAX_ROUNDS
-        )
-        stable_since = time.monotonic()
+        started = time.monotonic()
+        deadline = started + stability_s * _DELEGATE_INPUT_BOUNDARY_MAX_ROUNDS
+        # The microphone outranks every provider boundary while it still
+        # carries the user's voice — but only for a bounded stretch, so a
+        # noisy room delays an order instead of swallowing it.
+        mic_deadline = started + _USER_SPEAKING_DISPATCH_CAP_S
+        stable_since = started
+        settle_deadline = 0.0
         last_transcript = self._last_user_text
+        mic_holding = False
+        mic_held_ever = False
         while True:
             try:
                 await asyncio.wait_for(
                     turn_state.input_boundary_ready.wait(),
                     timeout=poll_s,
                 )
-                return
+                if not (
+                    self._user_is_speaking() and time.monotonic() < mic_deadline
+                ):
+                    return
             except TimeoutError:
                 pass
             now = time.monotonic()
-            if self._last_user_text != last_transcript:
-                last_transcript = self._last_user_text
+            if self._user_is_speaking() and now < mic_deadline:
+                # Whatever the provider committed, the user is mid-sentence.
+                # Re-arm the stability window: the words already accepted are
+                # a fragment, and the later finals still to arrive grow
+                # ``turn_state.user_text`` into the whole request.
+                if not mic_holding:
+                    mic_holding = True
+                    mic_held_ever = True
+                    log.info(
+                        "realtime[%s] deterministic delegate: holding the "
+                        "dispatch — the microphone still carries the user's "
+                        "voice after the provider closed its input turn",
+                        self.session_id,
+                    )
                 stable_since = now
-            elif turn_state.input_final or now - stable_since >= stability_s:
-                # ``input_final`` is boundary evidence by construction (the
-                # provider already responded to this input), so it needs no
-                # further stability margin — only the poll granularity.
-                log.info(
-                    "realtime[%s] deterministic delegate: provider input "
-                    "boundary missing after %.2fs of stable local "
-                    "transcript; dispatching",
-                    self.session_id,
-                    now - stable_since,
-                )
-                return
+                last_transcript = self._last_user_text
+            else:
+                if mic_holding:
+                    mic_holding = False
+                    settle_deadline = now + _UTTERANCE_TAIL_SETTLE_S
+                    log.info(
+                        "realtime[%s] deterministic delegate: user stopped "
+                        "speaking after a %.2fs hold; settling for the tail "
+                        "transcript",
+                        self.session_id,
+                        now - started,
+                    )
+                if self._last_user_text != last_transcript:
+                    last_transcript = self._last_user_text
+                    stable_since = now
+                elif (
+                    turn_state.input_final and not mic_held_ever
+                ) or now - stable_since >= stability_s:
+                    # ``input_final`` is boundary evidence by construction (the
+                    # provider already responded to this input), so it needs no
+                    # further stability margin — only the poll granularity.
+                    # It is NOT trusted once the microphone has contradicted
+                    # it: that finality is exactly what was wrong.
+                    log.info(
+                        "realtime[%s] deterministic delegate: provider input "
+                        "boundary missing after %.2fs of stable local "
+                        "transcript; dispatching",
+                        self.session_id,
+                        now - stable_since,
+                    )
+                    return
+                elif mic_held_ever and now >= settle_deadline:
+                    log.info(
+                        "realtime[%s] deterministic delegate: tail transcript "
+                        "never arrived within %.1fs; dispatching the %d words "
+                        "the utterance has",
+                        self.session_id,
+                        _UTTERANCE_TAIL_SETTLE_S,
+                        len(str(self._last_user_text or "").split()),
+                    )
+                    return
             if now >= deadline:
                 log.warning(
                     "realtime[%s] deterministic delegate: input transcript "
