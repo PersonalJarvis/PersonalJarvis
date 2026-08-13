@@ -44,9 +44,7 @@ def create(
     description: str = typer.Option("", "--description", "-d", help="One line for the card"),
     voice: str = typer.Option("", "--voice", help="TTS voice id this mode speaks in"),
     verbosity: str = typer.Option("normal", "--verbosity", help="brief | normal | rich"),
-    proactivity: str = typer.Option(
-        "normal", "--proactivity", help="reactive | normal | forward"
-    ),
+    proactivity: str = typer.Option("normal", "--proactivity", help="reactive | normal | forward"),
 ) -> None:
     """Create or replace a mode. Does NOT switch to it — use `modes use` for that."""
     invoke.run(
