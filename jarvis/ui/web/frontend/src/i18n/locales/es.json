@@ -3969,6 +3969,25 @@
     "sign_in": "Iniciar sesión",
     "rename": "Renombrar",
     "remove": "Eliminar",
+    "usage": {
+      "title": "Uso del plan",
+      "refresh": "Actualizar",
+      "live": "en vivo",
+      "cached": "desde la caché",
+      "as_of": "hace",
+      "resets_in": "se reinicia en",
+      "kind": {
+        "session": "Límite de 5 horas",
+        "weekly": "Límite semanal",
+        "monthly": "Límite mensual",
+        "rolling": "límite",
+        "other": "Límite"
+      },
+      "state": {
+        "unsupported": "Esta cuenta no tiene un límite de plan que mostrar.",
+        "unavailable": "El uso no se puede leer ahora mismo — volverá por sí solo."
+      }
+    },
     "flow": {
       "starting": "Iniciando el inicio de sesión…",
       "waiting_browser": "Esperando a que el inicio de sesión termine en el navegador…",

@@ -31,6 +31,7 @@ import {
   LogIn,
   Pencil,
   Plus,
+  RefreshCw,
   Trash2,
   Users,
   X,
@@ -39,6 +40,7 @@ import {
 import { useT } from "@/i18n";
 import {
   type AccountPlatform,
+  type AccountUsage,
   type AgentAccount,
   type AgentAccountsResponse,
   type LoginFlowState,
@@ -46,6 +48,7 @@ import {
   createAgentAccount,
   deleteAgentAccount,
   fetchAgentAccounts,
+  fetchAgentUsage,
   getLoginFlow,
   groupFor,
   loginAgentAccount,
@@ -54,6 +57,7 @@ import {
   startLoginFlow,
   submitLoginFlowCode,
 } from "@/lib/agentAccountsApi";
+import { AccountUsageMeters } from "./AccountUsageMeters";
 import { robustCopy, robustPaste } from "@/lib/clipboard";
 import { openExternalUrl } from "@/lib/openExternal";
 import { useEventStore } from "@/store/events";
@@ -86,6 +90,13 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
   const [data, setData] = useState<AgentAccountsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [usage, setUsage] = useState<Record<string, AccountUsage>>({});
+  const [usageTtl, setUsageTtl] = useState(60);
+  const [refreshing, setRefreshing] = useState(false);
+  // One clock for every countdown on screen. Per-meter timers would drift
+  // against each other and a card with four seats would run a dozen intervals
+  // to render the same minute.
+  const [now, setNow] = useState(() => Date.now());
 
   const reload = useCallback(async () => {
     try {
@@ -99,6 +110,59 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  /**
+   * Usage is fetched SEPARATELY from the account list, and that separation is
+   * the point: the list is a handful of local file reads and must stay instant,
+   * while a reading costs one network round trip per seat. Folding them into
+   * one request would make opening this panel as slow as the slowest provider.
+   */
+  const loadUsage = useCallback(async (force = false) => {
+    try {
+      const body = await fetchAgentUsage(force);
+      const next: Record<string, AccountUsage> = {};
+      for (const entry of body.accounts ?? []) next[entry.account_id] = entry;
+      setUsage(next);
+      if (body.ttl_seconds > 0) setUsageTtl(body.ttl_seconds);
+      setNow(Date.now());
+    } catch {
+      // Usage sits on top of the switcher, so a failed read keeps the previous
+      // numbers (each already labelled with its own age) and never costs the
+      // account list — which is the part the user came here to operate.
+    }
+  }, []);
+
+  // Re-read whenever the set of accounts changes, which is what makes a fresh
+  // sign-in show its plan straight away instead of after the next interval.
+  const accountKey = (data?.platforms ?? [])
+    .flatMap((group) => group.accounts.map((account) => account.id))
+    .join(",");
+  useEffect(() => {
+    if (accountKey) void loadUsage();
+  }, [accountKey, loadUsage]);
+
+  // Poll on the server's own cache lifetime rather than on a second number
+  // kept in step by hand. Floored so a short server TTL cannot turn this into
+  // a request loop.
+  useEffect(() => {
+    const period = Math.max(30, usageTtl) * 1000;
+    const timer = setInterval(() => void loadUsage(), period);
+    return () => clearInterval(timer);
+  }, [loadUsage, usageTtl]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const refreshUsage = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadUsage(true);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadUsage]);
 
   /** Run one account action, keeping the list and any error message honest. */
   const run = useCallback(
@@ -128,6 +192,17 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
         <span className="text-[11px] text-muted-foreground">
           · {t("agent_accounts.hint")}
         </span>
+        <button
+          type="button"
+          onClick={() => void refreshUsage()}
+          disabled={refreshing}
+          aria-label={t("agent_accounts.usage.refresh")}
+          title={t("agent_accounts.usage.refresh")}
+          className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground disabled:opacity-50"
+        >
+          <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
+          {t("agent_accounts.usage.refresh")}
+        </button>
       </div>
       <p className="px-1 text-[11px] leading-relaxed text-muted-foreground">
         {t("agent_accounts.description")}
@@ -159,6 +234,8 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
             busy={busy}
             run={run}
             activate={onActivate ?? setActiveAgentAccount}
+            usage={usage}
+            now={now}
           />
         ))}
       </div>
@@ -172,12 +249,16 @@ function PlatformCard({
   busy,
   run,
   activate,
+  usage,
+  now,
 }: {
   platform: AccountPlatform;
   group: ReturnType<typeof groupFor>;
   busy: string | null;
   run: (key: string, action: () => Promise<AgentAccountsResponse | void>) => Promise<void>;
   activate: Activate;
+  usage: Record<string, AccountUsage>;
+  now: number;
 }) {
   const t = useT();
   const [adding, setAdding] = useState(false);
@@ -216,6 +297,8 @@ function PlatformCard({
             busy={busy}
             run={run}
             activate={activate}
+            usage={usage[account.id]}
+            now={now}
           />
         ))}
         {accounts.length === 0 && (
@@ -275,12 +358,16 @@ function AccountRow({
   busy,
   run,
   activate,
+  usage,
+  now,
 }: {
   account: AgentAccount;
   active: boolean;
   busy: string | null;
   run: (key: string, action: () => Promise<AgentAccountsResponse | void>) => Promise<void>;
   activate: Activate;
+  usage: AccountUsage | undefined;
+  now: number;
 }) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -475,6 +562,11 @@ function AccountRow({
           <span className="min-w-0 break-words">{account.warning}</span>
         </p>
       )}
+
+      {/* How much of THIS seat's plan is gone — the number the choice above is
+          actually made on, which until now could only be read by opening a
+          pane and asking the CLI itself. */}
+      <AccountUsageMeters usage={usage} now={now} />
 
       {flow && (
         <LoginFlowBox

@@ -3969,6 +3969,25 @@
     "sign_in": "Anmelden",
     "rename": "Umbenennen",
     "remove": "Entfernen",
+    "usage": {
+      "title": "Plan-Verbrauch",
+      "refresh": "Aktualisieren",
+      "live": "live",
+      "cached": "aus dem Zwischenspeicher",
+      "as_of": "Stand vor",
+      "resets_in": "zurückgesetzt in",
+      "kind": {
+        "session": "5-Stunden-Limit",
+        "weekly": "Wochen-Limit",
+        "monthly": "Monats-Limit",
+        "rolling": "Limit",
+        "other": "Limit"
+      },
+      "state": {
+        "unsupported": "Dieser Zugang hat kein Plan-Limit, das angezeigt werden kann.",
+        "unavailable": "Der Verbrauch ist gerade nicht lesbar — er erscheint von selbst wieder."
+      }
+    },
     "flow": {
       "starting": "Anmeldung wird gestartet…",
       "waiting_browser": "Warte darauf, dass die Anmeldung im Browser abgeschlossen wird…",

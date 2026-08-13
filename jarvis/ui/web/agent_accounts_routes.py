@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -107,6 +108,39 @@ async def list_accounts() -> dict[str, Any]:
     or spun-down drive cannot stall the rest of the server.
     """
     return await asyncio.to_thread(_collect)
+
+
+def _usage(refresh: bool) -> dict[str, Any]:
+    """Plan usage for every registered account, keyed by account id."""
+    from jarvis import agent_usage
+
+    accounts = agent_accounts.all_accounts()
+    readings = agent_usage.collect(accounts, refresh=refresh)
+    return {
+        "accounts": [readings[a.id].to_dict() for a in accounts if a.id in readings],
+        # Told to the UI rather than agreed by convention, so the poll interval
+        # follows the server's cache instead of a second number that has to be
+        # kept in step with it by hand.
+        "ttl_seconds": agent_usage.USAGE_TTL_S,
+        "generated_at": time.time(),
+    }
+
+
+@router.get("/usage", summary="Plan usage of every connected subscription")
+async def usage(refresh: bool = False) -> dict[str, Any]:
+    """How much of each seat's plan is already spent, and when it resets.
+
+    One reading per account: the rolling short window, the weekly one, and any
+    per-model budget the provider scopes separately. Each reading says whether
+    it came from the provider just now (``source: "live"``) or from what the CLI
+    last wrote to disk (``source: "cached"``, with ``as_of``) — a stale weekly
+    figure presented as a live one is the one failure this endpoint must not
+    have, because it is the number a user picks a subscription on.
+
+    ``refresh=true`` bypasses the short server-side cache. Off the event loop:
+    every account is a network round trip, and they run in parallel.
+    """
+    return await asyncio.to_thread(_usage, refresh)
 
 
 @router.post("", summary="Add another subscription")

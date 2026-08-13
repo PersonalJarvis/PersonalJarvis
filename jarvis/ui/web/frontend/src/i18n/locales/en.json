@@ -3969,6 +3969,25 @@
     "sign_in": "Sign in",
     "rename": "Rename",
     "remove": "Remove",
+    "usage": {
+      "title": "Plan usage",
+      "refresh": "Refresh",
+      "live": "live",
+      "cached": "from cache",
+      "as_of": "as of",
+      "resets_in": "resets in",
+      "kind": {
+        "session": "5-hour limit",
+        "weekly": "Weekly limit",
+        "monthly": "Monthly limit",
+        "rolling": "limit",
+        "other": "Limit"
+      },
+      "state": {
+        "unsupported": "This seat has no plan limit to show.",
+        "unavailable": "Usage is not readable right now — it comes back on its own."
+      }
+    },
     "flow": {
       "starting": "Starting the sign-in…",
       "waiting_browser": "Waiting for the sign-in to finish in the browser…",

@@ -59,6 +59,75 @@ export interface AgentAccountsResponse {
   platforms: AccountPlatformGroup[];
 }
 
+/**
+ * One plan limit of one subscription, already normalised by the backend.
+ *
+ * `kind` is a small closed vocabulary the UI translates against — `session`,
+ * `weekly`, `weekly_scoped`, `monthly`, `other`. A provider that invents a
+ * limit this build has no name for arrives as `other` and is still DRAWN, using
+ * `raw_label`: the limit a user is actually being throttled by must never be
+ * the one the panel decides to hide.
+ */
+export interface UsageWindow {
+  kind: string;
+  /** 0-100, already clamped. */
+  percent: number;
+  /** "normal" | "warning" | "critical" */
+  severity: string;
+  /** ISO-8601 UTC, or null when the provider states no reset time. */
+  resets_at: string | null;
+  window_minutes: number | null;
+  /** What a scoped budget is restricted to, e.g. a model name. */
+  scope_label: string | null;
+  raw_label: string | null;
+}
+
+/**
+ * How much of one subscription's plan is spent.
+ *
+ * `source` and `as_of` are not decoration. A reading can come from the provider
+ * just now (`live`) or from what the CLI last wrote to disk (`cached`), and a
+ * cached weekly figure for an idle seat can be days old. Since this is the
+ * number a user picks a subscription on, the UI states which one it is showing
+ * rather than letting a stale percentage pass for a live one.
+ */
+export interface AccountUsage {
+  account_id: string;
+  platform: AccountPlatform;
+  /** "ok" | "signed_out" | "unsupported" | "unavailable" */
+  status: string;
+  windows: UsageWindow[];
+  /** "live" | "cached" */
+  source: string;
+  /** Epoch SECONDS the numbers were true at. */
+  as_of: number | null;
+  message: string;
+  /** Display-only plan name, e.g. "Max 20x". */
+  plan: string | null;
+}
+
+export interface AgentUsageResponse {
+  accounts: AccountUsage[];
+  /** The server's own cache lifetime — the poll interval follows it. */
+  ttl_seconds: number;
+  generated_at: number;
+}
+
+/**
+ * Plan usage for every registered subscription.
+ *
+ * `refresh` bypasses the server's short cache; it backs the manual refresh
+ * button, so a user who just closed a heavy session can see the new number
+ * without waiting out the interval.
+ */
+export async function fetchAgentUsage(refresh = false): Promise<AgentUsageResponse> {
+  const res = await fetch(`/api/agent-accounts/usage${refresh ? "?refresh=true" : ""}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as AgentUsageResponse;
+}
+
 async function detail(res: Response): Promise<string> {
   try {
     const body = (await res.json()) as { detail?: string };
