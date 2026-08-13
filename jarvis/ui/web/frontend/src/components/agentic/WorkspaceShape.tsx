@@ -37,12 +37,16 @@ import { Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { IconButton } from "./controls";
 import {
+  WORKABLE_COLS,
+  paneColumnsAt,
   paneGrid,
   paneWidthAt,
   panesAreComfortable,
   wizardPanes,
+  workableColumnCount,
   type PanePlacement,
 } from "./layout";
+import { measureAdvance } from "@/lib/terminalFont";
 
 /**
  * Steps a labelled tick is allowed to land on, coarsest last.
@@ -165,12 +169,21 @@ interface WorkspaceShapeProps {
    * panes out of the preview and the running workspace.
    */
   workspaceWidthPx: number;
+  /**
+   * The text size the panes will open at, in px.
+   *
+   * Passed in rather than read here, so the readout and the wizard's blocking
+   * warning can never quote two different sizes for the same workspace. See
+   * ./paneFont for where the reader's choice is kept.
+   */
+  fontSize: number;
 }
 
 export function WorkspaceShape({
   count,
   names,
   workspaceWidthPx,
+  fontSize,
 }: WorkspaceShapeProps) {
   const grid = useMemo(() => paneGrid(wizardPanes(count)), [count]);
 
@@ -183,7 +196,11 @@ export function WorkspaceShape({
         count={count}
         names={names}
       />
-      <Readout columns={grid.columns} workspaceWidthPx={workspaceWidthPx} />
+      <Readout
+        columns={grid.columns}
+        workspaceWidthPx={workspaceWidthPx}
+        fontSize={fontSize}
+      />
     </div>
   );
 }
@@ -594,18 +611,44 @@ function StagePane({
  * The second half is the part that matters. An arrangement stated without its
  * consequence is a bug this step actually had: correct on screen, and silent
  * about the thing the user would notice a minute later.
+ *
+ * ## Why it counts COLUMNS and not only pixels
+ *
+ * "About 145 px each" is true and says nothing. A pixel width means one thing
+ * at 8 px text and the opposite at 20, and the number that decides whether a
+ * coding CLI can draw at all is its column count — below {@link WORKABLE_COLS}
+ * a pane holds its agent's columns and shows a card instead of a terminal (see
+ * `PaneTooNarrowCard` in ./AgenticTerminal).
+ *
+ * That is exactly what went unsaid on 2026-08-13: twelve terminals opened on a
+ * 1 920 px window at text size 20 with no warning at all, because the only
+ * question asked was "twenty or more?" — a fixed count, blind to both the
+ * window and the text size. The readout now measures the real font and says
+ * what the user is about to get, in the unit that decides it.
  */
 function Readout({
   columns,
   workspaceWidthPx,
+  fontSize,
 }: {
   columns: number;
   workspaceWidthPx: number;
+  fontSize: number;
 }) {
   // By COLUMNS rather than the raw count, so the sentence can never describe a
   // different workspace from the stage above it.
   const paneWidth = paneWidthAt(columns, workspaceWidthPx);
   const comfortable = panesAreComfortable(columns, workspaceWidthPx);
+  /*
+   * The real font, measured — never an assumed advance width. `null` where
+   * there is no canvas to measure with (jsdom, and any environment that cannot
+   * answer), and every branch below treats that as "no answer yet" rather than
+   * as a warning: a readout that shouted at everyone once because it could not
+   * measure would be the next thing reported.
+   */
+  const cell = useMemo(() => measureAdvance(fontSize), [fontSize]);
+  const perPane = paneColumnsAt(columns, workspaceWidthPx, cell ?? 0);
+  const affordable = workableColumnCount(workspaceWidthPx, cell ?? 0);
 
   /*
    * There is no longer an "and the rest are off screen" case to warn about —
@@ -616,6 +659,14 @@ function Readout({
   let condition: string;
   if (paneWidth === 0) {
     condition = "All on one screen.";
+  } else if (perPane > 0 && perPane < WORKABLE_COLS) {
+    // The one case worth spelling out: these panes will not be terminals.
+    condition =
+      `All on one screen, about ${perPane} columns each — too narrow for an ` +
+      `agent to draw in, so they open as status cards. This window fits ` +
+      `${affordable} across at text size ${fontSize}.`;
+  } else if (perPane > 0) {
+    condition = `All on one screen, about ${perPane} columns each.`;
   } else if (comfortable) {
     condition = `All on one screen, about ${formatPx(paneWidth)} px each.`;
   } else {
@@ -627,6 +678,7 @@ function Readout({
   return (
     <p
       data-testid="workspace-stage-readout"
+      data-pane-cols={perPane || ""}
       className="text-xs leading-relaxed text-muted-foreground"
     >
       <span className="font-mono tabular-nums text-foreground">

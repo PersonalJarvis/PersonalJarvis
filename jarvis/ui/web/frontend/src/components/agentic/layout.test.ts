@@ -2,12 +2,86 @@ import { describe, expect, it } from "vitest";
 import {
   COMFORTABLE_PANE_WIDTH_PX,
   GRID_HORIZONTAL_PADDING_PX,
+  PANE_TERMINAL_INSET_PX,
+  WORKABLE_COLS,
   columnDepthFor,
+  paneColumnsAt,
   paneGrid,
   paneWidthAt,
   panesAreComfortable,
   wizardPanes,
+  workableColumnCount,
 } from "./layout";
+
+/*
+ * The workspace the bug was reported on (2026-08-13), in numbers.
+ *
+ * A 1 920 px window with the section rail beside it, at the maintainer's own
+ * text size — where twelve terminals opened in silence and every pane landed at
+ * a width no coding CLI can draw in.
+ */
+const REPORTED_WINDOW_PX = 1740;
+const CELL_AT_SIZE_20 = 12;
+
+describe("how many columns a pane really gets", () => {
+  it("answers in the unit that decides, not in pixels", () => {
+    // Twelve across on that window: ~145 px each, which sounds survivable and
+    // is not — it is thirteen columns, and a coding CLI needs about sixty.
+    const cols = paneColumnsAt(12, REPORTED_WINDOW_PX, CELL_AT_SIZE_20);
+    expect(cols).toBeLessThan(WORKABLE_COLS);
+    expect(cols).toBe(
+      Math.floor(
+        (paneWidthAt(12, REPORTED_WINDOW_PX) - PANE_TERMINAL_INSET_PX) /
+          CELL_AT_SIZE_20,
+      ),
+    );
+  });
+
+  it("gives the same panes a different answer at a smaller text size", () => {
+    // The half a fixed count of twenty can never see: the SAME four panes on
+    // the SAME window are two different decisions, and only the text size
+    // separates them.
+    expect(paneColumnsAt(4, REPORTED_WINDOW_PX, CELL_AT_SIZE_20)).toBeLessThan(
+      WORKABLE_COLS,
+    );
+    expect(paneColumnsAt(4, REPORTED_WINDOW_PX, 6)).toBeGreaterThanOrEqual(
+      WORKABLE_COLS,
+    );
+  });
+
+  it("has nothing to say where nothing can be measured", () => {
+    // jsdom, and any environment with no canvas. "We could not measure" must
+    // never render as a warning.
+    expect(paneColumnsAt(12, REPORTED_WINDOW_PX, 0)).toBe(0);
+    expect(paneColumnsAt(12, 0, CELL_AT_SIZE_20)).toBe(0);
+    expect(paneColumnsAt(12, REPORTED_WINDOW_PX, Number.NaN)).toBe(0);
+  });
+});
+
+describe("how many panes a window fits", () => {
+  it("counts the panes that would still be drawable", () => {
+    const across = workableColumnCount(REPORTED_WINDOW_PX, CELL_AT_SIZE_20);
+    expect(across).toBeGreaterThan(0);
+    expect(paneColumnsAt(across, REPORTED_WINDOW_PX, CELL_AT_SIZE_20)).toBeGreaterThanOrEqual(
+      WORKABLE_COLS,
+    );
+    // And one more would not be.
+    expect(paneColumnsAt(across + 1, REPORTED_WINDOW_PX, CELL_AT_SIZE_20)).toBeLessThan(
+      WORKABLE_COLS,
+    );
+  });
+
+  it("never answers zero on a measured window", () => {
+    // A window too narrow for one workable pane cannot be fixed by opening
+    // fewer, and "0 across" is not an arrangement anyone can choose.
+    expect(workableColumnCount(200, CELL_AT_SIZE_20)).toBe(1);
+  });
+
+  it("has nothing to say where nothing can be measured", () => {
+    expect(workableColumnCount(REPORTED_WINDOW_PX, 0)).toBe(0);
+    expect(workableColumnCount(0, CELL_AT_SIZE_20)).toBe(0);
+  });
+});
 
 /*
  * The widths are expressed as "content width + the grid's own padding" rather

@@ -57,6 +57,13 @@ import { AgentPickerMenu, offersAgentChoice, type SplitAgentChoice } from "./Age
 import type { TerminalAppearance } from "./terminalThemes";
 import { installZoomKeyBridge, type ZoomIntent } from "./terminalZoom";
 import {
+  FONT_DEFAULT,
+  FONT_KEY,
+  FONT_MAX,
+  FONT_MIN,
+  storedFontSize,
+} from "./paneFont";
+import {
   isEvenTree,
   treeLayout,
   type LayoutNode,
@@ -230,13 +237,10 @@ interface AgenticGridProps {
 }
 
 /*
- * Terminal text size, in pixels — the same three numbers as
- * `jarvis/agentic_ide/ui_prefs.py`, which is what the backend clamps a saved
- * size to. `FONT_DEFAULT` is also where Ctrl/Cmd+0 lands.
+ * Terminal text size, in pixels. Moved to ./paneFont, which the workspace
+ * wizard also reads: it has to say how many terminals this window fits before
+ * any pane exists, and that answer depends on the text size.
  */
-const FONT_MIN = 10;
-const FONT_MAX = 20;
-const FONT_DEFAULT = 13;
 
 /** The size one zoom step away from `from`, kept inside the bounds. */
 export function zoomedFontSize(from: number, intent: ZoomIntent): number {
@@ -522,7 +526,6 @@ function writePosition(node: HTMLElement, style: React.CSSProperties): void {
  * open at the remembered size instead of visibly resizing a moment later.
  */
 const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
-const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
 
 /**
  * The two ways of looking at one workspace.
@@ -644,12 +647,6 @@ function storedAppearance(): TerminalAppearance | null {
   return readStored(APPEARANCE_KEY, (raw) => (raw === "light" || raw === "dark" ? raw : null));
 }
 
-function storedFontSize(): number | null {
-  return readStored(FONT_KEY, (raw) => {
-    const n = Number.parseInt(raw, 10);
-    return Number.isFinite(n) && n >= FONT_MIN && n <= FONT_MAX ? n : null;
-  });
-}
 
 export function AgenticGrid({
   session,
@@ -2968,6 +2965,13 @@ export function AgenticGrid({
                   generatedAt: recaps[term.name]?.generated_at,
                 }}
                 recapActions={recapActionsFor(term.name)}
+                // The backend's reading of what this agent is doing. Only a
+                // pane that has had to give up its terminal for a card reads
+                // them — see PaneTooNarrowCard — but they are cheap and already
+                // in the state this component polls.
+                activity={term.activity}
+                activitySince={term.activity_since}
+                worked={term.worked}
                 // Only the panes that are NOT on the default login carry a
                 // badge. Labelling every pane "Default Claude Code login" would
                     // be noise for the many; labelling the odd one out is the whole
