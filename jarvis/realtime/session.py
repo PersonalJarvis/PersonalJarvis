@@ -248,10 +248,31 @@ _USER_VOICE_PEAK = 800
 # Long enough to bridge the hesitations inside one sentence, short enough
 # that a genuinely finished utterance dispatches without a perceptible wait.
 _USER_SPEAKING_HOLD_S = 0.7
-# Ceiling on how long the microphone may hold back a delegated dispatch. A
-# stuck-open floor (a noisy room, a hot mic) must cost a bounded delay, never
-# a turn that is never executed at all.
-_USER_SPEAKING_DISPATCH_CAP_S = 4.0
+# Ceiling on how long the microphone may hold back a delegated dispatch.
+#
+# This is NOT a budget for how long the user is allowed to talk. A flat 4.0 s
+# ceiling measured from the provider's premature commit was exactly that, and
+# it cut a 40 s spoken order at 4 s (live 2026-08-13 16:46:26.939 — the log
+# line "user stopped speaking after a 4.00s hold" was the CEILING expiring,
+# not the user; at 16:47:25.527, six seconds after the same cut, the session
+# still logged "the user is still audibly speaking"). The truncated fragment
+# was then pressed into a coding pane with Enter.
+#
+# The ceiling exists for ONE failure: a floor stuck open on room noise or a
+# hot mic, which must cost a bounded delay rather than an order that never
+# runs. Noise produces voiced frames but no WORDS — so the window re-arms on
+# every growth of the input transcript and expires only on a microphone that
+# is loud yet wordless. A user who keeps talking keeps the floor; a stuck
+# floor still releases within this window.
+#
+# Comfortably clear of one provider transcription lag (Gemini's input
+# transcription ran ~2.6 s behind its own commit in the 2026-08-13 forensics)
+# plus a long thinking pause inside a sentence.
+_MIC_HOLD_STALE_TRANSCRIPT_S = 8.0
+# Absolute backstop for a pathological floor that somehow keeps producing
+# transcript growth. Long enough for any single spoken order, bounded so the
+# wait always terminates.
+_MIC_HOLD_ABSOLUTE_CAP_S = 45.0
 # After the microphone finally goes quiet, the provider's transcript for the
 # LAST words is still in flight — Gemini's input transcription ran ~2.6 s
 # behind its own commit in the 2026-08-13 forensics. A dispatch that fires
@@ -2426,6 +2447,19 @@ class RealtimeVoiceSession:
             if provider_config is not None
             else ""
         )
+        # The active mode may ask for its own voice — a friend should not sound
+        # like a butler. Unlike the classic pipeline, which picks a voice per
+        # utterance, a realtime provider pins the voice when the session opens:
+        # switching modes mid-call therefore changes the voice on the NEXT call,
+        # not this sentence. Documented rather than worked around, because
+        # tearing down a live conversation to change its timbre would cost the
+        # user their turn.
+        try:
+            from jarvis.brain.modes import active_voice
+
+            voice = active_voice() or voice
+        except Exception as exc:  # noqa: BLE001 - a voice preference never costs a session
+            log.debug("Mode voice not applied to the realtime session: %s", exc)
         return model, voice
 
     @staticmethod
@@ -8143,9 +8177,12 @@ class RealtimeVoiceSession:
         started = time.monotonic()
         deadline = started + stability_s * _DELEGATE_INPUT_BOUNDARY_MAX_ROUNDS
         # The microphone outranks every provider boundary while it still
-        # carries the user's voice — but only for a bounded stretch, so a
-        # noisy room delays an order instead of swallowing it.
-        mic_deadline = started + _USER_SPEAKING_DISPATCH_CAP_S
+        # carries the user's voice. Its authority is bounded by a ROLLING
+        # window that every new word re-arms, never by a fixed budget from the
+        # provider's commit: the budget shape is what truncated a long order
+        # at its own ceiling (_MIC_HOLD_STALE_TRANSCRIPT_S).
+        mic_deadline = started + _MIC_HOLD_STALE_TRANSCRIPT_S
+        hard_deadline = started + _MIC_HOLD_ABSOLUTE_CAP_S
         stable_since = started
         settle_deadline = 0.0
         last_transcript = self._last_user_text
@@ -8164,7 +8201,14 @@ class RealtimeVoiceSession:
             except TimeoutError:
                 pass
             now = time.monotonic()
-            if self._user_is_speaking() and now < mic_deadline:
+            transcript_grew = self._last_user_text != last_transcript
+            if transcript_grew:
+                last_transcript = self._last_user_text
+                # Words are the one thing a stuck floor cannot produce, so a
+                # growing transcript renews the microphone's authority over
+                # the provider's boundary for another full window.
+                mic_deadline = now + _MIC_HOLD_STALE_TRANSCRIPT_S
+            if self._user_is_speaking() and now < mic_deadline and now < hard_deadline:
                 # Whatever the provider committed, the user is mid-sentence.
                 # Re-arm the stability window: the words already accepted are
                 # a fragment, and the later finals still to arrive grow
@@ -8179,20 +8223,32 @@ class RealtimeVoiceSession:
                         self.session_id,
                     )
                 stable_since = now
-                last_transcript = self._last_user_text
             else:
                 if mic_holding:
                     mic_holding = False
                     settle_deadline = now + _UTTERANCE_TAIL_SETTLE_S
-                    log.info(
-                        "realtime[%s] deterministic delegate: user stopped "
-                        "speaking after a %.2fs hold; settling for the tail "
-                        "transcript",
-                        self.session_id,
-                        now - started,
-                    )
-                if self._last_user_text != last_transcript:
-                    last_transcript = self._last_user_text
+                    if self._user_is_speaking():
+                        # Still loud, but no new words for a full window: this
+                        # is a stuck floor, not a talking user. Reporting it as
+                        # "the user stopped" is what hid the truncation for a
+                        # whole day of live calls.
+                        log.info(
+                            "realtime[%s] deterministic delegate: the "
+                            "microphone stayed loud for %.1fs without a single "
+                            "new word; treating the floor as stuck and "
+                            "settling for the tail transcript",
+                            self.session_id,
+                            _MIC_HOLD_STALE_TRANSCRIPT_S,
+                        )
+                    else:
+                        log.info(
+                            "realtime[%s] deterministic delegate: user stopped "
+                            "speaking after a %.2fs hold; settling for the tail "
+                            "transcript",
+                            self.session_id,
+                            now - started,
+                        )
+                if transcript_grew:
                     stable_since = now
                 elif (
                     turn_state.input_final and not mic_held_ever
@@ -8220,13 +8276,27 @@ class RealtimeVoiceSession:
                         len(str(self._last_user_text or "").split()),
                     )
                     return
-            if now >= deadline:
+            if now >= deadline and not mic_holding:
+                # The provider-silence cap answers "the provider said nothing".
+                # It must never fire while the MICROPHONE is actively holding
+                # the floor — that is the case this function exists for, and
+                # letting it through here re-truncated a long order at 9 s.
                 log.warning(
                     "realtime[%s] deterministic delegate: input transcript "
                     "kept growing through the %.0fs wait cap; dispatching "
                     "on the newest snapshot",
                     self.session_id,
                     stability_s * _DELEGATE_INPUT_BOUNDARY_MAX_ROUNDS,
+                )
+                return
+            if now >= hard_deadline:
+                log.warning(
+                    "realtime[%s] deterministic delegate: the microphone held "
+                    "the floor for the full %.0fs ceiling; dispatching the %d "
+                    "words the utterance has",
+                    self.session_id,
+                    _MIC_HOLD_ABSOLUTE_CAP_S,
+                    len(str(self._last_user_text or "").split()),
                 )
                 return
 

@@ -160,7 +160,8 @@ def _build_session(
 def _fast_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     """Scale the real-time windows down so the test stays sub-second."""
     monkeypatch.setattr(session_module, "_USER_SPEAKING_HOLD_S", 0.12)
-    monkeypatch.setattr(session_module, "_USER_SPEAKING_DISPATCH_CAP_S", 3.0)
+    monkeypatch.setattr(session_module, "_MIC_HOLD_STALE_TRANSCRIPT_S", 0.6)
+    monkeypatch.setattr(session_module, "_MIC_HOLD_ABSOLUTE_CAP_S", 10.0)
     monkeypatch.setattr(session_module, "_UTTERANCE_TAIL_SETTLE_S", 0.4)
     monkeypatch.setattr(session_module, "_DELEGATE_INPUT_BOUNDARY_WAIT_S", 0.2)
     monkeypatch.setattr(session_module, "_DELEGATE_INPUT_BOUNDARY_POLL_S", 0.02)
@@ -247,3 +248,125 @@ async def test_mid_sentence_commit_keeps_one_turn_and_one_executor(
     assert len(brain.calls) == 1, f"one order, one executor: {brain.calls}"
     assert _FRAGMENT_ONE in brain.calls[0]
     assert _FRAGMENT_TWO in brain.calls[0]
+
+
+_LONG_ORDER = (
+    "Can you please prompt terminal five",
+    "to do a deep dive into the spawning",
+    "it should work with every IDE we connected",
+    "and tell me what you find",
+    "before the end of the day",
+)
+
+
+class _LongOrderWire(_ChoppedUtteranceWire):
+    """Commits after the opening clause, then transcribes the rest slowly."""
+
+    session_id = "long-order-wire"
+
+    def __init__(self, *, gap_s: float) -> None:
+        super().__init__()
+        self._gap_s = gap_s
+        self.all_sent = asyncio.Event()
+
+    async def receive(self):
+        for index, fragment in enumerate(_LONG_ORDER):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text=fragment,
+                is_final=True,
+                item_id=f"long-{index}",
+            )
+            if index == 0:
+                self.first_final.set()
+            await asyncio.sleep(self._gap_s)
+        self.all_sent.set()
+        await self.closed.wait()
+
+
+class _LongOrderProvider(_ChoppedUtteranceProvider):
+    name = "long-order"
+
+    def __init__(self, *, gap_s: float) -> None:
+        self.session = _LongOrderWire(gap_s=gap_s)
+
+
+@pytest.mark.asyncio
+async def test_a_long_order_survives_past_the_hold_ceiling(
+    _fast_windows: None,
+) -> None:
+    """The 2026-08-13 16:46:26.939 truncation: the CEILING expired, not the user.
+
+    A fixed budget measured from the provider's commit cut a long spoken order
+    at its own ceiling and briefed a coding pane with the opening clause. Here
+    the user talks for twice a full window after the commit; every new word
+    must renew the microphone's authority so the whole order survives.
+    """
+    provider = _LongOrderProvider(gap_s=0.25)
+    brain = _OrderBrain()
+    session = _build_session(provider, brain, session_id="long-order")
+
+    stop_speaking = asyncio.Event()
+
+    async def _hold_the_floor() -> None:
+        while not stop_speaking.is_set():
+            await session.handle_audio_frame(_voiced_frame())
+            await asyncio.sleep(0.02)
+
+    await session.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    floor = asyncio.create_task(_hold_the_floor())
+    try:
+        await asyncio.wait_for(provider.session.first_final.wait(), timeout=1.0)
+        # Well past the point a fixed budget would have given up at.
+        await asyncio.sleep(session_module._MIC_HOLD_STALE_TRANSCRIPT_S * 2)
+        assert brain.calls == [], "dispatched while the user was still talking"
+
+        await asyncio.wait_for(provider.session.all_sent.wait(), timeout=5.0)
+        stop_speaking.set()
+        await floor
+        await asyncio.wait_for(brain.called.wait(), timeout=5.0)
+    finally:
+        stop_speaking.set()
+        if not floor.done():
+            floor.cancel()
+        await session.end(reason="test")
+
+    assert len(brain.calls) == 1, f"one order, one executor: {brain.calls}"
+    for fragment in _LONG_ORDER:
+        assert fragment in brain.calls[0], f"lost {fragment!r}: {brain.calls[0]!r}"
+
+
+@pytest.mark.asyncio
+async def test_a_loud_but_wordless_floor_still_releases_the_order(
+    _fast_windows: None,
+) -> None:
+    """The bounded half: a hot mic may DELAY an order, never swallow it.
+
+    Room noise keeps the voice floor above the threshold forever but produces
+    no words, so the rolling window must expire and the turn must still run.
+    """
+    provider = _ChoppedUtteranceProvider()
+    brain = _OrderBrain()
+    session = _build_session(provider, brain, session_id="stuck-floor")
+
+    stop = asyncio.Event()
+
+    async def _hot_mic() -> None:
+        while not stop.is_set():
+            await session.handle_audio_frame(_voiced_frame())
+            await asyncio.sleep(0.02)
+
+    await session.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    mic = asyncio.create_task(_hot_mic())
+    try:
+        await asyncio.wait_for(provider.session.first_final.wait(), timeout=1.0)
+        # The tail is never released and the floor never goes quiet.
+        await asyncio.wait_for(brain.called.wait(), timeout=5.0)
+    finally:
+        stop.set()
+        if not mic.done():
+            mic.cancel()
+        await session.end(reason="test")
+
+    assert brain.calls, "a stuck floor swallowed the order entirely"
+    assert _FRAGMENT_ONE in brain.calls[0]

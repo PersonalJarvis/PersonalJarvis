@@ -9475,3 +9475,87 @@ reader is: a dropped HTTP client has lost the answer, while a person who hangs
 up has withdrawn the request. The same cancellation means different things to
 different callers, so survival has to be the CALLER's declaration, never the
 work's default.
+
+## BUG-137: a spoken order is cut off after a few sentences — the guard that protects it reports its own ceiling as the user falling silent (HIGH, FIXED 2026-08-13)
+
+**Symptoms (maintainer report).** In realtime mode you cannot finish a long
+prompt. After roughly three or four sentences the turn submits by itself and
+the rest of the sentence is gone. Reported for the agentic-IDE case in
+particular — the truncated fragment is what gets typed into a coding pane and
+submitted with Enter, so a quarter-order becomes a real briefing.
+
+**Evidence.** `data/flight_recorder/<date>.jsonl` + `data/jarvis_desktop.log`,
+session `373af352`, 2026-08-13 16:46/16:47. Both turns were terminal-prompt
+orders; the recorded `user_text` of the second ends mid-phrase ("…and you know
+when you do a customer ID with a"). The log tells the whole story:
+
+```
+16:46:22.919  turn-state: LISTENING -> PROCESSING      ← provider closed the input turn
+16:46:23.189  holding the dispatch — the microphone still carries the user's voice
+16:46:26.939  user stopped speaking after a 4.00s hold ← the CEILING, not the user
+...
+16:47:19.668  holding the dispatch — the microphone still carries the user's voice
+16:47:25.527  provider committed a boundary while the user is still audibly speaking
+```
+
+`4.00s` is `_USER_SPEAKING_DISPATCH_CAP_S` to the centisecond. At 16:47:25 —
+six seconds after the cut — the session's own microphone probe still said the
+user was talking.
+
+**Root.** Two layers, and the second one hid the first.
+
+1. **The provider was never asked to be patient.** `RealtimeSessionConfig`
+   carried exactly one turn-detection knob, `silence_duration_ms`, pinned to
+   `None` by the 2026-07-21 directive (a fixed window taxed every short
+   utterance and read as "done speaking but still listening" — that directive
+   was right). So `gemini_live.py` omitted `realtime_input_config` entirely
+   and inherited Gemini's native end-of-speech detection, which treats an
+   ordinary mid-sentence pause as end-of-turn. The knob that actually fits the
+   problem — `end_of_speech_sensitivity`, present in the installed SDK, and
+   unlike a silence window free for short utterances — appeared in **zero**
+   files in the repository.
+
+2. **The compensating guard was a fixed budget.** `_await_stable_input_boundary`
+   correctly detects that the microphone still carries the user's voice after a
+   premature commit (BUG-131's fix), but measured its authority as
+   `started + 4.0s` from the provider's commit. That is a budget for how long
+   the user may keep talking. Speak past it and the tail is dropped, the
+   truncated text is dispatched, and the pane is briefed with it.
+
+**Why it survived a day of live calls.** The release log line read
+`user stopped speaking after a 4.00s hold`. A timeout reported as an
+observation. Every truncation looked, in the log, like the guard working.
+
+**Fix.** Both layers, because either alone leaves the failure reachable:
+
+- `end_of_speech_sensitivity` added to `RealtimeSessionConfig` (default
+  `"low"`), wired in `gemini_live.py` behind an SDK capability probe (AP-21 —
+  an SDK without the enum opens on the provider default and says so in the
+  log) and in `openai_realtime.py` as semantic-VAD `eagerness`. Plain
+  `server_vad` has no equivalent and honestly keeps its default rather than
+  faking patience with a fixed window. `silence_duration_ms` stays unset: the
+  2026-07-21 directive is untouched.
+- The microphone hold became a ROLLING window
+  (`_MIC_HOLD_STALE_TRANSCRIPT_S`, re-armed by every growth of the input
+  transcript) with an absolute backstop (`_MIC_HOLD_ABSOLUTE_CAP_S`). The
+  ceiling still bounds the only failure it was ever for — a floor stuck open
+  on room noise or a hot mic — because noise produces voiced frames but no
+  WORDS. A talking user keeps the floor indefinitely; a stuck floor releases
+  within one window. The provider-silence cap no longer fires while the
+  microphone is actively holding.
+- The release log line now distinguishes "the user stopped" from "the floor
+  stayed loud without producing a word".
+
+**Class.** A bounded guard whose bound is expressed in the units of the thing
+it is protecting. The ceiling on "how long may the microphone override the
+provider" was written as a duration of USER SPEECH, when the failure it exists
+for is a microphone that produces sound without content. Bound the failure
+mode, not the legitimate behaviour — and never let a guard log its own timeout
+in the vocabulary of a measurement.
+
+**Tests.** `tests/unit/realtime/test_utterance_continuation.py`
+(`test_a_long_order_survives_past_the_hold_ceiling` — verified to FAIL against
+the fixed-budget form, losing the final fragment exactly as the live call did;
+`test_a_loud_but_wordless_floor_still_releases_the_order` for the bounded
+half) and `tests/unit/realtime/test_gemini_live.py` (default sensitivity, the
+opt-out, and the old-SDK degradation).

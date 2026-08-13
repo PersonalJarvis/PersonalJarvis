@@ -57,6 +57,45 @@ def _compression_kwargs(types: Any) -> dict[str, Any]:
     }
 
 
+_END_SENSITIVITY_MEMBERS = {
+    "low": "END_SENSITIVITY_LOW",
+    "high": "END_SENSITIVITY_HIGH",
+}
+
+
+def _end_of_speech_sensitivity(types: Any, preference: str | None) -> Any | None:
+    """Resolve the requested end-of-speech patience, or None on an old SDK.
+
+    Probed by SDK capability, never a version pin (AP-21): an SDK without the
+    enum — or without the field on AutomaticActivityDetection — opens a
+    session on the provider default instead of failing to open at all. The
+    degradation is loud, because silently inheriting Gemini's eager default is
+    exactly the bug this setting exists to fix.
+    """
+    wanted = str(preference or "").strip().lower()
+    if not wanted:
+        return None
+    member = _END_SENSITIVITY_MEMBERS.get(wanted)
+    if member is None:
+        log.warning(
+            "gemini-live: unknown end-of-speech sensitivity %r; using the default",
+            preference,
+        )
+        return None
+    enum_cls = getattr(types, "EndSensitivity", None)
+    detection_cls = getattr(types, "AutomaticActivityDetection", None)
+    fields = getattr(detection_cls, "model_fields", None) or {}
+    resolved = getattr(enum_cls, member, None) if enum_cls is not None else None
+    if resolved is None or "end_of_speech_sensitivity" not in fields:
+        log.warning(
+            "gemini-live: installed google-genai SDK cannot set the "
+            "end-of-speech sensitivity; Gemini's own eager turn detection may "
+            "close a turn on a mid-sentence pause"
+        )
+        return None
+    return resolved
+
+
 def _usage_from_metadata(md: Any) -> dict[str, int] | None:
     """Token counts of one generation as a flat dict, or None when empty.
 
@@ -578,10 +617,25 @@ class GeminiLiveProvider:
                     voice_name=voice
                 )
             )
-        # An unset window (None/0) omits realtime_input_config entirely so
-        # Gemini's native automatic activity detection decides the turn end;
-        # only an explicit override forces a fixed silence window.
+        # An unset window (None/0) sends no silence_duration_ms at all, so
+        # Gemini keeps deciding turn ends on its own timing; only an explicit
+        # override forces a fixed window (the 2026-07-21 directive).
         silence_ms = getattr(cfg, "silence_duration_ms", None)
+        # End-of-speech SENSITIVITY is a different knob and the one that
+        # matters here: Gemini's native default reads an ordinary mid-sentence
+        # pause as the end of the turn. Live 2026-08-13 16:46/16:47 — one
+        # spoken brief for a coding pane was committed twice while the
+        # microphone still carried the user's voice, and the pane was handed a
+        # quarter of the sentence. LOW reads a pause as a pause and costs a
+        # finished short utterance nothing.
+        aad_kwargs: dict[str, Any] = {}
+        if silence_ms:
+            aad_kwargs["silence_duration_ms"] = int(silence_ms)
+        sensitivity = _end_of_speech_sensitivity(
+            types, getattr(cfg, "end_of_speech_sensitivity", None)
+        )
+        if sensitivity is not None:
+            aad_kwargs["end_of_speech_sensitivity"] = sensitivity
         # Gemini 3.1 rejects client_content (1007, the whole connection dies)
         # unless the setup declares it as initial history — so the declaration
         # and the seed travel together, and neither happens without the other
@@ -608,11 +662,11 @@ class GeminiLiveProvider:
                     "realtime_input_config": types.RealtimeInputConfig(
                         automatic_activity_detection=types.AutomaticActivityDetection(
                             disabled=False,
-                            silence_duration_ms=int(silence_ms),
+                            **aad_kwargs,
                         )
                     )
                 }
-                if silence_ms
+                if aad_kwargs
                 else {}
             ),
             **(

@@ -330,17 +330,60 @@ async def test_every_selectable_model_uses_live_audio_and_transcriptions(
 
 
 @pytest.mark.asyncio
-async def test_default_config_keeps_native_activity_detection(
+async def test_default_config_asks_gemini_to_sit_through_a_pause(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A default session is patient about pauses without a forced window.
+
+    Live 2026-08-13 16:46/16:47: Gemini's own default read a mid-sentence
+    pause as end-of-turn and a coding pane was briefed with a quarter of the
+    sentence. LOW fixes that; silence_duration_ms must STAY unset, because a
+    fixed window taxes every short utterance (directive 2026-07-21).
+    """
+    from google.genai import types
+
     holder = _patch_genai_client(monkeypatch)
     provider = GeminiLiveProvider(api_key="test-key")
 
     session = await provider.open_session(RealtimeSessionConfig(voice="Puck"))
     _selected, config = holder["client"].aio.live.connect_calls[0]
-    # No forced silence window: Gemini's native automatic activity detection
-    # decides the turn end (the Settings "Thinking pause" is pipeline-only).
+    detection = config.realtime_input_config.automatic_activity_detection
+    assert detection.end_of_speech_sensitivity == types.EndSensitivity.END_SENSITIVITY_LOW
+    assert detection.silence_duration_ms is None
+    assert detection.disabled is False
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_sensitivity_can_be_waived_back_to_the_provider_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_genai_client(monkeypatch)
+    provider = GeminiLiveProvider(api_key="test-key")
+
+    session = await provider.open_session(
+        RealtimeSessionConfig(voice="Puck", end_of_speech_sensitivity=None)
+    )
+    _selected, config = holder["client"].aio.live.connect_calls[0]
     assert config.realtime_input_config is None
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_an_sdk_without_the_enum_still_opens_a_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AP-21: a capability gap degrades the session, never blocks it."""
+    from google.genai import types
+
+    holder = _patch_genai_client(monkeypatch)
+    monkeypatch.delattr(types, "EndSensitivity", raising=False)
+    provider = GeminiLiveProvider(api_key="test-key")
+
+    session = await provider.open_session(RealtimeSessionConfig(voice="Puck"))
+    _selected, config = holder["client"].aio.live.connect_calls[0]
+    assert config.realtime_input_config is None
+    assert config.speech_config is not None
     await session.close()
 
 

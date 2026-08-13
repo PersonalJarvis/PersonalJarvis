@@ -266,6 +266,15 @@ def _session_payload(
     silence_ms = getattr(cfg, "silence_duration_ms", None)
     if turn_detection == "server_vad" and silence_ms:
         turn_detection_config["silence_duration_ms"] = int(silence_ms)
+    # OpenAI's name for end-of-speech sensitivity is semantic-VAD "eagerness":
+    # low = let the user take their time before the turn is called over. Plain
+    # server_vad has no equivalent knob at all, so a session configured for it
+    # honestly keeps the provider default rather than faking patience with a
+    # fixed silence window (which would tax every short utterance — the very
+    # trade the 2026-07-21 directive rejected).
+    sensitivity = str(getattr(cfg, "end_of_speech_sensitivity", "") or "").lower()
+    if turn_detection == "semantic_vad" and sensitivity in {"low", "high"}:
+        turn_detection_config["eagerness"] = sensitivity
 
     payload: dict[str, Any] = {
         "type": "realtime",

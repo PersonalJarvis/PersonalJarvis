@@ -102,6 +102,19 @@ class RealtimeSessionConfig:
     # listening" (maintainer directive 2026-07-21). An explicit int still
     # overrides the provider default for callers that need a fixed window.
     silence_duration_ms: int | None = None
+    # How eagerly the provider's native VAD may declare the user finished.
+    # "low" = read a pause as a pause; "high" = the provider's own eager
+    # default; None = send nothing and inherit whatever the provider ships.
+    #
+    # This is deliberately NOT ``silence_duration_ms``. A fixed silence window
+    # taxes EVERY utterance with the same wait, which is why the 2026-07-21
+    # directive removed it — that directive stands. End-of-speech sensitivity
+    # changes only how a PAUSE is interpreted, so a finished short sentence
+    # still commits immediately while a hesitation inside a long order no
+    # longer ends the turn (live 2026-08-13 16:46/16:47: a spoken brief for a
+    # coding pane was closed twice mid-sentence and delivered truncated).
+    # Providers without the concept ignore it.
+    end_of_speech_sensitivity: str | None = "low"
     tools: tuple[dict[str, Any], ...] = ()
     # Bounded transcript of the call so far, oldest first, as
     # ``{"role": "user" | "assistant", "text": ...}`` mappings. A fresh
