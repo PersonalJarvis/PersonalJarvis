@@ -77,6 +77,10 @@ _HEADER = (
     "terminal later. If the work did not go out, say plainly that it did not and "
     "why — an honest \"I could not reach that terminal\" is always better than a "
     "confident sentence that turns out to be false.\n"
+    "- A pane listed below as STILL BEING WRITTEN has received NOTHING yet. The "
+    "prompt writer takes 10-30 seconds, and the earlier prompts counted for that "
+    "pane are OLD ones, not this one. Say the work is still going out — never "
+    "that it arrived, and never that the agent has started.\n"
     "- Brainstorming, architecture, and 'what should we do next' are answered "
     "inline, against this codebase, and you may propose which terminal should "
     "take which part.\n"
@@ -88,9 +92,22 @@ _HEADER = (
 )
 
 
-def _terminal_block(term, tail_lines: int = _LINES_PER_TERMINAL) -> list[str]:  # noqa: ANN001 - Terminal, avoid import cycle
+def _terminal_block(  # noqa: ANN001 - Terminal, avoid import cycle
+    term,
+    tail_lines: int = _LINES_PER_TERMINAL,
+    *,
+    writing_for_s: float | None = None,
+) -> list[str]:
     status = term.status
     bits = [f"{term.name} ({term.display_name}) — {status}"]
+    if writing_for_s is not None:
+        # Stated before the receipt count on purpose: the counted prompts are
+        # what the model turned into "I have prompted T5" while this one was
+        # still being written (live 2026-08-13 11:20:12).
+        bits.append(
+            f"A BRIEF IS STILL BEING WRITTEN for it ({int(writing_for_s)}s so "
+            f"far) — nothing has reached {term.name} yet"
+        )
     if status == "live" and term.last_output_at:
         idle = max(0, int(time.time() - term.last_output_at))
         bits.append(f"last output {idle}s ago")
@@ -139,9 +156,23 @@ def focus_context_block(max_chars: int = _MAX_CHARS) -> str:
             if len(session.terminals) < _CROWDED_AT
             else _LINES_PER_TERMINAL_CROWDED
         )
+        # Which panes have a brief ON THE WAY. The one workspace fact that
+        # exists nowhere else: a pane with a 20 s composition running looks
+        # exactly like an idle pane that was prompted an hour ago, and the model
+        # answered from the older receipt.
+        try:
+            from .fanout import in_flight_briefs
+
+            writing = dict(in_flight_briefs(session))
+        except Exception:  # noqa: BLE001 - a missing fact never costs the block
+            writing = {}
         parts.append(f"Terminals in this workspace ({len(session.terminals)}):")
         for term in session.terminals:
-            parts.extend(_terminal_block(term, tail_lines))
+            parts.extend(
+                _terminal_block(
+                    term, tail_lines, writing_for_s=writing.get(term.name)
+                )
+            )
     else:
         parts.append("No terminals are open in this workspace yet.")
 

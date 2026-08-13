@@ -7575,6 +7575,23 @@ class SpeechPipeline:
                         win.clear()
                 except Exception:  # noqa: BLE001 — teardown must never crash
                     log.debug("Clarify/continuation teardown failed", exc_info=True)
+                # Hanging up ends a coding-agent brief that is still being
+                # written, the same way it does on the realtime engine (see
+                # ``RealtimeVoiceSession._abandon_spoken_workspace_briefs``):
+                # composing takes 10-30 s, and a pane typed into after the user
+                # stopped waiting is work they no longer asked for. Idempotent —
+                # a realtime call that already dropped its briefs leaves none
+                # here. Skipped on an engine reconnect: that session re-arms and
+                # the order the user gave is still live.
+                if not reopen_after_engine_change:
+                    try:
+                        from jarvis.agentic_ide.fanout import cancel_spoken_deliveries
+
+                        cancel_spoken_deliveries(
+                            reason=f"the call ended ({hangup_reason or 'unknown'})"
+                        )
+                    except Exception:  # noqa: BLE001 — teardown must never crash
+                        log.debug("Workspace brief teardown failed", exc_info=True)
                 await self._publish_event(
                     VoiceSessionEnded(
                         source_layer="speech.pipeline",

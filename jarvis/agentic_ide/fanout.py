@@ -356,6 +356,77 @@ def note_detached_delivery(work: asyncio.Future[Any], *, describe: str) -> None:
     )
 
 
+#: Spoken fan-outs a hangup must be able to abort. A brief ordered by voice
+#: belongs to the conversation that ordered it: ending the call ends the order
+#: (maintainer decision 2026-08-13). This narrows the 2026-08-06 detach rule to
+#: the REST/CLI callers it was written for — a dropped HTTP client is a lost
+#: READER, not a withdrawn instruction — because on the spoken path the detach
+#: produced the opposite failure: the user hung up, the workspace stayed silent
+#: for another 20-30 s, and a pane they had stopped waiting for was typed into
+#: (live 2026-08-13 11:19:43 hangup → 11:20:03 delivery).
+#:
+#: A registry rather than "cancel the caller": since the realtime session
+#: transfers unfinished delegate work to process scope on hangup ("retaining it
+#: for exactly-once delivery"), the caller no longer dies when the call ends, so
+#: nothing downstream ever learned the conversation was over. Teardown cancels
+#: these futures explicitly instead.
+_SPOKEN_DELIVERIES: set[asyncio.Future[Any]] = set()
+
+
+def cancel_spoken_deliveries(*, reason: str = "the call ended") -> int:
+    """Abort every spoken fan-out still being written; return how many stopped.
+
+    Called from voice-session teardown. Nothing has reached a pane at that
+    point — the PTY write is the LAST step of ``deliver`` — so an aborted brief
+    leaves the workspace exactly as it was: no text in the input box, no
+    receipt (``last_prompt_at``), nothing for the user to discover later.
+
+    Idempotent, never raises, and a no-op when no brief is in flight.
+    """
+    live = [work for work in tuple(_SPOKEN_DELIVERIES) if not work.done()]
+    for work in live:
+        work.cancel()
+    if live:
+        log.info(
+            "Agentic IDE fan-out: %s — abandoned %d brief(s) still being "
+            "written; nothing was typed",
+            reason,
+            len(live),
+        )
+    return len(live)
+
+
+#: Panes whose brief is being written RIGHT NOW: ``(workspace_id, pane)`` →
+#: ``time.monotonic()`` when it started. A counter rather than a flag, because
+#: one pane can legitimately be in two fan-outs at once.
+#:
+#: Read by the turn context (``agentic_ide.context``) so the model answering a
+#: turn is told the one fact it cannot see anywhere else: a brief is on its way
+#: and NOTHING has reached that pane yet. Without it, the only workspace
+#: evidence in front of the model was the receipt of EARLIER prompts, and it
+#: duly narrated the pending one as finished — live 2026-08-13 11:20:12, "I have
+#: prompted T5 …" spoken 2 s after dispatch, 14 s before that brief's writer had
+#: even started, for a delivery that then failed outright.
+_IN_FLIGHT: dict[tuple[str, str], list[float]] = {}
+
+
+def in_flight_briefs(session: Any, *, now: float | None = None) -> tuple[tuple[str, float], ...]:
+    """Panes of ``session`` with a brief being written, and its age in seconds.
+
+    In-memory read of a dict, so it is free on the voice hot path (AP-9).
+    """
+    workspace_id = str(getattr(session, "id", "") or "")
+    if not workspace_id:
+        return ()
+    moment = time.monotonic() if now is None else now
+    out = [
+        (pane, max(0.0, moment - min(starts)))
+        for (wid, pane), starts in _IN_FLIGHT.items()
+        if wid == workspace_id and starts
+    ]
+    return tuple(sorted(out, key=lambda item: item[0]))
+
+
 async def _default_compose(utterance: str, **kwargs: Any) -> Any:
     from .prompt_composer import compose as compose_prompt
 
@@ -380,6 +451,9 @@ async def deliver(
     send: Callable[[str, str], Awaitable[Any]] | None = None,
     limit: int = DEFAULT_CONCURRENCY,
     include_pending_attachments: bool = False,
+    on_progress: Callable[[Any], None] | None = None,
+    on_delivered: Callable[[Any], Awaitable[None]] | None = None,
+    cancel_on_hangup: bool = False,
 ) -> FanOutResult:
     """Compose and deliver a prompt for each of ``terminals``.
 
@@ -401,14 +475,26 @@ async def deliver(
     delivery path. Manual REST/CLI fan-out must not steal a drop that was
     explicitly staged for the next spoken prompt.
 
+    ``on_progress`` receives the composer's ``ComposeNotice`` beats for every
+    pane, so a caller that is not the REST route can put the 10-30 s of writing
+    on a screen too. ``on_delivered`` is awaited with the pane's ``Terminal``
+    right after its prompt went in, which is how a caller announces the ARRIVAL
+    without having to wait for the slowest sibling.
+
     Never raises for a single pane. A pane that is missing, not running, whose
     prompt could not be written, or whose PTY write failed comes back as an
     undelivered ``Delivery`` carrying the reason.
 
-    Survives its caller. Once the fleet is composing, cancelling this call —
-    a voice hangup, a disconnected client — re-raises for the caller but lets
-    the briefs finish detached: hanging up ends the conversation, not the
-    order the user already gave. The detached outcome is logged per pane.
+    Survives its caller by default: cancelling this call re-raises for the
+    caller but lets the briefs finish detached, because a REST client that
+    disconnects has lost the ANSWER, not withdrawn the order. ``deliver`` is a
+    long-running effect and a reader is not its owner.
+
+    ``cancel_on_hangup=True`` reverses that for the spoken path: the fan-out is
+    registered with :func:`cancel_spoken_deliveries` and abandoned the moment
+    the call ends. Hanging up ends the order — the user stopped waiting, and a
+    pane typed into half a minute later is work they no longer asked for
+    (maintainer decision 2026-08-13). Nothing is typed on that exit.
     """
     wanted = _unique(terminals)
     if not wanted:
@@ -429,8 +515,30 @@ async def deliver(
         Announced here rather than after the gather: with a fleet composing at
         once, collecting every line until the slowest pane finishes turns
         per-pane progress back into the silence it exists to remove.
+
+        Marked in-flight per PANE, not per fan-out: with five panes composing
+        at once, a ledger cleared only at the end would still be claiming
+        "nothing has reached T1" minutes after T1 was typed into.
         """
-        delivery = await _one(name)
+        found = session.find(name) if session is not None else None
+        key = (
+            str(getattr(session, "id", "") or ""),
+            str(getattr(found, "name", "") or name),
+        )
+        started = time.monotonic()
+        if key[0]:
+            _IN_FLIGHT.setdefault(key, []).append(started)
+        try:
+            delivery = await _one(name)
+        finally:
+            starts = _IN_FLIGHT.get(key)
+            if starts is not None:
+                if started in starts:
+                    starts.remove(started)
+                else:  # pragma: no cover - defensive, clocks are monotonic
+                    starts.pop()
+                if not starts:
+                    _IN_FLIGHT.pop(key, None)
         try:
             from .prompt_composer import announce_delivery
 
@@ -489,6 +597,10 @@ async def deliver(
             try:
                 from .session import AGENT_DISPLAY
 
+                # Passed only when there IS a sink: the composer defaults to its
+                # own stdout notice, and injected test/CLI composers are free to
+                # take no such keyword at all.
+                progress_kw = {} if on_progress is None else {"on_progress": on_progress}
                 composed = await compose_fn(
                     utterance,
                     session=session,
@@ -497,6 +609,7 @@ async def deliver(
                     instruction=own_instruction,
                     conversation=tuple(conversation or ()),
                     attachments=pending_attachments,
+                    **progress_kw,
                 )
             except asyncio.CancelledError:
                 await _finish_prompt_attachments_shielded(term, pending_batches, consume=False)
@@ -544,6 +657,16 @@ async def deliver(
 
         await _finish_prompt_attachments_shielded(term, pending_batches, consume=True)
 
+        if on_delivered is not None:
+            try:
+                await on_delivered(term)
+            except Exception:  # noqa: BLE001 - a notification never costs a delivery
+                log.debug(
+                    "Agentic IDE fan-out: could not announce the send for %s",
+                    term.name,
+                    exc_info=True,
+                )
+
         # The sender reports whether the agent actually STARTED. A sender that
         # says nothing leaves it None (unknown) rather than claiming success —
         # the readback then stays silent about it instead of overstating.
@@ -562,19 +685,41 @@ async def deliver(
     work = asyncio.ensure_future(
         asyncio.gather(*(one(name) for name in wanted), return_exceptions=True)
     )
+    if cancel_on_hangup:
+        _SPOKEN_DELIVERIES.add(work)
+        work.add_done_callback(_SPOKEN_DELIVERIES.discard)
     try:
         results = await asyncio.shield(work)
     except asyncio.CancelledError:
         if work.cancelled():
             raise
-        # The CALLER died mid-delivery — a voice hangup, a disconnected HTTP
-        # client — not the fleet. The order was accepted before the composer
+        if cancel_on_hangup:
+            # The spoken caller is gone (teardown cancelled the retained
+            # delegate task, a turn was abandoned). The order goes with the
+            # conversation instead of typing into panes nobody is waiting on.
+            # The strong reference and the callback stay for the unwind only:
+            # the attachment reservations settle inside it, and the honest
+            # "those panes received nothing" line lands in the log (AP-30).
+            _DETACHED_DELIVERIES.add(work)
+            work.add_done_callback(
+                lambda task, names=tuple(wanted): _finish_detached(task, names)
+            )
+            work.cancel()
+            log.info(
+                "Agentic IDE fan-out: the spoken caller went away — abandoning "
+                "the brief(s) for %s; nothing was typed",
+                ", ".join(wanted),
+            )
+            raise
+        # The CALLER died mid-delivery — a disconnected HTTP client, a cancelled
+        # CLI — not the fleet. The order was accepted before the composer
         # started, and cancelling here is how "prompt T1 …" ended as a pane
         # that never received anything while the user believed it had (live
         # 2026-08-06 18:49/18:52: both turns were cancelled inside a 15-20 s
-        # subscription-CLI composition and nothing was ever typed). Hanging up
-        # ends the CONVERSATION — the spoken verdict is dropped — but the
-        # briefs still land; the receipt (`last_prompt_at`) stays the proof.
+        # subscription-CLI composition and nothing was ever typed). Losing the
+        # reader drops the verdict, not the order; the briefs still land and the
+        # receipt (`last_prompt_at`) stays the proof. The SPOKEN path takes the
+        # branch above instead — there the reader is the person who ordered it.
         _DETACHED_DELIVERIES.add(work)
         work.add_done_callback(lambda task, names=tuple(wanted): _finish_detached(task, names))
         log.warning(
@@ -616,7 +761,9 @@ __all__ = [
     "Delivery",
     "FanOutResult",
     "RecentFanOut",
+    "cancel_spoken_deliveries",
     "deliver",
     "find_duplicate_fanout",
+    "in_flight_briefs",
     "record_fanout",
 ]

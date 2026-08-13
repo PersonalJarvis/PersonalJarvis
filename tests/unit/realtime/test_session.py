@@ -6061,6 +6061,49 @@ async def test_session_end_names_the_delegated_request_it_retains(caplog):
     ) == 1
 
 
+async def test_hangup_abandons_a_coding_brief_that_is_still_being_written(
+    monkeypatch,
+):
+    """The ONE piece of delegated work a hangup drops instead of retaining.
+
+    Maintainer decision 2026-08-13: hanging up ends the order for a workspace
+    pane. Composing a brief takes 10-30 s and the PTY write is its last step, so
+    abandoning it leaves the pane untouched — unlike a sent mail or a spawned
+    mission, which is why the retention above stays the rule for everything else.
+    """
+    from jarvis.agentic_ide import fanout as ide_fanout
+
+    reasons: list[str] = []
+    monkeypatch.setattr(
+        ide_fanout,
+        "cancel_spoken_deliveries",
+        lambda *, reason="": reasons.append(reason) or 1,
+    )
+
+    sess = _session(FakeProvider([]))
+    await sess.end(reason="hotkey")
+
+    assert len(reasons) == 1
+    assert "hotkey" in reasons[0]
+
+
+async def test_a_handover_keeps_the_coding_brief_alive(monkeypatch):
+    """desktop_fallback is not a hangup: the same call continues elsewhere."""
+    from jarvis.agentic_ide import fanout as ide_fanout
+
+    called: list[str] = []
+    monkeypatch.setattr(
+        ide_fanout,
+        "cancel_spoken_deliveries",
+        lambda *, reason="": called.append(reason) or 0,
+    )
+
+    sess = _session(FakeProvider([]))
+    await sess.end(reason="desktop_fallback")
+
+    assert called == []
+
+
 # ---------------------------------------------------------------------------
 # BUG-071: in-place transport rebuild after a mid-call provider death
 # ---------------------------------------------------------------------------

@@ -63,6 +63,7 @@ from jarvis.realtime.scrub_gate import ScrubHoldGate
 from jarvis.sessions.constants import (
     HANGUP_CLIENT_STOP,
     HANGUP_DESKTOP_FALLBACK,
+    HANGUP_REALTIME_FALLBACK,
     HANGUP_VOICE_PATTERN,
     SPOKEN_KIND_PROGRESS,
     SPOKEN_KIND_REPLY,
@@ -630,6 +631,11 @@ _LATE_DELEGATE_POLL_S = 0.15
 # before process-scope retention. Real action work remains untouched after
 # this tiny teardown-only grace and is transferred below.
 _DELEGATE_END_SETTLE_S = 0.1
+# Session ends that HAND THE CALL OVER instead of finishing it: the same
+# conversation continues in the classic pipeline under the same session id, so
+# an order the user gave is still live and must not be abandoned with the
+# transport. Every other reason is the call being over.
+_HANDOVER_END_REASONS = frozenset({HANGUP_DESKTOP_FALLBACK, HANGUP_REALTIME_FALLBACK})
 # Strong references for delegated work whose realtime transport has already
 # gone away.  The task itself retains the session-local delivery ledger and
 # publishes the final result through AnnouncementRequested; a module-level
@@ -9242,6 +9248,48 @@ class RealtimeVoiceSession:
             close_clean=not (self._close_timed_out or self._failed.is_set()),
         )
 
+    def _abandon_spoken_workspace_briefs(self, reason: str) -> None:
+        """Drop every coding-agent brief still being written for this call.
+
+        The one exception to the retention rule below, and the maintainer's
+        decision of 2026-08-13: hanging up ends the ORDER for a workspace pane,
+        not just the conversation. Live that day — hangup at 11:19:43, the brief
+        landed in T5 at 11:20:03 — the user had stopped waiting twenty seconds
+        before a pane they were watching started working on something they no
+        longer expected, and a second announcement about it was spoken into an
+        idle room.
+
+        Safe precisely for THIS kind of work and no other: the PTY write is the
+        last step of a fan-out, so an abandoned brief leaves no text in the
+        input box, no receipt and no half-run agent — unlike a mail that was
+        already sent or a mission that already spawned, which is why everything
+        else is still transferred to process scope instead.
+
+        Nothing is spoken about it: ``_run_delegate`` re-raises the
+        cancellation, so the turn publishes no result at all. The abandoned
+        panes are named in the log by the fan-out itself.
+        """
+        try:
+            from jarvis.agentic_ide.fanout import cancel_spoken_deliveries
+
+            stopped = cancel_spoken_deliveries(
+                reason=f"the call ended ({reason or 'unknown'})"
+            )
+        except Exception:  # noqa: BLE001 - optional surface, never break teardown
+            log.debug(
+                "realtime[%s] could not abandon workspace briefs",
+                self.session_id,
+                exc_info=True,
+            )
+            return
+        if stopped:
+            log.info(
+                "realtime[%s] hangup abandoned %d coding-agent brief(s) that "
+                "were still being written",
+                self.session_id,
+                stopped,
+            )
+
     async def end(self, *, reason: str = "") -> None:
         if self._ended:
             return
@@ -9262,6 +9310,8 @@ class RealtimeVoiceSession:
         if self._end_call_timer is not None and not self._end_call_timer.done():
             self._end_call_timer.cancel()
         self._end_call_timer = None
+        if reason not in _HANDOVER_END_REASONS:
+            self._abandon_spoken_workspace_briefs(reason)
         if self._delegate_tasks:
             await asyncio.wait(
                 tuple(self._delegate_tasks),

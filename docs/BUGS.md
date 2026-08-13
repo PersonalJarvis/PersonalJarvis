@@ -9319,3 +9319,104 @@ from a command. Guards accumulated along one path eventually cover the case
 they were each built for and, between them, the case nobody wrote a guard for.
 The fix is not a fourth heuristic but an explicit ordering of the ones already
 there, cheapest and most certain first.
+
+## BUG-136: a spoken brief for a pane outlives the call that ordered it — the confirmation is spoken before the prompt exists, and hanging up does not stop it (HIGH, FIXED 2026-08-13)
+
+**Symptoms (maintainer report).** "The terminals are prompted before they
+actually are prompted." Jarvis says the pane has been prompted, nothing in the
+app indicates work is running — no thinking state, no status line — so it reads
+as a failure, and roughly twenty seconds later the pane really is prompted.
+Second half of the same report: hanging up does not end it. The order keeps
+running in the background and types into the pane after the call is over.
+
+**Forensics (live log, 2026-08-13 11:19-11:21).** One spoken order to T5
+produced four deliveries and three contradictory spoken accounts:
+
+| time | what happened |
+| --- | --- |
+| 11:19:33 | turn 1 dispatched; the composer's writer (`claude-cli`) starts |
+| 11:19:42 | a repeat turn is answered with the honest progress line |
+| 11:19:43 | **user hangs up** (hotkey); two delegates "retained for exactly-once delivery" |
+| 11:20:03 | T5 is typed into — 20 s after the hangup, inside the NEXT call |
+| 11:20:10 | T5 is typed into again (turn 2's own composition) |
+| 11:20:12 | "I have prompted T5 to do a deep dive …" — **2.0 s after dispatch** |
+| 11:20:17 / 11:20:21 | the same sentence announced twice more, the last one after the second hangup |
+| 11:20:26 | that order's fan-out finally reports `could not send to T5` → "I could not reach T5, so nothing is running." |
+
+**Root.** Three separate causes, one shape: **the delivery outlives the turn
+that ordered it, and nothing downstream knows.**
+
+1. **Structural.** Composing a brief is 16-30 s by deliberate design (quality
+   over latency, maintainer decision 2026-07-25; `COMPOSE_TIMEOUT_S` is 90 s,
+   `HEDGE_AFTER_S` 30 s), while a delegated voice turn is force-answered after
+   20 s (`tool_use_loop` deadline). A spoken pane order therefore CANNOT finish
+   inside its own turn: the verdict always arrives as an out-of-band
+   announcement, which can land in a later call, after a hangup, or out of order
+   against a second delivery of the same order.
+2. **The claim.** On a turn where no delivery was dispatched at all (a VAD
+   fragment — "when you speak with him you can't"), the router brain narrated
+   the PENDING order as finished. Every workspace fact in front of it said a
+   prompt had been sent to that pane (`prompts_sent`, `last prompt sent: "…"`)
+   and nothing said the current brief was still being written. The prompt rule
+   forbidding the claim was already there and was ignored — prompt compliance is
+   not a correctness boundary (BUG-047 class rule).
+3. **Invisibility.** Both signals that would have shown the work existed —
+   the composer's `STAGE_*` beats (`AgenticIdeComposeProgress`) and
+   `AgenticIdePromptSent` — were published ONLY by the REST route behind the
+   typed prompt bar. The spoken path passed no sink and published no delivery
+   event, so a voice-driven brief was invisible in every window until the agent
+   echoed it back. The frontend has rendered both for weeks
+   (`useWebSocket.ts`, `AgenticGrid.tsx`).
+4. **Hangup.** `fanout.deliver` deliberately detached on caller cancellation and
+   `RealtimeVoiceSession.end` transfers unfinished delegates to process scope,
+   both fixes for the opposite failure (2026-08-06: a hangup mid-composition
+   typed nothing while the user believed it had). Together they made a hangup a
+   no-op for an order already in flight.
+
+**Fix.**
+
+- `jarvis/agentic_ide/fanout.py`: `deliver(..., on_progress=, on_delivered=,
+  cancel_on_hangup=)`. `cancel_spoken_deliveries()` aborts every spoken fan-out
+  still being written; the detach stays the rule for REST/CLI callers, where a
+  lost client is a lost READER, not a withdrawn order. `in_flight_briefs()`
+  exposes the per-pane ledger.
+- `jarvis/realtime/session.py`: `_abandon_spoken_workspace_briefs()` runs in
+  `end()` for every reason except the two handovers (`desktop_fallback`,
+  `realtime_fallback`, where the same call continues in the pipeline).
+  `_run_delegate` re-raises the cancellation, so an abandoned brief speaks
+  nothing at all. `jarvis/speech/pipeline.py` does the same at the one
+  engine-agnostic session end, for the classic engine.
+- `jarvis/brain/manager.py`: `_agentic_ide_delivery_signals()` publishes the
+  composer's beats and `AgenticIdePromptSent` from the spoken path — the same
+  events, so no client changes.
+- `jarvis/agentic_ide/context.py`: a pane with a brief in flight is stated as
+  `A BRIEF IS STILL BEING WRITTEN … nothing has reached T5 yet`, with the rule
+  that the counted prompts are OLD ones.
+
+Safe to abandon precisely for THIS kind of work: the PTY write is the last step
+of a fan-out, so an abandoned brief leaves no text in the input box, no receipt
+and no started agent — unlike a sent mail or a spawned mission, which is why
+everything else is still retained.
+
+**Guards:** `tests/unit/agentic_ide/test_fanout.py`
+(`test_a_hangup_abandons_a_spoken_brief`,
+`test_a_spoken_delivery_narrates_and_reports_its_arrival`,
+`test_an_injected_composer_needs_no_progress_keyword`, and the renamed
+`test_a_cancelled_reader_still_briefs_the_pane` which pins the REST contract),
+`tests/unit/realtime/test_session.py`
+(`test_hangup_abandons_a_coding_brief_that_is_still_being_written`,
+`test_a_handover_keeps_the_coding_brief_alive`, alongside the unchanged
+`test_session_end_names_the_delegated_request_it_retains`), and
+`tests/unit/agentic_ide/test_context.py`
+(`test_a_brief_being_written_is_stated_as_not_arrived`).
+
+**Lesson.** A quality decision that makes one step slower than the turn that
+runs it changes the honesty contract of everything downstream, and that
+consequence is invisible at the site of the decision. Two survival rules were
+added for the same 20-30 s window from opposite directions — "finish the brief
+after the caller dies" and "retain the delegate after the socket closes" — and
+each was right about the incident it fixed. What neither could know is who the
+reader is: a dropped HTTP client has lost the answer, while a person who hangs
+up has withdrawn the request. The same cancellation means different things to
+different callers, so survival has to be the CALLER's declaration, never the
+work's default.

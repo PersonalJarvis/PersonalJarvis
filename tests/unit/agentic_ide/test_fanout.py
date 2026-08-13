@@ -254,14 +254,19 @@ async def _settle_detached() -> None:
         await asyncio.wait(pending, timeout=5.0)
 
 
-async def test_a_hangup_mid_compose_still_briefs_the_pane() -> None:
-    """Cancelling the CALLER detaches the delivery instead of killing it.
+async def test_a_cancelled_reader_still_briefs_the_pane() -> None:
+    """Cancelling a REST/CLI caller detaches the delivery instead of killing it.
 
     The live 2026-08-06 failure: "prompt terminal T1 …" reached the composer,
-    the composer's writer needed 15-20 s, the user hung up at 13 s, and the
-    cancellation killed the delivery mid-compose — nothing was ever typed while
-    the user believed T1 was working. Hanging up ends the conversation, not the
-    order: the brief must still land, and its receipt must still be written.
+    the composer's writer needed 15-20 s, the caller was cancelled at 13 s, and
+    that killed the delivery mid-compose — nothing was ever typed while the user
+    believed T1 was working. A client that goes away has lost the ANSWER, not
+    withdrawn the order: the brief must still land, and its receipt must still
+    be written.
+
+    The SPOKEN path is the deliberate exception (``cancel_on_hangup``) — see
+    ``test_a_hangup_abandons_a_spoken_brief``: there the caller IS the person who
+    gave the order.
     """
     session = _session("Iris")
     attachment = SimpleNamespace(name="layout.png")
@@ -388,6 +393,121 @@ async def test_cancellation_during_commit_still_consumes_a_sent_batch() -> None:
 
     assert term.pending_prompt_attachment_batches == []
     assert term.pending_prompt_attachment_reservations == set()
+
+
+async def test_a_hangup_abandons_a_spoken_brief() -> None:
+    """Hanging up ends the ORDER for a pane, not just the conversation.
+
+    Maintainer decision 2026-08-13, from the session that produced it: the user
+    hung up at 11:19:43 and T5 was typed into at 11:20:03 — twenty seconds after
+    they had stopped waiting, on a screen they were watching, followed by a
+    verdict spoken into an empty room. Composition is the whole 20-30 s window,
+    and the PTY write is its LAST step, so abandoning it leaves the pane exactly
+    as it was: no text, no receipt, nothing to discover later.
+    """
+    session = _session("Iris")
+    term = session.terminals[0]
+    attachment = SimpleNamespace(name="layout.png")
+    batch = PendingPromptAttachmentBatch("batch-a", (attachment,), ("layout.png",))
+    term.pending_prompt_attachment_batches.append(batch)
+    composing = asyncio.Event()
+    sent: dict[str, str] = {}
+
+    async def compose(_utterance: str, **_kwargs) -> ComposedPrompt:
+        composing.set()
+        await asyncio.Event().wait()  # the writer is still thinking
+        return ComposedPrompt(text="unreachable")
+
+    async def send(name: str, text: str) -> SimpleNamespace:
+        sent[name] = text
+        return SimpleNamespace(submitted=True)
+
+    task = asyncio.create_task(
+        fanout.deliver(
+            session=session,
+            terminals=["Iris"],
+            utterance="fix the layout",
+            include_pending_attachments=True,
+            compose=compose,
+            send=send,
+            cancel_on_hangup=True,
+        )
+    )
+    await composing.wait()
+
+    assert fanout.cancel_spoken_deliveries(reason="the call ended (hotkey)") == 1
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # Nothing typed, no brief left running, and the staged drop stays claimable
+    # for the next spoken prompt rather than being consumed by a dead order.
+    assert sent == {}
+    assert [w for w in fanout._SPOKEN_DELIVERIES if not w.done()] == []
+    assert term.pending_prompt_attachment_batches == [batch]
+    assert term.pending_prompt_attachment_reservations == set()
+    # Idempotent: teardown may run through both the realtime session and the
+    # pipeline for the same call.
+    assert fanout.cancel_spoken_deliveries() == 0
+
+
+async def test_a_spoken_delivery_narrates_and_reports_its_arrival() -> None:
+    """The spoken path gets the same two UI signals the typed prompt bar has.
+
+    Until 2026-08-13 both were wired to the REST route only, so speaking to a
+    pane left the app looking untouched for the 10-30 s a brief takes to write —
+    "the bar didn't indicate any thinking, so you think it didn't work".
+    """
+    beats: list[str] = []
+    arrived: list[str] = []
+
+    async def compose(utterance: str, **kwargs) -> ComposedPrompt:
+        kwargs["on_progress"](
+            SimpleNamespace(
+                stage="drafting", message="writing for Iris", terminal="Iris", kind=""
+            )
+        )
+        return ComposedPrompt(text=utterance)
+
+    async def send(name: str, _text: str) -> SimpleNamespace:
+        return SimpleNamespace(name=name, submitted=True)
+
+    async def on_delivered(term) -> None:  # noqa: ANN001 - the fake Terminal
+        arrived.append(term.name)
+
+    result = await fanout.deliver(
+        session=_session("Iris"),
+        terminals=["Iris"],
+        utterance="analyse the run",
+        compose=compose,
+        send=send,
+        on_progress=lambda notice: beats.append(notice.stage),
+        on_delivered=on_delivered,
+    )
+
+    assert beats == ["drafting"]
+    assert arrived == ["Iris"]
+    assert result.all_delivered is True
+
+
+async def test_an_injected_composer_needs_no_progress_keyword() -> None:
+    """No sink, no keyword: the composer's own stdout notice stays the default."""
+    seen: list[str] = []
+
+    async def compose(utterance: str, **kwargs) -> ComposedPrompt:
+        seen.append(",".join(sorted(kwargs)))
+        return ComposedPrompt(text=utterance)
+
+    async def send(name: str, _text: str) -> SimpleNamespace:
+        return SimpleNamespace(name=name, submitted=True)
+
+    await fanout.deliver(
+        session=_session("Iris"),
+        terminals=["Iris"],
+        utterance="analyse the run",
+        compose=compose,
+        send=send,
+    )
+    assert "on_progress" not in seen[0]
 
 
 async def test_prompts_are_composed_concurrently() -> None:

@@ -6431,6 +6431,72 @@ class BrainManager:
             log.debug("Agentic IDE: conversation context unavailable", exc_info=True)
             return ()
 
+    def _agentic_ide_delivery_signals(
+        self, session: Any
+    ) -> tuple[Callable[[Any], None] | None, Callable[[Any], Awaitable[None]] | None]:
+        """Put a SPOKEN delivery on screen: the writing beats, then the arrival.
+
+        Writing a brief is 10-30 s of quality-tier model work, and nothing on
+        screen said so when the order arrived by voice. Both signals existed
+        already — the composer's ``STAGE_*`` beats and ``AgenticIdePromptSent``
+        — but only the typed prompt bar's REST route published them, so a spoken
+        "T5, look at the transcript" left the whole app looking untouched until
+        the agent itself echoed the text half a minute later. Reported
+        2026-08-13: the bar showed no thinking state, "so you think it did not
+        work" — and then the pane was prompted 20 s later.
+
+        Deliberately the SAME events, not a spoken line: the clients already
+        render them (the pane's live status line, the delivery toast), and a
+        sentence spoken before the work is done is a claim a downstream model
+        re-tenses into "I have prompted T5" — the failure this whole path is
+        built to avoid.
+
+        Returns ``(None, None)`` without a bus. A publish that fails costs the
+        line, never the brief.
+        """
+        bus = self._bus
+        if bus is None:
+            return None, None
+        from jarvis.agentic_ide.session import prompt_sent_event
+        from jarvis.core.events import AgenticIdeComposeProgress
+
+        session_id = str(getattr(session, "id", "") or "")
+
+        def _beat(notice: Any) -> None:
+            from jarvis.agentic_ide.prompt_composer import print_notice
+
+            # Keep the stdout/log line a headless install watches, exactly as
+            # the REST route does — the socket beat is an addition to it.
+            print_notice(notice)
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:  # pragma: no cover - no loop, no clients
+                return
+            task = loop.create_task(
+                bus.publish(
+                    AgenticIdeComposeProgress(
+                        session_id=session_id,
+                        terminal=str(getattr(notice, "terminal", "") or ""),
+                        stage=str(getattr(notice, "stage", "") or ""),
+                        message=str(getattr(notice, "message", "") or ""),
+                        kind=str(getattr(notice, "kind", "") or ""),
+                        source_layer="brain.agentic_ide_prompt",
+                    )
+                )
+            )
+            # Fire-and-forget: a beat that cannot be delivered must never cost
+            # the brief, nor a warning about an unobserved task at teardown.
+            task.add_done_callback(lambda done: done.cancelled() or done.exception())
+
+        async def _delivered(term: Any) -> None:
+            await bus.publish(
+                prompt_sent_event(
+                    session, term, source_layer="brain.agentic_ide_prompt"
+                )
+            )
+
+        return _beat, _delivered
+
     async def _deliver_agentic_ide_prompt(
         self,
         *,
@@ -6467,6 +6533,7 @@ class BrainManager:
         # A delivery that did not happen is a fact worth saying out loud, so
         # every exit below carries one; ``deliver`` itself never raises for a
         # single pane, so reaching these means the whole fan-out fell over.
+        on_progress, on_delivered = self._agentic_ide_delivery_signals(session)
         try:
             result = await ide_fanout.deliver(
                 session=session,
@@ -6476,6 +6543,10 @@ class BrainManager:
                 assignments=assignments,
                 conversation=self._agentic_ide_conversation(utterance),
                 include_pending_attachments=consume_pending_voice_attachments,
+                on_progress=on_progress,
+                on_delivered=on_delivered,
+                # Hanging up ends the order (maintainer decision 2026-08-13).
+                cancel_on_hangup=True,
             )
         except Exception:  # noqa: BLE001 - never crash the turn over a pane
             log.warning("Agentic IDE fast-path failed", exc_info=True)

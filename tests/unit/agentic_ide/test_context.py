@@ -98,6 +98,62 @@ async def test_block_is_capped(
     assert len(focus_context_block(max_chars=800)) <= 800
 
 
+async def test_a_brief_being_written_is_stated_as_not_arrived(
+    wired: tuple[Registry, FakePtyManager], tmp_path: Path
+) -> None:
+    """The one workspace fact that lived nowhere: a brief is ON THE WAY.
+
+    Live 2026-08-13 11:20:12 — "I have prompted T5 to do a deep dive …" was
+    spoken 2 s after dispatch, 14 s before that brief's writer had even started,
+    for a delivery that then failed. Everything the model could see said a
+    prompt HAD been sent to that pane (the receipt count, the last prompt text);
+    nothing said the current one was still being written.
+    """
+    import asyncio
+
+    from jarvis.agentic_ide import fanout
+
+    registry, _ = wired
+    await registry.start(str(tmp_path), [{"agent": "claude"}])
+    registry.set_focus_mode(True)
+    # A pane is only written into once it is live with a PTY.
+    await registry.attach("T1", 80, 24, _noop, _noop_exit)
+    session = registry.session
+    assert session is not None
+
+    composing = asyncio.Event()
+
+    async def compose(_utterance: str, **_kwargs):
+        composing.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(
+        fanout.deliver(
+            session=session,
+            terminals=["T1"],
+            utterance="analyse the run",
+            compose=compose,
+            send=lambda _n, _t: asyncio.sleep(0),
+            cancel_on_hangup=True,
+        )
+    )
+    # Bounded: a pane that never reaches the composer must fail the test, not
+    # hang the suite.
+    await asyncio.wait_for(composing.wait(), timeout=5.0)
+
+    block = focus_context_block()
+    assert "STILL BEING WRITTEN" in block
+    assert "nothing has reached T1 yet" in block
+
+    fanout.cancel_spoken_deliveries()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    # …and the pane's marker disappears again once no brief is in flight, so a
+    # later turn is not told it is waiting for something that was abandoned.
+    # (The rule in the header stays, of course — it is not a pane line.)
+    assert "nothing has reached T1 yet" not in focus_context_block()
+
+
 async def test_turning_focus_off_removes_the_block_again(
     wired: tuple[Registry, FakePtyManager], tmp_path: Path
 ) -> None:
