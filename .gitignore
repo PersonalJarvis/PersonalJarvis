@@ -399,3 +399,21 @@ wiki/obsidian-vault/90-attachments/*
 # ============================================================
 /marketing/
 docs/reports/*marketing-readiness*
+
+# ============================================================
+# Privacy-gate reference manifests (2026-08-13)
+# ------------------------------------------------------------
+# pii-scrub.tsv and secret-allowlist.tsv hold the maintainer's real name, both
+# e-mail addresses, the GitHub login and personal home paths as scrub *patterns*.
+# The file that defines what must never be public was itself the most complete
+# public inventory of that data. distribution-denylist.txt has withheld
+# `scripts/ci/privacy_gate/**` since the build-a-snapshot era, but that era ended
+# when releasing became a plain `git push` (CLAUDE.md §2), so nothing filtered
+# them any more and they stayed live on the public default branch.
+#
+# They remain on disk: the local pre-push docs scan and strip_and_scan.py still
+# read them. docs_privacy_scan.py already falls back to a generic manifest when
+# the file is absent, so CI stays green for every clone and fork.
+# ============================================================
+scripts/ci/privacy_gate/references/pii-scrub.tsv
+scripts/ci/privacy_gate/references/secret-allowlist.tsv
