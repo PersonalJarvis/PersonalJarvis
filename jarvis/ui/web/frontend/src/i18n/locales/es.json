@@ -4398,7 +4398,8 @@
     },
     "demo": {
       "title": "Casa de demostración (simulada)",
-      "body": "Añade un pequeño piso simulado con luces, calefacción, persianas y una cerradura, para que la sección se pueda usar antes de conectar hardware. Nada de esto es físico."
+      "body": "Añade un pequeño piso simulado con luces, calefacción, persianas y una cerradura, para que la sección se pueda usar antes de conectar hardware. Nada de esto es físico.",
+      "hint": "Prueba la sección sin hardware. Nada de esto es físico."
     },
     "ecosystems": {
       "title": "Todos los ecosistemas",
@@ -4437,6 +4438,33 @@
       "script": "Scripts",
       "button": "Botones",
       "other": "Otros"
+    },
+    "eco": {
+      "recommended": "Recomendado",
+      "hub_pitch": "Una conexión que alcanza unas 2000 marcas: Hue, IKEA, Google Nest, SmartThings, Apple HomeKit, Zigbee, Sonos y el resto. Para casi cualquier casa, esta es toda la respuesta.",
+      "manage": "Gestionar conexión",
+      "popular_title": "Marcas habituales",
+      "popular_subtitle": "Toca cualquiera para ver qué cubre y qué hay que hacer exactamente. La mayoría se alcanzan a través de Home Assistant.",
+      "show_technical": "Mostrar protocolos y equipo técnico ({count})",
+      "hide_technical": "Ocultar protocolos y equipo técnico",
+      "steps": "Qué hacer",
+      "docs": "Instrucciones oficiales",
+      "needs_hub": "Esta se alcanza a través de Home Assistant, que aún no está conectado. Conéctalo primero y estos dispositivos aparecerán solos.",
+      "connect_hub_first": "Conectar Home Assistant",
+      "hub_ready": "Home Assistant está conectado. Configúralo allí y los dispositivos aparecerán aquí en la siguiente actualización.",
+      "connect_here": "Conectar ahora",
+      "field_address": "Dirección de tu Home Assistant",
+      "field_token": "Token de acceso de larga duración",
+      "connected_ok": "Conectado. Tus dispositivos están en la pestaña Dispositivos."
+    },
+    "conn": {
+      "hub": "A través de un hub en tu red",
+      "local_button_pairing": "Emparejado pulsando un botón",
+      "local_http": "Local, en tu propia red",
+      "local_mqtt": "Broker MQTT local",
+      "cloud_oauth": "Iniciar sesión con el fabricante",
+      "cloud_token": "Token de API pegado",
+      "none": "Sin entrada para otras apps"
     }
   }
 }

@@ -4398,7 +4398,8 @@
     },
     "demo": {
       "title": "Demo home (simulated)",
-      "body": "Adds a small simulated flat with lights, heating, blinds and a lock, so the section is usable before any hardware is connected. Nothing here is physical."
+      "body": "Adds a small simulated flat with lights, heating, blinds and a lock, so the section is usable before any hardware is connected. Nothing here is physical.",
+      "hint": "Try the section without any hardware. Nothing here is physical."
     },
     "ecosystems": {
       "title": "Every ecosystem",
@@ -4437,6 +4438,33 @@
       "script": "Scripts",
       "button": "Buttons",
       "other": "Other"
+    },
+    "eco": {
+      "recommended": "Recommended",
+      "hub_pitch": "One connection that reaches around 2000 brands — Hue, IKEA, Google Nest, SmartThings, Apple HomeKit, Zigbee, Sonos and the rest. For almost every house this is the whole answer.",
+      "manage": "Manage connection",
+      "popular_title": "Popular brands",
+      "popular_subtitle": "Tap any of them to see what it covers and exactly what to do. Most are reached through Home Assistant above.",
+      "show_technical": "Show protocols and enthusiast kit ({count})",
+      "hide_technical": "Hide protocols and enthusiast kit",
+      "steps": "What to do",
+      "docs": "Official instructions",
+      "needs_hub": "This one is reached through Home Assistant, which is not connected yet. Connect that first and these devices appear here on their own.",
+      "connect_hub_first": "Connect Home Assistant",
+      "hub_ready": "Home Assistant is connected. Set this up there and the devices appear here on the next refresh.",
+      "connect_here": "Connect now",
+      "field_address": "Your Home Assistant address",
+      "field_token": "Long-lived access token",
+      "connected_ok": "Connected. Your devices appear on the Devices tab."
+    },
+    "conn": {
+      "hub": "Via a hub on your network",
+      "local_button_pairing": "Paired by pressing a button",
+      "local_http": "Local, on your own network",
+      "local_mqtt": "Local MQTT broker",
+      "cloud_oauth": "Sign in with the vendor",
+      "cloud_token": "Pasted API token",
+      "none": "No way in for other apps"
     }
   }
 }

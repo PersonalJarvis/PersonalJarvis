@@ -4398,7 +4398,8 @@
     },
     "demo": {
       "title": "Demo-Zuhause (simuliert)",
-      "body": "Fügt eine kleine simulierte Wohnung mit Licht, Heizung, Rollläden und Türschloss hinzu, damit die Sektion schon vor der ersten Hardware bedienbar ist. Nichts davon ist echt."
+      "body": "Fügt eine kleine simulierte Wohnung mit Licht, Heizung, Rollläden und Türschloss hinzu, damit die Sektion schon vor der ersten Hardware bedienbar ist. Nichts davon ist echt.",
+      "hint": "Die Sektion ohne Hardware ausprobieren. Nichts davon ist physisch."
     },
     "ecosystems": {
       "title": "Alle Ökosysteme",
@@ -4437,6 +4438,33 @@
       "script": "Skripte",
       "button": "Taster",
       "other": "Sonstiges"
+    },
+    "eco": {
+      "recommended": "Empfohlen",
+      "hub_pitch": "Eine Verbindung, die rund 2000 Marken erreicht — Hue, IKEA, Google Nest, SmartThings, Apple HomeKit, Zigbee, Sonos und den Rest. Für fast jedes Zuhause ist das die ganze Antwort.",
+      "manage": "Verbindung verwalten",
+      "popular_title": "Gängige Marken",
+      "popular_subtitle": "Tippe eine an, um zu sehen, was sie abdeckt und was genau zu tun ist. Die meisten laufen über Home Assistant oben.",
+      "show_technical": "Protokolle und Bastel-Technik anzeigen ({count})",
+      "hide_technical": "Protokolle und Bastel-Technik ausblenden",
+      "steps": "Was zu tun ist",
+      "docs": "Offizielle Anleitung",
+      "needs_hub": "Das läuft über Home Assistant, und der ist noch nicht verbunden. Verbinde ihn zuerst — die Geräte tauchen dann von allein hier auf.",
+      "connect_hub_first": "Home Assistant verbinden",
+      "hub_ready": "Home Assistant ist verbunden. Richte das dort ein, dann erscheinen die Geräte hier beim nächsten Aktualisieren.",
+      "connect_here": "Jetzt verbinden",
+      "field_address": "Adresse deines Home Assistant",
+      "field_token": "Langlebiger Zugriffs-Token",
+      "connected_ok": "Verbunden. Deine Geräte stehen im Reiter Geräte."
+    },
+    "conn": {
+      "hub": "Über eine Zentrale im Netzwerk",
+      "local_button_pairing": "Kopplung per Knopfdruck",
+      "local_http": "Lokal, im eigenen Netzwerk",
+      "local_mqtt": "Lokaler MQTT-Broker",
+      "cloud_oauth": "Anmeldung beim Hersteller",
+      "cloud_token": "Eingefügter API-Token",
+      "none": "Kein Zugang für andere Apps"
     }
   }
 }

@@ -113,6 +113,37 @@ export interface Ecosystem {
   longevity: string;
   note: string;
   covers: string;
+  /** Curation rank: "hub" is the one universal route, then popular, then technical. */
+  tier: string;
+  /** Brand colour as hex WITHOUT "#", for the logo tile. */
+  logo_color: string;
+  /** What the user actually does, in order. Empty when nothing can be done. */
+  setup_steps: string[];
+  docs_url: string | null;
+}
+
+/**
+ * Hand a Home Assistant token to the marketplace, from inside this section.
+ *
+ * Deliberately posts to the marketplace endpoint rather than growing a second
+ * credential store: Home Assistant is ONE connection, and a token pasted here
+ * has to be the same token the plugin surface sees. What this section owns is
+ * the moment of asking — sending someone to a different screen to type it was
+ * the "you cannot connect anything" complaint.
+ */
+export async function connectHomeAssistant(
+  instanceUrl: string,
+  token: string,
+): Promise<void> {
+  const res = await fetch("/api/marketplace/plugins/home_assistant/connect/pat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, instance_url: instanceUrl }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
 }
 
 interface Overview extends RoomLayoutPayload {

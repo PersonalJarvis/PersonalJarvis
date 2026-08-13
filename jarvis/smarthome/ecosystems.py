@@ -35,6 +35,29 @@ class Reachability(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+class Tier(StrEnum):
+    """How prominently an entry is shown — a CURATION decision, not a capability.
+
+    Twenty equal cards in one grid is not an answer to "does this work with my
+    stuff?", it is a wall the reader has to search. So the list is ranked by how
+    likely someone is to recognise the name:
+
+    * ``HUB`` — the one that reaches nearly everything. Exactly one entry, shown
+      on its own as the recommended route, because for most houses it IS the
+      answer and burying it among nineteen peers hides that.
+    * ``POPULAR`` — the household names people actually own or shop for.
+      Shown by default.
+    * ``TECHNICAL`` — protocols and enthusiast kit (Matter, Thread, KNX, MQTT).
+      Real, supported, and hidden behind "show everything" — someone who runs a
+      Zigbee coordinator will look for it; someone who bought a smart plug at
+      the supermarket should not have to scroll past it.
+    """
+
+    HUB = "hub"
+    POPULAR = "popular"
+    TECHNICAL = "technical"
+
+
 class ConnectionKind(StrEnum):
     """HOW the credential is obtained — this is what decides the longevity."""
 
@@ -71,6 +94,19 @@ class Ecosystem:
     note: str
     #: Roughly what shows up once connected. Shown as a subtitle on the card.
     covers: str
+    tier: Tier = Tier.TECHNICAL
+    #: The brand's own colour, hex without "#". Drives the logo tile exactly as
+    #: the marketplace does it: a white glyph on the brand colour reads as a
+    #: product decision, where one uniform grey across twenty cards reads as a
+    #: placeholder nobody finished.
+    logo_color: str = "3F3F46"
+    #: What the user actually DOES, step by step. Shown when a card is opened.
+    #: Empty for an ecosystem no third party can reach — there is no procedure
+    #: to give, and inventing one would send people hunting for a menu that
+    #: does not exist.
+    setup_steps: tuple[str, ...] = ()
+    #: The vendor's own documentation for that procedure.
+    docs_url: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -82,6 +118,10 @@ class Ecosystem:
             "longevity": self.longevity,
             "note": self.note,
             "covers": self.covers,
+            "tier": str(self.tier),
+            "logo_color": self.logo_color,
+            "setup_steps": list(self.setup_steps),
+            "docs_url": self.docs_url,
         }
 
 
@@ -106,6 +146,22 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "Around 2000 integrations — Hue, Zigbee, Z-Wave, Matter, Thread, "
             "KNX, Shelly, Tuya, Nest, HomeKit, Sonos and the rest"
         ),
+        tier=Tier.HUB,
+        logo_color="18BCF2",
+        setup_steps=(
+            "Open Home Assistant in your browser and sign in.",
+            "Click your name at the bottom left, then the Security tab.",
+            (
+                "Scroll to Long-lived access tokens and create one. It is shown only once, so "
+                "copy it "
+                "straight away."
+            ),
+            (
+                "Paste it here together with your Home Assistant address (for example "
+                "http://192.168.1.20:8123)."
+            ),
+        ),
+        docs_url="https://www.home-assistant.io/docs/authentication/",
     ),
     Ecosystem(
         id="matter",
@@ -121,6 +177,18 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "through it rather than competing for the same slot."
         ),
         covers="Any Matter-certified light, plug, sensor, lock or thermostat",
+        tier=Tier.TECHNICAL,
+        logo_color="000000",
+        setup_steps=(
+            "Connect Home Assistant first — it holds the Matter fabric.",
+            "In Home Assistant add the Matter integration.",
+            (
+                "Scan the device's pairing code. A device may belong to one controller at a time, "
+                "so "
+                "pair it here rather than in a phone app."
+            ),
+        ),
+        docs_url="https://www.home-assistant.io/integrations/matter/",
     ),
     Ecosystem(
         id="thread",
@@ -135,6 +203,17 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "a Home Assistant SkyConnect). Control still runs over Matter."
         ),
         covers="Battery-powered Matter devices on a Thread mesh",
+        tier=Tier.TECHNICAL,
+        logo_color="000000",
+        setup_steps=(
+            (
+                "You need a Thread border router in the house — a HomePod, an Apple TV, a Nest "
+                "Hub or "
+                "a Home Assistant SkyConnect."
+            ),
+            "Pair the device over Matter; Thread is only the radio underneath.",
+        ),
+        docs_url="https://www.home-assistant.io/integrations/thread/",
     ),
     Ecosystem(
         id="philips_hue",
@@ -149,6 +228,14 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "expires and no Philips account is involved."
         ),
         covers="Hue lights, plugs, motion sensors, dimmer switches",
+        tier=Tier.POPULAR,
+        logo_color="0065D3",
+        setup_steps=(
+            "Make sure the Hue Bridge and this computer are on the same network.",
+            "Press the round button on top of the bridge.",
+            "Confirm here within 30 seconds — the bridge hands out a key that never expires.",
+        ),
+        docs_url="https://developers.meethue.com/develop/get-started-2/",
     ),
     Ecosystem(
         id="ikea_dirigera",
@@ -163,6 +250,15 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "is through Home Assistant's integration."
         ),
         covers="TRÅDFRI and DIRIGERA lights, plugs, blinds, air purifiers",
+        tier=Tier.POPULAR,
+        logo_color="0058A3",
+        setup_steps=(
+            "Connect Home Assistant first — IKEA publishes no stable public API of its own.",
+            "In Home Assistant add the DIRIGERA integration.",
+            "Press the action button on the underside of the DIRIGERA hub when asked.",
+            "Your TRADFRI lights, plugs and blinds then appear here.",
+        ),
+        docs_url="https://www.home-assistant.io/integrations/dirigera/",
     ),
     Ecosystem(
         id="shelly",
@@ -177,6 +273,14 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "Assistant; a direct connector is a small step from there."
         ),
         covers="Shelly relays, dimmers, roller shutters, energy meters",
+        tier=Tier.POPULAR,
+        logo_color="4495D1",
+        setup_steps=(
+            "Connect Home Assistant first.",
+            "Shelly relays are discovered automatically on your network — no cloud account at all.",
+            "Confirm them in Home Assistant and they appear here.",
+        ),
+        docs_url="https://www.home-assistant.io/integrations/shelly/",
     ),
     Ecosystem(
         id="zigbee2mqtt",
@@ -191,6 +295,14 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "the credential."
         ),
         covers="Any Zigbee device, regardless of brand, via a USB coordinator",
+        tier=Tier.TECHNICAL,
+        logo_color="660066",
+        setup_steps=(
+            "Run Zigbee2MQTT with a USB Zigbee coordinator plugged into the machine.",
+            "Point it at a local MQTT broker with a username and password you choose.",
+            "Connect Home Assistant to the same broker; the devices appear here.",
+        ),
+        docs_url="https://www.zigbee2mqtt.io/guide/getting-started/",
     ),
     Ecosystem(
         id="knx",
@@ -204,6 +316,14 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "in the fuse box; there is no account and no cloud."
         ),
         covers="Wired lighting, blinds, heating and ventilation in a fitted house",
+        tier=Tier.TECHNICAL,
+        logo_color="00A2E1",
+        setup_steps=(
+            "You need a KNX IP gateway in the fuse box.",
+            "Connect Home Assistant and add the KNX integration with the gateway's address.",
+            "Import your ETS project file so the addresses have names.",
+        ),
+        docs_url="https://www.home-assistant.io/integrations/knx/",
     ),
     Ecosystem(
         id="google_nest",
@@ -220,6 +340,18 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "dollars — that fee is Google's, not ours."
         ),
         covers="Nest thermostats, cameras, doorbells, locks",
+        tier=Tier.POPULAR,
+        logo_color="4285F4",
+        setup_steps=(
+            (
+                "Register once in Google's Device Access Console (a one-off 5 US dollar fee, "
+                "charged "
+                "by Google)."
+            ),
+            "Create a project and allow it to reach your Nest devices.",
+            "Sign in with the Google account your Nest devices belong to.",
+        ),
+        docs_url="https://developers.google.com/nest/device-access",
     ),
     Ecosystem(
         id="google_home",
@@ -236,6 +368,10 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "maker instead."
         ),
         covers="—",
+        tier=Tier.POPULAR,
+        logo_color="4285F4",
+        setup_steps=(),
+        docs_url="https://developers.home.google.com/apis",
     ),
     Ecosystem(
         id="samsung_smartthings",
@@ -251,6 +387,17 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "background."
         ),
         covers="SmartThings hubs, Samsung appliances and partnered brands",
+        tier=Tier.POPULAR,
+        logo_color="1428A0",
+        setup_steps=(
+            "Sign in with the Samsung account your SmartThings hub belongs to.",
+            "Approve access for Jarvis. The session renews itself in the background.",
+            (
+                "Personal access tokens issued since late 2024 expire after 24 hours, so use this "
+                "sign-in rather than a pasted token."
+            ),
+        ),
+        docs_url="https://developer.smartthings.com/docs/getting-started/overview",
     ),
     Ecosystem(
         id="tuya",
@@ -266,6 +413,21 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "wraps that, and local control is possible for many devices."
         ),
         covers="Most inexpensive WLAN plugs, bulbs and sensors sold online",
+        tier=Tier.POPULAR,
+        logo_color="FF4800",
+        setup_steps=(
+            "Connect Home Assistant first — it wraps Tuya's developer setup for you.",
+            (
+                "In Home Assistant add the Tuya integration and sign in with your Smart Life app "
+                "account."
+            ),
+            (
+                "Many Tuya devices can also be controlled locally, without the cloud, once they "
+                "are "
+                "set up."
+            ),
+        ),
+        docs_url="https://www.home-assistant.io/integrations/tuya/",
     ),
     Ecosystem(
         id="apple_home",
@@ -281,6 +443,18 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "using the same eight-digit code the iPhone uses."
         ),
         covers="HomeKit-certified accessories, paired locally",
+        tier=Tier.POPULAR,
+        logo_color="000000",
+        setup_steps=(
+            "Connect Home Assistant first — it is the part that speaks HomeKit.",
+            "In Home Assistant add the HomeKit Device integration.",
+            (
+                "Enter the eight-digit code printed on the accessory, the same one the iPhone asks "
+                "for."
+            ),
+            "The accessory then appears here like any other device.",
+        ),
+        docs_url="https://www.home-assistant.io/integrations/homekit_controller/",
     ),
     Ecosystem(
         id="amazon_alexa",
@@ -296,6 +470,10 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "publishing Jarvis as an Alexa skill later on."
         ),
         covers="—",
+        tier=Tier.POPULAR,
+        logo_color="00CAFF",
+        setup_steps=(),
+        docs_url="https://developer.amazon.com/en-US/docs/alexa/smarthome/understand-the-smart-home-skill-api.html",
     ),
     Ecosystem(
         id="sonos",
@@ -309,6 +487,14 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "cloud account, which is how Home Assistant reaches them."
         ),
         covers="Sonos speakers: playback, volume, grouping",
+        tier=Tier.POPULAR,
+        logo_color="000000",
+        setup_steps=(
+            "Connect Home Assistant first.",
+            "Sonos speakers are found automatically on your own network — no account needed.",
+            "Confirm the discovered speakers in Home Assistant and they appear here.",
+        ),
+        docs_url="https://www.home-assistant.io/integrations/sonos/",
     ),
     Ecosystem(
         id="netatmo",
@@ -322,6 +508,14 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "itself. Weather and heating are the common cases."
         ),
         covers="Weather stations, thermostats, radiator valves, cameras",
+        tier=Tier.TECHNICAL,
+        logo_color="55B0D3",
+        setup_steps=(
+            "Connect Home Assistant first.",
+            "Add the Netatmo integration and sign in with your Netatmo account.",
+            "The session renews itself, so this stays connected.",
+        ),
+        docs_url="https://www.home-assistant.io/integrations/netatmo/",
     ),
     Ecosystem(
         id="tado",
@@ -332,6 +526,14 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
         longevity="self_renewing",
         note="OAuth device flow against tado°'s cloud; the session renews itself.",
         covers="Radiator valves, room thermostats, air-conditioning control",
+        tier=Tier.TECHNICAL,
+        logo_color="5A9FD4",
+        setup_steps=(
+            "Connect Home Assistant first.",
+            "Add the tado integration and confirm the sign-in on tado's website.",
+            "The session renews itself.",
+        ),
+        docs_url="https://www.home-assistant.io/integrations/tado/",
     ),
     Ecosystem(
         id="fritzbox",
@@ -345,6 +547,14 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "with the router password — local, and nothing to renew."
         ),
         covers="FRITZ!DECT plugs, radiator valves, buttons",
+        tier=Tier.TECHNICAL,
+        logo_color="E2001A",
+        setup_steps=(
+            "Connect Home Assistant first.",
+            "Add the FRITZ!SmartHome integration with your router's address and password.",
+            "Local only — nothing to renew.",
+        ),
+        docs_url="https://www.home-assistant.io/integrations/fritzbox/",
     ),
     Ecosystem(
         id="homematic",
@@ -358,6 +568,14 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
             "on your own network and does not expire."
         ),
         covers="Radiator valves, window contacts, wall switches, alarm sensors",
+        tier=Tier.TECHNICAL,
+        logo_color="6C2C2F",
+        setup_steps=(
+            "Connect Home Assistant first.",
+            "Add the Homematic IP integration and enter the access point's SGTIN from its sticker.",
+            "Press the blue button on the access point to confirm.",
+        ),
+        docs_url="https://www.home-assistant.io/integrations/homematicip_cloud/",
     ),
     Ecosystem(
         id="wled",
@@ -368,6 +586,14 @@ ECOSYSTEMS: tuple[Ecosystem, ...] = (
         longevity="permanent",
         note="An open local JSON API with no account at all.",
         covers="DIY LED strips and effect controllers",
+        tier=Tier.TECHNICAL,
+        logo_color="FF5722",
+        setup_steps=(
+            "Connect Home Assistant first.",
+            "WLED controllers are discovered automatically on your network.",
+            "Confirm them and the strips appear here.",
+        ),
+        docs_url="https://kno.wled.ge/",
     ),
 )
 
