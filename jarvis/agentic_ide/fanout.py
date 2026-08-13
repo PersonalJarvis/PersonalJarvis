@@ -531,14 +531,16 @@ async def deliver(
         try:
             delivery = await _one(name)
         finally:
+            # Truthiness, not `is not None`: an empty list left behind by a
+            # sibling must not make pop() raise inside a finally clause.
             starts = _IN_FLIGHT.get(key)
-            if starts is not None:
+            if starts:
                 if started in starts:
                     starts.remove(started)
                 else:  # pragma: no cover - defensive, clocks are monotonic
                     starts.pop()
-                if not starts:
-                    _IN_FLIGHT.pop(key, None)
+            if not _IN_FLIGHT.get(key):
+                _IN_FLIGHT.pop(key, None)
         try:
             from .prompt_composer import announce_delivery
 
