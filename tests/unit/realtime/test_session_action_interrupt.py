@@ -153,7 +153,8 @@ async def test_c_a_redirect_cancels_the_old_order_and_keeps_the_new_one():
         )
 
     jsons = []
-    sess = await _run(_scripted_provider(script), brain, jsons)
+    provider = _scripted_provider(script)
+    sess = await _run(provider, brain, jsons)
     gate.set()
     await asyncio.sleep(0.1)
 
@@ -163,6 +164,12 @@ async def test_c_a_redirect_cancels_the_old_order_and_keeps_the_new_one():
     assert not any(
         "stopped" in line.lower() or "cancel" in line.lower()
         for line in _spoken(jsons)
+    )
+    # ...and the replacement is actually ANSWERED. This is the half of the
+    # goal the cancellation alone does not deliver: interrupting has to leave
+    # Jarvis holding the new context, not merely silent.
+    assert provider.session.response_requests >= 1, (
+        "the replacement order was cancelled into silence"
     )
     await sess.end(reason="test")
 
