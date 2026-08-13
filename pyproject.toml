@@ -751,6 +751,15 @@ reveal-key-preview = "jarvis.plugins.tool.reveal_key_preview:RevealKeyPreviewToo
 contact-lookup = "jarvis.plugins.tool.contact_lookup:ContactLookupTool"
 contact-upsert = "jarvis.plugins.tool.contact_upsert:ContactUpsertTool"
 call-contact = "jarvis.plugins.tool.call_contact:CallContactTool"
+# Browser over CDP (2026-08-13): drive a real Chrome through browser-harness —
+# the honest route into a web page, replacing Computer-Use as the DEFAULT for
+# anything that happens in a browser (computer-use stays for native desktop
+# apps and explicit screen-control requests). Unlike every other action tool
+# here it is deliberately NOT on the worker denylist: CDP needs no pointer and
+# no foreground window, so a mission worker may use it while the user keeps
+# working (docs/plans/autonomous-missions.md C6/C12). monitor-tier, escalating
+# to "ask" on purchase-shaped work.
+browser = "jarvis.plugins.tool.browser:BrowserTool"
 
 [tool.setuptools.packages.find]
 where = ["."]

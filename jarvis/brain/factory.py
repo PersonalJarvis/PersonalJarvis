@@ -187,6 +187,17 @@ ROUTER_TOOLS = frozenset({
     # directly; otherwise a connected Drive is not callable by voice/chat. Never
     # a spawn (AP-5/AP-14).
     "google_drive",
+    # Browser over CDP (2026-08-13): the default route into a web page. Driven
+    # through browser-harness, it addresses elements via the accessibility tree
+    # instead of guessing click points from a screenshot, and needs neither the
+    # pointer nor the foreground window — so the user keeps working while it
+    # runs. That last property is why it is the FIRST action tool a mission
+    # worker may use: the desktop tools below are banned from worker sets
+    # because they are the one physical pointer (AP-5/AP-14), and that reason
+    # does not apply here. Never a spawn. Router prompt states the ladder:
+    # plugin/MCP first, then this, then computer-use.
+    # See docs/plans/autonomous-missions.md C6/C12.
+    "browser",
     # Computer-Use (Wave 1, 2026-05-29): first-class, clearly-described tool to
     # drive the user's LIVE desktop (open apps, click, type, scroll, operate
     # any GUI). The router previously had no honest desktop path — spawn-worker
