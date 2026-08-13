@@ -817,8 +817,21 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         ),
         experimental=True,
     ),
-    # grok-realtime was removed 2026-07-16 (BUG-064: the xAI realtime server
-    # drops its session contract after any response cancel and goes deaf).
+    ProviderSpec(
+        id="grok-realtime",
+        label="xAI Grok Voice",
+        tier="realtime",
+        auth_mode="api_key",
+        secret_keys=("realtime_grok_api_key",),
+        dashboard_url="https://console.x.ai/",
+        signup_url="https://grok.com/",
+        credential_help=(
+            "xAI API key dedicated to Grok Voice realtime calls. It is not "
+            "reused by the Grok brain, TTS, or Jarvis-Agents. Existing shared "
+            "xAI credentials remain a compatibility fallback until a dedicated "
+            "key is saved. Billed per audio minute on your xAI account."
+        ),
+    ),
 )
 
 

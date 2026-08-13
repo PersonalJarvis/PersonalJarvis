@@ -10,6 +10,7 @@ from jarvis.brain.app_control import AUTH_PROVIDER_ALIASES, is_credential_presen
 from jarvis.core import config as cfg_mod
 from jarvis.core.config import PROVIDER_SECRET_CANDIDATES, JarvisConfig
 from jarvis.plugins.realtime.gemini_live import GeminiLiveProvider
+from jarvis.plugins.realtime.grok_realtime import GrokRealtimeProvider
 from jarvis.ui.web.provider_routes import router
 from jarvis.ui.web.provider_spec import get_spec
 
@@ -21,12 +22,16 @@ def test_gemini_live_adapter_credentials_match_canonical_family() -> None:
     assert AUTH_PROVIDER_ALIASES["gemini-live"] == "gemini-live"
 
 
-def test_grok_realtime_stays_removed() -> None:
-    """grok-realtime was removed 2026-07-16 (BUG-064 deaf-session wedge):
-    the xAI server drops its session contract after any response cancel.
-    Neither the credential registry nor the auth alias map may resurrect it."""
-    assert "grok-realtime" not in PROVIDER_SECRET_CANDIDATES
-    assert "grok-realtime" not in AUTH_PROVIDER_ALIASES
+def test_grok_realtime_adapter_credentials_match_canonical_family() -> None:
+    """grok-realtime was removed 2026-07-16 (BUG-064) and restored 2026-08-13
+    against grok-voice-think-fast-2.0. Its credential registry and auth alias
+    must line up exactly like every other realtime card, or the API-keys view
+    saves a key the factory never reads."""
+    assert (
+        GrokRealtimeProvider.credential_candidates
+        == PROVIDER_SECRET_CANDIDATES["grok-realtime"]
+    )
+    assert AUTH_PROVIDER_ALIASES["grok-realtime"] == "grok-realtime"
 
 
 @pytest.mark.parametrize(

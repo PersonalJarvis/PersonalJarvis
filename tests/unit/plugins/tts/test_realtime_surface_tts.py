@@ -282,3 +282,23 @@ def test_grok_surface_voice_keeps_the_session_voice_profile() -> None:
 def test_grok_realtime_without_a_key_stays_text_only() -> None:
     with override_provider_secrets({"grok-realtime": ""}):
         assert build_realtime_surface_tts(_grok_cfg(), "grok-realtime") is None
+
+
+def test_grok_surface_voice_cannot_cross_into_pipeline_credentials() -> None:
+    """The reverse guard, for the one family that HAS a cross-family stage.
+
+    ``GrokVoiceTTS`` answers a quota error by resolving another TTS family
+    through ``resolve_keyed_fallback`` — i.e. through the PIPELINE's keys.
+    Inside a realtime call that is the 2026-07-17 incident itself ("Charon @
+    openrouter"), so the realtime-scoped instance must have it switched off
+    while the pipeline keeps its AP-22 safety net.
+    """
+    with override_provider_secrets({"grok-realtime": "rt-scoped-key"}):
+        surface = build_realtime_surface_tts(_grok_cfg(), "grok-realtime")
+    assert surface is not None
+    assert surface._allow_cross_family_fallback is False
+    assert surface._allow_sapi5_fallback is False
+    # The pipeline default is untouched.
+    from jarvis.plugins.tts.grok_voice_tts import GrokVoiceTTS
+
+    assert GrokVoiceTTS()._allow_cross_family_fallback is True

@@ -114,6 +114,7 @@ class GrokVoiceTTS:
         optimize_streaming_latency: int = 1,
         allow_sapi5_fallback: bool = False,
         api_key: str | None = None,
+        allow_cross_family_fallback: bool = True,
     ) -> None:
         # Voice-mismatch protection: a voice name like "Charon" carried over
         # from the Gemini profile would make xAI respond with HTTP 400. We
@@ -137,6 +138,14 @@ class GrokVoiceTTS:
         # never on whichever xAI key the pipeline happens to see (strict mode
         # separation, maintainer mandate 2026-07-17).
         self._api_key = (api_key or "").strip() or None
+        # Stage-1 cross-family fallback resolves through the PIPELINE's TTS
+        # credentials, which two callers must never spend: the realtime
+        # surface fallback (strict mode separation, maintainer mandate
+        # 2026-07-17 — this is exactly the "Charon @ openrouter" incident) and
+        # the voice PREVIEW, where another family's voice would impersonate
+        # the one being sampled. Both pass False; the pipeline keeps its
+        # AP-22 cross-family safety net.
+        self._allow_cross_family_fallback = allow_cross_family_fallback
         self._client: Any = None  # httpx.AsyncClient, lazy
         self._quota_blocked_until: float = 0.0
 
@@ -382,11 +391,15 @@ class GrokVoiceTTS:
         # for a Grok-only downloader.
         from jarvis.plugins.tts import resolve_keyed_fallback
 
-        fb = resolve_keyed_fallback(
-            self.name,
-            allow_sapi5=self._allow_sapi5_fallback,
-            language_code=language_code,
-            reference_voice=self._default_voice,
+        fb = (
+            resolve_keyed_fallback(
+                self.name,
+                allow_sapi5=self._allow_sapi5_fallback,
+                language_code=language_code,
+                reference_voice=self._default_voice,
+            )
+            if self._allow_cross_family_fallback
+            else None
         )
         if fb is not None:
             produced = False

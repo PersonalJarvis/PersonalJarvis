@@ -239,3 +239,52 @@ def test_marin_and_cedar_are_in_the_openai_catalog() -> None:
 
     ids = {option.id for option in REALTIME_VOICES["openai-realtime"]}
     assert {"marin", "cedar"} <= ids
+
+
+def test_every_api_key_realtime_provider_can_be_previewed() -> None:
+    """Parity guard: a cataloged realtime provider the user pays per minute for
+    must let them hear the voice BEFORE pinning it. ``grok-realtime`` shipped
+    without a sampler on 2026-08-13, so its voice picker was the only one whose
+    play button stayed dark. Providers without a hosted voice roster of their
+    own (a self-hosted local server) are exempt.
+    """
+    from jarvis.brain.model_catalog import REALTIME_VOICES
+
+    exempt = {"local-realtime"}
+    missing = set(REALTIME_VOICES) - set(provider_routes._REALTIME_PREVIEW_SAMPLERS)
+    assert not (missing - exempt), (
+        f"cataloged realtime providers without a voice preview: {sorted(missing)}"
+    )
+
+
+def test_grok_preview_renders_through_the_xai_voice_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sampler must speak with xAI's OWN voice, never cross to another
+    family on a quota error — a preview that plays a different provider's
+    voice is worse than an error."""
+    from jarvis.plugins.tts import grok_voice_tts
+
+    built: dict[str, object] = {}
+
+    class _FakeGrokTTS:
+        def __init__(self, **kwargs: object) -> None:
+            built.update(kwargs)
+
+        async def synthesize(self, _text: str, **_kw: object):
+            from jarvis.core.protocols import AudioChunk
+
+            yield AudioChunk(pcm=b"\x03\x04" * 240, sample_rate=24_000, timestamp_ns=0)
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(grok_voice_tts, "GrokVoiceTTS", _FakeGrokTTS)
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: "xai-key")
+    client = TestClient(_app())
+    response = _preview(client, "grok-realtime", voice="eve", model="grok-voice-latest")
+
+    assert response.status_code == 200
+    assert built["api_key"] == "xai-key"
+    assert built["allow_cross_family_fallback"] is False
+    assert built["allow_sapi5_fallback"] is False

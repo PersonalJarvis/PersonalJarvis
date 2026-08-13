@@ -182,8 +182,11 @@ PROVIDER_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
         ("google_aistudio_api_key", "GOOGLE_AIStudio_API_KEY"),
         ("google_api_key", "GOOGLE_API_KEY"),
     ),
-    # "grok-realtime" was removed 2026-07-16 (BUG-064 deaf-session wedge);
-    # any stored realtime_grok_api_key simply stays unused in its backend.
+    "grok-realtime": (
+        ("realtime_grok_api_key", "JARVIS_REALTIME_GROK_API_KEY"),
+        ("grok_api_key", "GROK_API_KEY"),
+        ("xai_api_key", "XAI_API_KEY"),
+    ),
 }
 
 # Jarvis-Agent API credentials are independently replaceable from the Agent
@@ -3428,6 +3431,18 @@ class AgenticIdeConfig(BaseModel):
         ),
     )
 
+    direct_delivery: bool = Field(
+        default=True,
+        description=(
+            "Send an order that already names the work — an executional verb "
+            "plus a concrete file, command or symbol — straight to the pane "
+            "instead of having a model write a brief for it first. Saves the "
+            "measured 19-25 s a brief costs on orders a writer can only "
+            "restate; vague instructions are briefed either way. Off puts "
+            "every order back through the writer."
+        ),
+    )
+
     smart_recaps: bool = Field(
         default=True,
         description=(
@@ -3485,6 +3500,26 @@ class GoogleAuthConfig(BaseModel):
     vertex_mode: Literal["auto", "always", "never"] = "auto"
 
 
+class SmartHomeConfig(BaseModel):
+    """The Smart Home section ([smarthome] in jarvis.toml).
+
+    Only cross-platform switches live here. Credentials never do: a hub's token
+    and address are stored by the marketplace TokenStore (keyring), because a
+    config file is a file people paste into issues.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    #: Simulated devices, so the section is usable before any hub is connected.
+    #: Off by default and labelled everywhere it appears — a fake lamp that
+    #: passes for real would be the worst bug this section could have.
+    demo_mode: bool = False
+    #: Cache window for the aggregated device list. A hub answers over the home
+    #: network, and the section polls while it is open; without this, opening
+    #: the page in two windows doubles the traffic to someone's Raspberry Pi.
+    cache_ttl_seconds: float = 5.0
+
+
 class JarvisConfig(BaseModel):
     """Root config model."""
     # populate_by_name=True lets callers use Python field names alongside
@@ -3524,6 +3559,8 @@ class JarvisConfig(BaseModel):
     # Wave 2 — plugin-marketplace OAuth connect (hosted vs loopback callback).
     marketplace: MarketplaceConfig = Field(default_factory=MarketplaceConfig)
     board: BoardConfig = Field(default_factory=BoardConfig)
+    # The Smart Home section — hub/bridge connections and the demo home.
+    smarthome: SmartHomeConfig = Field(default_factory=SmartHomeConfig)
     # Persona mandate, Phase 5: top-level ``[vision]`` section.
     vision: VisionContextConfig = Field(default_factory=VisionContextConfig)
     # One-shot, intent-driven screen look (jarvis/screen_context/). Distinct

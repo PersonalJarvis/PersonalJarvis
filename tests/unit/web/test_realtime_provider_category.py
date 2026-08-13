@@ -46,10 +46,14 @@ def test_gemini_live_spec_present():
     assert spec.alt_credential is None
 
 
-def test_grok_realtime_spec_stays_removed() -> None:
-    """grok-realtime was removed 2026-07-16 (BUG-064 deaf-session wedge);
-    the API-keys UI must not offer it again."""
-    assert get_spec("grok-realtime") is None
+def test_grok_realtime_spec_present() -> None:
+    """Restored 2026-08-13 against grok-voice-think-fast-2.0, on which none of
+    the four BUG-064 wedges reproduce. Its own key slot keeps realtime billing
+    separable from the Grok brain's."""
+    spec = get_spec("grok-realtime")
+    assert spec is not None
+    assert spec.tier == "realtime"
+    assert spec.secret_keys == ("realtime_grok_api_key",)
 
 
 # ---------------------------------------------------------------------------
@@ -325,15 +329,24 @@ def test_get_realtime_options_gemini_live_voices(monkeypatch):
     assert body["models"][0]["id"] == "gemini-3.1-flash-live-preview"
 
 
-def test_get_realtime_options_removed_grok_is_unknown(monkeypatch) -> None:
-    """grok-realtime was removed 2026-07-16 (BUG-064 deaf-session wedge); its
-    realtime-options endpoint must answer like any unknown provider."""
+def test_get_realtime_options_grok_realtime(monkeypatch) -> None:
+    """The restored card must serve BOTH pickers, or the UI offers a provider
+    the user cannot configure. ``grok-voice-latest`` leads because it is the
+    adapter's hardcoded default; the 1.0 generation the BUG-064 wedges were
+    real on must not be selectable."""
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *a, **kw: "xai-test")
     client = TestClient(_app())
 
     resp = client.get("/api/providers/grok-realtime/realtime-options")
 
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    body = resp.json()
+    model_ids = [m["id"] for m in body["models"]]
+    assert model_ids[0] == "grok-voice-latest"
+    assert "grok-voice-think-fast-1.0" not in model_ids
+    voice_ids = [v["id"] for v in body["voices"]]
+    assert voice_ids[0] == "eve"
+    assert len(voice_ids) == 28
 
 
 def test_get_realtime_options_reflects_pinned_selection(monkeypatch):

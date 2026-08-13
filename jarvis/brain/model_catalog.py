@@ -466,8 +466,8 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
 }
 
 # Realtime catalogs — REALTIME_MODELS + REALTIME_VOICES, keyed by realtime
-# provider id (``codex-subscription-realtime`` / ``openai-realtime`` /
-# ``gemini-live``).
+# provider id (``openai-realtime`` / ``gemini-live`` / ``grok-realtime`` /
+# ``local-realtime``).
 # Realtime needs BOTH a
 # model AND a voice selection per provider (unlike every other picker, which
 # serves ONE selection), so these two dicts are looked up directly by the
@@ -527,11 +527,21 @@ REALTIME_MODELS: dict[str, list[ModelInfo]] = {
             ),
         ]
     ),
-    # grok-realtime (xAI Voice Agent API) was REMOVED 2026-07-16: the xAI
-    # server drops the session contract after any response cancel, ignores
-    # the configured VAD silence window, swallows response.done, and spams
-    # stray auto-responses — four deaf-session variants in one morning
-    # (BUG-064 recurrences #1-#4). Maintainer decision: not shippable.
+    # grok-realtime (xAI Voice Agent API) — REMOVED 2026-07-16 after the
+    # BUG-064 deaf-session wedges, RESTORED 2026-08-13. Those wedges were
+    # measured against grok-voice-think-fast-1.0; xAI shipped 2.0 on
+    # 2026-07-29 and pointed ``grok-voice-latest`` at it on 2026-08-05. None
+    # of the four variants reproduce on 2.0 (see the module docstring of
+    # jarvis/plugins/realtime/grok_realtime.py for the measurements).
+    # ``grok-voice-latest`` is the adapter default; the versioned sibling lets
+    # a user pin production behaviour. 1.0 is deliberately absent — it is the
+    # generation the wedges were real on.
+    "grok-realtime": _curated(
+        [
+            ("grok-voice-latest", "Grok Voice Latest (default)"),
+            ("grok-voice-think-fast-2.0", "Grok Voice Think Fast 2.0"),
+        ]
+    ),
 }
 
 # Realtime voice catalogs — stable prebuilt-voice names (curated, not live).
@@ -593,8 +603,41 @@ REALTIME_VOICES: dict[str, list[ModelInfo]] = {
             "Sulafat",
         ]
     ),
-    # Live roster verified through xAI's authenticated /v1/tts/voices endpoint.
-    # Eve leads because it is xAI's current Voice Agent default.
+    # Live roster verified through xAI's authenticated /v1/tts/voices endpoint
+    # (re-verified 2026-08-13: 28 voices, with aurora and liora added since the
+    # 2026-07 reading). Eve leads because it is xAI's Voice Agent default.
+    "grok-realtime": _ids(
+        [
+            "eve",
+            "altair",
+            "ara",
+            "atlas",
+            "aurora",
+            "carina",
+            "castor",
+            "celeste",
+            "cosmo",
+            "helios",
+            "helix",
+            "iris",
+            "kepler",
+            "leo",
+            "liora",
+            "lumen",
+            "luna",
+            "lux",
+            "naksh",
+            "orion",
+            "perseus",
+            "rex",
+            "rigel",
+            "sal",
+            "sirius",
+            "ursa",
+            "zagan",
+            "zenith",
+        ]
+    ),
 }
 
 

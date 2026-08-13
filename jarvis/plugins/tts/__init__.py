@@ -413,6 +413,9 @@ def build_realtime_surface_tts(cfg: Any, realtime_provider: str) -> Any | None:
                 # session's voice identity, and xAI bills per request anyway.
                 chunk_by_sentence=False,
                 api_key=api_key,
+                # Its stage-1 fallback resolves through the PIPELINE's TTS
+                # credentials — the one thing this builder exists to prevent.
+                allow_cross_family_fallback=False,
             )
         else:  # pragma: no cover — map entries always name a buildable family
             return None

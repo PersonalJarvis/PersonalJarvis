@@ -3488,12 +3488,51 @@ async def _openai_realtime_voice_sample(
     return bytes(pcm), output_rate
 
 
+async def _grok_realtime_voice_sample(
+    api_key: str, *, model: str, voice: str, text: str, language: str
+) -> tuple[bytes, int]:
+    """Sample an xAI Grok Voice via the xAI TTS endpoint.
+
+    Same relationship as the Gemini pair above: the Voice Agent API and
+    ``/v1/tts`` serve ONE prebuilt roster (re-verified 2026-08-13 against
+    the authenticated ``/v1/tts/voices`` endpoint), so a cheap TTS call
+    renders the identical voice without opening a duplex session. ``model``
+    is the pinned LIVE model and plays no role — voices, not models, are what
+    the sample demonstrates.
+    """
+    del model
+    from jarvis.plugins.tts.grok_voice_tts import GROK_TTS_SAMPLE_RATE, GrokVoiceTTS
+
+    tts = GrokVoiceTTS(
+        api_key=api_key,
+        # One take = one coherent voice; no OS fallback voice may ever
+        # impersonate the sampled voice.
+        chunk_by_sentence=False,
+        allow_sapi5_fallback=False,
+        # A sample that quietly crossed to another family would play a
+        # different voice than the one the button names.
+        allow_cross_family_fallback=False,
+    )
+    pcm = bytearray()
+    sample_rate = GROK_TTS_SAMPLE_RATE
+    try:
+        async for chunk in tts.synthesize(
+            text, voice=voice, language_code=_REALTIME_PREVIEW_LANG_CODES.get(language)
+        ):
+            pcm += bytes(chunk.pcm)
+            sample_rate = chunk.sample_rate
+    finally:
+        await tts.aclose()
+    return bytes(pcm), sample_rate
+
+
 # Only providers whose preview transport can run without an interactive media
 # offer appear here. A cataloged provider may intentionally omit a sampler;
 # ``preview_available`` keeps the UI from rendering a button that cannot work.
 _REALTIME_PREVIEW_SAMPLERS: dict[str, Any] = {
     "gemini-live": _gemini_live_voice_sample,
     "openai-realtime": _openai_realtime_voice_sample,
+    "grok-realtime": _grok_realtime_voice_sample,
 }
 
 

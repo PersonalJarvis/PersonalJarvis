@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -309,6 +309,17 @@ class _OpenAIRealtimeSession:
     supports_tool_updates = True
     creates_responses_automatically = False
     isolates_response_generations = True
+    #: Provider capability, never a provider-name check (AP-21): the server
+    #: answers a SPOKEN turn on its own the moment its VAD seals the input
+    #: buffer, no matter what ``turn_detection.create_response`` says. For such
+    #: a server an auto-created response is the normal shape of a turn, not
+    #: evidence of a dropped session contract — so it is adopted quietly and
+    #: the BUG-064 contract re-arm (which only makes sense against a server
+    #: that PROMISED manual-response mode) stays out of the hot path. Text
+    #: turns and tool continuations are unaffected: those still wait for our
+    #: own ``response.create`` (measured against grok-voice-think-fast-2.0,
+    #: 2026-08-13).
+    server_answers_speech_turns = False
 
     def __init__(
         self,
@@ -891,10 +902,24 @@ class _OpenAIRealtimeSession:
                 "accepted one pending response by lifecycle order"
             )
         else:
-            if (
-                response_id
-                and self._response_idle.is_set()
-                and self._server_heard_user_since_response
+            if response_id and (
+                # A server that answers spoken turns ITSELF has no
+                # manual-response contract to drop, so its response is never
+                # "unsolicited" — it is the only answer this turn will get.
+                # The idle/heard gate below is a repair for a BROKEN contract
+                # and must not stand between such a provider and its own
+                # answer: live grok-realtime 2026-08-13 18:53:39 opened a
+                # lifecycle that produced no output, and while it hung open
+                # the server's three real answers (18:53:40, :41, :44) were
+                # each cancelled as strays. The 8 s stall then rebuilt the
+                # transport, and every remaining turn of that call went
+                # text-only. Adoption resets the lifecycle timers below, so
+                # the newest server answer simply supersedes the stuck one.
+                self.server_answers_speech_turns
+                or (
+                    self._response_idle.is_set()
+                    and self._server_heard_user_since_response
+                )
             ):
                 # The server dropped the manual-response contract and
                 # auto-answered a user turn it audibly heard (speech_started /
@@ -905,12 +930,26 @@ class _OpenAIRealtimeSession:
                 # suppressed as unsolicited → Jarvis stayed silent until a
                 # manual hang-up. Adopt the response; the re-arm below
                 # restores the contract for the following turns.
-                log.warning(
-                    "OpenAI Realtime adopting unsolicited response %s as the "
-                    "answer to a heard user turn (server dropped the "
-                    "manual-response contract)",
-                    response_id,
-                )
+                #
+                # A provider that ALWAYS answers spoken turns takes the same
+                # adoption path for the opposite reason: nothing was dropped,
+                # this is simply how its turns end. Logging it as a fault and
+                # re-arming a contract it never made would spend a
+                # ``session.update`` per turn and arm the unheeded-re-arm
+                # rebuild against a healthy session.
+                if self.server_answers_speech_turns:
+                    log.debug(
+                        "Realtime adopting the provider's own response %s for "
+                        "the spoken turn",
+                        response_id,
+                    )
+                else:
+                    log.warning(
+                        "OpenAI Realtime adopting unsolicited response %s as the "
+                        "answer to a heard user turn (server dropped the "
+                        "manual-response contract)",
+                        response_id,
+                    )
                 self._response_idle.clear()
                 self._accepted_response_ids.add(response_id)
                 now = time.monotonic()
@@ -919,7 +958,8 @@ class _OpenAIRealtimeSession:
                 self._response_output_started = False
                 self._server_heard_user_since_response = False
                 self._auto_adopted_unanswered_input = True
-                await self._rearm_session_contract()
+                if not self.server_answers_speech_turns:
+                    await self._rearm_session_contract()
                 return
             log.warning(
                 "OpenAI Realtime suppressed unsolicited response %s",
@@ -1024,7 +1064,17 @@ class _OpenAIRealtimeSession:
             self._transcript_heard_since_rearm = True
         # The manual flow answers transcribed turns itself; a crossing
         # auto-response is now a duplicate, not a salvageable answer.
-        self._server_heard_user_since_response = False
+        #
+        # Against a server that answers spoken turns ITSELF the same clearing
+        # is destructive, because that server transcribes BEFORE it answers:
+        # the final transcript would retract the very evidence that qualifies
+        # the response arriving milliseconds later for adoption, and the only
+        # answer the turn will ever get gets cancelled as unsolicited. Measured
+        # live 2026-08-13 on grok-voice-think-fast-2.0 — transcript at 7.86 s,
+        # its response at 7.86 s, the buffer commit only at 8.05 s — where it
+        # produced a fully transcribed turn that was never answered aloud.
+        if not self.server_answers_speech_turns:
+            self._server_heard_user_since_response = False
 
     def _arm_transcript_deadline(self, *, require_recent_quiet: bool) -> None:
         # Only arm while the session is at rest: with a response lifecycle in
@@ -1300,14 +1350,18 @@ async def _open_realtime_session(
     prompted_response_retry: bool = False,
     renders_surface_fallback: bool = False,
     owns_client: bool = True,
+    session_cls: type[_OpenAIRealtimeSession] = _OpenAIRealtimeSession,
+    payload_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> _OpenAIRealtimeSession:
     """Open, configure and hand back a live session on ``client``.
 
-    Shared by the hosted OpenAI card and the self-hosted one: they differ only
-    in which endpoint the client points at, and every hard-won detail below —
-    the cleanup after a failed ``__aenter__``, the session payload, the
-    mid-call history seed — must stay identical for both, so it lives here
-    once rather than in two drifting copies.
+    Shared by the hosted OpenAI card, the self-hosted one, and every other
+    endpoint speaking this protocol: they differ only in which endpoint the
+    client points at, which session subclass declares their capabilities, and
+    what their session payload must say. Every hard-won detail below — the
+    cleanup after a failed ``__aenter__``, the mid-call history seed — must
+    stay identical for all of them, so it lives here once rather than in
+    drifting copies.
     """
     connection_cm = client.realtime.connect(model=model)
     try:
@@ -1334,7 +1388,9 @@ async def _open_realtime_session(
                 log.debug("Realtime client cleanup after failed enter failed", exc_info=True)
         raise
     payload = _session_payload(cfg, transcription_model=transcription_model)
-    session = _OpenAIRealtimeSession(
+    if payload_transform is not None:
+        payload = payload_transform(payload)
+    session = session_cls(
         connection=connection,
         connection_cm=connection_cm,
         client=client,
