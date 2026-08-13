@@ -59,6 +59,13 @@ def test_install_manual_url_alone_is_valid() -> None:
     assert model.install.manual_url == "https://example.com/install"
 
 
+def test_install_windows_script_url_alone_is_valid() -> None:
+    payload = _minimal_payload(install={"windows_script_url": "https://example.com/install.ps1"})
+    model = CliSpecModel.model_validate(payload)
+    spec = CliSpec.from_model(model)
+    assert spec.install.windows_script_url == "https://example.com/install.ps1"
+
+
 def test_env_vars_must_match_secret_keys_length() -> None:
     payload = _minimal_payload(
         auth={
@@ -121,12 +128,14 @@ def test_from_model_projects_to_dataclass() -> None:
 
 def test_capabilities_block_roundtrip() -> None:
     payload = _minimal_payload(
-        capabilities=[{
-            "domains": ["repos"],
-            "verbs": ["zeig", "list", "show"],
-            "objects": ["pull request", "issue"],
-            "description": "GitHub repos, PRs and issues.",
-        }],
+        capabilities=[
+            {
+                "domains": ["repos"],
+                "verbs": ["zeig", "list", "show"],
+                "objects": ["pull request", "issue"],
+                "description": "GitHub repos, PRs and issues.",
+            }
+        ],
     )
     spec = CliSpec.from_model(CliSpecModel.model_validate(payload))
     assert spec.capabilities[0].domains == ("repos",)
@@ -142,12 +151,14 @@ def test_capabilities_default_empty() -> None:
 
 def test_capabilities_reject_empty_lists() -> None:
     payload = _minimal_payload(
-        capabilities=[{
-            "domains": [],
-            "verbs": ["x"],
-            "objects": ["y"],
-            "description": "broken",
-        }],
+        capabilities=[
+            {
+                "domains": [],
+                "verbs": ["x"],
+                "objects": ["y"],
+                "description": "broken",
+            }
+        ],
     )
     with pytest.raises(ValidationError):
         CliSpecModel.model_validate(payload)

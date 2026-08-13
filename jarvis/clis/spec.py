@@ -11,8 +11,10 @@ Both are merged via ``CliCatalog.load_all()``. Validation runs through
 ``CliSpecModel`` (Pydantic); the runtime form remains a frozen dataclass for
 hashability + performance.
 """
+
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -44,6 +46,10 @@ class InstallMethods:
     pip_package: str | None = None
     cargo_package: str | None = None
     script_url: str | None = None
+    # Official Windows installer when it is a different file from the POSIX
+    # one (``install.ps1`` vs ``install.sh``). Empty means the shared
+    # ``script_url`` is used on every OS.
+    windows_script_url: str | None = None
     manual_url: str = ""
     # Preference explicitly set by the catalog editor. None = the first
     # available method string from available_methods() is pre-selected as the
@@ -52,15 +58,28 @@ class InstallMethods:
     # scoop/npm so the user is not led into a dead winget path.
     recommended: str | None = None
 
+    def script_url_for_host(self) -> str | None:
+        """The install-script URL that actually runs on this OS, if any."""
+        if sys.platform == "win32":
+            return self.windows_script_url or self.script_url
+        return self.script_url
+
     def available_methods(self) -> tuple[str, ...]:
         out: list[str] = []
-        if self.winget_id: out.append("winget")
-        if self.scoop_package: out.append("scoop")
-        if self.npm_package: out.append("npm")
-        if self.pip_package: out.append("pip")
-        if self.cargo_package: out.append("cargo")
-        if self.script_url: out.append("script")
-        if self.manual_url and not out: out.append("manual")
+        if self.winget_id:
+            out.append("winget")
+        if self.scoop_package:
+            out.append("scoop")
+        if self.npm_package:
+            out.append("npm")
+        if self.pip_package:
+            out.append("pip")
+        if self.cargo_package:
+            out.append("cargo")
+        if self.script_url_for_host():
+            out.append("script")
+        if self.manual_url and not out:
+            out.append("manual")
         return tuple(out)
 
 
@@ -133,6 +152,7 @@ class CliSpec:
                 pip_package=model.install.pip_package,
                 cargo_package=model.install.cargo_package,
                 script_url=model.install.script_url,
+                windows_script_url=model.install.windows_script_url,
                 manual_url=model.install.manual_url or "",
                 recommended=model.install.recommended,
             ),
@@ -188,6 +208,7 @@ class InstallMethodsModel(BaseModel):
     pip_package: str | None = None
     cargo_package: str | None = None
     script_url: str | None = None
+    windows_script_url: str | None = None
     manual_url: str = ""
     recommended: str | None = None
 
@@ -207,8 +228,7 @@ class AuthConfigModel(BaseModel):
         secret_keys = info.data.get("secret_keys", [])
         if v and secret_keys and len(v) != len(secret_keys):
             raise ValueError(
-                f"env_vars ({len(v)}) must match secret_keys ({len(secret_keys)}) "
-                "or be empty."
+                f"env_vars ({len(v)}) must match secret_keys ({len(secret_keys)}) or be empty."
             )
         return v
 
@@ -242,26 +262,42 @@ class CliSpecModel(BaseModel):
     category: str = "other"
     source: Literal["seed", "custom"] = "seed"
     capabilities: list[CliCapabilityDeclModel] = Field(
-        default_factory=list, max_length=5,
+        default_factory=list,
+        max_length=5,
     )
 
     @field_validator("install")
     @classmethod
     def _at_least_one_install_method(cls, v: InstallMethodsModel) -> InstallMethodsModel:
-        if not any([
-            v.winget_id, v.scoop_package, v.npm_package,
-            v.pip_package, v.cargo_package, v.script_url, v.manual_url,
-        ]):
-            raise ValueError(
-                "At least one install method or manual_url must be set."
-            )
+        if not any(
+            [
+                v.winget_id,
+                v.scoop_package,
+                v.npm_package,
+                v.pip_package,
+                v.cargo_package,
+                v.script_url,
+                v.windows_script_url,
+                v.manual_url,
+            ]
+        ):
+            raise ValueError("At least one install method or manual_url must be set.")
         return v
 
 
 __all__ = [
-    "AuthType", "StatusParseStrategy", "RiskTier",
-    "InstallMethods", "AuthConfig", "RiskConfig", "CliSpec", "CliStatus",
+    "AuthType",
+    "StatusParseStrategy",
+    "RiskTier",
+    "InstallMethods",
+    "AuthConfig",
+    "RiskConfig",
+    "CliSpec",
+    "CliStatus",
     "CliCapabilityDecl",
-    "CliSpecModel", "InstallMethodsModel", "AuthConfigModel", "RiskConfigModel",
+    "CliSpecModel",
+    "InstallMethodsModel",
+    "AuthConfigModel",
+    "RiskConfigModel",
     "CliCapabilityDeclModel",
 ]

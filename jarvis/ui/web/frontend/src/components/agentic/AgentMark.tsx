@@ -33,9 +33,11 @@ interface LogoAsset {
 }
 
 const AGENT_LOGOS: Record<string, LogoAsset> = {
+  antigravity: { url: "/provider-logos/antigravity.svg", ground: "ink" },
   claude: { url: "/provider-logos/claude.svg", ground: "ink" },
   codex: { url: "/provider-logos/openai.svg", ground: "ink" },
   glm: { url: "/agent-logos/zai.svg", ground: "any" },
+  grok: { url: "/agent-logos/grok.svg", ground: "ink" },
   kimi: { url: "/agent-logos/kimi.svg", ground: "dark" },
   opencode: { url: "/agent-logos/opencode.svg", ground: "dark" },
 };

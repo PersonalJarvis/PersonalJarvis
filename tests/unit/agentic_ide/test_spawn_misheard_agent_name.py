@@ -15,6 +15,7 @@ Two properties are pinned here, and they pull against each other on purpose:
   its own — otherwise the fix would turn every sentence about the cloud into a
   request for a Claude pane.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -67,9 +68,7 @@ def test_an_everyday_word_counts_only_with_the_products_second_word(
 
 def test_live_hyphenated_cloth_code_transcript_names_claude() -> None:
     """The exact 2026-08-09 pipeline transcript must keep its count and CLI."""
-    assert _groups(
-        "Geil, kannst du bitte 5 Cloth-Code-Terminal spawnen?"
-    ) == [(5, "claude")]
+    assert _groups("Geil, kannst du bitte 5 Cloth-Code-Terminal spawnen?") == [(5, "claude")]
 
 
 @pytest.mark.parametrize("separator", [" - ", "- ", " – "])
@@ -136,7 +135,7 @@ def test_a_plural_product_name_still_names_its_cli() -> None:
 
 
 def test_a_group_without_a_cli_keeps_its_own_count() -> None:
-    """"two terminals and one Codex" is THREE panes, not two."""
+    """ "two terminals and one Codex" is THREE panes, not two."""
     assert _groups("Open two terminals and one Codex terminal") == [
         (2, None),
         (1, "codex"),
@@ -163,9 +162,7 @@ def test_a_spoken_count_past_a_dozen_is_heard(utterance: str, expected: int) -> 
 def test_the_workspace_maximum_is_the_only_ceiling() -> None:
     from jarvis.agentic_ide.session import MAX_TERMINALS
 
-    request = intent.detect_spawn(
-        f"open {MAX_TERMINALS + 40} Codex terminals"
-    )
+    request = intent.detect_spawn(f"open {MAX_TERMINALS + 40} Codex terminals")
     assert request is not None
     assert request.count == MAX_TERMINALS
 
@@ -179,7 +176,7 @@ def test_naming_a_cli_without_counting_it_is_not_a_pane_request() -> None:
 
 
 def test_spawning_agents_is_still_a_background_request() -> None:
-    """"Spawn" means a worker, even when it names a coding CLI (AP-5 margin)."""
+    """ "Spawn" means a worker, even when it names a coding CLI (AP-5 margin)."""
     # i18n-allow: spoken input under test
     assert intent.detect_spawn("Spawne 5 Claude Codes") is None
 
@@ -192,9 +189,7 @@ def test_spawning_agents_is_still_a_background_request() -> None:
 
 
 def test_a_cli_the_workspace_does_not_have_is_named_not_dropped() -> None:
-    request = intent.detect_spawn(
-        "open two Claude Code terminals and one Gemini terminal"
-    )
+    request = intent.detect_spawn("open two Claude Code terminals and one Gemini terminal")
     assert request is not None
     assert [(g.count, g.agent) for g in request.groups] == [(2, "claude")]
     assert request.unsupported == ("Gemini",)
@@ -214,6 +209,17 @@ def test_asking_only_for_a_cli_that_is_missing_opens_nothing() -> None:
     assert request.groups == ()
     assert request.count == 0
     assert request.unsupported == ("Gemini",)
+
+
+def test_antigravity_is_a_supported_terminal_kind() -> None:
+    """Google's terminal CLI is a pane, not a refusal leftover from Gemini CLI."""
+    request = intent.detect_spawn("open one Antigravity terminal")
+    assert request is not None
+    assert [(g.count, g.agent) for g in request.groups] == [(1, "antigravity")]
+    assert request.unsupported == ()
+    by_binary = intent.detect_spawn("open two agy terminals")
+    assert by_binary is not None
+    assert [(g.count, g.agent) for g in by_binary.groups] == [(2, "antigravity")]
 
 
 def test_naming_an_unsupported_cli_without_counting_it_is_not_a_request() -> None:

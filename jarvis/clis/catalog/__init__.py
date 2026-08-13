@@ -159,6 +159,7 @@ def _spec_to_json(spec: CliSpec) -> dict[str, Any]:
             "pip_package": spec.install.pip_package,
             "cargo_package": spec.install.cargo_package,
             "script_url": spec.install.script_url,
+            "windows_script_url": spec.install.windows_script_url,
             "manual_url": spec.install.manual_url,
         },
         "auth": {

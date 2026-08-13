@@ -3,6 +3,7 @@
 Every test gets its own scratch store, so nothing here can see or damage the
 maintainer's own entries.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -21,9 +22,7 @@ SVG = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"></svg>'
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     root = tmp_path / "workspace-clis"
     monkeypatch.setattr(custom_clis, "workspace_clis_dir", lambda: root)
-    monkeypatch.setattr(
-        custom_clis, "workspace_clis_path", lambda: root / "custom.json"
-    )
+    monkeypatch.setattr(custom_clis, "workspace_clis_path", lambda: root / "custom.json")
     registry.refresh_custom_agents()
 
     from jarvis.ui.web import workspace_clis_routes
@@ -37,7 +36,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _create(client: TestClient, **overrides) -> dict:
-    payload = {"display_name": "Antigravity", "command": "agy", **overrides}
+    payload = {"display_name": "Helix", "command": "agy", **overrides}
     response = client.post("/api/workspace-clis", json=payload)
     assert response.status_code == 200, response.text
     return response.json()
@@ -55,13 +54,13 @@ def test_the_empty_list_still_carries_the_form_limits(client: TestClient) -> Non
 def test_a_created_cli_is_immediately_openable(client: TestClient) -> None:
     """Stored, registered and offered — without a restart, which is the point."""
     entry = _create(client, description="Google's terminal coding CLI.")
-    assert entry["id"] == "antigravity"
+    assert entry["id"] == "helix"
     assert entry["binary"] == "agy"
     assert entry["runs_through_shell"] is False
     assert entry["logo_url"] == ""
 
-    assert "antigravity" in registry.coding_agent_names()
-    agent = registry.get_agent("antigravity")
+    assert "helix" in registry.coding_agent_names()
+    agent = registry.get_agent("helix")
     assert agent is not None and agent.custom is True
 
 
@@ -74,9 +73,7 @@ def test_a_shell_command_says_so_in_the_payload(client: TestClient) -> None:
 def test_a_blank_command_is_refused_with_a_readable_reason(
     client: TestClient,
 ) -> None:
-    response = client.post(
-        "/api/workspace-clis", json={"display_name": "Nothing", "command": "  "}
-    )
+    response = client.post("/api/workspace-clis", json={"display_name": "Nothing", "command": "  "})
     assert response.status_code == 422
     # The message is meant to be read by the person looking at the form.
     assert "command" in response.json()["detail"].lower()
@@ -85,25 +82,23 @@ def test_a_blank_command_is_refused_with_a_readable_reason(
 def test_a_patch_leaves_untouched_fields_alone(client: TestClient) -> None:
     entry = _create(client, description="Original description.")
     updated = client.patch(
-        f"/api/workspace-clis/{entry['id']}", json={"display_name": "Antigravity CLI"}
+        f"/api/workspace-clis/{entry['id']}", json={"display_name": "Helix CLI"}
     ).json()
     assert updated["id"] == entry["id"]
-    assert updated["display_name"] == "Antigravity CLI"
+    assert updated["display_name"] == "Helix CLI"
     assert updated["description"] == "Original description."
     assert updated["command"] == "agy"
 
 
 def test_patching_something_that_is_gone_says_so(client: TestClient) -> None:
-    response = client.patch(
-        "/api/workspace-clis/never-existed", json={"display_name": "X"}
-    )
+    response = client.patch("/api/workspace-clis/never-existed", json={"display_name": "X"})
     assert response.status_code == 422
 
 
 def test_delete_removes_it_from_the_registry(client: TestClient) -> None:
     entry = _create(client)
     assert client.delete(f"/api/workspace-clis/{entry['id']}").json()["ok"] is True
-    assert "antigravity" not in registry.coding_agent_names()
+    assert "helix" not in registry.coding_agent_names()
 
 
 def test_a_logo_round_trips_with_the_headers_that_make_it_safe(

@@ -1,4 +1,4 @@
-"""The three CLI providers added alongside Claude Code and Codex.
+"""The CLI providers added alongside Claude Code and Codex.
 
 Each of them exercises a different half of the registry contract, which is why
 they are worth testing together rather than one file per product:
@@ -11,6 +11,9 @@ they are worth testing together rather than one file per product:
 * **GLM** is not a CLI at all — it is the Claude Code binary pointed at another
   vendor — so it proves a launch profile inherits behaviour without duplicating
   it, and that the environment it depends on is never half-applied.
+* **Antigravity CLI** is a native ``agy`` binary (not the Antigravity desktop
+  app). It is launchable and installable from the official per-OS script; it
+  has no session adapter yet.
 """
 
 from __future__ import annotations
@@ -31,12 +34,27 @@ from jarvis.workspace import agents as workspace_agents
 
 def test_every_new_provider_is_launchable_and_installable() -> None:
     """A registered entry must answer the three questions a pane asks of it."""
-    for name in ("opencode", "kimi", "glm"):
+    for name in ("opencode", "kimi", "glm", "antigravity"):
         entry = workspace_agents.get_agent(name)
         assert entry is not None, f"{name} is not registered"
         assert entry.is_coding_agent
         assert entry.executable, f"{name} resolves to no binary"
         assert workspace_agents.install_command(name)
+
+
+def test_antigravity_launches_the_cli_binary_not_the_desktop_app() -> None:
+    """The picker must start ``agy``. The Antigravity app is a different product."""
+    entry = workspace_agents.get_agent("antigravity")
+    assert entry is not None
+    assert entry.executable == "agy"
+    assert entry.launch_command == "agy"
+    assert entry.needs_trust is False
+    command = workspace_agents.install_command("antigravity")
+    assert command is not None
+    assert "antigravity.google/cli/install." in command
+    assert "antigravity.exe" not in command
+    assert workspace_agents.spoken_aliases()["agy"] == "antigravity"
+    assert workspace_agents.spoken_aliases()["anti gravity"] == "antigravity"
 
 
 def test_a_two_part_version_string_is_not_read_as_no_version() -> None:
@@ -55,7 +73,15 @@ def test_a_two_part_version_string_is_not_read_as_no_version() -> None:
 def test_a_product_name_can_never_become_a_pane_call_sign() -> None:
     """Saying "Kimi" must address the CLI, not a pane that happens to be called that."""
     reserved = workspace_agents.reserved_call_signs()
-    for spoken in ("kimi", "opencode", "glm", "claude", "codex"):
+    for spoken in (
+        "kimi",
+        "opencode",
+        "glm",
+        "claude",
+        "codex",
+        "antigravity",
+        "agy",
+    ):
         assert spoken in reserved
     from jarvis.agentic_ide import names
 
@@ -142,9 +168,7 @@ def test_two_opencode_panes_in_one_folder_get_different_conversations(
     _add_session(db, "ses_b", str(tmp_path), started + 2)
     first = agent_sessions.discover("opencode", str(tmp_path), started)
     assert first is not None
-    second = agent_sessions.discover(
-        "opencode", str(tmp_path), started, taken=[first.id]
-    )
+    second = agent_sessions.discover("opencode", str(tmp_path), started, taken=[first.id])
     assert second is not None
     assert second.id != first.id
 
@@ -464,9 +488,7 @@ async def test_a_refused_glm_pane_says_so_instead_of_claiming_to_be_starting(
 def test_the_glm_environment_factory_reports_not_configured_without_a_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "jarvis.core.config.get_secret", lambda *_a, **_k: None
-    )
+    monkeypatch.setattr("jarvis.core.config.get_secret", lambda *_a, **_k: None)
     assert workspace_agents.glm_spawn_env() is None
 
 
@@ -548,9 +570,7 @@ def test_a_booting_pane_of_a_new_cli_is_not_prompted_yet() -> None:
     assert _ready_for_prompt(_Pane("opencode", ("Loading...",))) is False
     assert _ready_for_prompt(_Pane("opencode", ("> ",))) is True
     assert _ready_for_prompt(_Pane("kimi", ("starting",))) is False
-    assert _ready_for_prompt(
-        _Pane("codex", ("› Input disabled.",), cursor_visible=False)
-    ) is False
+    assert _ready_for_prompt(_Pane("codex", ("› Input disabled.",), cursor_visible=False)) is False
     assert _ready_for_prompt(_Pane("codex", ("› Ask Codex anything",))) is True
     assert _ready_for_prompt(_Pane("codex", ("» Ask Codex anything",))) is True
     # The one measured exception keeps its fast path.

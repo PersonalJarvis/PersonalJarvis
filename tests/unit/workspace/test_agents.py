@@ -2,9 +2,11 @@
 
 Detection runs against a fake prober — no real CLI is ever invoked.
 """
+
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import pytest
 
@@ -33,7 +35,9 @@ from jarvis.workspace.agents import (
 # later addition into a test edit, which is the opposite of what an open
 # registry is for. What must not break is that a shipped provider silently
 # disappears.
-REQUIRED_CODING_AGENTS = frozenset({"claude", "codex", "opencode", "kimi", "glm"})
+REQUIRED_CODING_AGENTS = frozenset(
+    {"claude", "codex", "opencode", "kimi", "glm", "antigravity"}
+)
 
 
 def test_every_promised_coding_agent_is_registered() -> None:
@@ -90,6 +94,12 @@ def test_install_commands_are_runnable_or_honestly_absent() -> None:
     assert install_command("kimi") == "npm install -g @moonshot-ai/kimi-code"
     # A launch profile installs the binary it borrows.
     assert install_command("glm") == "npm install -g @anthropic-ai/claude-code"
+    antigravity_install = install_command("antigravity")
+    assert antigravity_install is not None
+    if sys.platform == "win32":
+        assert "install.ps1" in antigravity_install
+    else:
+        assert "install.sh" in antigravity_install
     assert install_command("nope") is None
 
 
@@ -103,6 +113,9 @@ def test_launch_command_is_bare_binary() -> None:
     assert get_agent("opencode").launch_command == "opencode"
     # The profile runs the borrowed binary, not a command named after itself.
     assert get_agent("glm").launch_command == "claude"
+    # The Antigravity *app* is a different binary. This pane must start the CLI.
+    assert get_agent("antigravity").launch_command == "agy"
+    assert get_agent("antigravity").executable == "agy"
 
 
 def test_build_agent_argv_wraps_command_in_a_shell() -> None:
@@ -153,10 +166,7 @@ class FakeProber:
         self._statuses = statuses
 
     async def probe_all(self, specs) -> dict[str, CliStatus]:  # noqa: ANN001
-        return {
-            s.name: self._statuses.get(s.name, CliStatus(installed=False))
-            for s in specs
-        }
+        return {s.name: self._statuses.get(s.name, CliStatus(installed=False)) for s in specs}
 
 
 @pytest.mark.asyncio

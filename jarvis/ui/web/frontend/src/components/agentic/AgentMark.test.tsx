@@ -36,6 +36,15 @@ describe("AgentMark", () => {
     expect(mark("claude").querySelector("img")).toBeNull();
   });
 
+  it("redraws the Antigravity CLI mark in the theme's own ink", () => {
+    render(<AgentMark agent="antigravity" label="Antigravity CLI" />);
+    expect(mark("antigravity").getAttribute("data-ground")).toBe("ink");
+    expect(mark("antigravity").getAttribute("data-logo")).toBe(
+      "/provider-logos/antigravity.svg",
+    );
+    expect(mark("antigravity").querySelector("img")).toBeNull();
+  });
+
   it("gives a lockup with a white background the dark ground it was drawn on", () => {
     // OpenCode is a white square with a dark inner shape. On paper the square
     // IS the paper and the mark collapsed to an unlabelled grey dot.

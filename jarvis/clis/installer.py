@@ -64,7 +64,9 @@ _PS_FETCH = "i" + "wr -useb"
 _PS_PIPE = " | i" + "ex"
 
 
-def _build_script_download_command(url: str) -> list[str]:
+def _build_script_download_command(
+    url: str | None, *, windows_url: str | None = None
+) -> list[str] | None:
     """Download-and-run wrapper for an official install script, per platform.
 
     Follows the installer pattern most CLIs publish (Fly.io, Bun, OpenCode, ...):
@@ -79,15 +81,24 @@ def _build_script_download_command(url: str) -> list[str]:
     exactly the "the maintainer's OS is the baseline" failure the project
     forbids.
 
+    Some vendors ship two scripts (``install.sh`` and ``install.ps1``). Passing
+    the POSIX file through PowerShell, or the PowerShell file through ``sh``,
+    fails outright — so ``windows_url`` is used on Windows when it is set.
+
     The Windows one-liner stays assembled from fragments: written out whole it
     matches the ``iwr … | iex`` pattern that anti-virus heuristics flag on sight.
     """
     if sys.platform == "win32":
-        inner = f"{_PS_FETCH} '{url}'{_PS_PIPE}"
+        chosen = windows_url or url
+        if not chosen:
+            return None
+        inner = f"{_PS_FETCH} '{chosen}'{_PS_PIPE}"
         return [
             "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
             "-Command", inner,
         ]
+    if not url:
+        return None
     # POSIX: curl if present, otherwise wget — a slim container often has only
     # one of the two, and failing over inside the shell keeps this a single
     # command rather than a probe plus a decision.
@@ -114,8 +125,10 @@ class CliInstaller:
             return ["pip", "install", "--upgrade", i.pip_package]
         if method == "cargo" and i.cargo_package:
             return ["cargo", "install", i.cargo_package]
-        if method == "script" and i.script_url:
-            return _build_script_download_command(i.script_url)
+        if method == "script" and (i.script_url or i.windows_script_url):
+            return _build_script_download_command(
+                i.script_url, windows_url=i.windows_script_url
+            )
         return None
 
     def start(

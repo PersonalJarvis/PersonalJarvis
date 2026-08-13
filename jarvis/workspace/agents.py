@@ -672,6 +672,44 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         spawn_env_factory=glm_spawn_env,
         spoken_aliases=("glm", "g l m", "gee ell em", "jlm"),
     ),
+    "antigravity": make_cli_agent(
+        "antigravity",
+        "Antigravity CLI",
+        # The product is Google Antigravity. The DESKTOP APP is a different
+        # binary (often ``antigravity`` / ``Antigravity.exe``). This entry
+        # must launch the official terminal CLI, whose command is ``agy``.
+        binary="agy",
+        homepage="https://antigravity.google/product/antigravity-cli",
+        description=(
+            "Google's terminal coding agent. Opens the agy CLI, not the "
+            "Antigravity desktop app."
+        ),
+        install=InstallMethods(
+            script_url="https://antigravity.google/cli/install.sh",
+            windows_script_url="https://antigravity.google/cli/install.ps1",
+            recommended="script",
+        ),
+        # First launch asks about workspace trust in the TUI. The file it
+        # writes has not been verified against a live install, so a guessed
+        # seed would fail silently and the dialog would appear anyway.
+        needs_trust=False,
+        # Official installer: ``~/.local/bin/agy`` on macOS/Linux. Windows
+        # lands in ``%LOCALAPPDATA%\\agy\\bin``, which the platform PATH
+        # table already covers.
+        extra_path_dirs=("~/.local/bin",),
+        # DELIBERATELY no AccountSpec and no session adapter: login lives in
+        # the OS keyring / Google Sign-In, and the conversation store has
+        # not been verified. Same bar as Grok Build.
+        spoken_aliases=(
+            "antigravity",
+            "anti gravity",
+            "agy",
+            "antigavity",
+            "google antigravity",
+        ),
+        spoken_aliases_needing_suffix=("anti",),
+        alias_suffix="gravity",
+    ),
     PLAIN_TERMINAL: WorkspaceAgent(
         name=PLAIN_TERMINAL,
         display_name="Plain Terminal",

@@ -56,7 +56,17 @@ _POSITION_NAME_RE = re.compile(rf"^{CALL_SIGN_PREFIX}(\d{{1,3}})$", re.IGNORECAS
 #: merely has installed — so the list is deliberately WIDER than the registry.
 #: Positional call-signs cannot collide with any of them.
 _KNOWN_PRODUCTS: frozenset[str] = frozenset(
-    {"jarvis", "claude", "codex", "gemini", "copilot", "cursor", "aider"}
+    {
+        "jarvis",
+        "claude",
+        "codex",
+        "gemini",
+        "copilot",
+        "cursor",
+        "aider",
+        "antigravity",
+        "agy",
+    }
 )
 
 
