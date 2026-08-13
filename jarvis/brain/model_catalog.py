@@ -179,20 +179,29 @@ def _curated(pairs: list[tuple[str, str]]) -> list[ModelInfo]:
 # offer a years-old model); when a valid key exists the live catalog supersedes
 # this entirely, so a new release still shows up automatically there.
 CURATED_MODELS: dict[str, list[ModelInfo]] = {
+    # Anthropic ships no public catalog to an OAuth/Max session, so this list is
+    # what the Claude card shows for most users — it MUST carry the current
+    # flagship. Opus 5 verified 2026-08-13 (live OpenRouter roster:
+    # ``anthropic/claude-opus-5`` + ``…-5-fast``); 4.8 stays as the previous
+    # generation a user may still want to pin.
     "claude-api": _curated(
         [
+            ("claude-opus-5", "Claude Opus 5"),
             ("claude-fable-5", "Claude Fable 5"),
-            ("claude-opus-4-8", "Claude Opus 4.8"),
             ("claude-sonnet-5", "Claude Sonnet 5"),
+            ("claude-opus-4-8", "Claude Opus 4.8"),
             ("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
         ]
     ),
+    # Verified 2026-08-13 against the live /v1/models roster. The bare ``gpt-5.6``
+    # alias was REMOVED: a GET /v1/models/gpt-5.6 answers 404 — only the three
+    # named 5.6 variants resolve, so offering the alias handed a keyless user a
+    # model id that fails on first use.
     "openai": _curated(
         [
-            ("gpt-5.6-sol", "GPT-5.6 Sol (preview)"),
-            ("gpt-5.6-terra", "GPT-5.6 Terra (preview)"),
-            ("gpt-5.6-luna", "GPT-5.6 Luna (preview)"),
-            ("gpt-5.6", "GPT-5.6 (Sol alias, preview)"),
+            ("gpt-5.6-sol", "GPT-5.6 Sol"),
+            ("gpt-5.6-terra", "GPT-5.6 Terra"),
+            ("gpt-5.6-luna", "GPT-5.6 Luna"),
             ("gpt-5.5", "GPT-5.5"),
             ("gpt-5.5-pro", "GPT-5.5 Pro"),
             ("gpt-5.4", "GPT-5.4"),
@@ -201,21 +210,28 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
             ("gpt-5.4-nano", "GPT-5.4 Nano"),
         ]
     ),
+    # Verified 2026-08-13 against the live /v1beta/models roster. The 2.5 pair is
+    # gone: both ids sit in ``frontier_resolver.STALE_MODELS``, so the fallback
+    # was offering models the rest of the stack refuses as end-of-life.
     "gemini": _curated(
         [
+            ("gemini-3.7-flash", "Gemini 3.7 Flash"),
+            ("gemini-3.6-flash", "Gemini 3.6 Flash"),
             ("gemini-3.5-flash", "Gemini 3.5 Flash"),
             ("gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
             ("gemini-3-flash-preview", "Gemini 3 Flash"),
+            ("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite"),
             ("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite"),
-            ("gemini-2.5-pro", "Gemini 2.5 Pro"),
-            ("gemini-2.5-flash", "Gemini 2.5 Flash"),
-            ("gemini-flash-lite-latest", "Gemini Flash Lite"),
+            ("gemini-flash-latest", "Gemini Flash (latest alias)"),
+            ("gemini-pro-latest", "Gemini Pro (latest alias)"),
         ]
     ),
+    # Verified 2026-08-13 against the live public /api/v1/models roster.
     "openrouter": _curated(
         [
+            ("anthropic/claude-opus-5", "Claude Opus 5"),
+            ("anthropic/claude-opus-5-fast", "Claude Opus 5 (Fast)"),
             ("anthropic/claude-fable-5", "Claude Fable 5"),
-            ("anthropic/claude-opus-4.8", "Claude Opus 4.8"),
             ("anthropic/claude-sonnet-5", "Claude Sonnet 5"),
             ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
             ("openai/gpt-5.6-sol-pro", "GPT-5.6 Sol Pro"),
@@ -224,18 +240,24 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
             ("openai/gpt-5.6-terra", "GPT-5.6 Terra"),
             ("openai/gpt-5.6-luna-pro", "GPT-5.6 Luna Pro"),
             ("openai/gpt-5.6-luna", "GPT-5.6 Luna"),
-            ("google/gemini-3.5-flash", "Gemini 3.5 Flash"),
+            ("google/gemini-3.7-flash", "Gemini 3.7 Flash"),
             ("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
             ("x-ai/grok-4.20", "Grok 4.20"),
             ("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
+            ("moonshotai/kimi-k3", "Kimi K3"),
+            ("z-ai/glm-5.2", "GLM-5.2"),
         ]
     ),
-    # Grok 4.3 is the universal default because Grok 4.5 is not yet available
-    # in every region. The authenticated live catalog replaces this fallback.
+    # Verified 2026-08-13 against the live api.x.ai roster. 4.20 is the current
+    # flagship (reasoning / non-reasoning split), 4.6 and 4.5 are the previous
+    # generations, 4.3 stays because it is the one available in every region.
     "grok": _curated(
         [
-            ("grok-4.3", "Grok 4.3"),
+            ("grok-4.20-0309-reasoning", "Grok 4.20 (reasoning)"),
+            ("grok-4.20-0309-non-reasoning", "Grok 4.20 (non-reasoning)"),
+            ("grok-4.6", "Grok 4.6"),
             ("grok-4.5", "Grok 4.5"),
+            ("grok-4.3", "Grok 4.3"),
         ]
     ),
     # NVIDIA NIM — the offline fallback when the live /v1/models catalog is
@@ -244,15 +266,17 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
     # model still shows up automatically.
     "nvidia": _curated(
         [
+            ("nvidia/nemotron-3-ultra-550b-a55b", "Nemotron 3 Ultra 550B"),
+            ("nvidia/nemotron-3-super-120b-a12b", "Nemotron 3 Super 120B"),
+            ("nvidia/nemotron-3.5-lightning-30b-a3b", "Nemotron 3.5 Lightning 30B"),
             ("nvidia/llama-3.1-nemotron-ultra-253b-v1", "Nemotron Ultra 253B"),
             ("nvidia/llama-3.3-nemotron-super-49b-v1.5", "Nemotron Super 49B v1.5"),
-            ("deepseek-ai/deepseek-v4-pro", "DeepSeek V4 Pro"),
-            ("deepseek-ai/deepseek-v4-flash", "DeepSeek V4 Flash"),
+            ("deepseek-ai/deepseek-v4-flash-0731", "DeepSeek V4 Flash"),
             ("moonshotai/kimi-k2.6", "Kimi K2.6"),
             ("z-ai/glm-5.2", "GLM-5.2"),
-            ("qwen/qwen3.5-397b-a17b", "Qwen3.5 397B A17B"),
-            ("meta/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick"),
-            ("mistralai/mistral-large-3-675b-instruct-2512", "Mistral Large 3"),
+            ("minimaxai/minimax-m3", "MiniMax M3"),
+            ("openai/gpt-oss-120b", "GPT-OSS 120B"),
+            ("meta/llama-3.3-70b-instruct", "Llama 3.3 70B"),
         ]
     ),
 }
@@ -1182,8 +1206,14 @@ _FAMILY_RANK: tuple[tuple[str, int], ...] = (
     ("glm-5", 27),
     ("qwen3", 26),
     ("qwen-3", 26),
+    # NVIDIA's OWN flagship line. Listed BEFORE the llama-* entries on purpose:
+    # ``nvidia/llama-3.1-nemotron-ultra-253b-v1`` contains both needles, and the
+    # first hit wins — without this it scored 12 (plain llama-3) and NVIDIA's
+    # current flagship sorted BELOW meta/llama-3.2-1b on its own provider card.
+    ("nemotron", 25),
     ("glm-4", 25),
     ("llama-4", 24),
+    ("minimax", 24),
     ("mistral-large", 23),
     ("mistral-medium", 22),
     ("gpt-oss", 21),
@@ -1197,6 +1227,10 @@ _FAMILY_RANK: tuple[tuple[str, int], ...] = (
     ("qwen", 10),
     ("glm", 10),
     ("command", 9),
+    # Gemma is deliberately NOT ranked. It is a small open-weights family the
+    # Gemini API also serves; giving it a band made it a "line flagship" and the
+    # flagship pre-pass then lifted gemma-4-31b-it ABOVE gemini-3.6/3.5-flash on
+    # the Gemini card. Unranked it stays selectable, just not in the lead rows.
 )
 
 
@@ -1248,16 +1282,22 @@ def _squash(text: str) -> str:
 # stripped) so the same pick is starred whether it comes from a direct provider
 # (``claude-opus-4-8``) or OpenRouter (``anthropic/claude-opus-4.8``). Extend
 # freely — this is a curated favourites list, presentation only.
+#
+# Refreshed 2026-08-13 against the live rosters: a star on a superseded model is
+# worse than no star — it points the user at last generation while the newer
+# sibling sits unstarred right above it. ``gpt-5.6`` (the bare alias) is gone
+# because it 404s; only the three named 5.6 variants exist.
 STARRED_MODELS: frozenset[str] = frozenset(
     {
-        _squash("claude-opus-4.8"),  # Opus 4.8
-        _squash("claude-opus-4.8-fast"),  # Opus 4.8 (Fast)
-        _squash("gpt-5.6"),  # GPT-5.6 alias (direct OpenAI)
-        _squash("gpt-5.6-sol"),  # GPT-5.6 flagship (OpenAI/OpenRouter)
-        _squash("gpt-5.5"),  # GPT-5.5
-        _squash("gemini-3.5-flash"),  # Gemini 3.5 Flash
+        _squash("claude-opus-5"),  # Opus 5
+        _squash("claude-opus-5-fast"),  # Opus 5 (Fast)
         _squash("claude-fable-5"),  # Fable 5
+        _squash("claude-sonnet-5"),  # Sonnet 5
+        _squash("gpt-5.6-sol"),  # GPT-5.6 flagship (OpenAI/OpenRouter)
+        _squash("gpt-5.5"),  # GPT-5.5 — previous flagship, still widely used
+        _squash("gemini-3.7-flash"),  # Gemini 3.7 Flash
         _squash("glm-5.2"),  # GLM-5.2
+        _squash("kimi-k3"),  # Kimi K3
     }
 )
 
@@ -1310,7 +1350,16 @@ _SPECIALIZED_MARKERS: tuple[str, ...] = (
     "-nano",
     "-lite",
     ":free",
+    # OpenRouter's async batch-API variant of an otherwise identical model. It is
+    # NOT a chat endpoint, and every flagship ships one — untagged they took half
+    # the top rows of the OpenRouter picker as pure duplicates (measured
+    # 2026-08-13: 3 of the first 7 rows).
+    ":batch",
     "-codex",
+    # Same rationale as ``-codex``: a code-specialised sibling is not the default
+    # chat brain. Without it ``deepseek-ai/deepseek-coder-6.7b-instruct`` (a
+    # small, old coder model) led the whole NVIDIA card.
+    "-coder",
     "-chat",
     "-search",
     "-air",
@@ -1321,6 +1370,10 @@ _SPECIALIZED_MARKERS: tuple[str, ...] = (
     "-deep-research",
     "-multi-agent",
     "-customtools",
+    # Reward / safety-classifier siblings of a chat family (NVIDIA ships both
+    # under the nemotron name) — real models, but never the chat brain.
+    "-reward",
+    "-content-safety",
 )
 
 

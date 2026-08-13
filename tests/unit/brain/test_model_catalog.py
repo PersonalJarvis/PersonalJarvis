@@ -460,9 +460,15 @@ class TestFilterBrainModels:
         # WHEN modality data is present (regression: modality-only filtering let
         # llama-guard-4-12b / gpt-oss-safeguard-20b slip through with output text).
         models = [
-            ModelInfo(id="meta-llama/llama-guard-4-12b", label="Guard", output_modalities=("text",)),
-            ModelInfo(id="openai/gpt-oss-safeguard-20b", label="Safeguard", output_modalities=("text",)),
-            ModelInfo(id="openai/text-embedding-3-large", label="Embed", output_modalities=("text",)),
+            ModelInfo(
+                id="meta-llama/llama-guard-4-12b", label="Guard", output_modalities=("text",)
+            ),
+            ModelInfo(
+                id="openai/gpt-oss-safeguard-20b", label="Safeguard", output_modalities=("text",)
+            ),
+            ModelInfo(
+                id="openai/text-embedding-3-large", label="Embed", output_modalities=("text",)
+            ),
             ModelInfo(id="cohere/rerank-3.5", label="Rerank", output_modalities=("text",)),
             ModelInfo(id="openai/gpt-5.5", label="GPT", output_modalities=("text",)),
         ]
@@ -652,9 +658,8 @@ class TestListModels:
         assert any("haiku" in i for i in ids)
 
     def test_every_catalog_provider_has_a_curated_family(self) -> None:
-        from jarvis.brain.model_catalog import CURATED_MODELS
-
         from jarvis.brain.app_control import LOCAL_PROVIDERS
+        from jarvis.brain.model_catalog import CURATED_MODELS
 
         for provider in CATALOG_PROVIDERS:
             if provider in LOCAL_PROVIDERS:
@@ -700,14 +705,23 @@ class TestModelClassification:
     def test_starred_matches_across_provider_id_shapes(self) -> None:
         # The same pick is starred whether it is a direct-provider id or an
         # OpenRouter namespaced id — separator/punctuation differences and all.
-        assert is_starred_model("claude-opus-4-8") is True
-        assert is_starred_model("anthropic/claude-opus-4.8") is True
+        assert is_starred_model("claude-opus-5") is True
+        assert is_starred_model("anthropic/claude-opus-5") is True
         # The separate Fast variant is its own starred pick (distinct from base).
-        assert is_starred_model("anthropic/claude-opus-4.8-fast") is True
+        assert is_starred_model("anthropic/claude-opus-5-fast") is True
         assert is_starred_model("claude-fable-5") is True
         assert is_starred_model("openai/gpt-5.5") is True
-        assert is_starred_model("gemini-3.5-flash") is True
+        assert is_starred_model("gemini-3.7-flash") is True
         assert is_starred_model("z-ai/glm-5.2") is True
+
+    def test_superseded_picks_lose_their_star(self) -> None:
+        # A star on last generation is worse than no star: it points the user at
+        # the older model while the newer sibling sits unstarred right above it.
+        assert is_starred_model("claude-opus-4-8") is False
+        assert is_starred_model("anthropic/claude-opus-4.8") is False
+        assert is_starred_model("gemini-3.5-flash") is False
+        # The bare ``gpt-5.6`` alias does not exist (404) — never star a phantom.
+        assert is_starred_model("gpt-5.6") is False
 
     def test_starred_is_exact_so_siblings_are_not_starred(self) -> None:
         # Only the named base picks are starred — not their mini/pro siblings.
@@ -719,11 +733,19 @@ class TestModelClassification:
         assert is_starred_model("z-ai/glm-5.2:free") is True
 
     def test_classify_flagship_is_frontier_not_value(self) -> None:
-        tags = classify_model("anthropic/claude-opus-4.8", "Claude Opus 4.8")
+        tags = classify_model("anthropic/claude-opus-5", "Claude Opus 5")
         assert tags.frontier is True
         assert tags.value is False
         assert tags.starred is True
         assert tags.free is False
+
+    def test_frontier_band_is_family_wide_and_survives_a_new_generation(self) -> None:
+        # The band comes from the FAMILY, not from a per-version list, so last
+        # generation stays "frontier" (just unstarred) and a brand-new version
+        # is frontier the day it appears — no catalog edit needed.
+        assert classify_model("anthropic/claude-opus-4.8").frontier is True
+        assert classify_model("anthropic/claude-opus-4.8").starred is False
+        assert classify_model("google/gemini-3.9-flash").frontier is True
 
     def test_classify_strong_value_family_is_value_not_frontier(self) -> None:
         tags = classify_model("deepseek/deepseek-v3.2", "DeepSeek V3.2")

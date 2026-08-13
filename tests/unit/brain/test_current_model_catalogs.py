@@ -69,9 +69,11 @@ def test_live_openrouter_response_keeps_every_gpt_5_6_text_model() -> None:
 
 
 def test_direct_openai_and_codex_catalogs_offer_current_gpt_models() -> None:
-    assert {"gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} <= _ids(
-        CURATED_MODELS["openai"]
-    )
+    assert {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} <= _ids(CURATED_MODELS["openai"])
+    # The bare ``gpt-5.6`` alias must NOT be offered: measured 2026-08-13, a
+    # GET /v1/models/gpt-5.6 answers 404 while the three named variants answer
+    # 200. A keyless user picking it from the fallback would fail on first use.
+    assert "gpt-5.6" not in _ids(CURATED_MODELS["openai"])
     assert {
         "gpt-5.5",
         "gpt-5.5-pro",
@@ -97,6 +99,8 @@ def test_gemini_fallback_uses_current_non_media_models() -> None:
     ids = _ids(CURATED_MODELS["gemini"])
 
     assert {
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
         "gemini-3.5-flash",
         "gemini-3.1-pro-preview",
         "gemini-3-flash-preview",
@@ -104,6 +108,28 @@ def test_gemini_fallback_uses_current_non_media_models() -> None:
     } <= ids
     assert "gemini-3-pro" not in ids
     assert "gemini-3-pro-preview" not in ids
+    assert is_starred_model("gemini-3.7-flash")
+
+
+def test_no_curated_fallback_offers_an_end_of_life_model() -> None:
+    """The offline list must never hand a user a model the rest of the stack
+    refuses as EOL. Regression: the Gemini fallback carried gemini-2.5-pro and
+    gemini-2.5-flash while both sat in ``frontier_resolver.STALE_MODELS``."""
+    from jarvis.brain.frontier_resolver import STALE_MODELS
+
+    for provider, models in CURATED_MODELS.items():
+        for model in models:
+            tail = model.id.rsplit("/", 1)[-1]
+            assert tail not in STALE_MODELS, f"{provider} offers EOL model {model.id}"
+
+
+def test_claude_fallback_carries_the_current_flagship() -> None:
+    """Anthropic serves no catalog to an OAuth/Max session, so this curated list
+    IS the Claude picker for most users — it must lead with the current Opus."""
+    ids = _ids(CURATED_MODELS["claude-api"])
+
+    assert {"claude-opus-5", "claude-fable-5", "claude-sonnet-5"} <= ids
+    assert is_starred_model("claude-opus-5")
 
 
 def test_current_stt_and_cartesia_model_rosters() -> None:
@@ -155,10 +181,15 @@ def test_current_realtime_models_and_voices() -> None:
         "gemini-2.5-flash-native-audio-preview-12-2025",
     } == _ids(REALTIME_MODELS["gemini-live"])
     assert len(_ids(REALTIME_VOICES["gemini-live"])) == 30
-    # grok-realtime was removed 2026-07-16 (BUG-064 deaf-session wedge);
-    # neither catalog may resurrect it.
-    assert "grok-realtime" not in REALTIME_MODELS
-    assert "grok-realtime" not in REALTIME_VOICES
+    # grok-realtime was restored 2026-08-13 on grok-voice-think-fast-2.0.
+    # The 1.0 generation the BUG-064 wedges were measured on stays out of the
+    # catalog: offering it would hand a user the broken stack by name.
+    assert {
+        "grok-voice-latest",
+        "grok-voice-think-fast-2.0",
+    } == _ids(REALTIME_MODELS["grok-realtime"])
+    assert len(_ids(REALTIME_VOICES["grok-realtime"])) == 28
+    assert "eve" in _ids(REALTIME_VOICES["grok-realtime"])
 
 
 def test_gemini_voice_roster_is_identical_across_runtime_and_pickers() -> None:

@@ -357,9 +357,11 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         ),
         alt_credential=_GEMINI_VERTEX,
         # Maintainer-recommended brain (2026-06-22): best real-world experience.
-        # Badge on the brain card; the model picker highlights gemini-3.5-flash.
+        # Badge on the brain card; the model picker highlights the current Flash
+        # generation (3.7 since 2026-08-13 — keep in step with the live roster,
+        # a badge pointing at a superseded model is worse than none).
         recommended=True,
-        recommended_model="gemini-3.5-flash",
+        recommended_model="gemini-3.7-flash",
     ),
     # ── Brain: Google subscription via the official Antigravity/Gemini CLI ──
     # OAuth-only (no API-key slot): we drive the official ``agy``/``gemini`` CLI
