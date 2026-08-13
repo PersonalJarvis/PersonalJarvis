@@ -760,6 +760,13 @@ call-contact = "jarvis.plugins.tool.call_contact:CallContactTool"
 # working (docs/plans/autonomous-missions.md C6/C12). monitor-tier, escalating
 # to "ask" on purchase-shaped work.
 browser = "jarvis.plugins.tool.browser:BrowserTool"
+# Login vault (2026-08-13): the brain's only window into the user's stored
+# website logins. It answers WHETHER one exists, for which service and under
+# which username, and records whether a login worked — never the password. The
+# value travels a separate road: SECRET("<id>", "password") in a browser script,
+# filled in by jarvis.logins.injection on the way to the harness subprocess. Do
+# not add a "reveal" action here; the split is the whole safety property.
+credentials = "jarvis.plugins.tool.credentials:CredentialsTool"
 # Autonomous errands (2026-08-13): hand over a real-world job — book, order,
 # arrange, cancel — and let it run to a proven outcome across restarts. Router
 # tier, monitor risk. NOT gated behind delegation vocabulary, unlike

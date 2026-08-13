@@ -198,6 +198,14 @@ ROUTER_TOOLS = frozenset({
     # plugin/MCP first, then this, then computer-use.
     # See docs/plans/autonomous-missions.md C6/C12.
     "browser",
+    # Login vault (2026-08-13): lets the brain ask "is a login stored for this
+    # site?" before it hits a password wall, and record afterwards whether the
+    # login worked. Metadata only — the password itself never passes through a
+    # tool result, it is substituted into the browser script out of band. A
+    # read this cheap has to be router-reachable, otherwise the model's only
+    # remaining move at a login form is to ask the user to say a password out
+    # loud, which is the exact thing the contract forbids (§7). Never a spawn.
+    "credentials",
     # Autonomous errands (2026-08-13): the door into the errand loop — a
     # real-world job that ends when the goal is PROVEN reached, not when a step
     # budget runs out (docs/plans/autonomous-missions.md). Router-tier, monitor
