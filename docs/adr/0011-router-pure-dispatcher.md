@@ -1054,3 +1054,44 @@ queries via hybrid search.
 
 - `tests/unit/plugins/tool/test_ultrawiki_search_tool.py`
 - `tests/unit/brain/test_routing.py` (ROUTER_TOOLS exact set)
+
+## Amendment: Assistant-Mode Tools (2026-08-13)
+
+`list-modes`, `switch-mode` and `save-mode` join `ROUTER_TOOLS`: the assistant
+can now read, switch and author its own *mode* — the character it answers in
+(`jarvis/brain/modes.py`, `jarvis/plugins/tool/assistant_mode.py`).
+
+The precedent is `switch-provider`, not `open_app`. These tools reconfigure the
+assistant itself; they run in-process, touch no external system, and their
+result is deterministic. Nothing here is a direct action on the user's machine,
+so nothing here belongs behind the Jarvis-Agent bridge. Direct gated actions,
+never spawns, never in a worker tool set (AP-5/AP-14).
+
+Tiers are set by what each one can actually cost:
+
+- `list-modes` — safe. A property read over the mode directory.
+- `switch-mode` — monitor. It changes tone and nothing else, the app-wide mode
+  indicator shows it the moment it happens, and undoing it is one sentence.
+  Confirming a change of character the user just asked for out loud would be
+  paperwork, not safety.
+- `save-mode` — ask, echo-confirmed. It writes a file that every future turn
+  reads, under a name the model chose from a conversation. The confirmation is
+  the natural last beat of the mode-builder interview and is what stops a
+  half-heard sentence from becoming a permanent character.
+
+A mode is layered onto the base persona, never substituted for it
+(`persona_loader.load_effective_persona_prompt`), so no mode — including one the
+model wrote itself — can drop the standing rules about honesty and about what is
+safe to say aloud. `save_mode` is told not to restate those rules, because a
+mode that appears to own them invites a later one to relax them.
+
+The Agentic IDE's coding mode is applied as an in-memory *section override*
+rather than a persisted choice, so a mode a screen switched on cannot outlive
+the process.
+
+### Regression guards
+
+- `tests/unit/plugins/test_assistant_mode_tool.py`
+- `tests/unit/brain/test_modes.py`
+- `tests/integration/test_modes_routes.py`
+- `tests/unit/brain/test_routing.py` (ROUTER_TOOLS exact set)
