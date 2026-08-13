@@ -278,6 +278,23 @@ _DELEGATION_COMPOSITION_RE = re.compile(
 )
 
 
+def _active_mode_voice() -> str | None:
+    """TTS voice the active assistant mode asks for, or ``None`` to keep the
+    configured one.
+
+    Never raises and never blocks: this sits on the speak path, and a mode is a
+    cosmetic preference. A missing mode layer, an unreadable mode file or a
+    voice the provider does not have all degrade to the configured voice â€”
+    sounding wrong is recoverable, going silent is not.
+    """
+    try:
+        from jarvis.brain.modes import active_voice
+
+        return active_voice() or None
+    except Exception:  # noqa: BLE001 - a voice preference must never cost speech
+        return None
+
+
 def _looks_like_delegation_composition(partial: str | None) -> bool:
     """True if the live partial transcript shows a delegation being composed."""
     return bool(partial) and _DELEGATION_COMPOSITION_RE.search(partial) is not None
@@ -4604,8 +4621,16 @@ class SpeechPipeline:
             # symptom; forensic 2026-06-23).
             lang_code = self._bcp47(ann_lang)
             self._register_assistant_speech(scrubbed.cleaned)
+            # A mode may name the voice it speaks in â€” a friend should not sound
+            # like a butler. Resolved per utterance rather than bound when the
+            # provider is built, so switching modes changes the voice on the
+            # next sentence instead of at the next restart. None means "keep the
+            # configured voice", which is every mode that names none.
+            mode_voice = _active_mode_voice()
             try:
-                chunks = self._tts.synthesize(scrubbed.cleaned, language_code=lang_code)
+                chunks = self._tts.synthesize(
+                    scrubbed.cleaned, voice=mode_voice, language_code=lang_code
+                )
             except TypeError:
                 chunks = self._tts.synthesize(scrubbed.cleaned)
             if is_preamble:
