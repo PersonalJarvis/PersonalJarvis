@@ -203,27 +203,6 @@ function lookFor(
 }
 
 /**
- * The word for this pane's state — "working", "done", "needs you".
- *
- * The pill itself is eight pixels of icon and says this only in its tooltip and
- * its accessible name, which is the right size for a header. A pane that has
- * given up its terminal to a card (see `PaneTooNarrowCard` in
- * ./AgenticTerminal) has room to spell it out, and has to: the card IS the
- * pane's state, and there is nothing else on it to read.
- *
- * Exported from here rather than restated there, so the vocabulary keeps one
- * home. A value added to the Python `Activity` literal still fails to compile
- * until `LOOK` is given a label for it, and now both readers inherit that.
- */
-export function paneActivityLabel(
-  status: string,
-  activity: PaneActivity = "",
-  worked = false,
-): string {
-  return lookFor(status, activity, worked).label;
-}
-
-/**
  * How long it has been in this state — "45s", "3 min", "2 hours".
  *
  * A DURATION, not a moment: "waiting since 14:02" makes the reader do the

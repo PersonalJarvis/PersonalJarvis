@@ -3863,7 +3863,6 @@
     },
     "crowded": {
         "warning": "{0} Terminals nebeneinander sind auf den meisten Bildschirmen zu klein zum Lesen, und der Arbeitsbereich kann träge werden. Öffne ihn trotzdem, wenn dein Bildschirm den Platz hat.",
-        "measured": "{0} Terminals wären auf diesem Fenster etwa {1} Spalten breit — zu schmal, als dass ein Agent darin zeichnen könnte, also öffnen sie sich als Status-Karten statt als Terminals. In dieses Fenster passen bei deiner Schriftgröße {2} nebeneinander.",
         "accept": "Trotzdem öffnen",
         "accepted": "{0} Terminals werden trotzdem geöffnet."
       },

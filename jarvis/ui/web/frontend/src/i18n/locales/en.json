@@ -3863,7 +3863,6 @@
     },
     "crowded": {
         "warning": "{0} terminals side by side will be too small to read on most displays, and the workspace may feel sluggish. Open it anyway if your screen has the room.",
-        "measured": "{0} terminals would be about {1} columns each on this window — too narrow for an agent to draw in, so they open as status cards instead of terminals. This window fits {2} across at your text size.",
         "accept": "Open it anyway",
         "accepted": "Opening {0} terminals anyway."
       },

@@ -30,24 +30,6 @@ vi.mock("./FolderPicker", () => ({
   FolderPicker: () => <div data-testid="folder-picker" />,
 }));
 
-/*
- * The cell width the wizard measures, faked.
- *
- * jsdom has no 2D canvas, so the real `measureAdvance` answers null there and
- * every measured branch of this screen is skipped — which is itself the
- * behaviour a test below pins. The ones that exercise the measurement set this
- * to a real advance instead: 12 px is what the maintainer's text size 20
- * measured at, on the window the bug was reported from.
- */
-const advance = { px: null as number | null };
-vi.mock("@/lib/terminalFont", () => ({
-  measureAdvance: () => advance.px,
-}));
-
-afterEach(() => {
-  advance.px = null;
-});
-
 afterEach(cleanup);
 
 function props(
@@ -159,61 +141,5 @@ describe("a crowded workspace has to be confirmed", () => {
     }
     fireEvent.click(screen.getByText("workspace_launcher.wizard.open_workspace"));
     expect(onStart).toHaveBeenCalledTimes(1);
-  });
-});
-
-/**
- * …and a workspace the WINDOW cannot carry has to be confirmed too.
- *
- * The fixed count of twenty is blind to both halves of the thing it guesses at.
- * Twelve terminals on a 1 740 px stage at text size 20 land at thirteen columns
- * each — a width no coding CLI can draw a frame in — and opened in complete
- * silence, because twelve is not twenty (reported 2026-08-13). The same twelve
- * on a video wall are fine and were never worth a word.
- *
- * So the measurement asks the second question. It blocks in exactly the same
- * way, for the same reason, and is overruled by the same button: the count is
- * still never refused.
- */
-describe("a workspace this window cannot draw has to be confirmed", () => {
-  const REPORTED_WINDOW_PX = 1740;
-
-  it("stops a count that would leave every pane undrawable", () => {
-    advance.px = 12;
-    openLayoutStep(12, { workspaceWidthPx: REPORTED_WINDOW_PX });
-
-    const warning = screen.getByTestId("workspace-crowded-warning");
-    // The measured sentence, not the general one about "most displays".
-    expect(warning.textContent).toContain(
-      "workspace_launcher.crowded.measured",
-    );
-    expect(nextStep().closest("button")?.disabled).toBe(true);
-  });
-
-  it("says nothing when the same panes have room", () => {
-    // A wall display, or simply a smaller text size. Nothing is wrong here and
-    // a warning would be noise.
-    advance.px = 6;
-    openLayoutStep(4, { workspaceWidthPx: REPORTED_WINDOW_PX });
-
-    expect(screen.queryByTestId("workspace-crowded-warning")).toBeNull();
-    expect(nextStep().closest("button")?.disabled).toBe(false);
-  });
-
-  it("stays quiet where nothing can be measured", () => {
-    // No canvas to measure with. "We could not measure" must never render as a
-    // warning, or the wizard shouts at everyone once.
-    advance.px = null;
-    openLayoutStep(12, { workspaceWidthPx: REPORTED_WINDOW_PX });
-
-    expect(screen.queryByTestId("workspace-crowded-warning")).toBeNull();
-  });
-
-  it("is overruled by the same button, and opens the count asked for", () => {
-    advance.px = 12;
-    openLayoutStep(12, { workspaceWidthPx: REPORTED_WINDOW_PX });
-
-    fireEvent.click(screen.getByTestId("workspace-crowded-accept"));
-    expect(nextStep().closest("button")?.disabled).toBe(false);
   });
 });
