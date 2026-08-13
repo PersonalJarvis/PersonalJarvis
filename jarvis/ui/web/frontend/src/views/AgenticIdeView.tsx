@@ -343,6 +343,21 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
    * assistant for a minute" works and does not get overridden a second later.
    */
   const optedOutRef = useRef(false);
+  /*
+   * Was the mode switched on BY this screen, or by the user?
+   *
+   * It decides what happens when the section is left. An auto-enabled mode is
+   * on loan — it belongs to this screen and goes back when you walk away. A
+   * mode the user switched on by hand is theirs, and stays on everywhere, which
+   * is how "ask Jarvis about my terminals from the kitchen" keeps working.
+   *
+   * Without this distinction the mode simply never turned off: this view
+   * switched it on, nothing switched it off, and because the view is sticky
+   * (see MainView) there was not even an unmount to hang the cleanup on. The
+   * result was an assistant permanently in coding mode on every screen, with
+   * only a small badge admitting it.
+   */
+  const autoEnabledRef = useRef(false);
   const [modeIntroFor, setModeIntroFor] = useState<string | null>(null);
 
   /*
@@ -380,13 +395,21 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   }, [session, loading]);
 
   useEffect(() => {
-    if (!session || session.focus_mode || optedOutRef.current) return;
+    // Gated on the LOCAL flag, not `session.focus_mode`: `session` is only
+    // refetched by `refresh`, so after this effect's counterpart hands the mode
+    // back on leaving, the cached session still claims the mode is on and
+    // returning to the section would never switch it on again. The local flag
+    // is the one that tracks what actually happened — and it is trustworthy
+    // here because `session` is non-null only once a refresh has landed, and
+    // that same refresh sets the flag from the backend.
+    if (!onScreen || !session || focusMode || optedOutRef.current) return;
     let cancelled = false;
     void (async () => {
       try {
         const on = await setFocusMode(true);
         if (cancelled) return;
         setFocus(on);
+        autoEnabledRef.current = on;
         // First workspace on this machine: say once what just changed. A mode
         // that switches silently is indistinguishable from a bug.
         if (on && !hasSeenModeIntro()) setModeIntroFor(session.id);
@@ -397,7 +420,33 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [session]);
+    // `onScreen` belongs here: this view is sticky and stays mounted, so coming
+    // back to the section is a prop change, not a remount. Without it the mode
+    // would be given back on leaving and never picked up again on return.
+  }, [session, onScreen, focusMode]);
+
+  /*
+   * Leaving the section gives the mode back.
+   *
+   * The signal is `onScreen`, not an unmount — MainView keeps this view mounted
+   * on purpose so a dozen terminals survive a trip to Settings, which means
+   * there is no unmount to clean up on. Only an auto-enabled mode is returned;
+   * one the user switched on by hand is left alone.
+   *
+   * Failure is deliberately silent. This runs while the user is already looking
+   * at another section, and a toast about a mode belonging to the screen they
+   * just left would be noise pointing at nothing. The app-wide badge keeps
+   * telling the truth either way, because it re-reads the backend on every
+   * section change (useCodingMode, path 4).
+   */
+  useEffect(() => {
+    if (onScreen) return;
+    if (!autoEnabledRef.current) return;
+    autoEnabledRef.current = false;
+    void setFocusMode(false)
+      .then(() => setFocus(false))
+      .catch(() => {});
+  }, [onScreen]);
 
   // Memoised so these arrays keep a stable identity across renders — see the
   // note on buildPlan for what an unstable one costs.
@@ -740,6 +789,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     // Remember a deliberate opt-out, or the auto-enable effect above would turn
     // the mode straight back on and the switch would look broken.
     optedOutRef.current = !enabled;
+    // Touching the switch takes ownership of the mode either way: switching it
+    // on by hand means "keep it on when I leave", switching it off means there
+    // is nothing left for the leave-handler to undo.
+    autoEnabledRef.current = false;
     try {
       setFocus(await setFocusMode(enabled));
     } catch (e) {

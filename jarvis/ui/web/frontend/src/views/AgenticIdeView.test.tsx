@@ -841,6 +841,74 @@ describe("Agentic IDE running workspace", () => {
     );
   });
 
+  /*
+   * The mode is scoped to this section, and the signal is `onScreen`.
+   *
+   * This view is sticky — MainView keeps it mounted so a workspace survives a
+   * trip to Settings — so there is no unmount to clean up on. That is exactly
+   * how the mode came to be permanently on: this view switched it on and
+   * nothing ever switched it off, leaving the assistant in coding mode on every
+   * screen for the rest of the session.
+   */
+  it("hands an auto-enabled coding mode back when the section is left", async () => {
+    vi.mocked(api.fetchIdeState).mockResolvedValue(
+      stateWith(sessionWith(["Mika"])),
+    );
+    vi.mocked(api.setFocusMode).mockResolvedValue(true);
+    const { rerender } = render(<AgenticIdeView onScreen />);
+
+    await waitFor(() => expect(api.setFocusMode).toHaveBeenCalledWith(true));
+
+    vi.mocked(api.setFocusMode).mockResolvedValue(false);
+    rerender(<AgenticIdeView onScreen={false} />);
+    await waitFor(() => expect(api.setFocusMode).toHaveBeenLastCalledWith(false));
+  });
+
+  it("switches the mode back on when the section is returned to", async () => {
+    vi.mocked(api.fetchIdeState).mockResolvedValue(
+      stateWith(sessionWith(["Mika"])),
+    );
+    vi.mocked(api.setFocusMode).mockResolvedValue(true);
+    const { rerender } = render(<AgenticIdeView onScreen />);
+    await waitFor(() => expect(api.setFocusMode).toHaveBeenCalledWith(true));
+
+    vi.mocked(api.setFocusMode).mockResolvedValue(false);
+    rerender(<AgenticIdeView onScreen={false} />);
+    await waitFor(() => expect(api.setFocusMode).toHaveBeenLastCalledWith(false));
+
+    // The cached session still claims focus_mode is on, which is precisely why
+    // the auto-enable gate reads the local flag instead of the session.
+    vi.mocked(api.setFocusMode).mockResolvedValue(true);
+    rerender(<AgenticIdeView onScreen />);
+    await waitFor(() => expect(api.setFocusMode).toHaveBeenLastCalledWith(true));
+  });
+
+  it("leaves a hand-toggled coding mode alone when the section is left", async () => {
+    vi.mocked(api.fetchIdeState).mockResolvedValue(
+      stateWith(sessionWith(["Mika"], true)),
+    );
+    vi.mocked(api.setFocusMode).mockResolvedValue(true);
+    const { rerender } = render(<AgenticIdeView onScreen />);
+
+    const toggle = await screen.findByTestId("agentic-focus-toggle");
+    // Off by hand, then on by hand: now the mode is the user's, not the screen's,
+    // so walking away must not take it back. This is what keeps "ask Jarvis
+    // about my terminals from another room" working.
+    vi.mocked(api.setFocusMode).mockResolvedValue(false);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(api.setFocusMode).toHaveBeenLastCalledWith(false));
+    vi.mocked(api.setFocusMode).mockResolvedValue(true);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(api.setFocusMode).toHaveBeenLastCalledWith(true));
+
+    const callsBeforeLeaving = vi.mocked(api.setFocusMode).mock.calls.length;
+    rerender(<AgenticIdeView onScreen={false} />);
+    await Promise.resolve();
+    expect(vi.mocked(api.setFocusMode).mock.calls.length).toBe(
+      callsBeforeLeaving,
+    );
+  });
+
   it("sends a prompt to the selected terminal through the same endpoint voice uses", async () => {
     vi.mocked(api.fetchIdeState).mockResolvedValue(
       stateWith(sessionWith(["Mika", "Nova"])),
