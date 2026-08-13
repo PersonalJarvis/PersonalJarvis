@@ -198,6 +198,15 @@ ROUTER_TOOLS = frozenset({
     # plugin/MCP first, then this, then computer-use.
     # See docs/plans/autonomous-missions.md C6/C12.
     "browser",
+    # Autonomous errands (2026-08-13): the door into the errand loop — a
+    # real-world job that ends when the goal is PROVEN reached, not when a step
+    # budget runs out (docs/plans/autonomous-missions.md). Router-tier, monitor
+    # risk. Unlike spawn-worker it is deliberately NOT behind the explicit
+    # delegation gate: an order IS the instruction, and requiring the user to
+    # say "agent" first is the exact behaviour this replaces. Never a spawn in
+    # the AP-5/AP-14 sense, and the runner removes it from its own leg tools so
+    # an errand can never dispatch an errand.
+    "start-errand",
     # Computer-Use (Wave 1, 2026-05-29): first-class, clearly-described tool to
     # drive the user's LIVE desktop (open apps, click, type, scroll, operate
     # any GUI). The router previously had no honest desktop path — spawn-worker

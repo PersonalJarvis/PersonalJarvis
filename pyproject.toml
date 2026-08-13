@@ -760,6 +760,13 @@ call-contact = "jarvis.plugins.tool.call_contact:CallContactTool"
 # working (docs/plans/autonomous-missions.md C6/C12). monitor-tier, escalating
 # to "ask" on purchase-shaped work.
 browser = "jarvis.plugins.tool.browser:BrowserTool"
+# Autonomous errands (2026-08-13): hand over a real-world job — book, order,
+# arrange, cancel — and let it run to a proven outcome across restarts. Router
+# tier, monitor risk. NOT gated behind delegation vocabulary, unlike
+# spawn-worker: the whole point is that an ORDER is the instruction. Never
+# enters a worker tool set, and the runner strips it from its own leg tools so
+# an errand cannot dispatch an errand (AP-5/AP-14 reasoning).
+start-errand = "jarvis.plugins.tool.start_errand:StartErrandTool"
 
 [tool.setuptools.packages.find]
 where = ["."]

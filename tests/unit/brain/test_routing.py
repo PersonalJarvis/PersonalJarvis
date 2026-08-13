@@ -1916,6 +1916,25 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # MCP server block, so it must be router-visible directly; per-action
             # risk gating (reads safe, writes monitor, share/delete ask).
             "google_drive",
+            # Browser over CDP (2026-08-13): the default route into a web page,
+            # driven through browser-harness. Addresses elements via the
+            # accessibility tree rather than guessing click points from a
+            # screenshot, and needs neither the pointer nor the foreground
+            # window. Direct monitor-tier action escalating to "ask" on
+            # purchase-shaped work; never a spawn. Unlike the desktop tools it
+            # is sub-agent-safe, because it is not the one physical pointer —
+            # pinned in tests/unit/plugins/tool/test_browser.py.
+            # See docs/plans/autonomous-missions.md C6/C12.
+            "browser",
+            # Autonomous errands (2026-08-13): the door into the errand loop —
+            # a real-world job (book, order, arrange, cancel) that ends when the
+            # goal is PROVEN reached rather than when a step budget runs out.
+            # Router-tier, monitor risk, never a spawn in the AP-5/AP-14 sense;
+            # the runner strips it from its own leg tools so an errand cannot
+            # dispatch an errand. Deliberately NOT behind the explicit
+            # delegation gate that guards spawn-worker: an order is itself the
+            # instruction. See docs/plans/autonomous-missions.md.
+            "start-errand",
             # Computer-Use (Wave 1, 2026-05-29): first-class tool to drive the
             # live desktop. Router-tier only — a direct safe-gated action (the
             # loop gates each action via ToolExecutor, ADR-0008), never a spawn,
