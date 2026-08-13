@@ -138,6 +138,11 @@ const ContactsView = lazyView(() =>
     default: m.ContactsView,
   })),
 );
+const PasswordsView = lazyView(() =>
+  import("@/views/passwords/PasswordsView").then((m) => ({
+    default: m.PasswordsView,
+  })),
+);
 const FeedbackView = lazyView(() =>
   import("@/views/feedback/FeedbackView").then((m) => ({
     default: m.FeedbackView,
@@ -422,6 +427,8 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <SocialsView />;
     case "contacts":
       return <ContactsView />;
+    case "passwords":
+      return <PasswordsView />;
     case "feedback":
       return <FeedbackView />;
     case "agent-instructions":

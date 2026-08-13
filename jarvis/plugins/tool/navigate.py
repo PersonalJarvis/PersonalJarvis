@@ -45,6 +45,7 @@ KNOWN: frozenset[str] = frozenset(
         "socials",
         "taskbar",
         "contacts",
+        "passwords",
         "feedback",
         "agent-instructions",
         "wallpaper",
@@ -158,6 +159,19 @@ _ALIASES: dict[str, str] = {
     "kontakte": "contacts",
     "address book": "contacts",
     "adressbuch": "contacts",
+    # The login vault. "logins" and "zugänge" are what people actually say for
+    # it; "password manager" is what they call the category.
+    "password": "passwords",
+    "passwort": "passwords",  # i18n-allow: input vocab
+    "passwörter": "passwords",  # i18n-allow: input vocab
+    "passwoerter": "passwords",  # i18n-allow: input vocab
+    "password manager": "passwords",
+    "passwortmanager": "passwords",  # i18n-allow: input vocab
+    "login": "passwords",
+    "logins": "passwords",
+    "zugang": "passwords",  # i18n-allow: input vocab
+    "zugänge": "passwords",  # i18n-allow: input vocab
+    "contraseñas": "passwords",  # i18n-allow: input vocab
     # "Extensions" is the merged sidebar entry fronting skills + plugins + clis
     # + mcps. The bare name lands on the Skills tab; "tools" lands on the Tools
     # tab (which defaults to Plugins). The underlying section ids are unchanged.

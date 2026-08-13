@@ -107,6 +107,12 @@ const NAV_GROUPS: NavItem[][] = [
     { id: "board", labelKey: "nav.board", icon: Sparkles },
     { id: "memory", labelKey: "nav.wiki", icon: Notebook },
     { id: "contacts", labelKey: "nav.contacts", icon: Contact },
+    {
+      id: "passwords",
+      labelKey: "nav.passwords",
+      icon: KeyRound,
+      fallbackLabel: "Passwords",
+    },
     { id: "profile", labelKey: "nav.profile", icon: UserCircle2 },
     {
       id: "agent-instructions",

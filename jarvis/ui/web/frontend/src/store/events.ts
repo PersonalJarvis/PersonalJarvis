@@ -65,6 +65,10 @@ export type SectionId =
   | "socials"
   | "taskbar"
   | "contacts"
+  // The login vault. A real section rather than a tab under API keys: those
+  // are the assistant's own model credentials, these are the user's personal
+  // accounts, and only a real section id can be reached by voice.
+  | "passwords"
   | "feedback"
   | "agent-instructions"
   | "wallpaper"
@@ -113,6 +117,7 @@ export const SECTION_IDS = [
   "socials",
   "taskbar",
   "contacts",
+  "passwords",
   "feedback",
   "agent-instructions",
   "wallpaper",
@@ -179,6 +184,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   socials: "Socials",
   taskbar: "Taskbar",
   contacts: "Contacts",
+  passwords: "Passwords",
   feedback: "Feedback",
   "agent-instructions": "Agent Instructions",
   wallpaper: "Wallpaper",
