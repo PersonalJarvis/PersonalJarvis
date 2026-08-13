@@ -34,6 +34,12 @@ scripts/ci/german-allowlist.txt
 # --- The gate's own tests (German fixture strings are required to test it) ---
 tests/unit/ci/test_check_no_new_german.py
 
+# --- Room-layout tests: the German room names ARE the fixtures. A hub is set
+#     up in its owner's language, so "Küche"/"Büro" is what the slug builder
+#     and the icon hints must actually survive — an English-only fixture would
+#     test nothing about the umlaut folding it exists for ---
+tests/unit/smarthome/test_home_layout.py
+
 # --- i18n / locale source files (German IS the point here) ---
 */i18n/*
 */locales/*
