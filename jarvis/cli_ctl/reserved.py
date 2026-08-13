@@ -47,6 +47,7 @@ RESERVED_CONTROL_NAMES: frozenset[str] = frozenset(
         "docs",
         "frontier",
         "ide",
+        "modes",
     }
 )
 

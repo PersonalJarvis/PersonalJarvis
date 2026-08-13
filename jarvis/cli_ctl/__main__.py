@@ -34,6 +34,7 @@ from jarvis.cli_ctl.commands import ide as ide_cmd
 from jarvis.cli_ctl.commands import marketplace as marketplace_cmd
 from jarvis.cli_ctl.commands import mcps as mcps_cmd
 from jarvis.cli_ctl.commands import missions as missions_cmd
+from jarvis.cli_ctl.commands import modes as modes_cmd
 from jarvis.cli_ctl.commands import outputs as outputs_cmd
 from jarvis.cli_ctl.commands import permissions as permissions_cmd
 from jarvis.cli_ctl.commands import sessions as sessions_cmd
@@ -114,6 +115,7 @@ app.add_typer(commands_cmd.app, name="commands")
 app.add_typer(computer_use_cmd.app, name="computer-use")
 app.add_typer(config_cmd.app, name="config")
 app.add_typer(missions_cmd.app, name="missions")
+app.add_typer(modes_cmd.app, name="modes")
 app.add_typer(wiki_cmd.app, name="wiki")
 app.add_typer(sessions_cmd.app, name="sessions")
 app.add_typer(skills_cmd.app, name="skills")
