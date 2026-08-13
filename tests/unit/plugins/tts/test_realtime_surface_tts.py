@@ -30,7 +30,7 @@ from jarvis.plugins.tts import (
 )
 from jarvis.plugins.tts.gemini_flash_tts import GeminiFlashTTS
 
-_REALTIME_PROVIDER_IDS = ("gemini-live", "openai-realtime")
+_REALTIME_PROVIDER_IDS = ("gemini-live", "openai-realtime", "grok-realtime")
 
 
 def _cfg(voice: str = "Fenrir") -> SimpleNamespace:
@@ -233,3 +233,52 @@ def test_pipeline_tts_cannot_see_a_realtime_only_key(
     monkeypatch.setattr("jarvis.core.config.get_secret", _secret)
     tts_cfg = SimpleNamespace(use_vertex=False)
     assert _tts_has_credential("gemini-flash-tts", tts_cfg) is False
+
+
+def _grok_cfg(voice: str = "leo") -> SimpleNamespace:
+    return SimpleNamespace(
+        brain=SimpleNamespace(
+            providers={"grok-realtime": SimpleNamespace(voice=voice)},
+        ),
+        tts=SimpleNamespace(
+            language_code="de-DE",
+            allow_sapi5_fallback=False,
+            streaming=False,
+        ),
+    )
+
+
+def test_grok_realtime_has_a_same_family_emergency_voice() -> None:
+    """Live incident 2026-08-13 18:53: a grok-realtime session whose transport
+    rebuilt went fully mute — the family had no surface TTS registered, so
+    four executed action results were written and never heard, even though
+    xAI serves TTS on the very token the call already authenticated with.
+    """
+    from jarvis.plugins.tts.grok_voice_tts import GrokVoiceTTS
+
+    with override_provider_secrets({"grok-realtime": "rt-scoped-key"}):
+        tts = build_realtime_surface_tts(_grok_cfg(), "grok-realtime")
+    assert isinstance(tts, GrokVoiceTTS)
+    assert tts._default_voice == "leo"
+    # The realtime slot is injected, never left to the ambient xAI lookup.
+    assert tts._resolve_api_key() == "rt-scoped-key"
+
+
+def test_grok_surface_voice_keeps_the_session_voice_profile() -> None:
+    """BUG-089 for the xAI family: an unknown session voice keeps the audible
+    masculine/feminine character instead of flipping the perceived speaker."""
+    from jarvis.plugins.tts.curated_catalog import FEMININE, voice_gender
+    from jarvis.plugins.tts.grok_voice_tts import DEFAULT_VOICES
+
+    with override_provider_secrets({"grok-realtime": "rt-scoped-key"}):
+        # "Kore" is a Gemini voice with a curated FEMININE profile — exactly
+        # the carry-over that made xAI answer HTTP 400 in the live session.
+        tts = build_realtime_surface_tts(_grok_cfg(voice="Kore"), "grok-realtime")
+    assert tts is not None
+    assert tts._default_voice in DEFAULT_VOICES
+    assert voice_gender(tts._default_voice) == FEMININE
+
+
+def test_grok_realtime_without_a_key_stays_text_only() -> None:
+    with override_provider_secrets({"grok-realtime": ""}):
+        assert build_realtime_surface_tts(_grok_cfg(), "grok-realtime") is None

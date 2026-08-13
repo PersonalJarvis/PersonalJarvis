@@ -8058,3 +8058,48 @@ async def test_a_turn_without_a_boundary_releases_the_microphone_fast() -> None:
         "should fire at ~2 s of provider silence"
     )
     await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_late_delegate_result_falls_back_to_the_surface_when_never_at_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A busy call must not silently swallow an executed action's result.
+
+    Live incident 2026-08-13 18:53: the provider path only speaks a follow-up
+    while the session is AT REST, and continuous room speech plus a second
+    in-flight action kept it busy for the whole window. Four executed analyses
+    were written to the transcript and never heard. The surface last mile has
+    none of those preconditions, so the window expiring must hand over to it
+    instead of dropping the result.
+    """
+    from jarvis.realtime import session as session_mod
+
+    monkeypatch.setattr(session_mod, "_LATE_DELEGATE_DELIVERY_TIMEOUT_S", 0.0)
+
+    jsons: list[dict] = []
+    provider = FakeProvider([])
+    sess = _session(provider, jsons=jsons)
+    sess._session = FakeSession([])  # noqa: SLF001
+    # The user never stops talking, so the provider path never gets its turn.
+    monkeypatch.setattr(sess, "_session_is_at_rest", lambda: False)
+    sess._late_delegate_results.append(  # noqa: SLF001
+        session_mod._LateDelegateResult(  # noqa: SLF001
+            text="The analysis is finished and waiting for you.",
+            success=True,
+            language="en",
+            delivery_id="late-1",
+        )
+    )
+
+    await sess._flush_late_delegate_results()  # noqa: SLF001
+
+    spoken = [m for m in jsons if m.get("type") == "error_spoken"]
+    assert spoken, "the executed result was dropped instead of spoken"
+    assert spoken[0]["text"] == "The analysis is finished and waiting for you."
+    assert spoken[0]["detail"] == "kind=late_delegate_result"
+    # The surface resolves its TTS from this id, so a missing one is silence.
+    assert spoken[0]["provider"] == sess.active_provider
+    assert sess._delegate_delivery_status["late-1"] == "delivered"  # noqa: SLF001
+    assert not sess._late_delegate_results  # noqa: SLF001
+    await sess.end(reason="test")

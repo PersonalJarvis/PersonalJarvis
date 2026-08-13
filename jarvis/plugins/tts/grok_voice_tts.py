@@ -86,7 +86,9 @@ DEFAULT_VOICES: tuple[str, ...] = (
 )
 
 # Sentence splitter: identical to GeminiFlashTTS — DE+EN capital lookahead.
-_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")  # i18n-allow: DE+EN capital-letter lookahead, matched in logic
+_SENTENCE_END = re.compile(
+    r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])"  # i18n-allow: DE+EN capital-letter lookahead
+)
 
 
 class GrokVoiceTTS:
@@ -111,6 +113,7 @@ class GrokVoiceTTS:
         text_normalization: bool = True,
         optimize_streaming_latency: int = 1,
         allow_sapi5_fallback: bool = False,
+        api_key: str | None = None,
     ) -> None:
         # Voice-mismatch protection: a voice name like "Charon" carried over
         # from the Gemini profile would make xAI respond with HTTP 400. We
@@ -128,6 +131,12 @@ class GrokVoiceTTS:
         self._text_normalization = text_normalization
         self._optimize_streaming_latency = optimize_streaming_latency
         self._allow_sapi5_fallback = allow_sapi5_fallback
+        # Injected key wins over the ambient lookup: the realtime surface
+        # fallback must speak on the REALTIME credential slot
+        # (`realtime_grok_api_key`) it already authenticated the call with,
+        # never on whichever xAI key the pipeline happens to see (strict mode
+        # separation, maintainer mandate 2026-07-17).
+        self._api_key = (api_key or "").strip() or None
         self._client: Any = None  # httpx.AsyncClient, lazy
         self._quota_blocked_until: float = 0.0
 
@@ -139,10 +148,13 @@ class GrokVoiceTTS:
         """Single-key policy: xAI uses one token for brain + voice.
 
         Order:
+          0. an explicitly injected key (realtime surface fallback)
           1. `xai_api_key` / ENV `XAI_API_KEY` (xAI doc default)
           2. `grok_api_key` / ENV `GROK_API_KEY` (Jarvis wizard slot,
              also used by the Grok brain plugin)
         """
+        if self._api_key:
+            return self._api_key
         for key, env in (
             ("xai_api_key", "XAI_API_KEY"),
             ("grok_api_key", "GROK_API_KEY"),

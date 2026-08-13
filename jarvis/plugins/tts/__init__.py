@@ -270,6 +270,12 @@ def resolve_keyed_fallback(
 # not even as a last resort.
 _REALTIME_SURFACE_TTS_FAMILY: dict[str, str] = {
     "gemini-live": "gemini-flash-tts",
+    # xAI ships a TTS sibling on the SAME token as the realtime call
+    # (api.x.ai/v1/tts). Without this entry a grok-realtime session that loses
+    # its transport goes fully mute while the transcript keeps filling up
+    # (live incident 2026-08-13 18:53: the provider rebuilt after 8 s of no
+    # output, and four executed action results were written but never heard).
+    "grok-realtime": "grok-voice",
 }
 
 
@@ -365,6 +371,47 @@ def build_realtime_surface_tts(cfg: Any, realtime_provider: str) -> Any | None:
                 chunk_by_sentence=False,
                 seed=getattr(tts_cfg, "seed", None),
                 temperature=getattr(tts_cfg, "temperature", None),
+                api_key=api_key,
+            )
+        elif family == "grok-voice":
+            from jarvis.plugins.tts.grok_voice_tts import (
+                DEFAULT_VOICES as _GROK_VOICES,
+            )
+            from jarvis.plugins.tts.grok_voice_tts import (
+                GROK_VOICE_LEO,
+                GrokVoiceTTS,
+            )
+
+            # xAI's realtime and TTS surfaces share one built-in voice roster,
+            # so the session voice normally carries over verbatim. An unknown
+            # name keeps the session's VOICE PROFILE rather than flipping the
+            # perceived speaker mid-call (BUG-089).
+            if session_voice in _GROK_VOICES:
+                voice = session_voice
+            else:
+                from jarvis.plugins.tts.curated_catalog import (
+                    continuity_voice,
+                    voice_gender,
+                )
+
+                profile_gender = voice_gender(session_voice)
+                voice = (
+                    continuity_voice(family, profile_gender)
+                    if profile_gender
+                    else None
+                ) or GROK_VOICE_LEO
+            surface = GrokVoiceTTS(
+                default_voice=voice,
+                # The realtime call already resolved the turn language; xAI's
+                # own detection keeps a mixed-language result intelligible.
+                language="auto",
+                allow_sapi5_fallback=bool(
+                    getattr(tts_cfg, "allow_sapi5_fallback", False)
+                ),
+                # One take for the whole answer, same reasoning as the Gemini
+                # branch above: the emergency re-render exists to preserve the
+                # session's voice identity, and xAI bills per request anyway.
+                chunk_by_sentence=False,
                 api_key=api_key,
             )
         else:  # pragma: no cover — map entries always name a buildable family

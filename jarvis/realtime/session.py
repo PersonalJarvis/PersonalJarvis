@@ -7462,6 +7462,8 @@ class RealtimeVoiceSession:
                 break
             await asyncio.sleep(_LATE_DELEGATE_POLL_S)
         for lost in self._late_delegate_results:
+            if await self._speak_late_delegate_via_surface(lost):
+                continue
             # The action itself ran; only its spoken confirmation was lost.
             log.warning(
                 "realtime[%s] executed action result could not be spoken: %s",
@@ -7469,6 +7471,61 @@ class RealtimeVoiceSession:
                 safe_preview(lost.text, max_chars=200),
             )
         self._late_delegate_results.clear()
+
+    async def _speak_late_delegate_via_surface(
+        self, pending: _LateDelegateResult
+    ) -> bool:
+        """Last mile for a follow-up the provider path never got to speak.
+
+        ``_flush_late_delegate_results`` only hands a result to the provider
+        while the session is AT REST, so a busy call can run the whole window
+        out: every poll finds the user still talking, another action still in
+        flight, or a response already claimed. Dropping the result there made
+        an answer the user explicitly ordered audible-never while the
+        transcript kept claiming it was delivered (live incident 2026-08-13
+        18:53 — a grok-realtime transport rebuild plus continuous room speech
+        buried four executed analyses in exactly two 30 s windows).
+
+        The surface path has none of those preconditions: it renders locally
+        on the realtime-scoped TTS instead of asking the provider for a
+        response, so it works precisely when the provider channel is the thing
+        that failed. Mode separation is untouched — the surface resolves the
+        realtime family's OWN voice, and a family without one still keeps the
+        turn text-only.
+        """
+        if self._ended or self._session is None:
+            return False
+        if self._delegate_delivery_status.get(pending.delivery_id) == "delivered":
+            return True
+        # The provider never rendered this text, so its own context may still
+        # try to: keep dropping its output until the user owns a turn again.
+        self._drop_provider_output_until_user_turn = True
+        self._arm_stale_readback_guard(pending.text)
+        try:
+            await self._send_json(
+                self._surface_speech_message(
+                    pending.text,
+                    language=pending.language,
+                    spoken_kind=SPOKEN_KIND_REPLY,
+                    detail="kind=late_delegate_result",
+                )
+            )
+        except Exception:  # noqa: BLE001 — a failed last mile must not end the call
+            self._drop_provider_output_until_user_turn = False
+            log.warning(
+                "realtime[%s] late delegate surface delivery failed",
+                self.session_id,
+                exc_info=True,
+            )
+            return False
+        self._delegate_delivery_status[pending.delivery_id] = "delivered"
+        log.info(
+            "realtime[%s] action result spoken through the surface after the "
+            "session never came to rest: %s",
+            self.session_id,
+            safe_preview(pending.text, max_chars=120),
+        )
+        return True
 
     async def _speak_late_delegate_result(
         self, pending: _LateDelegateResult
