@@ -867,11 +867,14 @@ async def test_desktop_cpu_barge_in_cancels_and_forwards_user_preroll(
     pipe = _pipe()
     output_started = asyncio.Event()
     forwarded = b"\x09\x00" * 32
-    detector_kwargs: dict[str, object] = {}
+    # Per INSTANCE: the session builds two detectors — one for playback and one
+    # for the silent thinking wait — and they are configured differently on
+    # purpose (see the output_active assertions below).
+    detector_kwargs: list[dict[str, object]] = []
 
     class _Detector:
         def __init__(self, **kwargs: object) -> None:
-            detector_kwargs.update(kwargs)
+            detector_kwargs.append(dict(kwargs))
 
         def warmup(self) -> None:
             return None
@@ -954,7 +957,19 @@ async def test_desktop_cpu_barge_in_cancels_and_forwards_user_preroll(
     assert {"type": "barge_in"} in session.controls
     assert session.audio_frames[-1] == forwarded
     assert built["half_duplex"] is True
-    assert detector_kwargs["output_active"] is pipeline_mod.level_tap.playback_active
+    # The PLAYBACK detector keeps the probe: it must judge frames against what
+    # the speakers are emitting, or its echo gates cannot tell our own voice
+    # from the user's.
+    assert (
+        detector_kwargs[0]["output_active"]
+        is pipeline_mod.level_tap.playback_active
+    )
+    # The THINKING detector must NOT have one. With the probe attached, feed()
+    # returns None for as long as nothing is playing, which is exactly the
+    # silence it exists to listen through.
+    assert any(kwargs.get("output_active") is None for kwargs in detector_kwargs[1:]), (
+        "no detector is armed for the silent thinking wait"
+    )
 
 
 @pytest.mark.asyncio
@@ -1857,3 +1872,203 @@ async def test_capture_latency_extends_the_audible_phase(
     # silent reached the provider. Without the capture latency, tail_pcm was
     # uploaded and the model answered its own echo.
     assert session.audio_frames == [live_pcm]
+
+
+@pytest.mark.asyncio
+async def test_thinking_phase_barge_in_takes_the_floor_without_a_stop_word(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Speaking into the SILENT wait interrupts, exactly like speaking over him.
+
+    The reported failure (live 2026-08-13 12:11:12): barge-in during playback
+    works perfectly, barge-in while Jarvis thinks does nothing. The playback
+    detector is armed only inside the ``echo_guard_active`` branch, so during
+    the silent wait there was no local detector at all and the only remaining
+    signal — the provider's own VAD — is deliberately parked while an action
+    runs. No stop word is spoken here on purpose: ordinary speech has to be
+    enough.
+    """
+    pipe = _pipe()
+    ready = asyncio.Event()
+    captured = b"\x0b\x00" * 32
+
+    class _Detector:
+        """Confirms on any frame — the arming logic is what is under test."""
+
+        def __init__(self, **kwargs: object) -> None:
+            self._probe = kwargs.get("output_active")
+            self.active = False
+
+        def warmup(self) -> None:
+            return None
+
+        def start_output(self) -> None:
+            self.active = True
+
+        def stop_output(self) -> None:
+            self.active = False
+
+        def feed(self, _pcm: bytes) -> bytes | None:
+            # Only the probe-less (thinking) detector ever confirms, mirroring
+            # the real gate: with a playback probe attached feed() returns None
+            # while nothing is playing.
+            return None if self._probe is not None else captured
+
+    class _Mic:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            return False
+
+        async def stream(self):
+            await ready.wait()
+            # Enough frames to clear _THINKING_BARGE_QUIET_S at 32 ms/frame.
+            for _ in range(40):
+                yield AudioChunk(
+                    pcm=b"\x01\x00" * 256, sample_rate=16_000, timestamp_ns=0
+                )
+                await asyncio.sleep(0.02)
+            await asyncio.Event().wait()
+
+    class _ThinkingSession(_HandshakeOnlyRealtimeSession):
+        """Owes a reply, nothing audible — the phase under test."""
+
+        def __init__(self, send_binary, send_json) -> None:
+            super().__init__(send_binary, send_json)
+            self.audio_frames: list[bytes] = []
+            self.barged = asyncio.Event()
+
+        def owes_the_user_a_reply(self) -> bool:
+            return True
+
+        def _user_is_speaking(self) -> bool:
+            return False
+
+        async def handle_control(self, message) -> None:
+            await super().handle_control(message)
+            if message.get("type") == "barge_in":
+                self.barged.set()
+
+        async def handle_audio_frame(self, pcm: bytes) -> None:
+            self.audio_frames.append(pcm)
+
+        async def wait_finished(self) -> None:
+            await self.barged.wait()
+
+    built: dict[str, object] = {}
+
+    def _build(**kwargs):
+        session = _ThinkingSession(kwargs["send_binary"], kwargs["send_json"])
+        built["session"] = session
+        ready.set()
+        return session
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(
+        "jarvis.realtime.desktop.DesktopRealtimeBargeInDetector", _Detector
+    )
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _Mic())
+
+    await asyncio.wait_for(pipe._active_realtime_session(), timeout=5.0)
+
+    session = built["session"]
+    assert {"type": "barge_in"} in session.controls, (
+        "speaking during the thinking phase did not interrupt"
+    )
+    # ...and what the user said reaches the provider, or the interruption
+    # would take the floor and deliver no context.
+    assert captured in session.audio_frames
+
+
+@pytest.mark.asyncio
+async def test_thinking_barge_stays_disarmed_while_the_user_is_still_talking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user's own trailing words must not arm the barge against themselves.
+
+    A provider that commits on its own VAD cuts mid-sentence when a filler
+    pause fools it. That shape is turn fragmentation (872b05051), not an
+    interruption, and firing a barge there would abandon the order the user is
+    still in the middle of giving.
+    """
+    pipe = _pipe()
+    ready = asyncio.Event()
+
+    class _Detector:
+        def __init__(self, **kwargs: object) -> None:
+            self._probe = kwargs.get("output_active")
+            self.active = False
+            self.fed = 0
+
+        def warmup(self) -> None:
+            return None
+
+        def start_output(self) -> None:
+            self.active = True
+
+        def stop_output(self) -> None:
+            self.active = False
+
+        def feed(self, _pcm: bytes) -> bytes | None:
+            self.fed += 1
+            return None if self._probe is not None else b"\x0c\x00" * 32
+
+    class _Mic:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            return False
+
+        async def stream(self):
+            await ready.wait()
+            for _ in range(30):
+                yield AudioChunk(
+                    pcm=b"\x01\x00" * 256, sample_rate=16_000, timestamp_ns=0
+                )
+                await asyncio.sleep(0.02)
+            await asyncio.Event().wait()
+
+    class _StillTalkingSession(_HandshakeOnlyRealtimeSession):
+        def __init__(self, send_binary, send_json) -> None:
+            super().__init__(send_binary, send_json)
+            self.audio_frames: list[bytes] = []
+            self.settled = asyncio.Event()
+
+        def owes_the_user_a_reply(self) -> bool:
+            return True
+
+        def _user_is_speaking(self) -> bool:
+            return True
+
+        async def handle_audio_frame(self, pcm: bytes) -> None:
+            self.audio_frames.append(pcm)
+            if len(self.audio_frames) >= 20:
+                self.settled.set()
+
+        async def wait_finished(self) -> None:
+            await self.settled.wait()
+
+    built: dict[str, object] = {}
+
+    def _build(**kwargs):
+        session = _StillTalkingSession(kwargs["send_binary"], kwargs["send_json"])
+        built["session"] = session
+        ready.set()
+        return session
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(
+        "jarvis.realtime.desktop.DesktopRealtimeBargeInDetector", _Detector
+    )
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _Mic())
+
+    await asyncio.wait_for(pipe._active_realtime_session(), timeout=5.0)
+
+    session = built["session"]
+    assert {"type": "barge_in"} not in session.controls, (
+        "a still-running utterance was mistaken for an interruption"
+    )
+    # The audio still flows: withholding it is what would lose the tail.
+    assert session.audio_frames

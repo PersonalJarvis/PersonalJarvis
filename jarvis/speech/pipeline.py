@@ -794,6 +794,15 @@ _REALTIME_HW_ECHO_TAIL_MARGIN_S = 0.25
 # _REALTIME_POST_OUTPUT_ECHO_GUARD_S + _REALTIME_OUTPUT_LATENCY_CAP_S (~5.5 s
 # of 16 kHz mono PCM16 ≈ 176 kB), so this never truncates in practice.
 _REALTIME_TAIL_PENDING_MAX_BYTES = 256_000
+# How long the microphone must stay quiet after a turn is committed before
+# speaking into the silent THINKING wait counts as an interruption rather than
+# the tail of the utterance that started it. The provider commits on ITS OWN
+# VAD, mid-sentence when a filler pause fools it, so the first moments after a
+# commit are exactly when the user is most likely to still be talking (the turn
+# fragmentation the session's own _user_is_speaking hold answers). Long enough
+# to clear that overlap, short enough that a deliberate interruption a beat
+# after Jarvis goes quiet still lands.
+_THINKING_BARGE_QUIET_S = 0.35
 
 
 def _feed_live_mic_level(chunk: AudioChunk) -> None:
@@ -7930,6 +7939,47 @@ class SpeechPipeline:
         barge_feed_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix=f"rt-barge-feed-{session_id}"
         )
+        # Second detector for the SILENT wait (see the thinking-phase branch in
+        # _send_microphone). A separate instance rather than a mode flag on the
+        # one above: that one's state machine is keyed to a playback response
+        # (start_output/stop_output per answer, per-response echo calibration),
+        # and interleaving a second, differently-armed window through it would
+        # corrupt the calibration the playback barge depends on.
+        #
+        # ``output_active=None`` is what makes it work at all: with the
+        # playback probe attached, ``feed`` returns None forever while nothing
+        # plays (jarvis/realtime/desktop.py — the ``_playback_started`` gate),
+        # which is precisely why no detector existed for this phase. With no
+        # probe the window opens on start_output(). For the same reason the
+        # echo machinery is inert here and wants to be: nothing is playing, so
+        # there is no echo to discriminate, and the only question left is the
+        # one Silero answers — is this sustained, deliberate speech.
+        #
+        # The grace period drops to a token value: on the playback detector it
+        # exists to collect echo for the adaptive floor, and here there is
+        # none to collect. Detection strictness is unchanged (0.97 / 12 frames
+        # ~= 0.4 s of speech), so a cough or a door does not take the floor.
+        thinking_detector = DesktopRealtimeBargeInDetector(
+            grace_s=0.05, output_active=None
+        )
+        # The microphone must fall quiet ONCE before the thinking barge arms,
+        # or the user's own trailing words would arm it against themselves.
+        thinking_barge_quiet_since = 0.0
+
+        def thinking_barge_armed(active_session: Any, now: float) -> bool:
+            nonlocal thinking_barge_quiet_since
+            owed = getattr(active_session, "owes_the_user_a_reply", None)
+            if not callable(owed) or not owed():
+                thinking_barge_quiet_since = 0.0
+                return False
+            speaking_now = getattr(active_session, "_user_is_speaking", None)
+            if callable(speaking_now) and speaking_now():
+                # Still the same utterance the provider just committed.
+                thinking_barge_quiet_since = 0.0
+                return False
+            if not thinking_barge_quiet_since:
+                thinking_barge_quiet_since = now
+            return (now - thinking_barge_quiet_since) >= _THINKING_BARGE_QUIET_S
         # Provider PCM is owned by ``playback``; the independent surface-TTS
         # fallback used to bypass that adapter and was awaited inline. A barge
         # then stopped PortAudio but left the TTS producer alive, so its next
@@ -8043,6 +8093,12 @@ class SpeechPipeline:
         async def _warm_barge_detector() -> None:
             try:
                 await _run_voice_critical_thread(barge_detector.warmup)
+                # BOTH detectors, or the thinking-phase one is silently dead:
+                # ``feed`` returns None while ``_ready`` is false, so an
+                # unwarmed detector looks exactly like a room that never
+                # speaks. They share the bundled ONNX model, so the second
+                # warmup is a cache hit, not a second load.
+                await _run_voice_critical_thread(thinking_detector.warmup)
             except Exception as exc:  # noqa: BLE001 -- voice still works without local VAD
                 log.warning(
                     "Realtime desktop barge-in detector unavailable; "
@@ -8522,7 +8578,7 @@ class SpeechPipeline:
 
                 async def _send_microphone() -> None:
                     nonlocal post_output_echo_guard_until, preroll_bytes
-                    nonlocal tail_pending_bytes
+                    nonlocal tail_pending_bytes, thinking_barge_quiet_since
                     async for chunk in self._session_input_stream(input_chunks):
                         if not provider_ready.is_set():
                             if (
@@ -8586,6 +8642,52 @@ class SpeechPipeline:
                         if bool(getattr(barge_detector, "active", False)):
                             barge_detector.stop_output()
                         await _flush_tail_pending()
+                        # THINKING-PHASE BARGE-IN. Everything above this line
+                        # only runs while audio plays, which is why speaking
+                        # over Jarvis worked and speaking over his THINKING
+                        # did nothing (live 2026-08-13 12:11:12: the provider
+                        # edge was deferred and he answered the original
+                        # question 11.7 s later regardless). The same Silero
+                        # detector, armed for the silent wait, closes that
+                        # hole with the mechanism that already works.
+                        #
+                        # Arming is deliberately two-condition:
+                        #   - the session owes a reply and nothing is audible;
+                        #   - the microphone has fallen quiet since the turn
+                        #     was committed, so the user's OWN trailing words
+                        #     cannot arm it against themselves (that shape is
+                        #     turn fragmentation, handled by the session's
+                        #     _user_is_speaking hold, not by a barge).
+                        # The frame is still uploaded either way — unlike the
+                        # playback branch there is no echo to withhold, and
+                        # the words have to reach the provider or the
+                        # interruption would take the floor and say nothing.
+                        if thinking_barge_armed(session, now):
+                            if not thinking_detector.active:
+                                thinking_detector.start_output()
+                            confirmed_pcm = await asyncio.get_running_loop(
+                            ).run_in_executor(
+                                barge_feed_executor,
+                                thinking_detector.feed,
+                                chunk.pcm,
+                            )
+                            if confirmed_pcm is not None:
+                                log.info(
+                                    "Realtime desktop barge-in confirmed by "
+                                    "local CPU VAD while Jarvis was thinking"
+                                )
+                                thinking_detector.stop_output()
+                                thinking_barge_quiet_since = 0.0
+                                await session.handle_control(
+                                    {"type": "barge_in"}
+                                )
+                                # The detector's own capture carries the
+                                # opening syllables its confirmation consumed;
+                                # uploading the raw frame too would double them.
+                                await session.handle_audio_frame(confirmed_pcm)
+                                continue
+                        elif thinking_detector.active:
+                            thinking_detector.stop_output()
                         await session.handle_audio_frame(chunk.pcm)
 
                 # A shared capture buffer already owns and meters production

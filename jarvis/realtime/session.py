@@ -2868,6 +2868,37 @@ class RealtimeVoiceSession:
             return False
         return (time.monotonic() - stamp) < _USER_SPEAKING_HOLD_S
 
+    def owes_the_user_a_reply(self) -> bool:
+        """True while a turn is being worked on and nothing is audible yet.
+
+        The THINKING phase, named for the one surface that needs it: the
+        desktop microphone pump. Barge-in during playback is detected locally
+        and fires in milliseconds; during this phase there was no local
+        detector at all, because the one that exists is armed only while audio
+        plays (``jarvis/speech/pipeline.py``, the ``echo_guard_active``
+        branch). The only remaining signal was the provider's own VAD, which
+        on a Live-API transport reports room noise and a real interruption as
+        the SAME event and is therefore parked while an action runs
+        (``_pending_delegate_needs_endpoint_protection``). Net effect, live
+        2026-08-13 12:11:12: the user spoke into a 11.7 s silent wait, the
+        edge was deferred, and Jarvis answered the original question anyway.
+
+        Deliberately a capability question ("may the user take the floor?"),
+        not a state enum: the pump must not learn the turn machinery, and
+        every caller wants the same thing — is a reply owed, and is the room
+        still silent enough that speech can only be the user's.
+        """
+        return bool(
+            not self._ended
+            and self._session is not None
+            and not self._output_active
+            and (
+                self._response_requested_for_turn
+                or self._turn_has_pending_delegate(self._turn_id)
+                or self._has_pending_delegate_from_earlier_turn()
+            )
+        )
+
     async def handle_audio_frame(self, pcm_native: bytes) -> None:
         if self._ended or self._session is None or not pcm_native:
             return
