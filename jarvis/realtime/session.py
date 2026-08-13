@@ -70,6 +70,11 @@ from jarvis.sessions.constants import (
 )
 from jarvis.speech.echo_guard import SelfEchoGuard
 from jarvis.speech.hangup import END_CALL_SIGNAL, HANGUP_RE
+from jarvis.speech.interrupt_intent import (
+    INTERRUPT_NONE,
+    INTERRUPT_STOP,
+    classify_interrupt,
+)
 
 log = logging.getLogger(__name__)
 
@@ -1026,6 +1031,36 @@ def _delegate_bridge_texts(language: str) -> tuple[str, ...]:
 def _pick_delegate_bridge_text(language: str) -> str:
     # noqa comment: variety, not security — any pool member is equally safe.
     return random.choice(_delegate_bridge_texts(language))  # noqa: S311
+
+
+#: Spoken when the user interrupts a running action and it is actually
+#: abandoned. One short, honest sentence: the user needs to know the work
+#: stopped, because a silent cancellation is indistinguishable from a session
+#: that simply ignored them — which is the failure this whole path exists to
+#: end. Same locale coverage as every other runtime pool (CLAUDE.md §1).
+_INTERRUPT_ACK_TEXTS: dict[str, tuple[str, ...]] = {
+    "de": (  # i18n-allow: localized runtime voice output
+        "Okay, ich habe das gestoppt.",  # i18n-allow
+        "Alles klar, ich breche das ab.",  # i18n-allow
+        "Okay, ich lasse das.",  # i18n-allow
+    ),
+    "en": (
+        "Okay, I stopped that.",
+        "Alright, cancelling that.",
+        "Okay, dropping that.",
+    ),
+    "es": (  # i18n-allow: localized runtime voice output
+        "Vale, lo he detenido.",
+        "De acuerdo, lo cancelo.",
+        "Vale, lo dejo.",
+    ),
+}
+
+
+def _pick_interrupt_ack_text(language: str) -> str:
+    pool = _INTERRUPT_ACK_TEXTS.get(language, _INTERRUPT_ACK_TEXTS["en"])
+    # noqa comment: variety, not security — any pool member is equally safe.
+    return random.choice(pool)  # noqa: S311
 
 
 def _normalized_bridge_text(text: str) -> str:
@@ -3457,6 +3492,56 @@ class RealtimeVoiceSession:
                                 )
                             ).strip()
                     if event.is_final and input_observed:
+                        # BARGE-IN DURING AN ACTION. Everything below this
+                        # point routes the utterance as a REQUEST; a request
+                        # to abandon the running action has to be answered
+                        # before that, because none of the routing can express
+                        # "undo what you are doing". Ordered deliberately:
+                        #
+                        #   - the mic probe first, so a hesitation inside one
+                        #     sentence can never read as a stop (the provider
+                        #     commits on ITS VAD, mid-utterance, and "warte"
+                        #     is also just a word people say while thinking);
+                        #   - the two open-question probes next, so a bare
+                        #     "no" answering a clarify question or an ask-tier
+                        #     confirmation stays an ANSWER;
+                        #   - only then the words.
+                        interrupt_kind = INTERRUPT_NONE
+                        if not (
+                            self._user_is_speaking()
+                            or self._answers_open_delegate_question()
+                            or self._brain_awaits_voice_confirm()
+                        ):
+                            # THIS chunk first, then the whole turn. Finals
+                            # without an item id APPEND (``_note_user_final``),
+                            # so on a provider that never split the turn the
+                            # accumulated text reads "Write this to my wiki.
+                            # Stop." — and a stop word in the middle is not a
+                            # stop. The chunk is what the user just said.
+                            interrupt_kind = classify_interrupt(
+                                transcript
+                            ) or classify_interrupt(self._last_user_text)
+                        if interrupt_kind != INTERRUPT_NONE and (
+                            self._turn_has_pending_delegate(self._turn_id)
+                            or self._has_pending_delegate_from_earlier_turn()
+                            or self._late_delegate_results
+                        ):
+                            cancelled = await self._cancel_running_delegates(
+                                reason=interrupt_kind
+                            )
+                            if cancelled and interrupt_kind == INTERRUPT_STOP:
+                                # Nothing replaces the cancelled order, so
+                                # this turn is complete once it is confirmed.
+                                # Claiming the response here also stops the
+                                # provider — whose context still holds the
+                                # order — from answering the request the user
+                                # just withdrew.
+                                self._delegate_required_for_turn = False
+                                await self._acknowledge_interrupt()
+                            # A REDIRECT keeps falling through: the remainder
+                            # ("…I meant Rome") is a real order and is routed
+                            # by the ordinary path below, now that the order
+                            # it replaces is gone.
                         turn_plan = self._plan_turn(self._last_user_text)
                         if (
                             turn_plan.requires_orchestrator
@@ -7154,6 +7239,16 @@ class RealtimeVoiceSession:
         ):
             return False
         text = str(self._last_user_text or "").strip()
+        if classify_interrupt(text) != INTERRUPT_NONE:
+            # "Stop", "warte mal", "no, I meant Rome" — every one of these is
+            # SHORT and carries no planner reason of its own, so all four
+            # continuation probes below hold and the fragment would be folded
+            # into the running order and answered with a progress line. That
+            # is the exact shape of the reported bug: speaking during an
+            # action did nothing except make Jarvis say he was still working
+            # on it. An explicit stop is never a continuation of the thing it
+            # asks to stop.
+            return False
         if not text or len(text.split()) > _CONTINUATION_FRAGMENT_MAX_TOKENS:
             return False
         if turn_plan.reasons & _SELF_STANDING_ORDER_REASONS:
@@ -7321,6 +7416,103 @@ class RealtimeVoiceSession:
             self.session_id,
         )
         await self._send_json(self._surface_speech_message(status_text))
+
+    async def _cancel_running_delegates(self, *, reason: str) -> int:
+        """Abandon every still-running delegated action. Returns the count.
+
+        The counterpart to ``_retain_detached_delegate_task``: that path keeps
+        an action alive because the user moved on to something ELSE and still
+        wants the result. This one runs when the user said to stop, so the
+        result is not merely late — it is unwanted, and delivering it later
+        would be the assistant ignoring an explicit instruction.
+
+        Three things have to go, or the cancelled work comes back:
+
+        1. the task itself (reaped through the heartbeat-bounded helper, never
+           a bare await after ``cancel()`` — see ``_cancel_and_reap``);
+        2. any result ALREADY queued for the late flush, which would otherwise
+           be spoken minutes later as a follow-up nobody asked for;
+        3. the turn state's delivery latch, so a delegate finishing inside the
+           cancellation window cannot re-queue itself on the way out.
+        """
+        turn_ids = [
+            turn_id
+            for turn_id, tasks in self._delegate_tasks_by_turn.items()
+            if any(not task.done() for task in tasks)
+        ]
+        pending = [
+            task
+            for turn_id in turn_ids
+            for task in tuple(self._delegate_tasks_by_turn.get(turn_id, ()))
+            if not task.done()
+        ]
+        # Queued results are dropped even when no task is still running: the
+        # action may have completed microseconds before the user said stop,
+        # and its follow-up is exactly as unwanted.
+        dropped = self._drop_queued_delegate_results(turn_ids)
+        if not pending and not dropped:
+            return 0
+        for turn_id in turn_ids:
+            state = self._delegate_turns.get(turn_id)
+            if state is None:
+                continue
+            # Latch the delivery so _queue_late_delegate_result refuses this
+            # turn from now on, whatever order the cancellation resolves in.
+            state.delivery_started = True
+            if state.delivery_id:
+                self._delegate_delivery_status[state.delivery_id] = (
+                    "cancelled_by_user"
+                )
+        for task in pending:
+            await self._cancel_and_reap(task)
+        log.info(
+            "realtime[%s] user interrupt (%s) cancelled %d running action(s) "
+            "and dropped %d queued result(s)",
+            self.session_id,
+            reason,
+            len(pending),
+            dropped,
+        )
+        return len(pending) + dropped
+
+    def _drop_queued_delegate_results(self, turn_ids: list[str]) -> int:
+        """Discard late results belonging to ``turn_ids``. Returns the count.
+
+        Keyed by delivery id rather than turn id because ``_LateDelegateResult``
+        carries only the former; the turn states supply the mapping.
+        """
+        delivery_ids = {
+            state.delivery_id
+            for turn_id in turn_ids
+            if (state := self._delegate_turns.get(turn_id)) is not None
+            and state.delivery_id
+        }
+        if not delivery_ids or not self._late_delegate_results:
+            return 0
+        keep = [
+            pending
+            for pending in self._late_delegate_results
+            if pending.delivery_id not in delivery_ids
+        ]
+        dropped = len(self._late_delegate_results) - len(keep)
+        self._late_delegate_results = keep
+        return dropped
+
+    async def _acknowledge_interrupt(self) -> None:
+        """Own this turn with one short confirmation that the action stopped.
+
+        Deliberately the SAME shape as ``_speak_pending_action_status``: the
+        orchestrator speaks a closed-pool line through the surface TTS and
+        drops the provider's freestyle response for the turn. The provider
+        cannot be trusted with it — its context still holds the order it was
+        told to carry out, and left to itself it answers the cancelled request
+        instead of confirming the cancellation.
+        """
+        ack_text = _pick_interrupt_ack_text(self._language)
+        self._response_requested_for_turn = True
+        self._drop_provider_output_until_user_turn = True
+        self._output_transcript.append(ack_text)
+        await self._send_json(self._surface_speech_message(ack_text))
 
     async def _handle_tool_call(self, event: Any) -> None:
         if self._session is None:
