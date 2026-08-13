@@ -114,16 +114,25 @@ export interface AgentUsageResponse {
 }
 
 /**
- * Plan usage for every registered subscription.
+ * Plan usage for every registered subscription, or `null` on a backend that
+ * has no usage route at all.
+ *
+ * The `null` is the interesting part. The app's Python server does not pick up
+ * a new route while it is running, so between updating and restarting there is
+ * a real window where the new panel talks to an old backend and every call 404s.
+ * Treating that as an ERROR put a Refresh button on screen that could not
+ * possibly work; treating it as "not available here" lets the panel hide the
+ * whole block and look finished rather than broken.
  *
  * `refresh` bypasses the server's short cache; it backs the manual refresh
  * button, so a user who just closed a heavy session can see the new number
  * without waiting out the interval.
  */
-export async function fetchAgentUsage(refresh = false): Promise<AgentUsageResponse> {
+export async function fetchAgentUsage(refresh = false): Promise<AgentUsageResponse | null> {
   const res = await fetch(`/api/agent-accounts/usage${refresh ? "?refresh=true" : ""}`, {
     cache: "no-store",
   });
+  if (res.status === 404) return null;
   if (!res.ok) throw new Error(await detail(res));
   return (await res.json()) as AgentUsageResponse;
 }

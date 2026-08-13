@@ -93,6 +93,9 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
   const [usage, setUsage] = useState<Record<string, AccountUsage>>({});
   const [usageTtl, setUsageTtl] = useState(60);
   const [refreshing, setRefreshing] = useState(false);
+  // Assumed true until a 404 proves otherwise, so the meters appear on the
+  // first successful read instead of after a round trip spent proving support.
+  const [usageAvailable, setUsageAvailable] = useState(true);
   // One clock for every countdown on screen. Per-meter timers would drift
   // against each other and a card with four seats would run a dozen intervals
   // to render the same minute.
@@ -120,6 +123,16 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
   const loadUsage = useCallback(async (force = false) => {
     try {
       const body = await fetchAgentUsage(force);
+      if (body === null) {
+        // This backend predates the usage route — the app's server does not
+        // pick up new routes while it is running, so this is the ordinary state
+        // between an update and the next restart. Hide the block entirely
+        // rather than offering a control that cannot work.
+        setUsageAvailable(false);
+        setUsage({});
+        return;
+      }
+      setUsageAvailable(true);
       const next: Record<string, AccountUsage> = {};
       for (const entry of body.accounts ?? []) next[entry.account_id] = entry;
       setUsage(next);
@@ -145,10 +158,13 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
   // kept in step by hand. Floored so a short server TTL cannot turn this into
   // a request loop.
   useEffect(() => {
+    // Polling a route that answered 404 would be a request a minute, forever,
+    // for an answer that cannot change without a server restart.
+    if (!usageAvailable) return;
     const period = Math.max(30, usageTtl) * 1000;
     const timer = setInterval(() => void loadUsage(), period);
     return () => clearInterval(timer);
-  }, [loadUsage, usageTtl]);
+  }, [loadUsage, usageTtl, usageAvailable]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
@@ -192,17 +208,19 @@ export function AgentAccountsPanel({ onActivate, note }: AgentAccountsPanelProps
         <span className="text-[11px] text-muted-foreground">
           · {t("agent_accounts.hint")}
         </span>
-        <button
-          type="button"
-          onClick={() => void refreshUsage()}
-          disabled={refreshing}
-          aria-label={t("agent_accounts.usage.refresh")}
-          title={t("agent_accounts.usage.refresh")}
-          className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground disabled:opacity-50"
-        >
-          <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
-          {t("agent_accounts.usage.refresh")}
-        </button>
+        {usageAvailable && (
+          <button
+            type="button"
+            onClick={() => void refreshUsage()}
+            disabled={refreshing}
+            aria-label={t("agent_accounts.usage.refresh")}
+            title={t("agent_accounts.usage.refresh")}
+            className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground disabled:opacity-50"
+          >
+            <RefreshCw className={cn("h-3 w-3", refreshing && "animate-spin")} />
+            {t("agent_accounts.usage.refresh")}
+          </button>
+        )}
       </div>
       <p className="px-1 text-[11px] leading-relaxed text-muted-foreground">
         {t("agent_accounts.description")}
