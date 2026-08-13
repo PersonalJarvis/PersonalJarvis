@@ -1,0 +1,1193 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis Run Graph — Node Catalog</title>
+<style>
+/* ---------------------------------------------------------------------------
+   Theme tokens.
+
+   Mirrored verbatim from jarvis/ui/web/frontend/src/index.css so a card on this
+   page is the same card the app draws. The --viz-* block is the shipped node
+   palette; the four tokens marked NEW are this catalog's proposal and are the
+   only values that do not exist in the app yet.
+   Light and dark are both defined — the project rule is that every frontend
+   change works in both appearances.
+--------------------------------------------------------------------------- */
+:root {
+  --background: 0 0% 100%;
+  --foreground: 240 10% 12%;
+  --card: 45 30% 99%;
+  --muted: 45 20% 94%;
+  --muted-foreground: 240 5% 42%;
+  --border: 44 18% 88%;
+  --primary: 38 100% 33%;
+  --destructive: 0 72% 45%;
+  --good: 152 55% 32%;
+  --sheen: 0 0 0;
+
+  --viz-trigger: 38 100% 33%;
+  --viz-reasoning: 258 35% 46%;
+  --viz-terminal: 190 50% 30%;
+  --viz-file: 210 50% 38%;
+  --viz-search: 168 45% 28%;
+  --viz-web: 232 35% 46%;
+  --viz-integration: 24 60% 38%;
+  --viz-agent: 292 35% 40%;
+  --viz-tool: 240 6% 38%;
+  --viz-result: 152 45% 28%;
+  --viz-deliverable: 240 6% 38%;
+  /* NEW — proposed additions */
+  --viz-speech: 330 45% 42%;
+  --viz-memory: 88 40% 26%;
+  --viz-vision: 312 35% 40%;
+  --viz-gate: 45 75% 34%;
+}
+.dark {
+  --background: 0 0% 4%;
+  --foreground: 0 0% 96%;
+  --card: 0 0% 6%;
+  --muted: 0 0% 10%;
+  --muted-foreground: 0 0% 56%;
+  --border: 0 0% 14%;
+  --primary: 50 100% 52%;
+  --destructive: 0 84% 60%;
+  --good: 152 60% 62%;
+  --sheen: 255 255 255;
+
+  --viz-trigger: 50 100% 52%;
+  --viz-reasoning: 258 45% 70%;
+  --viz-terminal: 187 40% 56%;
+  --viz-file: 210 50% 64%;
+  --viz-search: 168 35% 52%;
+  --viz-web: 232 45% 70%;
+  --viz-integration: 24 55% 58%;
+  --viz-agent: 292 40% 66%;
+  --viz-tool: 0 0% 62%;
+  --viz-result: 152 40% 52%;
+  --viz-deliverable: 0 0% 62%;
+  /* NEW — proposed additions */
+  --viz-speech: 330 42% 68%;
+  --viz-memory: 88 34% 56%;
+  --viz-vision: 312 40% 66%;
+  --viz-gate: 45 70% 58%;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+code, .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace; }
+a { color: hsl(var(--primary)); }
+
+.wrap { max-width: 1400px; margin: 0 auto; padding: 0 28px 96px; }
+
+/* --- Page header --------------------------------------------------------- */
+header.page {
+  position: sticky; top: 0; z-index: 40;
+  background: hsl(var(--background) / 0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid hsl(var(--border));
+}
+header.page .bar {
+  max-width: 1400px; margin: 0 auto; padding: 14px 28px;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+.brandmark {
+  width: 26px; height: 26px; border-radius: 7px; flex: none;
+  background: hsl(var(--primary)); color: hsl(var(--background));
+  display: grid; place-items: center; font-weight: 800; font-size: 13px;
+}
+header.page h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+header.page .sub { font-size: 12px; color: hsl(var(--muted-foreground)); margin: 0; }
+.spacer { flex: 1 1 auto; }
+
+.ctl {
+  appearance: none; cursor: pointer;
+  background: hsl(var(--muted)); color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--border)); border-radius: 8px;
+  font: inherit; font-size: 12px; padding: 6px 11px;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: border-color .15s, background .15s;
+}
+.ctl:hover { border-color: hsl(var(--primary) / 0.6); }
+.ctl[aria-pressed="true"] { background: hsl(var(--primary) / 0.16); border-color: hsl(var(--primary) / 0.7); }
+input.ctl { cursor: text; min-width: 200px; }
+
+/* --- Sections ------------------------------------------------------------ */
+section { margin-top: 56px; scroll-margin-top: 80px; }
+h2 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.13em;
+  color: hsl(var(--muted-foreground)); margin: 0 0 6px; font-weight: 600;
+}
+h3 { font-size: 19px; margin: 0 0 8px; font-weight: 600; letter-spacing: -0.015em; }
+.lede { color: hsl(var(--muted-foreground)); max-width: 82ch; margin: 0 0 22px; font-size: 13.5px; }
+.rule { height: 1px; background: hsl(var(--border)); border: 0; margin: 0; }
+
+.callout {
+  border: 1px solid hsl(var(--border)); border-left: 3px solid hsl(var(--primary));
+  border-radius: 10px; padding: 14px 16px; background: hsl(var(--card));
+  font-size: 13px; max-width: 92ch;
+}
+.callout p { margin: 0 0 8px; }
+.callout p:last-child { margin: 0; }
+.callout.warn { border-left-color: hsl(var(--destructive)); }
+
+/* =========================================================================
+   THE NODE — the proposed card anatomy.
+   Today's card (NODE_W 216 / NODE_H 76, icon + 2 lines) is one fixed shape for
+   all 11 categories. This adds a body slot, a meta footer and four silhouettes,
+   which is where n8n's readability actually comes from.
+   ========================================================================= */
+.node {
+  --hue: var(--viz-tool);
+  position: relative;
+  width: 264px;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / .18), 0 8px 24px -18px rgb(0 0 0 / .5);
+  overflow: hidden;
+  text-align: left;
+  transition: border-color .15s, transform .15s;
+}
+.node:hover { border-color: hsl(var(--hue) / 0.55); }
+
+/* The category rail — 3px of hue down the left edge. One glance sorts the
+   card into its family before a single word is read. */
+.node::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: hsl(var(--hue)); opacity: .9;
+}
+
+.node .head { display: flex; align-items: center; gap: 10px; padding: 10px 11px 10px 14px; }
+.node .tile {
+  width: 30px; height: 30px; border-radius: 9px; flex: none;
+  display: grid; place-items: center;
+  color: hsl(var(--hue)); background: hsl(var(--hue) / 0.13);
+  border: 1px solid hsl(var(--hue) / 0.22);
+}
+.node .tile svg { width: 16px; height: 16px; }
+.node .txt { min-width: 0; flex: 1; }
+.node .t {
+  font-size: 12.5px; font-weight: 550; letter-spacing: -0.005em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.node .s {
+  font-size: 11px; color: hsl(var(--muted-foreground));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.node .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.dot.done { background: hsl(var(--good)); }
+.dot.failed { background: hsl(var(--destructive)); }
+.dot.running { background: hsl(var(--primary)); animation: pulse 1.4s ease-in-out infinite; }
+.dot.skipped { background: hsl(var(--muted-foreground) / 0.45); }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+
+/* Body slot — the reason a node beats a table row: the actual payload,
+   two lines of it, on the card itself. */
+.node .body {
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--sheen) / 0.03);
+  padding: 8px 11px 8px 14px;
+  font-size: 10.5px; line-height: 1.5;
+  color: hsl(var(--muted-foreground));
+  white-space: pre-wrap;
+  max-height: 46px; overflow: hidden;
+}
+.node .body.code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+.node .thumb {
+  border-top: 1px solid hsl(var(--border));
+  height: 68px;
+  background:
+    linear-gradient(135deg, hsl(var(--hue) / .22), transparent 60%),
+    repeating-linear-gradient(45deg, hsl(var(--sheen) / .04) 0 6px, transparent 6px 12px);
+  display: grid; place-items: center;
+  color: hsl(var(--hue) / .85);
+}
+.node .thumb svg { width: 22px; height: 22px; opacity: .8; }
+
+.node .foot {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  border-top: 1px solid hsl(var(--border));
+  padding: 7px 11px 7px 14px;
+}
+.chip {
+  font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 5px;
+  background: hsl(var(--sheen) / 0.06);
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground)); white-space: nowrap;
+}
+.chip.hue { color: hsl(var(--hue)); border-color: hsl(var(--hue) / .35); background: hsl(var(--hue) / .1); }
+.chip.bad { color: hsl(var(--destructive)); border-color: hsl(var(--destructive) / .4); background: hsl(var(--destructive) / .1); }
+.chip.ok  { color: hsl(var(--good)); border-color: hsl(var(--good) / .4); background: hsl(var(--good) / .1); }
+.foot .num { margin-left: auto; font-size: 10px; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
+
+/* Ports — a dot only ever renders where an edge really attaches. */
+.port {
+  position: absolute; width: 7px; height: 7px; border-radius: 50%;
+  background: hsl(var(--primary) / .8);
+  border: 1.5px solid hsl(var(--background));
+}
+.port.l { left: -4px; top: 26px; }
+.port.r { right: -4px; top: 26px; }
+.port.r2a { right: -4px; top: 18px; }
+.port.r2b { right: -4px; top: 34px; background: hsl(var(--destructive) / .85); }
+.port.b { bottom: -4px; left: 50%; margin-left: -3.5px; }
+
+/* Silhouettes — shape carries meaning the hue cannot. */
+.node.pill { border-radius: 12px 12px 12px 12px; }
+.node.pill::before { width: 4px; }
+.node.pill .head { padding-left: 15px; }
+.node.gate { border-style: solid; border-color: hsl(var(--hue) / .5); }
+.node.gate::after {
+  content: ""; position: absolute; right: -1px; top: 50%; margin-top: -9px;
+  width: 0; height: 0; border: 9px solid transparent;
+  border-right-color: hsl(var(--background));
+}
+.node.stack { box-shadow: 0 1px 2px rgb(0 0 0/.2), 5px 5px 0 -1px hsl(var(--card)), 5px 5px 0 0 hsl(var(--border)), 10px 10px 0 -1px hsl(var(--card)), 10px 10px 0 0 hsl(var(--border)); }
+.node.dashed { border-style: dashed; }
+.node.alarm { border-color: hsl(var(--destructive) / .65); }
+.node.live { border-color: hsl(var(--primary) / .6); }
+.node.note {
+  background: hsl(var(--viz-trigger) / .09);
+  border-color: hsl(var(--viz-trigger) / .3);
+  border-radius: 12px 12px 12px 2px;
+}
+.node.annotation { width: 190px; }
+.node.annotation .head { padding-top: 7px; padding-bottom: 7px; }
+
+/* --- Catalog grid -------------------------------------------------------- */
+.family { margin-top: 44px; }
+.family > .fhead { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+.family > .fhead .count { font-size: 11px; color: hsl(var(--muted-foreground)); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 22px; margin-top: 20px; }
+.entry {
+  border: 1px solid hsl(var(--border)); border-radius: 14px;
+  padding: 20px 18px 16px; background: hsl(var(--card) / .5);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.entry .stage {
+  display: grid; place-items: center; padding: 12px 22px 16px;
+  border-radius: 10px;
+  background:
+    radial-gradient(ellipse at 50% 0%, hsl(var(--sheen) / .05), transparent 70%),
+    repeating-linear-gradient(0deg, transparent 0 21px, hsl(var(--sheen) / .035) 21px 22px),
+    repeating-linear-gradient(90deg, transparent 0 21px, hsl(var(--sheen) / .035) 21px 22px);
+}
+.spec { font-size: 11.5px; }
+.spec dl { display: grid; grid-template-columns: 74px 1fr; gap: 4px 10px; margin: 0; }
+.spec dt { color: hsl(var(--muted-foreground)); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; padding-top: 1px; }
+.spec dd { margin: 0; }
+.spec code { font-size: 10.5px; background: hsl(var(--muted)); padding: 1px 5px; border-radius: 4px; }
+.idline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.idline .id { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; color: hsl(var(--foreground)); }
+.state { font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em; padding: 2px 7px; border-radius: 999px; border: 1px solid; }
+.state.live { color: hsl(var(--good)); border-color: hsl(var(--good) / .45); background: hsl(var(--good) / .1); }
+.state.extend { color: hsl(var(--primary)); border-color: hsl(var(--primary) / .45); background: hsl(var(--primary) / .1); }
+.state.new { color: hsl(var(--muted-foreground)); border-color: hsl(var(--border)); background: hsl(var(--sheen) / .05); }
+
+/* --- Tables -------------------------------------------------------------- */
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; margin-top: 14px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid hsl(var(--border)); vertical-align: top; }
+th { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: hsl(var(--muted-foreground)); font-weight: 600; }
+td code { font-size: 11px; background: hsl(var(--muted)); padding: 1px 5px; border-radius: 4px; }
+.tablewrap { overflow-x: auto; }
+.sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; vertical-align: -1px; margin-right: 7px; }
+
+/* --- Example graph ------------------------------------------------------- */
+.canvas {
+  position: relative; border: 1px solid hsl(var(--border)); border-radius: 14px;
+  background:
+    radial-gradient(ellipse at 30% 0%, hsl(var(--primary) / .045), transparent 65%),
+    repeating-linear-gradient(0deg, transparent 0 23px, hsl(var(--sheen) / .04) 23px 24px),
+    repeating-linear-gradient(90deg, transparent 0 23px, hsl(var(--sheen) / .04) 23px 24px),
+    hsl(var(--background));
+  overflow: auto; padding: 4px;
+}
+.canvas .inner { position: relative; width: 1240px; height: 720px; }
+.canvas .node { position: absolute; }
+.canvas svg.edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.lane {
+  position: absolute; border: 1px dashed hsl(var(--viz-agent) / .35);
+  border-radius: 14px; background: hsl(var(--viz-agent) / .05);
+}
+.lane > span {
+  position: absolute; top: -9px; left: 14px; font-size: 10px; letter-spacing: .06em;
+  text-transform: uppercase; padding: 1px 8px; border-radius: 5px;
+  background: hsl(var(--background)); color: hsl(var(--viz-agent));
+  border: 1px solid hsl(var(--viz-agent) / .35);
+}
+.turnband {
+  position: absolute; border: 1px solid hsl(var(--border)); border-radius: 16px;
+  background: hsl(var(--sheen) / .022);
+}
+.turnband > span {
+  position: absolute; top: -9px; left: 14px; font-size: 10px; letter-spacing: .06em;
+  text-transform: uppercase; padding: 1px 8px; border-radius: 5px;
+  background: hsl(var(--background)); color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border));
+}
+
+/* --- Anatomy ------------------------------------------------------------- */
+.anatomy { display: flex; gap: 46px; flex-wrap: wrap; align-items: flex-start; }
+.anatomy ol { margin: 0; padding-left: 20px; font-size: 13px; max-width: 56ch; }
+.anatomy li { margin-bottom: 9px; }
+.anatomy li b { font-weight: 600; }
+
+.states { display: flex; gap: 18px; flex-wrap: wrap; }
+.hidden { display: none !important; }
+footer.page { margin-top: 72px; padding-top: 22px; border-top: 1px solid hsl(var(--border)); font-size: 12px; color: hsl(var(--muted-foreground)); }
+</style>
+</head>
+<body>
+
+<!-- Icon sprite. Simplified 24×24 stroke glyphs standing in for the lucide-react
+     icon each node ships with; the lucide name is listed in every node's spec. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><path d="M12 19v3"/></symbol>
+<symbol id="i-keyboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7.5 14h9"/></symbol>
+<symbol id="i-message" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h8l-1 8 10-12h-8z"/></symbol>
+<symbol id="i-turn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v8a2 2 0 0 0 2 2h12"/><path d="m15 11 4 3-4 3"/></symbol>
+<symbol id="i-audio" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h1"/><path d="M8 6v12"/><path d="M12 9v6"/><path d="M16 4v16"/><path d="M20 10v4"/></symbol>
+<symbol id="i-volume" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 9.5a4 4 0 0 1 0 5"/><path d="M18.5 6.5a8 8 0 0 1 0 11"/></symbol>
+<symbol id="i-hand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V5.5a1.8 1.8 0 0 1 3.6 0V11"/><path d="M10.6 10.5V4a1.8 1.8 0 0 1 3.6 0v6.5"/><path d="M14.2 11V6.5a1.8 1.8 0 0 1 3.6 0V15a6 6 0 0 1-6 6h-1a6 6 0 0 1-6-6v-2.5a1.8 1.8 0 0 1 3.6 0"/></symbol>
+<symbol id="i-filter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h18l-7 8.2V20l-4 2v-9.8z"/></symbol>
+<symbol id="i-brain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3A3 3 0 0 0 6.6 6a3 3 0 0 0-1.1 5.7A3 3 0 0 0 7 17.8a3 3 0 0 0 5 1.4V4.7A2 2 0 0 0 9.5 3z"/><path d="M14.5 3A3 3 0 0 1 17.4 6a3 3 0 0 1 1.1 5.7A3 3 0 0 1 17 17.8a3 3 0 0 1-5 1.4"/></symbol>
+<symbol id="i-cpu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5"/><path d="M9.5 2v3M14.5 2v3M9.5 19v3M14.5 19v3M2 9.5h3M2 14.5h3M19 9.5h3M19 14.5h3"/></symbol>
+<symbol id="i-branch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="8" r="2.2"/><path d="M6 8.2v7.6"/><path d="M18 10.2a6.5 6.5 0 0 1-6.5 6.5H8.2"/></symbol>
+<symbol id="i-signpost" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M4.5 7h13l3 3-3 3h-13z"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 4.5 5.4V11c0 4.8 3.2 8.9 7.5 10.5 4.3-1.6 7.5-5.7 7.5-10.5V5.4z"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 0 1 14.3-6.2L21 8.5"/><path d="M21 3.5v5h-5"/><path d="M20.5 12a8.5 8.5 0 0 1-14.3 6.2L3 15.5"/><path d="M3 20.5v-5h5"/></symbol>
+<symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3 6 1.5 1.5L7 5"/><path d="m3 12 1.5 1.5L7 11"/><path d="m3 18 1.5 1.5L7 17"/><path d="M10 6h11M10 12h11M10 18h11"/></symbol>
+<symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-5-6-5"/><path d="M12 19h8"/></symbol>
+<symbol id="i-sqterm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7.5 14.5 3-2.5-3-2.5"/><path d="M13 15h4"/></symbol>
+<symbol id="i-filepen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h5"/><path d="M14 3v5h5"/><path d="M20.4 13.1 15 18.5l-3 .8.8-3 5.4-5.4a1.7 1.7 0 0 1 2.2 2.2z"/></symbol>
+<symbol id="i-filesearch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><path d="M14 3v5h5v2"/><circle cx="17" cy="17" r="3"/><path d="m19.3 19.3 2.2 2.2"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3.2 12h17.6"/><path d="M12 3c2.6 2.6 2.6 15.4 0 18-2.6-2.6-2.6-15.4 0-18z"/></symbol>
+<symbol id="i-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V5a2 2 0 0 1 2-2h13v16H6.5a2.5 2.5 0 0 0-2.5 2.5z"/><path d="M8 7.5h7M8 11h5"/></symbol>
+<symbol id="i-db" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7.5" ry="3"/><path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"/><path d="M4.5 11.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"/></symbol>
+<symbol id="i-sparkles" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m11 3 1.7 4.3L17 9l-4.3 1.7L11 15l-1.7-4.3L5 9l4.3-1.7z"/><path d="m18 14.5.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></symbol>
+<symbol id="i-plug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2.5v5.5M15 2.5v5.5"/><path d="M6 8h12v3.5a6 6 0 0 1-12 0z"/><path d="M12 17.5V22"/></symbol>
+<symbol id="i-boxes" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/></symbol>
+<symbol id="i-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/></symbol>
+<symbol id="i-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M8 2.5V7M16 2.5V7M3 10.5h18"/></symbol>
+<symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 9-8 9 8"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5h4v5"/></symbol>
+<symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2.5"/><path d="M8.5 21h7M12 17v4"/></symbol>
+<symbol id="i-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h2.8l1.5-2.2h7.4L17.2 8H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z"/><circle cx="12" cy="13.5" r="3.4"/></symbol>
+<symbol id="i-pointer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 3 6.5 17 2.4-6.6L20 11z"/></symbol>
+<symbol id="i-palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18c1.3 0 2.1-.8 2.1-1.9 0-1.6-1.4-1.7-1.4-2.9 0-.9.8-1.5 1.9-1.5h1.5A4.9 4.9 0 0 0 21 9.8C21 6 17 3 12 3z"/><circle cx="7.8" cy="11.5" r="1"/><circle cx="10.4" cy="7.6" r="1"/><circle cx="15.2" cy="8" r="1"/></symbol>
+<symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6.5h9M17 6.5h3.5M3.5 12h3M12.5 12h8M3.5 17.5h9M17 17.5h3.5"/><circle cx="14.5" cy="6.5" r="2.2"/><circle cx="9" cy="12" r="2.2"/><circle cx="14.5" cy="17.5" r="2.2"/></symbol>
+<symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.8"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/></symbol>
+<symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.4"/><path d="M2.5 20.5a6.5 6.5 0 0 1 13 0"/><path d="M15.5 5.2a3.4 3.4 0 0 1 0 5.6"/><path d="M17.5 20.5a6.6 6.6 0 0 0-2.4-5"/></symbol>
+<symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h2.8l1.8 4.6-2.3 1.4a12.5 12.5 0 0 0 5.7 5.7l1.4-2.3L20 14.2V17a2 2 0 0 1-2.2 2A16.8 16.8 0 0 1 4 5.2 2 2 0 0 1 6 3z"/></symbol>
+<symbol id="i-bot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3.5"/><path d="M12 4.5V8"/><circle cx="12" cy="3.4" r="1.2"/><path d="M9.2 13.5h.01M14.8 13.5h.01"/><path d="M1.8 12.5V16M22.2 12.5V16"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.2 12.2 2.6 2.6 5-5.6"/></symbol>
+<symbol id="i-stamp" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a3 3 0 0 1 3 3.3L17.2 12H6.8L6 6.3A3 3 0 0 1 9 3z"/><rect x="4" y="14" width="16" height="3.5" rx="1.2"/><path d="M5 21h14"/></symbol>
+<symbol id="i-flag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22V3"/><path d="M5 4h13l-2.4 4L18 12H5z"/></symbol>
+<symbol id="i-filetext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></symbol>
+<symbol id="i-image" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="m4.5 18 4.5-4.5 3.5 3.5 3-3 4 4"/></symbol>
+<symbol id="i-filecode" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m10 12.5-2 2 2 2M14 12.5l2 2-2 2"/></symbol>
+<symbol id="i-table" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 10h18M3 15h18M10 4v16"/></symbol>
+<symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 20.5h17"/><rect x="5" y="11" width="3.2" height="6.5" rx="1"/><rect x="10.4" y="5.5" width="3.2" height="12" rx="1"/><rect x="15.8" y="13.5" width="3.2" height="4" rx="1"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 2.5 20h19z"/><path d="M12 9.5v4.5M12 17.2h.01"/></symbol>
+<symbol id="i-ban" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></symbol>
+<symbol id="i-timer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.5 1.8"/><path d="M9.5 2.5h5"/></symbol>
+<symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5a2.5 2.5 0 0 1 2.5-2.5H17V8"/><rect x="3" y="7.5" width="18" height="12.5" rx="2.5"/><path d="M16.5 14h2"/></symbol>
+<symbol id="i-scissors" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="m8 7.6 11.5 10M19.5 6.5 8 16.4"/></symbol>
+<symbol id="i-rotate" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.9-6.4L3 8.5"/><path d="M3 3.5v5h5"/></symbol>
+<symbol id="i-stop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><rect x="9" y="9" width="6" height="6" rx="1.2"/></symbol>
+<symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 4.8-9 4.8-9-4.8z"/><path d="m3 13 9 4.8 9-4.8"/></symbol>
+<symbol id="i-note" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h14a2 2 0 0 1 2 2v9.5L14.5 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M21 14.5h-4.5a2 2 0 0 0-2 2V21"/></symbol>
+<symbol id="i-hourglass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h10M7 21h10"/><path d="M7 3v3.2l5 5.8-5 5.8V21"/><path d="M17 3v3.2l-5 5.8 5 5.8V21"/></symbol>
+<symbol id="i-wrench" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 3.5a5.5 5.5 0 0 0-6.6 7L3 17v4h4l6.5-6.5a5.5 5.5 0 0 0 7-6.6l-3.3 3.3-3.5-3.5z"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></symbol>
+<symbol id="i-frame" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5h17M3.5 16.5h17M7.5 3.5v17M16.5 3.5v17"/></symbol>
+<symbol id="i-cloud" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 18.5a4 4 0 0 1 .6-7.95 5.5 5.5 0 0 1 10.6 1.45 3.5 3.5 0 0 1-.2 6.5z"/></symbol>
+<symbol id="i-merge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.2"/><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="12" r="2.2"/><path d="M8.2 5.6c0 3.5 2.6 6.4 7.6 6.4"/><path d="M8.2 18.4c0-3.5 2.6-6.4 7.6-6.4"/></symbol>
+</svg>
+
+<header class="page">
+  <div class="bar">
+    <div class="brandmark">J</div>
+    <div>
+      <h1>Run Graph — Node Catalog</h1>
+      <p class="sub">Every node the Visualization section should be able to draw, rendered in the app's own tokens.</p>
+    </div>
+    <div class="spacer"></div>
+    <input id="q" class="ctl" type="search" placeholder="Filter nodes…" aria-label="Filter nodes">
+    <button class="ctl" id="f-new" aria-pressed="false">Only not-built-yet</button>
+    <button class="ctl" id="theme" aria-pressed="true">Dark</button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section id="why">
+  <h2>Why this document</h2>
+  <h3>The canvas is finished. The vocabulary is not.</h3>
+  <p class="lede">
+    <code>VisualizationView.tsx</code> already does the hard part: pan, anchored zoom, fit,
+    edge routing, ports derived from real edges, a node inspector, and a no-JS server-rendered
+    twin (<code>mission_graph.py</code>). What it lacks is <em>things to draw</em>. This file is the
+    catalog: one card per node type, in the app's real colours, with the data source each one
+    reads from — the seed for <code>nodeSpec.ts</code> and the backend that has to feed it.
+  </p>
+
+  <div class="callout warn">
+    <p><b>Measured on this machine, 2026-08-13.</b> The canvas reads only <code>/api/outputs</code>
+    (archived mission worktrees): <b>17 runs, all from 16–17 May 2026</b>, of which <b>9</b> have a
+    worker stream. Across every one of those streams the complete set of tool names is
+    <code>Write</code> (3×) and <code>Read</code> (1×) — so of eleven shipped node categories,
+    <b>nine have never had a single row of data</b>. Meanwhile the session store holds
+    <b>305 sessions, 458 turns and 8 929 events</b>, and <code>ROUTER_TOOLS</code> exposes
+    <b>33 real Jarvis tools</b> — none of which <code>toolCategory()</code> currently recognises.</p>
+    <p>The catalog below is therefore split by data source, and every node says where its facts
+    come from. A node without a source is a drawing, not a diagnosis.</p>
+  </div>
+</section>
+
+<section id="anatomy">
+  <h2>Anatomy</h2>
+  <h3>What one node is made of</h3>
+  <p class="lede">
+    Today every category renders the same 216×76 rectangle: icon tile, two text lines, status dot.
+    That is why a graph of thirty steps reads as a grid of identical grey cards. The proposal keeps
+    the header, adds a payload slot and a meta footer, and gives four families their own silhouette —
+    which is where n8n's glanceability actually comes from, not from colour.
+  </p>
+  <div class="anatomy">
+    <div class="entry" style="max-width:330px">
+      <div class="stage">
+        <div class="node" style="--hue: var(--viz-terminal)">
+          <span class="port l"></span><span class="port r"></span>
+          <div class="head">
+            <span class="tile"><svg><use href="#i-terminal"/></svg></span>
+            <span class="txt">
+              <span class="t">run-shell</span>
+              <span class="s">git status --porcelain</span>
+            </span>
+            <span class="dot done"></span>
+          </div>
+          <div class="body code">M jarvis/ui/web/frontend/src/lib/nodeSpec.ts
+M jarvis/ui/web/run_plan.py</div>
+          <div class="foot">
+            <span class="chip hue">shell</span>
+            <span class="chip ok">exit 0</span>
+            <span class="chip">safe</span>
+            <span class="num">1.4 s</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ol>
+      <li><b>Category rail</b> — 3 px of the family hue on the left edge. Sorts the card into its
+        family before a word is read, and stays visible at 35 % zoom where icons blur out.</li>
+      <li><b>Icon tile</b> — one lucide glyph per family, on a 13 % tint of the same hue. Already
+        implemented in <code>nodeSpec.ts</code>; unchanged.</li>
+      <li><b>Title + detail</b> — the tool name and the one line that identifies the call
+        (command, path, query). Already implemented.</li>
+      <li><b>Status dot</b> — done / failed / running / no-confirmed-result. Already implemented,
+        and honest: an uncorrelated call is never shown as success.</li>
+      <li><b>Payload slot</b> <i>(new)</i> — two lines of what actually happened: the diff, the
+        stdout head, the result count, a thumbnail. This is the single biggest step from
+        "a picture of a run" to "I can follow what it did".</li>
+      <li><b>Meta footer</b> <i>(new)</i> — the chips that carry the facts a table would hide:
+        risk tier, approval source, exit code, attempts, tokens, cost, duration.</li>
+      <li><b>Ports</b> — dots only where an edge really attaches. Already implemented and derived
+        from the edge set, so a dot can never lie. Gate nodes get two labelled outputs.</li>
+    </ol>
+  </div>
+
+  <h3 style="margin-top:34px">Four silhouettes</h3>
+  <p class="lede">Shape encodes what colour cannot: how a node behaves in the flow.</p>
+  <div class="states">
+    <div class="entry" style="width:300px">
+      <div class="stage"><div class="node pill" style="--hue: var(--viz-trigger)"><span class="port r"></span>
+        <div class="head"><span class="tile"><svg><use href="#i-mic"/></svg></span>
+        <span class="txt"><span class="t">Wake word</span><span class="s">„Jarvis, …" · porcupine</span></span></div></div></div>
+      <div class="spec"><b>card&nbsp;/&nbsp;pill</b> — one in, one out. The ordinary step, and the entry point.</div>
+    </div>
+    <div class="entry" style="width:300px">
+      <div class="stage"><div class="node gate" style="--hue: var(--viz-gate)"><span class="port l"></span><span class="port r2a"></span><span class="port r2b"></span>
+        <div class="head"><span class="tile"><svg><use href="#i-shield"/></svg></span>
+        <span class="txt"><span class="t">Risk gate</span><span class="s">monitor · auto-approved</span></span></div>
+        <div class="foot"><span class="chip ok">allow</span><span class="chip bad">block</span></div></div></div>
+      <div class="spec"><b>gate</b> — two labelled outputs, the lower one in the alarm colour. Every branch in the run.</div>
+    </div>
+    <div class="entry" style="width:300px">
+      <div class="stage" style="padding-right:34px"><div class="node stack" style="--hue: var(--viz-agent)"><span class="port l"></span><span class="port r"></span>
+        <div class="head"><span class="tile"><svg><use href="#i-users"/></svg></span>
+        <span class="txt"><span class="t">Worker · 019e314f</span><span class="s">14 steps · 2 files</span></span><span class="dot done"></span></div></div></div>
+      <div class="spec"><b>stack</b> — collapsible sub-graph. Click to expand into its own lane.</div>
+    </div>
+    <div class="entry" style="width:300px">
+      <div class="stage"><div class="node" style="--hue: var(--viz-deliverable)"><span class="port l"></span>
+        <div class="head"><span class="tile"><svg><use href="#i-image"/></svg></span>
+        <span class="txt"><span class="t">chart.png</span><span class="s">report/chart.png</span></span></div>
+        <div class="thumb"><svg><use href="#i-image"/></svg></div>
+        <div class="foot"><span class="chip hue">png</span><span class="num">412 KB</span></div></div></div>
+      <div class="spec"><b>tile</b> — deliverables, with the file actually previewed on the card.</div>
+    </div>
+  </div>
+</section>
+
+<section id="catalog">
+  <h2>The catalog</h2>
+  <h3>Nodes, by family</h3>
+  <p class="lede">
+    <span class="state live">live</span> already drawn today ·
+    <span class="state extend">extend</span> exists but shallow or mis-classified ·
+    <span class="state new">new</span> needs a data path first.
+    Every entry names the event kind or API field it reads, so the backlog falls out of the table.
+  </p>
+  <div id="families"></div>
+</section>
+
+<section id="states">
+  <h2>States</h2>
+  <h3>The same node, four ways</h3>
+  <p class="lede">
+    Status is carried three times over — dot, border, and (on failure) the incoming edge — because a
+    6 px dot alone is not a glanceable alarm at fit-zoom. "No confirmed result" is its own state and
+    never borrows the success colour: the stream simply never proved the call returned.
+  </p>
+  <div class="states" id="statedemo"></div>
+</section>
+
+<section id="edges">
+  <h2>Connectors</h2>
+  <h3>Five edge types</h3>
+  <p class="lede">
+    <code>edgePath()</code> already draws bezier tracks with arrowheads and brightens the selected
+    node's own edges. These are the variants the richer node set needs.
+  </p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th style="width:150px">Edge</th><th style="width:190px">Look</th><th>Meaning</th><th style="width:120px">State</th></tr></thead>
+    <tbody>
+      <tr><td><code>flow</code></td><td>solid, primary, arrowhead</td><td>Next step in the same lane.</td><td><span class="state live">live</span></td></tr>
+      <tr><td><code>failed</code></td><td>solid, destructive</td><td>Leads into a failed node.</td><td><span class="state live">live</span></td></tr>
+      <tr><td><code>produces</code></td><td>bottom→top, thinner, no arrow</td><td>Step → the file it wrote. Provenance, not sequence.</td><td><span class="state extend">extend</span></td></tr>
+      <tr><td><code>branch</code></td><td>solid, splits from a gate's two ports</td><td>Allow/block, pass/revise, spawn fan-out. Labelled at the source.</td><td><span class="state new">new</span></td></tr>
+      <tr><td><code>retry</code></td><td>dashed, curves back to the source</td><td>The loop a critic or a retry actually took. Carries an attempt counter.</td><td><span class="state new">new</span></td></tr>
+      <tr><td><code>waiting</code></td><td>animated dash, primary</td><td>A live run's in-flight call. Only ever on the newest edge.</td><td><span class="state new">new</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="palette">
+  <h2>Palette</h2>
+  <h3>Fifteen hues, both themes</h3>
+  <p class="lede">
+    Eleven <code>--viz-*</code> tokens ship today in <code>index.css</code>. Four are proposed here.
+    Saturation stays low on purpose: signal-yellow is the only loud voice in this product, so the
+    node hues are quiet accents that sort rather than shout.
+  </p>
+  <div class="tablewrap"><table id="palettetable">
+    <thead><tr><th style="width:190px">Token</th><th style="width:120px">Dark</th><th style="width:120px">Light</th><th>Family</th><th style="width:110px">State</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+<section id="example">
+  <h2>Assembled</h2>
+  <h3>One real turn, drawn with these nodes</h3>
+  <p class="lede">
+    A single voice turn — wake word, transcript, brain, risk gate, a shell command, a spawn into two
+    workers, the merge, the answer, two deliverables — using nothing but cards from the catalog.
+    This is the target picture for an ordinary Tuesday, not for the rare archived mission.
+  </p>
+  <div class="canvas"><div class="inner" id="example-canvas"></div></div>
+</section>
+
+<section id="build">
+  <h2>Build order</h2>
+  <h3>What has to happen, in the order that pays off</h3>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th style="width:44px">#</th><th style="width:230px">Step</th><th>What it changes</th><th style="width:280px">Touches</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><b>Second data source</b>: a run-graph builder over the session store</td>
+        <td>The canvas draws <em>every</em> turn, not the 17 archived missions. This is the whole difference between a dead section and a daily one.</td>
+        <td><code>jarvis/runs/</code> → new <code>GET /api/runs/{id}/graph</code>; <code>useRuns</code> beside <code>useOutputsList</code> in the run rail</td></tr>
+      <tr><td>2</td><td><b>Node registry</b> keyed on Jarvis's own vocabulary</td>
+        <td>Router tools, event kinds and risk tiers each get their node instead of collapsing into the grey wrench. Substring guessing on tool names goes away.</td>
+        <td><code>lib/nodeSpec.ts</code> — table driven by <code>ROUTER_TOOLS</code> + <code>EVENT_CATEGORY_BY_KIND</code>, with a parity test both ways</td></tr>
+      <tr><td>3</td><td><b>Card anatomy</b>: payload slot, meta footer, four silhouettes</td>
+        <td>A node answers "what happened here" on the card; the inspector becomes the detail view, not the only view.</td>
+        <td><code>VisualizationView.tsx</code> <code>GraphCanvas</code>; <code>runGraph.ts</code> gains variable node height</td></tr>
+      <tr><td>4</td><td><b>Turn bands and worker lanes</b> as real frames</td>
+        <td>A five-turn session stops being one endless chain. Lanes already exist in the layout maths — they just have no frame around them.</td>
+        <td><code>runGraph.ts</code> (<code>laneKey</code> is already there), new group primitives</td></tr>
+      <tr><td>5</td><td><b>Live</b>: subscribe to the existing run WebSocket</td>
+        <td>Nodes appear while the run happens. The in-flight step pulses; the edge animates. Watching beats refreshing.</td>
+        <td><code>/api/runs/live</code> (<code>runs_ws.py</code>, already shipped) → incremental graph patches</td></tr>
+      <tr><td>6</td><td><b>Depth</b>: full payloads in the inspector</td>
+        <td>Today the backend clips detail to 160 and output to 400 characters, so "capture all the important data behind it" hits a wall.</td>
+        <td><code>run_plan.py</code> <code>_DETAIL_CHARS</code>/<code>_OUTPUT_CHARS</code> + a lazy full-payload route</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<footer class="page">
+  Jarvis — Run Graph node catalog · design source of truth for
+  <code>jarvis/ui/web/frontend/src/lib/nodeSpec.ts</code>,
+  <code>lib/runGraph.ts</code>, <code>jarvis/ui/web/run_plan.py</code> and
+  <code>jarvis/ui/web/mission_graph.py</code>. Colours mirror
+  <code>frontend/src/index.css</code>; icons name their <code>lucide-react</code> glyph.
+</footer>
+
+</div>
+
+<script>
+/* ---------------------------------------------------------------------------
+   The catalog itself. This array is deliberately shaped like the registry it is
+   meant to become: `id` is the future node-kind enum value, `token` the CSS
+   custom property, `icon` the lucide glyph, `source` the exact field or event
+   kind the node reads. Porting it to nodeSpec.ts should be transcription, not
+   translation.
+--------------------------------------------------------------------------- */
+const FAMILIES = [
+  { key: "start",    title: "Trigger", note: "How a run begins. Today there is exactly one: the archived utterance." },
+  { key: "speech",   title: "Voice", note: "What was heard and what was said. Drawn from the speech events — currently invisible in the graph." },
+  { key: "think",    title: "Thinking &amp; deciding", note: "The brain turn and the four decision kinds the run recorder already captures with an honest rationale source." },
+  { key: "act",      title: "Tools", note: "One node per router-tool family. These 33 tools are what Jarvis actually does — and what today's classifier cannot see." },
+  { key: "delegate", title: "Delegated work", note: "Spawns, workers, harnesses, and the critic loop that judges them." },
+  { key: "produce",  title: "Results &amp; deliverables", note: "The answer, and the files left behind — previewed on the card." },
+  { key: "signal",   title: "Problems &amp; limits", note: "Errors, denials, budgets, and the honesty markers that keep a shortened graph from reading as a shorter run." },
+  { key: "frame",    title: "Structure", note: "Not steps: the frames that make a long run readable." },
+];
+
+const N = [
+/* ---- trigger ---------------------------------------------------------- */
+{ id:"trigger.wake", family:"start", title:"Wake word", sub:"„Jarvis, …\" · porcupine", icon:"i-mic",
+  token:"--viz-trigger", shape:"pill", ports:"0 in / 1 out", state:"new",
+  chips:[["hue","voice"],["","de-DE"]], meta:"820 ms",
+  source:"WakeWordDetected · wake_source, wake_keyword", when:"A voice run started by the wake word.",
+  inspector:"Keyword, detector, confidence, the audio window that triggered it, time to listening." },
+{ id:"trigger.hotkey", family:"start", title:"Hotkey", sub:"Ctrl+Alt+J · push-to-talk", icon:"i-keyboard",
+  token:"--viz-trigger", shape:"pill", ports:"0 in / 1 out", state:"new",
+  chips:[["hue","hotkey"]], meta:"",
+  source:"HotkeyPressed", when:"A run the user started by hand instead of by voice.",
+  inspector:"Which binding fired, held or tapped, the surface it came from." },
+{ id:"trigger.chat", family:"start", title:"Typed message", sub:"\"make me a chart of last week\"", icon:"i-message",
+  token:"--viz-trigger", shape:"pill", ports:"0 in / 1 out", state:"extend",
+  chips:[["hue","chat"]], meta:"",
+  source:"OutputSummary.utterance · VoiceTurnStarted(surface)", when:"Every chat turn. This is the ONE trigger that exists today (as the generic `start` node).",
+  inspector:"The full request text, the surface, attachments." },
+{ id:"trigger.schedule", family:"start", title:"Scheduled run", sub:"routine · daily 08:00", icon:"i-clock",
+  token:"--viz-trigger", shape:"pill", ports:"0 in / 1 out", state:"new",
+  chips:[["hue","cron"]], meta:"",
+  source:"routine/cron dispatch", when:"A run nobody was present for — exactly the run you most need drawn afterwards.",
+  inspector:"Schedule expression, previous run, drift, whether it overlapped a live session." },
+{ id:"trigger.api", family:"start", title:"External call", sub:"jarvis mission run · CLI", icon:"i-zap",
+  token:"--viz-trigger", shape:"pill", ports:"0 in / 1 out", state:"new",
+  chips:[["hue","cli"]], meta:"",
+  source:"CliInvoked · REST route", when:"A run started by the CLI or another program.",
+  inspector:"Caller, argv, auth path, exit code of the invocation." },
+{ id:"trigger.followup", family:"start", title:"Follow-up", sub:"turn 3 of 5 · same session", icon:"i-turn",
+  token:"--viz-trigger", shape:"pill", ports:"1 in / 1 out", state:"new",
+  chips:[["","+42 s"]], meta:"",
+  source:"VoiceTurnStarted within an open session", when:"Every turn after the first. Without it a five-turn session draws as one impossible chain.",
+  inspector:"Time since the previous turn, whether context carried over, tokens re-sent." },
+
+/* ---- speech ----------------------------------------------------------- */
+{ id:"speech.heard", family:"speech", title:"Heard", sub:"final transcript", icon:"i-audio",
+  token:"--viz-speech", shape:"card", ports:"1 in / 1 out", state:"new",
+  body:"\"check whether the build passes and let me know\"",
+  chips:[["hue","stt"],["","de"]], meta:"1.1 s",
+  source:"TranscriptFinal · UtteranceCaptured", when:"Every voice turn.",
+  inspector:"Final and interim text, language, STT provider, endpoint reason, audio duration." },
+{ id:"speech.spoke", family:"speech", title:"Spoke", sub:"reply, as voiced", icon:"i-volume",
+  token:"--viz-speech", shape:"card", ports:"1 in / 1 out", state:"new",
+  body:"\"The build is green — 412 tests passed.\"",
+  chips:[["hue","tts"],["","nova"]], meta:"3.4 s",
+  source:"SpeechSpoken · AudioOutFirst", when:"Every spoken reply, including intermediate fillers.",
+  inspector:"Voice, TTS provider, time to first audio, whether it was cut off." },
+{ id:"speech.bargein", family:"speech", title:"Interrupted", sub:"user spoke over playback", icon:"i-hand",
+  token:"--viz-speech", shape:"alarm", ports:"1 in / 1 out", state:"new",
+  chips:[["bad","barge-in"],["","1.2 s in"]], meta:"",
+  source:"playback abort + TurnExtras.interrupted", when:"A reply the user cut off — the single most diagnostic moment in a voice run.",
+  inspector:"How far into playback, which detector fired, what was left unsaid." },
+{ id:"speech.scrub", family:"speech", title:"Voice-safe rewrite", sub:"scrub_for_voice · 2 spans", icon:"i-filter",
+  token:"--viz-speech", shape:"dashed", ports:"1 in / 1 out", state:"new",
+  body:"path removed · code block summarised",
+  chips:[["hue","filter"]], meta:"",
+  source:"output filter diff (regex-only, AP: no LLM in the scrubber)", when:"When what was written and what was spoken differ.",
+  inspector:"Before/after, which rule fired. Answers \"why did it not read that out\" without a log dive." },
+
+/* ---- think ------------------------------------------------------------ */
+{ id:"think.reasoning", family:"think", title:"Reasoning", sub:"collapsed thoughts before an action", icon:"i-brain",
+  token:"--viz-reasoning", shape:"dashed", ports:"1 in / 1 out", state:"live",
+  body:"I should check the build status first, then report the failing suite…",
+  chips:[["hue","thought"]], meta:"",
+  source:"run_plan.py · kind:\"reasoning\" (consecutive blocks collapsed)", when:"Between actions. Already drawn, already dashed — the one node with real visual grammar today.",
+  inspector:"The full thought text." },
+{ id:"think.brain", family:"think", title:"Brain turn", sub:"anthropic · claude-opus-5", icon:"i-cpu",
+  token:"--viz-reasoning", shape:"card", ports:"1 in / 1 out", state:"new",
+  chips:[["hue","frontier"],["","12.4k in"],["","1.1k out"]], meta:"$0.038",
+  source:"BrainTurnStarted/Completed · BrainTTFT · RunTurn.tokens/cost", when:"Every turn. The node that finally makes cost and latency visible where they happened.",
+  inspector:"Provider, model, tier, tokens, cost, TTFT, cache hit, context size, tools offered." },
+{ id:"decide.tier", family:"think", title:"Tier", sub:"router → direct", icon:"i-branch",
+  token:"--viz-gate", shape:"gate", ports:"1 in / 2 out", state:"new",
+  chips:[["ok","direct"],["","spawn"]], meta:"",
+  source:"DecisionStep(kind=\"tier\") + rationale_source", when:"Every turn that chose a routing tier.",
+  inspector:"Which tier, why, and whether the reason was the model's own words or a deterministic rule — the run recorder already distinguishes the two." },
+{ id:"decide.route", family:"think", title:"Route", sub:"force-spawn heuristic", icon:"i-signpost",
+  token:"--viz-gate", shape:"gate", ports:"1 in / 2 out", state:"new",
+  chips:[["","heuristic"]], meta:"",
+  source:"DecisionStep(kind=\"route\")", when:"When a heuristic overrode the model's own choice.",
+  inspector:"The rule that fired and the alternative it suppressed." },
+{ id:"decide.risk", family:"think", title:"Risk gate", sub:"monitor · auto-approved", icon:"i-shield",
+  token:"--viz-gate", shape:"gate", ports:"1 in / 2 out (allow, block)", state:"new",
+  chips:[["ok","allow"],["bad","block"]], meta:"",
+  source:"DecisionStep(kind=\"risk\") · ActionApprovalRequired/Approved/Denied · ToolCall.risk_tier", when:"Before every non-safe action. Safe/monitor/ask/block is core product behaviour and currently invisible in the graph.",
+  inspector:"Tier, which list decided (blacklist > whitelist > default), who approved, how long the user took." },
+{ id:"decide.fallback", family:"think", title:"Fallback", sub:"openai → anthropic (429)", icon:"i-refresh",
+  token:"--viz-gate", shape:"gate", ports:"1 in / 1 out", state:"new",
+  chips:[["bad","429"],["","retry 2"]], meta:"",
+  source:"DecisionStep(kind=\"fallback\") · BrainProviderSwitched", when:"When a provider failed over. The node that explains a mysteriously slow or differently-worded answer.",
+  inspector:"Which provider failed, the error, what took over, added latency." },
+{ id:"think.plan", family:"think", title:"Plan", sub:"6 steps · mission", icon:"i-list",
+  token:"--viz-reasoning", shape:"stack", ports:"1 in / 1 out", state:"extend",
+  chips:[["hue","plan"],["","6 steps"]], meta:"",
+  source:"PlanResponse.plan (plan_id, vision, status, total_steps)", when:"Missions that produced a plan. The payload exists today and is never drawn.",
+  inspector:"The whole plan, step by step, with which steps were actually reached." },
+
+/* ---- act -------------------------------------------------------------- */
+{ id:"act.shell", family:"act", title:"run-shell", sub:"git status --porcelain", icon:"i-terminal",
+  token:"--viz-terminal", shape:"card", ports:"1 in / 1 out", state:"extend",
+  body:"M jarvis/ui/web/run_plan.py\nM jarvis/ui/web/frontend/src/lib/nodeSpec.ts",
+  chips:[["hue","shell"],["ok","exit 0"],["","safe"]], meta:"1.4 s",
+  source:"ROUTER_TOOLS run-shell · ToolCall.command/exit_code/output", when:"Every shell command, from voice or from a worker.",
+  inspector:"Full command, working directory, shell, exit code, stdout/stderr, risk tier, approver." },
+{ id:"act.file_write", family:"act", title:"Write", sub:"report/summary.md", icon:"i-filepen",
+  token:"--viz-file", shape:"card", ports:"1 in / 1 out (+ produces)", state:"live",
+  body:"+ 42 lines  · − 3 lines",
+  chips:[["hue","write"],["ok","ok"]], meta:"0.3 s",
+  source:"tool_use Write/Edit/MultiEdit/replace · step.writes[]", when:"Any file the run created or changed. One of exactly two node types with real data today.",
+  inspector:"Path, diff, bytes, and the deliverable node it feeds." },
+{ id:"act.file_read", family:"act", title:"Read", sub:"jarvis/core/config.py", icon:"i-filesearch",
+  token:"--viz-search", shape:"card", ports:"1 in / 1 out", state:"live",
+  body:"148 lines · 6 matches for \"realtime\"",
+  chips:[["hue","read"]], meta:"0.1 s",
+  source:"tool_use Read/Grep/Glob/LS", when:"Lookups. The second of the two node types that have ever had data.",
+  inspector:"Path or pattern, match count, the excerpt that mattered." },
+{ id:"act.web", family:"act", title:"search-web", sub:"\"remotion 4 audio sync\"", icon:"i-globe",
+  token:"--viz-web", shape:"card", ports:"1 in / 1 out", state:"extend",
+  body:"3 results · remotion.dev/docs/audio …",
+  chips:[["hue","web"],["","3 hits"]], meta:"2.1 s",
+  source:"ROUTER_TOOLS search-web · WebFetch", when:"Inline web lookups.",
+  inspector:"Query, provider, every result with its URL, which one was quoted in the answer." },
+{ id:"act.wiki", family:"act", title:"wiki-recall", sub:"ultrawiki · \"deployment\"", icon:"i-book",
+  token:"--viz-memory", shape:"card", ports:"1 in / 1 out", state:"new",
+  body:"4 pages · top: \"Release checklist\"",
+  chips:[["hue","wiki"],["","4 hits"]], meta:"90 ms",
+  source:"ROUTER_TOOLS wiki-recall · wiki-page-read · wiki-list · wiki-ingest · ultrawiki-search", when:"Whenever the answer came from your own knowledge base rather than the model.",
+  inspector:"Query, matched pages with scores, the passage that was injected into the prompt." },
+{ id:"act.memory", family:"act", title:"awareness-recall", sub:"episodes · last 7 days", icon:"i-db",
+  token:"--viz-memory", shape:"card", ports:"1 in / 1 out", state:"new",
+  body:"2 episodes · 11 frames scanned",
+  chips:[["hue","memory"]], meta:"140 ms",
+  source:"ROUTER_TOOLS awareness-recall · awareness-snapshot", when:"When Jarvis remembered something. Explains \"how did it know that\".",
+  inspector:"Query, matched episodes, frames, what was written back." },
+{ id:"act.skill", family:"act", title:"run-skill", sub:"github-version", icon:"i-sparkles",
+  token:"--viz-trigger", shape:"stack", ports:"1 in / 1 out", state:"new",
+  chips:[["hue","skill"],["","draft"]], meta:"22 s",
+  source:"ROUTER_TOOLS run-skill · skill registry", when:"A packaged capability ran. Stack shape because a skill is a sub-flow, not a call.",
+  inspector:"Skill name, version, status (skills stay draft), arguments, its own inner steps." },
+{ id:"act.mcp", family:"act", title:"mcp-tools", sub:"github · create_pull_request", icon:"i-plug",
+  token:"--viz-integration", shape:"card", ports:"1 in / 1 out", state:"extend",
+  body:"PR #418 opened on PersonalJarvis",
+  chips:[["hue","mcp"],["ok","200"]], meta:"1.9 s",
+  source:"ROUTER_TOOLS mcp-tools · tool names prefixed mcp__", when:"Any MCP server call. Partly classified today (the `mcp__` prefix), but with no server identity on the card.",
+  inspector:"Server, tool, arguments, raw response, auth path used." },
+{ id:"act.plugin", family:"act", title:"plugin-tools", sub:"entry-point plugin", icon:"i-boxes",
+  token:"--viz-integration", shape:"card", ports:"1 in / 1 out", state:"new",
+  chips:[["hue","plugin"]], meta:"",
+  source:"ROUTER_TOOLS plugin-tools · entry-point registry", when:"A third-party plugin acted.",
+  inspector:"Plugin id, version, declared capability, call and result." },
+{ id:"act.cli", family:"act", title:"cli-tools", sub:"codex exec --json", icon:"i-sqterm",
+  token:"--viz-terminal", shape:"card", ports:"1 in / 1 out", state:"new",
+  chips:[["hue","cli"],["","codex"]], meta:"48 s",
+  source:"ROUTER_TOOLS cli-tools · CliInvoked/CliInvocationFinished", when:"When Jarvis drove another coding CLI. Currently indistinguishable from a shell call.",
+  inspector:"Which CLI, account, model, cost, the full invocation, its own transcript link." },
+{ id:"act.service", family:"act", title:"gmail", sub:"send · 1 recipient", icon:"i-mail",
+  token:"--viz-integration", shape:"card", ports:"1 in / 1 out", state:"new",
+  brand:true,
+  chips:[["hue","google"],["ok","sent"]], meta:"1.2 s",
+  source:"ROUTER_TOOLS gmail · google_calendar · google_drive · vercel · home_assistant", when:"Any first-party service integration. ONE node type with a brand slot, not five hardcoded ones.",
+  inspector:"Service, operation, arguments, the response, and the account it acted as." },
+{ id:"act.service.cal", family:"act", title:"google_calendar", sub:"create · \"Standup\" 09:00", icon:"i-calendar",
+  token:"--viz-integration", shape:"card", ports:"1 in / 1 out", state:"new", brand:true,
+  chips:[["hue","google"],["ok","created"]], meta:"0.8 s",
+  source:"same node type as act.service, different brand slot", when:"Shown here to demonstrate that the brand varies and the node does not.",
+  inspector:"Calendar, event, attendees, conflict check." },
+{ id:"act.service.ha", family:"act", title:"home_assistant", sub:"light.office → off", icon:"i-home",
+  token:"--viz-integration", shape:"card", ports:"1 in / 1 out", state:"new", brand:true,
+  chips:[["hue","home"],["ok","ack"]], meta:"210 ms",
+  source:"same node type as act.service", when:"Home automation calls.",
+  inspector:"Entity, service, prior state, new state." },
+{ id:"act.screen", family:"act", title:"screen-snapshot", sub:"display 1 · 2560×1440", icon:"i-camera",
+  token:"--viz-vision", shape:"tile", ports:"1 in / 1 out", state:"new",
+  thumb:"i-camera",
+  chips:[["hue","vision"]], meta:"340 ms",
+  source:"ROUTER_TOOLS screen-snapshot · inspect-pointer · ObservationCaptured", when:"Every time Jarvis looked at the screen. The thumbnail IS the evidence.",
+  inspector:"The screenshot, the region, what was injected into the prompt, the element under the cursor." },
+{ id:"act.computer_use", family:"act", title:"computer-use", sub:"observe → plan → act → verify", icon:"i-monitor",
+  token:"--viz-vision", shape:"stack", ports:"1 in / 2 out", state:"new",
+  chips:[["hue","cu"],["","7 steps"],["ok","verified"]], meta:"1 min 12 s",
+  source:"ActionPlanned · ActionVerified · CUStepProfiled · CUControlStarted/Ended", when:"Desktop control. A sub-graph of its own — expand to see each observe/act pair with its screenshot.",
+  inspector:"Every step with before/after frames, the verification verdict, what it clicked and why." },
+{ id:"act.app", family:"act", title:"app-command", sub:"navigate → settings", icon:"i-sliders",
+  token:"--viz-tool", shape:"card", ports:"1 in / 1 out", state:"new",
+  chips:[["hue","app"]], meta:"",
+  source:"ROUTER_TOOLS app-command · navigate · describe-app-settings · update-profile · switch-provider · manage-mcp-server", when:"Jarvis operating its own UI or config.",
+  inspector:"Command, registry entry, danger metadata, the config diff it wrote." },
+{ id:"act.contact", family:"act", title:"contact-lookup", sub:"\"Anna\" → 1 match", icon:"i-user",
+  token:"--viz-tool", shape:"card", ports:"1 in / 1 out", state:"new",
+  chips:[["hue","contacts"]], meta:"",
+  source:"ROUTER_TOOLS contact-lookup · contact-upsert", when:"Contact reads and writes.",
+  inspector:"Query, match, fields changed. Personal data stays in the inspector, never on the card." },
+{ id:"act.call", family:"act", title:"call-contact", sub:"telephony · outbound", icon:"i-phone",
+  token:"--viz-speech", shape:"card", ports:"1 in / 1 out", state:"new",
+  chips:[["hue","call"],["","2 min 4 s"]], meta:"",
+  source:"ROUTER_TOOLS call-contact · telephony events", when:"A real phone call. Deserves its own node the moment it exists.",
+  inspector:"Number (masked), duration, hangup reason, transcript link." },
+{ id:"act.visualize", family:"act", title:"visualize", sub:"flow · \"deployment pipeline\"", icon:"i-palette",
+  token:"--viz-deliverable", shape:"card", ports:"1 in / 1 out (+ produces)", state:"new",
+  chips:[["hue","chart"],["","flow"]], meta:"1.6 s",
+  source:"ROUTER_TOOLS visualize (ask-only, gated by visualize_gate)", when:"The on-demand drawing tool — which produces a deliverable, so it always has an outgoing produces edge.",
+  inspector:"Requested kind, the data it drew from, the archived file." },
+{ id:"act.unknown", family:"act", title:"Tool", sub:"unrecognised call", icon:"i-wrench",
+  token:"--viz-tool", shape:"card", ports:"1 in / 1 out", state:"live",
+  chips:[["hue","tool"]], meta:"",
+  source:"toolCategory() fallback", when:"Any tool the registry does not know. Today this is where essentially every real Jarvis tool lands.",
+  inspector:"Raw name, raw input, raw output — honest about not knowing more." },
+
+/* ---- delegate --------------------------------------------------------- */
+{ id:"delegate.spawn", family:"delegate", title:"spawn-worker", sub:"2 workers · isolated worktrees", icon:"i-bot",
+  token:"--viz-agent", shape:"gate", ports:"1 in / N out", state:"live",
+  chips:[["hue","spawn"],["","2 lanes"]], meta:"",
+  source:"run_plan.py kind:\"spawn\" · JarvisAgentTaskStarted", when:"Heavy work handed to a worker. Already has branch grammar (its output port doubles).",
+  inspector:"Prompt handed over, tool set, worktree path, kill-on-crash state." },
+{ id:"delegate.worker", family:"delegate", title:"Worker · 019e314f", sub:"14 steps · 2 files", icon:"i-users",
+  token:"--viz-agent", shape:"stack", ports:"1 in / 1 out", state:"extend",
+  chips:[["hue","worker"],["ok","done"]], meta:"4 min 12 s",
+  source:"tasks/<id>/logs/stream.jsonl · laneKey()", when:"One per parallel worker. The lane maths exists; the collapsible node does not.",
+  inspector:"Its whole sub-graph, its transcript, its worktree, its cost." },
+{ id:"delegate.harness", family:"delegate", title:"Harness", sub:"claude · stream-json", icon:"i-zap",
+  token:"--viz-agent", shape:"card", ports:"1 in / 1 out", state:"new",
+  chips:[["hue","harness"],["","claude"]], meta:"",
+  source:"HarnessDispatched · HarnessCompleted", when:"Which vehicle actually ran the work — the fact that decides how to read everything downstream.",
+  inspector:"Harness, account, model, exit, why that one was chosen." },
+{ id:"delegate.critic", family:"delegate", title:"Critic verdict", sub:"revise · evidence missing", icon:"i-check",
+  token:"--viz-agent", shape:"gate", ports:"1 in / 2 out (accept, revise)", state:"new",
+  chips:[["ok","accept"],["bad","revise"],["","loop 2/3"]], meta:"",
+  source:"Phase-6 critic loop verdicts", when:"Every critic pass. The revise output loops back — that loop is the most interesting edge in the whole product.",
+  inspector:"Verdict, reasons, which evidence was demanded, loop counter against MAX_CRITIC_LOOPS." },
+{ id:"delegate.kontrollierer", family:"delegate", title:"Signed off", sub:"Kontrollierer · deliverables verified", icon:"i-stamp",
+  token:"--viz-agent", shape:"card", ports:"1 in / 1 out", state:"new",
+  chips:[["ok","signed"]], meta:"",
+  source:"Kontrollierer signature event", when:"The moment a mission's output became trustworthy.",
+  inspector:"What was checked, what was signed, the deliverable paths it accepted." },
+{ id:"delegate.mission", family:"delegate", title:"Mission", sub:"019e366f · complete", icon:"i-layers",
+  token:"--viz-agent", shape:"stack", ports:"1 in / 1 out", state:"new",
+  chips:[["hue","mission"],["ok","complete"]], meta:"11 min",
+  source:"MissionRef · MissionCompleted · missions.db", when:"A turn that spawned a mission — the bridge from the voice graph into the mission graph.",
+  inspector:"State machine history, workers, cost, link that opens the mission's own graph." },
+
+/* ---- produce ---------------------------------------------------------- */
+{ id:"result.answer", family:"produce", title:"Result", sub:"what Jarvis finally said", icon:"i-flag",
+  token:"--viz-result", shape:"card", ports:"N in / 0 out", state:"live",
+  body:"Build is green — 412 tests, 1 skipped. Report written to report/summary.md.",
+  chips:[["hue","answer"],["ok","success"]], meta:"",
+  source:"PlanResponse.final_answer · run outcome", when:"Every run that landed. Already drawn, and already honest about a cancelled run that never answered.",
+  inspector:"Full answer, outcome, total duration and cost." },
+{ id:"artifact.doc", family:"produce", title:"summary.md", sub:"report/summary.md", icon:"i-filetext",
+  token:"--viz-deliverable", shape:"tile", ports:"1 in / 0 out", state:"live", thumb:"i-filetext",
+  chips:[["hue","md"]], meta:"8 KB",
+  source:"/api/outputs/{slug}/artifacts + findSourceStep()", when:"Documents. Already drawn and already connected to the step that wrote it.",
+  inspector:"Rendered preview under the no-script CSP, size, open/download/reveal." },
+{ id:"artifact.image", family:"produce", title:"chart.png", sub:"report/chart.png", icon:"i-image",
+  token:"--viz-deliverable", shape:"tile", ports:"1 in / 0 out", state:"extend", thumb:"i-image",
+  chips:[["hue","png"]], meta:"412 KB",
+  source:"classifyVisual() → image | vector", when:"Images. Previewed in the inspector today; the thumbnail belongs on the card.",
+  inspector:"Full preview, dimensions, the step that produced it." },
+{ id:"artifact.code", family:"produce", title:"pipeline.py", sub:"src/pipeline.py", icon:"i-filecode",
+  token:"--viz-deliverable", shape:"tile", ports:"1 in / 0 out", state:"extend", thumb:"i-filecode",
+  chips:[["hue","py"],["","+128"]], meta:"6 KB",
+  source:"classifyVisual() → page | document", when:"Code and pages left behind.",
+  inspector:"Syntax-highlighted head, diff against the previous version if there was one." },
+{ id:"artifact.data", family:"produce", title:"metrics.csv", sub:"data/metrics.csv", icon:"i-table",
+  token:"--viz-deliverable", shape:"tile", ports:"1 in / 0 out", state:"new", thumb:"i-table",
+  chips:[["hue","csv"],["","1 284 rows"]], meta:"96 KB",
+  source:"artifact listing + a cheap header sniff", when:"Data files. The first three rows on the card answer \"is this the right file\" instantly.",
+  inspector:"Column headers, row count, first rows, download." },
+{ id:"artifact.chart", family:"produce", title:"Generated chart", sub:"visualize · flow", icon:"i-chart",
+  token:"--viz-deliverable", shape:"tile", ports:"1 in / 0 out", state:"new", thumb:"i-chart",
+  chips:[["hue","svg"]], meta:"",
+  source:"visualize tool output · MISSION_MAP_PATH sibling", when:"Anything the drawing tool made — it is a deliverable like any other.",
+  inspector:"The chart, its source data, the request that asked for it." },
+
+/* ---- signal ----------------------------------------------------------- */
+{ id:"signal.error", family:"signal", title:"Error", sub:"brain · rate limited", icon:"i-alert",
+  token:"--viz-tool", shape:"alarm", ports:"1 in / 1 out", state:"new",
+  body:"429 Too Many Requests — retry after 20 s",
+  chips:[["bad","error"],["","recoverable"]], meta:"",
+  source:"ErrorOccurred · RunTurn.errors[] (source, layer, recoverable)", when:"Any recorded error. The layer is already captured — the graph should show WHERE it happened.",
+  inspector:"Full message, layer, recoverable flag, what followed." },
+{ id:"signal.denied", family:"signal", title:"Denied", sub:"blocked by risk policy", icon:"i-ban",
+  token:"--viz-tool", shape:"alarm", ports:"1 in / 0 out", state:"new",
+  chips:[["bad","blocked"],["","blacklist"]], meta:"",
+  source:"ActionDenied", when:"An action the policy refused. A dead-ended branch, drawn as one.",
+  inspector:"What was proposed, which rule refused it, whether the user was asked." },
+{ id:"signal.budget", family:"signal", title:"Budget", sub:"warning at 80 %", icon:"i-wallet",
+  token:"--viz-tool", shape:"alarm", ports:"1 in / 1 out", state:"new",
+  chips:[["bad","budget"],["","$1.60/2.00"]], meta:"",
+  source:"BudgetWarning · BudgetExceeded", when:"When money or a step budget became the reason for what happened next.",
+  inspector:"Limit, spend, what was stopped." },
+{ id:"signal.cancelled", family:"signal", title:"Cancelled", sub:"user aborted", icon:"i-stop",
+  token:"--viz-tool", shape:"dashed", ports:"1 in / 0 out", state:"new",
+  chips:[["","cancelled"]], meta:"",
+  source:"TaskCancelled · run status cancelled", when:"A run the user stopped. Never drawn as a failure — it did what it was told.",
+  inspector:"Who cancelled, at which step, what was already written." },
+{ id:"signal.slo", family:"signal", title:"Slow phase", sub:"tts · 2.4 s (budget 1.5 s)", icon:"i-timer",
+  token:"--viz-tool", shape:"annotation", ports:"annotation on an edge", state:"new",
+  chips:[["bad","breach"]], meta:"",
+  source:"LatencySpan + slo_status (ok | warn | breach)", when:"On the edge where the time actually went. The waterfall already computes this per phase.",
+  inspector:"Phase, measured time, budget, the three worst spans of the run." },
+{ id:"signal.retry", family:"signal", title:"Retried", sub:"attempt 3 of 3", icon:"i-rotate",
+  token:"--viz-tool", shape:"annotation", ports:"loop-back edge", state:"extend",
+  chips:[["","3 attempts"]], meta:"",
+  source:"PlanStep.attempts (already in the payload, only shown as text)", when:"Any step that had to be repeated.",
+  inspector:"Each attempt with its own error." },
+{ id:"signal.truncated", family:"signal", title:"Not drawn", sub:"31 further steps", icon:"i-scissors",
+  token:"--viz-tool", shape:"dashed", ports:"inline in the track", state:"extend",
+  chips:[["","cap 200"]], meta:"",
+  source:"dropped_steps · truncated (MAX_STEPS 200, MAX_STREAM_BYTES 24 MB)", when:"A shortened graph. It is a footer line today — as a node it cannot be missed.",
+  inspector:"Why it was cut and how to read the rest." },
+
+/* ---- frame ------------------------------------------------------------ */
+{ id:"frame.turn", family:"frame", title:"Turn 2", sub:"\"and now push it\" · 18 s", icon:"i-frame",
+  token:"--viz-tool", shape:"annotation", ports:"a band around a turn's nodes", state:"new",
+  chips:[["","turn"]], meta:"",
+  source:"VoiceTurnStarted/Completed boundaries", when:"Always, in multi-turn sessions. The single change that makes a 5-turn session readable.",
+  inspector:"Turn totals: duration, cost, tools, outcome." },
+{ id:"frame.lane", family:"frame", title:"Worker lane", sub:"019e314f", icon:"i-merge",
+  token:"--viz-agent", shape:"annotation", ports:"a band around one worker's row", state:"extend",
+  chips:[["hue","lane"]], meta:"",
+  source:"laneKey() — already computed, never framed", when:"Missions with parallel workers.",
+  inspector:"Which worker, its worktree, its own outcome." },
+{ id:"frame.gap", family:"frame", title:"Idle", sub:"4 min 12 s of silence", icon:"i-hourglass",
+  token:"--viz-tool", shape:"annotation", ports:"inline between two nodes", state:"new",
+  chips:[["","gap"]], meta:"",
+  source:"timestamp delta between adjacent nodes", when:"When nothing happened for a while — which is information, not a gap to hide.",
+  inspector:"Exact window, whether the session was open or asleep." },
+{ id:"frame.note", family:"frame", title:"Note", sub:"pinned by you", icon:"i-note",
+  token:"--viz-trigger", shape:"note", ports:"none", state:"new",
+  body:"This is the run where the barge-in bug first showed up.",
+  chips:[["hue","note"]], meta:"",
+  source:"local, user-authored (like n8n's sticky notes)", when:"Whenever you want to mark a run for later. The one node that carries no telemetry at all.",
+  inspector:"Free text, pinned position, the run it belongs to." },
+];
+
+/* --- rendering ---------------------------------------------------------- */
+const svg = (id) => `<svg viewBox="0 0 24 24"><use href="#${id}"/></svg>`;
+const esc = (s) => String(s).replace(/[&<>]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c]));
+
+function portsHtml(n) {
+  const p = [];
+  const spec = n.ports || "";
+  if (!/^0 in/.test(spec) && spec !== "none" && !/^a band|^inline|^loop|^annotation/.test(spec)) p.push('<span class="port l"></span>');
+  if (/2 out|N out/.test(spec)) { p.push('<span class="port r2a"></span>', '<span class="port r2b"></span>'); }
+  else if (!/0 out/.test(spec) && spec !== "none" && !/^a band|^inline|^loop|^annotation/.test(spec)) p.push('<span class="port r"></span>');
+  if (/produces/.test(spec)) p.push('<span class="port b"></span>');
+  return p.join("");
+}
+
+function nodeHtml(n) {
+  const shapeClass = ["gate","stack","dashed","alarm","note","annotation","pill"].includes(n.shape) ? " " + n.shape : "";
+  const chips = (n.chips || []).map(([k, label]) => `<span class="chip ${k}">${esc(label)}</span>`).join("");
+  const foot = (chips || n.meta)
+    ? `<div class="foot">${chips}${n.meta ? `<span class="num">${esc(n.meta)}</span>` : ""}</div>` : "";
+  const body = n.body ? `<div class="body${/shell|Write|Read|code/.test(n.id) ? " code" : ""}">${esc(n.body)}</div>` : "";
+  const thumb = n.thumb ? `<div class="thumb">${svg(n.thumb)}</div>` : "";
+  return `<div class="node${shapeClass}" style="--hue: var(${n.token})">
+    ${portsHtml(n)}
+    <div class="head">
+      <span class="tile">${svg(n.icon)}</span>
+      <span class="txt"><span class="t">${esc(n.title)}</span><span class="s">${esc(n.sub)}</span></span>
+    </div>${body}${thumb}${foot}
+  </div>`;
+}
+
+function entryHtml(n) {
+  return `<article class="entry" data-search="${esc((n.id + " " + n.title + " " + n.sub + " " + n.source).toLowerCase())}" data-state="${n.state}">
+    <div class="stage">${nodeHtml(n)}</div>
+    <div class="idline"><span class="id">${esc(n.id)}</span><span class="state ${n.state}">${n.state}</span></div>
+    <div class="spec"><dl>
+      <dt>Source</dt><dd>${esc(n.source)}</dd>
+      <dt>Appears</dt><dd>${esc(n.when)}</dd>
+      <dt>Inspector</dt><dd>${esc(n.inspector)}</dd>
+      <dt>Ports</dt><dd>${esc(n.ports)}</dd>
+      <dt>Token</dt><dd><code>${esc(n.token)}</code></dd>
+      <dt>Icon</dt><dd><code>${esc(n.icon.replace("i-", ""))}</code> (lucide)</dd>
+    </dl></div>
+  </article>`;
+}
+
+document.getElementById("families").innerHTML = FAMILIES.map(f => {
+  const nodes = N.filter(n => n.family === f.key);
+  return `<div class="family" data-family="${f.key}">
+    <div class="fhead"><h3>${f.title}</h3><span class="count">${nodes.length} nodes</span></div>
+    <p class="lede">${f.note}</p>
+    <div class="grid">${nodes.map(entryHtml).join("")}</div>
+  </div>`;
+}).join("");
+
+/* --- status demo --------------------------------------------------------- */
+const STATES = [
+  ["done", "Succeeded", "The tool_result frame was observed and carried no error.", ""],
+  ["running", "Running", "In flight right now — the only node allowed to pulse.", "live"],
+  ["failed", "Failed", "The result frame arrived and reported an error. Border and incoming edge turn red.", "alarm"],
+  ["skipped", "No confirmed result", "The call was made; its result never arrived. Never shown as success — that is the anti-hearsay rule.", "dashed"],
+];
+document.getElementById("statedemo").innerHTML = STATES.map(([dot, title, note, cls]) => `
+  <div class="entry" style="width:320px">
+    <div class="stage">
+      <div class="node ${cls}" style="--hue: var(--viz-terminal)">
+        <span class="port l"></span><span class="port r"></span>
+        <div class="head">
+          <span class="tile">${svg("i-terminal")}</span>
+          <span class="txt"><span class="t">run-shell</span><span class="s">npm run build</span></span>
+          <span class="dot ${dot}"></span>
+        </div>
+        <div class="foot"><span class="chip hue">shell</span><span class="chip ${dot === "failed" ? "bad" : dot === "done" ? "ok" : ""}">${dot === "failed" ? "exit 1" : dot === "done" ? "exit 0" : "—"}</span><span class="num">${dot === "running" ? "…" : "12.8 s"}</span></div>
+      </div>
+    </div>
+    <div class="spec"><b>${title}</b><br>${note}</div>
+  </div>`).join("");
+
+/* --- palette table ------------------------------------------------------- */
+const PALETTE = [
+  ["--viz-trigger", "50 100% 52%", "38 100% 33%", "Triggers — the run's ignition, the brand gold", "live"],
+  ["--viz-reasoning", "258 45% 70%", "258 35% 46%", "Thinking, brain turns, plans", "live"],
+  ["--viz-terminal", "187 40% 56%", "190 50% 30%", "Shell and CLI calls", "live"],
+  ["--viz-file", "210 50% 64%", "210 50% 38%", "File writes and edits", "live"],
+  ["--viz-search", "168 35% 52%", "168 45% 28%", "Reads, grep, glob", "live"],
+  ["--viz-web", "232 45% 70%", "232 35% 46%", "Web search and fetch", "live"],
+  ["--viz-integration", "24 55% 58%", "24 60% 38%", "MCP, plugins, first-party services", "live"],
+  ["--viz-agent", "292 40% 66%", "292 35% 40%", "Spawns, workers, critic, missions", "live"],
+  ["--viz-tool", "0 0% 62%", "240 6% 38%", "Unclassified tools, signals, frames", "live"],
+  ["--viz-result", "152 40% 52%", "152 45% 28%", "The run's landing", "live"],
+  ["--viz-deliverable", "0 0% 62%", "240 6% 38%", "Files left behind", "live"],
+  ["--viz-speech", "330 42% 68%", "330 45% 42%", "Heard, spoke, barge-in, calls", "new"],
+  ["--viz-memory", "88 34% 56%", "88 40% 26%", "Wiki and awareness recall", "new"],
+  ["--viz-vision", "312 40% 66%", "312 35% 40%", "Screen capture and computer-use", "new"],
+  ["--viz-gate", "45 70% 58%", "45 75% 34%", "Decisions and gates (gold, distinguished by the gate shape)", "new"],
+];
+document.querySelector("#palettetable tbody").innerHTML = PALETTE.map(([tok, dark, light, use, state]) => `
+  <tr>
+    <td><span class="sw" style="background:hsl(var(${tok}))"></span><code>${tok}</code></td>
+    <td class="mono" style="font-size:11px">${dark}</td>
+    <td class="mono" style="font-size:11px">${light}</td>
+    <td>${use}</td>
+    <td><span class="state ${state}">${state}</span></td>
+  </tr>`).join("");
+
+/* --- assembled example --------------------------------------------------- */
+const EX_W = 264, EX_H = 78;
+const EX = [
+  { x: 30,  y: 96,  n: { id:"trigger.wake", title:"Wake word", sub:"„Jarvis, …\" · 08:41", icon:"i-mic", token:"--viz-trigger", shape:"pill", ports:"0 in / 1 out", chips:[["hue","voice"]], meta:"820 ms" } },
+  { x: 30,  y: 200, n: { id:"speech.heard", title:"Heard", sub:"final transcript", icon:"i-audio", token:"--viz-speech", shape:"card", ports:"1 in / 1 out", body:"\"check the build and push if it is green\"", chips:[["hue","stt"],["","en"]], meta:"1.1 s" } },
+  { x: 350, y: 200, n: { id:"think.brain", title:"Brain turn", sub:"anthropic · claude-opus-5", icon:"i-cpu", token:"--viz-reasoning", shape:"card", ports:"1 in / 1 out", chips:[["hue","frontier"],["","12.4k in"]], meta:"$0.038" } },
+  { x: 670, y: 200, n: { id:"decide.risk", title:"Risk gate", sub:"monitor · auto-approved", icon:"i-shield", token:"--viz-gate", shape:"gate", ports:"1 in / 2 out", chips:[["ok","allow"],["bad","block"]], meta:"" } },
+  { x: 990, y: 120, n: { id:"act.shell", title:"run-shell", sub:"npm run build", icon:"i-terminal", token:"--viz-terminal", shape:"card", ports:"1 in / 1 out", body:"412 passed · 1 skipped", chips:[["hue","shell"],["ok","exit 0"]], meta:"12.8 s" } },
+  { x: 990, y: 320, n: { id:"delegate.spawn", title:"spawn-worker", sub:"2 workers", icon:"i-bot", token:"--viz-agent", shape:"gate", ports:"1 in / 2 out", chips:[["hue","spawn"],["","2 lanes"]], meta:"" } },
+  { x: 350, y: 452, n: { id:"delegate.worker", title:"Worker · release", sub:"9 steps", icon:"i-users", token:"--viz-agent", shape:"stack", ports:"1 in / 1 out", chips:[["ok","done"]], meta:"3 min" } },
+  { x: 350, y: 574, n: { id:"delegate.worker2", title:"Worker · changelog", sub:"5 steps", icon:"i-users", token:"--viz-agent", shape:"stack", ports:"1 in / 1 out", chips:[["bad","1 failed"]], meta:"1 min" } },
+  { x: 700, y: 512, n: { id:"delegate.critic", title:"Critic verdict", sub:"accept", icon:"i-check", token:"--viz-agent", shape:"gate", ports:"1 in / 2 out", chips:[["ok","accept"],["","loop 1/3"]], meta:"" } },
+  { x: 990, y: 512, n: { id:"result.answer", title:"Result", sub:"what Jarvis said", icon:"i-flag", token:"--viz-result", shape:"card", ports:"N in / 0 out", body:"Build green, pushed — CHANGELOG updated.", chips:[["ok","success"]], meta:"4 min 6 s" } },
+  { x: 30,  y: 620, n: { id:"artifact.doc", title:"CHANGELOG.md", sub:"CHANGELOG.md", icon:"i-filetext", token:"--viz-deliverable", shape:"tile", ports:"1 in / 0 out", thumb:"i-filetext", chips:[["hue","md"]], meta:"8 KB" } },
+];
+const EX_EDGES = [
+  [0, 1, "down"], [1, 2, "h"], [2, 3, "h"], [3, 4, "h"], [3, 5, "h"],
+  [5, 6, "back"], [5, 7, "back"], [6, 8, "h"], [7, 8, "h"], [8, 9, "h"], [4, 9, "down"], [6, 10, "back"],
+];
+(function drawExample() {
+  const host = document.getElementById("example-canvas");
+  const bands = `
+    <div class="turnband" style="left:14px; top:70px; width:1180px; height:260px"><span>Turn 1 · 08:41 · $0.038</span></div>
+    <div class="lane" style="left:334px; top:428px; width:560px; height:230px"><span>Workers</span></div>`;
+  const paths = EX_EDGES.map(([a, b, kind]) => {
+    const A = EX[a], B = EX[b];
+    let x1, y1, x2, y2, d;
+    if (kind === "h") {
+      x1 = A.x + EX_W; y1 = A.y + 26; x2 = B.x; y2 = B.y + 26;
+      const bend = Math.max(26, (x2 - x1) / 2);
+      d = `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`;
+    } else if (kind === "down") {
+      x1 = A.x + EX_W / 2; y1 = A.y + EX_H; x2 = B.x + EX_W / 2; y2 = B.y;
+      const bend = Math.max(30, (y2 - y1) / 2);
+      d = `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2}`;
+    } else {
+      x1 = A.x + EX_W / 2; y1 = A.y + EX_H; x2 = B.x + EX_W / 2; y2 = B.y;
+      d = `M ${x1} ${y1} C ${x1} ${y1 + 60}, ${x2} ${y2 - 60}, ${x2} ${y2}`;
+    }
+    return `<path d="${d}" fill="none" stroke="hsl(var(--primary) / .5)" stroke-width="1.6" marker-end="url(#ex-arrow)"/>`;
+  }).join("");
+  host.innerHTML = bands + `<svg class="edges"><defs>
+      <marker id="ex-arrow" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="5.5" markerHeight="5.5" orient="auto">
+        <path d="M 0 0 L 8 4 L 0 8 Z" fill="hsl(var(--primary) / .7)"/>
+      </marker></defs>${paths}</svg>` +
+    EX.map(e => `<div style="position:absolute; left:${e.x}px; top:${e.y}px">${nodeHtml(e.n)}</div>`).join("");
+})();
+
+/* --- controls ------------------------------------------------------------ */
+const themeBtn = document.getElementById("theme");
+themeBtn.addEventListener("click", () => {
+  const dark = document.documentElement.classList.toggle("dark");
+  themeBtn.textContent = dark ? "Dark" : "Light";
+  themeBtn.setAttribute("aria-pressed", String(dark));
+});
+
+const q = document.getElementById("q");
+const onlyNew = document.getElementById("f-new");
+let filterNew = false;
+function applyFilter() {
+  const term = q.value.trim().toLowerCase();
+  document.querySelectorAll(".entry[data-search]").forEach(el => {
+    const hitText = !term || el.dataset.search.includes(term);
+    const hitState = !filterNew || el.dataset.state !== "live";
+    el.classList.toggle("hidden", !(hitText && hitState));
+  });
+  document.querySelectorAll(".family").forEach(fam => {
+    const visible = fam.querySelectorAll(".entry:not(.hidden)").length;
+    fam.classList.toggle("hidden", visible === 0);
+    const c = fam.querySelector(".count");
+    if (c) c.textContent = `${visible} nodes`;
+  });
+}
+q.addEventListener("input", applyFilter);
+onlyNew.addEventListener("click", () => {
+  filterNew = !filterNew;
+  onlyNew.setAttribute("aria-pressed", String(filterNew));
+  applyFilter();
+});
+</script>
+</body>
+</html>
