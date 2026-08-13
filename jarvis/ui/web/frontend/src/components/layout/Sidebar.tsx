@@ -7,6 +7,7 @@ import {
   Settings,
   UserCircle2,
   ListTodo,
+  Drama,
   FolderOpen,
   Gauge,
   Notebook,
@@ -156,6 +157,14 @@ const NAV_GROUPS: NavItem[][] = [
       fallbackLabel: "Voice",
     },
     { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
+    // The assistant's character. Sits with the configuration group because it
+    // changes how the assistant behaves everywhere, not what any one page holds.
+    {
+      id: "modes",
+      labelKey: "nav.modes",
+      icon: Drama,
+      fallbackLabel: "Modes",
+    },
     // Appearance. Sits with the configuration group rather than with the
     // content views: it changes how the app looks, not what it holds.
     {
