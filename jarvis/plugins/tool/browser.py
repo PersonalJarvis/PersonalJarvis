@@ -34,6 +34,16 @@ browser-harness process, never in ours.
 Risk tier is "monitor" (logged, no confirmation) because reading and navigating
 the web is not a destructive act. Purchase-shaped work escalates to "ask" via
 ``risk_tier_for_args`` — see the honest limits documented there.
+
+## Logging in
+
+A script may reference the user's stored logins as ``SECRET("service", "field")``
+and NEVER as a literal value. ``jarvis.logins.injection`` swaps the
+reference for the real value on the way to this subprocess's stdin, and redacts
+it back out of stdout — so the password exists in the piped bytes and nowhere
+else. The model writes the reference, the logged tool call keeps the reference,
+and the value is never in either. Read that module's docstring before touching
+the two call sites below; the whole guarantee lives in those few lines.
 """
 
 from __future__ import annotations
@@ -125,6 +135,12 @@ class BrowserTool:
         "Do NOT use screen control (computer-use) for web pages — this tool is "
         "faster, more reliable, needs no foreground window, and leaves the "
         "user's mouse and keyboard free.\n\n"
+        "To log in somewhere, never type a password you were told — call "
+        "credentials(action='find', url=...) first, and if an entry exists put "
+        "SECRET(\"<service_id>\", \"password\") and SECRET(\"<service_id>\", "
+        "\"username\") straight into the script. Those placeholders are filled "
+        "in on the way to the browser; you never see the values, and you must "
+        "never print a credential field.\n\n"
         "You write a short Python script. These helpers are pre-imported: "
         "new_tab(url) for the first navigation, goto_url(url) afterwards, "
         "wait_for_load(), ensure_real_tab(), page_info(), js(code) to inspect "
@@ -172,6 +188,42 @@ class BrowserTool:
         if _PURCHASE_RE.search(haystack):
             log.info("browser tool: purchase vocabulary matched — escalating to ask tier")
             return "ask"
+        return self._credential_tier(args.get("script") or "")
+
+    @staticmethod
+    def _credential_tier(script: str) -> str | None:
+        """Ask before the FIRST login with a given stored credential.
+
+        The agreed rule: confirm once per service, then stay quiet. "Once" is
+        the record's own status — an entry that has never produced a successful
+        login is unproven, and the first use is exactly where the user wants to
+        see that the right site was picked. A rejected login flips it back to
+        unproven by itself, so a changed password surfaces as a question rather
+        than as a silent failure loop.
+
+        Fail-closed: if the vault cannot be read, ask. A confirmation prompt is
+        a small cost; a silent unattended login attempt on an unverified record
+        is not.
+        """
+        from jarvis.logins.injection import (  # noqa: PLC0415
+            has_secret_placeholder,
+            needs_confirmation,
+            placeholder_services,
+        )
+
+        if not has_secret_placeholder(script):
+            return None
+        try:
+            from jarvis.logins import store as store_module  # noqa: PLC0415
+
+            if needs_confirmation(
+                placeholder_services(script), store_module.default_store()
+            ):
+                log.info("browser tool: unproven stored login — escalating to ask tier")
+                return "ask"
+        except Exception:  # noqa: BLE001 -- an unreadable vault must not silently proceed
+            log.warning("browser tool: could not read the login vault — asking first")
+            return "ask"
         return None
 
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
@@ -200,6 +252,28 @@ class BrowserTool:
             )
 
         log.info("browser tool: %s", goal or "(no goal stated)")
+
+        # Fill in any SECRET("service", "field") reference the model wrote. This
+        # is the ONLY place a stored password enters the picture, and it never
+        # goes further than this subprocess's stdin — see the module docstring.
+        from jarvis.logins.injection import (  # noqa: PLC0415
+            SecretResolutionError,
+            resolve_secrets,
+            scrub_secrets,
+        )
+
+        try:
+            resolution = resolve_secrets(script)
+        except SecretResolutionError as exc:
+            # Honest, actionable failure: the model cannot create a login, so
+            # say what is missing instead of letting an undefined name blow up
+            # inside the harness with a message that explains nothing.
+            return ToolResult(success=False, output=None, error=str(exc))
+        if resolution.touched_vault:
+            log.info(
+                "browser tool: using stored login(s) for %s",
+                ", ".join(resolution.services),
+            )
 
         # UTF-8 on every platform (§5): the harness prints page text, and the
         # Windows OEM codepage would mangle any non-ASCII content on the way
@@ -232,7 +306,7 @@ class BrowserTool:
 
         try:
             async with asyncio.timeout(self._timeout_s):
-                stdout, _ = await proc.communicate(script.encode("utf-8"))
+                stdout, _ = await proc.communicate(resolution.script.encode("utf-8"))
         except TimeoutError:
             proc.kill()
             # Reap the process so no zombie is left behind; a kill that races
@@ -249,7 +323,17 @@ class BrowserTool:
                 ),
             )
 
-        output = _truncate(stdout.decode("utf-8", errors="replace").strip())
+        # Redact before truncating, and before ANY return path can see it: a
+        # script that printed a credential field would otherwise hand the value
+        # straight back to the model through the tool result. The skill tells
+        # scripts never to print one; this is the backstop for when it happens
+        # anyway, including on the failure path below.
+        output = _truncate(
+            scrub_secrets(
+                stdout.decode("utf-8", errors="replace").strip(),
+                resolution.secrets,
+            )
+        )
 
         if proc.returncode != 0:
             return ToolResult(
