@@ -9281,7 +9281,46 @@ carried on anyway.
 Absorber 3 is why the bug reads as being ignored rather than as a missed cut:
 the session took the turn, understood it, and replied that it was busy.
 
-**Fix.**
+**Root, corrected (2026-08-13, after the first fix failed in the field).** The
+three absorbers above are real, but they are all downstream of a simpler fact:
+**during the thinking phase no local barge detector runs at all.** Barge-in
+over PLAYBACK works perfectly and always has — the desktop pump feeds a local
+Silero detector that fires in milliseconds. That detector sits inside the
+`echo_guard_active` branch of `_send_microphone`, entered only while audio is
+playing. During the silent wait it is not idle, it is unreachable. Everything
+above was therefore describing what happened to the ONE remaining signal (the
+provider's VAD) after the local path had already been skipped.
+
+This is why the first fix did not work in the field: it read the WORDS and
+fired only on an explicit stop phrase. Interrupting must not require a command
+— the maintainer's report was "I don't want to say stop; when he is speaking
+it works perfectly, why not now?" The trigger has to be voice, not vocabulary.
+
+**Fix (primary): arm the mechanism that already works.**
+
+- `jarvis/speech/pipeline.py`: a SECOND `DesktopRealtimeBargeInDetector`, fed
+  during the silent wait, firing the same `barge_in` control the playback path
+  uses. Two details are load-bearing and each one silently disables it:
+  `output_active=None` (with the playback probe attached, `feed` returns None
+  for as long as nothing plays — the `_playback_started` gate in
+  `jarvis/realtime/desktop.py`, i.e. precisely the silence it must listen
+  through), and warming it alongside the first (`feed` returns None while
+  `_ready` is false, so an unwarmed detector looks exactly like a room that
+  never speaks).
+- Arming requires the microphone to fall quiet once after the turn is
+  committed (`_THINKING_BARGE_QUIET_S`), or the user's own trailing words arm
+  it against themselves — that shape is turn fragmentation and belongs to the
+  session's `_user_is_speaking` hold (872b05051), not to a barge.
+- `RealtimeVoiceSession.owes_the_user_a_reply()` is the capability the pump
+  reads. Deliberately not a turn-state enum: the microphone pump must not
+  learn the turn machinery.
+- The frame is uploaded either way. Unlike the playback branch there is no
+  echo to withhold, and the words must reach the provider or the interruption
+  would take the floor and deliver nothing.
+
+**Fix (secondary): what the words are still for.** Once the floor is taken,
+the vocabulary decides only whether the running ACTION dies — never whether
+the user gets to speak.
 
 - `jarvis/speech/interrupt_intent.py` (new, sibling of `hangup.py`): regex-only
   probe, de/en/es at equal depth, whole-utterance anchored so a stop word
@@ -9311,14 +9350,30 @@ out loud and never with a progress line; a redirect cancels AND is answered; a
 continuation fragment, a clarify answer, and a mid-sentence hesitation still
 cancel nothing).
 
-**Lesson.** Every one of the three absorbers was added to fix a real incident,
-and none of them was wrong. What was missing is that "the user is still
-talking" and "the user wants me to stop" look identical from any single signal
-— the microphone cannot read intent and the words cannot tell a hesitation
-from a command. Guards accumulated along one path eventually cover the case
-they were each built for and, between them, the case nobody wrote a guard for.
-The fix is not a fourth heuristic but an explicit ordering of the ones already
-there, cheapest and most certain first.
+**Guards (primary fix):** `tests/unit/speech/test_realtime_mode.py` — speaking
+during the thinking phase sends `barge_in` and the captured speech reaches the
+provider, with NO stop word anywhere in the test; a still-running utterance
+does not; and the two detectors are asserted to be configured differently
+(playback keeps the probe, thinking must not have one).
+
+**Lesson.** Two lessons, and the second one cost a shipped fix.
+
+Every one of the three absorbers was added for a real incident and none was
+wrong on its own. "The user is still talking" and "the user wants me to stop"
+look identical from any single signal — the microphone cannot read intent and
+the words cannot tell a hesitation from a command. Guards accumulated along one
+path eventually cover every case they were each built for, and between them the
+case nobody wrote a guard for.
+
+But the reason the first fix shipped and failed is worse and more general: the
+investigation traced the signal that was PRESENT (the provider's VAD edge, with
+its deferral and its progress line) and never asked why the mechanism that
+demonstrably works ten seconds earlier — the local detector during playback —
+was not running. A feature that works in one phase and not another is a
+question about the DIFFERENCE between the phases, and the answer here was a
+branch condition, not a heuristic. When a user says "it works perfectly there,
+why not here", that sentence is the diagnosis: find the machinery that makes
+"there" work and ask what disables it in "here", before writing anything new.
 
 ## BUG-136: a spoken brief for a pane outlives the call that ordered it — the confirmation is spoken before the prompt exists, and hanging up does not stop it (HIGH, FIXED 2026-08-13)
 
