@@ -357,6 +357,7 @@ class WebServer:
         from .feedback_routes import router as feedback_router
         from .friends_routes import router as friends_router
         from .frontier_routes import router as frontier_router
+        from .logins_routes import router as logins_router
         from .marketplace_routes import router as marketplace_router
         from .mcp_routes import router as mcp_router
         from .missions_auth import router as missions_auth_router
@@ -485,6 +486,10 @@ class WebServer:
         app.include_router(chat_library_router)
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
+        # Passwords section — the user's own website logins, stored in the OS
+        # keychain. No Brain dependency: the model never reaches a password over
+        # HTTP, it is substituted into a browser script by jarvis.logins.injection.
+        app.include_router(logins_router)
         app.include_router(dictionary_router)
         # Dictation mode — hold to speak, text lands in the focused field.
         # Mounted so every action is also `jarvis api dictation <op>`, which is
