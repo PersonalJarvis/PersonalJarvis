@@ -21,6 +21,7 @@ from jarvis.claude_auth import (
     _account_from_claude_json,
     _is_default_config_dir,
     _parse_cli_auth_status,
+    _read_json,
     _subscription_label,
     claude_account_identity,
 )
@@ -683,3 +684,83 @@ def test_the_default_dir_is_recognised_without_a_hardcoded_separator(
 
     assert _is_default_config_dir(home / ".claude") is True
     assert _is_default_config_dir(tmp_path / "elsewhere") is False
+
+
+def _count_parses(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count every ``json.loads`` the identity reader actually performs."""
+    calls = [0]
+    real_loads = json.loads
+
+    def counting_loads(raw, *args, **kwargs):  # noqa: ANN001, ANN202 - test seam
+        calls[0] += 1
+        return real_loads(raw, *args, **kwargs)
+
+    monkeypatch.setattr(claude_auth.json, "loads", counting_loads)
+    return calls
+
+
+def test_identity_file_is_parsed_once_no_matter_how_often_it_is_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The freeze this guards: one cheap-looking read paid thousands of times.
+
+    ``.claude.json`` is Claude Code's own state store and reaches megabytes on a
+    long-lived install, and ``json.loads`` holds the GIL for the whole parse.
+    The subscription probe runs per resolver candidate, per pane, per recap, so
+    an uncached read pinned a core and stopped every other Python thread in the
+    process — the desktop window then could not answer Windows and went "Not
+    Responding" (measured 2026-08-14 at 99.7% of a core for minutes).
+    """
+    identity = tmp_path / ".claude.json"
+    _write_identity(identity, "one@example.com", mtime=1_000_000)
+    calls = _count_parses(monkeypatch)
+
+    for _ in range(25):
+        assert _read_json(identity) == {"oauthAccount": {"emailAddress": "one@example.com"}}
+
+    assert calls[0] == 1
+
+
+def test_a_rewritten_identity_file_is_re_read_so_a_new_login_is_seen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Caching must never outlive the file: signing in again changes the answer."""
+    identity = tmp_path / ".claude.json"
+    _write_identity(identity, "old@example.com", mtime=1_000_000)
+    calls = _count_parses(monkeypatch)
+
+    assert _read_json(identity) == {"oauthAccount": {"emailAddress": "old@example.com"}}
+    _write_identity(identity, "new@example.com", mtime=2_000_000)
+
+    assert _read_json(identity) == {"oauthAccount": {"emailAddress": "new@example.com"}}
+    assert calls[0] == 2
+
+
+def test_a_deleted_identity_file_reports_absent_and_forgets_its_cached_parse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A removed config must never keep answering from a stale parse."""
+    identity = tmp_path / ".claude.json"
+    _write_identity(identity, "gone@example.com", mtime=1_000_000)
+
+    assert _read_json(identity) is not None
+    identity.unlink()
+    assert _read_json(identity) is None
+
+    # Written back at the SAME size and mtime the cached entry was keyed by:
+    # the entry has to be gone, not merely shadowed, or this would answer with
+    # the pre-deletion parse.
+    _write_identity(identity, "back@example.com", mtime=1_000_000)
+    assert _read_json(identity) == {"oauthAccount": {"emailAddress": "back@example.com"}}
+
+
+def test_the_identity_cache_stays_bounded_on_a_long_lived_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Agent accounts each bring a config dir; the cache must not grow forever."""
+    for index in range(claude_auth._IDENTITY_JSON_CACHE_MAX + 5):
+        path = tmp_path / f"account{index}" / ".claude.json"
+        _write_identity(path, f"user{index}@example.com", mtime=1_000_000)
+        _read_json(path)
+
+    assert len(claude_auth._IDENTITY_JSON_CACHE) <= claude_auth._IDENTITY_JSON_CACHE_MAX

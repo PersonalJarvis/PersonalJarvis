@@ -73,6 +73,32 @@ _AUTH_STATUS_CACHE: dict[
 _SAFE_MODE_CACHE: dict[tuple[str, ...], bool] = {}
 _AUTH_STATUS_TTL_S = 5.0
 
+#: Parsed identity files keyed by path, guarded by the file's own
+#: ``(mtime_ns, size)``.
+#:
+#: ``status()`` opens ``.claude.json`` for ONE display string — the account
+#: email — but that file is Claude Code's own state store and grows with every
+#: project it has ever opened: measured here at 5.6 MB and ~23 ms per parse.
+#: The probe behind it runs for every candidate the subscription resolver
+#: considers, and the Agentic IDE resolves brains per pane and per recap, so
+#: those parses arrived back to back on a single worker thread. ``json.loads``
+#: never releases the GIL, so that thread pinned a core at 99.7% for minutes
+#: (measured 2026-08-14, ~43 parses/s) and no other Python thread in the
+#: process could run: the log went silent mid-second and the desktop window
+#: stopped answering Windows, which is the "Not Responding" freeze the user
+#: sees. Nothing was leaking and nothing was deadlocked — one cheap-looking
+#: read was simply being paid thousands of times.
+#:
+#: A ``stat()`` replaces the parse on every repeat call, and the fingerprint
+#: expires the entry the instant a login rewrites the file, so a re-login is
+#: still picked up on the next probe.
+_IDENTITY_JSON_CACHE: dict[str, tuple[tuple[int, int], dict[str, Any] | None]] = {}
+#: Config dirs are finite (one per agent account) but not fixed, so cap the
+#: cache rather than let a long-lived process accumulate entries for paths it
+#: has stopped consulting. Cleared wholesale: the entries are equal in value
+#: and re-earned by one parse each.
+_IDENTITY_JSON_CACHE_MAX = 64
+
 
 def claude_install_command(platform: str | None = None) -> str:
     """Official native installer for the current OS."""
@@ -97,6 +123,7 @@ def clear_version_cache() -> None:
     _AUTH_LOGOUT_CACHE.clear()
     _AUTH_STATUS_CACHE.clear()
     _SAFE_MODE_CACHE.clear()
+    _IDENTITY_JSON_CACHE.clear()
 
 
 # ----------------------------------------------------------------------
@@ -105,16 +132,44 @@ def clear_version_cache() -> None:
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
-    """Parse a JSON file into a dict; ``None`` if absent/unreadable/not-a-dict."""
+    """Parse a JSON file into a dict; ``None`` if absent/unreadable/not-a-dict.
+
+    Cached per path against the file's own ``(mtime_ns, size)`` — see
+    ``_IDENTITY_JSON_CACHE`` for the freeze that re-parsing on every call cost.
+    A file that cannot be stat'ed drops its entry and reports absent, so a
+    deleted config never answers from a stale parse.
+
+    The cached dict is handed back as-is rather than copied. Every caller here
+    passes it straight to a reader (``_account_from_claude_json``), and copying
+    a multi-megabyte structure per call would give back exactly the cost this
+    cache exists to remove. A failed parse is cached as ``None`` for the same
+    reason a successful one is cached: a truncated file mid-write must not be
+    re-read at full speed until it changes.
+    """
+    key = str(path)
+    try:
+        stat = path.stat()
+    except OSError:
+        _IDENTITY_JSON_CACHE.pop(key, None)
+        return None
+    fingerprint = (stat.st_mtime_ns, stat.st_size)
+    cached = _IDENTITY_JSON_CACHE.get(key)
+    if cached is not None and cached[0] == fingerprint:
+        return cached[1]
     try:
         raw = path.read_text(encoding="utf-8")
     except (FileNotFoundError, OSError):
+        _IDENTITY_JSON_CACHE.pop(key, None)
         return None
     try:
-        data = json.loads(raw)
+        parsed = json.loads(raw)
     except (ValueError, json.JSONDecodeError):
-        return None
-    return data if isinstance(data, dict) else None
+        parsed = None
+    data = parsed if isinstance(parsed, dict) else None
+    if len(_IDENTITY_JSON_CACHE) >= _IDENTITY_JSON_CACHE_MAX:
+        _IDENTITY_JSON_CACHE.clear()
+    _IDENTITY_JSON_CACHE[key] = (fingerprint, data)
+    return data
 
 
 def _account_from_claude_json(
