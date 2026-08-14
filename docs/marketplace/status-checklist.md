@@ -26,8 +26,8 @@ installed plugin · **Reads:** [community-registry.md](community-registry.md)
 | **Format** — Agent Plugins v1.0.0 manifests → `PluginSpec` | ✅ shipped |
 | **Format** — a plugin may bundle skills; ownership markers; `$schema`; component rule | ✅ shipped 2026-08-14 |
 | **Registry** — CI validation, auto-merge, ownership ledger, Pages index | ✅ live, but see §2 |
-| **Registry** — knows about bundled skills, feed is self-contained | ✅ written 2026-08-14, **on branch `feat/bundled-skills`, not pushed** |
-| **Publish** — any interface a human can use | ❌ not started |
+| **Registry** — knows about bundled skills, feed is self-contained | ✅ live 2026-08-14 (PR #5, index revision 12) |
+| **Publish** — in-app Publish tab (device flow → storefront endpoint) | ✅ shipped 2026-08-14 |
 | **Publish** — GitHub sign-in gate + storefront submit | 🔨 in build (parallel effort, spec written) |
 | **Storefront** — the site itself | ❌ no repo exists yet |
 | **Frontend ↔ backend** — bundled skills visible, consent names them | ✅ shipped 2026-08-14 |
@@ -51,15 +51,15 @@ installing the **plugin** works (its manifests are embedded in the index),
 installing the **skill** fails, and every provenance link is dead. The store
 looks open and is half closed.
 
-**Fix written, not yet live.** The feed now embeds every skill's `SKILL.md`
-(app side: shipped; registry side: branch `feat/bundled-skills`, awaiting a
-push). A linked file inherits the availability of whatever host serves it;
-an embedded one cannot go missing while the feed advertising it is
-reachable. `raw_url` stays for older clients.
+**Fixed and verified live** (PR #5, merged 2026-08-14 08:20 UTC). The feed
+now embeds every skill's `SKILL.md`; a linked file inherits the availability
+of whatever host serves it, an embedded one cannot go missing while the feed
+advertising it is reachable. `raw_url` stays for older clients.
 
-**Until that branch is pushed and Pages redeploys, the outage stands** — the
-live feed still carries links only, so the app has nothing embedded to fall
-back to.
+Measured after the deploy: `index.json` is at revision 12,
+`skills[0].skill_md` carries 1126 bytes, and the client's own validation
+accepts it — install writes straight from the feed with no download. The
+outage is over without the repo becoming public.
 
 Still open: the dead `source_url` on every card. The index should omit it
 while the repo is private rather than publish a link that 404s.
@@ -110,11 +110,14 @@ ships.**
       `scripts/test_bundled_skills.py` pinning the four rejection cases in
       CI. Verified end to end against the app's own loader.
 
-### Blocked on a push
+- [x] Registry branch pushed, PR #5 merged, Pages redeployed, live feed
+      verified against the client loader.
 
-- [ ] Push `feat/bundled-skills` in `PersonalJarvis/marketplace` and let
-      Pages redeploy. **The skill-install outage (§2) stays until this
-      happens** — the live feed carries links only.
+### Waiting on the maintainer
+
+- [ ] Restart the desktop app once, so the new
+      `POST /api/marketplace/community/skills/{name}/install` route exists in
+      the running process. The frontend already reloaded itself.
 
 ### Next — the registry's remaining hole
 
@@ -134,8 +137,11 @@ ships.**
       (parallel effort — spec §8 steps 2–4).
 - [ ] Reopen the registry repo (spec §8 step 5) — only after the gate is
       green.
-- [ ] In-app Publish view, device flow on the same GitHub App (spec §7);
-      `jarvis/marketplace/auth/oauth_device.py` already exists.
+- [x] In-app Publish view (spec §7) — shipped 2026-08-14: Plugins → Publish
+      tab with device-flow sign-in on the marketplace App, a form whose
+      checks mirror the endpoint's rules (`jarvis/marketplace/publish.py`),
+      submit as `Authorization: Bearer` through the storefront endpoint, and
+      a watch-until-live poll against the community feed.
 
 ### Definition of done for the whole chain
 
