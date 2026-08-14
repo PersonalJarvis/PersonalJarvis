@@ -254,14 +254,14 @@ def _mcp_live(
     return False, None
 
 
-@router.get("/plugins")
-async def list_plugins(response: Response) -> dict[str, Any]:
-    # Never let an embedded webview (pywebview/WebView2) serve a stale cached
-    # plugin list: WebView2 heuristically caches this GET, so after a catalog
-    # change the desktop window kept showing the old/empty list while a fresh
-    # browser tab showed the new one. no-store forces every fetch to hit the
-    # server. (Bug: "plugins disappear / don't show in the desktop app".)
-    response.headers["Cache-Control"] = "no-store"
+def _build_plugin_listing() -> dict[str, Any]:
+    """The catalog with each plugin's live auth state. Blocking on purpose.
+
+    One token load PER PLUGIN, and a token load is a keyring/file read that
+    resolves the data dir through the environment every time — so the cost is
+    the catalog length times a disk round trip, not a lookup. See
+    :func:`list_plugins` for what paying that on the event loop cost.
+    """
     catalog = load_catalog()
     store = TokenStore()
     enriched: list[dict[str, Any]] = []
@@ -316,6 +316,24 @@ async def list_plugins(response: Response) -> dict[str, Any]:
         "total": len(enriched),
         "connected": connected,
     }
+
+
+@router.get("/plugins")
+async def list_plugins(response: Response) -> dict[str, Any]:
+    # Never let an embedded webview (pywebview/WebView2) serve a stale cached
+    # plugin list: WebView2 heuristically caches this GET, so after a catalog
+    # change the desktop window kept showing the old/empty list while a fresh
+    # browser tab showed the new one. no-store forces every fetch to hit the
+    # server. (Bug: "plugins disappear / don't show in the desktop app".)
+    response.headers["Cache-Control"] = "no-store"
+    # Off the event loop: the listing is one keyring/file read per plugin, and
+    # the Plugins view polls it. Run inline in this ``async def`` those reads
+    # are a stall of the WHOLE backend — no other route, no pane WebSocket, no
+    # voice turn — repeated for as long as the view is open. Measured
+    # 2026-08-14 on the running app: this route held the backend loop at 97.7%
+    # of a core with the window frozen and the log stopped mid-second, 30 of 30
+    # stack samples inside the per-plugin secret read.
+    return await asyncio.to_thread(_build_plugin_listing)
 
 
 # ----------------------------------------------------------------------
