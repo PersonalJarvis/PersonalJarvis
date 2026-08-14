@@ -215,6 +215,12 @@ ROUTER_TOOLS = frozenset({
     # the AP-5/AP-14 sense, and the runner removes it from its own leg tools so
     # an errand can never dispatch an errand.
     "start-errand",
+    # Errand control (2026-08-14): answer the waiting errand, report status,
+    # stop one — the return half of the dialog start-errand opens. Status is
+    # safe-tier; answer/cancel are monitor like the door itself.
+    "answer-errand",
+    "errand-status",
+    "cancel-errand",
     # Computer-Use (Wave 1, 2026-05-29): first-class, clearly-described tool to
     # drive the user's LIVE desktop (open apps, click, type, scroll, operate
     # any GUI). The router previously had no honest desktop path — spawn-worker

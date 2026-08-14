@@ -359,6 +359,7 @@ class WebServer:
         from .docs_routes import router as docs_router
         from .downloads_routes import router as downloads_router
         from .drop_routes import router as drop_router
+        from .errands_routes import router as errands_router
         from .federation_proxy_routes import router as federation_proxy_router
         from .feedback_routes import router as feedback_router
         from .friends_routes import router as friends_router
@@ -547,6 +548,9 @@ class WebServer:
         app.include_router(missions_router)
         app.include_router(missions_ws_router)
         app.include_router(missions_pty_router)
+        # Errand surface — the same four verbs the voice tools expose
+        # (list / inspect / answer / cancel), so CLI and UI see what voice sees.
+        app.include_router(errands_router)
         # Computer-Use run control (deep-dive 2026-07-15, H-09): start/list/
         # inspect/cancel desktop goals — auto-exposed as `jarvis api
         # computer-use <op>` by the dynamic CLI layer.

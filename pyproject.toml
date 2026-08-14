@@ -774,6 +774,12 @@ credentials = "jarvis.plugins.tool.credentials:CredentialsTool"
 # enters a worker tool set, and the runner strips it from its own leg tools so
 # an errand cannot dispatch an errand (AP-5/AP-14 reasoning).
 start-errand = "jarvis.plugins.tool.start_errand:StartErrandTool"
+# Errand control (2026-08-14): the other half of the errand dialog. The user's
+# answers reach the waiting errand (provide_answers finally has a caller),
+# "how is my errand going" has a data source, and "stop it" works by voice.
+answer-errand = "jarvis.plugins.tool.errand_control:AnswerErrandTool"
+errand-status = "jarvis.plugins.tool.errand_control:ErrandStatusTool"
+cancel-errand = "jarvis.plugins.tool.errand_control:CancelErrandTool"
 
 [tool.setuptools.packages.find]
 where = ["."]
