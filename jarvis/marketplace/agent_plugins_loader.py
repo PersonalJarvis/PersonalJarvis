@@ -1,25 +1,28 @@
-"""Convert an Agent Plugins v1.0.0 manifest set into a catalog `PluginSpec`.
+"""Convert an Agent Plugins v1.0.0 package into a catalog `PluginSpec`.
 
 The community registry distributes plugins as Agent Plugins v1.0.0 packages
 (docs/marketplace/agent-plugins-standard.md): a `plugin.json` whose Jarvis
-specifics live under ``extensions["io.github.personaljarvis"]``, plus an
-optional `mcp.json`. This module is the "loader wave" that document defers:
-it validates the manifests and produces the same `PluginSpec` the seed
-catalog uses, so an installed community plugin flows through the exact same
-runtime (connect flows, relevance gate, worker bridge) as a shipped one.
+specifics live under ``extensions["io.github.personaljarvis"]``, an optional
+`mcp.json`, and an optional ``skills/`` tree. This module is the "loader
+wave" that document defers: it validates the package and produces the same
+`PluginSpec` the seed catalog uses, so an installed community plugin flows
+through the exact same runtime (connect flows, relevance gate, worker
+bridge) as a shipped one.
 
 Security posture: the registry auto-merges submissions on green CI, so the
 client must NOT blindly trust index content. Every rule CI enforces on
 submission is re-enforced here — spec-conformant name, https-only endpoints,
-launcher allowlist for stdio commands, pinned package versions, and no
-credentials in `mcp.json` headers or env. A violation raises
-:class:`AgentPluginError` with a message safe to surface in the UI.
+launcher allowlist for stdio commands, pinned package versions, no
+credentials in `mcp.json` headers or env, and no self-declared risk tier in
+a bundled skill. A violation raises :class:`AgentPluginError` with a message
+safe to surface in the UI.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
@@ -27,6 +30,10 @@ from pydantic import ValidationError
 from jarvis.marketplace.catalog import PluginSpec
 
 EXTENSION_NAMESPACE = "io.github.personaljarvis"
+
+# The spec pins this exact string and forbids reassigning a published schema
+# id to different contents, so an equality check IS the version check.
+PLUGIN_SCHEMA_ID = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 
 # Spec name constraints (agent-plugins.org 1.0.0): 1-64 chars, lowercase
 # alphanumerics plus `-` and `.`, alphanumeric start and end, no `--`/`..`,
@@ -66,6 +73,115 @@ def validate_spec_name(name: Any) -> str:
             "no '--' or '..', no underscores)"
         )
     return text
+
+
+# --- Bundled skills (Agent Plugins `skills/`) --------------------------------
+#
+# A package may carry skills alongside (or instead of) an MCP server — that
+# combination is the reason the standard exists. The registry embeds each
+# skill's SKILL.md verbatim in the index, exactly as it embeds the usage
+# card, so nothing is fetched from a third host at install time.
+
+# Caps: the registry repo is also the CDN, and every skill lands as a file on
+# the user's disk. Generous for instructions, small enough that one package
+# cannot bloat the index for everyone.
+MAX_BUNDLED_SKILLS = 10
+MAX_SKILL_MD_BYTES = 64 * 1024
+
+# Top-level frontmatter keys a community skill may not declare.
+#
+# `risk_policy` is a privilege boundary, not a preference: skills/runner.py
+# evaluates a skill's tools against the SKILL'S OWN declared tier rather than
+# the tool's static one ("the skill author's risk_policy is what governs
+# here"). That is correct for repo-contributed skills, which pass human
+# review — for an auto-merged community skill it would let the author
+# downgrade a tool to `safe` and skip the confirmation the tool was given.
+# Rejecting is deliberate over silently dropping the key: the author sees why
+# (contract §7, no silent swallowing), and the built-in default applies.
+_FORBIDDEN_SKILL_FRONTMATTER = ("risk_policy",)
+
+# A top-level YAML key: no indentation, so nested `risk_policy:` inside some
+# other author's block is not what we are matching.
+_TOP_LEVEL_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:", re.MULTILINE)
+
+
+@dataclass(frozen=True, slots=True)
+class BundledSkill:
+    """One ``skills/<name>/SKILL.md`` carried by a plugin package."""
+
+    name: str
+    skill_md: str
+
+
+def _frontmatter_block(skill_md: str) -> str:
+    """The raw YAML frontmatter, or "" when the document has none."""
+    if not skill_md.startswith("---"):
+        return ""
+    _, _, rest = skill_md.partition("---")
+    block, sep, _ = rest.partition("\n---")
+    return block if sep else ""
+
+
+def validate_bundled_skills(raw: Any, *, plugin_name: str) -> list[BundledSkill]:
+    """Validate the ``skills`` block of an index entry.
+
+    Each item is ``{"name": ..., "skill_md": ...}``. The name becomes a
+    DIRECTORY under the user's skills root, so it carries the same spec name
+    rules the plugin name does — this is a path-traversal boundary, not
+    cosmetics.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise AgentPluginError("skills must be a list")
+    if len(raw) > MAX_BUNDLED_SKILLS:
+        raise AgentPluginError(
+            f"package bundles {len(raw)} skills — at most {MAX_BUNDLED_SKILLS} are accepted"
+        )
+
+    skills: list[BundledSkill] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise AgentPluginError("each bundled skill must be an object")
+        name = validate_spec_name(item.get("name"))
+        if name in seen:
+            raise AgentPluginError(f"package bundles the skill {name!r} twice")
+        seen.add(name)
+
+        skill_md = _require_str(item.get("skill_md"), f"skill {name!r}: skill_md")
+        if len(skill_md.encode("utf-8")) > MAX_SKILL_MD_BYTES:
+            raise AgentPluginError(
+                f"skill {name!r}: SKILL.md exceeds {MAX_SKILL_MD_BYTES // 1024} KB"
+            )
+
+        frontmatter = _frontmatter_block(skill_md)
+        if not frontmatter.strip():
+            raise AgentPluginError(
+                f"skill {name!r}: SKILL.md must open with a YAML frontmatter block"
+            )
+        declared = {match.group(1) for match in _TOP_LEVEL_KEY_RE.finditer(frontmatter)}
+        for key in _FORBIDDEN_SKILL_FRONTMATTER:
+            if key in declared:
+                raise AgentPluginError(
+                    f"skill {name!r}: {key!r} may not be declared by a "
+                    "marketplace skill — it governs which tools run without "
+                    "confirmation, so the built-in default applies instead"
+                )
+        for required in ("name", "description"):
+            if required not in declared:
+                raise AgentPluginError(f"skill {name!r}: frontmatter is missing {required!r}")
+
+        skills.append(BundledSkill(name=name, skill_md=skill_md))
+
+    # A skill directory shares the namespace with everything else the user
+    # installed; colliding with the package's own name would make uninstall
+    # ambiguous (which one does removing the plugin take with it?).
+    if plugin_name in seen and len(seen) > 1:
+        raise AgentPluginError(
+            f"a bundled skill may only be named {plugin_name!r} when it is the package's only skill"
+        )
+    return skills
 
 
 def _reject_http_urls(value: Any, where: str) -> None:
@@ -182,15 +298,24 @@ def _convert_mcp_json(
     raise AgentPluginError(f"mcp.json: unknown server type {server_type!r}")
 
 
-def convert_manifest(
+@dataclass(frozen=True, slots=True)
+class PluginPackage:
+    """A validated Agent Plugins package: the store entry plus its skills."""
+
+    spec: PluginSpec
+    skills: list[BundledSkill]
+
+
+def convert_package(
     plugin_json: Mapping[str, Any],
     mcp_json: Mapping[str, Any] | None = None,
+    skills: Any = None,
     *,
     publisher: str | None = None,
     version: str | None = None,
     source_url: str | None = None,
-) -> PluginSpec:
-    """Validate an Agent Plugins v1.0.0 manifest set and build a `PluginSpec`.
+) -> PluginPackage:
+    """Validate an Agent Plugins v1.0.0 package and build its catalog entry.
 
     ``publisher``/``version``/``source_url`` come from the registry index
     entry, not from the manifest, so a manifest cannot claim someone else's
@@ -198,7 +323,19 @@ def convert_manifest(
     """
     if not isinstance(plugin_json, Mapping):
         raise AgentPluginError("plugin.json must be a JSON object")
+
+    # The spec makes `$schema` required and forbids reassigning a published
+    # schema id to different contents, so this equality check is how a client
+    # pins the format version it understands.
+    schema_id = plugin_json.get("$schema")
+    if schema_id != PLUGIN_SCHEMA_ID:
+        raise AgentPluginError(
+            f"plugin.json must declare '$schema': '{PLUGIN_SCHEMA_ID}' (got {schema_id!r})"
+        )
+
     name = validate_spec_name(plugin_json.get("name"))
+    # `description` is optional in the spec but required here: it is the line
+    # under the name on the store card, and an entry without it is unbrowsable.
     description = _require_str(plugin_json.get("description"), "plugin description")
 
     extensions = plugin_json.get("extensions")
@@ -225,6 +362,20 @@ def convert_manifest(
     _reject_http_urls(auth, "auth")
 
     mcp_server = _convert_mcp_json(name, mcp_json, extension) if mcp_json is not None else None
+    bundled = validate_bundled_skills(skills, plugin_name=name)
+
+    # A package must carry at least one component that DOES something:
+    # an MCP server (its own `mcp.json`, or one the hosted auth mode points
+    # at), or bundled skills. Native bindings are the third way a plugin can
+    # be useful, and they are blocked above — so without this check a
+    # community entry could be a card that collects a token and offers no
+    # tools, no instructions, and no way to tell that from the store.
+    auth_mcp_url = auth.get("mcp_url") if isinstance(auth, Mapping) else None
+    if mcp_server is None and not auth_mcp_url and not bundled:
+        raise AgentPluginError(
+            "package has no components — a marketplace plugin needs an "
+            "mcp.json, a hosted MCP auth mode, or bundled skills"
+        )
 
     logo_url = extension.get("logo_url")
     if logo_url is not None:
@@ -232,7 +383,7 @@ def convert_manifest(
         _reject_http_urls(logo_url, "logo_url")
 
     try:
-        return PluginSpec.model_validate(
+        spec = PluginSpec.model_validate(
             {
                 "id": name,
                 "display_name": extension.get("display_name") or name.replace("-", " ").title(),
@@ -248,6 +399,7 @@ def convert_manifest(
                 "oauth_client_family": extension.get("oauth_client_family"),
                 "auth": dict(auth),
                 "mcp_server": mcp_server,
+                "bundled_skills": [skill.name for skill in bundled],
                 "post_install_hint_md": extension.get("post_install_hint_md"),
                 "source": "community",
                 "publisher": publisher,
@@ -263,5 +415,35 @@ def convert_manifest(
             message = str(errors[0]["msg"])
         raise AgentPluginError(f"manifest rejected at {location}: {message}") from exc
 
+    return PluginPackage(spec=spec, skills=bundled)
 
-__all__ = ["AgentPluginError", "EXTENSION_NAMESPACE", "convert_manifest", "validate_spec_name"]
+
+def convert_manifest(
+    plugin_json: Mapping[str, Any],
+    mcp_json: Mapping[str, Any] | None = None,
+    *,
+    publisher: str | None = None,
+    version: str | None = None,
+    source_url: str | None = None,
+) -> PluginSpec:
+    """The catalog entry alone, for callers that do not handle skills."""
+    return convert_package(
+        plugin_json,
+        mcp_json,
+        publisher=publisher,
+        version=version,
+        source_url=source_url,
+    ).spec
+
+
+__all__ = [
+    "AgentPluginError",
+    "EXTENSION_NAMESPACE",
+    "PLUGIN_SCHEMA_ID",
+    "BundledSkill",
+    "PluginPackage",
+    "convert_manifest",
+    "convert_package",
+    "validate_bundled_skills",
+    "validate_spec_name",
+]

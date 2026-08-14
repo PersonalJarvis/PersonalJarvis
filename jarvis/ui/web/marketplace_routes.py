@@ -801,7 +801,7 @@ def _community_payload(index: Any, status: str) -> dict[str, Any]:
     from jarvis.core.paths import user_skills_dir
     from jarvis.marketplace.agent_plugins_loader import (
         AgentPluginError,
-        convert_manifest,
+        convert_package,
     )
 
     catalog = load_catalog()
@@ -819,13 +819,14 @@ def _community_payload(index: Any, status: str) -> dict[str, Any]:
                 "source_url": entry.source_url,
             }
             try:
-                spec = convert_manifest(
+                spec = convert_package(
                     entry.plugin_json,
                     entry.mcp_json,
+                    entry.skills,
                     publisher=entry.publisher,
                     version=entry.version,
                     source_url=entry.source_url,
-                )
+                ).spec
                 if spec.id != entry.name:
                     raise AgentPluginError(
                         f"index name {entry.name!r} does not match manifest name {spec.id!r}"
@@ -917,14 +918,16 @@ async def community_refresh(response: Response) -> dict[str, Any]:
 
 @router.post("/community/plugins/{plugin_id}/install")
 async def community_install(plugin_id: str) -> dict[str, Any]:
-    """One-click install: convert the manifest, persist the catalog entry and
-    usage card, refresh the live registry. The plugin then behaves exactly
-    like a seed plugin (connect flows, relevance gate, worker bridge)."""
+    """One-click install: convert the package, persist the catalog entry,
+    usage card and bundled skills, refresh the live registry. The plugin then
+    behaves exactly like a seed plugin (connect flows, relevance gate, worker
+    bridge)."""
     from jarvis.marketplace import community_source
     from jarvis.marketplace.agent_plugins_loader import (
         AgentPluginError,
-        convert_manifest,
+        convert_package,
     )
+    from jarvis.marketplace.bundled_skills import write_bundled_skills
     from jarvis.marketplace.community_install import (
         install_plugin_spec,
         seed_plugin_ids,
@@ -953,19 +956,49 @@ async def community_install(plugin_id: str) -> dict[str, Any]:
             detail=f"{plugin_id!r} already exists in the local catalog",
         )
     try:
-        spec = convert_manifest(
+        package = convert_package(
             entry.plugin_json,
             entry.mcp_json,
+            entry.skills,
             publisher=entry.publisher,
             version=entry.version,
             source_url=entry.source_url,
         )
+        spec = package.spec
         if spec.id != plugin_id:
             raise AgentPluginError(
                 f"index name {plugin_id!r} does not match manifest name {spec.id!r}"
             )
     except AgentPluginError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Skills land BEFORE the catalog entry: a conflict here aborts the whole
+    # install, and aborting after the catalog write would leave a connectable
+    # plugin whose instructions never arrived.
+    skill_result = None
+    if package.skills:
+        try:
+            skill_result = write_bundled_skills(
+                spec.id, package.skills, version=entry.version
+            )
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(
+                status_code=500, detail=f"bundled skills could not be written: {exc}"
+            ) from exc
+        if skill_result.conflicts:
+            names = ", ".join(sorted(skill_result.conflicts))
+            # Roll back what this install just wrote, so a refused install
+            # leaves nothing of itself behind.
+            from jarvis.marketplace.bundled_skills import remove_bundled_skills
+
+            remove_bundled_skills(spec.id, skill_result.written)
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"a skill named {names} already exists and was not "
+                    "installed by this plugin — rename or remove it first"
+                ),
+            )
 
     try:
         install_plugin_spec(spec)
@@ -981,13 +1014,17 @@ async def community_install(plugin_id: str) -> dict[str, Any]:
     _refresh_plugin_in_live_registry(spec.id)
     item = spec.model_dump(mode="json")
     item["status"] = "not_connected"
+    if skill_result is not None:
+        item["installed_skills"] = skill_result.written
     return {"ok": True, "plugin": item}
 
 
 @router.delete("/community/plugins/{plugin_id}")
 async def community_uninstall(plugin_id: str) -> dict[str, Any]:
     """Remove an installed community plugin: revoke + drop stored tokens,
-    remove the catalog entry and its usage card, refresh the live registry."""
+    remove the catalog entry, its usage card and the skills it brought with
+    it, refresh the live registry."""
+    from jarvis.marketplace.bundled_skills import remove_bundled_skills
     from jarvis.marketplace.community_install import remove_community_plugin
     from jarvis.marketplace.usage_cards.loader import delete_usage_card
 
@@ -1017,6 +1054,9 @@ async def community_uninstall(plugin_id: str) -> dict[str, Any]:
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     delete_usage_card(plugin_id)
+    # Only directories still carrying this plugin's ownership marker go; a
+    # skill the user has since taken over stays.
+    removed_skills = remove_bundled_skills(plugin_id, list(spec.bundled_skills))
     _refresh_plugin_in_live_registry(plugin_id)
 
     revocation = "unsupported"
@@ -1026,4 +1066,9 @@ async def community_uninstall(plugin_id: str) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 - never block the uninstall
             log.info("plugin %s revocation skipped: %s", plugin_id, exc)
             revocation = "failed"
-    return {"ok": True, "removed": removed, "revocation": revocation}
+    return {
+        "ok": True,
+        "removed": removed,
+        "removed_skills": removed_skills,
+        "revocation": revocation,
+    }

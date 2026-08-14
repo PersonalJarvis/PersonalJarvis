@@ -60,6 +60,12 @@ class CommunityPluginEntry(_Tolerant):
     # taking the whole index down.
     plugin_json: dict[str, Any]
     mcp_json: dict[str, Any] | None = None
+    # The package's `skills/<name>/SKILL.md` files, embedded the same way —
+    # a plugin that bundles skills is the combination the Agent Plugins
+    # standard exists for. Embedded rather than linked so installing touches
+    # no host but the index itself, and validated at install time
+    # (agent_plugins_loader.validate_bundled_skills).
+    skills: list[dict[str, Any]] = Field(default_factory=list)
     usage_card: str | None = None
 
 

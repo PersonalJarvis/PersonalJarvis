@@ -200,6 +200,12 @@ class PluginSpec(_BaseAuth):
     # Native in-process router tool backing this plugin when no MCP server
     # exists (Gmail uses the REST API directly with marketplace-stored tokens).
     native_tool: str | None = None
+    # Names of the skills an Agent Plugins package brought with it
+    # (`skills/<name>/SKILL.md`). Recorded on the catalog entry so uninstall
+    # knows exactly which skill directories the plugin owns — a skill the
+    # user installed separately under the same name must survive, and one
+    # this package wrote must not outlive it. Empty for every seed entry.
+    bundled_skills: list[str] = Field(default_factory=list)
     post_install_hint_md: str | None = None
     future_v2_note: str | None = None
 

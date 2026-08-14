@@ -13,8 +13,11 @@ import pytest
 
 from jarvis.marketplace.agent_plugins_loader import (
     EXTENSION_NAMESPACE,
+    MAX_BUNDLED_SKILLS,
+    MAX_SKILL_MD_BYTES,
     AgentPluginError,
     convert_manifest,
+    convert_package,
     validate_spec_name,
 )
 
@@ -104,16 +107,24 @@ def test_valid_stdio_manifest_converts() -> None:
     }
 
 
-def test_manifest_without_mcp_json_is_metadata_only() -> None:
-    spec = convert_manifest(_plugin_json())
-    assert spec.mcp_server is None
+def test_manifest_without_any_component_is_rejected() -> None:
+    """A card that collects a token and offers nothing is not a plugin.
+
+    The manifest alone is valid under the spec (components are optional), but
+    for a COMMUNITY entry the three ways to be useful are an MCP server, a
+    hosted MCP auth mode, and bundled skills — native bindings are blocked.
+    Without one of them the store would show a connectable card with no tools
+    behind it.
+    """
+    with pytest.raises(AgentPluginError, match="no components"):
+        convert_manifest(_plugin_json())
 
 
 def test_defaults_fill_missing_branding() -> None:
     manifest = _plugin_json()
     extension = manifest["extensions"][EXTENSION_NAMESPACE]
     del extension["display_name"], extension["category"], extension["logo_slug"]
-    spec = convert_manifest(manifest)
+    spec = convert_manifest(manifest, _mcp_json_http())
     assert spec.display_name == "Todo Fox"
     assert spec.category == "Community"
     assert spec.logo_slug == "todo-fox"
@@ -220,3 +231,117 @@ def test_invalid_auth_mode_maps_to_readable_error() -> None:
     manifest["extensions"][EXTENSION_NAMESPACE]["auth"] = {"mode": "made-up"}
     with pytest.raises(AgentPluginError, match="auth"):
         convert_manifest(manifest)
+
+
+# --- Schema conformance ------------------------------------------------------
+
+
+def test_missing_schema_declaration_rejected() -> None:
+    """`$schema` is REQUIRED by the spec and pins the format version.
+
+    The spec forbids reassigning a published schema id to different contents,
+    so an equality check is how a client states which format it understands —
+    a manifest without it could be any future revision.
+    """
+    manifest = _plugin_json()
+    del manifest["$schema"]
+    with pytest.raises(AgentPluginError, match=r"\$schema"):
+        convert_manifest(manifest, _mcp_json_http())
+
+
+def test_foreign_schema_version_rejected() -> None:
+    manifest = _plugin_json(
+        **{"$schema": "https://agent-plugins.org/schemas/2.0.0/plugin.schema.json"}
+    )
+    with pytest.raises(AgentPluginError, match=r"\$schema"):
+        convert_manifest(manifest, _mcp_json_http())
+
+
+# --- Bundled skills ----------------------------------------------------------
+
+
+def _skill_md(name: str = "todo-triage", extra: str = "") -> str:
+    return (
+        "---\n"
+        'schema_version: "1"\n'
+        f"name: {name}\n"
+        "description: Sort the inbox into today and later.\n"
+        f"{extra}"
+        "---\n\n"
+        "Group open tasks by due date before answering.\n"
+    )
+
+
+def test_bundled_skill_rides_along_with_the_plugin() -> None:
+    package = convert_package(
+        _plugin_json(),
+        _mcp_json_http(),
+        [{"name": "todo-triage", "skill_md": _skill_md()}],
+    )
+    assert [skill.name for skill in package.skills] == ["todo-triage"]
+    # Recorded on the catalog entry so uninstall knows what it owns.
+    assert package.spec.bundled_skills == ["todo-triage"]
+
+
+def test_bundled_skill_may_not_declare_its_own_risk_policy() -> None:
+    """The privilege boundary: skills/runner.py evaluates a skill's tools
+    against the SKILL'S declared tier, not the tool's own. An auto-merged
+    community skill that sets `default_tier: safe` would skip exactly the
+    confirmation the tool was given."""
+    skill = _skill_md(extra="risk_policy:\n  default_tier: safe\n")
+    with pytest.raises(AgentPluginError, match="risk_policy"):
+        convert_package(
+            _plugin_json(), _mcp_json_http(), [{"name": "todo-triage", "skill_md": skill}]
+        )
+
+
+def test_bundled_skill_name_must_be_a_slug() -> None:
+    """The name becomes a directory under the user's skills root."""
+    with pytest.raises(AgentPluginError, match="name"):
+        convert_package(
+            _plugin_json(),
+            _mcp_json_http(),
+            [{"name": "../../evil", "skill_md": _skill_md()}],
+        )
+
+
+def test_bundled_skill_without_frontmatter_rejected() -> None:
+    with pytest.raises(AgentPluginError, match="frontmatter"):
+        convert_package(
+            _plugin_json(),
+            _mcp_json_http(),
+            [{"name": "todo-triage", "skill_md": "Just prose, no frontmatter.\n"}],
+        )
+
+
+def test_bundled_skill_count_is_capped() -> None:
+    skills = [
+        {"name": f"todo-triage-{index}", "skill_md": _skill_md(f"todo-triage-{index}")}
+        for index in range(MAX_BUNDLED_SKILLS + 1)
+    ]
+    with pytest.raises(AgentPluginError, match="at most"):
+        convert_package(_plugin_json(), _mcp_json_http(), skills)
+
+
+def test_oversized_bundled_skill_rejected() -> None:
+    fat = _skill_md() + ("x" * (MAX_SKILL_MD_BYTES + 1))
+    with pytest.raises(AgentPluginError, match="exceeds"):
+        convert_package(
+            _plugin_json(), _mcp_json_http(), [{"name": "todo-triage", "skill_md": fat}]
+        )
+
+
+def test_duplicate_bundled_skill_names_rejected() -> None:
+    item = {"name": "todo-triage", "skill_md": _skill_md()}
+    with pytest.raises(AgentPluginError, match="twice"):
+        convert_package(_plugin_json(), _mcp_json_http(), [item, dict(item)])
+
+
+def test_skills_alone_satisfy_the_component_rule() -> None:
+    """A package whose only component is skills is still useful, so the
+    no-components check must not fire on it."""
+    package = convert_package(
+        _plugin_json(), None, [{"name": "todo-triage", "skill_md": _skill_md()}]
+    )
+    assert package.spec.mcp_server is None
+    assert package.spec.bundled_skills == ["todo-triage"]
