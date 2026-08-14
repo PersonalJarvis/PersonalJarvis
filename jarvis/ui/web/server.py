@@ -2384,6 +2384,17 @@ class WebServer:
             )
         _boot_mark("mission_stack")
 
+        # Errand return path — the seam that lets a finished real-world job
+        # (jarvis/errands/) reach the user again: bus events, spoken
+        # announcements, and the C1 resume of open errands.
+        try:
+            self._init_errand_stack()
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning(
+                "Errand stack init failed — errands will run without announcements"
+            )
+        _boot_mark("errand_stack")
+
         # Screenshot retention: auto-delete old Vision / Flight-Recorder blobs
         # (data/flight_recorder/blobs/) after the configured window. Runs a
         # one-shot boot sweep plus a periodic background task.
@@ -2891,6 +2902,58 @@ class WebServer:
                 periodic_recovery_sweep(result["manager"].store),
                 name="mission-recovery-resweep",
             )
+
+    def _init_errand_stack(self) -> None:
+        """Wire the errand return path (docs/plans/autonomous-missions.md).
+
+        The errand ENGINE builds itself lazily off the BrainManager
+        (jarvis/errands/service.py); what the server owns is everything that
+        makes an errand visible again after the turn ended: the global-bus
+        seam its state changes publish through, the announcer that speaks
+        terminal outcomes and mid-run questions, and the C1 resume of open
+        errands once the brain stack is up.
+        """
+        from jarvis.errands.announcer import ErrandAnnouncer
+        from jarvis.errands.service import set_event_bus
+
+        set_event_bus(self.bus)
+        announcer = ErrandAnnouncer(bus=self.bus)
+        announcer.start()
+        self.app.state.errand_announcer = announcer
+
+        # Resume is gated on the same positive primary-instance proof as
+        # mission recovery: a side process (smoke script, eval harness,
+        # --no-lock session) must never pick up — and thereby steal — the
+        # desktop app's live errands.
+        if os.environ.get("JARVIS_PRIMARY_INSTANCE") == "1":
+            self._errand_resume_task = asyncio.create_task(
+                self._resume_errands_when_brain_ready(), name="errand-resume"
+            )
+
+    async def _resume_errands_when_brain_ready(self) -> None:
+        """C1: pick open errands back up once the brain stack exists.
+
+        The BrainManager is built by the desktop app AFTER the web server, so
+        this waits patiently off the boot critical path. resume_open() itself
+        detaches every loop — a boot never waits on a booking. If the brain
+        never arrives (headless run without one), this gives up quietly; the
+        durable records stay untouched for the next boot.
+        """
+        from jarvis.errands.service import get_runner
+
+        deadline = time.monotonic() + 600
+        while time.monotonic() < deadline:
+            runner = get_runner()
+            if runner is not None:
+                resumed = await runner.resume_open()
+                if resumed:
+                    logger.info(
+                        "errands: picked {} open errand(s) back up after restart",
+                        len(resumed),
+                    )
+                return
+            await asyncio.sleep(5)
+        logger.info("errands: brain stack never came up — no errand resume this boot")
 
     async def _init_wiki_integration(self) -> None:
         """Phase B5 wiki write-wiring: bootstrap SessionRollupWorker + WikiCurator.
@@ -3588,6 +3651,17 @@ class WebServer:
             except (TimeoutError, asyncio.CancelledError):
                 pass
             self._missions_cleanup_task = None
+
+        # Errand resume waiter — may still be polling for a brain that will
+        # now never arrive.
+        errand_resume = getattr(self, "_errand_resume_task", None)
+        if errand_resume is not None:
+            errand_resume.cancel()
+            try:
+                await asyncio.wait_for(errand_resume, timeout=2.0)
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+            self._errand_resume_task = None
 
         # Screenshot-retention background task (opt-in via retention_days > 0).
         screenshot_task = getattr(self, "_screenshot_retention_task", None)

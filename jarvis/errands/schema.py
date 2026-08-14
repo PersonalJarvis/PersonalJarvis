@@ -113,6 +113,12 @@ class Errand(BaseModel):
     #: True once the user has granted this errand permission to spend money
     #: (C11). Default false; the brake asks.
     spending_allowed: bool = False
+    #: Output language of the turn that gave the order, captured at start.
+    #: A completion may be hours later with no turn open, so the announcement
+    #: has nothing to resolve against — it speaks the language the order was
+    #: given in. Empty means "unknown"; consumers fall back to the shared
+    #: default locale, never to one particular language (CLAUDE.md §1).
+    language: str = ""
     trace_id: str = ""
     created_at_ns: int = Field(default_factory=time.time_ns)
     updated_at_ns: int = Field(default_factory=time.time_ns)

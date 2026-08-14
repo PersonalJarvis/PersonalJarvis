@@ -97,7 +97,16 @@ class StartErrandTool:
         # start() returns as soon as the errand is planned (or has questions),
         # never when it is finished. Ownership lives there so every door into
         # an errand (tool, REST, CLI, resume-at-boot) detaches identically.
-        errand = await runner.start(goal, trace_id=str(ctx.trace_id))
+        #
+        # The turn's resolved output language rides along (ctx.config is the
+        # loop's config snapshot): the completion announcement may come hours
+        # later with no turn open to resolve against, so the errand remembers
+        # the language its order was given in.
+        errand = await runner.start(
+            goal,
+            trace_id=str(ctx.trace_id),
+            language=str((ctx.config or {}).get("output_language") or ""),
+        )
 
         return ToolResult(success=True, output=_report(errand))
 

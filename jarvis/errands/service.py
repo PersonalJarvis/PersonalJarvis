@@ -22,12 +22,25 @@ from typing import Any
 from jarvis.core import runtime_refs
 
 from .brain_legs import BrainLegExecutor
+from .bridge import ErrandEventBridge
 from .runner import ErrandRunner
 from .store import ErrandStore
 
 log = logging.getLogger(__name__)
 
 _RUNNER: list[ErrandRunner] = []
+_EVENT_BUS: list[Any] = []
+
+
+def set_event_bus(bus: Any) -> None:
+    """Register the global EventBus so errands can report back.
+
+    Called once at server startup, BEFORE the first errand starts. Without it
+    the runner still works — but every state change lands only in SQLite,
+    which is exactly the silent-outcome hole this seam exists to close.
+    """
+    _EVENT_BUS.clear()
+    _EVENT_BUS.append(bus)
 
 
 def _data_dir(config: Any) -> Path:
@@ -77,17 +90,21 @@ def get_runner() -> ErrandRunner | None:
     # inside a leg. Same reasoning as AP-5/AP-14 for spawn tools in worker sets.
     tools.pop("start_errand", None)
 
+    if not _EVENT_BUS:
+        log.info("errands: no event bus registered — outcomes will not be announced")
     runner = ErrandRunner(
         store=ErrandStore(_data_dir(config) / "jarvis.db"),
         execute_leg=BrainLegExecutor(brain=brain, tools=tools, executor=executor),
+        on_update=ErrandEventBridge(_EVENT_BUS[0]) if _EVENT_BUS else None,
     )
     _RUNNER.append(runner)
     return runner
 
 
 def reset_runner() -> None:
-    """Drop the cached runner. Tests only."""
+    """Drop the cached runner and bus. Tests only."""
     _RUNNER.clear()
+    _EVENT_BUS.clear()
 
 
-__all__ = ["get_runner", "reset_runner"]
+__all__ = ["get_runner", "reset_runner", "set_event_bus"]

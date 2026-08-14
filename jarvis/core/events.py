@@ -948,6 +948,64 @@ class MissionCompleted(Event):
     reason: str = ""
 
 
+# Autonomous errands — the return path (docs/plans/autonomous-missions.md).
+# The errand engine (jarvis/errands/) runs real-world jobs detached from the
+# turn; these events are how a finished booking ever reaches the user again.
+# All fields are flat for the same reason as MissionCompleted: the Tasks
+# scheduler's safe-AST filter_expr only compares top-level names.
+
+@dataclass(frozen=True, slots=True)
+class ErrandUpdated(Event):
+    """One durable state change of an autonomous errand.
+
+    Published by the errand runner's ``on_update`` seam on every persist —
+    the tick the agents board and the run inspector subscribe to. ``state``
+    carries the ``ErrandState`` value verbatim (planning / needs_input /
+    running / completed / stalled / impossible / cancelled).
+    """
+    errand_id: str = ""
+    goal: str = ""
+    state: str = ""
+    outcome: str = ""
+    steps_done: int = 0
+    language: str = _DEFAULT_EVENT_LANGUAGE
+
+
+@dataclass(frozen=True, slots=True)
+class ErrandNeedsInput(Event):
+    """An errand is waiting on the ONE thing only the user can supply (C10/C11).
+
+    ``mid_run`` distinguishes the two cases: False is the opening
+    clarification round, which the start_errand tool already surfaces inside
+    the still-open turn; True is the mid-run interruption (money, a second
+    factor on the user's phone) that happens in a detached loop where no turn
+    is open — without this event it reaches nobody.
+    """
+    errand_id: str = ""
+    goal: str = ""
+    questions: str = ""
+    mid_run: bool = False
+    language: str = _DEFAULT_EVENT_LANGUAGE
+
+
+@dataclass(frozen=True, slots=True)
+class ErrandCompleted(Event):
+    """Terminal errand outcome — the signal that keeps the promise "I will
+    report back".
+
+    ``status`` is the terminal ``ErrandState`` value (completed / stalled /
+    impossible / cancelled); ``outcome`` carries the proof for a completion
+    and the wall for everything else, per C3's rule that the user always
+    learns why. Drives the spoken announcement and When-Then rules alike.
+    """
+    errand_id: str = ""
+    goal: str = ""
+    status: str = ""
+    outcome: str = ""
+    evidence_count: int = 0
+    language: str = _DEFAULT_EVENT_LANGUAGE
+
+
 # Voice mute (user-facing toggle, e.g. mascot double-click)
 
 @dataclass(frozen=True, slots=True)
