@@ -24,6 +24,7 @@ Loopback-only (server binds 127.0.0.1) — no auth token needed.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -230,19 +231,18 @@ def _conversation_title(
 # ----------------------------------------------------------------------
 
 
-@router.get("", response_model=list[ConversationSummary])
-async def list_conversations(
-    request: Request,
-    days: int = Query(default=0, ge=0, le=3650),
-    limit: int = Query(default=200, ge=1, le=1000),
+def _collect_conversations(
+    chat_store: ChatStore,
+    session_store: Any | None,
+    days: int,
+    limit: int,
 ) -> list[ConversationSummary]:
-    """Unified history (text threads + voice sessions), newest-first.
+    """Both histories, merged and sorted. Blocking on purpose — see the route.
 
-    ``days`` is a soft recent-window filter (0 = no filter, show all).
+    Two SQLite reads plus a Pydantic model per row. The voice half alone builds
+    ``limit`` models (200 by default), which is what makes this worth a thread
+    rather than a few stray milliseconds.
     """
-    chat_store = _require_chat_store(request)
-    session_store = _optional_session_store(request)
-
     items: list[ConversationSummary] = [
         _text_thread_to_summary(t) for t in chat_store.list_threads(include_empty=False)
     ]
@@ -259,6 +259,38 @@ async def list_conversations(
 
     items.sort(key=lambda c: c.updated_ms, reverse=True)
     return items[:limit]
+
+
+@router.get("", response_model=list[ConversationSummary])
+async def list_conversations(
+    request: Request,
+    days: int = Query(default=0, ge=0, le=3650),
+    limit: int = Query(default=200, ge=1, le=1000),
+) -> list[ConversationSummary]:
+    """Unified history (text threads + voice sessions), newest-first.
+
+    ``days`` is a soft recent-window filter (0 = no filter, show all).
+
+    **Off the event loop, and that is the whole point of the hop.** The work is
+    two SQLite queries and one Pydantic model per row — 60 ms measured on this
+    install for 200 voice sessions, of which the model construction is the bulk.
+    Run inline in this ``async def`` it is 60 ms during which the loop serves
+    nothing: not the other HTTP routes, not the pane WebSockets, not the voice
+    pipeline. The history list is polled while the view is open, so those stalls
+    arrive continuously, and the desktop window — which needs an answer to keep
+    painting — goes "Not responding" (measured 2026-08-14: this route holding
+    the backend loop at 35% of a core on its own, 10 of 10 stack samples inside
+    the row-model construction).
+
+    Both stores open their connections with ``check_same_thread=False`` and
+    serialise on their own lock precisely so route handlers may read them from a
+    worker thread, so the hop is safe as well as necessary.
+    """
+    chat_store = _require_chat_store(request)
+    session_store = _optional_session_store(request)
+    return await asyncio.to_thread(
+        _collect_conversations, chat_store, session_store, days, limit
+    )
 
 
 @router.post("", response_model=NewChatResponse)

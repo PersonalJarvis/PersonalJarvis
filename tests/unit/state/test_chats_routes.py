@@ -5,6 +5,8 @@ on ``app.state`` (the established pattern), driven via httpx ASGITransport.
 """
 from __future__ import annotations
 
+import asyncio
+import time
 from types import SimpleNamespace
 
 import httpx
@@ -207,3 +209,54 @@ async def test_days_filter_excludes_old() -> None:
         r = await c.get("/api/chats", params={"days": 10})
     ids = [row["id"] for row in r.json()]
     assert ids == ["fresh"]
+
+
+async def test_history_listing_keeps_the_event_loop_free() -> None:
+    """The listing is real work; doing it ON the loop stalls the whole backend.
+
+    Two SQLite reads plus one Pydantic model per row — 60 ms measured on a real
+    install with 200 voice sessions. Run inline in the ``async def`` route that
+    is 60 ms in which the loop serves nothing: no other route, no pane
+    WebSocket, no voice turn. The history list is polled while the view is open,
+    so the stalls arrive back to back and the desktop window stops answering
+    (measured 2026-08-14: this route alone holding the backend loop at 35% of a
+    core, 10 of 10 stack samples inside the row-model construction).
+
+    Pinned by behaviour rather than by asserting ``to_thread`` is called: what
+    matters is that a concurrent coroutine still runs while the listing is in
+    flight, however that is achieved.
+    """
+    app, store = await _make_app()
+    await store.add_message(thread_id="t1", role="user", text="hi")
+
+    # A store whose read BLOCKS the thread it runs on, the way sqlite does.
+    def _blocking_list(*_args, **_kwargs):
+        time.sleep(0.2)
+        return []
+
+    app.state.session_store = SimpleNamespace(list_sessions=_blocking_list)
+
+    ticks = 0
+
+    async def _ticker() -> None:
+        # sleep(0) yields without arming a timer: on Windows the timer
+        # resolution is ~15 ms, so a timed tick would measure the clock rather
+        # than whether the loop is free.
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    beat = asyncio.create_task(_ticker())
+    try:
+        async with _client(app) as c:
+            r = await c.get("/api/chats")
+    finally:
+        beat.cancel()
+
+    assert r.status_code == 200
+    # Run ON the loop, the blocking read freezes the ticker for the whole 200 ms
+    # and it lands in single digits. Off the loop it is scheduled thousands of
+    # times. The threshold sits far below the free case and far above the
+    # stalled one, so it does not measure machine speed.
+    assert ticks > 100, f"event loop was stalled during the listing (ticks={ticks})"
