@@ -32,11 +32,64 @@ installed.
 from __future__ import annotations
 
 import codecs
-from collections.abc import Mapping
+import subprocess
+from collections.abc import Mapping, Sequence
 from typing import Protocol, runtime_checkable
 
 from jarvis.platform import detect_platform
 from jarvis.platform.capabilities import detect_capabilities
+
+#: Windows caps ``CreateProcessW``'s ``lpCommandLine`` at 32,767 characters.
+_WINDOWS_CMDLINE_LIMIT = 32_767
+
+#: Headroom below that cap. The exact string Windows receives is assembled by
+#: pywinpty AFTER we hand over argv, and its quoting grows the payload by an
+#: amount that depends on the content (every embedded quote in a JSON prompt is
+#: escaped). Refusing a little early is free; refusing a little late is not.
+_WINDOWS_CMDLINE_HEADROOM = 512
+
+
+def _windows_cmdline_length(argv: Sequence[str]) -> int:
+    """Length of the command line Windows will actually receive for ``argv``.
+
+    Mirrors how pywinpty assembles it (``ptyprocess.py``: the executable is
+    passed separately and the rest is flattened with ``list2cmdline``), because
+    the number that matters is the one CreateProcessW sees, not ``len(argv)``.
+    """
+    if not argv:
+        return 0
+    return len(argv[0]) + 1 + len(subprocess.list2cmdline(list(argv[1:])))
+
+
+def _reject_overlong_cmdline(argv: Sequence[str]) -> None:
+    """Refuse a spawn that Windows would reject anyway — before allocating one.
+
+    This guard exists because a failed ConPTY spawn is not a clean failure. By
+    the time ``CreateProcessW`` rejects the command line, the pseudoconsole has
+    already been created, and the half-built object stays reachable from the
+    raised exception's traceback. Whenever it is finally freed, its destructor
+    (``ClosePseudoConsole``) blocks forever WHILE HOLDING THE GIL — so every
+    other thread in the process stops with it: the event loop, the log writer,
+    and the desktop window, which is what the user sees as "Python is not
+    responding". Live on 2026-08-14 a 33,514-character judge prompt passed as
+    an argv element did exactly this on every Consolidator run, and the log
+    brackets the boundary precisely: 32,066 characters answered normally in
+    37 s, 33,514 raised ``WinptyError`` in 22 ms and the app froze.
+
+    Nothing can rescue that state once it exists, so the only cure is not to
+    enter it. Callers with a large payload must pass it over stdin or a file
+    rather than on the command line.
+    """
+    length = _windows_cmdline_length(argv)
+    if length <= _WINDOWS_CMDLINE_LIMIT - _WINDOWS_CMDLINE_HEADROOM:
+        return
+    raise RuntimeError(
+        f"command line too long for a Windows PTY: {length} characters, and "
+        f"Windows rejects anything over {_WINDOWS_CMDLINE_LIMIT}. Refused "
+        "before the pseudoconsole was created, because a rejected spawn "
+        "leaves one orphaned and freeing it hangs the whole process. Pass the "
+        "payload over stdin or a file instead of on the command line."
+    )
 
 
 @runtime_checkable
@@ -146,12 +199,19 @@ class WinptyBackend:
         env: Mapping[str, str] | None = None,
     ) -> PtyHandle:
         try:
-            from winpty import PtyProcess  # type: ignore[import-not-found]
+            # Both codes on purpose: without pywinpty (a headless Linux VPS)
+            # mypy reports import-not-found, with it installed import-untyped.
+            from winpty import (  # type: ignore[import-not-found, import-untyped]
+                PtyProcess,
+            )
         except ImportError as exc:
             # Preserve the exact degrade message from pty_manager.py:72-75.
             raise RuntimeError(
                 "pywinpty not installed — `pip install pywinpty` (Windows-only)."
             ) from exc
+
+        # Last thing before anything native exists: see _reject_overlong_cmdline.
+        _reject_overlong_cmdline(argv)
 
         proc = PtyProcess.spawn(
             list(argv),
