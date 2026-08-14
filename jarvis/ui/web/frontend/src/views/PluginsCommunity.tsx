@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowUpCircle,
   Check,
+  Copy,
   ExternalLink,
   FileText,
   Globe,
@@ -22,6 +23,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { BrandedSelect } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { robustCopy } from "@/lib/clipboard";
 import { openExternalUrl } from "@/lib/openExternal";
 import { PRODUCT_NAME } from "@/lib/branding";
 
@@ -46,6 +48,16 @@ import { PRODUCT_NAME } from "@/lib/branding";
 export const MARKETPLACE_SUBMIT_URL = "https://personaljarvis.ai/marketplace/submit";
 
 // Wire types — mirror /api/marketplace/community (see marketplace_routes.py).
+
+/** The three install surfaces, computed server-side by
+ *  jarvis/marketplace/install_standard.py and rendered VERBATIM — the store
+ *  must never derive its own command strings, or it drifts from the CLI. */
+export interface InstallStandardWire {
+  cli: string;
+  runner: string;
+  prompt: string;
+}
+
 export interface CommunityPluginWire {
   name: string;
   valid: boolean;
@@ -74,6 +86,7 @@ export interface CommunityPluginWire {
   seed_conflict?: boolean;
   has_usage_card?: boolean;
   post_install_hint_md?: string | null;
+  install?: InstallStandardWire | null;
 }
 
 export interface CommunitySkillWire {
@@ -89,6 +102,7 @@ export interface CommunitySkillWire {
   installed: boolean;
   installed_version?: string | null;
   update_available?: boolean;
+  install?: InstallStandardWire | null;
 }
 
 export interface CommunityCategoryWire {
@@ -167,6 +181,7 @@ export function CommunityTab() {
   const [consentPlugin, setConsentPlugin] = useState<CommunityPluginWire | null>(null);
   const [consentSkill, setConsentSkill] = useState<CommunitySkillWire | null>(null);
   const [detail, setDetail] = useState<CommunityPluginWire | null>(null);
+  const [skillDetail, setSkillDetail] = useState<CommunitySkillWire | null>(null);
 
   const invalidateAll = () => {
     // An installed community plugin is a first-class store card and an
@@ -261,7 +276,10 @@ export function CommunityTab() {
       if (!res.ok) throw new Error(`Remove failed (${res.status})`);
       return res.json();
     },
-    onSuccess: invalidateAll,
+    onSuccess: () => {
+      setSkillDetail(null);
+      invalidateAll();
+    },
   });
 
   const q = query.trim().toLowerCase();
@@ -423,6 +441,7 @@ export function CommunityTab() {
                 key={s.name}
                 skill={s}
                 layout={layout}
+                onOpen={() => setSkillDetail(s)}
                 onInstall={() => setConsentSkill(s)}
                 onRemove={() => skillRemoveMutation.mutate(s.name)}
                 busy={
@@ -492,6 +511,22 @@ export function CommunityTab() {
           onUninstall={() => uninstallMutation.mutate(detail.name)}
           uninstalling={
             uninstallMutation.isPending && uninstallMutation.variables === detail.name
+          }
+        />
+      )}
+
+      {skillDetail && (
+        <SkillDetailSheet
+          skill={skillDetail}
+          onClose={() => setSkillDetail(null)}
+          onInstall={() => {
+            setSkillDetail(null);
+            setConsentSkill(skillDetail);
+          }}
+          onRemove={() => skillRemoveMutation.mutate(skillDetail.name)}
+          removing={
+            skillRemoveMutation.isPending &&
+            skillRemoveMutation.variables === skillDetail.name
           }
         />
       )}
@@ -1025,6 +1060,7 @@ function CommunityPluginRow({
 function CommunitySkillRow({
   skill,
   layout,
+  onOpen,
   onInstall,
   onRemove,
   busy,
@@ -1032,6 +1068,7 @@ function CommunitySkillRow({
 }: {
   skill: CommunitySkillWire;
   layout: LayoutId;
+  onOpen: () => void;
   onInstall: () => void;
   onRemove: () => void;
   busy: boolean;
@@ -1054,9 +1091,13 @@ function CommunitySkillRow({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <h4 className="min-w-0 max-w-full truncate text-sm font-semibold tracking-tight text-foreground">
+            <button
+              type="button"
+              onClick={onOpen}
+              className="min-w-0 max-w-full truncate text-left text-sm font-semibold tracking-tight text-foreground outline-none hover:text-primary focus-visible:text-primary"
+            >
               {skill.title}
-            </h4>
+            </button>
             <NotReviewedBadge />
             {skill.installed && (
               <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-primary">
@@ -1279,6 +1320,8 @@ export function PluginDetailSheet({
             </Field>
           )}
 
+          {plugin.install && <InstallStandard install={plugin.install} />}
+
           <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
             <Meta label="Category" value={plugin.category} />
             <Meta label="Sign-in method" value={authLabel} />
@@ -1349,6 +1392,101 @@ export function PluginDetailSheet({
   );
 }
 
+// The three install surfaces, in the order a visitor tries them: the curated
+// CLI command, the zero-install uvx runner, the assistant prompt.
+const INSTALL_TABS = [
+  { id: "cli", label: "CLI", hint: "Runs in any terminal while the app is running." },
+  {
+    id: "runner",
+    label: "uvx",
+    hint: "No install needed — uv fetches the CLI and runs the same command.",
+  },
+  {
+    id: "prompt",
+    label: "Prompt",
+    hint: "Paste this to your assistant — it runs the install for you.",
+  },
+] as const;
+type InstallTabId = (typeof INSTALL_TABS)[number]["id"];
+
+/** The store's install standard (the CLI | runner | Prompt pattern every
+ *  comparable store shows on a detail page). Strings arrive verbatim from the
+ *  backend — see InstallStandardWire — so the copy button can never hand out
+ *  a command the CLI does not have. */
+function InstallStandard({ install }: { install: InstallStandardWire }) {
+  const [tab, setTab] = useState<InstallTabId>("cli");
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  const active = INSTALL_TABS.find((t) => t.id === tab) ?? INSTALL_TABS[0];
+  const value = install[tab];
+  return (
+    <section>
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-foreground">
+          Install
+        </h3>
+        <div className="flex items-center">
+          {INSTALL_TABS.map((t, i) => (
+            <span key={t.id} className="flex items-center">
+              {i > 0 && (
+                <span aria-hidden className="mx-1.5 select-none text-muted-foreground/40">
+                  |
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setTab(t.id);
+                  setCopied(false);
+                }}
+                className={cn(
+                  "text-[11px] font-medium transition-colors",
+                  tab === t.id
+                    ? "text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {t.label}
+              </button>
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 py-1 pl-2.5 pr-1">
+        <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap py-1 text-xs text-foreground">
+          {tab !== "prompt" && (
+            <span aria-hidden className="select-none text-muted-foreground">
+              ${" "}
+            </span>
+          )}
+          {value}
+        </code>
+        <button
+          type="button"
+          onClick={async () => {
+            if (await robustCopy(value)) setCopied(true);
+          }}
+          className="grid h-7 w-7 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          title={copied ? "Copied" : "Copy"}
+          aria-label={`Copy the ${active.label} install command`}
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5 text-primary" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+        </button>
+      </div>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">{active.hint}</p>
+    </section>
+  );
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
@@ -1366,6 +1504,167 @@ function Meta({ label, value }: { label: string; value?: string | null }) {
     <div className="flex items-baseline justify-between gap-3 border-b border-border/40 pb-1.5">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="truncate text-xs font-medium text-foreground">{value}</dd>
+    </div>
+  );
+}
+
+/** The skill detail view — the same sheet plugins get, so the install
+ *  standard has a place to live for skills too (a row with two buttons
+ *  cannot carry three install surfaces). */
+export function SkillDetailSheet({
+  skill,
+  onClose,
+  onInstall,
+  onRemove,
+  removing,
+}: {
+  skill: CommunitySkillWire;
+  onClose: () => void;
+  onInstall: () => void;
+  onRemove: () => void;
+  removing: boolean;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const published = relativeDate(skill.published_at);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="community-skill-detail-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/70 p-4 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+        <header className="flex items-start gap-4 border-b border-border px-6 py-5">
+          <div className="grid h-14 w-14 shrink-0 place-items-center rounded-lg border border-border/60 bg-muted/60">
+            <FileText className="h-6 w-6 text-muted-foreground" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2
+              id="community-skill-detail-title"
+              className="font-display text-lg font-semibold tracking-tight text-foreground"
+            >
+              {skill.title}
+            </h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {skill.publisher ? `by ${skill.publisher}` : "unknown publisher"}
+              {skill.version ? ` · v${skill.version}` : ""}
+              {published ? ` · published ${published}` : ""}
+            </p>
+            <div className="mt-1.5">
+              <NotReviewedBadge />
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5 text-sm">
+          <p className="text-muted-foreground">{skill.description}</p>
+
+          <section>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground">
+              What it is allowed to do
+            </h3>
+            <ul className="space-y-1.5">
+              <li className="flex items-start gap-2 text-xs text-muted-foreground">
+                <span className="mt-0.5 shrink-0 text-muted-foreground">
+                  <FileText className="h-3.5 w-3.5" />
+                </span>
+                <span>
+                  A set of instructions the assistant follows once you switch
+                  it on — it runs no code by itself.
+                </span>
+              </li>
+            </ul>
+          </section>
+
+          {skill.raw_url && (
+            <Field label="The instructions are downloaded from">
+              {skill.raw_url}
+            </Field>
+          )}
+
+          {skill.install && <InstallStandard install={skill.install} />}
+
+          <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+            <Meta
+              label="Categories"
+              value={skill.categories.length ? skill.categories.join(", ") : undefined}
+            />
+            <Meta
+              label="Installed version"
+              value={skill.installed_version ? `v${skill.installed_version}` : undefined}
+            />
+          </dl>
+
+          {skill.update_available && (
+            <p className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-2 text-xs text-foreground">
+              <ArrowUpCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+              Version {skill.version} is available — you have{" "}
+              {skill.installed_version ?? "an older version"}.
+            </p>
+          )}
+        </div>
+
+        <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-6 py-4">
+          {skill.source_url && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => openExternalUrl(skill.source_url ?? "")}
+            >
+              <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+              View source
+            </Button>
+          )}
+          {skill.installed ? (
+            <>
+              {skill.update_available && skill.raw_url && (
+                <Button size="sm" onClick={onInstall}>
+                  <ArrowUpCircle className="mr-1.5 h-3.5 w-3.5" />
+                  Update
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={onRemove} disabled={removing}>
+                {removing ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                Remove
+              </Button>
+            </>
+          ) : skill.raw_url ? (
+            <Button size="sm" onClick={onInstall}>
+              Install
+            </Button>
+          ) : (
+            <span
+              className="text-xs text-muted-foreground"
+              title="No direct download — open the source and follow its steps"
+            >
+              Manual install — see the source.
+            </span>
+          )}
+        </footer>
+      </div>
     </div>
   );
 }
