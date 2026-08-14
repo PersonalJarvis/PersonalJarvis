@@ -26,11 +26,12 @@ enforcement.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any, Final, Protocol
 
@@ -128,13 +129,24 @@ class ErrandRunner:
     max_rechecks: int = MAX_RECHECKS
     max_legs_backstop: int = MAX_LEGS_BACKSTOP
     _cancelled: set[str] = field(default_factory=set)
+    #: Strong references to in-flight loops. The runner owns its background
+    #: work: a caller that had to remember create_task-and-hold would be the
+    #: classic fire-and-forget asyncio bug waiting to happen (and was — the
+    #: start_errand tool held a detach branch that was never reachable).
+    _tasks: set[asyncio.Task[Any]] = field(default_factory=set)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     async def start(self, goal: str, *, trace_id: str = "") -> Errand:
-        """Take on a new errand and carry it as far as it can go right now."""
+        """Open a new errand: gather context, ask once, plan — then detach.
+
+        Returns as soon as the errand is under way (or has questions). The
+        loop itself continues as a background task owned by this runner —
+        "book me a flight" must never hold the conversation turn hostage
+        until the flight is booked.
+        """
         errand = Errand(id=str(uuid.uuid4()), goal=goal.strip(), trace_id=trace_id)
         await self._persist(errand)
 
@@ -142,17 +154,25 @@ class ErrandRunner:
         errand = await self._clarify(errand)  # C10
         if errand.state is ErrandState.NEEDS_INPUT:
             return errand
-        return await self._plan_and_run(errand)
+        errand = await self._plan(errand)
+        self._detach(self.run(errand), errand.id)
+        return errand
 
     async def provide_answers(self, errand_id: str, answers: str) -> Errand | None:
-        """The user answered the one clarification round — now work alone."""
+        """The user answered the one clarification round — now work alone.
+
+        Same contract as ``start``: returns once the errand is planned and
+        moving again; the loop runs detached.
+        """
         errand = await self.store.get(errand_id)
         if errand is None:
             return None
         combined = f"{errand.answers}\n{answers}".strip() if errand.answers else answers
         errand = errand.with_state(ErrandState.PLANNING, answers=combined, open_questions=())
         await self._persist(errand)
-        return await self._plan_and_run(errand)
+        errand = await self._plan(errand)
+        self._detach(self.run(errand), errand.id)
+        return errand
 
     async def cancel(self, errand_id: str, reason: str = "the user stopped it") -> Errand | None:
         """Stop an errand. The running loop notices at its next leg boundary."""
@@ -168,8 +188,9 @@ class ErrandRunner:
         """Pick up every unfinished errand after a restart (C1).
 
         A restart is not a failure and must not read as one: an errand that was
-        mid-flight goes straight back to running, and one that was waiting on
-        the user stays waiting.
+        mid-flight goes straight back to running (detached, so a boot never
+        waits on a booking), and one that was waiting on the user stays
+        waiting.
         """
         resumed: list[Errand] = []
         for errand in await self.store.list_open():
@@ -177,8 +198,14 @@ class ErrandRunner:
                 resumed.append(errand)  # still the user's move
                 continue
             log.info("errand %s: resuming after restart", errand.id)
-            resumed.append(await self._plan_and_run(errand))
+            self._detach(self._plan_and_run(errand), errand.id)
+            resumed.append(errand)
         return resumed
+
+    async def join(self) -> None:
+        """Wait for every detached loop to finish. Tests and shutdown only."""
+        while self._tasks:
+            await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
 
     # ------------------------------------------------------------------
     # Phases
@@ -215,8 +242,8 @@ class ErrandRunner:
         await self._persist(errand)
         return errand
 
-    async def _plan_and_run(self, errand: Errand) -> Errand:
-        """C8 — plan, then run alone."""
+    async def _plan(self, errand: Errand) -> Errand:
+        """C8 — write the step plan (a fast judgement leg) and mark it running."""
         if not errand.plan:
             outcome = await self._leg(
                 system_prompt=plan_prompt(errand),
@@ -232,7 +259,17 @@ class ErrandRunner:
             errand = errand.model_copy(update={"plan": steps})
         errand = errand.with_state(ErrandState.RUNNING)
         await self._persist(errand)
-        return await self.run(errand)
+        return errand
+
+    async def _plan_and_run(self, errand: Errand) -> Errand:
+        """Plan (if the record has none yet), then run alone. Resume path."""
+        return await self.run(await self._plan(errand))
+
+    def _detach(self, loop: Coroutine[Any, Any, Errand], errand_id: str) -> None:
+        """Continue an errand as a background task the runner holds on to."""
+        task = asyncio.create_task(loop, name=f"errand-{errand_id[:8]}")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def run(self, errand: Errand) -> Errand:
         """The loop. No step cap, no clock — it ends on an outcome (C1)."""

@@ -106,16 +106,31 @@ async def test_questions_come_back_for_the_brain_to_ask(
 
 
 @pytest.mark.asyncio
-async def test_a_finished_errand_reports_its_proof(
+async def test_the_tool_returns_on_it_while_the_errand_keeps_working(
     ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """The turn gets "I'm on it"; the proof lands in the durable record.
+
+    Before the detach fix the tool blocked the whole conversation turn until
+    the errand finished — a spoken order froze the voice pipeline for the
+    entire booking. The tool's contract is the OPENING report, never the
+    outcome; the outcome travels via the errand record (and its events).
+    """
+    store = ErrandStore(tmp_path / "e.db")
     legs = ScriptedLegs(
         work=["Booked. EVIDENCE: ref ZZ42"],
         verdicts=[{"done": True, "proof": "ref ZZ42"}],
     )
-    runner = ErrandRunner(store=ErrandStore(tmp_path / "e.db"), execute_leg=legs)
+    runner = ErrandRunner(store=store, execute_leg=legs)
     monkeypatch.setattr("jarvis.plugins.tool.start_errand.get_runner", lambda: runner)
 
     result = await StartErrandTool().execute({"goal": "book a flight"}, ctx)
-    assert result.output["state"] == ErrandState.COMPLETED
-    assert "ZZ42" in result.output["proof"]
+    assert result.success is True
+    assert result.output["state"] == ErrandState.RUNNING
+    assert "report back" in result.output["say"]
+
+    await runner.join()
+    final = await store.get(result.output["errand_id"])
+    assert final is not None
+    assert final.state is ErrandState.COMPLETED
+    assert "ZZ42" in final.outcome

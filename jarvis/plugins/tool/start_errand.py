@@ -20,7 +20,6 @@ description: an order gets an errand, a question gets an answer.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -94,23 +93,13 @@ class StartErrandTool:
                 ),
             )
 
+        # The runner detaches the loop itself and holds the task reference —
+        # start() returns as soon as the errand is planned (or has questions),
+        # never when it is finished. Ownership lives there so every door into
+        # an errand (tool, REST, CLI, resume-at-boot) detaches identically.
         errand = await runner.start(goal, trace_id=str(ctx.trace_id))
 
-        # A run that is still going gets its own task: this tool must return
-        # while the errand continues. The reference is held so the loop is not
-        # garbage-collected mid-flight.
-        if errand.state is ErrandState.RUNNING:
-            task = asyncio.create_task(runner.run(errand))
-            _BACKGROUND.add(task)
-            task.add_done_callback(_BACKGROUND.discard)
-
         return ToolResult(success=True, output=_report(errand))
-
-
-#: Strong references to in-flight errand loops. Without this the task is only
-#: weakly held by the event loop and may be collected mid-run — the classic
-#: fire-and-forget asyncio bug.
-_BACKGROUND: set[asyncio.Task[Any]] = set()
 
 
 def _report(errand: Any) -> dict[str, Any]:

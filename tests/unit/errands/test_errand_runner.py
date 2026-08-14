@@ -13,6 +13,7 @@ never completes is as broken as one that always does.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -101,6 +102,19 @@ def store(tmp_path: Path) -> ErrandStore:
     return ErrandStore(tmp_path / "errands.db")
 
 
+async def settled(runner: ErrandRunner, goal: str) -> Errand:
+    """Start an errand, wait out its detached loop, return the durable record.
+
+    ``start()`` detaches the loop on purpose — a conversation turn must never
+    wait for a booking. The behaviour pins below judge the FINISHED errand, so
+    they wait explicitly and then read what was persisted: the same record a
+    restart would see, which makes the pins honest about C1 for free.
+    """
+    opened = await runner.start(goal)
+    await runner.join()
+    return await runner.store.get(opened.id) or opened
+
+
 # ----------------------------------------------------------------------
 # C3 — proof, not opinion
 # ----------------------------------------------------------------------
@@ -112,7 +126,7 @@ async def test_completion_requires_the_verifier(store: ErrandStore) -> None:
         work=["Booked it. EVIDENCE: booking reference XY123"],
         verdicts=[{"done": True, "proof": "reference XY123 exists"}],
     )
-    errand = await ErrandRunner(store=store, execute_leg=legs).start("book a flight")
+    errand = await settled(ErrandRunner(store=store, execute_leg=legs), "book a flight")
     assert errand.state is ErrandState.COMPLETED
     assert "XY123" in errand.outcome
     assert "verify" in legs.calls
@@ -129,7 +143,7 @@ async def test_a_confident_worker_does_not_finish_the_errand(store: ErrandStore)
         work=["DONE! Everything is finished and the flight is fully booked."],
         verdicts=[{"done": False, "missing": "no booking reference anywhere"}],
     )
-    errand = await ErrandRunner(store=store, execute_leg=legs).start("book a flight")
+    errand = await settled(ErrandRunner(store=store, execute_leg=legs), "book a flight")
     assert errand.state is not ErrandState.COMPLETED
     # It kept working after the claim rather than accepting it.
     assert len(errand.steps) > 1
@@ -147,7 +161,7 @@ async def test_run_stops_when_nothing_lands(store: ErrandStore) -> None:
         verdicts=[{"done": False}],
         rechecks=[{"route_exists": False, "why_impossible": "the site blocks automation"}],
     )
-    errand = await ErrandRunner(store=store, execute_leg=legs).start("book a flight")
+    errand = await settled(ErrandRunner(store=store, execute_leg=legs), "book a flight")
     assert errand.state in {ErrandState.STALLED, ErrandState.IMPOSSIBLE}
     assert errand.outcome
 
@@ -162,7 +176,7 @@ async def test_work_that_lands_facts_is_never_cut_off(store: ErrandStore) -> Non
     work = [f"Step {i}. EVIDENCE: fact number {i}" for i in range(12)]
     verdicts = [{"done": False}] * 11 + [{"done": True, "proof": "all facts in place"}]
     legs = ScriptedLegs(work=work, verdicts=verdicts, plan=["a"] * 12)
-    errand = await ErrandRunner(store=store, execute_leg=legs).start("a long errand")
+    errand = await settled(ErrandRunner(store=store, execute_leg=legs), "a long errand")
     assert errand.state is ErrandState.COMPLETED
     assert len(errand.steps) == 12
 
@@ -203,7 +217,7 @@ async def test_a_wall_is_rechecked_before_it_is_reported(store: ErrandStore) -> 
         verdicts=[{"done": False}] * 3 + [{"done": True, "proof": "ref QQ9"}],
         rechecks=[{"route_exists": True, "next_move": "use the airline site directly"}],
     )
-    errand = await ErrandRunner(store=store, execute_leg=legs).start("book a flight")
+    errand = await settled(ErrandRunner(store=store, execute_leg=legs), "book a flight")
     assert "recheck" in legs.calls
     assert errand.state is ErrandState.COMPLETED
     # The alternative route was added to the plan, so the user can see it.
@@ -220,7 +234,7 @@ async def test_rechecks_are_bounded_so_optimism_cannot_loop(store: ErrandStore) 
         rechecks=[{"route_exists": True, "next_move": "try again differently"}],
     )
     runner = ErrandRunner(store=store, execute_leg=legs, max_rechecks=2)
-    errand = await runner.start("book a flight")
+    errand = await settled(runner, "book a flight")
     assert errand.state is ErrandState.STALLED
     assert legs.calls.count("recheck") == 2
 
@@ -236,7 +250,7 @@ async def test_context_is_gathered_before_any_question(store: ErrandStore) -> No
         context="FOUND: the user flies from Hamburg, calendar is free from the 12th",
         questions=["Which cabin class?"],
     )
-    errand = await ErrandRunner(store=store, execute_leg=legs).start("book a flight")
+    errand = await settled(ErrandRunner(store=store, execute_leg=legs), "book a flight")
     assert legs.calls.index("context") < legs.calls.index("clarify")
     assert "Hamburg" in errand.gathered_context
     assert errand.state is ErrandState.NEEDS_INPUT
@@ -251,7 +265,7 @@ async def test_no_questions_means_no_interruption(store: ErrandStore) -> None:
         work=["Done it. EVIDENCE: confirmation mail received"],
         verdicts=[{"done": True, "proof": "confirmation mail"}],
     )
-    errand = await ErrandRunner(store=store, execute_leg=legs).start("book a flight")
+    errand = await settled(ErrandRunner(store=store, execute_leg=legs), "book a flight")
     assert errand.state is ErrandState.COMPLETED
 
 
@@ -263,13 +277,16 @@ async def test_answers_resume_the_errand_without_asking_again(store: ErrandStore
         verdicts=[{"done": True, "proof": "ref AA11"}],
     )
     runner = ErrandRunner(store=store, execute_leg=legs)
-    errand = await runner.start("book a flight")
+    errand = await settled(runner, "book a flight")
     assert errand.state is ErrandState.NEEDS_INPUT
 
     resumed = await runner.provide_answers(errand.id, "economy")
     assert resumed is not None
-    assert resumed.state is ErrandState.COMPLETED
     assert "economy" in resumed.answers
+    await runner.join()
+    final = await store.get(errand.id)
+    assert final is not None
+    assert final.state is ErrandState.COMPLETED
     # Asked once, not twice.
     assert legs.calls.count("clarify") == 1
 
@@ -283,7 +300,7 @@ async def test_mid_run_the_user_is_only_pulled_in_for_what_only_they_have(
         work=["NEEDS-USER: the airline wants the code from your authenticator app"],
         verdicts=[{"done": False}],
     )
-    errand = await ErrandRunner(store=store, execute_leg=legs).start("book a flight")
+    errand = await settled(ErrandRunner(store=store, execute_leg=legs), "book a flight")
     assert errand.state is ErrandState.NEEDS_INPUT
     assert "authenticator" in errand.open_questions[0]
 
@@ -299,7 +316,7 @@ async def test_every_leg_is_persisted_as_it_happens(store: ErrandStore) -> None:
         work=["Step done. EVIDENCE: page shows seat selected"],
         verdicts=[{"done": True, "proof": "seat selected"}],
     )
-    errand = await ErrandRunner(store=store, execute_leg=legs).start("book a flight")
+    errand = await settled(ErrandRunner(store=store, execute_leg=legs), "book a flight")
     reloaded = await store.get(errand.id)
     assert reloaded is not None
     assert reloaded.state is ErrandState.COMPLETED
@@ -326,9 +343,14 @@ async def test_a_restart_resumes_work_instead_of_failing_it(tmp_path: Path) -> N
         work=["Carried on. EVIDENCE: ref RR7"],
         verdicts=[{"done": True, "proof": "ref RR7"}],
     )
-    resumed = await ErrandRunner(store=fresh_store, execute_leg=legs).resume_open()
+    runner = ErrandRunner(store=fresh_store, execute_leg=legs)
+    resumed = await runner.resume_open()
     assert len(resumed) == 1
-    assert resumed[0].state is ErrandState.COMPLETED
+    # Resume is detached too — a boot must never wait on a booking.
+    await runner.join()
+    final = await fresh_store.get("err-1")
+    assert final is not None
+    assert final.state is ErrandState.COMPLETED
     # It continued the SAME errand rather than opening a new one.
     assert resumed[0].id == "err-1"
 
@@ -370,7 +392,7 @@ async def test_a_failing_leg_is_recorded_not_raised(store: ErrandStore) -> None:
             )
 
     legs = Exploding(verdicts=[{"done": False}])
-    errand = await ErrandRunner(store=store, execute_leg=legs).start("book a flight")
+    errand = await settled(ErrandRunner(store=store, execute_leg=legs), "book a flight")
     # It wound down honestly instead of crashing the errand.
     assert errand.state in {ErrandState.STALLED, ErrandState.IMPOSSIBLE}
 
@@ -389,7 +411,7 @@ async def test_unparseable_verdict_is_read_as_not_done(store: ErrandStore) -> No
             )
 
     legs = Garbled(work=["tried"], rechecks=[{"route_exists": False, "why_impossible": "x"}])
-    errand = await ErrandRunner(store=store, execute_leg=legs).start("book a flight")
+    errand = await settled(ErrandRunner(store=store, execute_leg=legs), "book a flight")
     assert errand.state is not ErrandState.COMPLETED
 
 
@@ -407,7 +429,7 @@ async def test_fenced_json_is_accepted(store: ErrandStore) -> None:
             )
 
     legs = Fenced(work=["did it. EVIDENCE: ref P1"])
-    errand = await ErrandRunner(store=store, execute_leg=legs).start("book a flight")
+    errand = await settled(ErrandRunner(store=store, execute_leg=legs), "book a flight")
     assert errand.state is ErrandState.COMPLETED
 
 
@@ -435,7 +457,7 @@ async def test_runaway_backstop_reports_itself_as_a_fault(store: ErrandStore) ->
 
     legs = NeverRepeats(verdicts=[{"done": False}])
     runner = ErrandRunner(store=store, execute_leg=legs, max_legs_backstop=5)
-    errand = await runner.start("an endless errand")
+    errand = await settled(runner, "an endless errand")
     assert errand.state is ErrandState.STALLED
     assert "investigate" in errand.outcome
 
@@ -444,7 +466,42 @@ async def test_runaway_backstop_reports_itself_as_a_fault(store: ErrandStore) ->
 async def test_cancel_stops_the_run(store: ErrandStore) -> None:
     legs = ScriptedLegs(work=["working"], verdicts=[{"done": False}])
     runner = ErrandRunner(store=store, execute_leg=legs)
-    errand = await runner.start("book a flight")
+    errand = await settled(runner, "book a flight")
     cancelled = await runner.cancel(errand.id)
     assert cancelled is not None
     assert cancelled.state is ErrandState.CANCELLED
+    await runner.join()
+
+
+@pytest.mark.asyncio
+async def test_start_returns_while_the_loop_is_still_working(store: ErrandStore) -> None:
+    """The turn must never wait for the booking (pin for the detach itself).
+
+    The working leg blocks on a gate the test controls. If start() ever runs
+    the loop inline again, this test deadlocks instead of merely failing —
+    which is exactly the severity the regression deserves.
+    """
+    gate = asyncio.Event()
+
+    class Gated(ScriptedLegs):
+        async def __call__(self, *, system_prompt: str, instruction: str, with_tools: bool):
+            if _WORK.lower() in system_prompt.lower():
+                await asyncio.wait_for(gate.wait(), timeout=10)
+            return await super().__call__(
+                system_prompt=system_prompt, instruction=instruction, with_tools=with_tools
+            )
+
+    legs = Gated(
+        work=["Booked. EVIDENCE: ref GG5"],
+        verdicts=[{"done": True, "proof": "ref GG5"}],
+    )
+    runner = ErrandRunner(store=store, execute_leg=legs)
+    opened = await runner.start("book a flight")
+    assert opened.state is ErrandState.RUNNING  # back before any work happened
+    assert opened.plan  # but already planned, so the user can be told the shape
+
+    gate.set()
+    await runner.join()
+    final = await store.get(opened.id)
+    assert final is not None
+    assert final.state is ErrandState.COMPLETED
