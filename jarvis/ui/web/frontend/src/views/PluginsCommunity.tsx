@@ -276,8 +276,10 @@ export function CommunityTab() {
       if (!res.ok) throw new Error(`Remove failed (${res.status})`);
       return res.json();
     },
-    onSuccess: () => {
-      setSkillDetail(null);
+    onSuccess: (_result, name) => {
+      // Close the sheet only if it shows the removed skill — removing B
+      // from a list row must not close an open sheet for A.
+      setSkillDetail((d) => (d && d.name === name ? null : d));
       invalidateAll();
     },
   });
