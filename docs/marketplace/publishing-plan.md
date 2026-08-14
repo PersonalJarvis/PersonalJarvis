@@ -30,14 +30,14 @@ Three concrete gaps, in order of how much they hurt:
    will do that.
 2. **One file per submission.** `scripts/automerge_gate.py` matches
    `^submissions/[a-z0-9][a-z0-9.-]*\.json$` and requires the PR to change
-   *exactly one* file. Anything multi-file — a skill with `references/`, a
-   bundle carrying both skills and an MCP server — cannot auto-merge. The
-   format is capped by the gate, not by the spec.
-3. **Plugin and skill are split.** Our submission schema has
-   `kind: "plugin" | "skill"` as mutually exclusive. Agent Plugins v1.0.0
-   says the opposite: one plugin *contains* skills and MCP servers. We
-   adopted the standard for connectors only and never took the `skills/`
-   half of it.
+   *exactly one* file. Bundled skills fit inside that file, so this is no
+   longer a blocker for the standard — but a skill with `references/`, or
+   any package that genuinely needs several files, still cannot auto-merge.
+3. **Plugin and skill were split.** Our submission schema has
+   `kind: "plugin" | "skill"` as mutually exclusive, and Agent Plugins
+   v1.0.0 says a plugin *contains* skills and MCP servers. **Closed
+   2026-08-14** on the client side: the two upload doors stay, but a plugin
+   package may now bundle skills (§3).
 
 ---
 
@@ -65,10 +65,27 @@ verify, no second host to trust, and delisting is a `git revert`.
 
 ---
 
-## 3. The standard: one package format, three shapes, one locked tier
+## 3. The standard: two upload shapes, one package format
 
-**Decision: drop `kind`. Every submission is an Agent Plugins v1.0.0
-directory.**
+**Decision (maintainer, 2026-08-14): the two upload shapes stay.** You
+publish *either* a skill *or* a plugin, because a skill genuinely is just a
+Markdown file and asking its author to wrap it in a manifest is friction for
+nothing. What changes is the plugin side: a plugin package may now **bundle
+skills**, which is the combination Agent Plugins v1.0.0 exists for. The
+author-facing reference is [package-layout.md](package-layout.md).
+
+The submission file keeps `kind: "plugin" | "skill"` and stays ONE file per
+PR — a bundled skill travels inside the plugin submission as
+`skills: [{name, skill_md}]`, so the auto-merge gate needs no change for
+this. Multi-file packages (a skill with `references/`) remain blocked by
+the gate and are deliberately out of scope until someone needs them.
+
+**Shipped 2026-08-14** (`convert_package` + `bundled_skills.py`): the loader
+validates and installs bundled skills, ownership markers keep a plugin from
+overwriting or deleting a skill it does not own, `$schema` is enforced, and
+a package with no working component is rejected.
+
+Below is the package layout underneath both shapes.
 
 ```
 submissions/<name>/
@@ -81,39 +98,45 @@ submissions/<name>/
     └── logo.svg                    # optional — square mark
 ```
 
-What the author puts in decides the shape — the store labels it, the author
-never picks it:
+Within the plugin shape, what the author puts in decides the rest — the
+store labels it, the author never sub-classifies it (this is where ClawHub
+asks up front and we do not):
 
 | Shape | Contains | Carries code? | Community |
 |---|---|---|---|
 | **Connector** | `plugin.json` + `mcp.json` + auth extension | No (endpoint or pinned launcher) | Allowed — this is what ships today |
-| **Skill pack** | `plugin.json` + `skills/` | No (Markdown only) | Allowed |
-| **Bundle** | both of the above | No | Allowed — the shape the spec exists for |
+| **Bundle** | connector + `skills/` | No | Allowed — the shape the spec exists for |
+| **Skill** | one `SKILL.md`, uploaded as a skill | No (Markdown only) | Allowed — needs no manifest, no auth, no connect flow |
 | **Native** | `extensions[…].native_tool`, Python entry point | **Yes** | **Blocked** — repo-contributed only, already rejected by `agent_plugins_loader.py` |
 
-Three rules that keep the "no foreign code execution" line intact:
+Four rules that keep the "no foreign code, no self-granted privilege" line
+intact — all four enforced in `agent_plugins_loader.py` as of 2026-08-14:
 
 1. **No `scripts/` in community skills.** The spec allows a skill to ship
-   executable scripts; we reject that directory on submission. A community
-   skill is instructions and reference text. Repo-contributed skills keep
+   executable scripts; the index embeds only `SKILL.md`, and the registry
+   rejects the directory on submission. Repo-contributed skills keep
    `scripts/` because they pass human review.
-2. **stdio stays allowlisted and pinned** — `npx` / `uvx` / `docker`, exact
+2. **No self-declared `risk_policy`.** `skills/runner.py` evaluates a
+   skill's tools against the SKILL'S declared tier rather than the tool's
+   own — an auto-merged author could otherwise mark a tool `safe` and skip
+   its confirmation.
+3. **stdio stays allowlisted and pinned** — `npx` / `uvx` / `docker`, exact
    versions, no `@latest`. Unchanged from today, enforced in both places.
-3. **`references/` is text only** — an extension allowlist (`.md`, `.txt`,
-   `.json`, `.csv`), a per-file cap, and a total-package cap.
+4. **Every package carries a working component.** No MCP server, no hosted
+   auth URL and no skills means a card that collects a token and does
+   nothing.
 
-**Why this is worth the migration.** A bundle written for us runs unchanged
-in ChatGPT, Cursor, Copilot, Kiro, and VS Code, and theirs run here — they
-read `skills/` and `mcp.json` and ignore our extension namespace, exactly as
-the spec intends. ClawHub's hard Skill/Plugin split gives up that
-portability. This is the one place where following the standard more
-literally than the competition is a straight product advantage.
+**Why the bundle shape is worth having.** A bundle written for us runs
+unchanged in ChatGPT, Cursor, Copilot, Kiro, and VS Code, and theirs run
+here — they read `skills/` and `mcp.json` and ignore our extension
+namespace, exactly as the spec intends. ClawHub's hard split gives that up
+on the plugin side; we keep the friendly two-door upload AND the portable
+package underneath.
 
-**Back-compat is free.** The compiled `index.json` keeps emitting both
-`plugins[]` and `skills[]`; the index builder projects each package into the
-lists an older client expects (a skill-pack with one skill also appears as a
-`skills[]` entry with a `raw_url`). `CommunityIndex` is already
-`extra="allow"`, so new fields never break an old app.
+**Back-compat is free.** `CommunityIndex` is already `extra="allow"`, so the
+new `skills` block on a plugin entry is simply ignored by an older app,
+which keeps installing the connector alone. The compiled `index.json` goes
+on emitting both `plugins[]` and `skills[]`.
 
 ---
 
@@ -156,10 +179,14 @@ in a text field.
 ### Path 3 — the storefront form (`personaljarvis.ai/marketplace/submit`)
 
 The only path that reaches someone who has *not* installed Jarvis, and the
-one the README already promises. Needs a repo, hosting, a domain, and a
-GitHub OAuth app that opens the PR on the author's behalf. Highest cost,
-lowest urgency — but until it exists, **fix the README** so it points at the
-CLI instead of a dead link.
+one the README already promises. **In build since 2026-08-14** in a parallel
+effort — see [github-signin-implementation.md](github-signin-implementation.md)
+(GitHub App, cookie session, Cloudflare Pages Functions, bot opens the PR)
+and [github-login-analysis.md](github-login-analysis.md) for the decision.
+The registry repo is private until that gate is green, so no submission path
+is open at all right now. Nothing in this plan duplicates that work: it
+supplies the *format* the form will upload and the *validator* it should
+call.
 
 ---
 
@@ -183,33 +210,39 @@ release cannot silently change what the registry accepts.
 
 ## 6. Waves
 
-**W1 — Unblock the format.** Auto-merge gate accepts
-`submissions/<name>/**` (added/modified only, path-traversal-safe, capped
-file count and total size). Submission schema gains the directory form; the
-single-file JSON keeps working. Expansion and index build handle `skills/`.
-*Done when:* a two-file skill-pack PR auto-merges and shows up in
-`index.json`.
+**W1 — Client-side bundles. DONE 2026-08-14.** `convert_package` validates
+a package's skills; `bundled_skills.py` writes them under the user's skills
+root behind an ownership marker; install rolls back on a name conflict and
+uninstall takes only what the plugin owns. `$schema` and the
+working-component rule land with it. 10 new tests.
 
-**W2 — One validator.** Extract `submission_rules.py`, point the registry CI
+**W2 — Registry side of the same format.** Submission schema gains
+`skills: [{name, skill_md}]` for `kind: "plugin"`; `validate.py` applies the
+four §3 rules; `expand.py` writes a real `skills/<name>/SKILL.md` into the
+package directory; `build_index.py` embeds them. Gate untouched — it is
+still one file. *Done when:* a bundle submission auto-merges and the app
+installs card plus skill from the live index.
+
+**W3 — One validator.** Extract `submission_rules.py`, point the registry CI
 at the installed package, delete the duplicated rules. *Done when:* one rule
 change lands in one file and both sides move together, proven by a test that
 feeds the same fixtures to both entry points.
 
-**W3 — The CLI.** `init` / `validate` / `publish` / `status`, plus a `--dry-run`
-that prints the PR body it would open. *Done when:* a fresh clone on Windows,
-macOS, and Linux publishes a skill pack end to end with no hand-written JSON.
-
-**W4 — Client-side skill packs.** The loader learns `skills/`: install writes
-them under the user's skills root (name validation is already a security
-boundary in `community_source.py`), lifecycle stays Draft until the user
-promotes them. *Done when:* installing a bundle yields both a store card and
-a draft skill, and uninstall removes both.
+**W4 — The CLI.** `init` / `validate` / `publish` / `status`, plus a
+`--dry-run` that prints the PR body it would open. *Done when:* a fresh
+clone on Windows, macOS, and Linux publishes a bundle end to end with no
+hand-written JSON.
 
 **W5 — In-app Publish view.** The form, drop target, live validation,
-card preview, device-flow auth.
+card preview, device-flow auth (the GitHub App already enables Device Flow
+for exactly this — signin spec §7).
 
-**W6 — Storefront.** Separate repo, submit form, OAuth app. Until then, W3
-lands and the README points at the CLI.
+**W6 — Storefront upload.** Being built in parallel as the GitHub sign-in
+gate; this plan does not duplicate it.
+
+**Multi-file packages** (a skill with `references/`) stay out of scope until
+someone asks: they need the gate widened to `submissions/<name>/**` with
+path-traversal and size caps, which is a trust change, not a format one.
 
 ---
 
